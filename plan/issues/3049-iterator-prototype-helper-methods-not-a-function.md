@@ -1,7 +1,9 @@
 ---
 id: 3049
 title: "Iterator.prototype helper methods (map/filter/take/drop/flatMap/…): 'X is not a function' + this-plain-iterator / return-forwarding residual (~27 fails)"
-status: ready
+status: done
+completed: 2026-07-09
+assignee: ttraenkler/fable-proto
 sprint: current
 priority: medium
 horizon: l
@@ -719,3 +721,93 @@ the helper proto's chain. This is a compiled \*\*function-`prototype`-field stor
 
 `status: ready` kept (not claiming further); the chain-fix draft is documented
 above for whoever resumes after the assignment-wall lands.
+
+## Implementation (2026-07-09, fable-proto) — SHIPPED
+
+**The "externref-prototype-storage wall" dissolved under verify-first probes:
+storage round-trips fine** (`F.prototype = src` in a function body preserves
+identity — `p === src` — and own-member reads cross-function; probes E/G).
+fable-3022's wall was Layer-1 ELISION wearing a storage costume: the top-level
+assignment never ran, so `F.prototype` reads fell back to the auto-vivified
+#1712 sidecar object (non-null but empty) — exactly "back non-null but
+back.map undefined". What ACTUALLY gated the cluster was a five-part stack,
+each pinned empirically before fixing:
+
+1. **Layer 1 — top-level `F.prototype = <expr>` elision (host/GC)**
+   (`src/codegen/declarations.ts`): the #2671 static-write keep explicitly
+   excluded `prototype`, claiming the fnctor-prototype lift consumes it — but
+   `tryCompileFnctorPrototypeAssign` is standalone-only, so host mode dropped
+   the statement entirely. Fixed: the keep now also covers `F.prototype = …`,
+   with the receiver unwrapped through parens/`as`-casts (the runner shim is
+   `(Iterator as any).prototype = …`). No double-apply is possible (verified
+   the lift's `!ctx.standalone` gate); standalone byte-identical.
+2. **Layer 2 — module-init-before-`setExports` (arch Option C1, as spec'd)**:
+   the shim RHS calls the `__iterator` host import, which needs
+   `getExports()` — under the wasm `(start)` section it threw "is not
+   iterable" DURING instantiate. Fixed via the existing #2796
+   `deferTopLevelInit` in the host test262 lanes only (compiler default
+   unchanged): `scripts/compiler-fork-worker.mjs` (+ incremental-compiler
+   defaults), `scripts/wasm-exec-worker.mjs` (calls exported
+   `__module_init()` after `setExports`, preserving runtime-negative
+   classification and reclassifying top-level throws honestly as runtime
+   fails instead of malformed-wasm compile_errors),
+   `tests/test262-runner.ts`, `scripts/test262-worker.mjs` (gated `!target`),
+   `tests/test262-shared.ts` fixture path. Standalone/wasi/linear lanes
+   untouched (`_start` model).
+3. **Layer 3 — one-level vec-fallback proto chain** (`src/runtime.ts`
+   `__iterator`): iterators minted for compiled vecs were
+   `Object.create(Iterator.prototype)` — ONE level — so the shim's two-hop
+   `getPrototypeOf(getPrototypeOf(arrayIter))` overshot to
+   `Object.prototype`. Fixed with a module-wide cached
+   `%ArrayIteratorPrototype%` middle proto (`_getArrayIteratorPrototype()`,
+   §23.1.5.2) anchored at `_getIteratorPrototype()` (same anchor as the
+   generator path). Note: the host-lane `getPrototypeOf([].values()) ===
+getPrototypeOf([][Symbol.iterator]())` identity was ALREADY false on main
+   (#3013 is standalone-only), so this can't regress it.
+4. **Bridge-exit marshaling** (`src/runtime.ts` `_marshalBridgeResult`): once
+   the helper resolved, native Iterator helpers consumed COMPILED iterators —
+   and every closure-bridge (`_wrapWasmClosure`, `_wrapWasmClosureUnknownArity`,
+   `_wrapForHost` field closureBridge, `callback_maker` /
+   `getter_callback_maker`) returned raw WasmGC structs the host cannot read:
+   a compiled `next()`'s `{done, value}` read as `r.done` → undefined → the
+   helper chain NEVER terminated; a getter-returned closure (`get next()`)
+   arrived non-callable ("object is not a function" — the dominant cluster
+   signature). Struct results now marshal at the bridge exit: data/vec →
+   identity-stable `_wrapForHost` proxy; closure → host-callable dynamic
+   bridge (recursive by construction). Re-entry identity holds via the
+   existing `_hostProxyReverse` / `_hostEqComparableValue` unwrap discipline.
+5. **Captured-mutable writeback timing** (`src/codegen/closures.ts` +
+   `src/codegen/statements.ts`): `.call/.apply/.bind` function args are
+   invoke-through registrars with unknown (typically LAZY) invocation — the
+   one-shot writeback snapshotted the pre-invocation ref cell, so
+   `++mapperCalls` counts stayed stale. They now register persistent
+   writebacks (#1695 mechanism), and for-of statements re-sync
+   `persistentCallbackWritebacks` at loop exit (lazy helpers invoke the
+   callback during for-of stepping, which is emitted by statement codegen,
+   not compileCallExpression).
+
+**Measured cluster delta (in-process runner, host lane): 1/21 → 13/21** —
+ALL 11 `*/this-plain-iterator.js` twins now pass, plus
+`flatMap/flattens-iterable.js` and `Symbol.iterator/return-val.js`. Tests in
+`tests/issue-3049.test.ts` (6 green).
+
+**Residuals split out (verify-first, distinct roots — do NOT reopen here):**
+
+- **#3123** — the remaining ~8 (`exhaustion-does-not-call-return`,
+  `return-is-forwarded`, `iterable-to-iterator-fallback`) all use
+  `class TestIterator extends Iterator` over the runtime-assigned shim
+  prototype; the class-extends machinery doesn't observe the live
+  `F.prototype`. Different subsystem (class hierarchy wiring).
+- **#3124** — the true substrate residue of fable-3022's probes: inherited
+  member reads through host chains built OVER compiled structs
+  (`Object.create(<struct>)`) resolve undefined (struct opacity mid-chain in
+  `__extern_get`'s native walk). Not the #3049 gate (the shim's proto object
+  is host-native), but real.
+
+Local regression validation: 27 targeted test files (closures/callbacks/
+iterators/prototypes/module-init: #1320/#1367/#1382/#1695/#1712/#2015/#2128/
+#2664/#2671/#2794/#2796/#3013/#3046/#2939/#2743/#2836/#2841/#907 + iterators/
+generators/prototype-chain/spread-rest suites) — zero deltas vs clean main
+(the 21 failures observed are identical on main; Node-25 container
+environment, pre-existing). Full validation: PR-level test262 diff +
+merge_group (broad-impact: host init timing corpus-wide + bridge marshaling).

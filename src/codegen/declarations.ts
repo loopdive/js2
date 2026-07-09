@@ -4522,21 +4522,45 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // write from inside a function already worked; only the top-level
         // collection dropped it. Scoped narrowly:
         //   - DIRECT `F.<name> = …` only (bare-identifier receiver);
-        //     `F.prototype = …` / `F.prototype.m = …` chains stay excluded —
-        //     those are consumed by the compile-time fnctor-prototype lift,
-        //     and re-running them at init would double-apply.
+        //     `F.prototype.m = …` chains stay excluded (non-identifier
+        //     receiver — the generic check below still drops them).
+        //   - (#3049 Layer 1) DIRECT `F.prototype = …` is now ALSO kept for
+        //     host/GC. The old exclusion claimed the compile-time
+        //     fnctor-prototype lift consumes it, but
+        //     `tryCompileFnctorPrototypeAssign` opens with
+        //     `if (!ctx.standalone) return undefined` — the lift is
+        //     STANDALONE-ONLY, so in host mode nothing consumed the statement
+        //     and it was silently elided. `F.prototype` reads then fell back
+        //     to the auto-vivified #1712 sidecar object (non-null but
+        //     empty), dropping the assigned prototype object and its whole
+        //     chain. This elision is what failed the Iterator-helper
+        //     `this-plain-iterator` cluster: the test262-runner harness shim
+        //     `Iterator.prototype = getPrototypeOf(getPrototypeOf(
+        //     [][Symbol.iterator]()))` never ran. No double-apply is
+        //     possible in host mode; standalone keeps its own #2660 S2 arm
+        //     above and stays byte-identical.
         //   - Host/GC lanes only: standalone's write-arm for fnctor statics
         //     is separate work (its prototype case has its own #2660 S2 keep
         //     above); standalone codegen stays byte-identical.
-        if (
-          !ctx.standalone &&
-          ts.isPropertyAccessExpression(expr.left) &&
-          ts.isIdentifier(expr.left.expression) &&
-          expr.left.name.text !== "prototype" &&
-          ctx.topLevelFunctionNames.has(expr.left.expression.text)
-        ) {
-          ctx.moduleInitStatements.push(stmt);
-          continue;
+        //   - The receiver is unwrapped through parens / `as`-casts /
+        //     non-null assertions (the harness shim writes
+        //     `(Iterator as any).prototype = …`; the cast must not hide the
+        //     top-level-function receiver — same unwrap
+        //     getAssignmentRootIdentifier applies).
+        if (!ctx.standalone && ts.isPropertyAccessExpression(expr.left)) {
+          let receiver: ts.Expression = expr.left.expression;
+          while (
+            ts.isParenthesizedExpression(receiver) ||
+            ts.isAsExpression(receiver) ||
+            ts.isNonNullExpression(receiver) ||
+            ts.isTypeAssertionExpression(receiver)
+          ) {
+            receiver = receiver.expression;
+          }
+          if (ts.isIdentifier(receiver) && ctx.topLevelFunctionNames.has(receiver.text)) {
+            ctx.moduleInitStatements.push(stmt);
+            continue;
+          }
         }
         const targetName = getAssignmentRootIdentifier(expr.left);
         if (targetName && ctx.moduleGlobals.has(targetName)) {

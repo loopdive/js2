@@ -1467,6 +1467,16 @@ export function isDeferredCallbackArgument(node: ts.Node, ctx: CodegenContext): 
   if (!parent.arguments.some((arg) => arg === node)) return false;
   if (!ts.isPropertyAccessExpression(parent.expression)) return false;
   const methodName = parent.expression.name.text;
+  // (#3049) Invoke-through registrars: a function argument to `.call(…)` /
+  // `.apply(…)` / `.bind(…)` reaches an UNKNOWN invoker that is typically
+  // lazy — e.g. `Iterator.prototype.map.call(iter, fn)` invokes `fn` only
+  // when the RESULT iterator is stepped, long after the registering call
+  // returned. A one-shot writeback then snapshots the pre-invocation ref
+  // cell, so captured-mutable counters (`++mapperCalls`) stay stale in the
+  // outer function. Treat as deferred → persistent writebacks. (This only
+  // triggers for HOST-boundary callbacks; `.call` on a compiled function
+  // lowers its function args as closure structs, not host callbacks.)
+  if (methodName === "call" || methodName === "apply" || methodName === "bind") return true;
   try {
     const recType = ctx.checker.getTypeAtLocation(parent.expression.expression);
     const symName = recType.getSymbol?.()?.getName?.();

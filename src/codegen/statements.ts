@@ -179,6 +179,16 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
 
   if (ts.isForOfStatement(stmt)) {
     markStatementPos(ctx, fctx, stmt, () => compileForOfStatement(ctx, fctx, stmt));
+    // (#3049) Loop-exit re-sync for persistent callback writebacks. A lazy
+    // host iterator (e.g. `Iterator.prototype.map.call(iter, fn)`) invokes
+    // its registered callback DURING the for-of stepping, which is emitted
+    // by statement codegen — not through compileCallExpression, where the
+    // persistent writebacks normally re-emit. Without this, a captured-
+    // mutable counter (`++mapperCalls`) written inside the callback stays
+    // stale in the outer local after the loop.
+    if (fctx.persistentCallbackWritebacks && fctx.persistentCallbackWritebacks.length > 0) {
+      fctx.body.push(...fctx.persistentCallbackWritebacks.map((instr) => structuredClone(instr)));
+    }
     return;
   }
 
