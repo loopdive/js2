@@ -1,8 +1,8 @@
 {
   "id": "3087",
-  "assignee": "ttraenkler/dev-ta",
+  "assignee": "ttraenkler/fable-3087",
   "status": "in-progress",
-  "branch": "issue-3087-dynamic-new-any-ctor",
-  "claimed_at": "2026-07-08T14:58:14Z",
-  "updated_at": "2026-07-08T14:58:14Z"
+  "branch": "issue-3087-dynamic-any-call-externref-arg",
+  "claimed_at": "2026-07-09T08:58:44Z",
+  "updated_at": "2026-07-09T08:58:44Z"
 }
