@@ -1,8 +1,9 @@
 {
   "id": "2001",
   "assignee": "ttraenkler/fable-2773t",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2001-hof-hole-skip",
   "claimed_at": "2026-07-09T18:25:42Z",
-  "updated_at": "2026-07-09T18:25:42Z"
+  "updated_at": "2026-07-09T19:41:38Z",
+  "released_at": "2026-07-09T19:41:38Z"
 }
