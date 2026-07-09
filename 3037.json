@@ -1,8 +1,8 @@
 {
   "id": "3037",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-05T00:01:13Z",
-  "updated_at": "2026-07-05T00:01:13Z"
+  "assignee": "ttraenkler/fable-identity",
+  "status": "in-progress",
+  "branch": "issue-2963-method-identity",
+  "claimed_at": "2026-07-09T09:09:11Z",
+  "updated_at": "2026-07-09T09:09:11Z"
 }
