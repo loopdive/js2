@@ -1,9 +1,8 @@
 {
   "id": "3022",
-  "assignee": "ttraenkler/dev-3051b",
-  "status": "released",
-  "branch": "issue-3022-defineproperty-descriptor-fidelity",
-  "claimed_at": "2026-07-05T08:20:20Z",
-  "updated_at": "2026-07-05T08:22:32Z",
-  "released_at": "2026-07-05T08:22:32Z"
+  "assignee": "ttraenkler/fable-3022",
+  "status": "in-progress",
+  "branch": "issue-3043-descriptor-transition-validation",
+  "claimed_at": "2026-07-09T15:28:11Z",
+  "updated_at": "2026-07-09T15:28:11Z"
 }
