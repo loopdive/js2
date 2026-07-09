@@ -1,9 +1,8 @@
 {
   "id": "2773",
-  "assignee": "ttraenkler/fable-2773",
-  "status": "released",
-  "branch": "issue-2773-value-rep-hof-element",
-  "claimed_at": "2026-07-09T11:21:17Z",
-  "updated_at": "2026-07-09T14:39:53Z",
-  "released_at": "2026-07-09T14:39:53Z"
+  "assignee": "ttraenkler/fable-2773t",
+  "status": "in-progress",
+  "branch": "issue-2773-dyn-index-write",
+  "claimed_at": "2026-07-09T15:26:36Z",
+  "updated_at": "2026-07-09T15:26:36Z"
 }
