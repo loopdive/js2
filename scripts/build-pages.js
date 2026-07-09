@@ -251,6 +251,10 @@ copyFile(join(WEBSITE, "getting-started", "index.html"), join(PAGES_DIST, "getti
 // entry point.
 copyFile(join(WEBSITE, "blog", "index.html"), join(PAGES_DIST, "blog", "index.html"));
 
+// Static whitepaper page — self-contained styled HTML, same pattern as the
+// "Get started" and blog pages above.
+copyFile(join(WEBSITE, "docs", "whitepaper.html"), join(PAGES_DIST, "docs", "whitepaper.html"));
+
 // Overwrite Vite-built report pages with the latest public/ versions (which include
 // web components like <t262-donut> that Vite doesn't process).
 const PUBLIC_REPORT = join(WEBSITE, "public", "benchmarks", "results", "report.html");
