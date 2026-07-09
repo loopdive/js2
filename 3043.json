@@ -1,8 +1,8 @@
 {
   "id": "3043",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-05T04:24:17Z",
-  "updated_at": "2026-07-05T04:24:17Z"
+  "assignee": "ttraenkler/fable-3022",
+  "status": "in-progress",
+  "branch": "issue-3043-descriptor-transition-validation",
+  "claimed_at": "2026-07-09T15:28:34Z",
+  "updated_at": "2026-07-09T15:28:34Z"
 }
