@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-09T19:19:13.926Z",
-  "baseline_generated_at": "2026-07-09T19:19:13.926Z",
-  "baseline_sha": "4d13f0121f7b074d2ac3497b220810654430a967",
+  "timestamp": "2026-07-09T19:40:55.559Z",
+  "baseline_generated_at": "2026-07-09T19:40:55.559Z",
+  "baseline_sha": "fc8b037bb5ac484660da00bcc63457b2ce74d65e",
   "oracle_version": 2,
   "mode": {
     "target": "standalone",
@@ -1243,8 +1243,8 @@
         },
         "sample_files": [
           "test/language/expressions/object/method-definition/forbidden-ext/b2/async-meth-forbidden-ext-indirect-access-own-prop-caller-get.js",
-          "test/language/expressions/async-function/try-reject-finally-throw.js",
           "test/language/expressions/async-arrow-function/eval-var-scope-syntax-err.js",
+          "test/language/expressions/async-function/try-reject-finally-throw.js",
           "test/language/expressions/class/async-method-static/returns-async-function-returns-newtarget.js",
           "test/language/expressions/class/dstr/async-private-gen-meth-static-dflt-ary-ptrn-elem-id-iter-done.js"
         ],
@@ -1298,8 +1298,8 @@
         },
         "error_categories": {
           "other": 2491,
-          "wasm_compile": 60,
           "illegal_cast": 2,
+          "wasm_compile": 60,
           "null_deref": 51,
           "type_error": 182,
           "assertion_fail": 782,
@@ -1310,13 +1310,13 @@
           "test/built-ins/Temporal/PlainDateTime/subclass.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/eraYear/prop-desc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/month/prop-desc.js",
-          "test/built-ins/Temporal/Instant/prototype/toString/timezone-wrong-type.js"
+          "test/built-ins/Temporal/PlainMonthDay/refisoyear-undefined.js"
         ],
         "sample_signatures": [
           "other:ReferenceError: Temporal is not defined",
           "other:ReferenceError: TemporalHelpers is not defined",
-          "wasm_compile:L#:## invalid Wasm binary (WebAssembly.instantiate(): Compiling function ##:\"test\" failed: extern.convert_any[#] expected type shared anyref, found array.get of type i64 @+#) [in test()] [@+#] [wat: (func $test (result f64) (local $instance",
           "illegal_cast:illegal cast [in __str_to_number() ← test]",
+          "wasm_compile:L#:## invalid Wasm binary (WebAssembly.instantiate(): Compiling function ##:\"test\" failed: extern.convert_any[#] expected type shared anyref, found array.get of type i64 @+#) [in test()] [@+#] [wat: (func $test (result f64) (local $instance",
           "null_deref:L#:## dereferencing a null pointer [in test()]"
         ]
       },
@@ -1695,9 +1695,9 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 2126,
+          "assertion_fail": 2127,
           "type_error": 398,
-          "other": 161,
+          "other": 160,
           "illegal_cast": 486,
           "runtime_error": 93,
           "wasm_compile": 54,
@@ -1746,8 +1746,8 @@
         },
         "sample_files": [
           "test/language/statements/for-await-of/async-func-dstr-const-obj-ptrn-id-init-skipped.js",
-          "test/built-ins/AsyncGeneratorFunction/instance-name.js",
           "test/built-ins/AsyncGeneratorFunction/prototype/extensibility.js",
+          "test/built-ins/AsyncGeneratorFunction/instance-name.js",
           "test/built-ins/GeneratorFunction/prototype/extensibility.js",
           "test/built-ins/GeneratorPrototype/throw/from-state-completed.js"
         ],
@@ -1775,8 +1775,8 @@
         },
         "error_categories": {
           "runtime_error": 58,
-          "assertion_fail": 4915,
-          "other": 128,
+          "assertion_fail": 4914,
+          "other": 129,
           "type_error": 1092,
           "illegal_cast": 206,
           "wasm_compile": 156,
@@ -1852,8 +1852,8 @@
         },
         "error_categories": {
           "assertion_fail": 313,
-          "type_error": 201,
           "illegal_cast": 56,
+          "type_error": 201,
           "other": 56,
           "promise_error": 3,
           "runtime_error": 3,
@@ -1865,15 +1865,15 @@
         "sample_files": [
           "test/built-ins/TypedArray/out-of-bounds-has.js",
           "test/built-ins/TypedArray/resizable-buffer-length-tracking-1.js",
+          "test/built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/detached-buffer.js",
-          "test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js",
-          "test/built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js"
+          "test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert(i in array);",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(ta.length, # / ta.BYTES_PER_ELEMENT);",
-          "type_error:TypeError: Cannot access property on null or undefined at #:#",
           "illegal_cast:L#:## illegal cast [in __closure_2() ← testWithTypedArrayConstructors ← test]",
+          "type_error:TypeError: Cannot access property on null or undefined at #:#",
           "type_error:TypeError: Object method called on null or undefined"
         ]
       },
@@ -2015,14 +2015,14 @@
           "test/annexB/language/global-code/switch-case-global-no-skip-try.js",
           "test/annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for-in.js",
           "test/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-block-scoping.js",
-          "test/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-update.js"
+          "test/annexB/language/global-code/switch-case-global-update.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { f; }, 'An initialized binding is not created following evaluation');",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue( f, undefined, 'Initialized binding created prior to evaluation' );",
           "type_error:TypeError: dynamic eval is not supported in standalone mode (##)",
-          "runtime_error:L#:## Invalid left-hand side in for-in/for-of",
-          "other:L#:## ';' expected."
+          "assertion_fail:returned # — assert ## at L#: assert.sameValue(typeof f, 'function');",
+          "runtime_error:L#:## Invalid left-hand side in for-in/for-of"
         ]
       },
       {
@@ -2145,15 +2145,15 @@
           "test/language/expressions/arrow-function/dstr/dflt-ary-init-iter-close.js",
           "test/language/expressions/arrow-function/lexical-this.js",
           "test/built-ins/Function/S15.3.5_A2_T1.js",
-          "test/language/function-code/10.4.3-1-60gs.js",
-          "test/language/function-code/10.4.3-1-101gs.js"
+          "test/language/function-code/10.4.3-1-101gs.js",
+          "test/language/function-code/10.4.3-1-60gs.js"
         ],
         "sample_signatures": [
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(doneCallCount, #);",
           "assertion_fail:returned # — assert ## at L#: assert.sameValue(f.af(), f);",
           "other:ReferenceError: y is not defined",
-          "other:'this' had incorrect value!",
-          "illegal_cast:L#:## illegal cast [in test()]"
+          "illegal_cast:L#:## illegal cast [in test()]",
+          "other:'this' had incorrect value!"
         ]
       },
       {
@@ -2383,8 +2383,8 @@
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 104,
           "type_error": 5,
+          "assertion_fail": 104,
           "promise_error": 4,
           "wasm_compile": 9,
           "negative_test_fail": 13,
@@ -2394,15 +2394,15 @@
           "runtime_error": 2
         },
         "sample_files": [
-          "test/language/module-code/instn-local-bndng-cls.js",
           "test/language/module-code/namespace/internals/delete-non-exported.js",
+          "test/language/module-code/instn-local-bndng-cls.js",
           "test/language/statements/for/dstr/const-ary-ptrn-elem-id-iter-val-err.js",
           "test/language/statements/for/dstr/const-ary-ptrn-rest-id-iter-val-err.js",
           "test/language/statements/const/dstr/obj-ptrn-prop-ary-value-null.js"
         ],
         "sample_signatures": [
-          "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { typeof test262; }, 'Binding is created but not initialized.');",
           "type_error:TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { typeof test262; }, 'Binding is created but not initialized.');",
           "assertion_fail:returned # — assert ## at L#: throw new Test262Error();",
           "assertion_fail:returned # — assert ## at L#: assert.throws(TypeError, function() { const { w: [x, y, z] = [#, #, #] } = { w: null }; });",
           "assertion_fail:returned # — assert ## at L#: assert.throws(ReferenceError, function() { typeof D; }, 'binding is created but not initialized');"
@@ -2469,8 +2469,8 @@
         "sample_files": [
           "test/language/module-code/instn-star-iee-cycle.js",
           "test/language/module-code/top-level-await/syntax/early-does-not-propagate-to-fn-declaration-params.js",
-          "test/language/module-code/parse-err-hoist-lex-fun.js",
           "test/language/module-code/top-level-await/new-await-parens.js",
+          "test/language/module-code/parse-err-hoist-lex-fun.js",
           "test/language/module-code/top-level-await/syntax/export-var-await-expr-obj-literal.js"
         ],
         "sample_signatures": [
@@ -2546,7 +2546,7 @@
           "test/language/line-terminators/S7.3_A7_T6.js",
           "test/language/directive-prologue/14.1-3-s.js",
           "test/language/expressions/import.meta/syntax/goal-script.js",
-          "test/language/line-terminators/S7.3_A7_T8.js"
+          "test/language/line-terminators/S7.3_A7_T2.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: ##: Check Function Expression for automatic semicolon insertion",
