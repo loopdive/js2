@@ -88,22 +88,6 @@ export function emitUndefinedSingleton(ctx: CodegenContext, fctx: FunctionContex
 }
 
 /**
- * (#2106 S1.0) Test whether the `ref $AnyValue` on top of the stack is the
- * `$undefined` singleton (tag === 1). Consumes the ref, leaves an i32. Returns
- * `false` (emitting nothing) when the singleton is unavailable. INERT until S1.1
- * routes the `=== undefined` / `typeof === "undefined"` consumers here.
- */
-export function emitIsUndefinedSingleton(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (!(ctx.standalone || ctx.nativeStrings)) return false;
-  if (ctx.anyValueTypeIdx < 0) return false;
-  // tag === 1  (the operand is a `ref $AnyValue`; read field 0 and compare).
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 0 } as Instr);
-  fctx.body.push({ op: "i32.const", value: 1 } as Instr);
-  fctx.body.push({ op: "i32.eq" } as Instr);
-  return true;
-}
-
-/**
  * (#2106 S1) Is the `undefinedSingleton` regime ACTIVE for this module?
  * True only when the flag is set AND we are in standalone/native-strings mode
  * (host mode has a real host `undefined` via `__get_undefined` and is never

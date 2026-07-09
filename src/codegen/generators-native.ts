@@ -37,7 +37,14 @@ import { reportError } from "./context/errors.js";
 import { nativeStringType } from "./native-strings.js";
 import { emitBrandCheckTypeError } from "./native-proto.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
-import { coerceType, compileExpression, compileStatement, valTypesMatch } from "./shared.js";
+import {
+  coerceType,
+  compileExpression,
+  compileStatement,
+  ensureLateImport,
+  flushLateImportShifts,
+  valTypesMatch,
+} from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { addUnionImports } from "./index.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
@@ -88,8 +95,17 @@ type StateTerminator =
   | { kind: "yield"; expr: ts.Expression | undefined; next: number }
   | { kind: "return"; expr: ts.Expression | undefined }
   | { kind: "done" }
-  | { kind: "jump"; next: number }
+  // (#3050) `setPending` — when jumping INTO a state-lowered finally on the
+  // NORMAL path, reset the region's pending-completion kind to 0 (none) so the
+  // finally's exit router proceeds to the join. Abrupt entries write the pending
+  // fields directly in the routers; plain jumps leave it undefined (no write).
+  | { kind: "jump"; next: number; setPending?: number }
   | { kind: "branch"; cond: ts.Expression; negate: boolean; thenState: number; elseState: number }
+  // (#3050) Exit router of a state-lowered `finally` block: consult the saved
+  // pending completion — none → proceed to `join`; return/throw → re-dispatch
+  // the completion against the region's OUTER unwind chain (innermost-first),
+  // which may enter an outer catch/finally or complete/re-throw.
+  | { kind: "finally-exit"; join: number; unwind: UnwindEntry[] }
   // (#2170) `yield* <inner-generator-call>` — delegate to an inner native
   // generator. `subject` is the inner generator call expression; `innerName` is
   // the callee's source name (resolved to a `NativeGeneratorInfo` at emit time).
@@ -144,6 +160,50 @@ type StateTerminator =
       bindResultTo?: string;
     };
 
+/**
+ * (#3050) A try-region admitted by the NEW try-region machinery: a `try` whose
+ * catch crosses a yield, and/or whose `finally` itself yields. The catch and
+ * finally blocks are lowered as REAL states; abrupt completions (`.throw(e)` /
+ * `.return(v)` at a suspended yield, or a runtime exception during a try-part
+ * state) are ROUTED to the region's handler states instead of the legacy
+ * "replay finalizers then re-throw" tail. Legacy kind-L regions (finally-only
+ * with a yield-free finally) never mint one of these — they keep the
+ * byte-identical `abruptResume.finalizers` replay.
+ */
+interface TryRegionPlan {
+  /** Catch-clause binding name (spilled as externref), when the catch binds one. */
+  catchParamName?: string;
+  /** Entry state of the catch block (set when the catch block is lowered). */
+  catchEntryState?: number;
+  /** Entry state of the state-lowered finally block. */
+  finallyEntryState?: number;
+}
+
+/**
+ * (#3050) One step of the abrupt-completion unwind chain attached to a
+ * resumable state, ordered innermost-first at capture time:
+ *  - `replay`  legacy yield-free finally — compiled inline, runs for BOTH
+ *              return and throw completions (byte-identical to abruptResume);
+ *  - `catch`   an enclosing catch handler — intercepts THROW completions only:
+ *              binds the stored error and enters the catch block's states;
+ *  - `finally` an enclosing state-lowered finally — intercepts BOTH: saves the
+ *              completion in the pending fields and enters the finally states;
+ *              the finally's exit router re-dispatches the pending completion.
+ */
+type UnwindEntry =
+  | { kind: "replay"; statements: readonly ts.Statement[] }
+  | { kind: "catch"; region: TryRegionPlan }
+  | { kind: "finally"; region: TryRegionPlan };
+
+/**
+ * (#3050) Runtime-throw route for exceptions raised WHILE EXECUTING a state
+ * (e.g. a `throw obj;` statement in a try block, or a throwing call). States
+ * positionally inside a NEW try-region get their dispatch arm wrapped in a wasm
+ * `try`/`catch $exc` that routes the exception per JS semantics: into the
+ * region's catch (binding the error) or into its finally (as a pending throw).
+ */
+type ThrowRoute = { kind: "catch"; region: TryRegionPlan } | { kind: "finally"; region: TryRegionPlan };
+
 interface NativeGeneratorState {
   /** Straight-line, yield-free statements to run on entering this state. */
   statements: ts.Statement[];
@@ -157,6 +217,18 @@ interface NativeGeneratorState {
    * `GeneratorResumeAbrupt` (`.return()`) hitting the yield that leads here.
    */
   abruptResume?: { finalizers: readonly ts.Statement[][] };
+  /**
+   * (#3050) Innermost-first unwind chain for abrupt resume at this state.
+   * Present INSTEAD of `abruptResume` when any enclosing try-region uses the
+   * new machinery; states under only legacy kind-L regions keep `abruptResume`
+   * so already-supported shapes emit byte-identical code.
+   */
+  unwind?: UnwindEntry[];
+  /**
+   * (#3050) Runtime-throw route for exceptions raised while this state's arm
+   * executes (set for states positionally inside a NEW try-region).
+   */
+  throwRoute?: ThrowRoute;
   terminator: StateTerminator;
 }
 
@@ -196,6 +268,20 @@ interface NativeGeneratorPlan {
    * `$__IterRec` slot), appended AFTER the native-gen and vec delegation slots.
    */
   iterableDelegationSites: { subject: ts.Expression }[];
+  /**
+   * (#3050) True when any try-region lowers its finally as states (a yielding
+   * finally): the state struct then carries an i32 `pending` completion-kind
+   * field (0 none / 1 return / 2 throw) consumed by the finally exit router.
+   * The value/error payloads ride the existing `abrupt` / `error` fields.
+   */
+  needsPending: boolean;
+  /**
+   * (#3050) True when any state carries a `throwRoute` (its arm is wrapped in a
+   * wasm try/catch). In JS-host mode the wrap's catch_all recovers foreign JS
+   * exceptions via `__get_caught_exception`, acquired up-front by the resume
+   * emitter so no late import fires mid-trampoline.
+   */
+  hasThrowRoutes: boolean;
 }
 
 function noJsHostTarget(ctx: CodegenContext): boolean {
@@ -454,7 +540,25 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   let curStatements: ts.Statement[] = [];
   let curResumeBindings: string[] = [];
   let curAbrupt: NativeGeneratorState["abruptResume"] | undefined;
+  let curUnwind: UnwindEntry[] | undefined; // (#3050) new-region unwind chain
   let curUsed = false; // becomes the id below once we know it
+
+  // (#3050) New try-region machinery bookkeeping. `curThrowRoute` is the
+  // runtime-throw route for states reserved at the current lowering position
+  // (stamped onto every state minted while set); `stateThrowRoutes` collects the
+  // stamps and is applied to the final state objects after lowering (finishState
+  // rebuilds state objects, so stamping the placeholder would be lost).
+  // `stateFinallyDepth` counts how many state-lowered finally blocks enclose the
+  // current position — a region with its OWN state-lowered finally nested inside
+  // one would clobber the single shared pending-completion field, so it bails.
+  let curThrowRoute: ThrowRoute | undefined;
+  const stateThrowRoutes = new Map<number, ThrowRoute>();
+  let stateFinallyDepth = 0;
+  let needsPending = false;
+  let hasThrowRoutes = false;
+  // (#3050) Catch-param spills are typed externref (the exn tag payload) —
+  // resolved here, not from a body VariableDeclaration (none exists).
+  const catchParamSpillTypes = new Map<string, ValType>();
 
   // Reserve the state id for the in-progress state.
   let curId = reserveState();
@@ -467,6 +571,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       resumeBindings: [],
       terminator: { kind: "done" },
     });
+    // (#3050) Stamp the runtime-throw route of the lowering position that
+    // minted this state (applied to the final object after lowering).
+    if (curThrowRoute) stateThrowRoutes.set(id, curThrowRoute);
     return id;
   }
 
@@ -474,6 +581,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
+    curUnwind = undefined;
     curUsed = false;
     return reserveState();
   }
@@ -483,8 +591,18 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       statements: curStatements,
       resumeBindings: curResumeBindings,
       abruptResume: curAbrupt,
+      unwind: curUnwind,
       terminator,
     };
+  }
+
+  /** (#3050) Point the cursor at an already-reserved state with a fresh prelude. */
+  function resetCursor(id: number): void {
+    curId = id;
+    curStatements = [];
+    curResumeBindings = [];
+    curAbrupt = undefined;
+    curUnwind = undefined;
   }
 
   const tryYieldDeclaration = (stmt: ts.Statement): { name: string; yieldExpr: ts.YieldExpression } | null => {
@@ -506,9 +624,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
    * that successor. Loops/ifs containing yields reserve their header / branch
    * states and wire jumps. Returns false (sets ok=false) on unsupported shapes.
    *
-   * `activeFinalizers` carries enclosing try/finally bodies for abrupt-resume.
+   * `unwind` carries the enclosing try-region unwind chain for abrupt-resume,
+   * outermost-first (#3050): legacy yield-free finally bodies as `replay`
+   * entries (byte-identical to the historical activeFinalizers threading) plus
+   * `catch` / `finally` entries for regions on the new try-region machinery.
    */
-  function lowerStatements(statements: readonly ts.Statement[], activeFinalizers: readonly ts.Statement[][]): boolean {
+  function lowerStatements(statements: readonly ts.Statement[], unwind: readonly UnwindEntry[]): boolean {
     for (const stmt of statements) {
       if (!ok) return false;
       if (stmt.kind === ts.SyntaxKind.EmptyStatement) continue;
@@ -520,6 +641,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // (#2171) The return *value* must match the generator's yield element
         // type (numeric or string); a bare `return;` (no expr) is allowed.
         if (stmt.expression && !yieldValueOk(stmt.expression)) return fail();
+        // (#3050) A `return` inside a region with a state-lowered finally must
+        // thread the completion THROUGH the finally (which can itself suspend).
+        // That return-through path is not modeled yet — bail to the host path
+        // rather than silently skip the finally. (Catch entries never intercept
+        // returns, and legacy replay entries keep today's behavior.)
+        if (unwind.some((e) => e.kind === "finally")) return fail();
         collectSpillsIn(stmt);
         finishState(curId, { kind: "return", expr: stmt.expression });
         // Unreachable tail — start a fresh (dead) state so the cursor stays
@@ -540,61 +667,193 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       // Statement that CONTAINS a yield somewhere — must be modeled.
       // 1) `yield expr;` as an expression statement.
       if (ts.isExpressionStatement(stmt) && ts.isYieldExpression(stmt.expression)) {
-        if (!emitYield(stmt.expression, undefined, activeFinalizers)) return false;
+        if (!emitYield(stmt.expression, undefined, unwind)) return false;
         continue;
       }
 
       // 2) `let x = yield expr;`
       const yd = tryYieldDeclaration(stmt);
       if (yd) {
-        if (!emitYield(yd.yieldExpr, yd.name, activeFinalizers)) return false;
+        if (!emitYield(yd.yieldExpr, yd.name, unwind)) return false;
         continue;
       }
 
-      // 3) try/finally (no catch) wrapping yields.
+      // 3) try statements wrapping yields.
       if (ts.isTryStatement(stmt)) {
-        if (stmt.catchClause || !stmt.finallyBlock) return fail();
-        if (!statementsAreYieldFree(stmt.finallyBlock.statements)) return fail();
-        if (!lowerStatements(stmt.tryBlock.statements, [...activeFinalizers, [...stmt.finallyBlock.statements]])) {
-          return false;
+        const finallyYieldFree = !stmt.finallyBlock || statementsAreYieldFree(stmt.finallyBlock.statements);
+        if (!stmt.catchClause && stmt.finallyBlock && finallyYieldFree) {
+          // Legacy kind-L region: finally-only, yield-free finally — the
+          // historical replay lowering, byte-identical to pre-#3050.
+          if (
+            !lowerStatements(stmt.tryBlock.statements, [
+              ...unwind,
+              { kind: "replay", statements: [...stmt.finallyBlock.statements] },
+            ])
+          ) {
+            return false;
+          }
+          // finally runs on the normal path too.
+          for (const f of stmt.finallyBlock.statements) {
+            collectSpillsIn(f);
+            curStatements.push(f);
+          }
+          continue;
         }
-        // finally runs on the normal path too.
-        for (const f of stmt.finallyBlock.statements) {
-          collectSpillsIn(f);
-          curStatements.push(f);
-        }
+        // (#3050) New try-region machinery: catch across yield and/or a
+        // yielding finally.
+        if (!lowerTryRegion(stmt, unwind)) return false;
         continue;
       }
 
       // 4) if / else with yields in a branch.
       if (ts.isIfStatement(stmt)) {
-        if (!lowerIf(stmt, activeFinalizers)) return false;
+        if (!lowerIf(stmt, unwind)) return false;
         continue;
       }
 
       // 5) while / do-while / for loops with yields in the body.
       if (ts.isWhileStatement(stmt)) {
-        if (!lowerWhile(stmt, activeFinalizers)) return false;
+        if (!lowerWhile(stmt, unwind)) return false;
         continue;
       }
       if (ts.isDoStatement(stmt)) {
-        if (!lowerDoWhile(stmt, activeFinalizers)) return false;
+        if (!lowerDoWhile(stmt, unwind)) return false;
         continue;
       }
       if (ts.isForStatement(stmt)) {
-        if (!lowerFor(stmt, activeFinalizers)) return false;
+        if (!lowerFor(stmt, unwind)) return false;
         continue;
       }
 
       // 6) A bare block with yields — flatten it (no new scope modeling).
       if (ts.isBlock(stmt)) {
-        if (!lowerStatements(stmt.statements, activeFinalizers)) return false;
+        if (!lowerStatements(stmt.statements, unwind)) return false;
         continue;
       }
 
       return fail();
     }
     return ok;
+  }
+
+  /**
+   * (#3050) Lower a try statement on the NEW try-region machinery: the try,
+   * catch and finally blocks each become real state subgraphs; abrupt
+   * completions and runtime exceptions are ROUTED between them per JS
+   * semantics (§14.15 TryStatement + §27.5.3.4 GeneratorResumeAbrupt):
+   *
+   *   [cur] --jump--> [try states] --normal--> [finally states | join]
+   *                     | runtime throw / .throw() at a yield
+   *                     v
+   *                  [catch states] --normal--> [finally states | join]
+   *                     | runtime throw / abrupt at a yield (throw AND return)
+   *                     v
+   *                  [finally states] --exit router--> join | outer unwind
+   *
+   * The catch param is spilled as externref; the pending completion kind rides
+   * the state struct's i32 `pending` field (payloads reuse `abrupt`/`error`).
+   */
+  function lowerTryRegion(stmt: ts.TryStatement, outerUnwind: readonly UnwindEntry[]): boolean {
+    // A region with a state-lowered finally nested inside another state-lowered
+    // finally would clobber the single shared pending-completion field — bail.
+    if (stmt.finallyBlock && stateFinallyDepth > 0) return fail();
+
+    // Catch param: identifier-only, spilled at externref (the exn tag payload).
+    let catchParamName: string | undefined;
+    const catchDecl = stmt.catchClause?.variableDeclaration;
+    if (catchDecl) {
+      if (!ts.isIdentifier(catchDecl.name)) return fail();
+      catchParamName = catchDecl.name.text;
+      if (!catchParamSpillTypes.has(catchParamName)) {
+        // Reusing the slot across sibling catches of the same name is fine
+        // (externref, non-overlapping lifetimes); any OTHER same-named binding
+        // (body local, param, pattern binding) would share the slot wrongly.
+        if (
+          spillSet.has(catchParamName) ||
+          patternParamSpillTypes.has(catchParamName) ||
+          (decl.body !== undefined && bodyDeclaresBinding(decl.body, catchParamName))
+        ) {
+          return fail();
+        }
+        catchParamSpillTypes.set(catchParamName, { kind: "externref" });
+        addSpill(catchParamName);
+      }
+    }
+
+    const region: TryRegionPlan = { catchParamName };
+    if (stmt.finallyBlock) needsPending = true;
+    hasThrowRoutes = true;
+
+    const outerRoute = curThrowRoute;
+    const tryPartRoute: ThrowRoute = stmt.catchClause ? { kind: "catch", region } : { kind: "finally", region };
+    const catchPartRoute: ThrowRoute | undefined = stmt.finallyBlock ? { kind: "finally", region } : outerRoute;
+
+    // Unwind chains per part (outermost-first, matching the legacy threading;
+    // captured lists are reversed to innermost-first at the yield).
+    const finallyEntryUnwind: UnwindEntry[] = stmt.finallyBlock ? [{ kind: "finally", region }] : [];
+    const tryUnwind: UnwindEntry[] = [
+      ...outerUnwind,
+      ...finallyEntryUnwind,
+      ...(stmt.catchClause ? [{ kind: "catch", region } as UnwindEntry] : []),
+    ];
+    const catchUnwind: UnwindEntry[] = [...outerUnwind, ...finallyEntryUnwind];
+
+    // Reserve all part-entry states up front so each part's tail can be wired
+    // the moment its cursor is still live (finishState reads the live cursor).
+    const tryEntry = reserveState();
+    const catchEntry = stmt.catchClause ? reserveState() : -1;
+    const finallyEntry = stmt.finallyBlock ? reserveState() : -1;
+    const joinId = reserveState();
+    if (catchEntry >= 0) region.catchEntryState = catchEntry;
+    if (finallyEntry >= 0) region.finallyEntryState = finallyEntry;
+    // The up-front reservations were stamped with the SURROUNDING route —
+    // re-stamp them with their own part's route.
+    stampRoute(tryEntry, tryPartRoute);
+    if (catchEntry >= 0) stampRoute(catchEntry, catchPartRoute);
+    if (finallyEntry >= 0) stampRoute(finallyEntry, outerRoute);
+    stampRoute(joinId, outerRoute);
+
+    const normalNext = finallyEntry >= 0 ? finallyEntry : joinId;
+    const normalPending = finallyEntry >= 0 ? 0 : undefined;
+
+    // --- try part ---
+    finishState(curId, { kind: "jump", next: tryEntry });
+    curThrowRoute = tryPartRoute;
+    resetCursor(tryEntry);
+    const tryOk = lowerStatements(stmt.tryBlock.statements, tryUnwind);
+    curThrowRoute = outerRoute;
+    if (!tryOk) return false;
+    finishState(curId, { kind: "jump", next: normalNext, setPending: normalPending });
+
+    // --- catch part ---
+    if (stmt.catchClause) {
+      curThrowRoute = catchPartRoute;
+      resetCursor(catchEntry);
+      const catchOk = lowerStatements(stmt.catchClause.block.statements, catchUnwind);
+      curThrowRoute = outerRoute;
+      if (!catchOk) return false;
+      finishState(curId, { kind: "jump", next: normalNext, setPending: normalPending });
+    }
+
+    // --- finally part ---
+    if (stmt.finallyBlock) {
+      resetCursor(finallyEntry);
+      stateFinallyDepth++;
+      const finOk = lowerStatements(stmt.finallyBlock.statements, [...outerUnwind]);
+      stateFinallyDepth--;
+      if (!finOk) return false;
+      finishState(curId, { kind: "finally-exit", join: joinId, unwind: [...outerUnwind].reverse() });
+    }
+
+    // Continue in the join state.
+    resetCursor(joinId);
+    return ok;
+  }
+
+  /** (#3050) Overwrite / clear a state's runtime-throw route stamp. */
+  function stampRoute(id: number, route: ThrowRoute | undefined): void {
+    if (route) stateThrowRoutes.set(id, route);
+    else stateThrowRoutes.delete(id);
   }
 
   function fail(): boolean {
@@ -606,7 +865,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   function emitYield(
     yieldExpr: ts.YieldExpression,
     bindSentTo: string | undefined,
-    activeFinalizers: readonly ts.Statement[][],
+    unwind: readonly UnwindEntry[],
   ): boolean {
     // (#2170) `yield* <inner-generator-call>` — delegate to an inner native
     // generator. Slice-1 supports a direct call to a native-generator function
@@ -614,6 +873,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     // value of `yield*` consumed, a non-native inner) still bails to the host
     // path / scoped diagnostic.
     if (yieldExpr.asteriskToken) {
+      // (#3050) `yield*` inside a NEW try-region is not modeled — the
+      // delegation states ignore the resume mode, so an abrupt completion
+      // could not be routed into the region's catch/finally. Bail to the host
+      // path (legacy replay-only regions keep today's behavior).
+      if (unwind.some((e) => e.kind !== "replay")) return fail();
       const subject = yieldExpr.expression;
       const innerName = subject ? nativeGeneratorDelegationName(subject) : undefined;
       if (subject && innerName === undefined) {
@@ -635,7 +899,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           }
           const vecSiteIndex = vecDelegationSites.length;
           vecDelegationSites.push({ subject });
-          const nextId = startStateAfterYield(undefined, activeFinalizers);
+          const nextId = startStateAfterYield(undefined, unwind);
           finishState(curId, {
             kind: "yield-star",
             delegationKind: "vec",
@@ -648,8 +912,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           curStatements = [];
           curResumeBindings = pendingResumeBindings;
           curAbrupt = pendingAbrupt;
+          curUnwind = pendingUnwind;
           pendingResumeBindings = [];
           pendingAbrupt = undefined;
+          pendingUnwind = undefined;
           return ok;
         }
         // (#2173 slice-2b) Not a native-gen call nor a numeric vec — try a
@@ -672,7 +938,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           }
           const iterableSiteIndex = iterableDelegationSites.length;
           iterableDelegationSites.push({ subject });
-          const nextId = startStateAfterYield(undefined, activeFinalizers);
+          const nextId = startStateAfterYield(undefined, unwind);
           finishState(curId, {
             kind: "yield-star",
             delegationKind: "iterable",
@@ -685,8 +951,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           curStatements = [];
           curResumeBindings = pendingResumeBindings;
           curAbrupt = pendingAbrupt;
+          curUnwind = pendingUnwind;
           pendingResumeBindings = [];
           pendingAbrupt = undefined;
+          pendingUnwind = undefined;
           return ok;
         }
         return fail();
@@ -711,7 +979,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       }
       const siteIndex = delegationSites.length;
       delegationSites.push({ innerName });
-      const nextId = startStateAfterYield(undefined, activeFinalizers);
+      const nextId = startStateAfterYield(undefined, unwind);
       finishState(curId, {
         kind: "yield-star",
         delegationKind: "native-gen",
@@ -726,17 +994,19 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       curStatements = [];
       curResumeBindings = pendingResumeBindings;
       curAbrupt = pendingAbrupt;
+      curUnwind = pendingUnwind;
       pendingResumeBindings = [];
       pendingAbrupt = undefined;
+      pendingUnwind = undefined;
       return ok;
     }
     // (#2171) yieldValueOk admits the f64 numeric path AND the uniform
     // native-string path; mixed/object yields still bail.
     if (!yieldValueOk(yieldExpr.expression)) return fail();
-    const next = startStateAfterYield(bindSentTo, activeFinalizers);
+    const next = startStateAfterYield(bindSentTo, unwind);
     // The state we were filling (curIdBefore) is finished by startStateAfterYield's
     // caller — handled inside helper to keep ids tidy.
-    finishCurrentAsYield(yieldExpr.expression, next, activeFinalizers, bindSentTo);
+    finishCurrentAsYield(yieldExpr.expression, next, unwind, bindSentTo);
     return ok;
   }
 
@@ -806,9 +1076,23 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // context, returning its id.
   let pendingResumeBindings: string[] = [];
   let pendingAbrupt: NativeGeneratorState["abruptResume"] | undefined;
-  function startStateAfterYield(bindSentTo: string | undefined, activeFinalizers: readonly ts.Statement[][]): number {
+  let pendingUnwind: UnwindEntry[] | undefined; // (#3050)
+  function startStateAfterYield(bindSentTo: string | undefined, unwind: readonly UnwindEntry[]): number {
     pendingResumeBindings = bindSentTo ? [bindSentTo] : [];
-    pendingAbrupt = { finalizers: [...activeFinalizers].reverse() };
+    if (unwind.every((e) => e.kind === "replay")) {
+      // Legacy chain (replay-only): byte-identical abruptResume capture.
+      pendingAbrupt = {
+        // Replay entries are minted with fresh mutable arrays (lowerStatements
+        // spreads the finally statements), so this cast only erases the
+        // UnwindEntry-level readonly view.
+        finalizers: unwind.map((e) => [...(e as { statements: readonly ts.Statement[] }).statements]).reverse(),
+      };
+      pendingUnwind = undefined;
+    } else {
+      // (#3050) New try-region chain — captured innermost-first.
+      pendingAbrupt = undefined;
+      pendingUnwind = [...unwind].reverse();
+    }
     if (bindSentTo) addSpill(bindSentTo);
     return states.length; // successor id (reserved inside finishCurrentAsYield)
   }
@@ -816,7 +1100,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   function finishCurrentAsYield(
     expr: ts.Expression | undefined,
     nextId: number,
-    _activeFinalizers: readonly ts.Statement[][],
+    _unwind: readonly UnwindEntry[],
     _bindSentTo: string | undefined,
   ): void {
     finishState(curId, { kind: "yield", expr, next: nextId });
@@ -825,12 +1109,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = pendingResumeBindings;
     curAbrupt = pendingAbrupt;
+    curUnwind = pendingUnwind;
     pendingResumeBindings = [];
     pendingAbrupt = undefined;
+    pendingUnwind = undefined;
   }
 
   /** if (cond) thenBlock [else elseBlock] — at least one branch yields. */
-  function lowerIf(stmt: ts.IfStatement, activeFinalizers: readonly ts.Statement[][]): boolean {
+  function lowerIf(stmt: ts.IfStatement, unwind: readonly UnwindEntry[]): boolean {
     if (!isNumericExpression(ctx, stmt.expression)) return fail();
     collectSpillsIn(stmt.expression);
     // Close current state with a branch terminator. Reserve the join state and
@@ -856,7 +1142,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
-    if (!lowerStatements(thenBody(stmt.thenStatement), activeFinalizers)) return false;
+    curUnwind = undefined;
+    if (!lowerStatements(thenBody(stmt.thenStatement), unwind)) return false;
     finishState(curId, { kind: "jump", next: joinId });
 
     if (hasElse) {
@@ -864,7 +1151,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       curStatements = [];
       curResumeBindings = [];
       curAbrupt = undefined;
-      if (!lowerStatements(thenBody(stmt.elseStatement!), activeFinalizers)) return false;
+      curUnwind = undefined;
+      if (!lowerStatements(thenBody(stmt.elseStatement!), unwind)) return false;
       finishState(curId, { kind: "jump", next: joinId });
     }
 
@@ -873,11 +1161,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
+    curUnwind = undefined;
     return ok;
   }
 
   /** while (cond) body — body yields. */
-  function lowerWhile(stmt: ts.WhileStatement, activeFinalizers: readonly ts.Statement[][]): boolean {
+  function lowerWhile(stmt: ts.WhileStatement, unwind: readonly UnwindEntry[]): boolean {
     if (!isNumericExpression(ctx, stmt.expression)) return fail();
     if (loopBodyHasUnsupportedJump(stmt.statement)) return fail();
     collectSpillsIn(stmt.expression);
@@ -900,7 +1189,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), activeFinalizers)) return false;
+    curUnwind = undefined;
+    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
     finishState(curId, { kind: "jump", next: headerId });
 
     // continue at exit.
@@ -908,11 +1198,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
+    curUnwind = undefined;
     return ok;
   }
 
   /** do body while (cond) — body runs at least once, then header. */
-  function lowerDoWhile(stmt: ts.DoStatement, activeFinalizers: readonly ts.Statement[][]): boolean {
+  function lowerDoWhile(stmt: ts.DoStatement, unwind: readonly UnwindEntry[]): boolean {
     if (!isNumericExpression(ctx, stmt.expression)) return fail();
     if (loopBodyHasUnsupportedJump(stmt.statement)) return fail();
     collectSpillsIn(stmt.expression);
@@ -928,7 +1219,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), activeFinalizers)) return false;
+    curUnwind = undefined;
+    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
     finishState(curId, { kind: "jump", next: headerId });
 
     // header: cond ? bodyEntry : exit
@@ -942,11 +1234,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
+    curUnwind = undefined;
     return ok;
   }
 
   /** for (init; cond; update) body — body yields. */
-  function lowerFor(stmt: ts.ForStatement, activeFinalizers: readonly ts.Statement[][]): boolean {
+  function lowerFor(stmt: ts.ForStatement, unwind: readonly UnwindEntry[]): boolean {
     if (loopBodyHasUnsupportedJump(stmt.statement)) return fail();
     // init: a yield-free var-decl list or expression; append to current state.
     if (stmt.initializer) {
@@ -990,7 +1283,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), activeFinalizers)) return false;
+    curUnwind = undefined;
+    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
     finishState(curId, { kind: "jump", next: updateId });
 
     // update → header
@@ -1008,6 +1302,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curStatements = [];
     curResumeBindings = [];
     curAbrupt = undefined;
+    curUnwind = undefined;
     return ok;
   }
 
@@ -1017,7 +1312,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // already in the state struct.
   function collectSpillsIn(node: ts.Node): void {
     function visit(n: ts.Node): void {
-      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)) {
+      // (#3050) A catch clause's binding IS a ts.VariableDeclaration — catch
+      // params are registered (externref-typed) by lowerTryRegion, not here.
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && !ts.isCatchClause(n.parent)) {
         addSpill(n.name.text, n);
       }
       if (
@@ -1118,6 +1415,25 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // Final fallthrough state completes the generator.
   finishState(curId, { kind: "done" });
 
+  // (#3050) When the final fallthrough state carries trailing statements
+  // (`… yield x; trailing();`), it doubles as BOTH the last executable state
+  // and the completed-generator dispatch target (doneState = last id) — so
+  // every post-completion `.next()` re-dispatched into it and RE-RAN the
+  // trailing prelude (observable via a `unreachable += 1` after the last
+  // yield, GeneratorPrototype/throw/try-*-following-*). Mint a DEDICATED empty
+  // done state in that case; generators whose final state is already empty
+  // keep their exact state graph (byte-identical).
+  if (states[curId]!.statements.length > 0) {
+    reserveState(); // empty placeholder — its default terminator IS `done`
+  }
+
+  // (#3050) Apply the runtime-throw route stamps now that every state object is
+  // final (finishState rebuilds them, so stamping placeholders would be lost).
+  for (const [id, route] of stateThrowRoutes) {
+    const s = states[id];
+    if (s) s.throwRoute = route;
+  }
+
   // Reject when the state count is too large. (#2170) A `yield*` delegation
   // state is a suspension point too.
   //
@@ -1176,13 +1492,68 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       spillTypes.set(name, patternType);
       continue;
     }
+    // (#3050) A catch-clause param — always externref (the exn tag payload);
+    // no body VariableDeclaration exists to resolve it from. A same-named body
+    // declaration bailed at region-lowering time, so no conflict reaches here.
+    const catchType = catchParamSpillTypes.get(name);
+    if (catchType) {
+      spillTypes.set(name, catchType);
+      continue;
+    }
     const declNode = spillDecls.get(name);
     const resolved = declNode ? resolveSpillLocalValType(ctx, declNode) : null;
     if (!resolved) return null;
     spillTypes.set(name, resolved);
   }
 
-  return { states, spills, spillTypes, elemValType, delegationSites, vecDelegationSites, iterableDelegationSites };
+  return {
+    states,
+    spills,
+    spillTypes,
+    elemValType,
+    delegationSites,
+    vecDelegationSites,
+    iterableDelegationSites,
+    needsPending,
+    hasThrowRoutes,
+  };
+}
+
+/**
+ * (#3050) True when `body` (a generator body) declares a binding named `name`
+ * anywhere reachable in this function's scope model (var/let/const declaration,
+ * or a nested non-function block). Used to bail a catch-param spill whose name
+ * would collide with a body local in the resume function's flat local map.
+ * Does not descend into nested function-likes (their locals are theirs).
+ */
+function bodyDeclaresBinding(body: ts.Node, name: string): boolean {
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      // A catch clause's binding IS a ts.VariableDeclaration — catch params are
+      // exactly what this check protects, so they don't collide with themselves
+      // (same-named sibling catch params share the externref slot safely).
+      !ts.isCatchClause(node.parent)
+    ) {
+      found = true;
+      return;
+    }
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  ts.forEachChild(body, visit);
+  return found;
 }
 
 /** A `break`/`continue` inside a yield-loop body is not modeled in this slice. */
@@ -1267,8 +1638,245 @@ function methodBodyUsesSuper(body: ts.Node): boolean {
  */
 export type GeneratorDecl = ts.FunctionDeclaration | ts.MethodDeclaration;
 
+/**
+ * (#3050) True when the generator body contains a try statement that crosses a
+ * yield AND needs the NEW try-region machinery: it has a catch clause, or its
+ * finally itself yields. (A finally-only try with a yield-free finally is the
+ * legacy kind-L shape the eager host path also handles observably-correctly for
+ * `.next()` driving, so it does NOT flip the host lane.) Does not descend into
+ * nested function-likes — their yields/trys belong to inner generators.
+ */
+/**
+ * (#3050) True when any value-position identifier in the generator body has no
+ * checker symbol (an unresolvable global like test262's `test262unresolvable`).
+ * Host-lane native routing bails on these — the eager path's #928
+ * deferred-pending-throw is the behavior the JS-host lane relies on. Skips
+ * property names and does not descend into nested function-likes.
+ */
+function bodyReferencesUnresolvableIdentifier(ctx: CodegenContext, decl: GeneratorDecl): boolean {
+  if (!decl.body) return false;
+  const { checker } = ctx;
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found) return;
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return;
+    }
+    if (
+      ts.isIdentifier(node) &&
+      node.text !== "arguments" &&
+      node.text !== "undefined" &&
+      !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
+      !(ts.isPropertyAssignment(node.parent) && node.parent.name === node) &&
+      !((ts.isVariableDeclaration(node.parent) || ts.isBindingElement(node.parent)) && node.parent.name === node)
+    ) {
+      const sym = checker.getSymbolAtLocation(node);
+      if (!sym) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  ts.forEachChild(decl.body, visit);
+  return found;
+}
+
+/**
+ * (#3050) Conservative HOST-lane use-site safety walk. The native generator
+ * state struct is a WasmGC ref the JS host cannot iterate, so it must never
+ * escape to a host-iterating context. Walks every `<name>(…)` call in the
+ * source file and demands its result flow into an allowlisted consumer:
+ *
+ *   - `g().next()/…` member access on the call result;
+ *   - `for (x of g())` (NO await), `[...g()]`, `Array.from(g())`;
+ *   - `const [a,b] = g()` array-destructuring;
+ *   - `iter = g()` / `var iter = g()` — where EVERY reference of `iter` is
+ *     itself allowlisted (member access — `.next()`/`.throw()` incl. inside
+ *     nested closures like `assert.throws(function(){ iter.throw(e) })` —
+ *     for-of/spread/Array.from subject, destructuring source, reassignment).
+ *
+ * Anything else (an eager generator's `yield*` subject, for-await-of, an
+ * arbitrary call argument such as `Promise.all(g())` / `new Map(g())`, a
+ * return value, a property value, …) fails the walk and the generator keeps
+ * the eager host path. Name-based matching over-approximates (a shadowing
+ * same-named function bails too) — conservative by design.
+ */
+function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl): boolean {
+  if (!decl.name || !ts.isIdentifier(decl.name)) return false;
+  const genName = decl.name.text;
+  const sf = decl.getSourceFile();
+  const { checker } = ctx;
+
+  const isArrayFromArg = (node: ts.Node): boolean => {
+    const p = node.parent;
+    return (
+      ts.isCallExpression(p) &&
+      p.arguments.length > 0 &&
+      p.arguments[0] === node &&
+      ts.isPropertyAccessExpression(p.expression) &&
+      ts.isIdentifier(p.expression.expression) &&
+      p.expression.expression.text === "Array" &&
+      p.expression.name.text === "from"
+    );
+  };
+
+  /** A reference/result value consumed in an allowlisted, host-safe position? */
+  const useIsSafe = (node: ts.Node): boolean => {
+    const p = node.parent;
+    if (ts.isPropertyAccessExpression(p) && p.expression === node) return true; // .next()/.throw()/.value…
+    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
+    if (ts.isSpreadElement(p)) return true;
+    if (isArrayFromArg(node)) return true;
+    if (ts.isParenthesizedExpression(p)) return useIsSafe(p);
+    return false;
+  };
+
+  /** Every reference of the binding `sym` (outside its declaration) is safe? */
+  const bindingUsesAreSafe = (bindingName: ts.Identifier): boolean => {
+    const sym = checker.getSymbolAtLocation(bindingName);
+    if (!sym) return false;
+    let safe = true;
+    const visitRef = (node: ts.Node): void => {
+      if (!safe) return;
+      if (ts.isIdentifier(node) && node.text === bindingName.text && node !== bindingName) {
+        // Skip non-value positions (property names, declaration names — incl.
+        // the binding's own `var iter;` declaration name).
+        if (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) return;
+        if (ts.isPropertyAssignment(node.parent) && node.parent.name === node) return;
+        if (ts.isVariableDeclaration(node.parent) && node.parent.name === node) return;
+        const refSym = checker.getSymbolAtLocation(node);
+        if (refSym !== sym) return;
+        const p = node.parent;
+        if (useIsSafe(node)) return;
+        // Reassignment target (`iter = g()` again) — the RHS call is checked
+        // at its own call site.
+        if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.left === node) {
+          return;
+        }
+        // Array-destructuring SOURCE: `[a] = iter` / `const [a] = iter`.
+        if (ts.isVariableDeclaration(p) && p.initializer === node && !ts.isIdentifier(p.name)) return;
+        if (
+          ts.isBinaryExpression(p) &&
+          p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          p.right === node &&
+          ts.isArrayLiteralExpression(p.left)
+        ) {
+          return;
+        }
+        safe = false;
+      }
+      ts.forEachChild(node, visitRef);
+    };
+    ts.forEachChild(sf, visitRef);
+    return safe;
+  };
+
+  let allSafe = true;
+  const visit = (node: ts.Node): void => {
+    if (!allSafe) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === genName &&
+      // Only calls that actually resolve to THIS declaration (a same-named
+      // local in another scope is someone else's call).
+      (checker.getSymbolAtLocation(node.expression)?.declarations?.includes(decl) ?? true)
+    ) {
+      const p = node.parent;
+      if (useIsSafe(node)) {
+        // safe direct consumer
+      } else if (ts.isVariableDeclaration(p) && p.initializer === node) {
+        if (ts.isIdentifier(p.name)) {
+          if (!bindingUsesAreSafe(p.name)) allSafe = false;
+        }
+        // array/object-binding destructuring init → handled natively, safe.
+      } else if (
+        ts.isBinaryExpression(p) &&
+        p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        p.right === node &&
+        ts.isIdentifier(p.left)
+      ) {
+        if (!bindingUsesAreSafe(p.left)) allSafe = false;
+      } else if (
+        ts.isBinaryExpression(p) &&
+        p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        p.right === node &&
+        ts.isArrayLiteralExpression(p.left)
+      ) {
+        // `[a, b] = g()` destructuring-assignment source — native path.
+      } else {
+        allSafe = false;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+  return allSafe;
+}
+
+export function bodyHasNewTryRegionAcrossYield(decl: GeneratorDecl): boolean {
+  if (!decl.body) return false;
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found) return;
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node)
+    ) {
+      return;
+    }
+    if (ts.isTryStatement(node) && nodeContainsYield(node)) {
+      const finallyYields =
+        node.finallyBlock !== undefined && node.finallyBlock.statements.some((s) => statementContainsYield(s));
+      if (node.catchClause || finallyYields) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  ts.forEachChild(decl.body, visit);
+  return found;
+}
+
 export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorDecl): boolean {
-  if (!noJsHostTarget(ctx)) return false;
+  if (!noJsHostTarget(ctx)) {
+    // (#3050) JS-HOST lane: the eager-buffer lowering evaluates the whole body
+    // at creation, so it PROVABLY cannot express a `.throw()`/abrupt resumption
+    // into a try-region (statements after a suspended yield already ran —
+    // GeneratorPrototype/throw/try-{catch,finally}-*). Route exactly those
+    // shapes — a free `function*` DECLARATION whose body has a catch across a
+    // yield or a yielding finally — through the native state machine even under
+    // the JS host. Every other host-lane generator keeps the eager path
+    // unchanged (zero behavior delta), and non-plannable shapes still fall back
+    // via the plan gate below.
+    if (!ts.isFunctionDeclaration(decl)) return false;
+    if (!bodyHasNewTryRegionAcrossYield(decl)) return false;
+    // Conservative: a body referencing an UNRESOLVABLE identifier (e.g.
+    // `try { yield test262unresolvable } catch (e) {…}`) keeps the eager path —
+    // its host-lane semantics ride #928's deferred-pending-throw (the eager
+    // eval's JS ReferenceError is re-thrown at the first next()), which the
+    // resume-time evaluation may not reproduce identically.
+    if (bodyReferencesUnresolvableIdentifier(ctx, decl)) return false;
+    // Conservative use-site safety walk: the native state struct is a WasmGC
+    // ref the JS HOST cannot iterate — if it escapes to any host-iterating
+    // context (an EAGER generator's `yield*`, for-await-of, Promise.all,
+    // `new Map(g())`, an arbitrary call argument, …) the values silently drop
+    // (an eager outer's `yield* inner()` over a native inner yielded nothing).
+    // Only generators whose every call-site result flows into an ALLOWLISTED
+    // consumer — `.next()/.throw()/.return()` member calls, for-of (no await),
+    // spread, `Array.from`, destructuring — route natively under the JS host;
+    // anything else keeps the eager path.
+    if (!hostLaneGeneratorUsesAreSafe(ctx, decl)) return false;
+  }
   if (!decl.name || !decl.body || !decl.asteriskToken) return false;
   // (#2571) An object-literal method with a computed/string name
   // (`{ [k]*(){} }`, `{ "m"*(){} }`) is out of scope — only an identifier-named
@@ -1517,7 +2125,13 @@ export function ensureNativeGeneratorResultType(ctx: CodegenContext, elemValType
 
   const fields: FieldDef[] = [
     { name: "value", type: elem, mutable: false },
-    { name: "done", type: { kind: "i32" }, mutable: false },
+    // (#3050) `done` is BRANDED boolean so any boxing to externref (the dynamic
+    // any-receiver `.done` read in the JS-host lane, `result.done` flowing into
+    // an `any` context) routes through `__box_boolean`, not `__box_number` —
+    // `result.done === true` must hold (a number-boxed 1 !== true, which failed
+    // the GeneratorPrototype/throw follow-up-`next()` asserts). Wasm-level the
+    // field is a plain i32 (brands are erased at emission).
+    { name: "done", type: { kind: "i32", boolean: true }, mutable: false },
   ];
   const typeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name: structName, fields });
@@ -1526,6 +2140,20 @@ export function ensureNativeGeneratorResultType(ctx: CodegenContext, elemValType
   ctx.structFields.set(structName, fields);
   if (isF64) ctx.nativeGeneratorResultTypeIdx = typeIdx;
   return typeIdx;
+}
+
+/**
+ * (#3050) One leading synthetic capture param of a capturing nested native
+ * generator. The caller (nested-declarations.ts) prepends these before the
+ * user params — mutable captures ride as `ref $cell` (writes propagate to the
+ * enclosing frame through the shared cell), immutable ones by value. `boxed`
+ * carries the cell layout so the resume function registers the name in
+ * `boxedCaptures` (identifier reads/writes deref the cell, exactly like a
+ * lifted closure body).
+ */
+export interface NativeGeneratorCaptureParam {
+  name: string;
+  boxed?: { refCellTypeIdx: number; valType: ValType };
 }
 
 export function registerNativeGenerator(
@@ -1540,6 +2168,11 @@ export function registerNativeGenerator(
   // the param/name arrays stay aligned. Free functions / static methods leave
   // this `false` — byte-identical to pre-#2571.
   synthesizedThis = false,
+  // (#3050) Capturing nested generator: the caller passes
+  // `paramTypes = [...captureParamTypes, ...userParamTypes]` plus this aligned
+  // capture list. Mutually exclusive with `synthesizedThis` (methods never take
+  // the capturing path).
+  leadingCaptures?: NativeGeneratorCaptureParam[],
 ): NativeGeneratorInfo | null {
   const existing = ctx.nativeGenerators.get(functionName);
   if (existing) return existing;
@@ -1562,7 +2195,10 @@ export function registerNativeGenerator(
   // (two `[a,b]`/`{x}` params would otherwise both be `param_`, a dup field).
   // The raw arg lives in this field and is destructured in the resume prelude.
   const userParamNames = decl.parameters.map((p, i) => (ts.isIdentifier(p.name) ? p.name.text : `__genarg${i}`));
-  const paramNames = synthesizedThis ? ["this", ...userParamNames] : userParamNames;
+  // (#3050) Leading synthetic capture params (capturing nested generator)
+  // precede the user params, aligned with the caller's paramTypes prefix.
+  const captureNames = (leadingCaptures ?? []).map((c) => c.name);
+  const paramNames = synthesizedThis ? ["this", ...userParamNames] : [...captureNames, ...userParamNames];
   // (#2864 F1) `sent` / `abrupt` carry the `.next(v)` / `.return(v)` value. For
   // the boxed-any carrier they are externref so an arbitrary value survives; for
   // numeric / string carriers they stay f64 (byte-identical to before).
@@ -1665,6 +2301,15 @@ export function registerNativeGenerator(
     });
   }
 
+  // (#3050) Pending completion kind for state-lowered finally regions —
+  // appended LAST so every existing field index is unaffected; byte-inert for
+  // generators without a yielding finally. Payloads reuse `abrupt` / `error`.
+  let pendingFieldIdx: number | undefined;
+  if (plan.needsPending) {
+    pendingFieldIdx = stateFields.length;
+    stateFields.push({ name: "pending", type: { kind: "i32" }, mutable: true });
+  }
+
   const stateName = `__GenState_${sanitizeTypeName(functionName)}`;
   const stateTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name: stateName, fields: stateFields });
@@ -1694,6 +2339,14 @@ export function registerNativeGenerator(
     delegationSlots: delegationSlots.length > 0 ? delegationSlots : undefined,
     vecDelegationSlots: vecDelegationSlots.length > 0 ? vecDelegationSlots : undefined,
     iterableDelegationSlots: iterableDelegationSlots.length > 0 ? iterableDelegationSlots : undefined,
+    pendingFieldIdx,
+    // (#3050) Capturing nested generator: leading capture-param count (for the
+    // resume prelude's user-param offset) + the cell layouts to register in the
+    // resume fctx's boxedCaptures.
+    leadingCaptureCount: leadingCaptures && leadingCaptures.length > 0 ? leadingCaptures.length : undefined,
+    leadingCaptureCells: leadingCaptures
+      ?.filter((c) => c.boxed)
+      .map((c) => ({ name: c.name, refCellTypeIdx: c.boxed!.refCellTypeIdx, valType: c.boxed!.valType })),
   };
   ctx.nativeGenerators.set(functionName, info);
   return info;
@@ -1925,6 +2578,8 @@ function emitTrampoline(
   plan: NativeGeneratorPlan,
   selfLocal: number,
   resultLocal: number,
+  // (#3050) Host-mode foreign-exception recovery import for throw-route wraps.
+  getCaughtExnIdx?: number,
 ): Instr[] {
   const states = plan.states;
 
@@ -1954,6 +2609,7 @@ function emitTrampoline(
       exitDepth,
       selfLocal,
       resultLocal,
+      getCaughtExnIdx,
     );
     const elseBody = buildArm(stateId + 1, level + 1);
     return [
@@ -2003,6 +2659,9 @@ function compileState(
   exitDepth: number,
   selfLocal: number,
   resultLocal: number,
+  // (#3050) Host-mode foreign-exception recovery import for throw-route wraps,
+  // acquired up-front by the resume emitter (never mid-trampoline).
+  getCaughtExnIdx?: number,
 ): Instr[] {
   const saved = fctx.body;
   const body: Instr[] = [];
@@ -2014,13 +2673,46 @@ function compileState(
   // import would over-shift any `call` funcIdx already in the outer body.
   ctx.liveBodies.add(saved);
 
+  // (#3050) A state positionally inside a NEW try-region gets its whole arm
+  // wrapped in a wasm `try`/`catch $exc` (see the tail of this function) so a
+  // runtime exception routes to the region's catch/finally. The wrap adds one
+  // block level — every branch depth inside the arm shifts by one.
+  if (state.throwRoute) {
+    loopDepth += 1;
+    exitDepth += 1;
+  }
+
   // Abrupt-resume handling: if we resumed into this state in an abrupt mode
   // (mode != 0), run the enclosing finalizers, then either complete with the
   // `.return(v)` value (mode 1) or RE-THROW the `.throw(e)` error (mode 2, #2864
   // F2). Both share the finalizer run + spill store + done transition; they
   // diverge only at the tail. The finalizers are compiled ONCE into `abruptBody`,
   // which the outer `if (mode != 0)` guards.
-  if (state.abruptResume) {
+  //
+  // (#3050) States under a NEW try-region carry `unwind` instead: the abrupt
+  // completion walks the innermost-first unwind chain — into an enclosing catch
+  // (throw only), into a state-lowered finally (both, saved as pending), through
+  // legacy replay finalizers — and only completes/re-throws when no handler
+  // remains. Legacy states keep the byte-identical `abruptResume` emission.
+  if (state.unwind) {
+    const abruptBody: Instr[] = [];
+    const savedAbrupt = fctx.body;
+    fctx.body = abruptBody;
+    emitUnwindWalk(ctx, fctx, info, state.unwind, {
+      selfLocal,
+      resultLocal,
+      srcFieldIdx: info.modeFieldIdx,
+      loopDepth: loopDepth + 1, // inside the `if (mode != 0)`
+      exitDepth: exitDepth + 1,
+    });
+    fctx.body = savedAbrupt;
+
+    body.push({ op: "local.get", index: selfLocal });
+    body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.modeFieldIdx });
+    body.push({ op: "i32.const", value: MODE_NEXT });
+    body.push({ op: "i32.ne" });
+    body.push({ op: "if", blockType: { kind: "empty" }, then: abruptBody, else: [] });
+  } else if (state.abruptResume) {
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
     fctx.body = abruptBody;
@@ -2118,8 +2810,46 @@ function compileState(
     }
     case "jump": {
       body.push(...storeSpills(info, fctx, selfLocal));
+      // (#3050) A normal-path entry into a state-lowered finally resets the
+      // region's pending-completion kind (abrupt entries write it in the
+      // routers instead).
+      if (term.setPending !== undefined && info.pendingFieldIdx !== undefined) {
+        body.push({ op: "local.get", index: selfLocal });
+        body.push({ op: "i32.const", value: term.setPending });
+        body.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.pendingFieldIdx });
+      }
       body.push(...setStateInstrs(info, selfLocal, term.next));
       body.push({ op: "br", depth: loopDepth }); // re-enter dispatch at new state
+      break;
+    }
+    // (#3050) Exit router of a state-lowered finally: pending none → proceed to
+    // the join; pending return/throw → re-dispatch the saved completion against
+    // the region's OUTER unwind chain (which may enter an outer catch/finally,
+    // run legacy replays, or complete/re-throw).
+    case "finally-exit": {
+      body.push(...storeSpills(info, fctx, selfLocal));
+      const abruptArm: Instr[] = [];
+      {
+        const savedFx = fctx.body;
+        fctx.body = abruptArm;
+        emitUnwindWalk(ctx, fctx, info, term.unwind, {
+          selfLocal,
+          resultLocal,
+          srcFieldIdx: info.pendingFieldIdx!,
+          loopDepth: loopDepth + 1, // inside the `if (pending == 0) … else …`
+          exitDepth: exitDepth + 1,
+        });
+        fctx.body = savedFx;
+      }
+      body.push({ op: "local.get", index: selfLocal });
+      body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.pendingFieldIdx! });
+      body.push({ op: "i32.eqz" });
+      body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [...setStateInstrs(info, selfLocal, term.join), { op: "br", depth: loopDepth + 1 }],
+        else: abruptArm,
+      });
       break;
     }
     case "branch": {
@@ -2521,7 +3251,175 @@ function compileState(
 
   fctx.body = saved;
   ctx.liveBodies.delete(saved);
+
+  // (#3050) Wrap the arm in a wasm try/catch so a runtime exception raised
+  // while this state executes (a `throw` statement in a try block, a throwing
+  // call, …) routes to the enclosing region's catch/finally per JS semantics.
+  // The wrap was already accounted for in the +1 depth shift at the top.
+  if (state.throwRoute) {
+    const route = state.throwRoute;
+    // Route body with the caught error value (externref) ON THE STACK.
+    const routeInstrs = (): Instr[] => {
+      const out: Instr[] = [];
+      if (route.kind === "catch") {
+        // Bind the error to the catch param (local + spill, so it survives a
+        // later suspension inside the catch), then enter the catch block. The
+        // jump stays within this resume call, so locals remain authoritative.
+        const eName = route.region.catchParamName;
+        const localIdx = eName !== undefined ? fctx.localMap.get(eName) : undefined;
+        if (localIdx !== undefined) {
+          out.push({ op: "local.set", index: localIdx });
+          const spillIdx = eName !== undefined ? info.spillNames.indexOf(eName) : -1;
+          if (spillIdx >= 0) {
+            out.push({ op: "local.get", index: selfLocal });
+            out.push({ op: "local.get", index: localIdx });
+            out.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.spillFieldOffset + spillIdx });
+          }
+        } else {
+          out.push({ op: "drop" });
+        }
+        out.push(...setModeInstrs(info, selfLocal, MODE_NEXT));
+        out.push(...setStateInstrs(info, selfLocal, route.region.catchEntryState!));
+      } else {
+        // Save the throw as the region's pending completion and enter the
+        // state-lowered finally; its exit router re-propagates afterwards.
+        const scratch = allocLocal(fctx, `__gen_exn_${fctx.locals.length}`, { kind: "externref" });
+        out.push({ op: "local.set", index: scratch });
+        out.push({ op: "local.get", index: selfLocal });
+        out.push({ op: "local.get", index: scratch });
+        out.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD });
+        if (info.pendingFieldIdx !== undefined) {
+          out.push({ op: "local.get", index: selfLocal });
+          out.push({ op: "i32.const", value: MODE_THROW });
+          out.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.pendingFieldIdx });
+        }
+        out.push(...setModeInstrs(info, selfLocal, MODE_NEXT));
+        out.push(...setStateInstrs(info, selfLocal, route.region.finallyEntryState!));
+      }
+      // Inside the try construct the loop label sits at the (already shifted)
+      // loopDepth — identical for the try body and its catch bodies.
+      out.push({ op: "br", depth: loopDepth });
+      return out;
+    };
+    // Foreign JS exceptions (host mode only): recover the value via
+    // `__get_caught_exception` (acquired up-front — no late import here) and
+    // route identically. Standalone/wasi have no foreign exceptions (#1473).
+    const catchAll: Instr[] | undefined =
+      getCaughtExnIdx !== undefined ? [{ op: "call", funcIdx: getCaughtExnIdx } as Instr, ...routeInstrs()] : undefined;
+    return [
+      {
+        op: "try",
+        blockType: { kind: "empty" },
+        body,
+        catches: [{ tagIdx: ensureExnTag(ctx), body: routeInstrs() }],
+        catchAll,
+      } as Instr,
+    ];
+  }
   return body;
+}
+
+/**
+ * (#3050) Emit the abrupt-completion unwind walk into `fctx.body`. `entries`
+ * is innermost-first. The completion KIND is read from the state struct field
+ * `srcFieldIdx` — the resume `mode` field when routing a fresh `.throw()` /
+ * `.return()` at a suspended yield, or the `pending` field when a state-lowered
+ * finally's exit router re-dispatches its saved completion. The payloads always
+ * ride the `error` (throw) / `abrupt` (return) fields.
+ *
+ *  - `replay`  compile the legacy yield-free finally statements inline (both
+ *              completion kinds run them — same as the historical router);
+ *  - `catch`   throw-kind only: bind `error` to the catch param (local + spill),
+ *              clear the mode, and enter the catch block's states;
+ *  - `finally` both kinds: save the kind into `pending`, clear the mode, and
+ *              enter the finally's states (its exit router continues outward) —
+ *              nothing after it is reachable;
+ *  - tail      no handler left: complete the generator, then re-throw (throw)
+ *              or produce `{abrupt, done:1}` (return) — byte-compatible with
+ *              the legacy `abruptResume` tail.
+ *
+ * `loopDepth`/`exitDepth` are the branch depths AT THE WALK'S EMISSION LEVEL.
+ */
+function emitUnwindWalk(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: NativeGeneratorInfo,
+  entries: readonly UnwindEntry[],
+  o: { selfLocal: number; resultLocal: number; srcFieldIdx: number; loopDepth: number; exitDepth: number },
+): void {
+  const body = fctx.body;
+  const srcIsThrow = (): Instr[] => [
+    { op: "local.get", index: o.selfLocal },
+    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: o.srcFieldIdx },
+    { op: "i32.const", value: MODE_THROW },
+    { op: "i32.eq" },
+  ];
+  for (const entry of entries) {
+    if (entry.kind === "replay") {
+      for (const stmt of entry.statements) compileStatement(ctx, fctx, stmt);
+      continue;
+    }
+    if (entry.kind === "catch") {
+      // Throw completions enter the catch; return completions pass through.
+      const thenInstrs: Instr[] = [];
+      const eName = entry.region.catchParamName;
+      const localIdx = eName !== undefined ? fctx.localMap.get(eName) : undefined;
+      if (localIdx !== undefined) {
+        thenInstrs.push({ op: "local.get", index: o.selfLocal });
+        thenInstrs.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD });
+        thenInstrs.push({ op: "local.set", index: localIdx });
+        const spillIdx = eName !== undefined ? info.spillNames.indexOf(eName) : -1;
+        if (spillIdx >= 0) {
+          thenInstrs.push({ op: "local.get", index: o.selfLocal });
+          thenInstrs.push({ op: "local.get", index: localIdx });
+          thenInstrs.push({
+            op: "struct.set",
+            typeIdx: info.stateTypeIdx,
+            fieldIdx: info.spillFieldOffset + spillIdx,
+          });
+        }
+      }
+      thenInstrs.push(...setModeInstrs(info, o.selfLocal, MODE_NEXT));
+      thenInstrs.push(...storeSpills(info, fctx, o.selfLocal));
+      thenInstrs.push(...setStateInstrs(info, o.selfLocal, entry.region.catchEntryState!));
+      thenInstrs.push({ op: "br", depth: o.loopDepth + 1 }); // +1: inside this if
+      body.push(...srcIsThrow());
+      body.push({ op: "if", blockType: { kind: "empty" }, then: thenInstrs, else: [] });
+      continue;
+    }
+    // finally — intercepts BOTH completion kinds; nothing after is reachable.
+    body.push({ op: "local.get", index: o.selfLocal });
+    body.push({ op: "local.get", index: o.selfLocal });
+    body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: o.srcFieldIdx });
+    body.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: info.pendingFieldIdx! });
+    body.push(...setModeInstrs(info, o.selfLocal, MODE_NEXT));
+    body.push(...storeSpills(info, fctx, o.selfLocal));
+    body.push(...setStateInstrs(info, o.selfLocal, entry.region.finallyEntryState!));
+    body.push({ op: "br", depth: o.loopDepth });
+    return;
+  }
+  // Tail: no handler — complete the generator, then re-throw or return-complete
+  // (mirrors the legacy abruptResume tail).
+  body.push(...storeSpills(info, fctx, o.selfLocal));
+  body.push(...setStateInstrs(info, o.selfLocal, info.doneState));
+  const throwBody: Instr[] = [
+    { op: "local.get", index: o.selfLocal },
+    { op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: ERROR_FIELD },
+    { op: "throw", tagIdx: ensureExnTag(ctx) } as Instr,
+  ];
+  const returnBody: Instr[] = [];
+  if (valTypesMatch(genCarrierFieldType(info.elemValType), info.elemValType)) {
+    returnBody.push({ op: "local.get", index: o.selfLocal });
+    returnBody.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: info.abruptFieldIdx });
+  } else {
+    returnBody.push(...defaultElemValueInstrs(info.elemValType));
+  }
+  returnBody.push({ op: "i32.const", value: 1 });
+  returnBody.push({ op: "struct.new", typeIdx: info.resultTypeIdx });
+  returnBody.push({ op: "local.set", index: o.resultLocal });
+  returnBody.push({ op: "br", depth: o.exitDepth + 1 }); // +1: inside this if
+  body.push(...srcIsThrow());
+  body.push({ op: "if", blockType: { kind: "empty" }, then: throwBody, else: returnBody });
 }
 
 export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: NativeGeneratorInfo): number {
@@ -2599,6 +3497,17 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     resumeFctx.body.push({ op: "local.set", index: localIdx });
   }
 
+  // (#3050) Capturing nested generator: register each cell-riding capture in
+  // `boxedCaptures` so identifier reads/writes inside resume states deref the
+  // shared cell (the exact mechanism a lifted capturing function body uses) —
+  // a `count += 1` inside the generator is visible in the enclosing frame.
+  if (info.leadingCaptureCells) {
+    for (const cap of info.leadingCaptureCells) {
+      if (!resumeFctx.boxedCaptures) resumeFctx.boxedCaptures = new Map();
+      resumeFctx.boxedCaptures.set(cap.name, { refCellTypeIdx: cap.refCellTypeIdx, valType: cap.valType });
+    }
+  }
+
   // Load spills into locals. (#2864 F1b) The load local is minted at the spill's
   // actual ValType so the `struct.get` (of the same-typed field) round-trips. The
   // body's var-declaration reuses this exact slot (it is already in `localMap`),
@@ -2619,7 +3528,9 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
   // re-run on resume (the spilled value is authoritative then). The bound-name
   // spill locals are already in `localMap`, so the destructure helper's
   // `ensureBindingLocals` reuses them (no double-alloc, no re-type).
-  const thisOffset = info.synthesizedThis ? 1 : 0;
+  // (#3050) Leading synthetic params (`this` OR capture params) offset the
+  // user-param indices in paramNames/paramTypes.
+  const thisOffset = info.synthesizedThis ? 1 : (info.leadingCaptureCount ?? 0);
   const patternParams = info.decl.parameters.filter((p) => !ts.isIdentifier(p.name));
   if (patternParams.length > 0) {
     // (#2920 funcIdx-shift fix) `destructureParamObject`/`destructureParamArray`
@@ -2669,7 +3580,18 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     const savedFunc = ctx.currentFunc;
     ctx.currentFunc = resumeFctx;
     try {
-      resumeFctx.body.push(...emitTrampoline(ctx, resumeFctx, info, plan, 0, resultLocal));
+      // (#3050) Throw-route wraps in HOST mode recover foreign JS exceptions
+      // via `__get_caught_exception` (mirrors exceptions.ts; dead in
+      // standalone/wasi, #1473 — wasm traps aren't catchable and every native
+      // throw rides the `$exc` tag). Acquire it BEFORE the trampoline emit so
+      // no late import fires mid-arm-chain (detached earlier arms would miss
+      // the funcidx shift).
+      let getCaughtExnIdx: number | undefined;
+      if (plan.hasThrowRoutes && !ctx.standalone && !ctx.wasi) {
+        getCaughtExnIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, resumeFctx);
+      }
+      resumeFctx.body.push(...emitTrampoline(ctx, resumeFctx, info, plan, 0, resultLocal, getCaughtExnIdx));
     } finally {
       ctx.currentFunc = savedFunc;
     }
@@ -2768,6 +3690,10 @@ export function compileNativeGeneratorFunction(
   // entry into the iterable-yield-star state.
   for (const _slot of info.iterableDelegationSlots ?? []) {
     fctx.body.push({ op: "ref.null.extern" } as Instr);
+  }
+  // (#3050) Pending completion kind starts at 0 (none).
+  if (info.pendingFieldIdx !== undefined) {
+    fctx.body.push({ op: "i32.const", value: 0 });
   }
   fctx.body.push({ op: "struct.new", typeIdx: info.stateTypeIdx });
 }

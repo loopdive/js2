@@ -51,7 +51,6 @@ export const RESULT_DONE_FIELD = 1;
 
 /** Resume modes stored in MODE_FIELD. */
 export const MODE_NEXT = 0;
-export const MODE_RETURN = 1;
 export const MODE_THROW = 2;
 
 /**

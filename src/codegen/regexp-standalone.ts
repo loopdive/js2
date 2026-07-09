@@ -2466,11 +2466,6 @@ export function emitRegExpTestFromLocals(
   fctx.body.push({ op: "call", funcIdx: searchIdx });
 }
 
-/** (#2175 S1) The standalone-RegExp struct type index, for the proto populator. */
-export function getStandaloneRegExpStructTypeIdx(ctx: CodegenContext): number {
-  return ensureStandaloneRegExpStruct(ctx);
-}
-
 // ── #2175 S1: RegExp builtin-prototype glue ───────────────────────────────────
 //
 // The contract `native-proto.ts` consumes for RegExp: a brand, a member CSV (the

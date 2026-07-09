@@ -140,7 +140,6 @@ export const SYMBOL_VISIBILITY_HIDDEN = 0x04;
 export const SYMBOL_UNDEFINED = 0x10;
 export const SYMBOL_EXPORTED = 0x20;
 export const SYMBOL_EXPLICIT_NAME = 0x40;
-export const SYMBOL_NO_STRIP = 0x80;
 
 // ── Symbol kinds ──────────────────────────────────────────────────
 

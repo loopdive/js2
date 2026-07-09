@@ -290,11 +290,6 @@ export function isNullablePrimitiveType(type: ts.Type): boolean {
   return getNullablePrimitiveInfo(type) !== null;
 }
 
-/** Check if a type is a nullable numeric sentinel, e.g. number | null or number | undefined. */
-export function isNullableNumberType(type: ts.Type): boolean {
-  return getNullablePrimitiveInfo(type)?.primitiveKind === "number";
-}
-
 /** Check if a ts.Type represents boolean */
 export function isBooleanType(type: ts.Type): boolean {
   return (type.flags & ts.TypeFlags.Boolean) !== 0 || (type.flags & ts.TypeFlags.BooleanLiteral) !== 0;

@@ -19,7 +19,7 @@ import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitBoundsCheckedArrayGet } from "./array-methods.js";
 import { emitHoleToUndefined } from "./array-holes.js"; // (#2001 S1)
-import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
+import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#1983) collision-free class-member funcMap keys; (#2963) method-owner chain
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
@@ -148,7 +148,7 @@ import {
 import { coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 import { tryEmitJsonParseElementAccess, tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { reserveMemberSetDispatch } from "./member-set-dispatch.js";
-import { reserveMemberGetDispatch } from "./member-get-dispatch.js";
+import { classMethodCandidatesForProp, reserveMemberGetDispatch } from "./member-get-dispatch.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct read dispatch
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
@@ -4462,18 +4462,45 @@ export function compilePropertyAccess(
         popBody(fctx, savedBody);
 
         // Success path: cast to the declaring struct, then either call the
-        // getter (accessor) or return the receiver itself (method value).
-        const successInstrs: Instr[] = [
+        // getter (accessor) or answer the method VALUE.
+        let successInstrs: Instr[] = [
           { op: "local.get", index: tmpAny } as Instr,
           { op: "ref.cast", typeIdx: structTypeIdx! } as Instr,
         ];
         let resultKind: ValType;
         if (cls.kind === "method") {
-          // Reading a private method as a value: the brand-checked receiver
-          // is returned as an externref view. The spec only mandates the
-          // brand check throws on a wrong receiver here; `o.#m()` call sites
-          // go through calls.ts, not this read path.
-          successInstrs.push({ op: "extern.convert_any" } as Instr);
+          // (#3080) Reading a private method as a value must yield the SAME
+          // canonical cached singleton the `this.#m` read yields (the
+          // `__method_closure_<Owner>_<fieldName>` global minted by
+          // `emitCachedMethodClosureAccess`), so
+          // `this.#m === (() => this)().#m` holds. The legacy arm returned
+          // the brand-checked RECEIVER itself as an externref view — a value
+          // that is neither the method nor `===` any other read of it. The
+          // brand check above still throws on a wrong-brand receiver.
+          const canonicalClass = ctx.classExprNameMap.get(cls.className) ?? cls.className;
+          const ownerName = resolveMethodOwnerClass(ctx, canonicalClass, cls.fieldName);
+          const methodFullName = `${ownerName}_${cls.fieldName}`;
+          const methodFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
+          const ownerStructTypeIdx = ctx.structMap.get(ownerName) ?? structTypeIdx!;
+          let emitted = false;
+          if (methodFuncIdx !== undefined) {
+            // Capture the singleton access into a detached array. The failure
+            // (throw) branch was popBody'd above and is DETACHED — register it
+            // on savedBodies for the duration of this emission so any late
+            // import/global shift the singleton emission triggers reaches its
+            // baked indices too (the #2563 hazard class).
+            fctx.savedBodies.push(failureInstrs);
+            const savedBody2 = pushBody(fctx);
+            emitted = emitCachedMethodClosureAccess(ctx, fctx, methodFullName, methodFuncIdx, ownerStructTypeIdx);
+            const singletonInstrs = fctx.body;
+            popBody(fctx, savedBody2);
+            fctx.savedBodies.pop();
+            if (emitted) successInstrs = singletonInstrs;
+          }
+          if (!emitted) {
+            // Fallback (signature unresolvable): legacy receiver-view.
+            successInstrs.push({ op: "extern.convert_any" } as Instr);
+          }
           resultKind = { kind: "externref" };
         } else {
           // Resolve the getter funcIdx AFTER the throw branch settled imports.
@@ -5932,31 +5959,10 @@ export function compilePropertyAccess(
       // different identity. Spec'd behaviour: identity follows the owning
       // class, so `(new D()).m === C.prototype.m`. Walk the chain until
       // either no parent or the parent's funcIdx differs (override).
-      const ownerNameForChain = (start: string): string => {
-        const startFull = `${start}_${propName}`;
-        const startIdx = ctx.funcMap.get(startFull);
-        if (startIdx === undefined) return start; // not a method we know
-        let bestOwner = start;
-        let cls: string | undefined = ctx.classParentMap.get(start);
-        const seen = new Set<string>([start]);
-        while (cls && !seen.has(cls)) {
-          seen.add(cls);
-          const full = `${cls}_${propName}`;
-          const parentIdx = ctx.funcMap.get(full);
-          if (parentIdx === undefined) break; // parent doesn't have this method
-          if (parentIdx === startIdx) {
-            // Inherited (same funcIdx) — keep walking up.
-            bestOwner = cls;
-            cls = ctx.classParentMap.get(cls);
-            continue;
-          }
-          // Parent has a DIFFERENT funcIdx → start overrides the method.
-          // Identity must use start's cache, not the parent's.
-          break;
-        }
-        return bestOwner;
-      };
-      const owner = ownerNameForChain(typeName);
+      // (#2963) Owner-chain resolution extracted to `resolveMethodOwnerClass`
+      // (class-member-keys.ts) so the member-get dispatcher's dynamic-read
+      // method arms canonicalise to the SAME owner (→ same cache global).
+      const owner = resolveMethodOwnerClass(ctx, typeName, propName);
       const methodFullName = `${owner}_${propName}`;
       if (ctx.classMethodSet.has(methodFullName) || ctx.staticMethodSet.has(methodFullName)) {
         const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
@@ -6528,6 +6534,33 @@ export function compilePropertyAccess(
           if (accessWasm.kind === "f64") return { kind: "f64" };
           if (accessWasm.kind === "i32") return { kind: "i32" };
           return { kind: "externref" };
+        }
+
+        // (#2963) No struct-FIELD candidates — but when a CLASS METHOD named
+        // `propName` exists, route through the `__get_member_<name>` dispatcher:
+        // its terminal is the same `__extern_get` (own/sidecar props keep
+        // shadowing) plus miss-gated method arms answering the canonical
+        // method-value singleton — the SAME cache global the typed
+        // `C.prototype.m` read uses — so a dynamic `any`-receiver method read
+        // resolves to an identical, `===`-stable value instead of `undefined`
+        // (the ~87-file `assert.sameValue(c.m, C.prototype.m)` class-elements
+        // cluster). Modules with no class-method of this name are byte-identical.
+        if (classMethodCandidatesForProp(ctx, propName).length > 0) {
+          const getMemberIdx = reserveMemberGetDispatch(ctx, propName, fctx);
+          if (getMemberIdx !== undefined) {
+            fctx.body.push({ op: "local.get", index: objTmp });
+            fctx.body.push({ op: "call", funcIdx: getMemberIdx } as Instr);
+            if (accessWasm.kind === "f64") {
+              if (unboxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx });
+              return { kind: "f64" };
+            }
+            if (accessWasm.kind === "i32") {
+              if (unboxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx });
+              fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+              return { kind: "i32" };
+            }
+            return { kind: "externref" };
+          }
         }
 
         // No struct candidates — use __extern_get directly
@@ -7591,6 +7624,35 @@ export function isNumericIndexExpression(ctx: CodegenContext, index: ts.Expressi
   return (t.flags & ts.TypeFlags.NumberLike) !== 0;
 }
 
+/**
+ * (#2773) True when an element-access index is a **dynamic `any`/`unknown`-typed**
+ * expression — the callback `idx` param of an `Array.prototype.{map,forEach,…}`
+ * callback passed as a *named function declaration* (TS does not contextually
+ * type such params → they are implicit `any`). This is the complement of
+ * {@link isNumericIndexExpression}: a statically-numeric index routes through the
+ * `#2784` native-vec read; a dynamic `any` index needs the runtime-guarded
+ * `__vec_len`/`__vec_get` read (property-access dynamic arm) so that `obj[idx]`
+ * on a native WasmGC vec coerced to `externref` returns the real element instead
+ * of the host `__extern_get` `undefined` (the vec is opaque to the host).
+ *
+ * A pure `string`/`symbol` key (a genuine property name, not an array index) and
+ * a union type are EXCLUDED — they stay on the string-keyed `__extern_get`.
+ */
+export function isAnyTypedIndexExpression(ctx: CodegenContext, index: ts.Expression): boolean {
+  let inner: ts.Expression = index;
+  while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isTypeAssertionExpression(inner)) {
+    inner = inner.expression;
+  }
+  // A numeric literal is statically numeric → handled by the #2784 path.
+  if (ts.isNumericLiteral(inner)) return false;
+  // Route through the oracle (#1930): `typeFactOf` yields `{kind:"any"}` /
+  // `{kind:"unknown"}` for an implicit-any index and `{kind:"union"}` for a
+  // union (⇒ excluded), so the check is exactly "the index type is `any`/
+  // `unknown`". A string/symbol key resolves to a different fact kind ⇒ excluded.
+  const fact = ctx.oracle.typeFactOf(inner);
+  return fact.kind === "any" || fact.kind === "unknown";
+}
+
 /** Inner element access logic — assumes objType is on the stack and non-null */
 export function compileElementAccessBody(
   ctx: CodegenContext,
@@ -7695,6 +7757,103 @@ export function compileElementAccessBody(
         fctx.body.push({ op: "call", funcIdx: extGetIdx } as Instr);
         return { kind: "externref" };
       }
+      fctx.body.push({ op: "drop" } as Instr);
+      fctx.body.push({ op: "ref.null.extern" } as Instr);
+      return { kind: "externref" };
+    }
+    // (#2773) DYNAMIC-index native-vec element read. The #2784 arm above only
+    // fires for a STATICALLY-numeric index. When the index is a dynamic
+    // `any`/`unknown` expression — the untyped `idx` param of an
+    // `Array.prototype.{map,forEach,filter,reduce,…}` callback passed as a NAMED
+    // function declaration (TS does not contextually type such params) — the
+    // receiver `obj` (the callback's 3rd `array` arg) is a native WasmGC vec
+    // coerced to `externref`, opaque to the host. The old fallback below routes
+    // `obj[idx]` to the host `__extern_get`, which cannot read the vec → returns
+    // `undefined`, so `obj[idx] !== val` in the "callbackfn called with correct
+    // parameters" test262 family is wrongly true. Route through the native
+    // `__vec_len` (0 for a non-vec ⇒ doubles as the vec-vs-host-object
+    // discriminator AND the in-bounds guard) + `__vec_get` (per-element-kind read
+    // → boxed carrier externref; already maps `$Hole → undefined`). For a non-vec
+    // receiver, an OOB index, or a non-integer/string key the guard is false and
+    // we fall to the host `__extern_get(recv, key)` — byte-for-byte the same
+    // observable result the old path produced for those cases (a host object read
+    // / `undefined`), so this arm only *adds* the correct native-vec answer.
+    // Host/gc only: standalone has its own `__extern_get_idx` `$ObjVec` path.
+    if (!ctx.standalone && ctx.vecTypeMap.size > 0 && isAnyTypedIndexExpression(ctx, expr.argumentExpression)) {
+      // recv externref is on the stack → recvLocal (allocated FIRST so local
+      // numbering is stable through the index compile, per #3007).
+      const recvLocal = allocLocal(fctx, `__dyn_recv_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: recvLocal } as Instr);
+      // Compile the key as externref FIRST (preserves a string key's identity for
+      // the host fallback) BEFORE capturing helper funcIdxs — the key's own
+      // lowering may register late imports that shift them (#3007). Single flush.
+      compileExpression(ctx, fctx, expr.argumentExpression, { kind: "externref" });
+      const keyLocal = allocLocal(fctx, `__dyn_key_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: keyLocal } as Instr);
+      const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
+      const extGetIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const vgIdx = ctx.funcMap.get("__vec_get") ?? reserveVecMethodHelper(ctx, "get");
+      const vlIdx = ctx.funcMap.get("__vec_len") ?? reserveVecMethodHelper(ctx, "len");
+      if (unboxIdx !== undefined && extGetIdx !== undefined && vgIdx !== undefined && vlIdx !== undefined) {
+        const idxF64 = allocLocal(fctx, `__dyn_idxf_${fctx.locals.length}`, { kind: "f64" });
+        const idxI32 = allocLocal(fctx, `__dyn_idxi_${fctx.locals.length}`, { kind: "i32" });
+        // idxF64 = Number(key); idxI32 = truncated integer. Number(non-numeric
+        // string) is NaN, and i32.trunc_sat(NaN) = 0 — the integer round-trip
+        // check below rejects it so a genuine string key never mis-indexes.
+        fctx.body.push({ op: "local.get", index: keyLocal } as Instr);
+        fctx.body.push({ op: "call", funcIdx: unboxIdx } as Instr);
+        fctx.body.push({ op: "local.tee", index: idxF64 } as Instr);
+        fctx.body.push({ op: "i32.trunc_sat_f64_s" } as Instr);
+        fctx.body.push({ op: "local.set", index: idxI32 } as Instr);
+        // cond = idxI32 >= 0 && idxI32 < __vec_len(recv) && f64(idxI32) === idxF64
+        fctx.body.push({ op: "local.get", index: idxI32 } as Instr);
+        fctx.body.push({ op: "i32.const", value: 0 } as Instr);
+        fctx.body.push({ op: "i32.ge_s" } as Instr);
+        fctx.body.push({ op: "local.get", index: idxI32 } as Instr);
+        fctx.body.push({ op: "local.get", index: recvLocal } as Instr);
+        fctx.body.push({ op: "call", funcIdx: vlIdx } as Instr);
+        fctx.body.push({ op: "i32.lt_s" } as Instr);
+        fctx.body.push({ op: "i32.and" } as Instr);
+        fctx.body.push({ op: "local.get", index: idxI32 } as Instr);
+        fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
+        fctx.body.push({ op: "local.get", index: idxF64 } as Instr);
+        fctx.body.push({ op: "f64.eq" } as Instr);
+        fctx.body.push({ op: "i32.and" } as Instr);
+        // then: __vec_get(recv, idxI32) — in-bounds native element (boxed carrier)
+        const thenInstrs: Instr[] = [
+          { op: "local.get", index: recvLocal } as Instr,
+          { op: "local.get", index: idxI32 } as Instr,
+          { op: "call", funcIdx: vgIdx } as Instr,
+        ];
+        // else: __extern_get(recv, key) — non-vec host object, OOB, or string key
+        const elseInstrs: Instr[] = [
+          { op: "local.get", index: recvLocal } as Instr,
+          { op: "local.get", index: keyLocal } as Instr,
+          { op: "call", funcIdx: extGetIdx } as Instr,
+        ];
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: thenInstrs,
+          else: elseInstrs,
+        } as Instr);
+        return { kind: "externref" };
+      }
+      // Defensive fallback — helpers unavailable (unreachable in host mode). Read
+      // via the host from the stored key so the stack stays balanced.
+      fctx.body.push({ op: "local.get", index: recvLocal } as Instr);
+      fctx.body.push({ op: "local.get", index: keyLocal } as Instr);
+      if (extGetIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: extGetIdx } as Instr);
+        return { kind: "externref" };
+      }
+      fctx.body.push({ op: "drop" } as Instr);
       fctx.body.push({ op: "drop" } as Instr);
       fctx.body.push({ op: "ref.null.extern" } as Instr);
       return { kind: "externref" };

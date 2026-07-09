@@ -53,7 +53,7 @@ import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
 import { collectClosureBaseWrapperTypeIdxs, buildClosureRefTestArms } from "./closure-classifier.js"; // (#2175 V2-S1)
-import { ensureNativeIteratorRuntime, fillNativeIteratorUserArms } from "./iterator-native.js";
+import { ensureNativeIteratorRuntime, fillNativeIteratorLateArms } from "./iterator-native.js";
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { fillMemberSetDispatch, reserveVecFieldMaterializers } from "./member-set-dispatch.js";
@@ -2306,13 +2306,13 @@ export function generateModule(
     // Emit __call_@@iterator export for runtime Symbol.iterator dispatch on WasmGC structs
     emitIteratorMethodExport(ctx);
 
-    // (#2038, reserve-then-fill #1719) Rebuild the native `__iterator` /
-    // `__iterator_next` carrier bodies with the USER `{next()}`-protocol arm now
-    // that the closed-struct dispatchers exist: `__sget_value`/`__sget_done`
-    // (emitStructFieldGetters, above) and `__call_@@iterator`/`__call_next`
-    // (emitIteratorMethodExport, just above). No-op unless the standalone native
-    // iterator runtime was registered AND a custom iterable produced those
-    // dispatchers — otherwise the carrier stays vec-only and byte-identical.
+    // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
+    // body with the LATE ladder arms now that every carrier type is known: the
+    // (#3100) vec-FAMILY normalization arms ($ObjVec + `__vec_<elemKind>` —
+    // dynamic iterables, previously an `illegal cast` trap) and, when the
+    // closed-struct dispatchers just emitted above exist, the (#2038) USER
+    // `{next()}` arm. Full docs on `fillNativeIteratorLateArms`. No-op unless
+    // the standalone native iterator runtime was registered.
     if (
       ctx.nativeIteratorUserArmPending &&
       ctx.funcMap.has("__call_@@iterator") &&
@@ -2328,7 +2328,7 @@ export function generateModule(
       // Native in standalone/WASI (appends funcs, no funcIdx shift).
       addUnionImports(ctx);
     }
-    fillNativeIteratorUserArms(ctx);
+    fillNativeIteratorLateArms(ctx);
 
     // (#2922) Rebuild `__combinator_to_vec`'s user-iterable arm with the same
     // closed-struct dispatchers (identical five-dispatcher condition, so the
@@ -3123,7 +3123,7 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
 
     // (#2038) Register in funcMap so the native iterator carrier's USER arm can
     // resolve `__sget_value` / `__sget_done` at finalize-fill time
-    // (`fillNativeIteratorUserArms`). No other code looks `__sget_*` up by funcMap
+    // (`fillNativeIteratorLateArms`). No other code looks `__sget_*` up by funcMap
     // key, so this is inert for every other path.
     ctx.funcMap.set(funcName, funcIdx);
   }
@@ -3919,7 +3919,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
 
     // (#2038) Register in funcMap so the native iterator carrier's USER arm can
     // resolve `__call_@@iterator` / `__call_next` at finalize-fill time
-    // (`fillNativeIteratorUserArms`). Harmless for the host/GC path — no other
+    // (`fillNativeIteratorLateArms`). Harmless for the host/GC path — no other
     // code looks these up by funcMap key.
     ctx.funcMap.set(exportName, funcIdx);
   };
@@ -5556,8 +5556,9 @@ function fields_type_kind(ctx: CodegenContext, structTypeIdx: number, fieldIdx: 
  * export + funcMap entry (shift-tracked); the finalize pass FILLS the body in
  * place (fill-or-build in `_emitVecAccessExportsInner`). Idempotent.
  */
-export function reserveVecMethodHelper(ctx: CodegenContext, kind: "push" | "pop" | "get"): number {
-  const name = kind === "push" ? "__vec_push" : kind === "pop" ? "__vec_pop" : "__vec_get";
+export function reserveVecMethodHelper(ctx: CodegenContext, kind: "push" | "pop" | "get" | "len"): number {
+  const name =
+    kind === "push" ? "__vec_push" : kind === "pop" ? "__vec_pop" : kind === "len" ? "__vec_len" : "__vec_get";
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   const typeIdx =
@@ -5565,11 +5566,13 @@ export function reserveVecMethodHelper(ctx: CodegenContext, kind: "push" | "pop"
       ? addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }], "$__vec_push_type")
       : kind === "pop"
         ? addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$__vec_pop_type")
-        : addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "externref" }], "$__vec_get_type");
+        : kind === "len"
+          ? addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$__vec_len_type")
+          : addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "externref" }], "$__vec_get_type");
   const idx = ctx.numImportFuncs + ctx.mod.functions.length;
   // Placeholder body must match the declared result type.
   const placeholder: Instr[] =
-    kind === "push" ? [{ op: "i32.const", value: 0 } as Instr] : [{ op: "ref.null.extern" } as Instr];
+    kind === "push" || kind === "len" ? [{ op: "i32.const", value: 0 } as Instr] : [{ op: "ref.null.extern" } as Instr];
   ctx.mod.functions.push({ name, typeIdx, locals: [], body: placeholder, exported: true } as any);
   ctx.mod.exports.push({ name, desc: { kind: "func", index: idx } });
   ctx.funcMap.set(name, idx);
@@ -5690,17 +5693,32 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     }
     body.push(...current);
 
-    mod.functions.push({
-      name: "__vec_len",
-      typeIdx: lenTypeIdx,
-      locals: [{ name: "__any", type: { kind: "anyref" } }],
-      body,
-      exported: true,
-    } as any);
-    mod.exports.push({
-      name: "__vec_len",
-      desc: { kind: "func", index: lenFuncIdx },
-    });
+    // (#2773) FILL-or-build. The dynamic-index native-vec element read
+    // (property-access.ts) reserves a `__vec_len` placeholder before this
+    // finalize pass (so it can bake the length-guard call at compile time); fill
+    // it in place if reserved, else push a fresh definition.
+    const reservedLen = ctx.funcMap.get("__vec_len");
+    if (reservedLen !== undefined) {
+      const fn = definedFuncAt(ctx, reservedLen)! as {
+        locals: { name: string; type: ValType }[];
+        body: Instr[];
+      };
+      fn.locals = [{ name: "__any", type: { kind: "anyref" } as ValType }];
+      fn.body = body;
+    } else {
+      mod.functions.push({
+        name: "__vec_len",
+        typeIdx: lenTypeIdx,
+        locals: [{ name: "__any", type: { kind: "anyref" } }],
+        body,
+        exported: true,
+      } as any);
+      mod.exports.push({
+        name: "__vec_len",
+        desc: { kind: "func", index: lenFuncIdx },
+      });
+      ctx.funcMap.set("__vec_len", lenFuncIdx);
+    }
   }
 
   // __vec_get(externref, i32) -> externref

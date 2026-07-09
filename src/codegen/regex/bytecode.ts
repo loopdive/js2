@@ -75,25 +75,6 @@ export enum ReOp {
 /** Slots per instruction in the flat program array. */
 export const INSTR_WIDTH = 3;
 
-/**
- * A character-class entry, compiled to a flat run-length table consumed by the
- * VM. Ranges are inclusive `[lo, hi]` UTF-16 code-unit pairs. A single char is
- * `[c, c]`. The VM walks the table for a CLASS op.
- *
- * The class table is emitted as a separate flat `number[]`:
- *   [ classCount,
- *     class0_rangeCount, class0_lo0, class0_hi0, class0_lo1, class0_hi1, ...,
- *     class1_rangeCount, ... ]
- * and `ReOp.CLASS`'s `a` operand indexes into a `classOffsets` array the
- * compiler returns so the VM can find a class's run by offset.
- */
-export interface CharClass {
-  /** Inclusive code-unit ranges. */
-  ranges: Array<[number, number]>;
-  /** When true the class is negated (`[^...]`). */
-  negated: boolean;
-}
-
 /** A fully compiled regex program ready to embed in a `$NativeRegExp`. */
 export interface CompiledRegex {
   /** Flat instruction stream: `INSTR_WIDTH` ints per instruction. */

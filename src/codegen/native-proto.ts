@@ -176,12 +176,6 @@ export function getBuiltinBrand(ctx: CodegenContext, name: string): number | und
 //   4 $memberCsv (mut externref) own member-name CSV (native string)
 //   5 $name      (mut externref) the proto's brand/[[class]] name string
 const NATIVE_PROTO_STRUCT_NAME = "__NativeProto";
-export const NATIVE_PROTO_FIELD_BRAND = 0;
-export const NATIVE_PROTO_FIELD_IS_CLASS = 1;
-export const NATIVE_PROTO_FIELD_CTOR = 2;
-export const NATIVE_PROTO_FIELD_PARENT = 3;
-export const NATIVE_PROTO_FIELD_MEMBER_CSV = 4;
-export const NATIVE_PROTO_FIELD_NAME = 5;
 
 /**
  * Register the single `$NativeProto` struct type once and stash its idx on

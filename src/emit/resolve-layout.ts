@@ -79,11 +79,6 @@ import type { FuncHandle, GlobalHandle, TypeHandle, WasmModule } from "../ir/typ
 // ---------------------------------------------------------------------------
 export const STABLE_FUNC_BASE = 1 << 21;
 
-/** True when `h` is a stable-regime function handle. */
-export function isStableFuncHandle(h: FuncHandle): boolean {
-  return h >= STABLE_FUNC_BASE;
-}
-
 /**
  * #1916 S3 — the shift predicate for the LIVE handle regime. A funcIdx is
  * shifted iff it is at/above the insertion point AND below `STABLE_FUNC_BASE`:

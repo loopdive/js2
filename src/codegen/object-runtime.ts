@@ -8948,7 +8948,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
  * residual false-positive tracked for a brand-bit follow-up. Only the
  * exclusively-non-array packed carriers can be filtered cleanly.
  */
-const NON_ARRAY_BYTE_VEC_ELEM_KINDS: ReadonlySet<string> = new Set(["i32_byte", "i32_elem", "i8_byte"]);
+export const NON_ARRAY_BYTE_VEC_ELEM_KINDS: ReadonlySet<string> = new Set(["i32_byte", "i32_elem", "i8_byte"]);
 
 function isNonArrayByteVecName(name: string): boolean {
   // Matches `__vec_i32_byte` / `__vec_i8_byte`. Only `__vec_*` structs reach
@@ -9049,7 +9049,7 @@ export function fillExternIsArray(ctx: CodegenContext): void {
  * falls back to the prior null behaviour — no worse than pre-#2190 — and is
  * deferred to a follow-up.
  */
-function boxVecElementToExternref(ctx: CodegenContext, elemType: ValType): Instr[] | null {
+export function boxVecElementToExternref(ctx: CodegenContext, elemType: ValType): Instr[] | null {
   if (elemType.kind === "f64") {
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx === undefined) return null;

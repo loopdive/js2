@@ -31,7 +31,7 @@
  * (`emitIteratorMethodExport`) and `__sget_value` / `__sget_done`
  * (`emitStructFieldGetters`). Those are only known at finalize, so the carrier
  * bodies are emitted vec-only eagerly and *rebuilt with the USER arm* by
- * `fillNativeIteratorUserArms` after the dispatchers exist — the reserve-then-fill
+ * `fillNativeIteratorLateArms` after the dispatchers exist — the reserve-then-fill
  * funcIdx-authority discipline of #1719 (`fillProtoIteratorDriver`).
  *
  * The native iterator-record:
@@ -48,6 +48,9 @@ import type { CodegenContext } from "./context/types.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { addFuncType } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+// (#3100) The vec-family normalize arms reuse the #2190 element-boxing recipe +
+// the non-array byte-carrier filter (ArrayBuffer/Uint8Array storage vecs).
+import { boxVecElementToExternref, NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. */
 const ITER_KIND_VEC = 3;
@@ -66,7 +69,7 @@ const ITER_KIND_USER = 1;
 
 /**
  * Resolved funcIdx of the closed-struct dispatchers the USER arm calls. All four
- * are emitted at FINALIZE; `fillNativeIteratorUserArms` looks them up then.
+ * are emitted at FINALIZE; `fillNativeIteratorLateArms` looks them up then.
  */
 interface UserCarrierDeps {
   /** `__call_@@iterator(externref) -> externref` (emitIteratorMethodExport). */
@@ -141,7 +144,7 @@ function iterRuntimeTypes(ctx: CodegenContext): IterRuntimeTypes {
  *
  * (#2038) The `__iterator` / `__iterator_next` bodies are emitted **vec-only**
  * here — byte-identical to the pre-USER runtime — and `nativeIteratorUserArmPending`
- * is set so `fillNativeIteratorUserArms` (finalize) rebuilds them with the USER
+ * is set so `fillNativeIteratorLateArms` (finalize) rebuilds them with the USER
  * arm once the closed-struct dispatchers exist. A non-vec subject keeps trapping
  * (the legacy hard cast) until that fill runs, so a module where the fill is
  * skipped (e.g. multi-module) never ships a broken iterator.
@@ -170,8 +173,12 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
   };
 
   // --- __iterator(obj: externref) -> externref (the $IterRec, as externref) ---
-  // GetIterator §7.4.1. Vec-only at emit time; the USER arm is filled later.
-  // local 0 = obj (param, externref); local 1 = objAny (anyref); local 2 = userIter (externref)
+  // GetIterator §7.4.1. Vec-only at emit time; the USER arm AND the (#3100)
+  // vec-family normalization arms are filled later (`fillNativeIteratorLateArms`).
+  // local 0 = obj (param, externref); local 1 = objAny (anyref);
+  // local 2 = userIter (externref); locals 3..5 = i/len/out — scratch for the
+  // (#3100) vec-family normalization loop (unused by the eager vec-only body;
+  // declared here so the finalize fill never has to grow the locals list).
   registerNative(
     "__iterator",
     [{ kind: "externref" }],
@@ -179,6 +186,9 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
     [
       { name: "objAny", type: { kind: "anyref" } },
       { name: "userIter", type: { kind: "externref" } },
+      { name: "i", type: { kind: "i32" } },
+      { name: "len", type: { kind: "i32" } },
+      { name: "out", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
     ],
     buildIteratorBody(types, undefined),
   );
@@ -448,19 +458,32 @@ export function ensureNativeArrayFromIterN(ctx: CodegenContext): number {
 }
 
 /**
- * (#2038, reserve-then-fill #1719) Rebuild the `__iterator` / `__iterator_next`
- * bodies with the USER `{next()}`-protocol arm, now that the closed-struct
- * dispatchers (`__call_@@iterator`, `__call_next`, `__sget_value`, `__sget_done`)
- * and `__is_truthy` have been emitted at finalize. No-op when:
- *   - the native runtime was never registered (`!nativeIteratorUserArmPending`),
- *   - any dispatcher is absent (e.g. no custom iterable / `{value,done}` struct in
- *     the module) — the carrier stays vec-only and byte-identical.
+ * (#2038 / #3100, reserve-then-fill #1719) Rebuild the `__iterator` (and, with
+ * USER deps, `__iterator_next`) bodies with the LATE ladder arms at finalize:
+ *
+ *   - (#3100) the vec-FAMILY normalization arms — `$ObjVec` (Object.keys/
+ *     values/entries results) and every module-local `__vec_<elemKind>`
+ *     carrier with a proven element-boxing recipe. These are only enumerable
+ *     at FINALIZE (array literals of a given element kind may compile after
+ *     the runtime registers — the same reason `fillExternGetIdxVecArms`
+ *     fills late). Filled INDEPENDENTLY of the USER dispatchers, so a module
+ *     with no custom iterable still iterates `Object.keys(<any>)` natively.
+ *   - (#2038) the USER `{next()}`-protocol arm, when the closed-struct
+ *     dispatchers (`__call_@@iterator`, `__call_next`, `__sget_value`,
+ *     `__sget_done`) and `__is_truthy` exist. `__iterator_next` is rebuilt
+ *     ONLY in this case — without the USER arm the kind is always VEC (the
+ *     family arms normalize INTO the canonical vec), so the vec-only next/rest
+ *     bodies stay correct as-is.
+ *
+ * No-op when the native runtime was never registered
+ * (`!nativeIteratorUserArmPending`) or when neither arm set applies — the
+ * carrier stays vec-only and byte-identical.
  *
  * MUST be called AFTER `emitStructFieldGetters` + `emitIteratorMethodExport` in
  * the finalize sequence. Storing the carrier funcIdx in `funcMap` (and looking it
  * up post-shift here) keeps it in lockstep with any late-import index shift.
  */
-export function fillNativeIteratorUserArms(ctx: CodegenContext): void {
+export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   if (!ctx.nativeIteratorUserArmPending) return;
 
   const callIteratorIdx = ctx.funcMap.get("__call_@@iterator");
@@ -468,21 +491,22 @@ export function fillNativeIteratorUserArms(ctx: CodegenContext): void {
   const sgetValueIdx = ctx.funcMap.get("__sget_value");
   const sgetDoneIdx = ctx.funcMap.get("__sget_done");
   const isTruthyIdx = ctx.funcMap.get("__is_truthy");
-  if (
+  const deps: UserCarrierDeps | undefined =
     callIteratorIdx === undefined ||
     callNextIdx === undefined ||
     sgetValueIdx === undefined ||
     sgetDoneIdx === undefined ||
     isTruthyIdx === undefined
-  ) {
-    // No closed-struct iterable in this module (or no truthiness helper) → the
-    // vec-only carrier is correct as-is. Custom iterables, if any, keep trapping
-    // exactly as on the pre-#2038 runtime rather than shipping a broken arm.
-    return;
-  }
-  const deps: UserCarrierDeps = { callIteratorIdx, callNextIdx, sgetValueIdx, sgetDoneIdx, isTruthyIdx };
+      ? // No closed-struct iterable in this module (or no truthiness helper) →
+        // no USER arm. Custom iterables, if any, keep trapping exactly as on
+        // the pre-#2038 runtime rather than shipping a broken arm. The (#3100)
+        // vec-family arms below fill regardless.
+        undefined
+      : { callIteratorIdx, callNextIdx, sgetValueIdx, sgetDoneIdx, isTruthyIdx };
 
   const types = iterRuntimeTypes(ctx);
+  const familyArms = buildVecFamilyArms(ctx, types);
+  if (!deps && familyArms.length === 0) return; // nothing to fill — byte-identical
 
   const iteratorIdx = ctx.funcMap.get("__iterator");
   const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
@@ -490,33 +514,44 @@ export function fillNativeIteratorUserArms(ctx: CodegenContext): void {
 
   const iteratorFn = definedFuncAt(ctx, iteratorIdx);
   const iteratorNextFn = definedFuncAt(ctx, iteratorNextIdx);
-  if (iteratorFn) iteratorFn.body = buildIteratorBody(types, deps);
-  if (iteratorNextFn) iteratorNextFn.body = buildIteratorNextBody(types, deps);
+  if (iteratorFn) iteratorFn.body = buildIteratorBody(types, deps, familyArms);
+  if (deps && iteratorNextFn) iteratorNextFn.body = buildIteratorNextBody(types, deps);
 }
 
 /**
- * Build the `__iterator(obj) -> externref` body. With `deps === undefined` this
- * is the vec-only carrier (a non-vec subject hard-casts → `illegal cast`, the
- * legacy failure mode). With `deps` it adds the USER arm:
- *   - obj is a canonical externref `$Vec` → $IterRec{kind:VEC, vec, 0, null}.
- *   - (#2038) otherwise → obtain the iterator object via `__call_@@iterator(obj)`
- *     and build $IterRec{kind:USER, vec:null, 0, userIter}. If the dispatcher
- *     returns null (obj is ALREADY an iterator with a bare `next` and no
- *     `@@iterator`), fall back to using obj itself as the iterator object.
- * Locals: 0=obj(param), 1=objAny(anyref), 2=userIter(externref).
+ * Build the `__iterator(obj) -> externref` body — the native GetIterator §7.4.1
+ * ladder. Arms, first match wins:
+ *   1. canonical externref `$Vec`      → $IterRec{kind:VEC, vec, 0, null}.
+ *   2. (#3100, finalize-filled) vec FAMILY (`$ObjVec`, `__vec_f64`, string vecs,
+ *      …) → normalize into a fresh canonical externref `$Vec` (per-element
+ *      boxing), then the same VEC record. `familyArms` is empty at eager
+ *      registration time (carriers not all known yet) and filled by
+ *      `fillNativeIteratorLateArms`.
+ *   3. (#2038, `deps`) USER `{next()}` protocol → obtain the iterator object via
+ *      `__call_@@iterator(obj)` and build $IterRec{kind:USER, vec:null, 0,
+ *      userIter}. If the dispatcher returns null (obj is ALREADY an iterator
+ *      with a bare `next` and no `@@iterator`), fall back to obj itself.
+ *   4. else (no `deps`) — the legacy hard cast: a non-vec subject traps loudly
+ *      (`illegal cast`) rather than silently misbehaving.
+ * Locals: 0=obj(param), 1=objAny(anyref), 2=userIter(externref),
+ * 3=i(i32)/4=len(i32)/5=out(arr) — scratch for the family-arm normalize loops.
  */
-function buildIteratorBody(types: IterRuntimeTypes, deps: UserCarrierDeps | undefined): Instr[] {
+function buildIteratorBody(
+  types: IterRuntimeTypes,
+  deps: UserCarrierDeps | undefined,
+  familyArms: Instr[] = [],
+): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx } = types;
   // VEC arm: $IterRec{VEC, vec, 0, userIter:null}. Field order/arity is
   // load-bearing — struct.new pushes all 4 fields (userIter = ref.null.extern).
   //
   // (#2169b) Build a FRESH arm each call — never reuse one `Instr[]`/`struct.new`
-  // object across the `then` and the `deps===undefined` `else` branches. A shared
-  // instruction object aliased into both branches is walked twice by any
-  // mutate-in-place body pass (DCE's `remapTypeIdxInBody`), which double-applies a
-  // chained type-index remap (e.g. 46→40 then 40→34) to the single `struct.new`,
-  // emitting it at the wrong type index → `invalid struct index`. Distinct objects
-  // per branch keep each `struct.new` remapped exactly once.
+  // object across branches. A shared instruction object aliased into two
+  // branches is walked twice by any mutate-in-place body pass (DCE's
+  // `remapTypeIdxInBody`), which double-applies a chained type-index remap
+  // (e.g. 46→40 then 40→34) to the single `struct.new`, emitting it at the
+  // wrong type index → `invalid struct index`. Distinct objects per branch keep
+  // each `struct.new` remapped exactly once.
   const buildVecArm = (): Instr[] => [
     { op: "i32.const", value: ITER_KIND_VEC },
     { op: "local.get", index: 1 },
@@ -527,7 +562,7 @@ function buildIteratorBody(types: IterRuntimeTypes, deps: UserCarrierDeps | unde
     { op: "extern.convert_any" } as Instr,
   ];
 
-  const elseArm: Instr[] = deps
+  const tail: Instr[] = deps
     ? [
         // userIter = __call_@@iterator(obj)  (null if obj has no @@iterator)
         { op: "local.get", index: 0 },
@@ -564,11 +599,163 @@ function buildIteratorBody(types: IterRuntimeTypes, deps: UserCarrierDeps | unde
     { op: "ref.test", typeIdx: vecTypeIdx },
     {
       op: "if",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      then: buildVecArm(),
-      else: elseArm,
+      blockType: { kind: "empty" },
+      then: [...buildVecArm(), { op: "return" } as Instr],
+      else: [],
     },
+    ...familyArms,
+    ...tail,
   ];
+}
+
+/**
+ * (#3100) One vec-FAMILY carrier the `__iterator` ladder normalizes: a struct
+ * shaped `{length/len: i32 (field 0), data: (ref array) (field 1)}` that is NOT
+ * the canonical externref `$Vec` type — `$ObjVec` (Object.keys/values/entries
+ * results) and every module-local `__vec_<elemKind>` (`__vec_f64` array
+ * literals reaching `any`, string vecs, …). `boxOps` lifts one loaded element
+ * to externref (empty = element already externref).
+ */
+interface VecFamilyCarrier {
+  typeIdx: number;
+  arrTypeIdx: number;
+  boxOps: Instr[];
+}
+
+/**
+ * (#3100) Enumerate the vec-family carriers `__iterator` should accept, at
+ * FINALIZE time (all module-local carrier types are registered by then):
+ *   - `$ObjVec` (when the object runtime exists) — elements already externref.
+ *   - every `ctx.vecTypeMap` carrier except the canonical externref `$Vec`
+ *     (ladder arm 1 already handles it), the exclusively-non-array byte
+ *     carriers (`i32_byte` ArrayBuffer / `i8_byte` Uint8Array storage — never
+ *     plain-array iterables), and carriers whose element kind has no proven
+ *     boxing recipe (`boxVecElementToExternref` returns null → the value keeps
+ *     the legacy loud-trap tail rather than iterating silently-wrong values).
+ * Deduped by typeIdx, sorted for deterministic emission.
+ */
+function collectVecFamilyCarriers(ctx: CodegenContext, types: IterRuntimeTypes): VecFamilyCarrier[] {
+  const carriers: VecFamilyCarrier[] = [];
+  const seen = new Set<number>([types.vecTypeIdx]);
+
+  const objRT = ctx.objectRuntimeTypes;
+  if (objRT && !seen.has(objRT.objVecTypeIdx)) {
+    seen.add(objRT.objVecTypeIdx);
+    carriers.push({ typeIdx: objRT.objVecTypeIdx, arrTypeIdx: objRT.objVecArrTypeIdx, boxOps: [] });
+  }
+
+  for (const [elemKind, vecTypeIdx] of ctx.vecTypeMap.entries()) {
+    if (NON_ARRAY_BYTE_VEC_ELEM_KINDS.has(elemKind)) continue;
+    if (seen.has(vecTypeIdx)) continue;
+    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+    if (arrTypeIdx < 0) continue;
+    const arrDef = ctx.mod.types[arrTypeIdx];
+    if (!arrDef || arrDef.kind !== "array") continue;
+    const boxOps = boxVecElementToExternref(ctx, arrDef.element);
+    if (boxOps === null) continue; // no proven boxing — keep the loud-trap tail
+    seen.add(vecTypeIdx);
+    carriers.push({ typeIdx: vecTypeIdx, arrTypeIdx, boxOps });
+  }
+
+  carriers.sort((a, b) => a.typeIdx - b.typeIdx);
+  return carriers;
+}
+
+/**
+ * (#3100) Build the `__iterator` vec-family normalization arms (ladder arm 2).
+ * Each arm: `ref.test <carrier>` → copy the carrier's elements into a FRESH
+ * canonical externref `$Vec` (boxing each element per kind) → return
+ * $IterRec{VEC, freshVec, 0, null}. Downstream (`__iterator_next` /
+ * `__iterator_rest`) then reads the canonical vec unchanged — the whole dynamic
+ * iteration fix lives in this one normalize step.
+ *
+ * A COPY (not an aliased rewrap of the carrier's data array) is deliberate:
+ * the canonical `$Vec.data` array type and a carrier's array type (e.g.
+ * `$ObjVecArr`) are distinct type-section entries even when structurally
+ * identical, and relying on engine iso-recursive canonicalization to make a
+ * cross-type `struct.new` validate is exactly the #2009/#2158 hazard class.
+ * The copy costs O(n) once per GetIterator — iteration steps stay O(1).
+ *
+ * All instruction objects are FRESH per arm (factory discipline, #2169b) so no
+ * finalize walk (DCE remap / funcIdx shift) ever double-visits a shared object.
+ * The only baked funcIdx is inside `boxOps` (`__box_number`), resolved from
+ * funcMap at fill time — the same discipline as the USER arm's dispatcher
+ * funcIdxs (#2038, landed) — and later import shifts walk this body like any
+ * other defined function.
+ *
+ * Locals (declared at registration): 1=objAny, 3=i, 4=len, 5=out.
+ */
+function buildVecFamilyArms(ctx: CodegenContext, types: IterRuntimeTypes): Instr[] {
+  const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
+  const arms: Instr[] = [];
+  for (const carrier of collectVecFamilyCarriers(ctx, types)) {
+    arms.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: carrier.typeIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // len = carrier.length (field 0)
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: carrier.typeIdx },
+          { op: "struct.get", typeIdx: carrier.typeIdx, fieldIdx: 0 },
+          { op: "local.set", index: 4 },
+          // out = array.new_default $__arr_externref (len)
+          { op: "local.get", index: 4 },
+          { op: "array.new_default", typeIdx: arrTypeIdx },
+          { op: "local.set", index: 5 },
+          // for (i = 0; i < len; i++) out[i] = box(carrier.data[i])
+          { op: "i32.const", value: 0 },
+          { op: "local.set", index: 3 },
+          {
+            op: "block",
+            blockType: { kind: "empty" },
+            body: [
+              {
+                op: "loop",
+                blockType: { kind: "empty" },
+                body: [
+                  { op: "local.get", index: 3 },
+                  { op: "local.get", index: 4 },
+                  { op: "i32.ge_s" },
+                  { op: "br_if", depth: 1 },
+                  { op: "local.get", index: 5 },
+                  { op: "ref.as_non_null" } as Instr,
+                  { op: "local.get", index: 3 },
+                  { op: "local.get", index: 1 },
+                  { op: "ref.cast", typeIdx: carrier.typeIdx },
+                  { op: "struct.get", typeIdx: carrier.typeIdx, fieldIdx: 1 },
+                  { op: "local.get", index: 3 },
+                  { op: "array.get", typeIdx: carrier.arrTypeIdx },
+                  ...carrier.boxOps.map((instr) => ({ ...instr })),
+                  { op: "array.set", typeIdx: arrTypeIdx } as Instr,
+                  { op: "local.get", index: 3 },
+                  { op: "i32.const", value: 1 },
+                  { op: "i32.add" },
+                  { op: "local.set", index: 3 },
+                  { op: "br", depth: 0 },
+                ],
+              } as Instr,
+            ],
+          } as Instr,
+          // return $IterRec{VEC, $Vec{len, out}, 0, null} as externref
+          { op: "i32.const", value: ITER_KIND_VEC },
+          { op: "local.get", index: 4 },
+          { op: "local.get", index: 5 },
+          { op: "ref.as_non_null" } as Instr,
+          { op: "struct.new", typeIdx: vecTypeIdx },
+          { op: "i32.const", value: 0 },
+          { op: "ref.null.extern" } as Instr,
+          { op: "struct.new", typeIdx: iterRecTypeIdx },
+          { op: "extern.convert_any" } as Instr,
+          { op: "return" } as Instr,
+        ],
+        else: [],
+      } as Instr,
+    );
+  }
+  return arms;
 }
 
 /**

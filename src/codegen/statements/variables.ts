@@ -354,7 +354,7 @@ const TA_VIEW_CTOR_NAMES = new Set([
  * byteOffset field populated), so 1..3 args are accepted here.
  */
 function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression | undefined): ValType | null {
-  if (!noJsHost(ctx) || !initializer) return null;
+  if (!initializer) return null;
   const unwrapped = stripInferenceWrapper(initializer);
   if (!ts.isNewExpression(unwrapped) || !ts.isIdentifier(unwrapped.expression)) return null;
   const viewName = unwrapped.expression.text;
@@ -366,6 +366,17 @@ function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression | undef
   if (!args || args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return null;
   // (#1930) Query the type-oracle boundary, not the raw checker.
   const argSymName = ctx.oracle.builtinReceiverOf(args[0]!);
+  // (#3097) JS-host lane: a buffer-arg TA construction routes through the host
+  // construct bridge (`emitHostTaBufferConstruct`, new-super.ts) and yields a
+  // REAL host TypedArray externref. The local must be externref so reads route
+  // through the extern paths — coercing to the native vec type would ref.cast
+  // trap. MUST stay in lock-step with `hostTaBufferArgSymName` (new-super.ts):
+  // DataView buffer args are excluded there (array-like per §23.2.5.1) and
+  // stay on the legacy path here too.
+  if (!noJsHost(ctx)) {
+    if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return { kind: "externref" };
+    return null;
+  }
   if (argSymName !== "ArrayBuffer" && argSymName !== "SharedArrayBuffer" && argSymName !== "DataView") return null;
   return { kind: "ref_null", typeIdx: getOrRegisterTaViewType(ctx, viewName) };
 }
@@ -1232,6 +1243,24 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           // below treats externref as "primitive" and would refuse this narrowing.
           localSlot.type = wasmType;
         } else if (standaloneRegExpMatchArrayType !== null && existingIsExternref && newIsRef) {
+          localSlot.type = wasmType;
+        } else if (
+          taViewType?.kind === "externref" &&
+          existingIsRef &&
+          wasmType.kind === "externref" &&
+          !(fctx.boxedCaptures?.has(name) ?? false) &&
+          !ctx.capturedGlobals.has(name)
+        ) {
+          // (#3097) JS-host `new TA(buffer, ...)` — the value is a REAL host
+          // TypedArray externref (built via the host construct bridge), but the
+          // var was pre-hoisted as the native vec ref. Narrow the slot to
+          // externref so reads route through the extern paths; the vec-slot
+          // coercion would otherwise `ref.test`-fail and materialize a COPY
+          // (length preserved, aliasing lost). Safe for the same reason as the
+          // accessor-literal / Proxy arms: the hoist pass emits no init for
+          // ref-typed locals. Captured slots keep the vec type (the capture
+          // cell/global was typed at hoist time) and fall back to the
+          // guarded-materialize copy.
           localSlot.type = wasmType;
         } else if (!(existingIsRef && newIsPrimitive) && !(existingIsExternref && newIsRef)) {
           localSlot.type = wasmType;

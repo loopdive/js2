@@ -30,11 +30,11 @@ and should be closed by its slices, not by independent point-fixes.
 
 ## The convergence (why this is one problem, not three)
 
-| Issue | Surface symptom | Underlying substrate defect |
-|---|---|---|
-| #2681 / #2686 (acorn parse walls) | `parse("x")` / `parse("1+2*3;")` moved from THROW to **HANG** after sr-acorn's A1–A3 `new this()` reconstruct landed the `parseExprAtom` switch. The hang is a `scope.flags` `__extern_get` that reads `undefined`; `currentVarScope()` loops forever. | A reconstructed-struct field read reached via a typed/`any` receiver routes through the host proxy (`__extern_get`) instead of native `struct.get`, diverging from the `struct.set`-written slot. The `Scope`-typed read path bakes a `ref.test $__fnctor_Scope` whose **typeIdx misses despite the struct being built+registered**. |
-| #2760 (plain-array OOB → undefined) | `a[OOB]` returns a type-default sentinel (sNaN / `false` / `null`), not `undefined`. | The element-read result needs an **externref-or-undefined** representation that ripples to every f64 consumer — a value-rep-shape decision, not a helper-flag flip. |
-| #2767 / #2768 / #2770 (bare-var nominal receiver dispatch) | Non-`Date` receivers regress; boolean-method results lose their brand. | `externref → ref` receiver recovery is **unguarded** across ~10 dispatch sites; the boolean-method result brand is dropped across 4 dispatch-result sites. |
+| Issue                                                      | Surface symptom                                                                                                                                                                                                                                        | Underlying substrate defect                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| #2681 / #2686 (acorn parse walls)                          | `parse("x")` / `parse("1+2*3;")` moved from THROW to **HANG** after sr-acorn's A1–A3 `new this()` reconstruct landed the `parseExprAtom` switch. The hang is a `scope.flags` `__extern_get` that reads `undefined`; `currentVarScope()` loops forever. | A reconstructed-struct field read reached via a typed/`any` receiver routes through the host proxy (`__extern_get`) instead of native `struct.get`, diverging from the `struct.set`-written slot. The `Scope`-typed read path bakes a `ref.test $__fnctor_Scope` whose **typeIdx misses despite the struct being built+registered**. |
+| #2760 (plain-array OOB → undefined)                        | `a[OOB]` returns a type-default sentinel (sNaN / `false` / `null`), not `undefined`.                                                                                                                                                                   | The element-read result needs an **externref-or-undefined** representation that ripples to every f64 consumer — a value-rep-shape decision, not a helper-flag flip.                                                                                                                                                                  |
+| #2767 / #2768 / #2770 (bare-var nominal receiver dispatch) | Non-`Date` receivers regress; boolean-method results lose their brand.                                                                                                                                                                                 | `externref → ref` receiver recovery is **unguarded** across ~10 dispatch sites; the boolean-method result brand is dropped across 4 dispatch-result sites.                                                                                                                                                                           |
 
 All three are facets of one substrate question: **what is the in-flight
 representation of a value as it crosses a dispatch/host/array boundary, and does
@@ -51,15 +51,15 @@ which function the compiler reached first. This produces **two** failure modes,
 which are the same bug seen from two angles:
 
 1. **Candidate-set freeze (`any`-receiver read path).** A lifted-method read site
-   that compiles *before* the `new F()` site enumerates its struct candidates via
+   that compiles _before_ the `new F()` site enumerates its struct candidates via
    `findAlternateStructsForField` (property-access.ts:1370), which reads
    `ctx.structFields` + `ctx.structMap`. If `__fnctor_F` isn't registered yet, it
    is **excluded** from the candidate set → no `ref.test` arm → the read falls to
    `__extern_get`. The #2674 finalize-filled `__get_member_<name>` dispatcher
-   already fixes *this* facet for the `any` path (it re-enumerates at finalize).
+   already fixes _this_ facet for the `any` path (it re-enumerates at finalize).
 
 2. **typeIdx instability (typed-receiver read path) — THE UNFIXED KEYSTONE.** A
-   *concretely* typed receiver (`Scope`-typed) reads via a direct
+   _concretely_ typed receiver (`Scope`-typed) reads via a direct
    `struct.get $__fnctor_Scope` / inline `ref.test $__fnctor_Scope`. The compiler
    numbers types across **two passes** — an early measuring/hoist pass
    (`inferLetConstInitializerWasmType`, sizes hoisted locals) and the final emit
@@ -92,12 +92,12 @@ Four sub-properties, each owned by a slice:
 1. **typeIdx stability (S1, keystone).** All reconstructed-fnctor struct types are
    reserved at one deterministic up-front point so their index is pass-invariant
    and DCE-survivable. ⇒ `ref.test`/`struct.get` hit.
-2. **Read/write/compound/delete-aware symmetry (S2).** *Every* field read of a
+2. **Read/write/compound/delete-aware symmetry (S2).** _Every_ field read of a
    reconstructed struct reached via a typed or `any` receiver routes through the
    same native dispatch its write uses — including `+=`/`++` compound ops and the
    `tryEmitDeleteAware*` (`#2179`) paths. (sr-acorn's branch already implements
    most of this; S2 lands + validates it on top of a stable S1.)
-2b. **`new this()` escape-gate reconstruct (S2b).** Teach the escape gate to
+   2b. **`new this()` escape-gate reconstruct (S2b).** Teach the escape gate to
    classify `new this()` inside a static/prototype method as an `F` reconstruct
    site so `Parser` gets a `$__fnctor_Parser` struct (sr-acorn A1–A2). Inert
    without S1+S2; load-bearing with them.
@@ -116,7 +116,7 @@ Four sub-properties, each owned by a slice:
 `findAlternateStructsForField` (the candidate enumerator for BOTH read and write
 dispatch) is a pure function of `ctx.structFields` + `ctx.structMap`. The
 finalize-filled `__get_member`/`__set_member` dispatchers (#2674/#2664) already
-re-enumerate at finalize, so they are *complete* — but the **typed-receiver
+re-enumerate at finalize, so they are _complete_ — but the **typed-receiver
 inline path bakes an absolute typeIdx** that the two-pass numbering desyncs.
 Reserving the slot up-front (placeholder→fill, exactly like class struct types in
 `class-bodies.ts`) makes the index pass-invariant, which is the one thing the
@@ -130,20 +130,20 @@ Every slice is **broad-impact** → validate via **full `merge_group` +
 standalone-floor**, never a scoped sweep (`project_broad_impact_validate_full_ci`,
 `project_standalone_floor_only_on_merge_group`).
 
-| # | Slice | Scope | Unblocks | Role |
-|---|---|---|---|---|
-| **S1** | **Up-front fnctor struct-type reservation (KEYSTONE)** | Reserve every approved `$__fnctor_<F>` struct slot (incl. `new this()` owners) in the deterministic type-init phase; placeholder→fill; populate `structMap`/`structFields`/`typeIdxToStructName` up-front. | typeIdx stability for #2681/#2686; foundation for S2/S2b | **senior-dev** |
-| **S2** | Read/write/compound/delete-aware dispatch symmetry | Land + validate sr-acorn's A3 + beyond-A3 routing (compound `+=`/`++`, `tryEmitDeleteAware{Get,Set}` → `__get_member`/`__set_member` dispatchers) on top of S1. | #2681/#2686 read/write divergence | **senior-dev** |
-| **S2b** | `new this()` escape-gate reconstruct | sr-acorn A1–A2: classify `new this()` in static/prototype methods as `F` reconstruct; owner resolvers. | #2681/#2686 (Parser gets a struct) | **senior-dev** |
-| **S3** | Array-element struct identity (no re-proxy on `.push`/host calls) | Ensure native struct refs stored into host-backed arrays round-trip without `extern.convert_any`→host-proxy identity loss. | #2681 `scope.flags` via `scopeStack.push` | **senior-dev** |
-| **S4** | Plain-array OOB → `undefined` (externref-or-undefined result rep) | #2760 re-spec: discriminate plain-array vs typed-view at the vec site (`property-access.ts:6341`), return the `undefined` singleton; ripple the result-rep change to f64 consumers without the shared-helper flip. | #2760 | **senior-dev** |
-| **S5** | Guarded receiver recovery + brand-preserving boolean results | #2767/#2768/#2770: guard `externref→ref` recovery across ~10 dispatch sites (`emitThisReceiverGuardConvert`); preserve the boolean brand across the 4 dispatch-result sites. | #2767/#2768/#2770 | **dev** (S5a guard audit) + **senior-dev** (S5b brand-rep) |
+| #       | Slice                                                             | Scope                                                                                                                                                                                                              | Unblocks                                                 | Role                                                       |
+| ------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- | ---------------------------------------------------------- |
+| **S1**  | **Up-front fnctor struct-type reservation (KEYSTONE)**            | Reserve every approved `$__fnctor_<F>` struct slot (incl. `new this()` owners) in the deterministic type-init phase; placeholder→fill; populate `structMap`/`structFields`/`typeIdxToStructName` up-front.         | typeIdx stability for #2681/#2686; foundation for S2/S2b | **senior-dev**                                             |
+| **S2**  | Read/write/compound/delete-aware dispatch symmetry                | Land + validate sr-acorn's A3 + beyond-A3 routing (compound `+=`/`++`, `tryEmitDeleteAware{Get,Set}` → `__get_member`/`__set_member` dispatchers) on top of S1.                                                    | #2681/#2686 read/write divergence                        | **senior-dev**                                             |
+| **S2b** | `new this()` escape-gate reconstruct                              | sr-acorn A1–A2: classify `new this()` in static/prototype methods as `F` reconstruct; owner resolvers.                                                                                                             | #2681/#2686 (Parser gets a struct)                       | **senior-dev**                                             |
+| **S3**  | Array-element struct identity (no re-proxy on `.push`/host calls) | Ensure native struct refs stored into host-backed arrays round-trip without `extern.convert_any`→host-proxy identity loss.                                                                                         | #2681 `scope.flags` via `scopeStack.push`                | **senior-dev**                                             |
+| **S4**  | Plain-array OOB → `undefined` (externref-or-undefined result rep) | #2760 re-spec: discriminate plain-array vs typed-view at the vec site (`property-access.ts:6341`), return the `undefined` singleton; ripple the result-rep change to f64 consumers without the shared-helper flip. | #2760                                                    | **senior-dev**                                             |
+| **S5**  | Guarded receiver recovery + brand-preserving boolean results      | #2767/#2768/#2770: guard `externref→ref` recovery across ~10 dispatch sites (`emitThisReceiverGuardConvert`); preserve the boolean brand across the 4 dispatch-result sites.                                       | #2767/#2768/#2770                                        | **dev** (S5a guard audit) + **senior-dev** (S5b brand-rep) |
 
 **Ordering rationale.** S1 must land first — it is the typeIdx-stability
 foundation that makes S2/S2b correct (without it the `ref.test` arms S2 emits miss
 at scale). S2 + S2b are a tight pair (the acorn parse fix) and should land in
 quick succession after S1, re-validating against the full acorn dogfood. S3 is
-independent of S1 mechanically but only *observable* once S1+S2 stop the parser
+independent of S1 mechanically but only _observable_ once S1+S2 stop the parser
 from hanging earlier, so sequence it after S2. S4 (#2760) and S5 (#2767/8/70) are
 mechanically independent of the fnctor work and may proceed in **parallel** with
 S1–S3 by separate devs (different files), but each is still broad-impact.
@@ -156,7 +156,7 @@ S1–S3 by separate devs (different files), but each is still broad-impact.
   minimal repros pass. S2/S2b **rebase this branch onto a merged S1**, they do not
   re-author it.
 - **Findings + probes** in that worktree: the #2681 issue file's `## Implementation
-  attempt + findings`; `.tmp/acorn-run.mjs` (single-compile worker watchdog +
+attempt + findings`; `.tmp/acorn-run.mjs` (single-compile worker watchdog +
   host-call signature), `.tmp/dbg-keys.mjs` (extern_get key histogram),
   `.tmp/identity*.mjs` (struct-identity repros). **Read these before touching S1–S3.**
 - The #2674 `__get_member_<name>` (member-get-dispatch.ts) and #2664
@@ -327,7 +327,7 @@ landing the gate-shape field in S1 so S2b is purely additive).
    equivalence test) before/after; WAT-diff must be empty. The pass is gated on
    `approvedNames.size > 0`.
 2. **typeIdx-stability unit repro** (`.tmp/`): a fnctor whose field is read in a
-   lifted method compiled *before* the `new` site, AND a sibling fnctor referenced
+   lifted method compiled _before_ the `new` site, AND a sibling fnctor referenced
    as a ref field — assert the read's `ref.test $__fnctor_F` matches the
    `struct.new $__fnctor_F` typeIdx (dump WAT, grep the type indices agree).
 3. **sr-acorn minimal repros** (`.tmp/identity*.mjs` from the WIP branch): all must
@@ -337,7 +337,7 @@ landing the gate-shape field in S1 so S2b is purely additive).
    the acorn hang (it needs S2's read/write symmetry on the now-stable indices) —
    so S1's acceptance is the **stability invariant + no regression**, and the acorn
    `parse("x")`/`parse("1+2*3;")` AST result is **S2+S2b's** acceptance. Verify S1
-   does not *worsen* acorn (still hangs/throws is acceptable for S1-alone;
+   does not _worsen_ acorn (still hangs/throws is acceptable for S1-alone;
    verify with `.tmp/acorn-run.mjs`).
 5. **Full `merge_group` + standalone-floor.** Broad-impact (changes struct-type
    ordering for every module with a reconstructed fnctor). NEVER a scoped sweep.
@@ -426,10 +426,10 @@ design changes.**
 Branch `issue-2681-s2-acorn` (merge of sr-acorn `ebc464375` onto merged S1).
 
 - **Merge:** `fnctor-escape-gate.ts` auto-merged (sr-acorn's `new this()` resolvers
-  + reconstruct classification alongside S1's `deriveFnctorFields`/`ctorDeclByName`/
-  `newThisOwnerNames`); only `new-super.ts`'s import line conflicted. The 4 S2 files
-  S1 didn't touch (`closures`/`assignment`/`unary-updates`/`property-access`) came
-  in clean.
+  - reconstruct classification alongside S1's `deriveFnctorFields`/`ctorDeclByName`/
+    `newThisOwnerNames`); only `new-super.ts`'s import line conflicted. The 4 S2 files
+    S1 didn't touch (`closures`/`assignment`/`unary-updates`/`property-access`) came
+    in clean.
 - **S2b** fills the empty S1 `newThisOwnerNames` placeholder from each
   reconstruct-classified `new this()` owner ⇒ `reserveFnctorStructTypes` reserves a
   pass-invariant `$__fnctor_Parser` (absent on main).
@@ -465,7 +465,7 @@ required` section) — do NOT redo that investigation. Closes #2760, unblocks #2
 arrDef.element, ctx, false, taSignedness)` call). That helper returns a
 **type-default sentinel** on OOB (sNaN for f64, `false` for boolean,
 `ref.null.extern`→`null` for externref), never the JS `undefined` singleton. The
-`property-access.ts:6390` raw-array path the *original* plan targeted is rarely
+`property-access.ts:6390` raw-array path the _original_ plan targeted is rarely
 reached → patching it fixes ~nothing. The shared-helper flip (parked S2/#2198)
 is the wrong fix: it perturbs typed-array/`$__subview`/array-method callers and
 regressed `built-ins/Array/prototype/map/15.4.4.19-8-b-2.js`.
@@ -491,7 +491,7 @@ caller). Three policy arms at the read site, chosen by what is statically known:
    box/unbox, no ripple). This arm is why the change does NOT ripple to f64
    consumers: they never see an externref.
 3. **Reference / `any` / comparison consumer (expectedType is externref/`any`, or
-   absent).** This is the *only* arm where the true `undefined` singleton is
+   absent).** This is the _only_ arm where the true `undefined` singleton is
    observable (`a[OOB] === undefined`, `String(a[OOB])`, spreading, passing to a
    parameter). Here the read returns **externref-or-undefined**: in-bounds **boxes**
    the element (`__box_number` for f64, `__box_boolean` for boolean, pass-through
@@ -572,7 +572,7 @@ caller. They must be byte-identical (verify by WAT-diff).
 - **Negative index** (`a[-1]`): the `i32.lt_u` guard already treats negatives as
   huge-unsigned → OOB branch → `undefined` (arms 2/3). No extra handling.
 - **Hole-in-bounds** (`[1,,3][1]`): keep the existing `$Hole → undefined`
-  mapping (`emitHoleToUndefined`); S4 is about *absent* (OOB), F2 (holes) is
+  mapping (`emitHoleToUndefined`); S4 is about _absent_ (OOB), F2 (holes) is
   separate and unchanged.
 - **`number[]` OOB previously sNaN**: under arm 2 still NaN (numeric consumer) —
   acceptance for `a[OOB] === undefined` requires arm 3, which fires for the `any`/
@@ -638,7 +638,7 @@ JS **number** (`1`/`0`) not a **boolean** (`true`/`false`):
    `getWasmFuncReturnType(ctx, finalIdx) ?? resolveWasmType(ctx, retType)` — a bare
    i32 with the brand dropped — at **every** such site:
    `calls.ts:8738, 9398, 9479, 9595, 9627, 9736, 12932, 13590, 13613, 13695,
-   13732, 14051` (the `?? resolveWasmType(ctx, retType)` extern-method-result
+13732, 14051` (the `?? resolveWasmType(ctx, retType)` extern-method-result
    family; the #2770 note cited 4606/9220/9279/14077 as the routing sites — the
    actual ValType sites are these `getWasmFuncReturnType` returns), plus
    `extern.ts:~150` (`return methodInfo.results[0]`).
@@ -659,20 +659,27 @@ without a cycle):
 // brand ONLY a bare i32 whose declared return type is exactly boolean; never
 // touch f64/externref/already-branded results.
 export function brandExternMethodResult(
-  ctx: CodegenContext, tsReturnType: ts.Type | undefined, valType: ValType,
+  ctx: CodegenContext,
+  tsReturnType: ts.Type | undefined,
+  valType: ValType,
 ): ValType {
   if (!tsReturnType) return valType;
   if (valType.kind !== "i32" || (valType as { boolean?: boolean }).boolean) return valType;
-  if (!isBooleanType(ctx, tsReturnType)) return valType;   // strict: flags === boolean only
+  if (!isBooleanType(ctx, tsReturnType)) return valType; // strict: flags === boolean only
   return { kind: "i32", boolean: true };
 }
 ```
 
 **Apply at every extern-method-result return site.** Wrap the existing expression:
+
 ```ts
-return brandExternMethodResult(ctx, retType,
-  getWasmFuncReturnType(ctx, finalMethodIdx) ?? resolveWasmType(ctx, retType));
+return brandExternMethodResult(
+  ctx,
+  retType,
+  getWasmFuncReturnType(ctx, finalMethodIdx) ?? resolveWasmType(ctx, retType),
+);
 ```
+
 at each of: `calls.ts:8738, 9398, 9479 (callReturnType=), 9595, 9627 (callReturnType=),
 9736, 12932, 13590, 13613 (callReturnType=), 13695, 13732, 14051`, and
 `extern.ts:~150` (`return brandExternMethodResult(ctx, <method TS return type>,
@@ -724,13 +731,13 @@ type at a time**, each behind a hardened recovery path + full `merge_group`.
 
 ### The 6 regressors and their per-site fix (from #2228's merge_group delta)
 
-| type | test262 evidence | failure | per-site fix |
-| --- | --- | --- | --- |
-| **Promise** | `built-ins/Promise/prototype/finally/{rejected,resolved}-observable-then-calls-PromiseResolve.js` | `illegal_cast` in the recovered closure (`__closure_0`) | guard the externref→ref recovery with `ref.test` BEFORE `ref.cast` on the Promise/thenable path (the cast currently trusts the substituted type) |
-| **RegExp** | `language/literals/regexp/y-assertion-start.js` (`re.test`) | returns truthy `1` not `true` | **subsumed by S5b** (boolean brand). Land S5b first; RegExp recovery then only needs the `ref.test` guard. |
-| **SharedArrayBuffer / ArrayBuffer** | `built-ins/SharedArrayBuffer/prototype/grow/this-is-not-resizable-arraybuffer-object.js` | `.grow()` skips the spec TypeError | brand-check the recovered buffer receiver (`ref.test` the resizable-buffer brand; throw the spec TypeError on miss) before dispatch |
-| **super-spread** | `language/expressions/super/call-spread-obj-spread-order.js` | `wasm_compile` (invalid Wasm) | the recovered super/closure receiver emits invalid Wasm — the super-call lowering must tolerate the substituted type (do not substitute into the super path, or emit a valid coercion) |
-| **DisposableStack** | `built-ins/DisposableStack/prototype/dispose/throws-error-as-is-if-only-one-error-during-disposal.js` | `assertion_fail` | recovered dispatch path partial — harden the DisposableStack method dispatch before safelisting |
+| type                                | test262 evidence                                                                                      | failure                                                 | per-site fix                                                                                                                                                                           |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Promise**                         | `built-ins/Promise/prototype/finally/{rejected,resolved}-observable-then-calls-PromiseResolve.js`     | `illegal_cast` in the recovered closure (`__closure_0`) | guard the externref→ref recovery with `ref.test` BEFORE `ref.cast` on the Promise/thenable path (the cast currently trusts the substituted type)                                       |
+| **RegExp**                          | `language/literals/regexp/y-assertion-start.js` (`re.test`)                                           | returns truthy `1` not `true`                           | **subsumed by S5b** (boolean brand). Land S5b first; RegExp recovery then only needs the `ref.test` guard.                                                                             |
+| **SharedArrayBuffer / ArrayBuffer** | `built-ins/SharedArrayBuffer/prototype/grow/this-is-not-resizable-arraybuffer-object.js`              | `.grow()` skips the spec TypeError                      | brand-check the recovered buffer receiver (`ref.test` the resizable-buffer brand; throw the spec TypeError on miss) before dispatch                                                    |
+| **super-spread**                    | `language/expressions/super/call-spread-obj-spread-order.js`                                          | `wasm_compile` (invalid Wasm)                           | the recovered super/closure receiver emits invalid Wasm — the super-call lowering must tolerate the substituted type (do not substitute into the super path, or emit a valid coercion) |
+| **DisposableStack**                 | `built-ins/DisposableStack/prototype/dispose/throws-error-as-is-if-only-one-error-during-disposal.js` | `assertion_fail`                                        | recovered dispatch path partial — harden the DisposableStack method dispatch before safelisting                                                                                        |
 
 ### The guard pattern (the common mechanism)
 
@@ -745,6 +752,7 @@ used at 4018/5868/array-object-proto:514) and the `.call`/`.apply` brand-guard a
 `calls.ts:4606` (which emits a `ref.test` guard + catchable TypeError on mismatch).
 
 **S5a per-type loop (one PR per type, or a small batch):**
+
 1. Route the recovered receiver's externref→ref recovery through a **guarded**
    convert (`ref.test $T` → on true `ref.cast` + dispatch; on false → the type's
    spec behavior: TypeError for brand-check methods, or fall through to dynamic
@@ -801,3 +809,126 @@ Epic stays **in-progress**. Per-slice merge state:
 - **S5a** (#2767/#2768 guarded receiver recovery): #2767 LANDED, PR #2228
   (`done`). **Remaining:** #2768 per-type safelist expansion/hardening is still
   `ready` — the open tail of this epic.
+
+---
+
+# SLICE S6 — HOF element-rep: dynamic-index native-vec read — #2773 (fable-2773, 2026-07-09)
+
+**Role: senior-dev. Broad-impact (touches every dynamic-index externref element
+read in host/gc mode). Byte-identity proven on unrelated code.**
+
+## Repro (empirical, current main 95af8b0)
+
+The "callbackfn called with correct parameters" test262 family passes a **named
+function declaration** as the HOF callback:
+
+```js
+function callbackfn(val, idx, obj) {
+  if (obj[idx] !== val) bPar = false;
+}
+[0, 1, true, null, new Object(), "five"].map(callbackfn); // srcArr[999999] = -6.6
+```
+
+TS does **not** contextually type the params of a _named function passed by
+reference_ (only inline arrow/function-expression params get contextual types),
+so `val`/`idx`/`obj` are implicit **`any`**. The heterogeneous array lowers to a
+native WasmGC **externref-element vec**, and the callback's 3rd `array` arg
+reaches the body coerced to `externref` (`extern.convert_any` on the vec ref).
+Inside, `obj[idx]` with a **dynamic `any` index** used to route to the host
+`__extern_get`, which **cannot read the opaque WasmGC vec** → returned
+`undefined`. So `obj[idx] !== val` was wrongly `true` and the whole family failed.
+
+Pinned distinction (why the inline-arrow probe passed but the named-fn test
+failed): `srcArr.map((v,i,a)=>a[i]===v)` — the arrow's `i` **is** contextually
+typed `number`, so `isNumericIndexExpression` is true and the #2784
+static-numeric native-vec read already fired. The `#2784` arm only covers a
+**statically-numeric** index; the dynamic-`any` index (the named-fn `idx`) fell
+through to `__extern_get`.
+
+## Root cause (one sentence)
+
+`obj[idx]` on an `any`/externref receiver that is a native WasmGC vec, where the
+index is a **dynamic `any`-typed** expression, routed to the host `__extern_get`
+(opaque to the vec ⇒ `undefined`) because the #2784 native-vec read only fires
+for a statically-numeric index.
+
+## Fix — dynamic-index native-vec read (the `__dyn_member_get` carrier shape)
+
+`src/codegen/property-access.ts`, `compileElementAccessBody`, externref-receiver
+branch. New arm gated on `!ctx.standalone && ctx.vecTypeMap.size > 0 &&
+isAnyTypedIndexExpression(ctx, index)` (new predicate: index static type is
+`Any`/`Unknown`, excluding string/symbol/union — those are genuine property
+keys). It emits, at runtime:
+
+```
+recv → recvLocal;  key(externref) → keyLocal          // key compiled FIRST (#3007 flush order)
+idxF64 = __unbox_number(keyLocal)                      // Number(key); NaN for a string key
+idxI32 = i32.trunc_sat_f64_s(idxF64)
+cond   = idxI32>=0 && idxI32 < __vec_len(recv) && f64(idxI32)==idxF64
+if cond: __vec_get(recv, idxI32)                       // native per-kind element → boxed carrier
+else:    __extern_get(recv, keyLocal)                  // non-vec host obj / OOB / string key
+```
+
+`__vec_len` returns **0 for a non-vec**, so it doubles as the vec-vs-host-object
+discriminator **and** the in-bounds guard; the integer round-trip check
+(`f64(idxI32)==idxF64`) rejects NaN/fractional/string keys so a genuine string
+key never mis-indexes. `__vec_get` is the existing per-element-kind reader that
+already boxes each kind to a carrier externref and maps `$Hole → undefined`. This
+is exactly the corrected-memory `__dyn_member_get(recv,key)→carrier` primitive,
+expressed inline over the existing native-vec helpers.
+
+**Plumbing:** added `"len"` to `reserveVecMethodHelper` and made the finalize
+`__vec_len` emit **fill-or-build** (like `__vec_get`), so the guard call can be
+baked at property-access compile time before the finalize pass fills the body.
+
+## Behavior-preserving for non-vec (the blast-radius bound)
+
+For a non-vec externref receiver (a genuine host object / array-like) the guard
+is always false → the `else` arm calls the **same** `__extern_get(recv, key)` the
+old fallback used ⇒ **identical observable result** (host property read / OOB
+`undefined`). The arm only _adds_ the correct native-vec answer. Byte-identity
+proven on the playground corpus: `prove-emit-identity` reports **IDENTICAL — all
+39 (file,target) emits** (the arm is gated on `vecTypeMap.size>0 &&
+any-typed-index`, so vec-free / numeric-index code is untouched).
+
+## Measured delta (via `runTest262File` on current main)
+
+- **+18 test262 files** flip FAIL→PASS across the HOF fail-set (632 files):
+  the `-c-ii-1/11/12/13` "callbackfn called with correct parameters" variants of
+  `every`/`filter`/`forEach`/`map`/`reduce`/`reduceRight`/`some`.
+- Regression sample: 65 previously-passing HOF files re-checked (no regression);
+  full byte-identity on the unrelated corpus. `merge_group` full test262 is the
+  real gate.
+- Test: `tests/issue-2773-hof-dynamic-index.test.ts` (8 host-mode cases).
+
+## Boundary — NOT closed by S6 (documented for follow-ups)
+
+These are DISTINCT gaps surfaced while validating; each is a separate slice, not
+part of the dynamic-index READ rep:
+
+1. **Boxed-carrier `=== primitive-number`** (`obj[0] === 0` where `obj[0]` is a
+   boxed-any carrier and `0` is an f64 literal). The `===` operator does not
+   unbox the carrier against a primitive number operand → false. (`direct-any-
+param-read` probe; pre-existing, unchanged.) Separate coercion slice.
+2. **HOF hole visit-skip** (#2001 S2): `forEach`/`map`/… still VISIT holes
+   (`[1,,3].forEach` count 3 not 2; `map` result NaN at the hole not a
+   result-hole). The dynamic-index READ maps `$Hole → undefined` correctly, but
+   the _visit semantics_ are #2001 S2/S3.
+3. **Index-grow past length writes element-default, not `$Hole`** (#2001 S3):
+   `a[3]=x` on a len-1 externref vec fills `[len,3)` with the default → HOFs then
+   visit those as present. `oob-grow-forEach` / `A-sparse-tail-het` probes.
+4. **Dynamic-index WRITE + read-back on a growing `any[]`** (`kIndex[idx]=1`
+   inside a callback, then `kIndex[idx-1]`): the `-c-ii-5` / `-c-iii-1-6`
+   variants. The WRITE side has no dynamic-index native-vec routing (this slice
+   is READ-only). Symmetric follow-up to S6.
+5. **Array-like `.call(obj)` receiver-shape** (`-c-ii-20/21/22/23`,
+   `Array.prototype.map.call({0:11,length:2}, cb)` + `thisArg`): a plain-object
+   array-like receiver, separate from the native-vec read.
+6. **`arguments[3][idx]`** (`reduceRight -c-ii-12`): arguments-object + nested
+   dynamic index — a distinct path.
+7. **Standalone lane**: S6 is host/gc only (standalone has its own
+   `__extern_get_idx` `$ObjVec` path); a standalone dynamic-index native-vec read
+   is a parallel follow-up.
+
+**S6 status: landed (this PR). The epic tail remains #2768 (S5a) + the boundary
+items above.**

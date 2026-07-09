@@ -884,27 +884,6 @@ export function encodeExport(exp: WasmExport, enc: WasmEncoder, _numImportFuncs:
   enc.u32(resolved);
 }
 
-export function encodeFunction(f: WasmFunction, enc: WasmEncoder): void {
-  const body = new WasmEncoder();
-
-  // Locals: group consecutive same-type locals
-  const localGroups = groupLocals(f.locals);
-  body.vector(localGroups, (group, e) => {
-    e.u32(group.count);
-    encodeValType(group.type, e);
-  });
-
-  // Body instructions
-  for (const instr of f.body) {
-    encodeInstr(instr, body);
-  }
-  body.byte(OP.end);
-
-  const bodyBytes = body.finish();
-  enc.u32(bodyBytes.length);
-  enc.bytes(bodyBytes);
-}
-
 export interface LocalGroup {
   count: number;
   type: ValType;

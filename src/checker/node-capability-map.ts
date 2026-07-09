@@ -275,11 +275,6 @@ const NODE_CAPABILITY_MAP = new Map<string, NodeModuleCapability>([
   ["node:process", buildProcessCapability()],
 ]);
 
-/** Look up the capability entry for a `node:<mod>` specifier, if mapped. */
-export function getModuleCapability(module: string): NodeModuleCapability | undefined {
-  return NODE_CAPABILITY_MAP.get(module);
-}
-
 /** Is `member` a known (mapped) member of `module`? */
 export function isKnownMember(module: string, member: string): boolean {
   return NODE_CAPABILITY_MAP.get(module)?.members.has(member) ?? false;

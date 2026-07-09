@@ -1053,10 +1053,32 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   // not a shift-walker miss — the index was an import from the start. Skip the
   // closure path for imports so the identifier falls through to the
   // type-appropriate graceful default below (valid Wasm, no spurious throw).
+  //
+  // (#3087) A `__`-prefixed name is only skipped when it does NOT resolve to a
+  // USER function declaration in the compiled source. The old blunt
+  // `!name.startsWith("__")` filter existed to keep compiler-internal DEFINED
+  // helpers that share the funcMap namespace (`__module_init`, `__closure_N`,
+  // `__call_fn_N`, method trampolines, …) out of the closure-wrap path — but it
+  // also silently compiled a user-defined `__foo` referenced as a VALUE to the
+  // graceful null default, so `var f: any = __foo; f(x)` dispatched on null and
+  // the call was dropped. That was the dominant honest-fail of the ~1,487-file
+  // test262 TypedArray harness cluster: the runner shim passes
+  // `__ta_makeCtorArgPassthrough` positionally into every callback, so
+  // `makeCtorArg(...)` returned null and `new TA(null)` built a length-0 view.
+  // Discriminate by the checker instead: a source-level function declaration
+  // resolves to a symbol whose valueDeclaration is a FunctionDeclaration;
+  // compiler-internal helper names do not resolve to any source declaration.
+  const isInternalHelperName = (): boolean => {
+    if (!name.startsWith("__")) return false;
+    const { checker } = ctx;
+    const valSym = checker.getSymbolAtLocation(id);
+    const valDecl = valSym?.valueDeclaration;
+    return !(valDecl !== undefined && ts.isFunctionDeclaration(valDecl));
+  };
   if (
     funcRefIdx !== undefined &&
     funcRefIdx >= ctx.numImportFuncs &&
-    !name.startsWith("__") &&
+    !isInternalHelperName() &&
     !ctx.classSet.has(name)
   ) {
     // Check if there's already a closure registered (e.g. from closureMap)

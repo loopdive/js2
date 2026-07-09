@@ -335,6 +335,110 @@ const GLOBAL_NON_CONSTRUCTOR_FUNCTIONS = new Set([
  * ambient builtin's symbol has all of its declarations in declaration files.
  * Unresolved symbols (no declaration anywhere) are treated as the global.
  */
+/**
+ * (#3097) JS-host lane: `new <TA>(buffer[, byteOffset[, length]])` with a
+ * statically-known ArrayBuffer/SharedArrayBuffer buffer arg.
+ *
+ * The native vec path treats the buffer arg as a numeric LENGTH
+ * (`ToNumber(vecStruct)` → NaN → `i32.trunc_sat` → 0), so
+ * `new Int8Array(new ArrayBuffer(8))` produced a length-0 compiled vec. Route
+ * through the host construct bridge instead: resolve the REAL host constructor
+ * (`__extern_get(globalThis, "<TA>")` — the #3087 ctor-as-value pattern),
+ * materialize the args into a JS argv, and `__construct_closure(ctor, argv)`.
+ * The bridge's runtime side (#3097) marshals a compiled-ArrayBuffer i32_byte
+ * vec struct to its canonical host ArrayBuffer (identity-cached), so the host
+ * constructor builds a REAL windowed TypedArray view with byte-sharing across
+ * sibling views.
+ *
+ * Returns a host TypedArray externref. `inferTaViewType` (variables.ts) types
+ * the binding externref in LOCK-STEP with this gate so reads route through the
+ * extern paths — a `ref.cast` to the native vec type would trap.
+ *
+ * DataView-typed buffer args are deliberately EXCLUDED (host lane): per
+ * §23.2.5.1 a DataView is not a buffer — `new TA(dataView)` takes the
+ * array-like path (length 0), which the existing numeric fallback already
+ * approximates.
+ *
+ * One terminal `flushLateImportShifts` before any body emission (the
+ * #608/#794 late-import index-shift hazard). Returns null when the bridge
+ * imports are unavailable (caller falls through to the legacy path).
+ */
+function emitHostTaBufferConstruct(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+  args: readonly ts.Expression[],
+): ValType | null {
+  const gtIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+  const ccIdx = ensureLateImport(
+    ctx,
+    "__construct_closure",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  addStringConstantGlobal(ctx, className);
+  flushLateImportShifts(ctx, fctx);
+  const finalGt = ctx.funcMap.get("__get_globalThis") ?? gtIdx;
+  const finalGet = ctx.funcMap.get("__extern_get") ?? getIdx;
+  const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
+  const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
+  const finalCc = ctx.funcMap.get("__construct_closure") ?? ccIdx;
+  if (
+    finalGt === undefined ||
+    finalGet === undefined ||
+    finalArrNew === undefined ||
+    finalArrPush === undefined ||
+    finalCc === undefined
+  ) {
+    return null;
+  }
+  // ctor = globalThis["<TA>"] — the genuine host constructor.
+  fctx.body.push({ op: "call", funcIdx: finalGt });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, className));
+  fctx.body.push({ op: "call", funcIdx: finalGet });
+  const ctorLocal = allocLocal(fctx, `__hta_ctor_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: ctorLocal });
+  // argv = [buffer, byteOffset?, length?] — each boxed externref, source order.
+  fctx.body.push({ op: "call", funcIdx: finalArrNew });
+  const argvLocal = allocLocal(fctx, `__hta_argv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argvLocal });
+  for (const arg of args) {
+    fctx.body.push({ op: "local.get", index: argvLocal });
+    const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (aTy && aTy.kind !== "externref") {
+      coerceType(ctx, fctx, aTy, { kind: "externref" });
+    } else if (aTy === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    fctx.body.push({ op: "call", funcIdx: finalArrPush });
+  }
+  fctx.body.push({ op: "local.get", index: ctorLocal });
+  fctx.body.push({ op: "local.get", index: argvLocal });
+  fctx.body.push({ op: "call", funcIdx: finalCc });
+  return { kind: "externref" };
+}
+
+/**
+ * (#3097) Gate for `emitHostTaBufferConstruct` — MUST stay in lock-step with
+ * `inferTaViewType`'s host-lane arm (variables.ts) so the binding's local type
+ * (externref) agrees with the constructed value.
+ */
+function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Expression[]): string | undefined {
+  if (noJsHost(ctx)) return undefined;
+  if (args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return undefined;
+  const argSymName = ctx.oracle.builtinReceiverOf(args[0]!);
+  if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return argSymName;
+  return undefined;
+}
+
 function resolvesToAmbientGlobal(ctx: CodegenContext, id: ts.Identifier): boolean {
   const sym = ctx.checker.getSymbolAtLocation(id);
   if (!sym) return true;
@@ -3686,6 +3790,16 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       const args = expr.arguments ?? [];
 
+      // (#3097) JS-host lane `new <TA>(buffer[, byteOffset[, length]])`:
+      // route through the host construct bridge (real host TypedArray view
+      // over the canonical host ArrayBuffer) instead of the numeric-length
+      // fallback below, which coerced the buffer struct to NaN → a length-0
+      // vec. Standalone keeps the native `$__ta_view` paths (B1/B2 below).
+      if (hostTaBufferArgSymName(ctx, args) !== undefined) {
+        const hostTa = emitHostTaBufferConstruct(ctx, fctx, expr.expression.text, args);
+        if (hostTa) return hostTa;
+      }
+
       if (args.length === 0) {
         // new TypedArray() → empty array, length 0
         fctx.body.push({ op: "i32.const", value: 0 }); // length = 0
@@ -4806,6 +4920,13 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
       const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
       const args = expr.arguments ?? [];
+
+      // (#3097) JS-host lane buffer-arg construction — see the matching gate
+      // in the identifier-keyed TypedArray branch above.
+      if (hostTaBufferArgSymName(ctx, args) !== undefined) {
+        const hostTa = emitHostTaBufferConstruct(ctx, fctx, className, args);
+        if (hostTa) return hostTa;
+      }
 
       if (args.length === 0) {
         // new Uint8Array() → empty array

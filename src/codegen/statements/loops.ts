@@ -5121,10 +5121,14 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
 
   // #1665: Wasm-native generator for-of. When the iterable is a native
   // generator state struct (the value produced by a `function*` declaration
-  // under --target wasi/standalone), drive the loop via the generator's resume
-  // function — no JS-host iterator protocol, no #681 gate. The subject value is
-  // already on the stack from compileExpression above.
-  if ((ctx.standalone || ctx.wasi) && (iterableType.kind === "ref" || iterableType.kind === "ref_null")) {
+  // under --target wasi/standalone — or, since #3050, a try-region generator
+  // under the JS host), drive the loop via the generator's resume function — no
+  // JS-host iterator protocol, no #681 gate. TYPE-driven, not mode-driven: the
+  // state-struct type only exists when the generator registered natively, and
+  // the host iterator protocol cannot iterate a WasmGC struct (a #3050
+  // host-lane native generator consumed by for-of summed 0). The subject value
+  // is already on the stack from compileExpression above.
+  if (iterableType.kind === "ref" || iterableType.kind === "ref_null") {
     const genInfo = nativeGeneratorInfoForForOfSubject(ctx, iterableType);
     if (genInfo && tryCompileNativeGeneratorForOf(ctx, fctx, stmt, iterableType, genInfo)) {
       return;

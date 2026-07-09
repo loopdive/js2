@@ -39,6 +39,7 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
+import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -155,6 +156,22 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   if ((ctx.standalone || ctx.wasi) && VEC_MUTATE_METHODS.has(methodName) && isVecMutateForm(methodName, arity)) {
     getOrRegisterVecBaseType(ctx);
     addUnionImportsViaRegistry(ctx); // __box_number for the push new-length result
+  }
+
+  // (#3098) For the callback-taking array HOFs (map/filter/forEach/find*/
+  // every/some/reduce/reduceRight), emit the native loop helper `__hof_<name>`
+  // NOW (append-only defined funcs; the fill only READS funcMap — #1719) and
+  // register the `$__vec_base` supertype for the fill's brand test. The fill
+  // adds a `$__vec_base`/`$ObjVec` arm that runs the loop natively and invokes
+  // the callback through `__apply_closure` — retiring the `env.__make_callback`
+  // host bridge on this lane (unsatisfiable standalone: the import leak made
+  // the whole module fail to instantiate). Standalone only: the
+  // `__extern_get_idx` vec/array-like arms the loop reads through are emitted
+  // only under `ctx.standalone` (see `objArrayLikeArms` in object-runtime.ts —
+  // same gate as the vararg dispatcher above).
+  if (ctx.standalone && NATIVE_HOF_METHODS.has(methodName) && arity >= 1) {
+    getOrRegisterVecBaseType(ctx);
+    ensureNativeArrayHof(ctx, methodName);
   }
 
   // Signature: (recv, arg0..arg{arity-1}) all externref → externref.
@@ -587,6 +604,54 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
             then: mutArmBody,
+            else: current,
+          } as Instr,
+        ];
+      }
+    }
+
+    // (#3098) Native array-HOF arm for a genuinely-`any` array receiver
+    // (`const a: any = […]; a.map(cb)`). Matches BOTH dynamic array reps:
+    // the `$__vec_base`-subtyped wasm vec carriers (array literals held in
+    // `any`) AND the `$ObjVec` boxed-any carrier (enumeration results,
+    // `map`/`filter` outputs — so chained HOFs work). Routes to the
+    // `__hof_<name>` native loop (emitted at reserve time), which invokes the
+    // callback via `__apply_closure` — no `env.__make_callback` host bridge.
+    // Callback signature per §23.1.3.*: predicate/map family
+    // `__hof_<name>(recv, cb, thisArg)` — dispatcher arity 1 passes
+    // undefined thisArg, arity ≥2 forwards arg1 (extra args ignored per
+    // spec); reduce family `__hof_<name>(recv, cb, init, hasInit)` — arity 1
+    // means no initial value. Standalone only (gated at reserve; the helper
+    // is simply absent otherwise). Sits UNDER the closed-struct arms so a
+    // user object-literal `{ map(cb){…} }` still wins.
+    {
+      const hofFuncIdx = ctx.funcMap.get(`__hof_${methodName}`);
+      const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
+      if (
+        ctx.standalone &&
+        arity >= 1 &&
+        hofFuncIdx !== undefined &&
+        ctx.vecBaseTypeIdx >= 0 &&
+        objVecTypeIdx !== undefined
+      ) {
+        const isReduceForm = methodName === "reduce" || methodName === "reduceRight";
+        const hofCall: Instr[] = [
+          { op: "local.get", index: 0 } as Instr, // recv (externref)
+          { op: "local.get", index: 1 } as Instr, // cb
+          ...(arity >= 2 ? [{ op: "local.get", index: 2 } as Instr] : [{ op: "ref.null.extern" } as Instr]), // thisArg | init
+          ...(isReduceForm ? [{ op: "i32.const", value: arity >= 2 ? 1 : 0 } as Instr] : []), // hasInit
+          { op: "call", funcIdx: hofFuncIdx } as Instr,
+        ];
+        current = [
+          { op: "local.get", index: anyLocalIdx } as Instr,
+          { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx } as Instr,
+          { op: "local.get", index: anyLocalIdx } as Instr,
+          { op: "ref.test", typeIdx: objVecTypeIdx } as Instr,
+          { op: "i32.or" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: hofCall,
             else: current,
           } as Instr,
         ];

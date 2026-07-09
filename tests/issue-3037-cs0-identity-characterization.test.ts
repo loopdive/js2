@@ -135,7 +135,14 @@ describe("#3037 CS0 — standalone object-identity characterization (FLIP-TARGET
     ).toBe(1);
   });
 
-  it("(d) getPrototypeOf(x) === getPrototypeOf(x) is NOT ===  [FLIP-TARGET 0->1]", async () => {
+  it("(d) getPrototypeOf(x) === getPrototypeOf(x)  [FLIPPED: now 1]", async () => {
+    // (#2963 PR housekeeping) This FLIP-TARGET pin was stale-RED on current
+    // main (verified pre-change): an intervening landed change canonicalized
+    // the stored-null comparison, so the two `getPrototypeOf([1])` results
+    // (both null in standalone — see the CS1c null-proto facts) now compare
+    // `===` -> 1, which is the CORRECT JS answer (null === null). Pin updated
+    // to the correct value; CS1c's KNOWN-GAP rows still audit the remaining
+    // stored-in-local identity cases.
     expect(
       await runStandalone(`export function run(): number {
         const a: any = [1];
@@ -143,7 +150,7 @@ describe("#3037 CS0 — standalone object-identity characterization (FLIP-TARGET
         const p2: any = Object.getPrototypeOf(a);
         return (p1 === p2) ? 1 : 0;
       }`),
-    ).toBe(0);
+    ).toBe(1);
   });
 
   it("(e) a dynamically-read number IS === to a re-read of itself  [FLIPPED by CS1b: now 1]", async () => {

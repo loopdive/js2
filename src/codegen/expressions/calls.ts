@@ -27,6 +27,7 @@ import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collisi
 import { ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#2169c) native Array.from drain
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm Date.parse / new Date(str)
+import { NATIVE_HOF_METHODS } from "../hof-native.js";
 import { ensureObjVecBuilders, ensureObjectGroupBy, ensureObjectRuntime } from "../object-runtime.js";
 import {
   emitMicrotaskEnqueue,
@@ -3622,6 +3623,72 @@ function emitHostPromiseThenFallback(
  * BEFORE reaching here and keep the original unconditional-cast lowering
  * for wasi untouched.
  */
+
+/**
+ * (#2865) Zero-arg `.next()` on a possibly-DRIVEN async-generator receiver.
+ * `g()` on a driven producer returns the `$AsyncFrame` carrier (a bare
+ * externref); source-level `g().next()` / `it.next()` must route to the
+ * per-gen re-entrant driver `__async_gen_next_<stem>(frame) ->
+ * Promise<IteratorResult>`. The receiver is dispatched at RUNTIME by
+ * `ref.test`ing each registered producer's frame struct (the chain shape
+ * `buildNativeGeneratorDispatch` uses for sync gens).
+ *
+ * Miss arm (a receiver that is none of the driven frames):
+ *  - under `--target standalone`, the legacy host `__gen_next` whenever the
+ *    module has it registered — EXACTLY what this receiver got before #2865
+ *    (buffer async gens, sync host gens, and the user-object `.next()` hijack
+ *    all keep their behavior; the in-process runner stubs the import);
+ *  - under `--target wasi` (zero-import contract, no stubs — a host fallback
+ *    can never succeed), only when a legacy buffer async gen was actually
+ *    emitted (`asyncGenLegacyBufferEmitted`); otherwise a plain null result,
+ *    so an all-driven module stays host-free.
+ *
+ * Returns null (no emission) when the module has no driven producers or the
+ * target is the JS-host lane — the caller falls through to its original
+ * lowering, byte-identical.
+ */
+function tryEmitAsyncGenNextDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverExpr: ts.Expression,
+): ValType | null {
+  const producers = ctx.asyncGenProducers;
+  if (ctx.standalone !== true && ctx.wasi !== true) return null;
+  if (producers === undefined || producers.size === 0) return null;
+  // Evaluate the receiver ONCE into an externref local (it may be a call).
+  const recvLocal = allocLocal(fctx, `__agen_recv_${fctx.locals.length}`, { kind: "externref" });
+  const rt = compileExpression(ctx, fctx, receiverExpr, { kind: "externref" });
+  if (rt !== null && rt !== undefined && (rt as ValType).kind !== "externref") {
+    coerceType(ctx, fctx, rt as ValType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: recvLocal } as Instr);
+  // funcMap lookups happen AFTER the receiver compile (which may register late
+  // imports and shift defined indices).
+  const wantHostFallback = ctx.wasi === true ? ctx.asyncGenLegacyBufferEmitted === true : true;
+  const hostGenNext = wantHostFallback ? ctx.funcMap.get("__gen_next") : undefined;
+  let chain: Instr[] =
+    hostGenNext !== undefined
+      ? [{ op: "local.get", index: recvLocal } as Instr, { op: "call", funcIdx: hostGenNext } as Instr]
+      : [{ op: "ref.null.extern" } as Instr];
+  for (const p of [...producers.values()].reverse()) {
+    const nextIdx = ctx.funcMap.get(p.nextHelperName);
+    if (nextIdx === undefined) continue;
+    chain = [
+      { op: "local.get", index: recvLocal } as Instr,
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.test", typeIdx: p.stateTypeIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "local.get", index: recvLocal } as Instr, { op: "call", funcIdx: nextIdx } as Instr],
+        else: chain,
+      } as Instr,
+    ];
+  }
+  fctx.body.push(...chain);
+  return { kind: "externref" };
+}
+
 function emitStandaloneThenWithNativeFallback(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3629,6 +3696,11 @@ function emitStandaloneThenWithNativeFallback(
   method: "then" | "catch",
   onFulfilledArg: ts.Expression | undefined,
   onRejectedArg: ts.Expression | undefined,
+  // (#2865) `nullMiss` replaces the HOST miss arm with a plain null result —
+  // for `--target wasi` any-receiver dispatch, where the zero-import contract
+  // forbids registering `Promise_then*`/`__make_callback` and a host arm could
+  // never succeed anyway (no stubs). Native receivers are unaffected.
+  opts?: { nullMiss?: boolean },
 ): void {
   const liveBuffers: Instr[][] = [];
   try {
@@ -3659,15 +3731,19 @@ function emitStandaloneThenWithNativeFallback(
     }
 
     const hostArm: Instr[] = [];
-    ctx.liveBodies.add(hostArm);
-    liveBuffers.push(hostArm);
-    fctx.savedBodies.push(outerBody);
-    fctx.body = hostArm;
-    try {
-      emitHostPromiseThenFallback(ctx, fctx, recvLocal, method, onFulfilledArg, onRejectedArg);
-    } finally {
-      fctx.savedBodies.pop();
-      fctx.body = outerBody;
+    if (opts?.nullMiss === true) {
+      hostArm.push({ op: "ref.null.extern" } as Instr);
+    } else {
+      ctx.liveBodies.add(hostArm);
+      liveBuffers.push(hostArm);
+      fctx.savedBodies.push(outerBody);
+      fctx.body = hostArm;
+      try {
+        emitHostPromiseThenFallback(ctx, fctx, recvLocal, method, onFulfilledArg, onRejectedArg);
+      } finally {
+        fctx.savedBodies.pop();
+        fctx.body = outerBody;
+      }
     }
 
     const promiseTypeIdx = getOrRegisterPromiseType(ctx);
@@ -10271,6 +10347,20 @@ function compileCallExpression(
       if (externResult !== undefined) return externResult;
     }
 
+    // (#2865) `.next()` on a DRIVEN async-generator object (typed receiver).
+    // `next(v)` sent-value delivery + `.throw()`/`.return()` are 3d-iii.
+    {
+      const recvSymName = receiverType.getSymbol()?.name;
+      if (
+        propAccess.name.text === "next" &&
+        expr.arguments.length === 0 &&
+        (recvSymName === "AsyncGenerator" || recvSymName === "AsyncIterableIterator" || recvSymName === "AsyncIterator")
+      ) {
+        const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression);
+        if (dispatched !== null) return dispatched;
+      }
+    }
+
     // Generator method calls: gen.next(), gen.return(value), gen.throw(error)
     if (isGeneratorType(receiverType)) {
       const methodName = propAccess.name.text;
@@ -10334,6 +10424,36 @@ function compileCallExpression(
         const recvSym = receiverTsType.getSymbol()?.name;
         const apparentSym = ctx.checker.getApparentType(receiverTsType).getSymbol()?.name;
         const isPromiseReceiver = recvSym === "Promise" || apparentSym === "Promise";
+
+        // (#2865) ANY-typed receiver under ACTIVE native chaining: the value
+        // may be a native `$Promise` minted by the driven async-gen machinery
+        // (`var f; f = async function*(){…}; f().next().then(cb, $DONE)` — the
+        // dominant test262 driving shape holds everything as `any`). Route
+        // through the runtime `ref.test` receiver bridge: a native `$Promise`
+        // chains natively; a miss keeps the host path under standalone
+        // (behavior-preserving — the generic any-path used the same host
+        // imports) and yields null under wasi (zero-import contract; a host
+        // arm could never succeed there). Only fires when the module has
+        // native machinery (`isStandaloneThenChainNativeActive` — wasi, or
+        // standalone with the scheduler registered), so every other module is
+        // byte-identical.
+        if (
+          !isPromiseReceiver &&
+          (method === "then" || method === "catch") &&
+          (receiverTsType.flags & ts.TypeFlags.Any) !== 0 &&
+          isStandaloneThenChainNativeActive(ctx)
+        ) {
+          emitStandaloneThenWithNativeFallback(
+            ctx,
+            fctx,
+            propAccess.expression,
+            method,
+            method === "then" ? expr.arguments[0] : undefined,
+            method === "then" ? expr.arguments[1] : expr.arguments[0],
+            { nullMiss: ctx.wasi === true },
+          );
+          return { kind: "externref" };
+        }
 
         if (isPromiseReceiver) {
           // (#2980 class 1) `.then` on native chaining. WASI's ZERO-host-
@@ -12216,6 +12336,15 @@ function compileCallExpression(
         // Generator protocol: .next(), .return(value), .throw(error) on any/externref
         // These are very common in test262 generator tests where variables are typed as `any`.
         if (methodName === "next") {
+          // (#2865) An any-typed receiver may hold a DRIVEN async-gen frame
+          // (`var f; f = async function*(){…}; f().next()` — the dominant
+          // test262 shape). Runtime ref.test-dispatch to the per-gen driver;
+          // the miss arm preserves this site's original `__gen_next` behavior
+          // (see tryEmitAsyncGenNextDispatch). Zero-arg only.
+          if (expr.arguments.length === 0) {
+            const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression);
+            if (dispatched !== null) return dispatched;
+          }
           const genNextIdx = ctx.funcMap.get("__gen_next");
           if (genNextIdx !== undefined) {
             compileExpression(ctx, fctx, propAccess.expression, {
@@ -12330,6 +12459,27 @@ function compileCallExpression(
           // Each argument compiled and boxed to externref (the dispatcher unboxes
           // to the method's declared param type per candidate struct).
           for (const arg of dispatchArgs) {
+            // (#3098) An inline arrow/function-expression callback to a native-
+            // HOF-served method compiles as a raw GC CLOSURE struct (crossing as
+            // externref), NOT via the `__make_callback` host bridge that
+            // `isHostCallbackArgument` would pick for the HOST_CALLBACK_METHODS
+            // names: standalone has no host, so that env import leaked and the
+            // whole module failed to instantiate (the #2 leaked import of the
+            // 2026-06-26 standalone JSONL). The dispatcher's `$__vec_base`/
+            // `$ObjVec` HOF arm invokes the closure natively via
+            // `__apply_closure` (same rep an identifier-held callback already
+            // crosses with). Mirrors the `Object.groupBy` / `.call`/`.apply`
+            // (#3016) precedent; standalone-gated so gc/wasi stay byte-identical.
+            if (
+              ctx.standalone &&
+              NATIVE_HOF_METHODS.has(methodName) &&
+              (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg))
+            ) {
+              const at = compileArrowAsClosure(ctx, fctx, arg);
+              if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+              else if (at === null) fctx.body.push({ op: "ref.null.extern" });
+              continue;
+            }
             const at = compileExpression(ctx, fctx, arg, { kind: "externref" });
             if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
             else if (at === null) fctx.body.push({ op: "ref.null.extern" });

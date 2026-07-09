@@ -6040,9 +6040,6 @@ function relOperandToF64(v: IrValueId, t: IrType, cx: LowerCtx): IrValueId | nul
   return null;
 }
 
-/** Result-type hints aren't used in Phase 1 (we always know from the op). */
-export type _Unused = IrUnop;
-
 // ---------------------------------------------------------------------------
 // Closure / nested-function lowering (#1169c — IR Phase 4 Slice 3)
 // ---------------------------------------------------------------------------
@@ -6451,15 +6448,6 @@ function collectOuterWrites(fn: ts.FunctionDeclaration | ts.ArrowFunction | ts.F
   forEachChild(body, visit);
   return writes;
 }
-
-// `closureSignatureEquals` is currently used elsewhere; keep an
-// explicit reference here so unused-export linting doesn't flag it
-// when only the lowerer consumes it.
-export const _CLOSURE_SIG_EQ_REF = closureSignatureEquals;
-
-// Reference ValType so the import isn't unused (used transitively via
-// signature param types but TS may not see it).
-export type _UnusedVal = ValType;
 
 // ---------------------------------------------------------------------------
 // Throw / try / catch / finally lowering (#1169h — IR Phase 4 Slice 9)

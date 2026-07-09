@@ -197,6 +197,17 @@ jobs:
               cp "$PROMOTE_SNAPSHOT/$f" "$f"
               git add -f "$f"
             done <<< "$PROMOTE_FILES"
+            # (#3115) STALE-CHECKOUT GUARD (same as promote-baseline). The coercion
+            # baseline is a pure src/codegen/** grep; the `--update` above computed
+            # it against this hourly job's checkout, but the re-anchor
+            # `git checkout -f -B _summary_sync_tmp deploykey/main` just replaced the
+            # working tree with main's current tip, which may have advanced. Banking
+            # the pre-re-anchor value over the advanced source wedges the required
+            # check:coercion-sites gate on main. Recompute against the re-anchored
+            # tree so the committed baseline always matches the tree it lands on.
+            node scripts/check-coercion-sites.mjs --update || \
+              echo "WARN: coercion-site baseline recompute on re-anchored tip failed (non-fatal)"
+            git add -f scripts/coercion-sites-baseline.json 2>/dev/null || true
             if git diff --cached --quiet; then
               echo "Summary already current on main after re-anchor — nothing to push."
               PUSHED=1

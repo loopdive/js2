@@ -34,9 +34,6 @@ const OWNERSHIP_RANK: Readonly<Record<Ownership, number>> = {
 
 const OWNERSHIP_BY_RANK: readonly Ownership[] = ["owned", "borrowed", "shared", "escaped"];
 
-/** Bottom of the ownership lattice — the most precise classification. */
-export const OWNERSHIP_BOTTOM: Ownership = "owned";
-
 /** Top of the ownership lattice — the conservative default. */
 export const OWNERSHIP_TOP: Ownership = "escaped";
 

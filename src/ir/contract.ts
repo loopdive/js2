@@ -57,17 +57,3 @@ export interface IrCoverageEntry {
    */
   readonly reason?: string;
 }
-
-/**
- * The serialized module document's header (#3030 D1). The `functions` array
- * (IR bodies for every `carrier: "ir"` manifest entry) is typed by the T3
- * serializer; its shape is normative in docs/ir/ir-module.schema.json.
- */
-export interface IrModuleDocumentHeader {
-  /** MUST equal the emitting compiler's `IR_FORMAT_VERSION`. */
-  readonly irVersion: string;
-  /** Source file the module was compiled from (diagnostic, not identity). */
-  readonly source?: string;
-  /** Every function in the module — IR-carried or not (D3.7). */
-  readonly coverage: readonly IrCoverageEntry[];
-}

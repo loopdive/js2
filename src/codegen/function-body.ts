@@ -1117,6 +1117,8 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // the AST node directly to detect async function* declarations.
       const isAsyncGenerator = hasAsyncModifier(decl);
       const createGenName = isAsyncGenerator ? "__create_async_generator" : "__create_generator";
+      // (#2865) Record legacy-buffer async gens so the .next() dispatch keeps a host miss arm.
+      if (createGenName === "__create_async_generator") ctx.asyncGenLegacyBufferEmitted = true;
       const createGenIdx = ctx.funcMap.get(createGenName)!;
       fctx.body.push({ op: "local.get", index: bufferLocal });
       fctx.body.push({ op: "local.get", index: pendingThrowLocal });

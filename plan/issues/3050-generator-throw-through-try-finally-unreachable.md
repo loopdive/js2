@@ -1,7 +1,10 @@
 ---
 id: 3050
 title: "GeneratorPrototype.throw() resumption through try/finally / try/catch hits `unreachable` (6 fails)"
-status: ready
+status: done
+completed: 2026-07-09
+assignee: ttraenkler/fable-3050
+pr: 2807
 sprint: current
 priority: medium
 horizon: m
@@ -239,6 +242,77 @@ generators-native.ts:2027-2029 does for abrupt). Concretely:
    try/finally (`language/statements/try/*`) — the eager→native promotion of these
    shapes must not perturb them.
 4. Full `merge_group` (generator lowering is broad; standalone floor green).
+
+## Implementation (2026-07-09, fable-3050) — WHY it took five mechanisms, not two
+
+**All 6 target files pass** (`runTest262File`, default lane), plus 15 more
+flips across `GeneratorPrototype/{throw,return}/try-*-nested-*` and
+`language/expressions/generators/dstr/*` — 21 total, 0 real regressions in a
+scoped 680-file sweep. The architect's two sub-slices were necessary but NOT
+sufficient; the chain of root causes:
+
+1. **Try-region state machine** (`generators-native.ts`) — as specced:
+   `TryRegionPlan` + innermost-first `UnwindEntry` chains per yield
+   (`replay` legacy finalizers | `catch` | `finally`), catch/finally blocks
+   lowered as real states, a trailing i32 `pending` completion field (payloads
+   reuse `abrupt`/`error`), a `finally-exit` router terminator, and wasm
+   `try/catch $exc` wraps (+ `catch_all` → `__get_caught_exception` in host
+   mode, acquired up-front) routing runtime throws positionally. Legacy
+   finally-only/yield-free shapes keep the byte-identical `abruptResume` path.
+   Bounded bails: return-through-finally, `yield*` inside a region, a yielding
+   finally nested in another yielding finally, non-identifier catch params.
+
+2. **The lane blind spot**: `isNativeGeneratorCandidate` hard-required
+   standalone/wasi, but the 6 fails are DEFAULT-lane. The native machine now
+   also admits **JS-host** free `function*` declarations whose body carries a
+   try-region shape (catch across yield / yielding finally) — exactly the
+   shapes the eager buffer provably cannot express. All other host generators
+   keep the eager path.
+
+3. **The harness blind spot**: `wrapTest` nests every test body in
+   `export function test()`, so ALL target generators are NESTED and CAPTURE
+   outer vars (`unreachable`) — the #2203-deferred slice. Captures now ride as
+   **leading synthetic params** (nested-declarations.ts): mutable captures are
+   already `ref $cell` params in the has-captures lift, the state struct
+   stores them as ordinary `param_*` fields, the existing
+   `nestedFuncCaptures` call-site prepend supplies them unchanged, and the
+   resume fn registers cells in `boxedCaptures` (the lifted-closure
+   mechanism) so writes propagate to the enclosing frame. Scoped to try-region
+   bodies; bails on TDZ-flagged captures and async generators.
+
+4. **Two latent bugs the matrix exposed**:
+   - `done` result field boxed as **number** through the dyn any-receiver
+     member read (`result.done === true` failed as `1 !== true`): the field is
+     now boolean-BRANDED and the member-get dispatcher boxes branded i32 via
+     `__box_boolean`.
+   - **Trailing statements re-ran on post-completion `.next()`**: the final
+     fallthrough state doubled as the completed-generator dispatch target. A
+     dedicated empty done state is minted when the final state carries
+     statements (byte-identical otherwise).
+
+5. **Host-escape safety (the hard-won lesson)**: a WasmGC state struct is not
+   host-iterable. The #1665 native for-of drive was standalone-gated → now
+   TYPE-driven (host-lane for-of summed 0 without it). An eager outer's
+   `yield* inner()` over a native inner silently yielded NOTHING — and the
+   same class covers for-await-of, `Promise.all(g())`, `new Map(g())`…
+   Host-lane native routing therefore requires a conservative **use-site
+   safety walk**: every call-site result must flow into an allowlisted
+   consumer (`.next/.throw/.return` member calls incl. via closure-captured
+   bindings, for-of sans await, spread, `Array.from`, destructuring); anything
+   else keeps the eager path. Ditto a body referencing an unresolvable
+   identifier (host semantics ride #928's deferred-pending-throw).
+
+**Follow-up candidates** (not blocking): widen host-lane routing beyond
+try-region bodies once the safety walk matures; `return`-through-finally;
+`yield*` inside regions; capture support for the standalone lane beyond
+try-region shapes (would grow the host-free floor); teach `coercionPlan` the
+boolean brand generally (the dispatcher fix is scoped).
+
+Tests: `tests/issue-3050.test.ts` (10 cases, host + standalone). Validation:
+scoped 680-file sweep (0 real regressions; 5 flagged files fail identically on
+main under the in-process runner; realm-pollution error storms reproduce on
+main), 16 generator vitest files (140 tests) green, equivalence
+generator/iterator/for-of subset green (one pre-existing main failure).
 
 ## arch-3049 re-verification (2026-07-06) — spec CONFIRMED trustworthy
 

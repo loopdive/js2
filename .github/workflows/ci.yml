@@ -111,6 +111,22 @@ jobs:
         # reseeds; --update-on-decrease banks improvements).
         run: pnpm run check:oracle-ratchet
 
+      - name: LOC-regrowth ratchet (#3102)
+        # CHANGE-SCOPED: fails only when THIS change-set grows a src file it
+        # touches past its recorded ceiling, crosses the 1,500 LOC threshold
+        # newly, or is net-additive over the total ceiling. Scoping to the diff
+        # vs `git merge-base origin/main HEAD` keeps an unrelated main advance
+        # from wedging the merge_group on a file the PR never touched (the #2808
+        # wedge). Needs origin/main for the merge-base; the fetch is best-effort
+        # and the gate audits the whole tree if it can't be resolved. Baseline:
+        # scripts/loc-budget-baseline.json (--update for intentional growth,
+        # visible in review; --update-on-decrease banks shrinkage). The god-file
+        # splits (#3103/#3104/…) never stick without this brake — see
+        # plan/log/compiler-consolidation-plan.md.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:loc-budget
+
       - name: IR adoption table freshness (#2145)
         # Fails when plan/log/ir-adoption.md drifts from its generator data or
         # from the IrFallbackReason union in src/ir/select.ts. Regenerate with

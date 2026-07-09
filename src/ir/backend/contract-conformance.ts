@@ -384,6 +384,3 @@ export function makeStubBackend(): BackendContract<StubSink, string, string, str
     assembler: new StubModuleAssembler(),
   };
 }
-
-// The in-tree production legality factory also satisfies the contract shape.
-export const wasmGcLegality: BackendLegality = legalityFor("wasmgc");

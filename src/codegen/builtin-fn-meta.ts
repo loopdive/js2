@@ -233,11 +233,6 @@ export function ensureBuiltinFnMetaType(
   return typeIdx;
 }
 
-/** Bit set in `bfnstate` when the `name` own property was deleted. */
-export const BFN_STATE_NAME_DELETED = 1;
-/** Bit set in `bfnstate` when the `length` own property was deleted. */
-export const BFN_STATE_LENGTH_DELETED = 2;
-
 /**
  * The instruction sequence that materializes a builtin closure VALUE from a
  * factory result. A meta-typed closure struct has the extra `(mut i32)

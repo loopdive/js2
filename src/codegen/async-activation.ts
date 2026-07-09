@@ -27,7 +27,12 @@ import {
   emitAsyncStateMachine,
   splitBodyAtAwait,
 } from "./async-cps.js";
-import { emitAsyncFrameStateMachine, asyncFnNeedsDrive, asyncFnNeedsHostDrive } from "./async-frame.js";
+import {
+  emitAsyncFrameStateMachine,
+  asyncFnNeedsDrive,
+  asyncFnNeedsHostDrive,
+  asyncGenConsumerNeedsDrive,
+} from "./async-frame.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js";
 
 /**
@@ -86,6 +91,20 @@ function decideAsyncActivation(
     // just the single canonical await `asyncFnNeedsCps` gates on. For a single
     // await the verdict is identical, so wasi single-await routing is unchanged.
     if (asyncFnNeedsDrive(ctx, decl, asyncPlan)) return { lane: "drive", plan: asyncPlan };
+    return null;
+  }
+
+  // (#2865) `--target standalone` with the native-`$Promise` CARRIER gate still
+  // OFF (#2980 — the measured widen decision): activate the drive lane ONLY for
+  // the for-await-over-async-GENERATOR consumer shape. Its every suspension
+  // awaits a promise MINTED by the machine itself (the producer's
+  // `__async_gen_next_<name>` next()-promise — a native `$Promise` on every
+  // lane), so it is carrier-independent. Plain awaits / Promise statics /
+  // boxed-array for-await stay on the legacy path until the carrier widen —
+  // widening those here would be exactly the piecemeal flip #2980 rule 2 declines.
+  if (ctx.standalone === true) {
+    const asyncPlan = analyzeAsyncBody(ctx, decl);
+    if (asyncGenConsumerNeedsDrive(ctx, decl, asyncPlan)) return { lane: "drive", plan: asyncPlan };
     return null;
   }
 
@@ -177,6 +196,17 @@ export function planAsyncClosureActivation(
   isAsync: boolean,
 ): AsyncActivationPlan | null {
   const decision = decideAsyncActivation(ctx, decl, isAsync, /*allowNonDeclaration*/ true);
+  // (#2865) Exception to the phase-2 park below: the for-await-over-async-
+  // GENERATOR consumer drive IS validated in the lifted-closure context (its
+  // machine is self-contained — every suspension awaits the producer's own
+  // `__async_gen_next_*` promise; no continuation capture-struct / `__self`
+  // interplay). Without this, an arrow/fn-expr consumer stays legacy while the
+  // producer returns the driven frame carrier — the legacy `__iterator` then
+  // ref.cast-traps on the frame. Every OTHER drive/host-drive closure shape
+  // stays parked (the #2646 33-regression class).
+  if (decision !== null && decision.lane === "drive" && asyncGenConsumerNeedsDrive(ctx, decl, decision.plan)) {
+    return decision;
+  }
   // Phase-2 scope: closures activate ONLY the single-tail-await CPS lane. The
   // host-drive ("host-drive") and native-drive ("drive") lanes activate
   // multi-await / try-finally-across-await shapes whose continuation

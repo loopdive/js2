@@ -34,12 +34,6 @@ export function isLinearU8SafeBinding(ctx: CodegenContext, node: ts.Node): boole
   return !!sym && ctx.linearUint8.safeBindings.has(sym);
 }
 
-export function isLinearU8LocalOnlyBinding(ctx: CodegenContext, node: ts.Node): boolean {
-  if (!ctx.linearUint8 || !ts.isIdentifier(node)) return false;
-  const sym = ctx.checker.getSymbolAtLocation(node);
-  return !!sym && ctx.linearUint8.localOnlyBindings.has(sym);
-}
-
 export function isLinearU8RepresentableNew(ctx: CodegenContext, newExpr: ts.NewExpression): boolean {
   const args = newExpr.arguments;
   if (!args || args.length === 0) return true; // `new Uint8Array()` => length 0

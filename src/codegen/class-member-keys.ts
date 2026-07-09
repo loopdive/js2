@@ -54,3 +54,43 @@ export function classMemberFuncKey(ctx: CodegenContext, fullName: string): strin
   while (ctx.topLevelFunctionNames.has(key)) key = `__cm$${fullName}$${n++}`;
   return key;
 }
+
+/**
+ * (#1394 / #2963) Walk the class-parent chain to the TOPMOST class that owns
+ * the same method funcIdx. When `class D extends C { }` inherits `m` from C,
+ * the codegen registers `D_m` with the SAME funcIdx as `C_m`
+ * (class-bodies.ts) — two distinct cache-key names would mint two closures
+ * with different identity. Spec'd behaviour: method identity follows the
+ * OWNING class (`(new D()).m === C.prototype.m`), so canonicalise the cache
+ * key to the topmost inheriting owner. Stops at an OVERRIDE (parent has a
+ * DIFFERENT funcIdx for the same member name).
+ *
+ * Extracted from the typed method-value read (`compileInstanceMember`'s
+ * inline `ownerNameForChain`) so the member-get dispatcher (#2963 dynamic
+ * `any`-receiver method reads) resolves the IDENTICAL owner → identical
+ * cache global → `c.m === C.prototype.m` holds across both read paths.
+ */
+export function resolveMethodOwnerClass(ctx: CodegenContext, start: string, propName: string): string {
+  const startFull = `${start}_${propName}`;
+  const startIdx = ctx.funcMap.get(classMemberFuncKey(ctx, startFull));
+  if (startIdx === undefined) return start; // not a method we know
+  let bestOwner = start;
+  let cls: string | undefined = ctx.classParentMap.get(start);
+  const seen = new Set<string>([start]);
+  while (cls && !seen.has(cls)) {
+    seen.add(cls);
+    const full = `${cls}_${propName}`;
+    const parentIdx = ctx.funcMap.get(classMemberFuncKey(ctx, full));
+    if (parentIdx === undefined) break; // parent doesn't have this method
+    if (parentIdx === startIdx) {
+      // Inherited (same funcIdx) — keep walking up.
+      bestOwner = cls;
+      cls = ctx.classParentMap.get(cls);
+      continue;
+    }
+    // Parent has a DIFFERENT funcIdx → start overrides the method.
+    // Identity must use start's cache, not the parent's.
+    break;
+  }
+  return bestOwner;
+}

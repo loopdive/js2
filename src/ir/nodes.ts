@@ -50,8 +50,6 @@ export interface IrTypeRef {
   readonly name: string;
 }
 
-export type IrSymRef = IrFuncRef | IrGlobalRef | IrTypeRef;
-
 // ---------------------------------------------------------------------------
 // IR types
 // ---------------------------------------------------------------------------
@@ -2475,22 +2473,6 @@ export interface IrFunction {
 
 export interface IrModule {
   readonly functions: readonly IrFunction[];
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-export function isIrFuncRef(x: unknown): x is IrFuncRef {
-  return typeof x === "object" && x !== null && (x as { kind?: unknown }).kind === "func";
-}
-
-export function isIrGlobalRef(x: unknown): x is IrGlobalRef {
-  return typeof x === "object" && x !== null && (x as { kind?: unknown }).kind === "global";
-}
-
-export function isIrTypeRef(x: unknown): x is IrTypeRef {
-  return typeof x === "object" && x !== null && (x as { kind?: unknown }).kind === "type";
 }
 
 // ---------------------------------------------------------------------------

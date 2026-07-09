@@ -23,11 +23,6 @@ import { ReOp } from "./bytecode.js";
 /** Matches the Wasm VM's step cap. Tunable; documented in the issue. */
 export const REGEX_STEP_CAP = 1_000_000;
 
-export interface VmMatch {
-  /** Capture slots: `[g0start,g0end,g1start,g1end,…]`; -1 = unset. */
-  caps: Int32Array;
-}
-
 interface Frame {
   pc: number;
   sp: number;

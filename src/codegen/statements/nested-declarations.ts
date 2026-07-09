@@ -21,9 +21,11 @@ import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
 import {
+  bodyHasNewTryRegionAcrossYield,
   compileNativeGeneratorFunction,
   isNativeGeneratorCandidate,
   registerNativeGenerator,
+  type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowString, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
 import {
@@ -34,6 +36,7 @@ import {
   extractConstantDefault,
   resolveWasmType,
 } from "../index.js";
+import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { ensureExnTag, nextModuleGlobalIdx } from "../registry/imports.js";
 import {
   addFuncType,
@@ -672,6 +675,15 @@ export function compileNestedFunctionDeclaration(
       // Wasm-native generator factory (builds + returns the state struct), the
       // same body the top-level path emits. No host imports, no JS buffer.
       compileNativeGeneratorFunction(ctx, liftedFctx, stmt, nativeGenInfo);
+    } else if (isGenerator && isAsync && isAsyncGenDriveCandidate(ctx, stmt)) {
+      // (#2865) NESTED async-generator producer (the dominant test262 shape —
+      // the runner wraps every test body inside `export function test()`, so
+      // the gen declaration is nested). Same interception the top-level
+      // `function-body.ts` path applies BEFORE the buffer/#680 arm: build the
+      // lazy `$AsyncFrame` carrier + the per-gen `__async_gen_next_<name>`
+      // driver on the async-frame CFG machine. No captures in this branch, so
+      // the frame captures the declared params only.
+      emitAsyncGenerator(ctx, liftedFctx, stmt);
     } else if (isGenerator) {
       // Generator function: eagerly evaluate body, collect yields into a JS array,
       // then wrap it with __create_generator to return a Generator-like object.
@@ -724,6 +736,8 @@ export function compileNestedFunctionDeclaration(
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
+      // (#2865) Record legacy-buffer async gens so the .next() dispatch keeps a host miss arm.
+      if (createGenName === "__create_async_generator") ctx.asyncGenLegacyBufferEmitted = true;
       const createGenIdx = ctx.funcMap.get(createGenName)!;
       liftedFctx.body.push({ op: "local.get", index: bufferLocal });
       liftedFctx.body.push({ op: "local.get", index: pendingThrowLocal });
@@ -780,7 +794,63 @@ export function compileNestedFunctionDeclaration(
     }));
     const captureParamTypes: ValType[] = [...valueCaptureParamTypes, ...tdzFlagParamTypes];
     const allParamTypes = [...captureParamTypes, ...paramTypes];
-    const funcTypeIdx = addFuncType(ctx, allParamTypes, results, `${funcName}_type`);
+
+    // (#3050) CAPTURING nested `function*` whose body needs the try-region
+    // machinery (catch across yield / yielding finally — shapes the eager
+    // buffer PROVABLY cannot express, GeneratorPrototype/throw/try-*): lower it
+    // on the native state machine with the captures riding as leading synthetic
+    // params. Mutable captures are already `ref $cell` params here, so writes
+    // inside resume states propagate to the enclosing frame through the shared
+    // cell; the state struct stores the cells/values as ordinary `param_*`
+    // fields and the call site's existing `nestedFuncCaptures` prepend supplies
+    // them — no call-site changes. Scope bails (keep today's eager path):
+    //   - TDZ-flagged captures (flag-box plumbing not modeled in the resume fn);
+    //   - async generators;
+    //   - anything the plan builder rejects (isNativeGeneratorCandidate).
+    // Generators withOUT a new-region shape keep the eager path in BOTH lanes —
+    // this is deliberately try-region-scoped so working eager/shim generators
+    // are untouched (#2172's no-capture native path is also unchanged).
+    let capturingNativeGen: ReturnType<typeof registerNativeGenerator> = null;
+    if (
+      isGenerator &&
+      !isAsync &&
+      tdzFlaggedCaptures.length === 0 &&
+      bodyHasNewTryRegionAcrossYield(stmt) &&
+      isNativeGeneratorCandidate(ctx, stmt)
+    ) {
+      const leadingCaptures: NativeGeneratorCaptureParam[] = captures.map((c, i) => {
+        const t = valueCaptureParamTypes[i]!;
+        if (c.mutable && (t.kind === "ref" || t.kind === "ref_null")) {
+          return {
+            name: c.name,
+            boxed: {
+              refCellTypeIdx: t.typeIdx,
+              // #2623: an already-boxed outer slot IS the cell — deref to its
+              // inner value type; a freshly-minted cell derefs to the local's.
+              valType: c.alreadyBoxed ? (c.boxedValType ?? { kind: "f64" }) : c.type,
+            },
+          };
+        }
+        // Immutable capture whose outer slot is already the canonical cell:
+        // deref through it too (mirrors the lifted-body registration below).
+        const outerBoxed = fctx.boxedCaptures?.get(c.name);
+        if (outerBoxed && (c.type.kind === "ref" || c.type.kind === "ref_null")) {
+          return {
+            name: c.name,
+            boxed: { refCellTypeIdx: outerBoxed.refCellTypeIdx, valType: outerBoxed.valType },
+          };
+        }
+        return { name: c.name };
+      });
+      capturingNativeGen = registerNativeGenerator(ctx, stmt, funcName, allParamTypes, false, leadingCaptures);
+      if (capturingNativeGen) {
+        // The generator factory returns the state struct, not a JS Generator object.
+        returnType = { kind: "ref", typeIdx: capturingNativeGen.stateTypeIdx };
+      }
+    }
+    const liftedResults: ValType[] = capturingNativeGen && returnType ? [returnType] : results;
+
+    const funcTypeIdx = addFuncType(ctx, allParamTypes, liftedResults, `${funcName}_type`);
     const liftedFctx: FunctionContext = {
       name: funcName,
       params: [
@@ -982,7 +1052,28 @@ export function compileNestedFunctionDeclaration(
       if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
     }
 
-    if (isGenerator) {
+    if (capturingNativeGen) {
+      // (#3050) Capturing nested SYNC `function*` with a try-region body — emit
+      // the Wasm-native generator factory. It reads EVERY wasm param (capture
+      // cells and values first, then user params — exactly this lifted
+      // function's param layout) into the state struct's `param_*` fields; the
+      // resume function rehydrates them and routes cell captures through
+      // `boxedCaptures` (see ensureNativeGeneratorResumeFunction). Disjoint
+      // from the #2865 async-gen arm below: `capturingNativeGen` is only
+      // registered for `!isAsync` declarations.
+      compileNativeGeneratorFunction(ctx, liftedFctx, stmt, capturingNativeGen);
+    } else if (isGenerator && isAsync && tdzFlaggedCaptures.length === 0 && isAsyncGenDriveCandidate(ctx, stmt)) {
+      // (#2865) NESTED async-generator producer WITH captures — the dominant
+      // real test262 shape (`var callCount = 0; async function* f() {
+      // callCount++; ... }` inside the runner's `test()` wrapper: callCount is
+      // a test() local, so the gen captures it as a mutable ref cell). The
+      // lifted fn's leading capture-cell params are captured into `$AsyncFrame`
+      // param fields like ordinary params; `emitAsyncGenerator` threads
+      // `liftedFctx.boxedCaptures` onto the resume fn so body reads/writes
+      // deref the cells. TDZ-flagged captures store PARAM indices in
+      // `boxedTdzFlags` (wrong in the resume fn's local layout) → legacy.
+      emitAsyncGenerator(ctx, liftedFctx, stmt);
+    } else if (isGenerator) {
       // Generator function: eagerly evaluate body, collect yields into a JS array,
       // then wrap it with __create_generator to return a Generator-like object.
       // The body is wrapped in try/catch so that exceptions thrown before any yields
@@ -1034,6 +1125,8 @@ export function compileNestedFunctionDeclaration(
 
       // Return __create_generator or __create_async_generator depending on async flag
       const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
+      // (#2865) Record legacy-buffer async gens so the .next() dispatch keeps a host miss arm.
+      if (createGenName === "__create_async_generator") ctx.asyncGenLegacyBufferEmitted = true;
       const createGenIdx = ctx.funcMap.get(createGenName)!;
       liftedFctx.body.push({ op: "local.get", index: bufferLocal });
       liftedFctx.body.push({ op: "local.get", index: pendingThrowLocal });

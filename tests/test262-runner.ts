@@ -1879,13 +1879,45 @@ function $DETACHBUFFER(buf: any): void {
 }`;
   }
 
-  // (#3088) Identity `makeCtorArg`/`boundArgFactory` passthrough shared by both
-  // the non-BigInt and BigInt harness shims. Emitted once when EITHER wrapper is
-  // referenced (guarding against a duplicate top-level definition when both are).
-  if (needsTestTypedArray || needsTestBigIntTypedArray) {
+  // (#3088) Identity `makeCtorArg`/`boundArgFactory` passthrough for the
+  // non-BigInt harness shim (mirrors the real harness's `makePassthrough`,
+  // which is also an identity).
+  //
+  // (#3087) NOTE: until the #3087 identifiers.ts fix, a `__`-prefixed function
+  // referenced as a VALUE compiled to `ref.null.extern` (the blunt internal-
+  // helper name filter), so `makeCtorArg(...)` inside every callback returned
+  // null via the dynamic-dispatch drop and `new TA(null)` built a length-0
+  // view. With the compiler fix this identity actually RUNS.
+  if (needsTestTypedArray) {
     p += `
 
 function __ta_makeCtorArgPassthrough(x: any): any {
+  return x;
+}`;
+  }
+
+  // (#3087) BigInt-lane `makeCtorArg` COMPAT factory. The real harness
+  // passthrough is an identity too, but BigInt tests feed it BigInt-LITERAL
+  // arrays (`makeCtorArg([40n, 41n])`) and the compiler currently lowers
+  // BigInt literals to plain f64 numbers (#1349 — BigInt rep is gated on the
+  // i64-brand ValType decision). A faithful identity would therefore hand the
+  // host `new BigInt64Array([40, 41])` an array of NUMBERS, which throws
+  // "Cannot convert 40 to a BigInt" — flipping ~300 currently-passing BigInt
+  // harness tests to runtime errors (measured 3/60 in the #3087 pass-sample
+  // A/B). Until #1349 lands:
+  //   - arrays → null: exactly reproduces the pre-#3087 behavior for array
+  //     args (the dynamic-dispatch null-drop made every makeCtorArg call
+  //     return null), so the BigInt lane's pass/fail set is preserved
+  //     bit-for-bit — no new dishonesty is introduced, the existing
+  //     length-0-view coincidental passes just stay as they were;
+  //   - primitives → identity: `makeCtorArg(8n)` lowers to `8` and
+  //     `new TA(8)` builds the length-8 view the real harness would — a
+  //     small honest win with no BigInt conversion involved.
+  if (needsTestBigIntTypedArray) {
+    p += `
+
+function __ta_makeCtorArgBigIntCompat(x: any): any {
+  if (Array.isArray(x)) { return null; }
   return x;
 }`;
   }
@@ -1919,10 +1951,11 @@ function testWithTypedArrayConstructors(fn: any): void {
   // is typically `function (TA, makeCtorArg) { … }`. Passing only the ctor
   // left `makeCtorArg` undefined; combined with the (now-fixed) nested-scope
   // dispatch gap the whole callback body was dead (a vacuous host-free pass,
-  // ~814 tests). Shim the 2-arg signature with the shared identity `makeCtorArg`
-  // passthrough (maps a length/iterable straight to the ctor's first arg).
-  // Requires the #2939 dispatch fix to land in lockstep — else it produces
-  // dishonest vacuous passes.
+  // ~814 tests). Shim the 2-arg signature so 2-param callbacks match arity and
+  // dispatch. (#3087) The factory is the BigInt COMPAT one (arrays → null,
+  // primitives → identity), NOT the true identity — see its definition above
+  // for why a faithful identity would crash on the compiler's f64-lowered
+  // BigInt literals until #1349 lands.
   if (needsTestBigIntTypedArray) {
     p += `
 
@@ -1931,7 +1964,7 @@ function testWithBigIntTypedArrayConstructors(fn: any): void {
   for (let i = 0; i < constructors.length; i++) {
     __harness_cb_expected = __harness_cb_expected + 1;
     const __ac_before = __assert_count;
-    fn(constructors[i], __ta_makeCtorArgPassthrough);
+    fn(constructors[i], __ta_makeCtorArgBigIntCompat);
     if (__assert_count === __ac_before) { __harness_cb_dead = __harness_cb_dead + 1; }
   }
 }`;

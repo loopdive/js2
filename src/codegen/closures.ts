@@ -81,6 +81,7 @@ import { addFunctionOwnLocals, registerOwnLocalsCollector } from "./binding-info
 // (a cycle), so it must evaluate after this module's other deps are loaded to
 // avoid perturbing the init order of the coercion-engine/string-ops chain.
 import { planAsyncClosureActivation, emitAsyncClosureBody } from "./async-activation.js";
+import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js"; // (#2865) async-gen fn-expr producer
 
 // ── Arrow function callbacks ──────────────────────────────────────────
 
@@ -2280,6 +2281,19 @@ export function compileArrowAsClosure(
     liftedFctx.body.push({ op: "local.set", index: castLocal });
     selfLocalForCaptures = castLocal;
   }
+  // (#2865) Record the capture layout so the async drive lane's FRESH resume
+  // FunctionContext can re-materialize these capture locals from the
+  // frame-captured `__self` (the materialization below lands only in THIS
+  // lifted body; a driven body compiles in the resume fn instead).
+  const selfCaptureLayoutEntries: { name: string; fieldIdx: number; localType: ValType }[] = [];
+  if (captures.length > 0) {
+    liftedFctx.selfCaptureLayout = {
+      selfParamName: "__self",
+      structTypeIdx,
+      castToTypeIdx: usesWrapperFuncType ? structTypeIdx : null,
+      entries: selfCaptureLayoutEntries,
+    };
+  }
   for (let i = 0; i < captures.length; i++) {
     const cap = captures[i]!;
     if (cap.mutable) {
@@ -2300,6 +2314,7 @@ export function compileArrowAsClosure(
       }
       const refCellType: ValType = { kind: "ref_null", typeIdx: refCellTypeIdx };
       const localIdx = allocLocal(liftedFctx, cap.name, refCellType);
+      selfCaptureLayoutEntries.push({ name: cap.name, fieldIdx: i + 1, localType: refCellType });
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
       liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 1 });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
@@ -2315,6 +2330,7 @@ export function compileArrowAsClosure(
       const valType = outerBoxed?.valType ?? { kind: "f64" as const };
       const refCellType: ValType = { kind: "ref_null", typeIdx: refCellTypeIdx };
       const localIdx = allocLocal(liftedFctx, cap.name, refCellType);
+      selfCaptureLayoutEntries.push({ name: cap.name, fieldIdx: i + 1, localType: refCellType });
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
       liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 1 });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
@@ -2322,6 +2338,7 @@ export function compileArrowAsClosure(
       liftedFctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType });
     } else {
       const localIdx = allocLocal(liftedFctx, cap.name, cap.type);
+      selfCaptureLayoutEntries.push({ name: cap.name, fieldIdx: i + 1, localType: cap.type });
       liftedFctx.body.push({ op: "local.get", index: selfLocalForCaptures });
       liftedFctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + 1 });
       liftedFctx.body.push({ op: "local.set", index: localIdx });
@@ -2728,7 +2745,24 @@ export function compileArrowAsClosure(
     hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
   }
 
-  if (isGenerator && ts.isBlock(body)) {
+  if (
+    isGenerator &&
+    isAsync &&
+    ts.isBlock(body) &&
+    (liftedFctx.boxedTdzFlags === undefined || liftedFctx.boxedTdzFlags.size === 0) &&
+    isAsyncGenDriveCandidate(ctx, arrow)
+  ) {
+    // (#2865) Async-generator function EXPRESSION producer (`const f = async
+    // function* () {...}` — the test262 forbidden-ext fn-expr family, which
+    // previously compiled to a null-returning shape under standalone). Same
+    // interception as the top-level / nested-declaration paths: build the lazy
+    // `$AsyncFrame` carrier + the per-gen `__async_gen_next_<name>` driver on
+    // the async-frame CFG machine. Capture cells (leading params of the lifted
+    // closure) ride into frame param fields; `boxedCaptures` is threaded onto
+    // the resume fn. TDZ-flagged captures store PARAM indices in
+    // `boxedTdzFlags` (wrong in the resume fn's local layout) → legacy path.
+    emitAsyncGenerator(ctx, liftedFctx, arrow);
+  } else if (isGenerator && ts.isBlock(body)) {
     // Generator function expression: eagerly evaluate body, collect yields
     // into a buffer, then wrap with __create_generator.
     // The body is wrapped in try/catch so that exceptions thrown before any yields
@@ -2810,6 +2844,8 @@ export function compileArrowAsClosure(
 
     // Return __create_generator or __create_async_generator depending on async flag
     const createGenName = isAsync ? "__create_async_generator" : "__create_generator";
+    // (#2865) Record legacy-buffer async gens so the .next() dispatch keeps a host miss arm.
+    if (createGenName === "__create_async_generator") ctx.asyncGenLegacyBufferEmitted = true;
     const createGenIdx = ctx.funcMap.get(createGenName)!;
     liftedFctx.body.push({ op: "local.get", index: bufferLocal });
     liftedFctx.body.push({ op: "local.get", index: pendingThrowLocal });
@@ -4653,17 +4689,67 @@ export function emitCachedMethodClosureAccess(
   methodFuncIdx: number,
   objStructTypeIdx: number,
 ): boolean {
+  const singleton = ensureMethodClosureSingleton(ctx, fctx, methodName, methodFuncIdx, objStructTypeIdx);
+  if (!singleton) return false;
+  const { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx } = singleton;
+
+  // Emit the lazy-init access (mirrors `emitLazyProtoGet`):
+  //   global.get $cache
+  //   ref.is_null
+  //   if (then: build closure, store in $cache)
+  //   global.get $cache
+  const initBody: Instr[] = [
+    { op: "ref.func", funcIdx: trampolineFuncIdx } as Instr,
+    { op: "struct.new", typeIdx: closureStructTypeIdx } as Instr,
+    { op: "extern.convert_any" } as Instr,
+    { op: "global.set", index: cacheGlobalIdx } as Instr,
+  ];
+  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: initBody,
+    else: [],
+  });
+  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
+  return true;
+}
+
+/**
+ * (#2963) The creation half of {@link emitCachedMethodClosureAccess}, split out
+ * so the member-get dispatcher (`member-get-dispatch.ts`) can pre-create the
+ * SAME canonical singleton machinery (trampoline + cache global) at reserve
+ * time — giving a DYNAMIC `any`-receiver method read (`c.m` where `c: any`)
+ * the identical value the typed read (`C.prototype.m`) yields, so
+ * `c.m === C.prototype.m` holds. Idempotent per `methodName`.
+ *
+ * Returns the handles, or `null` when the method signature is unresolvable
+ * (caller falls back / skips the candidate). NOTE: `trampolineFuncIdx` and
+ * `cacheGlobalIdx` are the CURRENT indices — late imports added after this
+ * call shift them. Compile-time callers baking instrs immediately (the typed
+ * read) are covered by the body walkers; FINALIZE-time consumers must
+ * re-resolve by name (`__obj_meth_tramp_<name>_cached` via funcMap,
+ * `ctx.methodClosureGlobals.get(methodName)` — both shift-maintained).
+ */
+export function ensureMethodClosureSingleton(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  methodName: string,
+  methodFuncIdx: number,
+  objStructTypeIdx: number,
+): { cacheGlobalIdx: number; trampolineFuncIdx: number; closureStructTypeIdx: number } | null {
   // Resolve the user-visible signature so we know the wrapper struct's
   // funcref shape. Method signature is [(ref null objStruct), ...userParams]
   // → results; strip the leading `this` to derive the closure-callable
   // user signature.
   const sig = getFuncSignature(ctx, methodFuncIdx);
-  if (!sig || sig.params.length === 0) return false;
+  if (!sig || sig.params.length === 0) return null;
   const userParams = sig.params.slice(1);
   const results = sig.results;
 
   const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
-  if (!wrapperTypes) return false;
+  if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
 
   // Reuse the canonical trampoline if one was already registered for
@@ -4747,27 +4833,7 @@ export function emitCachedMethodClosureAccess(
     ctx.methodClosureGlobals.set(methodName, cacheGlobalIdx);
   }
 
-  // Emit the lazy-init access (mirrors `emitLazyProtoGet`):
-  //   global.get $cache
-  //   ref.is_null
-  //   if (then: build closure, store in $cache)
-  //   global.get $cache
-  const initBody: Instr[] = [
-    { op: "ref.func", funcIdx: trampolineFuncIdx } as Instr,
-    { op: "struct.new", typeIdx: structTypeIdx } as Instr,
-    { op: "extern.convert_any" } as Instr,
-    { op: "global.set", index: cacheGlobalIdx } as Instr,
-  ];
-  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: initBody,
-    else: [],
-  });
-  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
-  return true;
+  return { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx };
 }
 
 /**

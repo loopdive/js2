@@ -1654,6 +1654,92 @@ const _dvViewMeta = new WeakMap<object, { offset: number; length: number }>();
  */
 const _detachedBuffers = new WeakSet<object>();
 
+/**
+ * (#3097) Canonical host ArrayBuffer per compiled-ArrayBuffer vec struct.
+ *
+ * The compiler lowers `new ArrayBuffer(n)` to an i32_byte vec struct in the
+ * JS-host lane. When that struct crosses the construct bridge as a ctor arg
+ * (`new TA(buffer, offset, length)` / `new DataView(buffer, ...)` on a host
+ * constructor), V8 sees an opaque non-buffer object and builds a LENGTH-0
+ * array-like view instead of a buffer view. Marshal the struct to ONE
+ * canonical host ArrayBuffer (identity-cached, one-time byte copy) so:
+ *   - `new TA(buffer, 0, 4)` builds the correct windowed view, and
+ *   - sibling views over the same compiled buffer share bytes (aliasing).
+ *
+ * One-way marshal by design: compiled-side vec writes made AFTER the first
+ * crossing are not reflected into the host buffer (and vice versa) — true
+ * bidirectional aliasing is #2773 value-rep substrate territory.
+ *
+ * `_abHostBufferReverse` maps the canonical host buffer back to its vec
+ * struct so `__extern_get(hostTA, "buffer")` can return the ORIGINAL struct:
+ * compiled-side identity (`sample.buffer === buffer`) holds, and re-crossing
+ * (`new TA2(sample.buffer)`) canonicalizes to the SAME host buffer.
+ */
+const _abHostBufferCache = new WeakMap<object, ArrayBuffer>();
+const _abHostBufferReverse = new WeakMap<ArrayBuffer, object>();
+
+/**
+ * (#3097) Marshal a compiled-ArrayBuffer i32_byte vec struct to its canonical
+ * host ArrayBuffer. Returns undefined when `vec` is not an i32_byte vec struct
+ * (the `__dv_byte_len` export answers -1 for any other value — it is the
+ * positive discriminator, mirroring `__is_vec`). A struct already detached
+ * (test262 `$DETACHBUFFER` / `transfer()`) marshals as a DETACHED host buffer
+ * so host-side construction throws the spec TypeError.
+ */
+function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | undefined): ArrayBuffer | undefined {
+  if (!exports || vec == null || typeof vec !== "object" || !_isWasmStruct(vec)) return undefined;
+  const cached = _abHostBufferCache.get(vec);
+  if (cached !== undefined) return cached;
+  const lenFn = exports.__dv_byte_len as ((v: any) => number) | undefined;
+  const getFn = exports.__dv_byte_get as ((v: any, i: number) => number) | undefined;
+  if (typeof lenFn !== "function" || typeof getFn !== "function") return undefined;
+  let n: number;
+  try {
+    n = lenFn(vec);
+  } catch {
+    return undefined;
+  }
+  if (typeof n !== "number" || n < 0) return undefined;
+  let ab = new ArrayBuffer(n);
+  const view = new Uint8Array(ab);
+  for (let i = 0; i < n; i++) view[i] = getFn(vec, i) & 0xff;
+  _abHostBufferCache.set(vec, ab);
+  _abHostBufferReverse.set(ab, vec);
+  if (_detachedBuffers.has(vec) || _sidecarGet(vec, "__detached__")) {
+    try {
+      (ab as { transfer?: () => ArrayBuffer }).transfer?.();
+    } catch {
+      /* engine without ArrayBuffer.prototype.transfer — leave attached */
+    }
+  }
+  return ab;
+}
+
+/**
+ * (#3097) `byteLength` for an ArrayBuffer/DataView-backing i32_byte vec struct
+ * read through the GENERIC extern getter (an `any`-typed receiver — e.g.
+ * `sample.buffer.byteLength` after the exit-boundary un-marshal returned the
+ * vec struct). The struct has no real `byteLength` field and no
+ * `__sget_byteLength` export, so the read otherwise resolves undefined → NaN.
+ * Honors a `_dvViewMeta` window when the struct was registered as a DataView.
+ * Returns undefined for any non-byte-vec value (`__dv_byte_len` answers -1).
+ */
+function _byteVecByteLength(obj: any, exports: Record<string, Function> | undefined): number | undefined {
+  if (!exports || obj == null || typeof obj !== "object" || !_isWasmStruct(obj)) return undefined;
+  const lenFn = exports.__dv_byte_len as ((v: any) => number) | undefined;
+  if (typeof lenFn !== "function") return undefined;
+  let n: number;
+  try {
+    n = lenFn(obj);
+  } catch {
+    return undefined;
+  }
+  if (typeof n !== "number" || n < 0) return undefined;
+  const meta = _dvViewMeta.get(obj);
+  if (meta) return meta.length >= 0 ? meta.length : Math.max(0, n - meta.offset);
+  return n;
+}
+
 const _SC_WRITABLE = 1;
 const _SC_ENUMERABLE = 2;
 const _SC_CONFIGURABLE = 4;
@@ -8444,7 +8530,20 @@ assert._isSameValue = isSameValue;
           }
           if (obj != null && typeof obj === "object") {
             try {
-              if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) return obj[key];
+              if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) {
+                const v = obj[key];
+                // (#3097) Exit-boundary un-marshal: a canonical host
+                // ArrayBuffer (minted at the construct bridge for a compiled
+                // buffer struct) presents to COMPILED code as the original vec
+                // struct — `sample.buffer === buffer` identity holds, and
+                // re-crossing (`new TA2(sample.buffer)`) canonicalizes to the
+                // SAME host buffer.
+                if (v instanceof ArrayBuffer) {
+                  const rawVec = _abHostBufferReverse.get(v);
+                  if (rawVec !== undefined) return rawVec;
+                }
+                return v;
+              }
             } catch (e) {
               // #2180/#2617 — a revoked-proxy TypeError, OR any exception from a
               // tracked user Proxy's get trap (abrupt completion), must propagate
@@ -8485,6 +8584,13 @@ assert._isSameValue = isSameValue;
             const exports = callbackState?.getExports();
             const getter = exports?.[`__sget_${key}`];
             if (typeof getter === "function") return getter(obj);
+            // (#3097) `.byteLength` on an ArrayBuffer/DataView-backing byte-vec
+            // struct via the generic getter (any-typed receiver) — e.g.
+            // `sample.buffer.byteLength` after the exit-boundary un-marshal.
+            if (key === "byteLength") {
+              const bl = _byteVecByteLength(obj, exports);
+              if (bl !== undefined) return bl;
+            }
           }
           return undefined;
         };
@@ -10325,6 +10431,19 @@ assert._isSameValue = isSameValue;
         return (buf: any): void => {
           if (buf != null && typeof buf === "object") {
             _detachedBuffers.add(buf);
+            // (#3097) Propagate the detach to the canonical host ArrayBuffer
+            // (if the buffer already crossed the construct bridge) so host
+            // TypedArray/DataView views observe the detach and throw per spec.
+            // A genuine host ArrayBuffer arg detaches natively for the same
+            // reason.
+            const hostAb = buf instanceof ArrayBuffer ? buf : _abHostBufferCache.get(buf);
+            if (hostAb !== undefined) {
+              try {
+                (hostAb as { transfer?: () => ArrayBuffer }).transfer?.();
+              } catch {
+                /* engine without ArrayBuffer.prototype.transfer */
+              }
+            }
           }
         };
       // #1515: query whether a buffer is detached. Returns 1 if detached, 0 otherwise.
@@ -11300,7 +11419,12 @@ assert._isSameValue = isSameValue;
         return (ctor: any, args: any, newTarget: any): any => {
           const exports = callbackState?.getExports();
           const wrappedCtor = _isWasmStruct(ctor) ? _wrapForHost(ctor, exports) : ctor;
-          const wrappedArgs = _isWasmStruct(args) ? _wrapForHost(args, exports) : args;
+          let wrappedArgs = _isWasmStruct(args) ? _wrapForHost(args, exports) : args;
+          // (#3097) Host ctor target: compiled-ArrayBuffer vec struct args
+          // marshal to their canonical host ArrayBuffer (see __construct).
+          if (!_isWasmStruct(ctor) && Array.isArray(wrappedArgs)) {
+            wrappedArgs = wrappedArgs.map((a: any) => _compiledAbToHostBuffer(a, exports) ?? a);
+          }
           if (newTarget === undefined || newTarget === null) {
             return Reflect.construct(wrappedCtor, wrappedArgs ?? []);
           }
@@ -11340,7 +11464,14 @@ assert._isSameValue = isSameValue;
             const nm = wrappedCallee && wrappedCallee.name ? wrappedCallee.name : String(wrappedCallee);
             throw new TypeError(nm + " is not a constructor");
           }
-          const wrappedArgs = _isWasmStruct(argsArray) ? _wrapForHost(argsArray, exports) : argsArray;
+          let wrappedArgs = _isWasmStruct(argsArray) ? _wrapForHost(argsArray, exports) : argsArray;
+          // (#3097) HOST callee: a compiled-ArrayBuffer vec struct arg must
+          // cross as its canonical host ArrayBuffer (`new TA(buffer, …)` on a
+          // non-buffer object builds a length-0 view). Compiled callees keep
+          // raw structs — they re-enter Wasm.
+          if (!_isWasmStruct(callee) && Array.isArray(wrappedArgs)) {
+            wrappedArgs = wrappedArgs.map((a: any) => _compiledAbToHostBuffer(a, exports) ?? a);
+          }
           return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
         };
       // (#1632b-2 / #1528a residual) Dynamically CONSTRUCT a runtime function
@@ -11387,7 +11518,15 @@ assert._isSameValue = isSameValue;
             const nm = wrappedCallee && wrappedCallee.name ? wrappedCallee.name : String(wrappedCallee);
             throw new TypeError(nm + " is not a constructor");
           }
-          const wrappedArgs = _isWasmStruct(argsArray) ? _wrapForHost(argsArray, exports) : argsArray;
+          let wrappedArgs = _isWasmStruct(argsArray) ? _wrapForHost(argsArray, exports) : argsArray;
+          // (#3097) HOST constructor (e.g. the harness TypedArray ctor in
+          // `new TA(buffer, 0, 4)`): marshal compiled-ArrayBuffer vec struct
+          // args to their canonical host ArrayBuffer — V8 treats the raw
+          // struct as a non-buffer array-like and builds a LENGTH-0 view.
+          // A compiled-closure callee keeps raw structs (re-enters Wasm).
+          if (!_isWasmStruct(callee) && Array.isArray(wrappedArgs)) {
+            wrappedArgs = wrappedArgs.map((a: any) => _compiledAbToHostBuffer(a, exports) ?? a);
+          }
           return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
         };
       // Symbol.for(key) — global symbol registry (#965)
@@ -13638,7 +13777,20 @@ assert._isSameValue = isSameValue;
       return (obj: any, key: any) => {
         if (obj != null && typeof obj === "object") {
           try {
-            if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) return obj[key];
+            if (Object.getPrototypeOf(obj) !== null && key in Object(obj)) {
+              const v = obj[key];
+              // (#3097) Exit-boundary un-marshal: a canonical host ArrayBuffer
+              // (minted at the construct bridge for a compiled buffer struct)
+              // presents to COMPILED code as the original vec struct —
+              // `sample.buffer === buffer` identity holds, and re-crossing
+              // (`new TA2(sample.buffer)`) canonicalizes to the SAME host
+              // buffer.
+              if (v instanceof ArrayBuffer) {
+                const rawVec = _abHostBufferReverse.get(v);
+                if (rawVec !== undefined) return rawVec;
+              }
+              return v;
+            }
           } catch {
             /* fall through to the generic path */
           }
@@ -13679,6 +13831,13 @@ assert._isSameValue = isSameValue;
           const exports = callbackState?.getExports();
           const getter = exports?.[`__sget_${key}`];
           if (typeof getter === "function") return getter(obj);
+          // (#3097) `.byteLength` on an ArrayBuffer/DataView-backing byte-vec
+          // struct via the generic getter (any-typed receiver) — e.g.
+          // `sample.buffer.byteLength` after the exit-boundary un-marshal.
+          if (key === "byteLength") {
+            const bl = _byteVecByteLength(obj, exports);
+            if (bl !== undefined) return bl;
+          }
         }
         // #1057 — vec wrapper structs (results of String.prototype.split,
         // Array.prototype.map, etc.) must report `.constructor === Array`.

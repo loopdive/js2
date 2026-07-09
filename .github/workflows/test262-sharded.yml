@@ -1992,6 +1992,28 @@ jobs:
             # commit. The [skip ci] trailer prevents the push from re-triggering
             # the shard matrix (#1156).
             reapply_promote_files
+            # (#3115) STALE-CHECKOUT GUARD. The coercion-site baseline is the ONE
+            # promote file derived from the SOURCE TREE (a pure src/codegen/**
+            # grep) rather than from this run's test262 report. The `--update`
+            # above (and the snapshot re-applied by reapply_promote_files) computed
+            # it against THIS job's checkout (github.sha, "T"). But the re-anchor
+            # `git checkout -f -B _promote_tmp deploykey/main` just replaced the
+            # working tree with main's CURRENT tip ("T+k"), which may include a PR
+            # that merged after T and changed the coercion-site count. Banking the
+            # T-snapshot value over the T+k source commits an internally
+            # inconsistent pair (source count != committed baseline) and turns the
+            # REQUIRED check:coercion-sites gate RED on main, wedging the whole
+            # merge queue (the 2026-07-09 property-access.ts 16->17 incident: a
+            # promote for a pre-#2812 SHA clobbered the reviewed 17 back to 16).
+            # RECOMPUTE it against the re-anchored tree so the banked baseline is
+            # correct-by-construction for the exact tree being pushed. No-op when
+            # main is stable (T == T+k); self-heals a drifted baseline otherwise.
+            # Mirrors refresh-baseline.yml, which already regenerates its source-
+            # derived docs INSIDE the loop after re-anchor. Non-fatal — a transient
+            # grep failure must not strand the summary commit.
+            node scripts/check-coercion-sites.mjs --update || \
+              echo "WARN: coercion-site baseline recompute on re-anchored tip failed (non-fatal)"
+            git add -f scripts/coercion-sites-baseline.json 2>/dev/null || true
             if git diff --cached --quiet; then
               echo "Baseline already current on main (no delta after re-anchor) — nothing to push."
               PUSHED=1
