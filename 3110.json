@@ -1,8 +1,8 @@
 {
   "id": "3110",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-09T10:50:45Z",
-  "updated_at": "2026-07-09T10:50:45Z"
+  "assignee": "ttraenkler/dev-consolidate",
+  "status": "in-progress",
+  "branch": "issue-3110-dead-export-sweep",
+  "claimed_at": "2026-07-09T11:35:22Z",
+  "updated_at": "2026-07-09T11:35:22Z"
 }
