@@ -1,8 +1,9 @@
 {
   "id": "3058",
   "assignee": "ttraenkler/fable-3058",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3058-resizable-ab-length-tracking",
   "claimed_at": "2026-07-09T15:27:44Z",
-  "updated_at": "2026-07-09T15:27:44Z"
+  "updated_at": "2026-07-09T17:09:44Z",
+  "released_at": "2026-07-09T17:09:44Z"
 }
