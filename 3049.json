@@ -1,9 +1,8 @@
 {
   "id": "3049",
-  "assignee": "ttraenkler/fable-3022",
-  "status": "released",
-  "branch": "issue-3049-iterator-helpers",
-  "claimed_at": "2026-07-09T19:12:36Z",
-  "updated_at": "2026-07-09T19:24:05Z",
-  "released_at": "2026-07-09T19:24:05Z"
+  "assignee": "ttraenkler/fable-proto",
+  "status": "in-progress",
+  "branch": "issue-3049-toplevel-fnctor-proto-init",
+  "claimed_at": "2026-07-09T19:54:18Z",
+  "updated_at": "2026-07-09T19:54:18Z"
 }
