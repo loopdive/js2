@@ -1,8 +1,9 @@
 {
   "id": "3087",
   "assignee": "ttraenkler/fable-3087",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3087-dynamic-any-call-externref-arg",
   "claimed_at": "2026-07-09T08:58:44Z",
-  "updated_at": "2026-07-09T08:58:44Z"
+  "updated_at": "2026-07-09T10:37:29Z",
+  "released_at": "2026-07-09T10:37:29Z"
 }
