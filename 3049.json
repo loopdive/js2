@@ -1,8 +1,9 @@
 {
   "id": "3049",
   "assignee": "ttraenkler/fable-3058",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3049-iterator-proto-helpers",
   "claimed_at": "2026-07-09T18:50:20Z",
-  "updated_at": "2026-07-09T18:50:20Z"
+  "updated_at": "2026-07-09T18:54:25Z",
+  "released_at": "2026-07-09T18:54:25Z"
 }
