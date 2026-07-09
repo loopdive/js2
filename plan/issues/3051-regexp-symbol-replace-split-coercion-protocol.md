@@ -425,3 +425,36 @@ lines) has advanced since 2026-07-05, so the cited line numbers are off by
 No downgrade — the cluster designs (wasm-exn→host throwing-getter bridge,
 object-arg `_wrapForHost` routing, SpeciesConstructor ctor bridge, WKS-method
 value-vs-call) are correct. Flagged only for the line drift.
+
+## Re-admission BLOCKED — g-match regression + redundant (dev-reclaim-2777, 2026-07-09)
+
+**Do NOT remove the `hold` label on PR #2777. The PR is NOT re-admittable as-is.**
+
+Re-validated PR #2777 after merging current `origin/main` (0cbd8a2, honest
+baseline `oracle_version: 2`) into the branch — new tip `765b0847`.
+
+**1. The cited merge_group test is a REAL regression, not a vacuity-unmask.**
+`built-ins/RegExp/prototype/Symbol.match/g-match-no-coerce-lastindex.js`:
+- Committed honest baseline (oracle_version 2, refreshed 2026-07-09 13:08):
+  **status = pass, reached_test = true** on the host/gc lane. Main *honestly
+  PASSES* it now — it is NOT an honest fail (the task/coordinator premise was
+  wrong on this point).
+- Local `runTest262File` reproduction (deterministic, 2 runs each):
+  - main-HEAD (0cbd8a2): host lane **pass**, standalone **pass**
+  - PR branch (765b0847): host lane **FAIL** ("This function should not be
+    invoked."), standalone **pass**
+- The PR flips g-match pass→fail on the host lane vs an honest-passing baseline
+  = genuine regression. The forced-externref-return makes native @@match coerce
+  `lastIndex` (invoking the `valueOf` the test asserts must NOT run) for a
+  non-empty match.
+
+**2. The PR is now REDUNDANT.** All 15 scenarios in the PR's own
+`tests/issue-3051.test.ts` — including "exec override returning an accessor-only
+object literal DIRECTLY is not nulled" — **PASS on main-HEAD with the PR change
+absent** (`closureReturnsHostAccessorObject` not present). One of the 87 commits
+landed since the 2026-07-06 park already fixes the #3051 accessor-only exec
+marshalling via a more general mechanism. The PR's heuristic in
+`src/codegen/closures.ts` is no longer needed and now only causes the g-match
+regression.
+
+**Recommendation:** rework or close #2777 as superseded. Hold left in place.
