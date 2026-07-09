@@ -1,9 +1,8 @@
 {
   "id": "3049",
-  "assignee": "ttraenkler/dev-3049b",
-  "status": "released",
-  "branch": "issue-3049-iterator-helpers-host-defer",
-  "claimed_at": "2026-07-06T18:46:59Z",
-  "updated_at": "2026-07-06T19:33:20Z",
-  "released_at": "2026-07-06T19:33:20Z"
+  "assignee": "ttraenkler/fable-3058",
+  "status": "in-progress",
+  "branch": "issue-3049-iterator-proto-helpers",
+  "claimed_at": "2026-07-09T18:50:20Z",
+  "updated_at": "2026-07-09T18:50:20Z"
 }
