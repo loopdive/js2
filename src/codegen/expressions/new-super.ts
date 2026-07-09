@@ -255,6 +255,59 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
 }
 
 /**
+ * (#3087) Does `new <id>(...)` target a runtime constructor VALUE held in an
+ * `any`/`unknown`-typed binding whose constructability cannot be decided
+ * statically — most importantly a **callback PARAMETER** that receives a
+ * constructor at runtime, e.g. the TypedArray harness wrapper
+ * `testWithTypedArrayConstructors(function (TA) { new TA(3); … })` where `TA`
+ * is the concrete `Int8Array`/… constructor passed positionally into the
+ * `any`-typed callback param?
+ *
+ * Such a callee is mis-classified by the unknown-ctor fallthrough as a static
+ * `extern_class` host import named after the local (`__new_TA`), which does not
+ * exist, so instantiation/execution fails with
+ * "No dependency provided for extern class 'TA'" (#3074's dominant downstream
+ * honest-fail). It must instead route through the **existing** `__construct_closure`
+ * host bridge, whose runtime side (runtime.ts) already handles a non-struct
+ * externref host constructor value: it runs the spec IsConstructor probe
+ * (`Reflect.construct(function(){}, [], value)`) and either `Reflect.construct`s
+ * the value or throws the spec `TypeError` for a non-constructor — so routing an
+ * `any`-typed value here is spec-safe REGARDLESS of whether the runtime value is
+ * actually a constructor.
+ *
+ * Gate strictly so no static class, ambient/intrinsic ctor (ArrayBuffer,
+ * DataView, TypedArrays, Error subclasses — handled by the explicit branches
+ * that PRECEDE the placement of this check), function-constructor, or registered
+ * extern class is intercepted:
+ *  - callee is a bare identifier;
+ *  - its value declaration is a **Parameter / VariableDeclaration / BindingElement**
+ *    in a real source file (NOT a declaration-file ambient global, NOT unresolved);
+ *  - its static type is `any` or `unknown` (a genuinely-dynamic ctor value —
+ *    a construct-signature-bearing or callable binding is left to the static /
+ *    `resolvesToConstructableFunctionValue` closure paths);
+ *  - it is NOT a known compiled class, registered extern class, or function
+ *    constructor.
+ */
+function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
+  if (!ts.isIdentifier(calleeExpr)) return false;
+  if (ctx.classSet.has(calleeExpr.text) || ctx.externClasses.has(calleeExpr.text)) return false;
+  if (ctx.funcConstructorMap?.has(calleeExpr.text)) return false;
+  // (#1930) Destructured-alias form for the symbol lookup (out of ratchet scope);
+  // the type-flags check routes through the oracle (`typeFactOf`) rather than a
+  // direct `getTypeAtLocation`.
+  const { checker } = ctx;
+  const sym = checker.getSymbolAtLocation(calleeExpr);
+  const decl = sym?.valueDeclaration;
+  if (!decl) return false;
+  // Ambient globals (ArrayBuffer/DataView/TypedArrays/…) declare in lib `.d.ts` —
+  // never intercept those; their explicit branches own them.
+  if (decl.getSourceFile().isDeclarationFile) return false;
+  if (!ts.isParameter(decl) && !ts.isVariableDeclaration(decl) && !ts.isBindingElement(decl)) return false;
+  const kind = ctx.oracle.typeFactOf(calleeExpr).kind;
+  return kind === "any" || kind === "unknown";
+}
+
+/**
  * (#2886) The global builtin **functions** that are NOT constructors per
  * ECMA-262 §19.2 (`decodeURI`/`encodeURI`/…/`parseInt`/`parseFloat`/`isNaN`/
  * `isFinite`). Each is an ordinary built-in function object that does **not**
@@ -1939,6 +1992,34 @@ function emitDynamicNewFallback(
     return true;
   }
 
+  // (#3087) When the value-bound ctor is an `any`/`unknown`-typed dynamic value
+  // (most importantly a callback PARAMETER receiving a real constructor — the
+  // TypedArray harness `function (TA) { new TA(buffer, 0, 4) }`), a genuine host
+  // constructor value matches NONE of the compiled-class tags and hits the
+  // no-match base below. On the JS-host lane, route that base through the
+  // `__construct_closure` bridge (its runtime side runs the spec IsConstructor
+  // probe + `Reflect.construct`) instead of the non-existent `__new_${ctorName}`
+  // extern-class import — the dominant #3074 downstream honest-fail
+  // ("No dependency provided for extern class 'TA'"). Ensure the bridge imports
+  // up-front and flush ONCE here so the funcIdx is stable before any body
+  // emission (the #608/#794 late-import index-shift hazard). Scoped to the
+  // fixed-arity (`!useRuntimeArgv`) form — the dominant harness shape.
+  const useConstructClosureBase = !noJsHost(ctx) && !useRuntimeArgv && resolvesToDynamicAnyCtorValue(ctx, calleeExpr);
+  let ccArrNewIdx: number | undefined = -1;
+  let ccArrPushIdx: number | undefined = -1;
+  let ccBridgeIdx: number | undefined = -1;
+  if (useConstructClosureBase) {
+    ccArrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+    ccArrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+    ccBridgeIdx = ensureLateImport(
+      ctx,
+      "__construct_closure",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+  }
+
   // Evaluate the callee descriptor once into an anyref local (the value to
   // type-test). null/undefined descriptors leave a null anyref → every
   // `ref.test` is false → falls through to the trailing no-match arm.
@@ -2240,7 +2321,35 @@ function emitDynamicNewFallback(
   const hostImportName = `__new_${ctorName}`;
   const hostFuncIdx = noJsHost(ctx) ? undefined : ctx.funcMap.get(hostImportName);
   let noMatchBase: Instr[];
-  if (hostFuncIdx !== undefined) {
+  if (useConstructClosureBase) {
+    // (#3087) The runtime value isn't a compiled class (tag == -1) but is an
+    // `any`-typed dynamic ctor — construct it via the host `__construct_closure`
+    // bridge: build a JS argv from the pre-evaluated externref args, then call
+    // `__construct_closure(calleeExternref, argv)`. The bridge throws the spec
+    // `TypeError` if the runtime value is not a constructor, so this is correct
+    // for ANY runtime value.
+    const finalArrNew = ctx.funcMap.get("__js_array_new") ?? ccArrNewIdx!;
+    const finalArrPush = ctx.funcMap.get("__js_array_push") ?? ccArrPushIdx!;
+    const finalCc = ctx.funcMap.get("__construct_closure") ?? ccBridgeIdx!;
+    const base: Instr[] = [];
+    const savedBodyCc = fctx.body;
+    fctx.body = base;
+    fctx.body.push({ op: "call", funcIdx: finalArrNew });
+    const ccArgvLocal = allocLocal(fctx, `__dynnew_ccargv_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: ccArgvLocal });
+    for (const aLocal of argLocals) {
+      fctx.body.push({ op: "local.get", index: ccArgvLocal });
+      fctx.body.push({ op: "local.get", index: aLocal });
+      fctx.body.push({ op: "call", funcIdx: finalArrPush });
+    }
+    // The callee descriptor (anyref) → externref for the bridge's first param.
+    fctx.body.push({ op: "local.get", index: descLocal });
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+    fctx.body.push({ op: "local.get", index: ccArgvLocal });
+    fctx.body.push({ op: "call", funcIdx: finalCc });
+    fctx.body = savedBodyCc;
+    noMatchBase = base;
+  } else if (hostFuncIdx !== undefined) {
     const base: Instr[] = [];
     const savedBody2 = fctx.body;
     fctx.body = base;
@@ -4442,6 +4551,64 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           return { kind: "externref" };
         }
       }
+    }
+
+    // (#3087) Dynamic `new <ctorVal>(...)` where `ctorVal` is an `any`/`unknown`-typed
+    // runtime binding — most importantly a callback PARAMETER that receives a real
+    // constructor at runtime, e.g. the TypedArray harness wrapper
+    // `testWithTypedArrayConstructors(function (TA) { new TA(3); … })` where `TA` is the
+    // concrete `Int8Array`/… ctor passed positionally into the `any`-typed callback param.
+    // The compiled-class dynamic fallback above excludes externref-backed builtin ctors
+    // (#2026), and the `__new_${ctorName}` host-import fallthrough below resolves to a
+    // non-existent extern class → "No dependency provided for extern class 'TA'" (the
+    // dominant #3074 downstream honest-fail). Route through the SAME `__construct_closure`
+    // host bridge as the value-bound-function-ctor arm above: its runtime side runs the
+    // spec IsConstructor probe (`Reflect.construct(function(){}, [], value)`) and either
+    // `Reflect.construct`s the value or throws the spec `TypeError` for a non-constructor —
+    // correct for ANY runtime value. JS-host only; standalone keeps its native TA-view
+    // path (#3054) / the extern-class fallthrough. ONE terminal `flushLateImportShifts`
+    // (after the call) — never mid-emission (the #608/#794 index-corruption hazard).
+    if (ts.isIdentifier(s1Callee) && !noJsHost(ctx) && resolvesToDynamicAnyCtorValue(ctx, s1Callee)) {
+      const calleeTy = compileExpression(ctx, fctx, s1Callee, { kind: "externref" });
+      if (calleeTy && calleeTy.kind !== "externref") {
+        coerceType(ctx, fctx, calleeTy, { kind: "externref" });
+      } else if (calleeTy === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      const calleeLocal = allocLocal(fctx, `__dynanyctor_callee_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: calleeLocal });
+      const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+      const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+      const ccIdx = ensureLateImport(
+        ctx,
+        "__construct_closure",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
+      const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
+      const finalCc = ctx.funcMap.get("__construct_closure") ?? ccIdx;
+      if (finalArrNew !== undefined && finalArrPush !== undefined && finalCc !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: finalArrNew });
+        const argvLocal = allocLocal(fctx, `__dynanyctor_argv_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: argvLocal });
+        for (const arg of args) {
+          fctx.body.push({ op: "local.get", index: argvLocal });
+          const aTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+          if (aTy && aTy.kind !== "externref") {
+            coerceType(ctx, fctx, aTy, { kind: "externref" });
+          } else if (aTy === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+          }
+          fctx.body.push({ op: "call", funcIdx: finalArrPush });
+        }
+        fctx.body.push({ op: "local.get", index: calleeLocal });
+        fctx.body.push({ op: "local.get", index: argvLocal });
+        fctx.body.push({ op: "call", funcIdx: finalCc });
+        return { kind: "externref" };
+      }
+      // Imports unavailable (shouldn't happen in JS-host): fall through.
     }
 
     const importName = `__new_${ctorName}`;

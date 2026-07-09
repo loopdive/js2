@@ -1,7 +1,9 @@
 ---
 id: 3080
 title: "private-method value identity: `this.#m === (()=>this)().#m` is false for class declarations (method-value-identity substrate)"
-status: ready
+status: done
+completed: 2026-07-09
+assignee: ttraenkler/fable-identity
 sprint: current
 priority: low
 horizon: m
@@ -17,6 +19,27 @@ created: 2026-07-07
 related: [3045, 2963, 3037]
 parent: 3045
 ---
+
+## Resolution (fable-identity, 2026-07-09 — landed with the #2963/#3037 method-identity PR)
+
+**Root cause (traced in WAT, not the narrated one):** not a "fresh wrapper per
+access". The private-method VALUE read with a **non-`this` receiver**
+(`(() => this)().#m`, property-access.ts brand-check branch, `cls.kind ===
+"method"`) returned the **brand-checked RECEIVER itself** as an externref view
+— a value that is neither the method nor `===` anything. The `this.#m` side
+correctly answered the cached `__method_closure_C___priv_m` singleton
+(`emitCachedMethodClosureAccess`), so the two sides could never be equal.
+
+**Fix:** the method-value success arm now emits the SAME canonical singleton
+(owner-chain + `classExprNameMap`-canonicalised key, captured via
+pushBody/popBody with the detached throw-branch registered on `savedBodies`
+during emission — the #2563 shift-hazard class). The brand check still throws
+on a wrong-brand receiver; private-method CALLS are untouched (calls.ts path).
+
+**Verified (both lanes):** `this.#m === (() => this)().#m` → 1 for class
+declarations AND expressions; brand-check throw preserved; call parity
+(`(() => this)().#m()` → 7) preserved; private GENERATOR method identity → 1
+(host). Regression-locked in `tests/issue-2963-method-value-identity.test.ts`.
 
 # #3080 — private-method value identity (`this.#m === (()=>this)().#m`)
 

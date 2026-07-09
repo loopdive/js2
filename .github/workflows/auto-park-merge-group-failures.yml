@@ -55,12 +55,12 @@ jobs:
       github.event.workflow_run.event == 'merge_group' &&
       github.event.workflow_run.conclusion == 'failure'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           sparse-checkout: |
             scripts/auto-park-merge-group-failure.mjs
           sparse-checkout-cone-mode: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
       - name: Self-check the parking logic

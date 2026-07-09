@@ -94,7 +94,7 @@ jobs:
 
       - name: Evaluate / record CLA acceptance
         if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           # Exposed so the gate module's own fetch()-based org-membership check
           # has a token. github-script also injects an authenticated `github`

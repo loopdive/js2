@@ -3332,7 +3332,19 @@ const ASYNC_CARRIER_WIDEN_MEASURE = typeof process !== "undefined" && process.en
  */
 export function isStandaloneThenChainNativeActive(ctx: CodegenContext): boolean {
   if (ASYNC_CARRIER_WIDEN_MEASURE) return ctx.wasi === true || ctx.standalone === true;
-  return ctx.wasi === true;
+  if (ctx.wasi === true) return true;
+  // (#2865) `--target standalone` with the async-GENERATOR drive active: the
+  // driven producers mint native `$Promise`s (`__async_gen_next_*` results, the
+  // consumer's result promise), which the host `.then` path cannot chain (an
+  // opaque struct to the host). Once THIS module has registered the native
+  // scheduler (only driven machinery does), `.then`/`.catch` compile the #3035
+  // runtime `ref.test` receiver bridge: a native `$Promise` receiver chains
+  // natively, anything else keeps the exact host path. Modules with no driven
+  // machinery are byte-identical (the predicate stays false — the scheduler is
+  // never registered for them). This is receiver-directed dispatch, NOT the
+  // #2980 carrier widen: `Promise.resolve`/statics/await lowering are untouched
+  // (`isStandalonePromiseActive` remains wasi-only pending the measured flip).
+  return ctx.standalone === true && getDrainFuncIdxForWasiStart(ctx) !== null;
 }
 
 /**

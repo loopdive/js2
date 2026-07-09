@@ -369,7 +369,7 @@ jobs:
           PARTIAL_OUT: equiv-partial-${{ matrix.shard }}.json
         run: node scripts/equivalence-gate.mjs
       - name: Upload partial result
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: equiv-partial-${{ matrix.shard }}
           path: equiv-partial-${{ matrix.shard }}.json
@@ -390,7 +390,7 @@ jobs:
           corepack prepare pnpm@10.30.2 --activate
       - run: pnpm install --frozen-lockfile
       - name: Download shard partials
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: equiv-partial-*
           path: equiv-partials

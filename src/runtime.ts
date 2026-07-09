@@ -4229,6 +4229,71 @@ let _symbolCache: Map<number, symbol> | undefined;
 const _symbolDescRegistry: Map<number, string | null> = new Map();
 const _asyncDisposeSym: symbol = (Symbol as any).asyncDispose ?? Symbol.for("Symbol.asyncDispose");
 
+/** Escape a literal string so it matches itself when used as a RegExp source. */
+function _escapeRegExpLiteral(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * #3095 — The well-known Symbol each `String.prototype` symbol-dispatch method
+ * looks up on its search value (per ECMA-262). `replaceAll` dispatches on
+ * `@@replace` (there is no `@@replaceAll`).
+ */
+const _stringMethodDispatchSymbol: Record<string, symbol | undefined> = {
+  match: Symbol.match,
+  matchAll: Symbol.matchAll,
+  search: Symbol.search,
+  replace: Symbol.replace,
+  replaceAll: Symbol.replace,
+  split: Symbol.split,
+};
+
+/**
+ * #3095 — For `String.prototype.{match,matchAll,search,replace,replaceAll,
+ * split}` with a **primitive** (non-Object) search value, ECMA-262 does NOT
+ * observably access the value's `Symbol.<method>` property; it goes straight to
+ * the "regexp is not an Object" branch. The JS host (`recvStr[method](arg)`)
+ * would instead run GetMethod on the primitive's wrapper prototype, triggering
+ * any user-defined `Number.prototype[Symbol.match]` (etc.) accessor.
+ *
+ * To preserve host delegation while suppressing that observable access, we
+ * pre-build the RegExp the spec's not-Object branch would create and hand
+ * *that* to the host method — the host then dispatches on the built-in
+ * `RegExp.prototype` symbol methods and never touches the primitive's
+ * prototype. match/matchAll/search treat the primitive as a **pattern**
+ * (RegExpCreate); replace/replaceAll/split treat it as a **literal string**
+ * (so we escape it; `replaceAll` needs the global flag).
+ *
+ * Returns the replacement RegExp, or `undefined` to leave the arg unchanged.
+ * Only engaged when the relevant Symbol property actually exists on the
+ * primitive's prototype chain (checked with `in`/HasProperty, which does not
+ * call getters) — so the common no-override case is byte-identical to before.
+ */
+function _rerouteStringSymbolMethodPrimitive(method: string, first: unknown): RegExp | undefined {
+  const t = typeof first;
+  if (t !== "number" && t !== "string" && t !== "boolean" && t !== "bigint") return undefined;
+  const sym = _stringMethodDispatchSymbol[method];
+  if (sym === undefined) return undefined;
+  // HasProperty (no getter side effect). Object(first) boxes the primitive so
+  // the prototype chain (Number/String/Boolean/BigInt.prototype) is visible.
+  if (!(sym in (Object(first) as object))) return undefined;
+  const str = String(first as number | string | boolean | bigint);
+  switch (method) {
+    case "match":
+    case "search":
+      return new RegExp(str);
+    case "matchAll":
+      return new RegExp(str, "g");
+    case "replaceAll":
+      return new RegExp(_escapeRegExpLiteral(str), "g");
+    case "replace":
+    case "split":
+      return new RegExp(_escapeRegExpLiteral(str));
+    default:
+      return undefined;
+  }
+}
+
 /** Map from JS well-known Symbols to Wasm "@@name" keys (and vice-versa). */
 const _symbolToWasm: Map<symbol, string> = new Map([
   [Symbol.iterator, "@@iterator"],
@@ -7563,7 +7628,24 @@ function resolveImport(
           // can dispatch on Symbol.<method> via the wasm-struct proxy (#1443).
           const first = a[0];
           let wrapped: any;
-          if (first != null && typeof first === "object" && _isWasmStruct(first)) {
+          const primReroute = _rerouteStringSymbolMethodPrimitive(method, first);
+          if (primReroute !== undefined) {
+            // #3095 — per spec (ECMA-262 String.prototype.{match,matchAll,
+            // search,replace,replaceAll,split}), when the search value is NOT
+            // an Object, its Symbol.<method> property must NOT be observably
+            // accessed. The JS host (Node) still walks the primitive's wrapper
+            // prototype via GetMethod, so a user-defined `Number.prototype[
+            // Symbol.match]` etc. getter would be triggered. Replicate the
+            // "regexp is not an Object" branch by pre-building the RegExp the
+            // spec would create: match/matchAll/search treat the primitive as a
+            // *pattern*, replace/replaceAll/split as a *literal string*. Passing
+            // a real RegExp makes Node dispatch on RegExp.prototype's built-in
+            // Symbol methods, never touching the primitive's prototype. Only
+            // engaged when the Symbol property actually exists on the primitive
+            // (checked via `in`, which does not trigger getters), so the common
+            // no-override case is byte-identical to before.
+            wrapped = primReroute;
+          } else if (first != null && typeof first === "object" && _isWasmStruct(first)) {
             wrapped = _wrapForHost(first, callbackState?.getExports?.());
           } else {
             wrapped = first;
@@ -11334,6 +11416,13 @@ assert._isSameValue = isSameValue;
           // this, so we just call it through.
           return Object.getOwnPropertyDescriptor(Symbol.prototype, "description")!.get!.call(sym);
         };
+      // (#3085) Symbol.prototype.toString → SymbolDescriptiveString (§20.4.3.3 /
+      // §20.4.3.3.1): "Symbol(" + (desc ?? "") + ")". Host-mode companion to the
+      // native `emitSymbolToString` (nativeStrings) path. Without this the generic
+      // `.toString()` fallback emits "[object Object]", and `String(sym)`
+      // stringifies the raw i32 symbol id. `Symbol.prototype.toString.call`
+      // transparently unwraps Symbol-wrapper objects (ToObject on receiver).
+      if (name === "__symbol_to_string") return (sym: any): any => Symbol.prototype.toString.call(sym);
       // Error.isError(value) — ES2025 static method (#1467).
       // Spec §20.5.2.1: returns true for any value with an [[ErrorData]]
       // internal slot. Cross-realm safe because it checks the slot, not

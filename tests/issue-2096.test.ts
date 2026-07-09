@@ -64,10 +64,26 @@ describe("#2096 oracle_version stamping + cross-version diff guard", () => {
     expect(code).toBe(0);
   });
 
-  it("refuses a cross-version diff (exit 2) without ORACLE_REBASE", () => {
+  // #3086: a FORWARD monotonic bump (baseline v1 → new v2) is always a
+  // deliberate re-baseline, so it auto-rebases (exit 0) WITHOUT ORACLE_REBASE —
+  // this is what lets an oracle bump self-land in merge_group, where main's YAML
+  // never sets the env flag.
+  it("auto-rebases a FORWARD cross-version bump (exit 0) without ORACLE_REBASE (#3086)", () => {
     const p = paths();
     writeJsonl(p.base, [{ oracle_version: 1, file: "a.js", status: "pass" }]);
     writeJsonl(p.cand, [{ oracle_version: 2, file: "a.js", status: "pass" }]);
+    const { code, out } = runDiff(p.base, p.cand);
+    expect(code).toBe(0);
+    expect(out).toMatch(/forward-bump auto-rebase/i);
+  });
+
+  // #3086: a BACKWARD skew (baseline v2, new v1 — stale code vs a newer
+  // baseline) is the accidental case the guard must still catch, so it refuses
+  // (exit 2) without an explicit ORACLE_REBASE.
+  it("refuses a BACKWARD cross-version diff (exit 2) without ORACLE_REBASE (#3086)", () => {
+    const p = paths();
+    writeJsonl(p.base, [{ oracle_version: 2, file: "a.js", status: "pass" }]);
+    writeJsonl(p.cand, [{ oracle_version: 1, file: "a.js", status: "pass" }]);
     const { code, out } = runDiff(p.base, p.cand);
     expect(code).toBe(2);
     expect(out).toMatch(/cross-version diff refused/i);
@@ -81,6 +97,44 @@ describe("#2096 oracle_version stamping + cross-version diff guard", () => {
     // net-zero (a.js stays pass) → exit 0; the guard must NOT block.
     expect(code).toBe(0);
     expect(out).toMatch(/ORACLE_REBASE=1/);
+  });
+
+  // #3086 — a deliberate oracle re-baseline (forward bump) has ~0 improvements,
+  // so the strict net<0/ratio gate is inapplicable; a small residual (main
+  // drift) within the drift tolerance must NOT block the re-baseline. The
+  // catastrophic/standalone guards (which parse the printed count, not this exit
+  // code) remain the coarse nets.
+  it("re-baseline (forward bump) with a residual regression within drift tolerance → exit 0 (#3086)", () => {
+    const p = paths();
+    writeJsonl(p.base, [
+      { oracle_version: 1, file: "a.js", status: "pass", wasm_sha: "b1" },
+      { oracle_version: 1, file: "b.js", status: "pass", wasm_sha: "b2" },
+    ]);
+    // a.js flips pass→fail with a CHANGED wasm_sha (a non-vacuous residual/drift).
+    writeJsonl(p.cand, [
+      { oracle_version: 2, file: "a.js", status: "fail", error: "drift", wasm_sha: "c1" },
+      { oracle_version: 2, file: "b.js", status: "pass", wasm_sha: "b2" },
+    ]);
+    const { code, out } = runDiff(p.base, p.cand);
+    expect(code).toBe(0);
+    expect(out).toMatch(/Re-baseline gate \(#3086\)/);
+    // The residual is still surfaced for the coarse guards.
+    expect(out).toMatch(/Regressions with wasm-hash change: 1/);
+  });
+
+  it("re-baseline (forward bump) exceeding the drift tolerance → exit 1 (#3086)", () => {
+    const p = paths();
+    const base = [];
+    const cand = [];
+    for (let i = 0; i < 30; i++) {
+      base.push({ oracle_version: 1, file: `t${i}.js`, status: "pass", wasm_sha: `b${i}` });
+      cand.push({ oracle_version: 2, file: `t${i}.js`, status: "fail", error: "break", wasm_sha: `c${i}` });
+    }
+    writeJsonl(p.base, base);
+    writeJsonl(p.cand, cand);
+    const { code, out } = runDiff(p.base, p.cand);
+    expect(code).toBe(1);
+    expect(out).toMatch(/exceeds drift tolerance/);
   });
 
   it("hard-refuses a MIXED-version file (exit 2) even with ORACLE_REBASE=1", () => {

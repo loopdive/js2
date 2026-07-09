@@ -2,11 +2,14 @@
 id: 3076
 title: Standalone destructuring lane must honor throwing accessor getters / user @@iterator
 status: ready
-sprint: Backlog
+sprint: current
+model: fable
 priority: medium
 horizon: m
 feasibility: hard
 blocks: [3040]
+created: 2026-07-07
+updated: 2026-07-08
 ---
 
 # Standalone destructuring must invoke throwing accessor getters / user `@@iterator`

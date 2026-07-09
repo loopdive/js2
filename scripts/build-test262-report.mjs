@@ -177,6 +177,22 @@ function isObjectToPrimitiveResidual(record, text) {
 
 const STANDALONE_ROOT_CAUSE_BUCKETS = [
   {
+    // #3086 — honest-vacuity reclassification. A would-be pass whose harness
+    // wrapper or nested callback never executed (so no assertion ran) is scored
+    // `fail` + `vacuous: true` by the runner's vacuity gate (#2463/#2940/#3086).
+    // These are a KNOWN, deliberate honest-metric reclassification, not a
+    // codegen root cause — so they get their own bucket rather than falling into
+    // `unclassified` (which the strict threshold-0 gate would then trip). Placed
+    // FIRST because `vacuous: true` is unambiguous: a vacuity-fail's root cause
+    // IS the dropped callback, never the feature the dead assertion targeted, so
+    // no feature-path bucket should poach it.
+    id: "honest-vacuity-reclassification",
+    issues: ["#3086", "#2940", "#2463"],
+    label:
+      "Honest-vacuity reclassification (harness/nested callback never executed → no assertion ran; scored vacuous fail, excluded from host_free_pass)",
+    match: (record, text) => record.vacuous === true || hasAny(text, ["vacuous:", "no assertion ran"]),
+  },
+  {
     id: "binary-emit-u32-out-of-range",
     issues: ["#1858", "#1862"],
     label: "Binary emit u32 out of range (negative index/count emitted as u32) — instanceof / Error.isError fail-loud",

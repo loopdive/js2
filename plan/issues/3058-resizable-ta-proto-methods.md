@@ -1,16 +1,18 @@
 ---
 id: 3058
 title: "Resizable-TA proto-methods over a dynamic `$__ta_dyn_view` receiver — runtime-kind method dispatch (materialize-into-f64-vec + OOB ValidateTypedArray + write-back)"
-status: in-progress
-assignee: ttraenkler/opus-3058b
+status: ready
+model: fable
 priority: high
 feasibility: hard
 reasoning_effort: max
 task_type: feature
 area: codegen
 language_feature: typed-array, resizable-arraybuffer, dynamic-index
-sprint: Backlog
+sprint: current
 horizon: l
+created: 2026-07-05
+updated: 2026-07-08
 es_edition: ES2024
 test262_category: built-ins/TypedArray
 goal: standalone-mode

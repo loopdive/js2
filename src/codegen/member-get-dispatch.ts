@@ -41,6 +41,8 @@
  * hazard is mode-independent — acorn dogfoods in gc/host mode).
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#2963) method-arm candidates
+import { ensureMethodClosureSingleton } from "./closures.js"; // (#2963) canonical method-value singleton
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isNativeGeneratorResultStruct, sentinelAwareF64BoxInstrs } from "./generators-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -54,6 +56,142 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 /** Mangle a property name into the reserved member-get dispatcher name. */
 function dispatcherName(propName: string): string {
   return `__get_member_${propName}`;
+}
+
+/**
+ * (#2963) A dynamic-read METHOD arm recorded at reserve time for the fill.
+ * The trampoline funcIdx + cache-global idx are re-resolved BY NAME at fill
+ * time (`__obj_meth_tramp_<methodFullName>_cached` in funcMap /
+ * `ctx.methodClosureGlobals` — both late-import-shift-maintained); only the
+ * receiver test type and closure struct type (append-only, pre-emission
+ * stable) are baked here.
+ */
+export interface MemberGetMethodArm {
+  /** The concrete class struct the receiver is `ref.test`ed against. */
+  receiverStructTypeIdx: number;
+  /** Owner-canonicalised `<Class>_<method>` — the singleton cache key. */
+  methodFullName: string;
+  /** The funcref-wrapper closure struct the lazy init `struct.new`s. */
+  closureStructTypeIdx: number;
+  /** Inheritance depth of the RECEIVER class — children sort first so an
+   * override's arm shadows the superclass arm under WasmGC subtyping. */
+  depth: number;
+}
+
+/**
+ * (#2963) Enumerate every class whose PROTOTYPE owns a method named
+ * `propName` — the class-method candidates a dynamic `any`-receiver member
+ * read must resolve. Today such a read falls to `__extern_get` → `undefined`,
+ * which is both wrong-typed (`typeof c.m !== "function"`) and identity-broken
+ * (`c.m !== C.prototype.m` — the ~87-file test262 class-elements cluster).
+ *
+ * Identity follows the OWNING class (`resolveMethodOwnerClass`), so an
+ * inherited method resolves to the parent's cache key — the SAME singleton
+ * the typed `C.prototype.m` read yields.
+ */
+export function classMethodCandidatesForProp(
+  ctx: CodegenContext,
+  propName: string,
+): {
+  className: string;
+  owner: string;
+  methodFullName: string;
+  methodFuncIdx: number;
+  receiverStructTypeIdx: number;
+  ownerStructTypeIdx: number;
+  depth: number;
+}[] {
+  if (!propName || propName === "constructor" || propName === "prototype" || propName === "__proto__") return [];
+  const out: {
+    className: string;
+    owner: string;
+    methodFullName: string;
+    methodFuncIdx: number;
+    receiverStructTypeIdx: number;
+    ownerStructTypeIdx: number;
+    depth: number;
+  }[] = [];
+  const seenCanonical = new Set<string>();
+  for (const rawClassName of ctx.classSet) {
+    // (#1394 dual-registration bridge) A class EXPRESSION registers under BOTH
+    // its binding name (`C`) and its synthetic name (`__anonClass_N`); the
+    // typed read canonicalises to the SYNTHETIC name for the cache key, so the
+    // dynamic arm must too — otherwise the two paths mint two singletons and
+    // identity breaks exactly for class expressions.
+    const className = ctx.classExprNameMap.get(rawClassName) ?? rawClassName;
+    if (seenCanonical.has(className)) continue;
+    seenCanonical.add(className);
+    if (!ctx.classMethodSet.has(`${className}_${propName}`)) continue;
+    const receiverStructTypeIdx = ctx.structMap.get(className);
+    if (receiverStructTypeIdx === undefined) continue;
+    const owner = resolveMethodOwnerClass(ctx, className, propName);
+    const methodFullName = `${owner}_${propName}`;
+    const methodFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, methodFullName));
+    if (methodFuncIdx === undefined) continue;
+    const ownerStructTypeIdx = ctx.structMap.get(owner) ?? receiverStructTypeIdx;
+    // Inheritance depth (for children-first arm ordering under subtyping).
+    let depth = 0;
+    let p = ctx.classParentMap.get(className);
+    const seen = new Set<string>([className]);
+    while (p && !seen.has(p)) {
+      seen.add(p);
+      depth++;
+      p = ctx.classParentMap.get(p);
+    }
+    out.push({ className, owner, methodFullName, methodFuncIdx, receiverStructTypeIdx, ownerStructTypeIdx, depth });
+  }
+  return out;
+}
+
+/**
+ * (#2963) Ensure the canonical method-closure singleton machinery exists for
+ * every class-method candidate of `propName`, and record the fill-time arms
+ * on `ctx.memberGetMethodArms`. Runs at RESERVE time (normal compile time —
+ * minting trampolines / cache globals / wrapper types is safe here, unlike at
+ * finalize). Idempotent per (propName, receiver struct). Returns true when at
+ * least one arm is recorded for `propName` (used by the read site to decide
+ * whether routing through the dispatcher buys anything when there are no
+ * struct-FIELD candidates).
+ */
+export function ensureMethodArmsForProp(ctx: CodegenContext, propName: string, fctx: FunctionContext): boolean {
+  const candidates = classMethodCandidatesForProp(ctx, propName);
+  if (candidates.length === 0) {
+    return (ctx.memberGetMethodArms?.get(propName)?.length ?? 0) > 0;
+  }
+  let arms = ctx.memberGetMethodArms?.get(propName);
+  if (!arms) {
+    arms = [];
+    (ctx.memberGetMethodArms ??= new Map<string, MemberGetMethodArm[]>()).set(propName, arms);
+  }
+  let ensured = false;
+  for (const cand of candidates) {
+    if (arms.some((a) => a.receiverStructTypeIdx === cand.receiverStructTypeIdx)) continue;
+    const singleton = ensureMethodClosureSingleton(
+      ctx,
+      fctx,
+      cand.methodFullName,
+      cand.methodFuncIdx,
+      cand.ownerStructTypeIdx,
+    );
+    if (!singleton) continue;
+    arms.push({
+      receiverStructTypeIdx: cand.receiverStructTypeIdx,
+      methodFullName: cand.methodFullName,
+      closureStructTypeIdx: singleton.closureStructTypeIdx,
+      depth: cand.depth,
+    });
+    ensured = true;
+  }
+  if (ensured) {
+    // Children-first so an override's arm wins over the superclass arm
+    // (subclass structs are WasmGC subtypes — `ref.test $Parent` matches them).
+    arms.sort((a, b) => b.depth - a.depth);
+    // The fill's miss-gate needs `__extern_is_undefined` (host: JS undefined is
+    // a NON-null externref; standalone S1: the undefined singleton is non-null).
+    // Register it NOW — the fill must not add imports.
+    ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
+  return arms.length > 0;
 }
 
 /**
@@ -94,7 +232,17 @@ export function reserveMemberGetDispatch(
 ): number | undefined {
   const name = dispatcherName(propName);
   const existing = ctx.funcMap.get(name);
-  if (existing !== undefined) return existing;
+  if (existing !== undefined) {
+    // (#2963) A class compiled AFTER the first reserve may add method
+    // candidates for this prop — pick them up so the fill sees the full set.
+    // Flush here because this early-return path skips the pre-mint flush
+    // below (the ensure may stage late-import shifts).
+    if (fctx) {
+      ensureMethodArmsForProp(ctx, propName, fctx);
+      flushLateImportShifts(ctx, fctx);
+    }
+    return existing;
+  }
 
   const getIdx = ensureLateImport(
     ctx,
@@ -105,6 +253,11 @@ export function reserveMemberGetDispatch(
   if (getIdx === undefined) return undefined;
   addStringConstantGlobal(ctx, propName);
   addUnionImportsViaRegistry(ctx);
+  // (#2963) Ensure the method-value singleton machinery (trampoline + cache
+  // global) for every class-method candidate of this prop, and record the
+  // fill-time arms. BEFORE the flush below so all import additions settle
+  // into the dispatcher funcIdx minted afterwards.
+  if (fctx) ensureMethodArmsForProp(ctx, propName, fctx);
 
   // (#2681) Settle the index-space shift the imports above staged BEFORE reserving
   // this dispatcher's funcIdx. Previously the flush ran AFTER `funcMap.set(name,
@@ -155,18 +308,130 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // does not need the mutable filter — reading an immutable field is fine.
     const candidates = findAlternateStructsForField(ctx, propName, -1);
 
+    // (#2963) Class-method arms recorded at reserve time. Resolved BY NAME
+    // here (funcMap / methodClosureGlobals are shift-maintained; the fill
+    // must not mint anything). Each arm answers the canonical method-value
+    // singleton — the SAME cache global the typed `C.prototype.m` read uses —
+    // so `c.m === C.prototype.m` holds across the dynamic path.
+    const methodArms = (ctx.memberGetMethodArms?.get(propName) ?? [])
+      .map((arm) => {
+        const trampIdx = ctx.funcMap.get(`__obj_meth_tramp_${arm.methodFullName}_cached`);
+        const cacheGlobalIdx = ctx.methodClosureGlobals.get(arm.methodFullName);
+        if (trampIdx === undefined || cacheGlobalIdx === undefined) return undefined;
+        return { ...arm, trampIdx, cacheGlobalIdx };
+      })
+      .filter((a): a is MemberGetMethodArm & { trampIdx: number; cacheGlobalIdx: number } => a !== undefined);
+    // (#2963) `collectDeclaredFuncRefs` REBUILT the declared-elem set by
+    // scanning bodies BEFORE this fill ran (the dispatcher body was still the
+    // `unreachable` placeholder), so a trampoline whose ONLY `ref.func` lives
+    // in this fill body was dropped → "undeclared reference to function"
+    // validation error. Re-declare each arm's trampoline here (fill runs
+    // before dead-elim, which keeps + remaps declaredFuncRefs entries).
+    for (const arm of methodArms) {
+      if (!ctx.mod.declaredFuncRefs.includes(arm.trampIdx)) ctx.mod.declaredFuncRefs.push(arm.trampIdx);
+    }
+    // Miss test helper: host `__extern_get` misses answer JS `undefined` (a
+    // NON-null externref) and the standalone S1 regime answers the undefined
+    // singleton — both need `__extern_is_undefined`; the legacy standalone
+    // miss is a bare null. Registered at reserve time; if it is somehow
+    // absent, gate on `ref.is_null` alone (under-fires on host, never wrong).
+    const isUndefIdx = methodArms.length > 0 ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+
     // Terminal else-arm: __extern_get(recv, "<name>") -> externref. Covers
     // genuine host externrefs and dynamic sidecar-only props.
+    //
+    // (#2963) With method arms: the host read runs FIRST so an OWN property
+    // (sidecar write `c.m = v`, delete tombstone, accessor) keeps shadowing
+    // the prototype method; only a MISS (null / undefined) falls through to
+    // the receiver-typed method arms. Uses local 2 (externref scratch,
+    // appended below) — the sentinel f64 scratch, when present, then shifts
+    // to local 3.
+    const buildMethodArmChain = (idx: number, mresLocal: number): Instr[] => {
+      if (idx >= methodArms.length) return [];
+      const arm = methodArms[idx]!;
+      return [
+        { op: "local.get", index: 1 } as Instr, // __any
+        { op: "ref.test", typeIdx: arm.receiverStructTypeIdx } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // Lazy-init the canonical singleton (mirrors emitCachedMethodClosureAccess).
+            { op: "global.get", index: arm.cacheGlobalIdx } as Instr,
+            { op: "ref.is_null" } as Instr,
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "ref.func", funcIdx: arm.trampIdx } as Instr,
+                { op: "struct.new", typeIdx: arm.closureStructTypeIdx } as Instr,
+                { op: "extern.convert_any" } as Instr,
+                { op: "global.set", index: arm.cacheGlobalIdx } as Instr,
+              ],
+              else: [],
+            } as Instr,
+            { op: "global.get", index: arm.cacheGlobalIdx } as Instr,
+            { op: "local.set", index: mresLocal } as Instr,
+          ],
+          else: buildMethodArmChain(idx + 1, mresLocal),
+        } as Instr,
+      ];
+    };
+    const buildFallbackWithMethodArms = (mresLocal: number): Instr[] => {
+      const hostRead: Instr[] =
+        getIdx !== undefined
+          ? [
+              { op: "local.get", index: 0 } as Instr, // recv
+              ...stringConstantExternrefInstrs(ctx, propName),
+              { op: "call", funcIdx: getIdx } as Instr,
+            ]
+          : [{ op: "ref.null.extern" } as Instr];
+      // miss = ref.is_null(v) || __extern_is_undefined(v)
+      const missTest: Instr[] = [
+        { op: "local.get", index: mresLocal } as Instr,
+        { op: "ref.is_null" } as Instr,
+        ...(isUndefIdx !== undefined
+          ? [
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } as ValType },
+                then: [{ op: "i32.const", value: 1 } as Instr],
+                else: [{ op: "local.get", index: mresLocal } as Instr, { op: "call", funcIdx: isUndefIdx } as Instr],
+              } as Instr,
+            ]
+          : []),
+      ];
+      return [
+        ...hostRead,
+        { op: "local.set", index: mresLocal } as Instr,
+        ...missTest,
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: buildMethodArmChain(0, mresLocal),
+          else: [],
+        } as Instr,
+        { op: "local.get", index: mresLocal } as Instr,
+      ];
+    };
+
     const fallback: Instr[] =
-      getIdx !== undefined
-        ? [
-            { op: "local.get", index: 0 } as Instr, // recv
-            ...stringConstantExternrefInstrs(ctx, propName),
-            { op: "call", funcIdx: getIdx } as Instr,
-          ]
-        : [{ op: "ref.null.extern" } as Instr];
+      methodArms.length > 0
+        ? buildFallbackWithMethodArms(2)
+        : getIdx !== undefined
+          ? [
+              { op: "local.get", index: 0 } as Instr, // recv
+              ...stringConstantExternrefInstrs(ctx, propName),
+              { op: "call", funcIdx: getIdx } as Instr,
+            ]
+          : [{ op: "ref.null.extern" } as Instr];
 
     let usedSentinelBox = false;
+    // (#2963) Locals layout: 1 = __any (anyref); with method arms 2 = __mres
+    // (externref scratch) and any sentinel f64 scratch shifts to 3; without
+    // method arms the sentinel f64 scratch keeps its legacy slot 2
+    // (byte-identical for every dispatcher with no method arm).
+    const f64ScratchIdx = methodArms.length > 0 ? 3 : 2;
     const buildGetDispatch = (idx: number): Instr[] => {
       if (idx >= candidates.length) return fallback;
       const cand = candidates[idx]!;
@@ -187,8 +452,10 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         boxNumIdx !== undefined &&
         isNativeGeneratorResultStruct(ctx, cand.structTypeIdx);
       if (useSentinelBox) usedSentinelBox = true;
+      // (#2963) When method arms exist, local 2 is the `__mres` externref
+      // scratch; the sentinel f64 scratch then lives at local 3.
       const box = useSentinelBox
-        ? sentinelAwareF64BoxInstrs(2, boxNumIdx)
+        ? sentinelAwareF64BoxInstrs(f64ScratchIdx, boxNumIdx)
         : coercionInstrs(ctx, cand.fieldType, { kind: "externref" });
       const readInstrs: Instr[] = [
         { op: "local.get", index: 1 } as Instr, // __any
@@ -218,12 +485,10 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
       { op: "local.set", index: 1 } as Instr, // __any
       ...buildGetDispatch(0),
     ];
-    dispFn.locals = usedSentinelBox
-      ? [
-          { name: "__any", type: { kind: "anyref" } },
-          { name: "__f64tmp", type: { kind: "f64" } },
-        ]
-      : [{ name: "__any", type: { kind: "anyref" } }];
+    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
+    if (methodArms.length > 0) locals.push({ name: "__mres", type: { kind: "externref" } }); // (#2963) local 2
+    if (usedSentinelBox) locals.push({ name: "__f64tmp", type: { kind: "f64" } }); // local 2 legacy / 3 with arms
+    dispFn.locals = locals;
     dispFn.body = dispatchBody;
   }
 }

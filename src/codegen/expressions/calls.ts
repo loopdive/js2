@@ -923,6 +923,20 @@ function emitNumberMethodReceiverF64(
   const exprType = compileExpression(ctx, fctx, propAccess.expression);
   if (exprType && exprType.kind === "i32") {
     fctx.body.push({ op: "f64.convert_i32_s" });
+  } else if (exprType && exprType.kind !== "f64") {
+    // (#3081) A `number`-typed receiver can compile to a BOXED-number externref
+    // rather than an f64 — e.g. a namespace-constant read `Number.NaN.toFixed(0)`
+    // / `Number.POSITIVE_INFINITY.toExponential()` lowers `Number.NaN` through
+    // `__get_builtin` to a boxed externref. The `number_to{Fixed,Precision,
+    // Exponential}` runtime helpers expect an f64 receiver, so feeding the raw
+    // externref emits invalid Wasm ("call[0] expected type f64, found externref").
+    // Route through the #1917 coercion ENGINE (`coerceType` → f64), which unboxes
+    // a boxed-number externref exactly as the sibling argument path
+    // (`coerceNumberMethodArgToF64`) already does — no hand-rolled coercion
+    // vocabulary here (#2108 coercion-sites gate). An externref/ref receiver was
+    // ALWAYS invalid Wasm here, so this cannot regress any previously-instantiable
+    // module.
+    coerceType(ctx, fctx, exprType, { kind: "f64" });
   }
 }
 
@@ -2865,15 +2879,36 @@ function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.SourceFil
   // which is what the dispatch discriminates on) for every func-expr / arrow used
   // as a call argument or a variable initializer.
   //
-  // Standalone-gated: on the gc/host lane a callback may instead take the
-  // `__make_callback` host path and never materialize a closure wrapper, so
-  // pre-registering one there would add a module type that lazy compilation
-  // would not — a byte change on the default lane. In standalone there is no
-  // host `__make_callback`, so every func-expr/arrow value compiles to a closure
-  // and the wrapper type is created regardless; pre-creating it only reorders
-  // when (all references stay internally consistent — same discipline the
-  // declaration loop above already relies on).
-  if (ctx.standalone) {
+  // (#3074) Applied on BOTH lanes. It was originally standalone-gated for
+  // byte-inertness on the gc/host lane, but that left the DEFAULT lane's
+  // harness-wrapper cluster (`testWith*TypedArrayConstructors(function(TA){…})`)
+  // stuck vacuous — measured at 1,535 default records vs 448 standalone, i.e.
+  // the LARGER cluster (#3074). Empirically the harness callback compiles to a
+  // real closure struct on the gc lane too (`ref.func …; struct.new $__fn_wrap_*;
+  // extern.convert_any` — verified via WAT), so the runtime value flowing into
+  // the higher-order body IS a wrapper struct that `tryEmitInlineDynamicCall`
+  // dispatches correctly; the ONLY reason the gc lane dropped the call was the
+  // compile-order candidate gap this pre-registration closes (identical to the
+  // declaration loop above, which already runs un-gated on both lanes).
+  //
+  // Safety on the gc lane (the two reasons for the old gate, both addressed):
+  //  1. Byte change on the default lane — intended: #3074 wants the gc lane
+  //     fixed, and the affected tests are ALL currently VACUOUS FAILS
+  //     (`return -262`), so dispatch can only move them fail→pass or stay fail
+  //     (never a pass→fail regression). The caller's only alternative to a
+  //     successful inline dispatch is the graceful `ref.null.extern` drop, so
+  //     enabling dispatch is a strict improvement.
+  //  2. A callback that instead takes the `__make_callback` host path (passed
+  //     to a host builtin, e.g. `arr.map(cb)`) never materializes a wrapper
+  //     STRUCT — only the wrapper TYPE is pre-registered here (the trampoline /
+  //     struct.new stays lazy at the value site). So an extra dispatch arm for
+  //     that signature never `ref.test`-matches the JS-function externref at
+  //     runtime → falls through to the default → same drop as before. No
+  //     behavior change for `__make_callback` callbacks, only the harness /
+  //     compiled-HOF callbacks gain dispatch. `getOrCreateFuncRefWrapperTypes`
+  //     is signature-cached, so the value site reuses the same funcTypeIdx —
+  //     no index inconsistency (the declaration loop already relies on this).
+  {
     const seenFnNodes = new Set<ts.Node>();
     const usedAsValueFn = (node: ts.FunctionExpression | ts.ArrowFunction): void => {
       if (seenFnNodes.has(node)) return;
@@ -3587,6 +3622,72 @@ function emitHostPromiseThenFallback(
  * BEFORE reaching here and keep the original unconditional-cast lowering
  * for wasi untouched.
  */
+
+/**
+ * (#2865) Zero-arg `.next()` on a possibly-DRIVEN async-generator receiver.
+ * `g()` on a driven producer returns the `$AsyncFrame` carrier (a bare
+ * externref); source-level `g().next()` / `it.next()` must route to the
+ * per-gen re-entrant driver `__async_gen_next_<stem>(frame) ->
+ * Promise<IteratorResult>`. The receiver is dispatched at RUNTIME by
+ * `ref.test`ing each registered producer's frame struct (the chain shape
+ * `buildNativeGeneratorDispatch` uses for sync gens).
+ *
+ * Miss arm (a receiver that is none of the driven frames):
+ *  - under `--target standalone`, the legacy host `__gen_next` whenever the
+ *    module has it registered — EXACTLY what this receiver got before #2865
+ *    (buffer async gens, sync host gens, and the user-object `.next()` hijack
+ *    all keep their behavior; the in-process runner stubs the import);
+ *  - under `--target wasi` (zero-import contract, no stubs — a host fallback
+ *    can never succeed), only when a legacy buffer async gen was actually
+ *    emitted (`asyncGenLegacyBufferEmitted`); otherwise a plain null result,
+ *    so an all-driven module stays host-free.
+ *
+ * Returns null (no emission) when the module has no driven producers or the
+ * target is the JS-host lane — the caller falls through to its original
+ * lowering, byte-identical.
+ */
+function tryEmitAsyncGenNextDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverExpr: ts.Expression,
+): ValType | null {
+  const producers = ctx.asyncGenProducers;
+  if (ctx.standalone !== true && ctx.wasi !== true) return null;
+  if (producers === undefined || producers.size === 0) return null;
+  // Evaluate the receiver ONCE into an externref local (it may be a call).
+  const recvLocal = allocLocal(fctx, `__agen_recv_${fctx.locals.length}`, { kind: "externref" });
+  const rt = compileExpression(ctx, fctx, receiverExpr, { kind: "externref" });
+  if (rt !== null && rt !== undefined && (rt as ValType).kind !== "externref") {
+    coerceType(ctx, fctx, rt as ValType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: recvLocal } as Instr);
+  // funcMap lookups happen AFTER the receiver compile (which may register late
+  // imports and shift defined indices).
+  const wantHostFallback = ctx.wasi === true ? ctx.asyncGenLegacyBufferEmitted === true : true;
+  const hostGenNext = wantHostFallback ? ctx.funcMap.get("__gen_next") : undefined;
+  let chain: Instr[] =
+    hostGenNext !== undefined
+      ? [{ op: "local.get", index: recvLocal } as Instr, { op: "call", funcIdx: hostGenNext } as Instr]
+      : [{ op: "ref.null.extern" } as Instr];
+  for (const p of [...producers.values()].reverse()) {
+    const nextIdx = ctx.funcMap.get(p.nextHelperName);
+    if (nextIdx === undefined) continue;
+    chain = [
+      { op: "local.get", index: recvLocal } as Instr,
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.test", typeIdx: p.stateTypeIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "local.get", index: recvLocal } as Instr, { op: "call", funcIdx: nextIdx } as Instr],
+        else: chain,
+      } as Instr,
+    ];
+  }
+  fctx.body.push(...chain);
+  return { kind: "externref" };
+}
+
 function emitStandaloneThenWithNativeFallback(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3594,6 +3695,11 @@ function emitStandaloneThenWithNativeFallback(
   method: "then" | "catch",
   onFulfilledArg: ts.Expression | undefined,
   onRejectedArg: ts.Expression | undefined,
+  // (#2865) `nullMiss` replaces the HOST miss arm with a plain null result —
+  // for `--target wasi` any-receiver dispatch, where the zero-import contract
+  // forbids registering `Promise_then*`/`__make_callback` and a host arm could
+  // never succeed anyway (no stubs). Native receivers are unaffected.
+  opts?: { nullMiss?: boolean },
 ): void {
   const liveBuffers: Instr[][] = [];
   try {
@@ -3624,15 +3730,19 @@ function emitStandaloneThenWithNativeFallback(
     }
 
     const hostArm: Instr[] = [];
-    ctx.liveBodies.add(hostArm);
-    liveBuffers.push(hostArm);
-    fctx.savedBodies.push(outerBody);
-    fctx.body = hostArm;
-    try {
-      emitHostPromiseThenFallback(ctx, fctx, recvLocal, method, onFulfilledArg, onRejectedArg);
-    } finally {
-      fctx.savedBodies.pop();
-      fctx.body = outerBody;
+    if (opts?.nullMiss === true) {
+      hostArm.push({ op: "ref.null.extern" } as Instr);
+    } else {
+      ctx.liveBodies.add(hostArm);
+      liveBuffers.push(hostArm);
+      fctx.savedBodies.push(outerBody);
+      fctx.body = hostArm;
+      try {
+        emitHostPromiseThenFallback(ctx, fctx, recvLocal, method, onFulfilledArg, onRejectedArg);
+      } finally {
+        fctx.savedBodies.pop();
+        fctx.body = outerBody;
+      }
     }
 
     const promiseTypeIdx = getOrRegisterPromiseType(ctx);
@@ -10236,6 +10346,20 @@ function compileCallExpression(
       if (externResult !== undefined) return externResult;
     }
 
+    // (#2865) `.next()` on a DRIVEN async-generator object (typed receiver).
+    // `next(v)` sent-value delivery + `.throw()`/`.return()` are 3d-iii.
+    {
+      const recvSymName = receiverType.getSymbol()?.name;
+      if (
+        propAccess.name.text === "next" &&
+        expr.arguments.length === 0 &&
+        (recvSymName === "AsyncGenerator" || recvSymName === "AsyncIterableIterator" || recvSymName === "AsyncIterator")
+      ) {
+        const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression);
+        if (dispatched !== null) return dispatched;
+      }
+    }
+
     // Generator method calls: gen.next(), gen.return(value), gen.throw(error)
     if (isGeneratorType(receiverType)) {
       const methodName = propAccess.name.text;
@@ -10299,6 +10423,36 @@ function compileCallExpression(
         const recvSym = receiverTsType.getSymbol()?.name;
         const apparentSym = ctx.checker.getApparentType(receiverTsType).getSymbol()?.name;
         const isPromiseReceiver = recvSym === "Promise" || apparentSym === "Promise";
+
+        // (#2865) ANY-typed receiver under ACTIVE native chaining: the value
+        // may be a native `$Promise` minted by the driven async-gen machinery
+        // (`var f; f = async function*(){…}; f().next().then(cb, $DONE)` — the
+        // dominant test262 driving shape holds everything as `any`). Route
+        // through the runtime `ref.test` receiver bridge: a native `$Promise`
+        // chains natively; a miss keeps the host path under standalone
+        // (behavior-preserving — the generic any-path used the same host
+        // imports) and yields null under wasi (zero-import contract; a host
+        // arm could never succeed there). Only fires when the module has
+        // native machinery (`isStandaloneThenChainNativeActive` — wasi, or
+        // standalone with the scheduler registered), so every other module is
+        // byte-identical.
+        if (
+          !isPromiseReceiver &&
+          (method === "then" || method === "catch") &&
+          (receiverTsType.flags & ts.TypeFlags.Any) !== 0 &&
+          isStandaloneThenChainNativeActive(ctx)
+        ) {
+          emitStandaloneThenWithNativeFallback(
+            ctx,
+            fctx,
+            propAccess.expression,
+            method,
+            method === "then" ? expr.arguments[0] : undefined,
+            method === "then" ? expr.arguments[1] : expr.arguments[0],
+            { nullMiss: ctx.wasi === true },
+          );
+          return { kind: "externref" };
+        }
 
         if (isPromiseReceiver) {
           // (#2980 class 1) `.then` on native chaining. WASI's ZERO-host-
@@ -11370,6 +11524,28 @@ function compileCallExpression(
         emitSymbolToString(ctx, fctx);
         return nativeStringType(ctx);
       }
+      // (#3085) Host mode: box the symbol id to a JS Symbol and route through the
+      // host SymbolDescriptiveString (§20.4.3.3). Without this the generic
+      // `.toString()` fallback drops the id and emits "[object Object]". Mirrors
+      // the `.description` host path (property-access.ts); the native-strings path
+      // above is the standalone fallback.
+      if (method === "toString" && expr.arguments.length === 0 && !ctx.nativeStrings) {
+        const symToStrIdx = ensureLateImport(
+          ctx,
+          "__symbol_to_string",
+          [{ kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        if (symToStrIdx !== undefined) {
+          const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+          if (recvType && recvType.kind !== "externref") {
+            coerceType(ctx, fctx, recvType, { kind: "externref" });
+          }
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "call", funcIdx: symToStrIdx });
+          return { kind: "externref" };
+        }
+      }
     }
 
     if (isNumberMethodReceiver(ctx, receiverType) && propAccess.name.text === "toFixed") {
@@ -12159,6 +12335,15 @@ function compileCallExpression(
         // Generator protocol: .next(), .return(value), .throw(error) on any/externref
         // These are very common in test262 generator tests where variables are typed as `any`.
         if (methodName === "next") {
+          // (#2865) An any-typed receiver may hold a DRIVEN async-gen frame
+          // (`var f; f = async function*(){…}; f().next()` — the dominant
+          // test262 shape). Runtime ref.test-dispatch to the per-gen driver;
+          // the miss arm preserves this site's original `__gen_next` behavior
+          // (see tryEmitAsyncGenNextDispatch). Zero-arg only.
+          if (expr.arguments.length === 0) {
+            const dispatched = tryEmitAsyncGenNextDispatch(ctx, fctx, propAccess.expression);
+            if (dispatched !== null) return dispatched;
+          }
           const genNextIdx = ctx.funcMap.get("__gen_next");
           if (genNextIdx !== undefined) {
             compileExpression(ctx, fctx, propAccess.expression, {
@@ -13199,6 +13384,26 @@ function compileCallExpression(
         }
         emitSymbolToString(ctx, fctx);
         return nativeStringType(ctx);
+      }
+      // (#3085) Host-mode counterpart: box the symbol id and route through the
+      // host SymbolDescriptiveString. Without this `String(sym)` falls through to
+      // the i32→number path and stringifies the raw symbol id (e.g. "101").
+      if (!ctx.nativeStrings && ctx.oracle.staticJsTypeOf(strArg0) === "symbol") {
+        const symToStrIdx = ensureLateImport(
+          ctx,
+          "__symbol_to_string",
+          [{ kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        if (symToStrIdx !== undefined) {
+          const recvType = compileExpression(ctx, fctx, strArg0, { kind: "externref" });
+          if (recvType && recvType.kind !== "externref") {
+            coerceType(ctx, fctx, recvType, { kind: "externref" });
+          }
+          flushLateImportShifts(ctx, fctx);
+          fctx.body.push({ op: "call", funcIdx: symToStrIdx });
+          return { kind: "externref" };
+        }
       }
 
       // #2160 — String(arr) in standalone: route an array argument through its

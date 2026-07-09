@@ -1538,19 +1538,25 @@ function buildPreamble(
 ): string {
   let p = `let __fail: number = 0;
 let __assert_count: number = 1;
-// (#2939/#2940) Vacuity sentinel. Harness wrappers that call a user callback in
-// a loop (testWith*Constructors and siblings) increment this per callback
-// invocation they ATTEMPT. If, post-run, a test "passed" (__fail === 0) but a
-// harness wrapper was invoked (__harness_cb_expected > 0) yet NO assertion ever
-// executed (__assert_count still at its initial 1 — every assert helper bumps
-// it), the callback body was DEAD (the dispatch-drop / dead-callback class):
-// the assertions live inside the callback, so zero counted asserts + an invoked
-// wrapper ⇒ vacuous. Such a pass is scored VACUOUS (a distinct status, NOT
-// pass) so host_free_pass structurally excludes it. Under-detection (asserts
-// outside the callback keep __assert_count > 1) is safe — the test just stays a
-// pass; over-detection is near-impossible for the harness class (its callbacks
-// always contain counted asserts).
+// (#2939/#2940/#3086) Vacuity sentinels. Harness wrappers that call a user
+// callback in a loop (testWith*Constructors and siblings) increment
+// __harness_cb_expected per callback invocation they ATTEMPT, and — the #3086
+// PARTIAL-vacuity extension — snapshot __assert_count around each fn(...) call,
+// incrementing __harness_cb_dead when that invocation contributed ZERO asserts
+// (its body ran nothing that asserted, i.e. the dispatch-drop / dead-callback
+// class). Post-run, a would-be pass (__fail === 0) is VACUOUS when a wrapper was
+// invoked (__harness_cb_expected > 0) and EVERY attempted invocation was dead
+// (__harness_cb_dead === __harness_cb_expected). This strictly generalizes the
+// old global "__assert_count === 1" check (the no-setup-asserts special case):
+// it now also catches PARTIAL vacuity — setup asserts (or an earlier
+// dispatching wrapper) ran, so __assert_count > 1, yet the callback holding the
+// real checks was dropped. Such a pass is scored VACUOUS (a distinct status,
+// NOT pass) so host_free_pass / the standalone floor structurally exclude it.
+// Under-detection (a callback that asserts even once is not flagged) is safe;
+// over-detection is near-impossible for the harness class (its callbacks always
+// assert), and requiring ALL invocations dead guards the mixed case.
 let __harness_cb_expected: number = 0;
+let __harness_cb_dead: number = 0;
 
 class Test262Error {
   message: string;
@@ -1873,6 +1879,58 @@ function $DETACHBUFFER(buf: any): void {
 }`;
   }
 
+  // (#3088) Identity `makeCtorArg`/`boundArgFactory` passthrough for the
+  // non-BigInt harness shim (mirrors the real harness's `makePassthrough`,
+  // which is also an identity).
+  //
+  // (#3087) NOTE: until the #3087 identifiers.ts fix, a `__`-prefixed function
+  // referenced as a VALUE compiled to `ref.null.extern` (the blunt internal-
+  // helper name filter), so `makeCtorArg(...)` inside every callback returned
+  // null via the dynamic-dispatch drop and `new TA(null)` built a length-0
+  // view. With the compiler fix this identity actually RUNS.
+  if (needsTestTypedArray) {
+    p += `
+
+function __ta_makeCtorArgPassthrough(x: any): any {
+  return x;
+}`;
+  }
+
+  // (#3087) BigInt-lane `makeCtorArg` COMPAT factory. The real harness
+  // passthrough is an identity too, but BigInt tests feed it BigInt-LITERAL
+  // arrays (`makeCtorArg([40n, 41n])`) and the compiler currently lowers
+  // BigInt literals to plain f64 numbers (#1349 — BigInt rep is gated on the
+  // i64-brand ValType decision). A faithful identity would therefore hand the
+  // host `new BigInt64Array([40, 41])` an array of NUMBERS, which throws
+  // "Cannot convert 40 to a BigInt" — flipping ~300 currently-passing BigInt
+  // harness tests to runtime errors (measured 3/60 in the #3087 pass-sample
+  // A/B). Until #1349 lands:
+  //   - arrays → null: exactly reproduces the pre-#3087 behavior for array
+  //     args (the dynamic-dispatch null-drop made every makeCtorArg call
+  //     return null), so the BigInt lane's pass/fail set is preserved
+  //     bit-for-bit — no new dishonesty is introduced, the existing
+  //     length-0-view coincidental passes just stay as they were;
+  //   - primitives → identity: `makeCtorArg(8n)` lowers to `8` and
+  //     `new TA(8)` builds the length-8 view the real harness would — a
+  //     small honest win with no BigInt conversion involved.
+  if (needsTestBigIntTypedArray) {
+    p += `
+
+function __ta_makeCtorArgBigIntCompat(x: any): any {
+  if (Array.isArray(x)) { return null; }
+  return x;
+}`;
+  }
+
+  // (#3088) The real test262 harness (`testTypedArray.js` →
+  // `testWithAllTypedArrayConstructors`) invokes the callback as
+  // `f(constructor, boundArgFactory)` — 2 ARGS. Many non-BigInt tests declare
+  // `function (TA, makeCtorArg) { … }` (2 params, void) and use `makeCtorArg` in
+  // the body. The old 1-arg shim (`fn(constructors[i])`) left those callbacks as
+  // over-arity-void candidates, which `tryEmitInlineDynamicCall` SKIPS (#1837),
+  // so they stayed vacuous even after the #3074 dispatch fix. Pass the second
+  // `boundArgFactory` arg (identity passthrough) so 2-param callbacks match arity
+  // and dispatch; 1-param callbacks truncate the extra arg (under-arity is fine).
   if (needsTestTypedArray) {
     p += `
 
@@ -1880,7 +1938,9 @@ function testWithTypedArrayConstructors(fn: any): void {
   const constructors = [Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array, Float32Array, Float64Array];
   for (let i = 0; i < constructors.length; i++) {
     __harness_cb_expected = __harness_cb_expected + 1;
-    fn(constructors[i]);
+    const __ac_before = __assert_count;
+    fn(constructors[i], __ta_makeCtorArgPassthrough);
+    if (__assert_count === __ac_before) { __harness_cb_dead = __harness_cb_dead + 1; }
   }
 }`;
   }
@@ -1891,22 +1951,21 @@ function testWithTypedArrayConstructors(fn: any): void {
   // is typically `function (TA, makeCtorArg) { … }`. Passing only the ctor
   // left `makeCtorArg` undefined; combined with the (now-fixed) nested-scope
   // dispatch gap the whole callback body was dead (a vacuous host-free pass,
-  // ~814 tests). Shim the 2-arg signature with an identity `makeCtorArg`
-  // passthrough (maps a length/iterable straight to the ctor's first arg).
-  // Only emitted when the body actually references the BigInt variant, so the
-  // non-BigInt corpus preamble is byte-unchanged. Requires the #2939 dispatch
-  // fix to land in lockstep — else it produces dishonest vacuous passes.
+  // ~814 tests). Shim the 2-arg signature so 2-param callbacks match arity and
+  // dispatch. (#3087) The factory is the BigInt COMPAT one (arrays → null,
+  // primitives → identity), NOT the true identity — see its definition above
+  // for why a faithful identity would crash on the compiler's f64-lowered
+  // BigInt literals until #1349 lands.
   if (needsTestBigIntTypedArray) {
     p += `
 
-function __ta_makeCtorArgPassthrough(x: any): any {
-  return x;
-}
 function testWithBigIntTypedArrayConstructors(fn: any): void {
   const constructors = [BigInt64Array, BigUint64Array];
   for (let i = 0; i < constructors.length; i++) {
     __harness_cb_expected = __harness_cb_expected + 1;
-    fn(constructors[i], __ta_makeCtorArgPassthrough);
+    const __ac_before = __assert_count;
+    fn(constructors[i], __ta_makeCtorArgBigIntCompat);
+    if (__assert_count === __ac_before) { __harness_cb_dead = __harness_cb_dead + 1; }
   }
 }`;
   }
@@ -2896,16 +2955,36 @@ export function test(): number {
   ${implicitDecls}
   ${hoistedFns}try {
     `;
+  // (#3086) GENERAL (non-harness) vacuity gate. A would-be pass whose test body
+  // contains executable assertions (every `assert.*`/bare `assert(` is rewritten
+  // to an `assert_*` helper, each of which bumps __assert_count) but executed
+  // ZERO of them (__assert_count stayed at its initial 1) asserted nothing at
+  // runtime — every assertion sat inside a callback/body that never ran. This is
+  // the dropped-nested-callback class (#2939/#2940 host lane, #3083 validator
+  // arrays) the harness gate does NOT catch (it keys on testWith*Constructors).
+  // Emitted ONLY for tests that HAVE assertions, so a throw-based test (no
+  // assert_* calls, checks via `throw new Test262Error`) is never flagged; and
+  // it only fires after `if (__fail) return __fail` below, so it touches only
+  // would-be passes. Under-detection is safe (an assert form we don't rewrite to
+  // assert_* just leaves the test a pass); over-detection needs a test whose
+  // EVERY assertion is unreachable, which is itself a vacuous test.
+  const hasExecutableAsserts = /\bassert_[A-Za-z]\w*\s*\(/.test(bodyForFunc);
+  const generalVacuityGate = hasExecutableAsserts ? "  if (__assert_count === 1) { return -262; }\n" : "";
   const postBody = `
   } catch (e) {
     if (!__fail) __fail = -1;
     throw e;
   }
 ${asyncDrainCall}  if (__fail) { return __fail; }
-  // (#2939/#2940) Vacuity gate: a would-be pass whose harness callback never
-  // executed (invoked wrapper + zero counted asserts) is VACUOUS, not a pass.
-  if (__harness_cb_expected > 0 && __assert_count === 1) { return -262; }
-  return 1;
+  // (#2939/#2940/#3086) Vacuity gate: a would-be pass whose harness callback
+  // never executed is VACUOUS, not a pass. A wrapper was invoked
+  // (__harness_cb_expected > 0) and EVERY attempted callback invocation was dead
+  // (contributed zero asserts) — so the callback body holding the real checks
+  // was dropped. This generalizes the old "__assert_count === 1" total-vacuity
+  // check to also catch PARTIAL vacuity (setup asserts ran, but the callback was
+  // still dead). Requiring ALL invocations dead keeps the mixed case safe.
+  if (__harness_cb_expected > 0 && __harness_cb_dead === __harness_cb_expected) { return -262; }
+${generalVacuityGate}  return 1;
 }
 `;
   const bodyLineOffset = preBody.split("\n").length - 1;

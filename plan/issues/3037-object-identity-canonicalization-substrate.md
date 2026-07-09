@@ -2,11 +2,13 @@
 id: 3037
 title: "Object-identity canonicalization substrate for standalone dynamic reads (foundation under #3027 / V2-S3b reader-arm)"
 status: in-progress
-assignee: opus-3037-cs1b
+assignee: ttraenkler/fable-identity
 sprint: current
+model: fable
 created: 2026-07-05
-updated: 2026-07-05
+updated: 2026-07-09
 priority: high
+horizon: l
 feasibility: hard
 reasoning_effort: max
 task_type: analysis
@@ -960,3 +962,34 @@ that piece.
    carrier's coverage ceiling is reached. Do not spend further dev effort trying
    to flip stored-in-local / harness-comparator cases with the operand carrier.
 3. Keep the CS1b(iii)/CS1c KNOWN-GAP test rows as the auditable CS3 flip targets.
+
+---
+
+## CS2-METHOD (synthesized-anchor: class METHODS) — LANDED (fable-identity, 2026-07-09, with #2963)
+
+The Option-A synthesized-anchor model ("a reflective/synthesized value is
+memoized to ONE canonical ref") now covers **class prototype methods reached
+through the DYNAMIC `any`-receiver read path** — INV-2 for method values:
+
+- The `__get_member_<name>` dispatcher gained miss-gated method arms answering
+  the canonical `__method_closure_<Owner>_<m>` singleton — the SAME anchor the
+  typed `C.prototype.m` read mints — so `c.m === C.prototype.m` holds without
+  any equality-site change (production-site canonicalization, exactly this
+  spec's thesis). The value reaches `===` as a plain externref of ONE GC
+  struct; both the standalone inline strict-eq chain and host `__host_eq`
+  answer identity on the shared ref. Neither the tag-5 same-tag arm, the
+  generic `boxToAny` externref arm, nor the `===` operand seam were touched;
+  `prove-emit-identity` 39/39 IDENTICAL vs main.
+- #3080 (private-method value identity) folded in: the non-`this`-receiver
+  private-method value read returned the RECEIVER; it now answers the same
+  singleton. See `plan/issues/2963-builtin-first-class-reification.md`
+  ("Class-METHOD value identity") for the full mechanism + the
+  `collectDeclaredFuncRefs`-ordering trap.
+- Housekeeping: the CS0 case (d) pin (`getPrototypeOf` results stored in `any`
+  locals) was stale-RED on main — an intervening landed change already
+  canonicalizes the stored-null comparison to the correct `1`; the pin is
+  updated (verified failing on pristine main BEFORE this branch's changes).
+
+**CS3 (universal reader carrier) remains open and architect-owned** per the
+readiness assessment above — this slice extends the Option-A anchor family,
+it does not attempt the −299 universal-carrier seam.
