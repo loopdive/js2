@@ -1,8 +1,8 @@
 {
   "id": "3099",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-09T10:32:58Z",
-  "updated_at": "2026-07-09T10:32:58Z"
+  "assignee": "ttraenkler/dev-proxy",
+  "status": "in-progress",
+  "branch": "issue-3099-method-shorthand-own-prop",
+  "claimed_at": "2026-07-09T11:18:32Z",
+  "updated_at": "2026-07-09T11:18:32Z"
 }
