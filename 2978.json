@@ -1,9 +1,8 @@
 {
   "id": "2978",
-  "assignee": "ttraenkler/dev-2978",
-  "status": "released",
-  "branch": "issue-2978-async-forawait-reject",
-  "claimed_at": "2026-07-06T12:40:55Z",
-  "updated_at": "2026-07-06T13:05:26Z",
-  "released_at": "2026-07-06T13:05:26Z"
+  "assignee": "ttraenkler/fable-2978",
+  "status": "in-progress",
+  "branch": "issue-2978-forawait-rejected-promise",
+  "claimed_at": "2026-07-09T19:35:42Z",
+  "updated_at": "2026-07-09T19:35:42Z"
 }
