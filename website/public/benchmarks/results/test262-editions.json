@@ -57,8 +57,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11733,
-    "fail": 3509,
+    "pass": 11734,
+    "fail": 3508,
     "ce": 143,
     "skip": 1,
     "total": 15386,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 815,
-        "fail": 287,
+        "pass": 816,
+        "fail": 286,
         "ce": 1,
         "skip": 0,
         "total": 1103,
@@ -1026,8 +1026,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3338,
-    "fail": 885,
+    "pass": 3340,
+    "fail": 883,
     "ce": 28,
     "skip": 0,
     "total": 4251,
@@ -1035,8 +1035,8 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2486,
-        "fail": 771,
+        "pass": 2488,
+        "fail": 769,
         "ce": 27,
         "skip": 0,
         "total": 3284,
@@ -3191,17 +3191,17 @@
   },
   {
     "edition": "ES2025",
-    "pass": 949,
-    "fail": 325,
+    "pass": 951,
+    "fail": 323,
     "ce": 0,
     "skip": 0,
     "total": 1274,
-    "pct": 74,
+    "pct": 75,
     "features": [
       {
         "name": "iterator-helpers",
-        "pass": 223,
-        "fail": 170,
+        "pass": 225,
+        "fail": 168,
         "ce": 0,
         "skip": 0,
         "total": 393,
