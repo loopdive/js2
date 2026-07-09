@@ -606,6 +606,15 @@ export function promoteAccessorCapturesToGlobals(
     // Remove from localMap so subsequent code in the enclosing function
     // also uses the global (maintaining shared state with the accessor)
     fctx.localMap.delete(name);
+    // (#3121) Record the promotion so later closure constructions in this
+    // function do NOT resurrect the orphaned local slot via the #1177
+    // fctx.locals-by-name rescan (which would fork the binding into a second
+    // store — a fresh ref cell over the dead local — invisible to the
+    // method's global-routed writes). With the name recorded, the closure
+    // skips the capture entirely and its lifted body resolves reads/writes
+    // through `ctx.capturedGlobals` — the same store as the method body and
+    // the enclosing function's own post-promotion references.
+    (fctx.promotedCaptureNames ??= new Set()).add(name);
   }
 }
 
@@ -2035,6 +2044,19 @@ export function compileArrowAsClosure(
     let localIdx = fctx.localMap.get(name);
     let tdzFlagIdxFromScan: number | undefined;
     if (localIdx === undefined) {
+      // (#3121) A localMap miss can ALSO mean the name was PROMOTED to a
+      // module global by `promoteAccessorCapturesToGlobals` (an earlier
+      // object-literal method/accessor in this function captured it). The
+      // promotion deliberately deleted the localMap entry so every later
+      // reference — including this closure's body — resolves through the
+      // promoted global (identifiers.ts/assignment.ts check
+      // `ctx.capturedBoxGlobals`/`ctx.capturedGlobals` on a localMap miss).
+      // The #1177 rescan below would resurrect the ORPHANED local slot and
+      // box it into a fresh ref cell — a second store the method's
+      // global-routed writes never reach (write via `__captured_c` global,
+      // read via the stale cell → silent wrong results). Skip the capture:
+      // the lifted body then shares the method's store via the global.
+      if (fctx.promotedCaptureNames?.has(name)) continue;
       // #1177: The block-scope shadow manager (saveBlockScopedShadows) deletes
       // localMap entries for block-scoped let/const names that were pre-hoisted
       // by hoistLetConstWithTdz. Inside the block, before the let-decl runs,

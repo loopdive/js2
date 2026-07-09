@@ -1,7 +1,7 @@
 {
   "generated": "2026-07-09",
   "threshold": 1500,
-  "totalCeiling": 388883,
+  "totalCeiling": 388919,
   "files": {
     "src/codegen-linear/index.ts": 5506,
     "src/codegen-linear/runtime.ts": 3638,
@@ -13,8 +13,8 @@
     "src/codegen/async-scheduler.ts": 3440,
     "src/codegen/binary-ops.ts": 4430,
     "src/codegen/class-bodies.ts": 3032,
-    "src/codegen/closures.ts": 5000,
-    "src/codegen/context/types.ts": 2442,
+    "src/codegen/closures.ts": 5022,
+    "src/codegen/context/types.ts": 2456,
     "src/codegen/dataview-native.ts": 3200,
     "src/codegen/declarations.ts": 5402,
     "src/codegen/destructuring-params.ts": 2119,
