@@ -1,8 +1,9 @@
 {
   "id": "2773",
   "assignee": "ttraenkler/fable-2773t",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2773-arraylike-call-thisarg",
   "claimed_at": "2026-07-09T16:46:58Z",
-  "updated_at": "2026-07-09T16:46:58Z"
+  "updated_at": "2026-07-09T18:55:40Z",
+  "released_at": "2026-07-09T18:55:40Z"
 }
