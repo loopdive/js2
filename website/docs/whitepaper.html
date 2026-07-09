@@ -1,0 +1,1629 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>js² Whitepaper — Squaring the Circle</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #ffffff;
+        --fg: #101114;
+        --muted: #5f6670;
+        --rule: #d7dce3;
+        --soft: #f5f7fa;
+        --soft-2: #fafbfd;
+        --dark: #101114;
+      }
+
+      @page {
+        size: A4;
+        margin: 16mm 16mm 14mm 16mm;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        font-size: 10.3pt;
+        line-height: 1.5;
+      }
+
+      body {
+        -webkit-print-color-adjust: exact;
+      }
+
+      .document {
+        max-width: 178mm;
+        margin: 0 auto;
+        background: #ffffff;
+      }
+
+      @media screen {
+        html {
+          background: #1c2128;
+        }
+
+        body {
+          padding: 24px 0 48px;
+          background: #1c2128;
+        }
+
+        .page-controls {
+          position: fixed;
+          left: 50%;
+          bottom: 14px;
+          transform: translateX(-50%);
+          z-index: 20;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px;
+          border: 1px solid #c9d1db;
+          border-radius: 10px;
+          background: rgba(237, 241, 246, 0.94);
+          box-shadow: 0 10px 28px rgba(16, 17, 20, 0.12);
+          backdrop-filter: blur(8px);
+        }
+
+        .page-controls-group {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .page-controls-separator {
+          width: 1px;
+          align-self: stretch;
+          background: #c9d1db;
+          margin: 0 2px;
+        }
+
+        .page-controls-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 30px;
+          height: 30px;
+          color: #58606b;
+        }
+
+        .page-controls-icon svg,
+        .page-controls button svg {
+          width: 16px;
+          height: 16px;
+          display: block;
+        }
+
+        .page-controls button {
+          border: 1px solid #c4ccd6;
+          background: #ffffff;
+          color: #2b3138;
+          font: inherit;
+          font-size: 12px;
+          font-weight: 600;
+          line-height: 1;
+          padding: 9px 11px;
+          border-radius: 8px;
+          cursor: pointer;
+        }
+
+        .page-controls button.icon-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 34px;
+          height: 34px;
+          padding: 0;
+        }
+
+        .page-controls button[aria-pressed="true"] {
+          background: #101114;
+          border-color: #101114;
+          color: #ffffff;
+        }
+
+        .screen-pages {
+          width: 210mm;
+          max-width: none;
+          margin: 0 auto;
+          zoom: var(--screen-zoom, 1);
+          display: none;
+        }
+
+        .screen-page {
+          position: relative;
+          width: 210mm;
+          height: 297mm;
+          margin: 0 auto 18px;
+          background: #ffffff;
+          border: 1px solid #868f9c;
+          box-shadow: 0 10px 20px rgba(16, 17, 20, 0.14);
+          overflow: hidden;
+        }
+
+        .screen-page:last-child {
+          margin-bottom: 0;
+        }
+
+        .screen-page-content {
+          position: relative;
+          width: 100%;
+          height: 100%;
+          padding: 16mm 16mm 18mm 16mm;
+          overflow: hidden;
+        }
+
+        .screen-page-content > *:first-child {
+          margin-top: 0 !important;
+        }
+
+        .screen-page-number {
+          position: absolute;
+          right: 16mm;
+          bottom: 8mm;
+          color: #79818c;
+          font-size: 8pt;
+          line-height: 1;
+          font-weight: 600;
+          letter-spacing: 0.04em;
+        }
+
+        .document {
+          width: 210mm;
+          max-width: none;
+          padding: 16mm 16mm 14mm 16mm;
+          background: #ffffff;
+          margin: 0 auto;
+        }
+
+        body.screen-view-continuous .document {
+          position: relative;
+          top: auto;
+          left: auto;
+          visibility: visible;
+          zoom: var(--screen-zoom, 1);
+        }
+
+        body.screen-view-continuous .screen-pages {
+          display: none;
+        }
+
+        body.screen-view-preview .document {
+          position: absolute;
+          top: 0;
+          left: -200vw;
+          margin: 0;
+          visibility: hidden;
+        }
+
+        body.screen-view-preview .screen-pages {
+          display: block;
+        }
+      }
+
+      @media print {
+        * {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+
+        .page-controls {
+          display: none !important;
+        }
+
+        .screen-pages {
+          display: none !important;
+        }
+
+        .document,
+        .screen-pages {
+          zoom: 1 !important;
+        }
+
+        .logo-glyphs-main {
+          stroke-width: 6.8 !important;
+        }
+
+        .logo-glyphs-sup {
+          stroke-width: 10.8 !important;
+        }
+
+        .header {
+          border-bottom: 1.2px solid #c7ced7;
+        }
+
+        .abstract {
+          border: 1.2px solid #c7ced7;
+          background: #f5f7fa !important;
+        }
+
+        .callout {
+          border-left: 3px solid #101114;
+          background: #f5f7fa !important;
+        }
+
+        .mini-table th,
+        .mini-table td,
+        pre {
+          border: 1.2px solid #c7ced7;
+        }
+
+        .mini-table th {
+          background: #f5f7fa !important;
+        }
+
+        pre {
+          background: #f6f8fb !important;
+        }
+
+        .footer {
+          border-top: 1.2px solid #c7ced7;
+        }
+      }
+
+      @media screen and (max-width: 720px) {
+        html {
+          background: #ffffff;
+        }
+
+        body {
+          padding: 24px 0 40px;
+          background: #ffffff;
+        }
+
+        .page-controls {
+          display: none;
+        }
+
+        .screen-pages {
+          display: none;
+        }
+
+        .document {
+          position: static;
+          left: auto;
+          visibility: visible;
+          width: 100%;
+          max-width: none;
+          padding: 0 16px;
+          border: none;
+          box-shadow: none;
+        }
+
+        .header {
+          padding-bottom: 18px;
+          margin-bottom: 24px;
+        }
+
+        .header-top,
+        .header-left,
+        .header-right,
+        .brand,
+        .brand-logo,
+        .brand-copy,
+        .footer-grid,
+        .footer-left,
+        .footer-right {
+          display: block;
+          width: auto;
+        }
+
+        .header-top {
+          margin-bottom: 28px;
+        }
+
+        .header-right {
+          text-align: left;
+          margin-top: 14px;
+        }
+
+        .publisher {
+          text-align: left;
+        }
+
+        .publisher-logo {
+          margin-left: 0;
+        }
+
+        .logo-svg {
+          width: 84px;
+          height: 84px;
+          margin-right: 0;
+          margin-bottom: 12px;
+        }
+
+        .brand-copy {
+          font-size: 11px;
+          line-height: 1.35;
+        }
+
+        .brand-copy-line-lead,
+        .publisher-copy,
+        .eyebrow {
+          font-size: 11px;
+        }
+
+        .eyebrow {
+          margin-bottom: 16px;
+        }
+
+        h1 {
+          margin: 0 0 18px 0;
+          font-size: 34px;
+          line-height: 1.02;
+        }
+
+        .subtitle {
+          max-width: none;
+          margin: 0 0 22px 0;
+          font-size: 16px;
+          line-height: 1.45;
+        }
+
+        .author-line {
+          margin: -4px 0 18px 0;
+          font-size: 13px;
+          line-height: 1.4;
+        }
+
+        .abstract,
+        .callout,
+        pre {
+          padding: 16px;
+        }
+
+        .section {
+          margin-bottom: 24px;
+        }
+
+        .section h2 {
+          margin-bottom: 10px;
+          font-size: 24px;
+        }
+
+        .mini-table {
+          display: block;
+          overflow-x: auto;
+          margin: 16px 0 10px 0;
+        }
+
+        .mini-table th,
+        .mini-table td {
+          padding: 10px 12px;
+          white-space: normal;
+        }
+
+        .references-list {
+          padding-left: 18px;
+          font-size: 13px;
+        }
+
+        .footer {
+          margin-top: 24px;
+          padding-top: 18px;
+        }
+
+        .footer-right {
+          margin-top: 14px;
+          text-align: left;
+        }
+      }
+
+      .header {
+        border-bottom: 1px solid var(--rule);
+        padding-bottom: 5mm;
+        margin-bottom: 8mm;
+      }
+
+      .header-top {
+        display: table;
+        width: 100%;
+        margin-bottom: 7.8mm;
+      }
+
+      .header-left,
+      .header-right {
+        display: table-cell;
+        vertical-align: middle;
+      }
+
+      .header-left {
+        padding-left: 2.6mm;
+      }
+
+      .header-right {
+        text-align: right;
+        padding-right: 2.6mm;
+      }
+
+      .brand {
+        display: table;
+      }
+
+      .brand-logo,
+      .brand-copy {
+        display: table-cell;
+        vertical-align: middle;
+      }
+
+      .brand-logo {
+        padding: 1.4mm 2.4mm 1.4mm 0;
+      }
+
+      .logo-svg {
+        width: 17.2mm;
+        height: 17.2mm;
+        margin-right: 3.6mm;
+        display: block;
+      }
+
+      .brand-copy {
+        font-size: 8.6pt;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+        line-height: 1.35;
+      }
+
+      .brand-copy-line {
+        display: block;
+      }
+
+      .brand-copy-line-lead {
+        font-size: 7.5pt;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.6mm;
+      }
+
+      .publisher {
+        display: inline-block;
+        text-align: right;
+      }
+
+      .publisher-logo {
+        width: 14mm;
+        height: 11.4mm;
+        display: block;
+        margin-left: auto;
+        margin-bottom: 0.7mm;
+      }
+
+      .publisher-copy {
+        font-size: 8.4pt;
+        line-height: 1;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: var(--fg);
+      }
+
+      .eyebrow {
+        margin: 0 0 4mm 0;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 8.1pt;
+        font-weight: 700;
+      }
+
+      h1 {
+        margin: 0 0 5mm 0;
+        font-size: 22pt;
+        line-height: 1.03;
+        letter-spacing: -0.03em;
+      }
+
+      .subtitle {
+        margin: 0 0 6mm 0;
+        font-size: 11.4pt;
+        line-height: 1.42;
+        color: var(--muted);
+        max-width: 156mm;
+      }
+
+      .author-line {
+        margin: -0.6mm 0 5mm 0;
+        font-size: 8.8pt;
+        line-height: 1.35;
+        color: var(--muted);
+      }
+
+      .abstract {
+        border: 1px solid var(--rule);
+        background: var(--soft-2);
+        border-radius: 6px;
+        padding: 4.2mm 4.8mm;
+        margin-bottom: 8mm;
+        page-break-inside: avoid;
+      }
+
+      .abstract-title {
+        margin: 0 0 1.8mm 0;
+        font-size: 8.5pt;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+        color: var(--muted);
+      }
+
+      .section {
+        margin-bottom: 8mm;
+        page-break-inside: auto;
+      }
+
+      .section h2 {
+        margin: 0 0 3mm 0;
+        font-size: 14pt;
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+      }
+
+      .section p {
+        margin: 0 0 3mm 0;
+        text-align: left;
+        hyphens: none;
+      }
+
+      .section ul,
+      .section ol {
+        margin: 0 0 3mm 0;
+        padding-left: 5mm;
+      }
+
+      .section li {
+        margin: 0 0 1.5mm 0;
+      }
+
+      .references-list {
+        margin: 0;
+        padding-left: 5mm;
+        font-size: 9.2pt;
+        line-height: 1.42;
+      }
+
+      .references-list li {
+        margin: 0 0 1.9mm 0;
+      }
+
+      .callout {
+        border-left: 3px solid var(--dark);
+        background: var(--soft);
+        padding: 3.8mm 4.2mm;
+        margin: 4mm 0;
+        page-break-inside: avoid;
+      }
+
+      .abstract p,
+      .callout p,
+      .subtitle {
+        text-align: left;
+        hyphens: none;
+      }
+
+      .callout p:last-child,
+      .abstract p:last-child {
+        margin-bottom: 0;
+      }
+
+      .mini-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 4mm 0 2mm 0;
+        page-break-inside: avoid;
+      }
+
+      .mini-table th,
+      .mini-table td {
+        border: 1px solid var(--rule);
+        padding: 2.5mm 3mm;
+        vertical-align: top;
+        text-align: left;
+      }
+
+      .mini-table th {
+        background: var(--soft);
+        font-size: 8.6pt;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+      }
+
+      .benchmark-table {
+        table-layout: fixed;
+        font-size: 8.45pt;
+        line-height: 1.28;
+      }
+
+      .benchmark-table th,
+      .benchmark-table td {
+        padding: 2mm 2.2mm;
+      }
+
+      .benchmark-table td:nth-child(4),
+      .benchmark-table td:nth-child(5) {
+        white-space: nowrap;
+      }
+
+      .benchmark-table td {
+        overflow-wrap: anywhere;
+      }
+
+      code,
+      pre {
+        font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+      }
+
+      pre {
+        margin: 4mm 0;
+        padding: 3.6mm 4mm;
+        background: #f6f8fb;
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        font-size: 8.9pt;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+
+      .footer {
+        border-top: 1px solid var(--rule);
+        padding-top: 4.5mm;
+        margin-top: 10mm;
+      }
+
+      .footer-grid {
+        display: table;
+        width: 100%;
+      }
+
+      .footer-left,
+      .footer-right {
+        display: table-cell;
+        vertical-align: top;
+      }
+
+      .footer-right {
+        text-align: right;
+      }
+
+      .small {
+        font-size: 8.8pt;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      strong {
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-controls" aria-label="Page scaling controls">
+      <div class="page-controls-group" role="group" aria-label="View mode">
+        <button type="button" data-view="continuous" aria-pressed="true">Continuous</button>
+        <button type="button" data-view="preview" aria-pressed="false">Paginated</button>
+      </div>
+      <span class="page-controls-separator" aria-hidden="true"></span>
+      <div class="page-controls-group" role="group" aria-label="Scale">
+        <span class="page-controls-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="6.5"></circle>
+            <path d="M16 16l5 5"></path>
+          </svg>
+        </span>
+        <button type="button" data-fit="actual" aria-pressed="true" title="Actual Size">100%</button>
+        <button type="button" class="icon-button" data-fit="width" aria-pressed="false" aria-label="Fit Width" title="Fit Width">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 8v8"></path>
+            <path d="M20 8v8"></path>
+            <path d="M8 12H16"></path>
+            <path d="M10.5 9.5L8 12l2.5 2.5"></path>
+            <path d="M13.5 9.5L16 12l-2.5 2.5"></path>
+          </svg>
+        </button>
+        <button type="button" class="icon-button" data-fit="height" aria-pressed="false" aria-label="Full Page" title="Full Page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="6.5" y="3.5" width="11" height="17" rx="1.5"></rect>
+            <path d="M9.5 7.5h5"></path>
+            <path d="M9.5 12h5"></path>
+            <path d="M9.5 16.5h5"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="screen-pages" aria-hidden="true"></div>
+    <div class="document">
+      <div class="header">
+        <div class="header-top">
+          <div class="header-left">
+            <div class="brand">
+              <div class="brand-logo">
+                <svg
+                  class="logo-svg"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 630 630"
+                  preserveAspectRatio="xMidYMid meet"
+                  role="img"
+                  aria-label="js² logo"
+                >
+                  <path d="M0 0H241A74 74 0 0 0 389 0H630V630H0Z" fill="#000000" />
+                  <g fill="none" stroke="#ffffff" stroke-width="14" stroke-linejoin="round" stroke-linecap="round">
+                    <g transform="translate(0 0) scale(0.5)">
+                      <g transform="rotate(90 315 315)">
+                        <path d="M0 0H241A74 74 0 0 0 389 0H630V630H0Z" />
+                      </g>
+                    </g>
+                    <g transform="translate(315 0) scale(0.5)">
+                      <g transform="rotate(180 315 315)">
+                        <path d="M0 0H241A74 74 0 0 0 389 0H630V630H0Z" />
+                      </g>
+                    </g>
+                    <g transform="translate(0 315) scale(0.5)">
+                      <path d="M0 0H241A74 74 0 0 0 389 0H630V630H0Z" />
+                    </g>
+                    <g transform="translate(315 315) scale(0.5)">
+                      <g transform="rotate(270 315 315)">
+                        <path d="M0 0H241A74 74 0 0 0 389 0H630V630H0Z" />
+                      </g>
+                    </g>
+                  </g>
+                  <g fill="none" stroke="#000000" stroke-width="9.2" stroke-linecap="round">
+                    <path d="M315 128.5V186.5" />
+                    <path d="M315 443.5V501.5" />
+                    <path d="M128.5 315H186.5" />
+                    <path d="M443.5 315H501.5" />
+                  </g>
+                  <g
+                    class="logo-glyphs-main"
+                    fill="#ffffff"
+                    stroke="#000000"
+                    stroke-width="9.75238"
+                    stroke-linejoin="round"
+                    paint-order="stroke fill"
+                    transform="translate(72 520)"
+                  >
+                    <g transform="scale(1.3125)">
+                      <path d="M 124.671875 -57.601562 L 124.671875 -182.785156 L 84.480469 -182.785156 L 84.480469 -59.390625 C 84.480469 -56.148438 84.351562 -52.777344 84.097656 -49.28125 C 83.839844 -45.78125 83.070312 -42.539062 81.792969 -39.550781 C 80.511719 -36.566406 78.421875 -34.132812 75.519531 -32.257812 C 72.617188 -30.378906 68.523438 -29.441406 63.230469 -29.441406 C 58.453125 -29.441406 54.570312 -30.207031 51.585938 -31.742188 C 48.597656 -33.28125 46.25 -35.371094 44.542969 -38.015625 C 42.835938 -40.660156 41.644531 -43.863281 40.960938 -47.617188 C 40.277344 -51.371094 39.9375 -55.464844 39.9375 -59.902344 L 39.9375 -68.097656 L 3.585938 -68.097656 L 3.585938 -52.222656 C 3.585938 -42.15625 5.289062 -33.578125 8.703125 -26.496094 C 12.117188 -19.414062 16.640625 -13.609375 22.273438 -9.089844 C 27.902344 -4.566406 34.304688 -1.238281 41.472656 0.894531 C 48.640625 3.03125 56.0625 4.097656 63.742188 4.097656 C 77.398438 4.097656 88.234375 2.003906 96.257812 -2.175781 C 104.277344 -6.355469 110.421875 -11.5625 114.6875 -17.792969 C 118.953125 -24.019531 121.683594 -30.71875 122.878906 -37.886719 C 124.074219 -45.054219 124.671875 -51.625 124.671875 -57.601562 Z M 124.671875 -57.601562 " />
+                      <path d="M 45.054688 -60.671875 L 6.144531 -60.671875 C 5.972656 -49.40625 8.019531 -39.679688 12.289062 -31.488281 C 16.554688 -23.296875 22.316406 -16.554688 29.566406 -11.265625 C 36.820312 -5.972656 45.183594 -2.089844 54.65625 0.382812 C 64.128906 2.859375 73.898438 4.097656 83.96875 4.097656 C 96.425781 4.097656 107.390625 2.644531 116.863281 -0.257812 C 126.335938 -3.15625 134.273438 -7.210938 140.671875 -12.414062 C 147.070312 -17.621094 151.894531 -23.808594 155.136719 -30.976562 C 158.378906 -38.144531 160 -45.910156 160 -54.273438 C 160 -64.511719 157.824219 -72.917969 153.472656 -79.488281 C 149.121094 -86.058594 143.957031 -91.308594 137.984375 -95.230469 C 132.011719 -99.15625 125.996094 -102.015625 119.9375 -103.808594 C 113.878906 -105.601562 109.140625 -106.835938 105.726562 -107.519531 C 94.292969 -110.421875 85.035156 -112.8125 77.953125 -114.6875 C 70.871094 -116.566406 65.324219 -118.441406 61.3125 -120.320312 C 57.300781 -122.199219 54.613281 -124.246094 53.246094 -126.464844 C 51.882812 -128.683594 51.199219 -131.585938 51.199219 -135.167969 C 51.199219 -139.09375 52.054688 -142.335938 53.761719 -144.894531 C 55.464844 -147.457031 57.644531 -149.589844 60.289062 -151.296875 C 62.933594 -153.003906 65.878906 -154.199219 69.121094 -154.878906 C 72.363281 -155.5625 75.605469 -155.902344 78.847656 -155.902344 C 83.796875 -155.902344 88.363281 -155.476562 92.542969 -154.625 C 96.726562 -153.769531 100.4375 -152.320312 103.679688 -150.273438 C 106.921875 -148.222656 109.523438 -145.40625 111.488281 -141.824219 C 113.449219 -138.238281 114.601562 -133.71875 114.945312 -128.257812 L 153.855469 -128.257812 C 153.855469 -138.835938 151.851562 -147.839844 147.839844 -155.265625 C 143.828125 -162.6875 138.410156 -168.789062 131.585938 -173.566406 C 124.757812 -178.347656 116.949219 -181.800781 108.160156 -183.9375 C 99.371094 -186.070312 90.199219 -187.136719 80.640625 -187.136719 C 72.449219 -187.136719 64.257812 -186.027344 56.0625 -183.808594 C 47.871094 -181.589844 40.535156 -178.175781 34.046875 -173.566406 C 27.5625 -168.960938 22.316406 -163.199219 18.304688 -156.289062 C 14.292969 -149.375 12.289062 -141.226562 12.289062 -131.839844 C 12.289062 -123.476562 13.867188 -116.351562 17.023438 -110.464844 C 20.179688 -104.574219 24.320312 -99.667969 29.441406 -95.742188 C 34.558594 -91.820312 40.363281 -88.617188 46.847656 -86.144531 C 53.332031 -83.667969 59.988281 -81.578125 66.816406 -79.871094 C 73.472656 -77.996094 80.042969 -76.289062 86.527344 -74.753906 C 93.011719 -73.214844 98.816406 -71.425781 103.9375 -69.375 C 109.054688 -67.328125 113.195312 -64.769531 116.351562 -61.695312 C 119.507812 -58.625 121.089844 -54.613281 121.089844 -49.664062 C 121.089844 -45.054688 119.894531 -41.257812 117.503906 -38.273438 C 115.113281 -35.285156 112.128906 -32.9375 108.542969 -31.230469 C 104.960938 -29.523438 101.121094 -28.375 97.023438 -27.777344 C 92.929688 -27.179688 89.089844 -26.878906 85.503906 -26.878906 C 80.214844 -26.878906 75.09375 -27.519531 70.144531 -28.800781 C 65.195312 -30.078125 60.886719 -32.042969 57.214844 -34.6875 C 53.546875 -37.332031 50.601562 -40.789062 48.382812 -45.054688 C 46.164062 -49.324219 45.054688 -54.527344 45.054688 -60.671875 Z M 45.054688 -60.671875 " transform="translate(131.661458 0)" />
+                    </g>
+                  </g>
+                  <g
+                    class="logo-glyphs-sup"
+                    fill="#ffffff"
+                    stroke="#000000"
+                    stroke-width="15.60476"
+                    stroke-linejoin="round"
+                    paint-order="stroke fill"
+                    transform="translate(448 230)"
+                  >
+                    <g transform="scale(0.8203125)">
+                      <path d="M 9.472656 -110.335938 L 44.289062 -110.335938 C 44.289062 -115.113281 44.757812 -119.9375 45.695312 -124.800781 C 46.632812 -129.664062 48.214844 -134.101562 50.433594 -138.113281 C 52.652344 -142.121094 55.59375 -145.367188 59.265625 -147.839844 C 62.933594 -150.316406 67.414062 -151.550781 72.703125 -151.550781 C 80.554688 -151.550781 86.996094 -149.121094 92.03125 -144.257812 C 97.066406 -139.390625 99.585938 -132.609375 99.585938 -123.902344 C 99.585938 -118.441406 98.347656 -113.578125 95.871094 -109.3125 C 93.398438 -105.046875 90.324219 -101.207031 86.65625 -97.792969 C 82.988281 -94.378906 78.933594 -91.265625 74.496094 -88.449219 C 70.058594 -85.632812 65.878906 -82.859375 61.953125 -80.128906 C 54.273438 -74.835938 46.976562 -69.632812 40.0625 -64.511719 C 33.152344 -59.390625 27.136719 -53.800781 22.015625 -47.742188 C 16.894531 -41.683594 12.84375 -34.816406 9.855469 -27.136719 C 6.871094 -19.457031 5.375 -10.410156 5.375 0 L 136.960938 0 L 136.960938 -31.230469 L 52.222656 -31.230469 C 56.660156 -37.375 61.78125 -42.753906 67.585938 -47.359375 C 73.386719 -51.96875 79.359375 -56.277344 85.503906 -60.289062 C 91.648438 -64.296875 97.75 -68.351562 103.808594 -72.449219 C 109.867188 -76.542969 115.285156 -81.109375 120.0625 -86.144531 C 124.84375 -91.179688 128.683594 -96.9375 131.585938 -103.425781 C 134.484375 -109.910156 135.9375 -117.675781 135.9375 -126.71875 C 135.9375 -135.425781 134.273438 -143.273438 130.945312 -150.273438 C 127.617188 -157.269531 123.136719 -163.15625 117.503906 -167.9375 C 111.871094 -172.714844 105.34375 -176.382812 97.921875 -178.945312 C 90.496094 -181.503906 82.6875 -182.785156 74.496094 -182.785156 C 63.742188 -182.785156 54.230469 -180.949219 45.953125 -177.28125 C 37.675781 -173.609375 30.804688 -168.492188 25.34375 -161.921875 C 19.882812 -155.347656 15.785156 -147.667969 13.054688 -138.878906 C 10.324219 -130.089844 9.128906 -120.574219 9.472656 -110.335938 Z M 9.472656 -110.335938 " />
+                    </g>
+                  </g>
+                </svg>
+              </div>
+              <div class="brand-copy">
+                <span class="brand-copy-line brand-copy-line-lead">JavaScript to WebAssembly GC Compiler</span>
+                <span class="brand-copy-line">Squaring the Circle</span>
+              </div>
+            </div>
+          </div>
+          <div class="header-right">
+            <div class="publisher">
+              <svg
+                class="publisher-logo"
+                width="123"
+                height="100"
+                viewBox="0 0 123 100"
+                xmlns="http://www.w3.org/2000/svg"
+                role="img"
+                aria-label="Loopdive logo"
+              >
+                <path
+                  d="M96.7088 81.9028L95.6831 82.9285C90.9396 87.6721 85.2985 91.39 79.1447 93.8259L120.94 93.8259L120.94 81.9028L96.7088 81.9028Z"
+                  fill="#101114"
+                />
+                <path
+                  d="M61.5806 3.82593C36.7088 3.82593 16.5806 23.9541 16.5806 48.8259C16.5806 60.4926 20.9396 71.0054 28.2473 79.0823L48.119 79.0823C36.5806 73.9541 28.5037 62.2875 28.5037 48.8259C28.5037 30.6208 43.3755 15.749 61.5806 15.749C79.7857 15.749 94.6575 30.6208 94.6575 48.8259C94.6575 67.0311 79.7857 81.9028 61.5806 81.9028L2.22161 81.9028L2.22161 93.8259L61.5806 93.8259C86.4524 93.8259 106.581 73.6977 106.581 48.8259C106.581 23.9541 86.4524 3.82593 61.5806 3.82593Z"
+                  fill="#101114"
+                />
+              </svg>
+              <div class="publisher-copy">Loopdive</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="eyebrow">Whitepaper · May 2026</p>
+        <h1>Standard ECMAScript,<br />compiled to WebAssembly GC<br />without embedding a runtime</h1>
+        <p class="author-line">Thomas Tränkler · Loopdive GmbH</p>
+        <p class="subtitle">
+          <strong>js²</strong> (js squared) is a direct ahead-of-time compiler from JavaScript and TypeScript to
+          WebAssembly GC. Its core architectural claim is that JavaScript can be compiled into Wasm-native
+          artifacts without shipping a bundled JavaScript engine inside the deployed module. The deeper claim
+          is that this materially changes module size, runtime overhead, and the feasibility of building
+          small, linkable, swappable Wasm modules <a href="https://cacm.acm.org/research/bringing-the-web-up-to-speed-with-webassembly/">[1]</a>
+          <a href="https://webassembly.github.io/spec/core/">[4]</a>
+          <a href="https://pldi17.sigplan.org/details/pldi-2017-papers/48/Bringing-the-Web-up-to-Speed-with-WebAssembly">[19]</a>.
+        </p>
+      </div>
+
+      <div class="abstract">
+        <div class="abstract-title">Abstract</div>
+        <p>
+          Most JavaScript-on-Wasm systems either ship an interpreter inside WebAssembly or narrow the
+          language into a subset or replacement dialect. <strong>js²</strong> (js squared) takes a different path:
+          direct ahead-of-time compilation to WebAssembly GC with the long-term goal of full ECMAScript
+          language compatibility, with TypeScript source support layered on top. The intended endpoint is
+          not a custom JavaScript sub- or superset. Test262 is the current
+          public measurement baseline, not the limit of the product contract. That matters not only for
+          language purity, but for ecosystem fit: broad compatibility with JavaScript is a cornerstone of
+          compatibility with the wider JavaScript ecosystem, including real-world npm packages and existing
+          application code. This whitepaper grounds those compatibility claims in the ECMAScript
+          specification and Test262
+          <a href="https://tc39.es/ecma262/">[2]</a>
+          <a href="https://github.com/tc39/test262/">[3]</a> and
+          explains why that architectural choice matters, what deployment profile it enables, what
+          tradeoffs remain, and where the approach is already concrete today.
+        </p>
+        <p>
+          The central claim is not only that JavaScript can be compiled without embedding a runtime. It is
+          that this changes the economics of deployment: modules can be orders of magnitude smaller than
+          interpreter-bundling approaches and, on representative published standalone Wasmtime benchmark
+          paths, can remove large interpreter or engine overhead from hot runtime execution.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>1. The problem: JavaScript on Wasm usually means shipping an engine</h2>
+        <p>
+          Most attempts to run JavaScript in WebAssembly follow one of two paths. The first path bundles a
+          JavaScript engine into a Wasm module. That preserves mature semantics, but it also preserves the
+          cost of shipping and initializing the engine. The second path avoids bundling an engine by
+          narrowing the language into a constrained subset, a TypeScript-like dialect, or a new language
+          designed to compile more easily to Wasm.
+        </p>
+        <p>
+          QuickJS-based approaches sit squarely in the first category. They are still runtime interpreters
+          packaged inside Wasm: the engine is bundled, and user code executes through that interpreter at
+          runtime <a href="https://github.com/bytecodealliance/javy/">[7]</a>. That also places them in
+          the slowest performance tier, because interpretation remains on the hot path.
+        </p>
+        <p>
+          Full-fledged engine approaches land in a different tier, but they run into a different ceiling.
+          Modern JavaScript engines are designed around native tiered execution, especially JIT
+          compilation, not around ahead-of-time compilation into standalone Wasm artifacts. Once the
+          engine itself is shipped as Wasm, those native JIT tiers are generally unavailable, so the
+          fastest optimization paths of the engine do not come along for the ride
+          <a href="https://github.com/bytecodealliance/StarlingMonkey/">[8]</a>
+          <a href="https://pldi25.sigplan.org/details/pldi-2025-papers/14/Partial-Evaluation-Whole-Program-Compilation">[10]</a>.
+        </p>
+        <p>
+          SpiderMonkey-based approaches therefore try to recover some of that lost ground through
+          preinitialization and ahead-of-time baseline specialization, for example with tools such as
+          Wizer and weval. That can improve startup and execution behavior, but it does not change the core
+          architecture: a full JavaScript engine is still shipped inside the module, and the engine is
+          still being adapted to an AOT deployment model it was not originally designed for
+          <a href="https://github.com/bytecodealliance/StarlingMonkey/">[8]</a>
+          <a href="https://github.com/bytecodealliance/wizer/">[9]</a>
+          <a href="https://pldi25.sigplan.org/details/pldi-2025-papers/14/Partial-Evaluation-Whole-Program-Compilation">[10]</a>
+          <a href="https://cir.nii.ac.jp/crid/1361418520481560832">[20]</a>.
+        </p>
+        <p>
+          Both paths solve real problems, but they also impose real constraints. Interpreter-in-Wasm
+          approaches inherit large artifacts and runtime overhead. Subset approaches reduce the deployment
+          cost, but they change the developer contract by asking teams to write a different language than
+          mainstream JavaScript.
+        </p>
+        <div class="callout">
+          <p>
+            <strong>js² is built around a third position:</strong> JavaScript should be compiled directly to
+            WebAssembly GC, without embedding a JavaScript engine, and without redefining the language into
+            a smaller substitute.
+          </p>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>2. Design thesis</h2>
+        <p>The project is organized around four design commitments.</p>
+        <table class="mini-table">
+          <thead>
+            <tr>
+              <th>Commitment</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Direct AOT compilation</strong></td>
+              <td>Compile program logic directly into Wasm GC binaries instead of dispatching through an embedded interpreter.</td>
+            </tr>
+            <tr>
+              <td><strong>No embedded JS engine</strong></td>
+              <td>Remove the runtime tax common in interpreter-in-Wasm and bundled-engine stacks, from high-hundreds-of-kilobytes for interpreters to megabytes for full-fledged JS engines.</td>
+            </tr>
+            <tr>
+              <td><strong>Full ECMAScript direction</strong></td>
+              <td>Treat ECMAScript compatibility as the strategic target, measured publicly through Test262 progress, with TypeScript source support layered above it.</td>
+            </tr>
+            <tr>
+              <td><strong>Wasm-native deployment model</strong></td>
+              <td>Produce artifacts that fit Wasm runtimes, plugin systems, and serverless environments rather than behaving like hidden JavaScript runtimes.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          This is also an ecosystem issue, not just a language-design issue. If the language surface is
+          narrowed too aggressively, or extended into a custom superset that is not specified ECMAScript,
+          compatibility with mainstream application code, existing libraries, and npm packages erodes
+          quickly. Full-language compatibility is therefore a cornerstone of ecosystem compatibility.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>3. Why WebAssembly GC</h2>
+        <p>
+          Targeting WebAssembly GC is the technical basis that makes direct JavaScript compilation plausible
+          without recreating a garbage-collected runtime in linear memory. Wasm GC provides host-managed
+          garbage collection, nominal types, struct and array support, subtyping, and interop through
+          references such as <code>externref</code> and <code>i31ref</code>
+          <a href="https://cacm.acm.org/research/bringing-the-web-up-to-speed-with-webassembly/">[1]</a>
+          <a href="https://webassembly.github.io/spec/core/">[4]</a>.
+        </p>
+        <p>
+          Without Wasm GC, direct JavaScript compilation typically falls back to manual object models in
+          linear memory or to bundled runtime machinery. Wasm GC does not make JavaScript semantics easy,
+          but it gives the compiler the right runtime substrate to express a dynamic, garbage-collected
+          language without embedding another garbage-collected runtime inside the output artifact.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>4. Architecture overview</h2>
+        <p>
+          At a high level, the compiler pipeline is straightforward:
+        </p>
+        <pre>JavaScript / TypeScript source
+  -&gt; parse and type-check via the TypeScript compiler API
+  -&gt; collect imports and declarations
+  -&gt; lower expressions and statements into a WasmModule IR
+  -&gt; emit a Wasm GC binary
+  -&gt; optionally optimize the result</pre>
+        <p>
+          Parsing and type analysis are handled through the TypeScript compiler API. Code generation lowers
+          the typed AST into a Wasm module IR, registering imports, declarations, structs, arrays, globals,
+          and function bodies before binary emission. Optional optimization can then run through Binaryen.
+        </p>
+        <p>
+          This is not an interpreter specialization pipeline and not a bytecode container format. The module
+          contains compiled program logic.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>5. Execution model: JS host and standalone paths</h2>
+        <p>
+          The compiler currently spans two execution models. In JS-host mode, modules can import selected
+          helpers from a JavaScript environment where some behavior is still easier or not yet fully lowered
+          into Wasm. In parallel, the project also has a standalone and WASI-oriented direction, where the
+          goal is to depend on Wasm-native facilities instead of a JavaScript embedding environment.
+        </p>
+        <p>
+          More generally, the host should be understood as a <strong>platform surface</strong>, not just as
+          “some leftover JavaScript runtime”. In a browser, that surface is the Web Platform and its Web
+          APIs. In Node.js, it includes the environment and standard-library APIs exposed by the runtime and
+          underlying native system. Those platform capabilities are part of the surrounding execution
+          environment and do not need to be eliminated simply because application logic is being compiled to
+          Wasm.
+        </p>
+        <p>
+          The JS-host path is therefore intentional for interoperability, not only a temporary fallback. It
+          is the right mode when compiled modules need to integrate with platform APIs or with existing
+          JavaScript code that already runs in that environment and is not itself meant to be compiled to
+          Wasm. In that sense, JS-host mode is part compatibility bridge and part integration surface.
+        </p>
+        <p>
+          This split is important. The end state is not "Wasm that still secretly depends on a browser-like
+          runtime." The point is to move as much behavior as possible into compiled output and explicit
+          Wasm-native integration. The deeper goal is to <strong>shrink the implicit host environment and
+          enlarge the Wasm closed world</strong> over time. What should remain outside the compiled module is
+          not an ambient JavaScript runtime context, but an explicit and bounded API surface such as Web
+          APIs, Node APIs, or WASI. Those API surfaces can then, in principle, be implemented by any
+          compatible host. Standalone support is meaningful and growing, but it is not yet the primary
+          public conformance path today.
+        </p>
+        <p>
+          This aligns with the direction of WinterCG and its successor standardization work in Ecma TC55 /
+          WinterTC: a provider-spanning effort to define a common, web-aligned API surface for server-side
+          and edge JavaScript runtimes, including worker-like serverless hosts such as Cloudflare Workers and
+          Deno Deploy <a href="https://www.w3.org/community/wintercg/">[21]</a>. <strong>js²</strong> does
+          not need to replace that host surface. The relevant point is that a compiled module can target
+          explicit, portable host APIs instead of assuming that each deployment unit must carry a full
+          JavaScript engine to get a familiar serverless programming model.
+        </p>
+        <p>
+          This is not just theoretical. Wasmer's Edge.js is a recent example of a system that re-exposes
+          Node.js workloads through a WebAssembly-based execution model rather than treating a conventional
+          Node process as the only way to provide the Node environment. That reinforces the broader point:
+          the platform surface can remain, while the ambient runtime context behind it can change. See the
+          <a href="https://wasmer.io/posts/edgejs-safe-nodejs-using-wasm-sandbox">official Wasmer Edge.js announcement</a>
+          <a href="https://wasmer.io/posts/edgejs-safe-nodejs-using-wasm-sandbox">[11]</a>.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>6. Deployment profile</h2>
+        <p>
+          The main reason to pursue direct compilation is deployment, not aesthetic purity. When an
+          application is compiled directly to Wasm GC without bundling an engine, the resulting module can
+          be materially better suited for edge runtimes, plugin systems, embedded applications,
+          multi-language hosts, and modular systems where compatible components should be swappable without
+          rebuilding the full application.
+        </p>
+        <p>
+          This changes the artifact shape in practical ways:
+        </p>
+        <ul>
+          <li>no bundled interpreter or engine tax before application code begins, from high-hundreds-of-kilobytes for interpreters to megabytes for full-fledged JS engines</li>
+          <li>a cleaner boundary between host integration and compiled program logic</li>
+          <li>better fit with Wasm-native execution environments</li>
+          <li>stronger isolation boundaries for third-party logic and extension code</li>
+          <li>a smaller supply-chain and runtime attack surface than runtime-heavy JavaScript deployment models</li>
+        </ul>
+        <p>
+          That size tax also matters at the granularity of composition. If the engine is embedded directly
+          into each deployment unit, then the cost is effectively paid per module, not just per
+          application. It can be amortized only if the engine is factored out into an imported or
+          otherwise shared dependency. That is a meaningful optimization path, but it changes the packaging
+          model less than it changes the size accounting.
+        </p>
+        <p>
+          The current public standalone Wasmtime benchmark surface is easiest to read as a packaging and
+          runtime comparison. The Wasmtime rows use precompiled Wasmtime artifacts
+          (<code>wasmtime compile</code> / <code>--allow-precompiled</code>) with runtime JIT compilation
+          disabled. That is intentional: it approximates a serverless deployment shape where code is
+          prepared before the request path, and the measured cost is packaging, instantiation, startup, and
+          execution without on-demand runtime compilation. The benchmark programs are deliberately small,
+          behavior-oriented kernels: iterative numeric looping, recursive calls, array allocation/fill/summation,
+          object allocation and field access churn, and string concatenation plus character-code hashing.
+        </p>
+        <table class="mini-table benchmark-table">
+          <colgroup>
+            <col style="width: 24%" />
+            <col style="width: 31%" />
+            <col style="width: 23%" />
+            <col style="width: 11%" />
+            <col style="width: 11%" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Deployment pattern</th>
+              <th>What it represents</th>
+              <th>Size model</th>
+              <th>Cold start</th>
+              <th>Runtime</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Direct js² AOT WasmGC</strong></td>
+              <td>Compiled WasmGC output, no JavaScript engine in the module</td>
+              <td><strong>0.34 kB</strong></td>
+              <td><strong>13.7 ms</strong></td>
+              <td><strong>21.7 ms</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Dynamic imported-interpreter module</strong></td>
+              <td>Small module calling a shared interpreter/runtime plugin</td>
+              <td><strong>2.98 kB</strong> per module<br />+ about <strong>1.2 MB</strong> shared runtime/plugin</td>
+              <td><strong>24.7 ms</strong></td>
+              <td><strong>272 ms</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Preinitialized/specialized bundled JS engine</strong></td>
+              <td>Bundled engine with ComponentizeJS/Wizer/weval-style preinitialization and specialization</td>
+              <td><strong>14.4 MB</strong></td>
+              <td><strong>24.7 ms</strong></td>
+              <td><strong>297 ms</strong></td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          In the same benchmark set, native JavaScript in Node/V8 with JIT enabled is
+          <strong>12.4 ms</strong> on the runtime metric and <strong>20.8 ms</strong> on cold start. That
+          remains the native runtime baseline to beat on hot execution.
+        </p>
+        <p>
+          The benchmark is a public standalone datapoint, not the scope of the compiler. Current
+          compatibility work is also pushing against popular npm packages and real application code, while
+          Test262 remains the public conformance baseline.
+        </p>
+        <p>
+          The runtime data should be read narrowly. Native JavaScript with JIT remains the runtime reference
+          point, and the current standalone path still has known gaps. The useful claim is not universal
+          speedup. It is that removing the embedded interpreter or engine changes module size by orders of
+          magnitude, improves cold start against the fresh Node/V8 process baseline in this benchmark set,
+          and can remove large standalone Wasmtime runtime overhead where direct compilation is already
+          mature.
+        </p>
+        <p>
+          This is also what makes modular composition more practical. If each deployment unit does not need
+          to carry an engine, it becomes realistic to ship and link smaller Wasm modules instead of
+          collapsing everything into one large runtime container just to amortize the engine cost. If an
+          engine can be shared as an imported dependency, that can reduce duplicated size across many
+          modules, but it still leaves execution centered around the imported engine rather than around
+          directly compiled module logic. With stable interfaces, compatible modules can also be swapped
+          independently, which pushes dependency injection and platform integration to the module boundary
+          instead of the source-bundle boundary.
+        </p>
+        <p>
+          That modularity is also a security property. Smaller runtime-free modules make it more realistic
+          to adopt a Component-Model-style or otherwise shared-nothing composition model, where modules
+          communicate through explicit interfaces instead of through one shared ambient runtime. In that
+          shape, smaller modules do not just improve packaging; they reduce the amount of state, capability,
+          and implicit trust bundled into each deployment unit
+          <a href="https://github.com/WebAssembly/component-model/">[5]</a>
+          <a href="https://popl25.sigplan.org/details/waw-2025-papers/4/The-WebAssembly-Component-Model">[6]</a>
+          <a href="https://www.usenix.org/conference/usenixsecurity22/presentation/bosamiya">[12]</a>.
+        </p>
+        <p>
+          The security implications matter as well. In-process JavaScript execution is structurally
+          difficult to harden, because code often shares one mutable object graph, one prototype universe,
+          and one ambient runtime context. In practice, once untrusted or compromised code runs in that
+          shared environment, it is often difficult to prevent it from reaching or influencing unrelated
+          parts of the program unless heavier isolation mechanisms such as iframes, workers, separate
+          processes, or comparable boundaries are used
+          <a href="https://www.usenix.org/system/files/usenixsecurity23-alhamdan_1.pdf">[15]</a>
+          <a href="https://www.usenix.org/conference/usenix-security-11/adsafety-type-based-verification-javascript-sandboxing">[16]</a>
+          <a href="https://research.chalmers.se/en/publication/246300">[17]</a>
+          <a href="https://www.usenix.org/conference/usenixsecurity21/presentation/xiao">[18]</a>.
+        </p>
+        <p>
+          Today, JavaScript deployment is often tied to a large runtime and a package-heavy execution model.
+          Public npm ecosystem incidents have shown how quickly that can widen the blast radius of
+          supply-chain failures. A compiled, sandboxed Wasm artifact model does not eliminate software
+          supply-chain risk, but it can reduce the amount of runtime machinery, shared mutable context, and
+          ambient capability that each deployment unit carries by default
+          <a href="https://www.microsoft.com/en-us/research/publication/what-are-weak-links-in-the-npm-supply-chain/">[14]</a>
+          <a href="https://www.usenix.org/conference/usenixsecurity22/presentation/bosamiya">[12]</a>
+          <a href="https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann">[13]</a>.
+        </p>
+        <p>
+          In other words, the goal is not merely “JavaScript in Wasm.” The goal is JavaScript with a
+          meaningfully different packaging, execution, security, and composition profile.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>7. Compatibility strategy</h2>
+        <p>
+          The principal risk in any direct JavaScript compiler is semantic coverage. JavaScript is large,
+          specification-heavy, and full of edge cases that are observable by user code. <strong>js²</strong>
+          treats compatibility as a public engineering problem rather than a hidden claim.
+        </p>
+        <p>
+          The project tracks ECMAScript compatibility through Test262, the standard conformance suite for
+          JavaScript implementations <a href="https://tc39.es/ecma262/">[2]</a>
+          <a href="https://github.com/tc39/test262/">[3]</a>. The current public milestone is
+          <strong>73.5% Test262 compliance</strong> (31,700 of 43,106 official conformance tests passing
+          in the current public report).
+        </p>
+        <div class="callout">
+          <p>
+            That figure should be interpreted correctly. It does <strong>not</strong> mean the compiler is
+            finished or suitable for arbitrary npm workloads today. It means there is already a public,
+            measurable conformance baseline that can improve in a disciplined way toward the broader goal of
+            real ecosystem compatibility.
+          </p>
+        </div>
+        <p>
+          The public evaluation surface already includes a landing page, a browser playground, benchmark
+          reporting, and compatibility reporting. That matters because it makes progress inspectable through
+          actual outputs rather than through private claims.
+        </p>
+        <p>
+          The project is not trying to prove that a small curated subset compiles well. The long-term value
+          is the steady expansion toward mainstream ECMAScript semantics, with TypeScript source support
+          layered above that contract, while preserving the deployment advantages of direct compilation.
+          In practice, ecosystem compatibility flows from
+          language compatibility: the closer the compiler gets to full ECMAScript semantics, the more
+          credible it becomes as a path for existing application code and npm packages rather than only for
+          greenfield demos.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>8. What this approach is not</h2>
+        <p>Clarity about non-goals matters.</p>
+        <ul>
+          <li><strong>js²</strong> is not an interpreter compiled to Wasm.</li>
+          <li>It is not a TypeScript-like dialect.</li>
+          <li>It is not a small pedagogical subset compiler.</li>
+          <li>It is not a claim that every JavaScript feature is equally AOT-friendly.</li>
+          <li>It is not yet a “drop any npm package in today” story.</li>
+        </ul>
+        <p>
+          Some behaviors are intrinsically hostile to ahead-of-time compilation or require explicit host
+          boundaries, including dynamic code evaluation, runtime module loading semantics, and deeply
+          host-observable engine behavior. The right response is not to pretend those constraints do not
+          exist. It is to design a compiler surface that handles them explicitly while still making the
+          broad language tractable.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>9. Competitive landscape</h2>
+        <p>
+          There are four broad architectures in the JavaScript-to-Wasm space: bundled engines plus AOT
+          specialization, interpreter-only bundling, direct AOT to core Wasm, and direct AOT to Wasm GC.
+          <strong>js²</strong> occupies the last category.
+        </p>
+        <p>
+          As of May 2026, we are not aware of another AOT JavaScript-to-Wasm approach that both aims to
+          implement the full ECMAScript standard and already has production-ready garbage collection. The
+          closest direct-AOT efforts are important, but publicly visible projects either remain experimental,
+          target a narrower language surface, or use core Wasm / linear-memory strategies rather than
+          host-provided WasmGC.
+        </p>
+        <p>
+          The nearest Wasm-GC direct-compilation analogues we track are
+          <a href="https://github.com/drogus/jawsm">JAWSM</a>, a JavaScript-to-Wasm prototype, and
+          <a href="https://github.com/web-devkits/Wasmnizer-ts">Wasmnizer-ts</a>, a
+          TypeScript-subset-to-WasmGC research compiler from the WAMR / Web DevKit ecosystem. They are useful
+          signals that direct JS/TS-to-WasmGC compilation is an active research direction, but we currently
+          treat them as prototype/subset comparators rather than production competitors for full ECMAScript
+          coverage.
+        </p>
+        <table class="mini-table">
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th>Interpreter in Wasm</th>
+              <th>Custom sub- or superset</th>
+              <th>Direct AOT to Wasm GC (js²)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Ships a JS engine</strong></td>
+              <td>Yes</td>
+              <td>No</td>
+              <td>No</td>
+            </tr>
+            <tr>
+              <td><strong>Targets full ECMAScript compatibility over time</strong></td>
+              <td>Usually inherits engine behavior</td>
+              <td>Usually no</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td><strong>Garbage collection model</strong></td>
+              <td>Engine-owned GC inside the bundled runtime</td>
+              <td>Usually custom or language-specific</td>
+              <td>Host-provided WasmGC</td>
+            </tr>
+            <tr>
+              <td><strong>Deployment profile</strong></td>
+              <td>Heavier artifacts, runtime overhead</td>
+              <td>Lean, but language adoption friction</td>
+              <td>Lean artifacts with mainstream-language ambition</td>
+            </tr>
+            <tr>
+              <td><strong>Main risk</strong></td>
+              <td>runtime bulk</td>
+              <td>developer adoption and compatibility ceiling</td>
+              <td>compiler and conformance complexity</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          The project deliberately accepts the last category of risk. It chooses compiler complexity over
+          runtime bulk and over language substitution.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>10. Where js² fits best</h2>
+        <p>
+          The approach is especially relevant where JavaScript demand exists but shipping a JavaScript
+          engine is the wrong deployment decision.
+        </p>
+        <ul>
+          <li>edge and serverless platforms</li>
+          <li>Wasm-native compute environments</li>
+          <li>extension and plugin ecosystems</li>
+          <li>embedded application containers</li>
+          <li>desktop applications using Wasm as an isolation boundary</li>
+          <li>multi-language hosts that want JavaScript and TypeScript support without embedding a JS engine</li>
+          <li>linkable small-module systems where paying an engine cost per module would otherwise be prohibitive</li>
+          <li>systems that want to swap compatible modules without rebuilding the rest of the program</li>
+        </ul>
+      </div>
+
+      <div class="section">
+        <h2>11. Current tradeoffs</h2>
+        <p>A useful whitepaper cannot ignore the hard parts.</p>
+        <p>
+          <strong>Conformance is still incomplete.</strong> At 73.5% Test262 compliance, the compiler is
+          credible but far from complete.
+        </p>
+        <p>
+          <strong>Wasm GC support is required.</strong> The architecture depends on runtimes with Wasm GC
+          support. That is increasingly practical, but it remains a real deployment constraint.
+        </p>
+        <p>
+          <strong>Some host fallbacks still exist.</strong> The system already compiles substantial behavior
+          directly, but some operations still use host-assisted paths. The long-term direction is to shrink
+          those boundaries, not normalize them.
+        </p>
+        <p>
+          <strong>The hardest part is semantic closure.</strong> The challenge is not emitting Wasm bytes.
+          It is matching JavaScript behavior closely enough that mainstream code can move through the
+          compiler without requiring a language rewrite.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>12. Roadmap direction</h2>
+        <p>The highest-value next steps are not ambiguous.</p>
+        <ol>
+          <li><strong>Deeper ECMAScript conformance</strong> through continued Test262-driven expansion and regression control.</li>
+          <li><strong>Stronger standalone execution</strong> with less dependence on JS-host fallbacks.</li>
+          <li><strong>Packaging and host integration</strong> including Component Model, platform-facing workflows, and interface-stable module swapping.</li>
+          <li><strong>Real application workloads</strong> beyond micro-tests, especially plugin and infrastructure cases where artifact size, startup behavior, and isolation matter.</li>
+        </ol>
+      </div>
+
+      <div class="section">
+        <h2>13. Conclusion</h2>
+        <p>
+          <strong>js²</strong> exists because “JavaScript in Wasm” is not the same thing as “JavaScript
+          compiled to Wasm.” Bundling an interpreter inside Wasm can deliver strong compatibility, but it
+          inherits the size and runtime costs of shipping the engine. Narrowing or extending the language
+          can simplify compilation, but it changes the developer contract. <strong>js²</strong> takes the
+          harder route: compile mainstream ECMAScript semantics directly to WebAssembly GC without embedding
+          a runtime, with TypeScript source support layered on top rather than used as a different language
+          contract.
+        </p>
+        <p>
+          That route is still in progress, and it is not trivial. But it produces a distinct and
+          strategically valuable outcome if it succeeds: Wasm-native artifacts, many-times smaller modules
+          than interpreter-bundling approaches, substantially lower hot-path runtime overhead on representative
+          standalone benchmark paths, reduced runtime and supply-chain attack surface, more portable deployment across
+          Wasm-capable environments without Node.js as the target runtime, more composable and swappable
+          modules when interfaces are stable, stronger isolation boundaries, and a credible TypeScript story
+          for Wasm platforms that do not want to ship a JS engine.
+        </p>
+      </div>
+
+      <div class="section">
+        <h2>14. References</h2>
+        <ol class="references-list">
+          <li><a href="https://cacm.acm.org/research/bringing-the-web-up-to-speed-with-webassembly/">Andreas Rossberg, Ben L. Titzer, Andreas Haas, Derek L. Schuff, Dan Gohman, Luke Wagner, Alon Zakai, J. F. Bastien, Michael Holman. <em>Bringing the Web Up to Speed with WebAssembly.</em></a> Communications of the ACM, 2018.</li>
+          <li><a href="https://tc39.es/ecma262/">TC39. <em>ECMAScript Language Specification.</em></a></li>
+          <li><a href="https://github.com/tc39/test262/">TC39. <em>Test262: Official ECMAScript Conformance Test Suite.</em></a></li>
+          <li><a href="https://webassembly.github.io/spec/core/">WebAssembly Community Group. <em>WebAssembly Core Specification.</em></a></li>
+          <li><a href="https://github.com/WebAssembly/component-model/">WebAssembly Community Group. <em>Component Model design and specification.</em></a></li>
+          <li><a href="https://popl25.sigplan.org/details/waw-2025-papers/4/The-WebAssembly-Component-Model">Lucy Menon, Luke Wagner. <em>The WebAssembly Component Model.</em></a> WebAssembly Workshop at POPL, 2025.</li>
+          <li><a href="https://github.com/bytecodealliance/javy/">Bytecode Alliance. <em>Javy.</em></a></li>
+          <li><a href="https://github.com/bytecodealliance/StarlingMonkey/">Bytecode Alliance. <em>StarlingMonkey.</em></a></li>
+          <li><a href="https://github.com/bytecodealliance/wizer/">Bytecode Alliance. <em>Wizer.</em></a></li>
+          <li><a href="https://pldi25.sigplan.org/details/pldi-2025-papers/14/Partial-Evaluation-Whole-Program-Compilation">Chris Fallin, Maxwell Bernstein. <em>Partial Evaluation, Whole-Program Compilation.</em></a> PLDI, 2025.</li>
+          <li><a href="https://wasmer.io/posts/edgejs-safe-nodejs-using-wasm-sandbox">Wasmer. <em>Edge.js: Running Node apps inside a WebAssembly Sandbox.</em></a> 2026.</li>
+          <li><a href="https://www.usenix.org/conference/usenixsecurity22/presentation/bosamiya">Jay Bosamiya, Wen Shih Lim, Bryan Parno. <em>Provably-Safe Multilingual Software Sandboxing using WebAssembly.</em></a> USENIX Security, 2022.</li>
+          <li><a href="https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann">Daniel Lehmann, Johannes Kinder, Michael Pradel. <em>Everything Old is New Again: Binary Security of WebAssembly.</em></a> USENIX Security, 2020.</li>
+          <li><a href="https://www.microsoft.com/en-us/research/publication/what-are-weak-links-in-the-npm-supply-chain/">Nusrat Zahan, Tom Zimmermann, Patrice Godefroid, Brendan Murphy, Chandra Maddila, Laurie Williams. <em>What are Weak Links in the npm Supply Chain?</em></a> ICSE, 2022.</li>
+          <li><a href="https://www.usenix.org/system/files/usenixsecurity23-alhamdan_1.pdf">Abdullah AlHamdan, Cristian-Alexandru Staicu. <em>SandDriller: A Fully-Automated Approach for Testing Language-Based JavaScript Sandboxes.</em></a> USENIX Security, 2023.</li>
+          <li><a href="https://www.usenix.org/conference/usenix-security-11/adsafety-type-based-verification-javascript-sandboxing">Joe Gibbs Politz, Spiridon Aristides Eliopoulos, Arjun Guha, Shriram Krishnamurthi. <em>ADsafety: Type-Based Verification of JavaScript Sandboxing.</em></a> USENIX Security, 2011.</li>
+          <li><a href="https://research.chalmers.se/en/publication/246300">Steven Van Acker, Andrei Sabelfeld. <em>Javascript sandboxing: Isolating and restricting client-side javascript.</em></a> FOSAD, 2016.</li>
+          <li><a href="https://www.usenix.org/conference/usenixsecurity21/presentation/xiao">Feng Xiao, Jianwei Huang, Yichang Xiong, Guangliang Yang, Hong Hu, Guofei Gu, Wenke Lee. <em>Abusing Hidden Properties to Attack the Node.js Ecosystem.</em></a> USENIX Security, 2021.</li>
+          <li><a href="https://pldi17.sigplan.org/details/pldi-2017-papers/48/Bringing-the-Web-up-to-Speed-with-WebAssembly">Andreas Haas, Andreas Rossberg, Derek Schuff, Ben L. Titzer, Dan Gohman, Luke Wagner, Alon Zakai, J. F. Bastien, Michael Holman. <em>Bringing the Web up to Speed with WebAssembly.</em></a> PLDI, 2017.</li>
+          <li><a href="https://cir.nii.ac.jp/crid/1361418520481560832">Neil D. Jones. <em>An Introduction to Partial Evaluation.</em></a> ACM Computing Surveys, 1996.</li>
+          <li><a href="https://www.w3.org/community/wintercg/">W3C. <em>Web-interoperable Runtimes Community Group.</em></a></li>
+          <li><a href="https://github.com/drogus/jawsm">JAWSM: Javascript to WebAssembly compiler.</a></li>
+          <li><a href="https://github.com/web-devkits/Wasmnizer-ts">Wasmnizer-ts: A TypeScript-to-WebAssembly compiler.</a></li>
+        </ol>
+      </div>
+
+      <div class="footer small">
+        <div class="footer-grid">
+          <div class="footer-left">
+            <strong>Public surface</strong><br />
+            <span class="muted">Project page:</span> <a href="https://js2.loopdive.com">js2.loopdive.com</a><br />
+            <span class="muted">Playground:</span> <a href="https://js2.loopdive.com/playground">js2.loopdive.com/playground</a><br />
+            <span class="muted">Repository:</span> <a href="https://github.com/loopdive/js2wasm">github.com/loopdive/js2wasm</a>
+          </div>
+          <div class="footer-right">
+            <strong>Contact</strong><br />
+            <a href="mailto:js2@loopdive.com">js2@loopdive.com</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        const controls = document.querySelector(".page-controls");
+        if (!controls || window.matchMedia("print").matches) return;
+
+        // Browsers treat CSS mm as reference units rather than true physical millimeters.
+        // This calibrated factor matches the current 14" MacBook Pro preview display more closely.
+        const ACTUAL_SIZE_ZOOM = 1.3226;
+        const fitStorageKey = "whitepaper-screen-fit-v2";
+        const viewStorageKey = "whitepaper-screen-view-v1";
+        const fitButtons = Array.from(controls.querySelectorAll("button[data-fit]"));
+        const viewButtons = Array.from(controls.querySelectorAll("button[data-view]"));
+        const documentEl = document.querySelector(".document");
+        const screenPagesEl = document.querySelector(".screen-pages");
+        if (!documentEl) return;
+        documentEl.style.removeProperty("zoom");
+        if (screenPagesEl) screenPagesEl.style.removeProperty("zoom");
+        const mobileQuery = window.matchMedia("(max-width: 720px)");
+
+        let currentMode = "actual";
+        let currentView = "continuous";
+        let baseWidth = 0;
+        let baseHeight = 0;
+        let singlePageHeight = 0;
+        let previewEl = documentEl;
+
+        function buildScreenPages() {
+          if (!screenPagesEl) return;
+          if (mobileQuery.matches) {
+            screenPagesEl.innerHTML = "";
+            previewEl = documentEl;
+            return;
+          }
+
+          screenPagesEl.innerHTML = "";
+          const sourceChildren = Array.from(documentEl.children).map((child) => child.cloneNode(true));
+          const measurePage = document.createElement("div");
+          measurePage.className = "screen-page";
+          measurePage.style.position = "absolute";
+          measurePage.style.visibility = "hidden";
+          measurePage.style.pointerEvents = "none";
+          measurePage.style.left = "-200vw";
+
+          const measureContent = document.createElement("div");
+          measureContent.className = "screen-page-content";
+          measurePage.appendChild(measureContent);
+          screenPagesEl.appendChild(measurePage);
+          const availableContentHeight = measureContent.clientHeight;
+          screenPagesEl.removeChild(measurePage);
+
+          function createPage(index) {
+            const pageEl = document.createElement("div");
+            pageEl.className = "screen-page";
+
+            const contentEl = document.createElement("div");
+            contentEl.className = "screen-page-content";
+
+            const numberEl = document.createElement("div");
+            numberEl.className = "screen-page-number";
+            numberEl.textContent = String(index + 1);
+
+            pageEl.appendChild(contentEl);
+            pageEl.appendChild(numberEl);
+            screenPagesEl.appendChild(pageEl);
+            return contentEl;
+          }
+
+          let pageIndex = 0;
+          let currentContent = createPage(pageIndex);
+
+          for (const child of sourceChildren) {
+            currentContent.appendChild(child);
+            if (currentContent.scrollHeight > availableContentHeight) {
+              currentContent.removeChild(child);
+              pageIndex += 1;
+              currentContent = createPage(pageIndex);
+              currentContent.appendChild(child);
+            }
+          }
+
+          previewEl = screenPagesEl;
+        }
+
+        function measureBaseSize() {
+          const previousZoom = previewEl.style.getPropertyValue("--screen-zoom");
+          previewEl.style.setProperty("--screen-zoom", "1");
+          baseWidth = previewEl.offsetWidth;
+          baseHeight = previewEl.offsetHeight;
+          singlePageHeight = baseWidth * (297 / 210);
+          if (previousZoom) previewEl.style.setProperty("--screen-zoom", previousZoom);
+          else previewEl.style.removeProperty("--screen-zoom");
+        }
+
+        function computeZoom(mode) {
+          if (!baseWidth || !baseHeight) measureBaseSize();
+          if (mode === "actual") return ACTUAL_SIZE_ZOOM;
+          const availableWidth = Math.max(window.innerWidth - 48, 320);
+          const availableHeight = Math.max(window.innerHeight - 96, 320);
+          const fitWidth = availableWidth / baseWidth;
+          const fitHeight = availableHeight / singlePageHeight;
+          if (mode === "height") return fitHeight;
+          return fitWidth;
+        }
+
+        function applyFit(mode) {
+          const normalized = mode === "height" ? "height" : mode === "width" ? "width" : "actual";
+          currentMode = normalized;
+          const exactZoom = computeZoom(normalized);
+          const finalZoom = mobileQuery.matches ? 1 : exactZoom;
+          previewEl.style.setProperty("--screen-zoom", String(finalZoom));
+          fitButtons.forEach((button) => {
+            button.setAttribute("aria-pressed", String(button.dataset.fit === normalized));
+          });
+          try {
+            localStorage.setItem(fitStorageKey, normalized);
+          } catch (_) {}
+        }
+
+        function applyView(view) {
+          const normalized = view === "preview" ? "preview" : "continuous";
+          currentView = normalized;
+          document.body.classList.toggle("screen-view-preview", normalized === "preview");
+          document.body.classList.toggle("screen-view-continuous", normalized === "continuous");
+
+          if (normalized === "preview") {
+            buildScreenPages();
+          } else {
+            previewEl = documentEl;
+          }
+
+          viewButtons.forEach((button) => {
+            button.setAttribute("aria-pressed", String(button.dataset.view === normalized));
+          });
+
+          try {
+            localStorage.setItem(viewStorageKey, normalized);
+          } catch (_) {}
+
+          measureBaseSize();
+          applyFit(currentMode);
+        }
+
+        let initialMode = "actual";
+        let initialView = "continuous";
+        try {
+          const savedMode = localStorage.getItem(fitStorageKey);
+          if (savedMode === "actual" || savedMode === "height" || savedMode === "width") initialMode = savedMode;
+        } catch (_) {}
+        try {
+          const savedView = localStorage.getItem(viewStorageKey);
+          if (savedView === "continuous" || savedView === "preview") initialView = savedView;
+        } catch (_) {}
+
+        fitButtons.forEach((button) => {
+          button.addEventListener("click", () => applyFit(button.dataset.fit));
+        });
+        viewButtons.forEach((button) => {
+          button.addEventListener("click", () => applyView(button.dataset.view));
+        });
+
+        window.addEventListener("resize", () => {
+          if (currentView === "preview") buildScreenPages();
+          else previewEl = documentEl;
+          measureBaseSize();
+          applyFit(currentMode);
+        });
+
+        applyView(initialView);
+        applyFit(initialMode);
+      })();
+    </script>
+  </body>
+</html>
