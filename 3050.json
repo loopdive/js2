@@ -1,8 +1,9 @@
 {
   "id": "3050",
   "assignee": "ttraenkler/fable-3050",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3050-gen-throw-try-region",
   "claimed_at": "2026-07-09T09:08:56Z",
-  "updated_at": "2026-07-09T09:08:56Z"
+  "updated_at": "2026-07-09T14:23:08Z",
+  "released_at": "2026-07-09T14:23:08Z"
 }
