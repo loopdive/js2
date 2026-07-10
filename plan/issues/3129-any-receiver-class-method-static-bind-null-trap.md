@@ -1,10 +1,10 @@
 ---
 id: 3129
 title: "any-receiver method call statically binds to the first CLASS with that method name and null-coerces foreign receivers — in-wasm trap instead of dynamic dispatch"
-status: in-progress
-assignee: fable-3124
-sprint: current
-priority: medium
+status: blocked
+assignee: ""
+sprint: Backlog
+priority: low
 horizon: l
 feasibility: hard
 created: 2026-07-10
@@ -113,3 +113,50 @@ byte-identical). Full merge_group validation required; watch the
 - `o.getX()` with `o.x = 99` shadow: dispatches without trapping (value may
   be 42 — shadow boundary documented).
 - Zero test262 regressions (full merge_group).
+
+## Tractability + yield assessment (fable-3124, 2026-07-10) — DEFER recommended
+
+**Tractability: PROVEN.** The exact trap is confirmed at WAT level: for
+`const o:any = Object.create(base); o.getX()`, the receiver `o` fails
+`ref.test (ref $Base)` and coerces to `ref.null $Base`, so `$Base_getX(null)`
+does `struct.get` on null → uncatchable trap. Verified the direct-call arm
+WORKS whenever the runtime receiver IS the struct: `proto = getPrototypeOf(o);
+proto.getX()` returns 42 (proto IS the `$Base` struct → `ref.test` succeeds).
+So the cleanest fix is a **guarded dispatch whose else-arm walks
+`__getPrototypeOf` and re-tests**, threading the struct HOP as `this` — no
+host method-dispatch, no per-(class,method) export explosion, no reliance on
+the host being able to call `$Base_getX` (it cannot). Correct modulo the
+documented shadow limit.
+
+**Yield: measured ~0 in the test262 corpus.** Before implementing an XL
+emission-wide change, measured the concrete incidence of the pattern this
+fixes:
+
+- test262 files that BOTH declare a `class` AND use `Object.create(...)`: **2**
+  (`language/statements/class/accessor-name-{inst,static}/computed-err-to-prop-key.js`)
+  — and BOTH use `Object.create(null)`, NOT a class instance.
+- **Zero** files exercise `Object.create(<class instance>).<inheritedClassMethod>()`.
+- Corpus-wide `Object.create(new …)`: **4** files, all built-in wrappers
+  (`new Boolean()` etc.), none a user class with compiled methods.
+
+This is the same shape as the #3124 read-side result (+0 cluster flip): the
+inherited-over-`Object.create(struct)` family is a real substrate gap but the
+conformance corpus does not exercise it. #3129 is a strictly NARROWER pattern
+than #3124, so its yield is ≤ #3124's measured 0.
+
+**Cost/benefit — why DEFER (not land-anyway like #3124):** #3124 was landed at
++0 yield because it was cheap and zero-risk (a ~90-line runtime patch,
+prove-emit-identity byte-identical). #3129 is the OPPOSITE: an XL,
+emission-wide codegen change (guarded-dispatch + bounded proto-walk helper at
+every any-receiver class-method call site), prove-emit-identity WILL diff, and
+it perturbs the hot `ref.test`-dispatch path (#1299 virtual dispatch). Landing
+a +0-yield change with that risk profile is a bad trade. The read side
+(#3124) is on the branch and doesn't depend on #3129; deferring #3129 strands
+nothing.
+
+**Recommendation:** keep as a documented correctness gap, revisit only if a
+real-world (non-test262) TS workload surfaces `Object.create(<class instance>)`
+inherited-method dispatch, OR if the broader "any-typed cross-class method
+call null-coerces a foreign receiver" trap is shown to gate a measurable
+cluster (it was not, here). Status → `blocked` (deferred on yield), claim
+released.
