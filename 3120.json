@@ -1,8 +1,9 @@
 {
   "id": "3120",
   "assignee": "ttraenkler/fable-3120",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3120-asyncgen-yield-implicit-await",
   "claimed_at": "2026-07-10T07:25:28Z",
-  "updated_at": "2026-07-10T07:25:28Z"
+  "updated_at": "2026-07-10T08:58:30Z",
+  "released_at": "2026-07-10T08:58:30Z"
 }
