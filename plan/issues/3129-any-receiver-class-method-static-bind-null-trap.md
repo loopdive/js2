@@ -1,8 +1,9 @@
 ---
 id: 3129
 title: "any-receiver method call statically binds to the first CLASS with that method name and null-coerces foreign receivers — in-wasm trap instead of dynamic dispatch"
-status: ready
-sprint: Backlog
+status: in-progress
+assignee: fable-3124
+sprint: current
 priority: medium
 horizon: l
 feasibility: hard
