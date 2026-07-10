@@ -16409,10 +16409,13 @@ function fnctorSubclassNameOfType(ctx: CodegenContext, varType: ts.Type): string
 
 /**
  * (#3123) True when the let-binding `decl` (named `name`, declared as class
- * `clsName`) is re-assigned somewhere in its containing function with a RHS
- * whose static type is NOT that class — i.e. the slot can hold a foreign
- * (usually host-object) value at runtime. Symbol-matched like `needsTdzFlag`
- * so shadowing same-named inner bindings don't false-positive.
+ * `clsName`) is re-assigned somewhere in its containing FUNCTION with a RHS
+ * whose declared type is NOT that class — i.e. the slot can hold a foreign
+ * (usually host-object) value at runtime. Oracle-based (#1930): the RHS type
+ * name comes from `ctx.oracle.declaredNameOf`. Name-matched but scoped to the
+ * SAME function (nested function bodies are not descended), so an inner
+ * function's same-named binding cannot false-positive; same-function shadows
+ * are already excluded by the pre-hoist caller (`localMap.has(name)` skip).
  */
 function bindingHasForeignReassignment(
   ctx: CodegenContext,
@@ -16420,13 +16423,28 @@ function bindingHasForeignReassignment(
   name: string,
   clsName: string,
 ): boolean {
-  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
   const declFunc = getContainingFunctionForTdz(decl);
   const funcBody = declFunc && "body" in declFunc ? (declFunc as { body?: ts.Node }).body : undefined;
   const scope = funcBody ?? decl.getSourceFile();
   let foreign = false;
   const visit = (node: ts.Node): void => {
     if (foreign) return;
+    // Do not descend into nested functions — their own `name` bindings are a
+    // different variable (and a capture-reassignment of the outer binding is
+    // out of this analysis' scope; the static-dispatch skip must not widen on
+    // it because dynamic dispatch only covers the kind-export surface).
+    if (
+      node !== scope &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -16434,21 +16452,13 @@ function bindingHasForeignReassignment(
       node.left.text === name &&
       node.left !== decl.name
     ) {
-      const sym = ctx.checker.getSymbolAtLocation(node.left);
-      if (symbol === undefined || sym === symbol) {
-        let rhsName: string | undefined;
-        try {
-          rhsName = ctx.checker.getTypeAtLocation(node.right).getSymbol()?.name;
-        } catch {
-          rhsName = undefined;
-        }
-        if (rhsName !== undefined && !ctx.classSet.has(rhsName)) {
-          rhsName = ctx.classExprNameMap.get(rhsName) ?? rhsName;
-        }
-        if (rhsName !== clsName) {
-          foreign = true;
-          return;
-        }
+      let rhsName = ctx.oracle.declaredNameOf(node.right);
+      if (rhsName !== undefined && !ctx.classSet.has(rhsName)) {
+        rhsName = ctx.classExprNameMap.get(rhsName) ?? rhsName;
+      }
+      if (rhsName !== clsName) {
+        foreign = true;
+        return;
       }
     }
     forEachChild(node, visit);
