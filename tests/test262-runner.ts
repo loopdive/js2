@@ -3742,7 +3742,12 @@ export async function runTest262File(
       // wrapper. Matches `test262-shared.ts`.
       inferModuleStrictArguments: isModuleGoal(category, meta, source),
       // (#2095) standalone lane for the baseline validator (default host/gc).
-      ...(target ? { target } : {}),
+      // (#3049 C1) Host lane defers top-level init (export `__module_init`,
+      // no wasm `(start)` section) so top-level code runs AFTER `setExports`
+      // has wired the runtime — aligned with `scripts/compiler-fork-worker.mjs`
+      // (#1251 both-paths rule). The standalone/wasi lane keeps its own
+      // `_start` model and is untouched.
+      ...(target ? { target } : { deferTopLevelInit: true }),
       // #1251: align with the sharded runner — both `scripts/compiler-fork-worker.mjs`
       // (the production path that records the committed JSONL) and `tests/test262-vitest.test.ts`
       // FIXTURE multi-compile pass `skipSemanticDiagnostics: true`. Without this flag,
@@ -3889,6 +3894,15 @@ export async function runTest262File(
     // Provide exports back to the runtime so __sget_* getters are discoverable
     if (typeof importResult.setExports === "function") {
       importResult.setExports(instance.exports as any);
+    }
+    // (#3049 C1) Deferred top-level init (host lane): run the exported
+    // `__module_init` now that `setExports` has wired the runtime. Inside the
+    // same try as instantiate + test(), so a top-level throw keeps the exact
+    // classification it had when it surfaced from the `(start)` section
+    // (runtime-negative → pass, else fail — see the catch below).
+    const moduleInit = (instance.exports as any).__module_init;
+    if (typeof moduleInit === "function") {
+      moduleInit();
     }
     const testFn = (instance.exports as any).test;
     if (typeof testFn !== "function") {

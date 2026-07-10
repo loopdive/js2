@@ -278,6 +278,16 @@ let _GeneratorInstancePrototypeCache: any = null;
 let _AsyncGeneratorInstancePrototypeCache: any = null;
 let _IteratorPrototypeCache: any = null;
 let _AsyncIteratorPrototypeCache: any = null;
+// (#3049 Layer 3) Host-lane `%ArrayIteratorPrototype%` analog (§23.1.5.2):
+// the shared middle proto every `__iterator` vec-fallback iterator inherits
+// from, itself chained to the helper-bearing `%IteratorPrototype%`
+// (`_getIteratorPrototype()` → native `Iterator.prototype`). Cached
+// module-wide so all array iterators report the SAME prototype by identity,
+// and the two-hop walk `getPrototypeOf(getPrototypeOf(arrayIter))` — the
+// test262-runner harness shim for the `Iterator` binding — lands exactly on
+// the helper proto instead of overshooting to `Object.prototype` (the old
+// one-level `Object.create(Iterator.prototype)` shape).
+let _ArrayIteratorPrototypeCache: any = null;
 
 /**
  * Install a built-in method on a prototype with spec-mandated descriptor
@@ -379,6 +389,23 @@ function _getIteratorPrototype(): any {
     configurable: true,
   });
   return proto;
+}
+
+/**
+ * (#3049 Layer 3) Host-lane `%ArrayIteratorPrototype%` analog (§23.1.5.2).
+ * Shared, identity-stable middle proto for every `__iterator` vec-fallback
+ * iterator: `arrayIter → %ArrayIteratorPrototype% → %IteratorPrototype% →
+ * (native Iterator.prototype, helper-bearing)`. Anchored at
+ * `_getIteratorPrototype()` — the compiler-owned proto the generator path
+ * already chains to — so array + generator receivers resolve the iterator
+ * helpers via the SAME object; `_installIteratorHelperPolyfills` links it
+ * to the native `Iterator.prototype` (a live chain, so creation order
+ * doesn't matter).
+ */
+function _getArrayIteratorPrototype(): any {
+  if (_ArrayIteratorPrototypeCache) return _ArrayIteratorPrototypeCache;
+  _ArrayIteratorPrototypeCache = Object.create(_getIteratorPrototype());
+  return _ArrayIteratorPrototypeCache;
 }
 
 /**
@@ -2292,10 +2319,14 @@ function _wrapWasmClosure(
         const methodPadded: any[] = [];
         for (let i = 0; i < methodArity; i++) methodPadded.push(args[i]);
         const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
-        return methodCallFn(_isWasmStruct(rawThis) ? rawThis : this, closure, ...methodPadded);
+        // (#3049) Marshal struct results host-usably (see _marshalBridgeResult).
+        return _marshalBridgeResult(
+          methodCallFn(_isWasmStruct(rawThis) ? rawThis : this, closure, ...methodPadded),
+          callbackState,
+        );
       }
     }
-    return callFn(closure, ...padded);
+    return _marshalBridgeResult(callFn(closure, ...padded), callbackState);
   };
   _wasmClosureWrapperSource.set(wrapped, { closure, arity });
   if (_canBeWeakKey(closure)) {
@@ -2360,7 +2391,11 @@ function _wrapWasmClosureUnknownArity(
         // `ref.test (ref objStruct)` then fails and the body's `this.<field>` traps.
         // Mirrors the known-arity bridge in `_wrapWasmClosure` (#1712 / #1320).
         const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
-        return methodCallFn(_isWasmStruct(rawThis) ? rawThis : this, closure, ...padded);
+        // (#3049) Marshal struct results host-usably (see _marshalBridgeResult).
+        return _marshalBridgeResult(
+          methodCallFn(_isWasmStruct(rawThis) ? rawThis : this, closure, ...padded),
+          callbackState,
+        );
       }
     }
     // Free-function / extracted-method (`const f = o.m; f()`) path: dispatch by the
@@ -2372,7 +2407,7 @@ function _wrapWasmClosureUnknownArity(
     if (typeof callFn !== "function") return undefined;
     const padded: any[] = [];
     for (let i = 0; i < arity; i++) padded.push(args[i]);
-    return callFn(closure, ...padded);
+    return _marshalBridgeResult(callFn(closure, ...padded), callbackState);
   };
   try {
     if (wrapped.prototype && closure != null) {
@@ -2392,6 +2427,46 @@ function _wrapWasmClosureUnknownArity(
     _wasmClosureWrapperTargets.set(wrapped, closure);
   }
   return wrapped;
+}
+
+/**
+ * (#3049) Exit-boundary marshal for closure-bridge RESULTS. A compiled
+ * closure invoked from HOST code (native Iterator helpers, accessors
+ * installed via `__defineProperty_accessor`, `Array.from` mapFn, …) used to
+ * return raw WasmGC structs the host cannot read ("WebAssembly objects are
+ * opaque"): a compiled `next()`'s `{done, value}` IteratorResult read as
+ * `r.done` came back `undefined`, so a native Iterator-helper chain never
+ * terminated, and a getter-returned closure (`{ get next() { return
+ * function () {…}; } }` — the test262 Iterator-helper `this-plain-iterator`
+ * receiver shape) arrived non-callable ("object is not a function").
+ * Marshal struct results into the SAME host-usable representations
+ * `_wrapForHost` field reads already produce: data/vec structs → the
+ * identity-stable live-mirror proxy; closure structs → a host-callable
+ * dynamic bridge (whose own results are marshaled recursively by
+ * construction). Wasm re-entry boundaries unwrap via `_hostProxyReverse`
+ * (`_unwrapForHost`) and `===` canonicalizes via `_hostEqComparableValue`,
+ * so identity round-trips.
+ */
+function _marshalBridgeResult(v: any, callbackState?: { getExports: () => Record<string, Function> | undefined }): any {
+  if (v == null || typeof v !== "object" || !_isWasmStruct(v)) return v;
+  const exports = callbackState?.getExports();
+  if (!exports) return v;
+  try {
+    // Positive data-struct / vec discrimination FIRST (#2794 —
+    // `__is_closure` can false-positive on layout-canonicalization
+    // collisions; the data/vec markers cannot).
+    const isVec = exports.__is_vec as unknown as ((x: any) => number) | undefined;
+    if (typeof isVec === "function" && isVec(v) === 1) return _wrapForHost(v, exports);
+    const isData = exports.__is_data_struct as unknown as ((x: any) => number) | undefined;
+    if (typeof isData === "function" && isData(v) === 1) return _wrapForHost(v, exports);
+    const isCl = exports.__is_closure as unknown as ((x: any) => number) | undefined;
+    if (typeof isCl === "function" && isCl(v) === 1) {
+      return _wrapWasmClosureUnknownArity(v, callbackState) ?? v;
+    }
+  } catch {
+    /* discriminators unavailable — fall through to the generic proxy */
+  }
+  return _wrapForHost(v, exports);
 }
 
 /**
@@ -6225,12 +6300,21 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
         }
         // Resolve the export key — for string keys use directly, for well-known
         // symbols use the @@name form (e.g. Symbol.toPrimitive → "@@toPrimitive") (#1090)
+        // (#3049) A bridged closure's RETURN value must be host-readable too:
+        // a compiled `next()` returns its `{done, value}` IteratorResult as a
+        // raw WasmGC struct, which is opaque to the host consumer (a native
+        // Iterator helper read `r.done` → undefined → the helper chain never
+        // terminated). Route struct results back through `_wrapForHost` (the
+        // proxy cache keeps identity stable; wasm re-entry boundaries unwrap
+        // via `_hostProxyReverse`).
+        const wrapBridgeResult = (res: any): any =>
+          res != null && typeof res === "object" && _isWasmStruct(res) ? _wrapForHost(res, exports) : res;
         const exportKey = typeof key === "string" ? key : typeof key === "symbol" ? _symbolToWasm.get(key) : undefined;
         if (exportKey !== undefined) {
           const callFn = exports[`__call_${exportKey}`];
           if (typeof callFn === "function") {
             return function closureBridge(this: any, ...args: any[]) {
-              return callFn(obj);
+              return wrapBridgeResult(callFn(obj));
             };
           }
         }
@@ -6265,21 +6349,24 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
             const rawThis = hasRecv && typeof this === "object" ? _unwrapForHost(this) : this;
             const recv = _isWasmStruct(rawThis) ? rawThis : undefined;
             if (recv !== undefined) {
-              if (args.length === 0 && typeof mcall0 === "function") return mcall0(recv, val);
-              if (args.length === 1 && typeof mcall1 === "function") return mcall1(recv, val, args[0]);
-              if (args.length >= 2 && typeof mcall2 === "function") return mcall2(recv, val, args[0], args[1]);
-              if (typeof mcall1 === "function") return mcall1(recv, val, args[0]);
-              if (typeof mcall0 === "function") return mcall0(recv, val);
-              if (typeof mcall2 === "function") return mcall2(recv, val, args[0], args[1]);
+              if (args.length === 0 && typeof mcall0 === "function") return wrapBridgeResult(mcall0(recv, val));
+              if (args.length === 1 && typeof mcall1 === "function")
+                return wrapBridgeResult(mcall1(recv, val, args[0]));
+              if (args.length >= 2 && typeof mcall2 === "function")
+                return wrapBridgeResult(mcall2(recv, val, args[0], args[1]));
+              if (typeof mcall1 === "function") return wrapBridgeResult(mcall1(recv, val, args[0]));
+              if (typeof mcall0 === "function") return wrapBridgeResult(mcall0(recv, val));
+              if (typeof mcall2 === "function") return wrapBridgeResult(mcall2(recv, val, args[0], args[1]));
             }
-            if (args.length === 0 && typeof callFn0 === "function") return callFn0(val);
-            if (args.length === 1 && typeof callFn1 === "function") return callFn1(val, args[0]);
-            if (args.length >= 2 && typeof callFn2 === "function") return callFn2(val, args[0], args[1]);
+            if (args.length === 0 && typeof callFn0 === "function") return wrapBridgeResult(callFn0(val));
+            if (args.length === 1 && typeof callFn1 === "function") return wrapBridgeResult(callFn1(val, args[0]));
+            if (args.length >= 2 && typeof callFn2 === "function")
+              return wrapBridgeResult(callFn2(val, args[0], args[1]));
             // Fallback: try the highest-arity dispatcher available, padding
             // missing args with undefined or dropping extras.
-            if (typeof callFn1 === "function") return callFn1(val, args[0]);
-            if (typeof callFn0 === "function") return callFn0(val);
-            if (typeof callFn2 === "function") return callFn2(val, args[0], args[1]);
+            if (typeof callFn1 === "function") return wrapBridgeResult(callFn1(val, args[0]));
+            if (typeof callFn0 === "function") return wrapBridgeResult(callFn0(val));
+            if (typeof callFn2 === "function") return wrapBridgeResult(callFn2(val, args[0], args[1]));
             return undefined;
           };
         }
@@ -13274,13 +13361,15 @@ assert._isSameValue = isSameValue;
               if (typeof len === "number" && len >= 0) {
                 let i = 0;
                 // (#1367) Synthesized iterators MUST inherit from
-                // Iterator.prototype so .drop/.take/.map/.filter etc. resolve.
-                const iterProto = (
-                  typeof (globalThis as any).Iterator === "function"
-                    ? ((globalThis as any).Iterator as any).prototype
-                    : null
-                ) as any;
-                const iterObj: any = iterProto ? Object.create(iterProto) : {};
+                // `%IteratorPrototype%` so .drop/.take/.map/.filter etc.
+                // resolve. (#3049 Layer 3) They inherit it through the shared
+                // `%ArrayIteratorPrototype%` middle proto (§23.1.5.2) — the
+                // old ONE-level `Object.create(Iterator.prototype)` made the
+                // harness shim's two-hop walk `getPrototypeOf(getPrototypeOf(
+                // arrayIter))` overshoot to `Object.prototype`, so
+                // `Iterator.prototype.<helper>` resolved to undefined for
+                // every Iterator-helper `this-plain-iterator` test.
+                const iterObj: any = Object.create(_getArrayIteratorPrototype());
                 iterObj.next = () => {
                   if (i >= len) return { value: undefined, done: true };
                   const val = vecGet(obj, i);
@@ -14179,7 +14268,8 @@ assert._isSameValue = isSameValue;
       return (id: number, cap: any) =>
         (...args: any[]) => {
           const exports = callbackState?.getExports();
-          return exports?.[`__cb_${id}`]?.(cap, ...args);
+          // (#3049) Marshal struct results host-usably (see _marshalBridgeResult).
+          return _marshalBridgeResult(exports?.[`__cb_${id}`]?.(cap, ...args), callbackState);
         };
     case "getter_callback_maker":
       return (id: number, cap: any) =>
@@ -14206,7 +14296,10 @@ assert._isSameValue = isSameValue;
               return undefined;
             }
           }
-          return exports?.[`__cb_${id}`]?.(cap, this, ...args);
+          // (#3049) Marshal struct results host-usably — a getter returning a
+          // fresh closure (`get next() { return function () {…}; }`) must
+          // arrive host-callable, not as an opaque struct.
+          return _marshalBridgeResult(exports?.[`__cb_${id}`]?.(cap, this, ...args), callbackState);
         };
     case "await":
       return (v: any) => v;

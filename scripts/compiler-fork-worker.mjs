@@ -38,6 +38,14 @@ function createFreshCompiler() {
       sourceMapUrl: "test.wasm.map",
       emitWat: false,
       skipSemanticDiagnostics: true,
+      // (#3049 C1) Defer top-level init in the host test262 lane: export
+      // `__module_init` instead of wiring the wasm `(start)` section, so
+      // top-level code runs AFTER `setExports` has wired the runtime
+      // (`__sget_*` / `__vec_*` exports). The executor
+      // (scripts/wasm-exec-worker.mjs) calls the exported `__module_init()`
+      // right after `setExports` — the #2796 diff-test model. This fork
+      // worker is host-lane only (it never receives a `target`).
+      deferTopLevelInit: true,
     });
   } catch (e) {
     incrementalCompiler = null;
@@ -66,6 +74,9 @@ process.on("message", async (msg) => {
             emitWat: false,
             skipSemanticDiagnostics: true,
             inferModuleStrictArguments,
+            // (#3049 C1) See createFreshCompiler — host lane defers top-level
+            // init; wasm-exec-worker calls __module_init() after setExports.
+            deferTopLevelInit: true,
           });
       const compileMs = performance.now() - start;
 

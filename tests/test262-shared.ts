@@ -616,6 +616,10 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   skipSemanticDiagnostics: true,
                   target: TEST262_TARGET,
                   inferModuleStrictArguments,
+                  // (#3049 C1) Host lane defers top-level init; the exec block
+                  // below calls the exported __module_init after setExports.
+                  // Aligned with compiler-fork-worker.mjs / test262-runner.ts.
+                  ...(TEST262_TARGET ? {} : { deferTopLevelInit: true }),
                   // (#2932) Without allowJs, TypeScript excludes the `.js`
                   // _FIXTURE root files from the program entirely — their
                   // top-level declarations are never codegen'd and every
@@ -667,6 +671,14 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);
                   if (typeof (importObj as any).setExports === "function") {
                     (importObj as any).setExports(instance.exports);
+                  }
+                  // (#3049 C1) Deferred top-level init (host lane): run the
+                  // exported __module_init now that setExports has wired the
+                  // runtime. Same try as instantiate + test(), so a top-level
+                  // throw keeps its pre-defer classification.
+                  const moduleInit = (instance.exports as any).__module_init;
+                  if (typeof moduleInit === "function") {
+                    moduleInit();
                   }
                   const testFn = (instance.exports as any).test;
                   if (typeof testFn !== "function") {
