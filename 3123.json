@@ -1,8 +1,9 @@
 {
   "id": "3123",
   "assignee": "ttraenkler/fable-reconcile",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3123-class-extends-fnctor-proto-clean",
   "claimed_at": "2026-07-10T21:26:13Z",
-  "updated_at": "2026-07-10T21:26:13Z"
+  "updated_at": "2026-07-10T22:28:27Z",
+  "released_at": "2026-07-10T22:28:27Z"
 }
