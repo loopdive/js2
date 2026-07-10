@@ -1,8 +1,8 @@
 {
   "id": "3125",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-10T00:14:30Z",
-  "updated_at": "2026-07-10T00:14:30Z"
+  "assignee": "ttraenkler/fable-thenable",
+  "status": "in-progress",
+  "branch": "issue-3125-native-resolve-thenable-assimilation",
+  "claimed_at": "2026-07-10T00:15:12Z",
+  "updated_at": "2026-07-10T00:15:12Z"
 }
