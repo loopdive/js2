@@ -1030,41 +1030,48 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       objectLiteralIsStandaloneAnyObjectCarrier(ctx, decl.initializer);
     const anyObjectCarrierTypeIdx = initIsAnyObjectCarrier ? ensureObjectRuntime(ctx).objectTypeIdx : -1;
     const wasmType: ValType =
-      initIsAccessorLiteral || initIsHostSpreadLiteral || initIsGrowableObjectLiteral
+      // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
+      // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
+      // keep its externref slot even when the block-scoped shadow machinery
+      // re-allocates here (the pre-hoisted slot reuse below is gated on
+      // plain-fn capture and does not fire for uncaptured bindings).
+      fctx.fnctorWidenedLocals?.has(name)
         ? { kind: "externref" as const }
-        : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
-          ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
-          : isI32CoercedLocal
-            ? { kind: "i32" }
-            : isI32SpecializedArray
-              ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
-              : widenedTypeIdx !== undefined
-                ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                : (taViewType ??
-                  subarraySubviewType ??
-                  inferredVecType ??
-                  standaloneRegExpMatchArrayType ??
-                  (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
-                    ? { kind: "externref" as const }
-                    : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
+        : initIsAccessorLiteral || initIsHostSpreadLiteral || initIsGrowableObjectLiteral
+          ? { kind: "externref" as const }
+          : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
+            ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
+            : isI32CoercedLocal
+              ? { kind: "i32" }
+              : isI32SpecializedArray
+                ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
+                : widenedTypeIdx !== undefined
+                  ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
+                  : (taViewType ??
+                    subarraySubviewType ??
+                    inferredVecType ??
+                    standaloneRegExpMatchArrayType ??
+                    (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                       ? { kind: "externref" as const }
-                      : // (#2615) `new Proxy(target, handler)` returns a host/native
-                        // Proxy externref. The checker types it as the TARGET's
-                        // struct (ProxyConstructor returns T), so the default slot
-                        // would `ref.test` the Proxy against that struct, fail, null
-                        // it, and trap every read via a direct `struct.get`. Force an
-                        // externref local so reads route through `__extern_get` (the
-                        // only path that runs the Proxy MOP / trap). Both modes emit
-                        // a Proxy externref, so this is mode-agnostic.
-                        initIsProxy
+                      : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                         ? { kind: "externref" as const }
-                        : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
-                          // returns a host bound-function externref in JS-host mode;
-                          // force an externref local so the value isn't ref.cast to
-                          // the target's closure struct (which traps → null binding).
-                          decl.initializer && !ctx.standalone && !noJsHost(ctx) && isBindHostCall(decl.initializer)
+                        : // (#2615) `new Proxy(target, handler)` returns a host/native
+                          // Proxy externref. The checker types it as the TARGET's
+                          // struct (ProxyConstructor returns T), so the default slot
+                          // would `ref.test` the Proxy against that struct, fail, null
+                          // it, and trap every read via a direct `struct.get`. Force an
+                          // externref local so reads route through `__extern_get` (the
+                          // only path that runs the Proxy MOP / trap). Both modes emit
+                          // a Proxy externref, so this is mode-agnostic.
+                          initIsProxy
                           ? { kind: "externref" as const }
-                          : localTypeForDeclaration(ctx, varType, decl)));
+                          : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
+                            // returns a host bound-function externref in JS-host mode;
+                            // force an externref local so the value isn't ref.cast to
+                            // the target's closure struct (which traps → null binding).
+                            decl.initializer && !ctx.standalone && !noJsHost(ctx) && isBindHostCall(decl.initializer)
+                            ? { kind: "externref" as const }
+                            : localTypeForDeclaration(ctx, varType, decl)));
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)

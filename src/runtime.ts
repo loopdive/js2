@@ -129,7 +129,23 @@ function _fnctorProtoLookup(
   if (!_canBeWeakKey(obj)) return undefined;
   const ctor = _fnctorInstanceCtor.get(obj);
   if (ctor == null) return undefined;
-  const proto = _sidecarGet(ctor, "prototype");
+  let proto = _sidecarGet(ctor, "prototype");
+  // (#3123) A top-level `F.prototype = <expr>` write may land in the closure
+  // STRUCT's typed `prototype` field slot (the #2664 `__set_member_prototype`
+  // dispatcher's struct arm) instead of the sidecar. Read the field through
+  // the compiled `__sget_prototype` getter so the live prototype the compiled
+  // side reads back is the SAME object the host walk starts from.
+  if (proto === undefined && exports !== undefined && _isWasmStruct(ctor)) {
+    const sgetProto = exports.__sget_prototype as ((v: any) => any) | undefined;
+    if (typeof sgetProto === "function") {
+      try {
+        const v = sgetProto(ctor);
+        if (v != null) proto = v;
+      } catch {
+        /* not a field of this struct shape */
+      }
+    }
+  }
   if (proto == null || typeof proto !== "object") return undefined;
   let cur: any = proto;
   let guard = 0;
@@ -4844,7 +4860,30 @@ function _safeGet(obj: any, key: any, callbackState?: { getExports: () => Record
       if (wasmKey) {
         const sc2 = _sidecarGet(obj, wasmKey);
         if (sc2 !== undefined) return sc2;
+        // (#3123) A computed well-known-symbol property in an object LITERAL
+        // (`{ [Symbol.iterator]: 0 }`) compiles to a typed struct FIELD named
+        // "@@iterator" — invisible to the sidecar read above. Read it through
+        // the per-shape `__sget_@@<name>` getter so a NON-CALLABLE @@iterator
+        // (the flatMap iterable-to-iterator-fallback shape, which must make
+        // GetMethod throw TypeError) is observable host-side.
+        const exports2 = callbackState?.getExports();
+        const fieldGetter = exports2?.[`__sget_${wasmKey}`];
+        if (typeof fieldGetter === "function") {
+          try {
+            const v = fieldGetter(obj);
+            if (v !== undefined && v !== null) return v;
+          } catch {
+            /* not a field of this struct shape */
+          }
+        }
       }
+    }
+    // (#3123) Compiled class methods/getters on a registered fnctor-subclass
+    // instance — the own-C.prototype level, shadowing the fnctor parent's
+    // prototype chain below.
+    {
+      const v = _resolveClassMemberOnInstance(obj, key, callbackState?.getExports());
+      if (v !== _MISS) return v;
     }
     // (#1712) fnctor instances: resolve through the constructor's vivified
     // prototype object before giving up. Accessors run with the instance
@@ -5700,6 +5739,67 @@ function _ownStructKeys(obj: any, exports: Record<string, Function> | undefined)
  * non-callable object — #1627) need the unmasked underlying value. Returns
  * `undefined` when nothing resolves.
  */
+/**
+ * (#3123) Cached host bridges for compiled class methods resolved on
+ * registered fnctor-subclass instances — identity-stable per (instance, key).
+ */
+const _classMethodHostBridges = new WeakMap<object, Map<string, Function>>();
+
+/**
+ * (#3123) Resolve a compiled CLASS method/getter on a registered
+ * fnctor-subclass instance (`class C extends F`, F a top-level plain function)
+ * via the module's dispatch exports:
+ *   - `__member_kind_<key>(recv)` → 0 none / 1 method / 2 getter;
+ *   - kind 1 → an identity-stable host function bridging to the 0-arg tag
+ *     dispatcher `__call_<key>(recv)` (the iterator protocol: `next()` /
+ *     `return()`);
+ *   - kind 2 → the getter's RESULT per [[Get]], marshaled host-usably (the
+ *     map/filter `get next()` exhaustion shape returns a FRESH closure per
+ *     read — do NOT cache).
+ * Returns `_MISS` when the exports are absent or the struct carries neither.
+ * The method bridge dispatches on the CAPTURED instance (correct for
+ * `Call(nextMethod, iterator)` where nextMethod was read from that instance;
+ * an extracted re-bind `f.call(other)` is out of scope — documented #3123).
+ */
+function _resolveClassMemberOnInstance(obj: any, key: any, exports: Record<string, Function> | undefined): any {
+  if (exports === undefined || typeof key !== "string") return _MISS;
+  if (obj == null || typeof obj !== "object" || !_canBeWeakKey(obj)) return _MISS;
+  if (!_fnctorInstanceCtor.has(obj)) return _MISS;
+  const kindFn = exports[`__member_kind_${key}`] as unknown as ((v: any) => number) | undefined;
+  if (typeof kindFn !== "function") return _MISS;
+  let kind = 0;
+  try {
+    kind = kindFn(obj);
+  } catch {
+    return _MISS;
+  }
+  const cbState = { getExports: () => exports };
+  if (kind === 2) {
+    const getFn = exports[`__call_get_${key}`] as unknown as ((v: any) => any) | undefined;
+    if (typeof getFn !== "function") return _MISS;
+    return _marshalBridgeResult(getFn(obj), cbState);
+  }
+  if (kind === 1) {
+    const callFn = exports[`__call_${key}`] as unknown as ((v: any) => any) | undefined;
+    if (typeof callFn !== "function") return _MISS;
+    let map = _classMethodHostBridges.get(obj);
+    if (!map) {
+      map = new Map();
+      _classMethodHostBridges.set(obj, map);
+    }
+    let fn = map.get(key);
+    if (!fn) {
+      fn = function classMethodHostBridge(this: any) {
+        return _marshalBridgeResult(callFn(obj), cbState);
+      };
+      Object.defineProperty(fn, "name", { value: key, configurable: true });
+      map.set(key, fn);
+    }
+    return fn;
+  }
+  return _MISS;
+}
+
 function _resolveHostField(obj: any, key: any, exports: Record<string, Function> | undefined): any {
   // #1336 — accessor properties (Object.defineProperty(obj, k, {get})) must
   // INVOKE the getter, not return a descriptor. Sidecar stores the descriptor
@@ -5753,7 +5853,27 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
     if (wasmKey !== undefined) {
       const v = _sidecarGet(obj, wasmKey);
       if (v !== undefined) return v;
+      // (#3123) Computed well-known-symbol LITERAL property → typed struct
+      // FIELD named "@@<name>" — read via the per-shape `__sget_@@<name>`
+      // getter (see the matching arm in `_safeGet`). Makes a non-callable
+      // `{ [Symbol.iterator]: 0 }` observable so native GetMethod throws.
+      const fieldGetter = exports?.[`__sget_${wasmKey}`];
+      if (typeof fieldGetter === "function") {
+        try {
+          const fv = fieldGetter(obj);
+          if (fv !== undefined && fv !== null) return fv;
+        } catch {
+          /* not a field of this struct shape */
+        }
+      }
     }
+  }
+  // (#3123) Compiled class methods/getters on a registered fnctor-subclass
+  // instance — the own-C.prototype level, which must SHADOW the fnctor
+  // parent's prototype chain below.
+  {
+    const v = _resolveClassMemberOnInstance(obj, key, exports);
+    if (v !== _MISS) return v;
   }
   // (#1712) fnctor instances: resolve through the constructor's vivified
   // prototype object. Accessors run with the live-mirror proxy as the receiver.
@@ -13239,21 +13359,32 @@ assert._isSameValue = isSameValue;
           _AsyncGeneratorState.set(obj, { buf, index: 0, pendingThrow });
           return obj;
         };
+      // (#3123) Shared miss-arm for the __gen_* dispatchers: a registered
+      // fnctor-subclass instance's `next`/`return`/`throw` is a compiled class
+      // method/getter invisible to a native property read — resolve it through
+      // the wasm-aware reader (class-member kind dispatch + fnctor prototype
+      // walk). Gated on the registration WeakMap so every other receiver keeps
+      // the exact pre-#3123 behavior.
+      const genMemberFallback = (gen: any, key: string): any => {
+        if (gen == null || typeof gen !== "object") return undefined;
+        if (!_isWasmStruct(gen) || !_canBeWeakKey(gen) || !_fnctorInstanceCtor.has(gen)) return undefined;
+        return _safeGet(gen, key, callbackState);
+      };
       if (name === "__gen_next")
         return (gen: any) => {
-          const next = gen.next ?? _sidecarGet(gen, "next");
+          const next = gen.next ?? _sidecarGet(gen, "next") ?? genMemberFallback(gen, "next");
           if (typeof next === "function") return next.call(gen);
           throw new TypeError("generator.next is not a function");
         };
       if (name === "__gen_return")
         return (gen: any, val: any) => {
-          const ret = gen.return ?? _sidecarGet(gen, "return");
+          const ret = gen.return ?? _sidecarGet(gen, "return") ?? genMemberFallback(gen, "return");
           if (typeof ret === "function") return ret.call(gen, val);
           return { value: val, done: true };
         };
       if (name === "__gen_throw")
         return (gen: any, err: any) => {
-          const thr = gen.throw ?? _sidecarGet(gen, "throw");
+          const thr = gen.throw ?? _sidecarGet(gen, "throw") ?? genMemberFallback(gen, "throw");
           if (typeof thr === "function") return thr.call(gen, err);
           throw err;
         };
@@ -13932,6 +14063,19 @@ assert._isSameValue = isSameValue;
           if (!userClassParents.has(className)) {
             userClassParents.set(className, parentName == null ? null : parentName);
           }
+        };
+      // (#3123) `class C extends F` where F is a top-level PLAIN FUNCTION
+      // (fnctor — the test262 harness `Iterator` shim shape): the ctor
+      // registers each instance → F's closure struct so host-side member
+      // resolution (`_fnctorProtoLookup` via `_safeGet` / `_resolveHostField` /
+      // `__extern_method_call`) walks F's LIVE `.prototype` chain for
+      // inherited reads (`inst.drop` → the runtime-assigned helper proto).
+      if (name === "__register_fnctor_instance")
+        return (instance: any, ctorClosure: any): void => {
+          if (instance == null || typeof instance !== "object") return;
+          if (ctorClosure == null || typeof ctorClosure !== "object") return;
+          if (!_canBeWeakKey(instance)) return;
+          _fnctorInstanceCtor.set(instance, ctorClosure);
         };
       // (#1455) Subclasses of host builtins: after `__new_<Parent>(args)`
       // returns the bare host instance whose [[Prototype]] is Parent.prototype,

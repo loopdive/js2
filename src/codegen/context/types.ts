@@ -568,6 +568,18 @@ export interface FunctionContext {
    */
   i32CoercedLocals?: Set<string>;
   /**
+   * (#3123) let-bindings declared as a fnctor-subclass class instance
+   * (`class C extends F`, F a top-level plain function) that are REASSIGNED
+   * with a value of another static type — at runtime they can hold a HOST
+   * object (e.g. `iterator = iterator.drop(0)` stores the Iterator-helper
+   * wrapper minted by F's live prototype methods). The pre-hoist allocator
+   * widens their slot to externref (a `(ref $C)` slot would null the host
+   * value through the guarded cast), and the class-method-call ladder
+   * dispatches member calls on them DYNAMICALLY (`__extern_method_call`) so
+   * the runtime value — struct instance or host object — decides.
+   */
+  fnctorWidenedLocals?: Set<string>;
+  /**
    * #1197: Set of let/const locals declared as `number[]` whose element
    * storage can safely lower to `i32` instead of `f64` (every write site is
    * provably i32-shaped, every use is a whitelisted access pattern, no

@@ -23,7 +23,7 @@ import { compileArrayMethodCall, compileArrayPrototypeCall, resolveArrayInfo } f
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S3b) stable-regime minting
 import { emitCollectionIteratorVec } from "../map-runtime.js"; // (#42) native Set/Map → vec, shared with spread / Array.from
 import { isSetReflectiveCallShape, tryCompileSetReflectiveCall } from "../set-runtime.js"; // (#2604) Set.prototype.METHOD.call brand-check
-import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
+import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js"; // (#1983 / #3123)
 import { ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#2169c) native Array.from drain
 import { reserveClosedMethodDispatch, reserveClosedMethodDispatchVararg } from "../closed-method-dispatch.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm Date.parse / new Date(str)
@@ -10781,6 +10781,16 @@ function compileCallExpression(
         const recvPropNames = new Set(recvProps.map((p) => p.name));
         for (const className of ctx.classSet) {
           if (!ctx.funcMap.has(`${className}_${methodName}`)) continue;
+          // (#3123) Never INFER a fnctor-subclass (`class C extends F`, F a
+          // top-level plain function) for an any/unknown-typed receiver: the
+          // runtime value may be a HOST object (e.g. an Iterator-helper
+          // wrapper minted by F.prototype's live methods), and the static
+          // tag-dispatch would run the class method with a null self instead
+          // of forwarding to the host object. The any-receiver ladder below
+          // (__gen_next/__gen_return/__extern_method_call) dispatches on the
+          // runtime value for BOTH host objects and struct instances (the
+          // struct arm resolves via _safeGet → __member_kind_* exports).
+          if (fnctorAncestorOfClass(ctx, className) !== undefined) continue;
           // Quick heuristic: check that the class has at least the same property names
           // as the interface (structural compatibility check)
           const classFields = ctx.structFields.get(className);
@@ -10808,6 +10818,31 @@ function compileCallExpression(
       const methodName = ts.isPrivateIdentifier(propAccess.name)
         ? "__priv_" + propAccess.name.text.slice(1)
         : propAccess.name.text;
+      // (#3123) A WIDENED fnctor-subclass binding (`let iterator = new C();
+      // iterator = iterator.drop(0)`) may hold a HOST object at runtime — the
+      // static tag-dispatch below would guarded-cast it to null and run the
+      // class method/getter with a null self. Dispatch member calls on such
+      // bindings dynamically: the runtime value (struct instance or host
+      // wrapper) decides, via __extern_method_call + the host-side
+      // member-kind resolution.
+      {
+        let recvInner: ts.Expression = propAccess.expression;
+        while (
+          ts.isParenthesizedExpression(recvInner) ||
+          ts.isAsExpression(recvInner) ||
+          ts.isNonNullExpression(recvInner)
+        ) {
+          recvInner = recvInner.expression;
+        }
+        if (
+          ts.isIdentifier(recvInner) &&
+          fctx.fnctorWidenedLocals?.has(recvInner.text) &&
+          fnctorAncestorOfClass(ctx, receiverClassName) !== undefined
+        ) {
+          const dynResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
+          if (dynResult !== undefined) return dynResult;
+        }
+      }
       let fullName = `${receiverClassName}_${methodName}`;
       let funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)); // (#1983)
       // Walk inheritance chain to find the method in a parent class
@@ -10920,6 +10955,18 @@ function compileCallExpression(
           methodName,
         );
         if (objProtoResult !== undefined) return objProtoResult;
+      }
+      // (#3123) Method MISS on a fnctor-subclass (`class C extends F`, F a
+      // top-level plain function): the method may live on F's LIVE
+      // `.prototype` — assigned at RUNTIME (module init; the test262 harness
+      // `Iterator` shim installs the ES2025 Iterator-helper prototype there),
+      // which no static dispatch can see. Route through the generic
+      // `__extern_method_call` host ladder (the ctor registered the instance
+      // in `_fnctorInstanceCtor`, so the host resolves the member through the
+      // live prototype chain) instead of falling to the graceful-null tail.
+      if (funcIdx === undefined && fnctorAncestorOfClass(ctx, receiverClassName) !== undefined) {
+        const dynResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
+        if (dynResult !== undefined) return dynResult;
       }
       if (funcIdx !== undefined) {
         const isStaticMethod = ctx.staticMethodSet.has(fullName);
@@ -16536,6 +16583,78 @@ function compileCallExpression(
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
   }
+}
+
+/**
+ * (#3123) Generic dynamic method dispatch for a method MISS on a
+ * fnctor-subclass receiver (`class C extends F`, F a top-level plain
+ * function). The member may live on F's runtime-assigned `.prototype`
+ * (host-side), so compile the receiver as externref (extern.convert_any for
+ * the struct instance), marshal the args into a host JS array (native $ObjVec
+ * under standalone), and call `__extern_method_call(recv, "<name>", args)` —
+ * mirroring the any-receiver generic ladder (#799 WI3) so both entry points
+ * behave identically. Helper indices are re-read from funcMap at each use so
+ * late-import shifts during arg compilation cannot bake stale call targets.
+ */
+function emitFnctorSubclassDynamicMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  methodName: string,
+): InnerResult | undefined {
+  let arrNewIdx: number | undefined;
+  let arrPushIdx: number | undefined;
+  const arrNewName = ctx.standalone ? "__objvec_new" : "__js_array_new";
+  const arrPushName = ctx.standalone ? "__objvec_push" : "__js_array_push";
+  if (ctx.standalone) {
+    const b = ensureObjVecBuilders(ctx);
+    arrNewIdx = b.newIdx;
+    arrPushIdx = b.pushIdx;
+  } else {
+    arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+    arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+  }
+  const methodCallIdx = ensureLateImport(
+    ctx,
+    "__extern_method_call",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  // The fallback's method-name string constant, materialized BEFORE any body
+  // instructions so the global index is settled.
+  addStringConstantGlobal(ctx, methodName);
+  flushLateImportShifts(ctx, fctx);
+  if (methodCallIdx === undefined || arrNewIdx === undefined || arrPushIdx === undefined) return undefined;
+
+  const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+  if (recvType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (recvType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" } as Instr);
+  }
+  const recvLocal = allocLocal(fctx, `__fsd_recv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvLocal });
+
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(arrNewName) ?? arrNewIdx });
+  const argsLocal = allocLocal(fctx, `__fsd_args_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  for (const arg of expr.arguments) {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (argType && argType.kind !== "externref") {
+      fctx.body.push({ op: "extern.convert_any" } as Instr);
+    }
+    if (argType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(arrPushName) ?? arrPushIdx });
+  }
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_method_call") ?? methodCallIdx });
+  return { kind: "externref" };
 }
 
 /**

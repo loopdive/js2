@@ -4807,23 +4807,29 @@ export function compileDeclarations(
   // that is already global (a false-positive defer only churns codegen order).
   function classDeclCapturesNames(decl: ts.ClassDeclaration, names: ReadonlySet<string>): boolean {
     if (names.size === 0) return false;
-    // (#2818 standalone follow-up) NEVER defer a class that has a base class
-    // (`extends …`). A derived class routes its constructor through a
-    // `super(...)` call; the deferred, block-recompiled path lowers that
-    // super-constructor invocation + any spread/getter in the arguments
-    // *correctly in the WasmGC (host) lane* but produces a **desynced** result
-    // in the standalone lane (the promoted-global read of a captured `let`
-    // resolves to a stale/empty value through the super/spread machinery). The
-    // *eager* path — which is exactly how `origin/main` compiled these — is
-    // correct in the standalone lane, so we keep every derived class eager.
-    // This regressed 6 standalone test262 files (all `class X extends Iterator`
-    // / `extends Parent` capturers: the `Iterator.prototype.{map,flatMap,take,
-    // drop,filter}` `return-is-forwarded*` tests + `super/call-spread-obj-
-    // getter-init`). Base-less capturers (the genuine #2818 target — a plain
-    // `class C { m(){ return s; } }` reading a block-`let`) still defer and are
-    // fixed; they have no super-constructor path and lower identically in both
-    // lanes.
-    if (decl.heritageClauses?.some((h) => h.token === ts.SyntaxKind.ExtendsKeyword)) {
+    // (#2818 standalone follow-up) In the STANDALONE/WASI lane, NEVER defer a
+    // class that has a base class (`extends …`). A derived class routes its
+    // constructor through a `super(...)` call; the deferred, block-recompiled
+    // path lowers that super-constructor invocation + any spread/getter in the
+    // arguments *correctly in the WasmGC (host) lane* but produces a
+    // **desynced** result in the standalone lane (the promoted-global read of
+    // a captured `let` resolves to a stale/empty value through the super/
+    // spread machinery). The *eager* path — which is exactly how `origin/main`
+    // compiled these — is correct in the standalone lane, so standalone keeps
+    // every derived class eager. This had regressed 6 standalone test262 files
+    // (all `class X extends Iterator` / `extends Parent` capturers: the
+    // `Iterator.prototype.{map,flatMap,take,drop,filter}`
+    // `return-is-forwarded*` tests + `super/call-spread-obj-getter-init`).
+    //
+    // (#3123) The HOST lane takes the opposite branch: an EAGER capturing
+    // derived class compiles before the block-`let` initialises, so
+    // `promoteAccessorCapturesToGlobals` never fires and the method body's
+    // capture read/write lowers to a silent no-op (`f64.const NaN; drop` —
+    // verified via WAT on the `class TestIterator extends Iterator {
+    // return() { ++returnCount; } }`-in-`try` shape of the Iterator-helper
+    // `return-is-forwarded` files). The deferred path is documented correct
+    // for host above, so host defers derived capturers like base-less ones.
+    if ((ctx.standalone || ctx.wasi) && decl.heritageClauses?.some((h) => h.token === ts.SyntaxKind.ExtendsKeyword)) {
       return false;
     }
     const wouldPromote = (name: string): boolean => {

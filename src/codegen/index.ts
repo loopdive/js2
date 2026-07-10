@@ -140,7 +140,7 @@ import {
   collectDeclaredFuncRefs,
   compileClassBodies,
 } from "./class-bodies.js";
-import { classMemberFuncKey } from "./class-member-keys.js"; // (#1983)
+import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } from "./class-member-keys.js"; // (#1983 / #3123)
 import {
   applyShapeInference,
   collectDeclarations,
@@ -3937,6 +3937,159 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
   emitMethodDispatch("@@iterator", "__call_@@iterator");
   emitMethodDispatch("next", "__call_next");
   emitMethodDispatch("return", "__call_return"); // (#3100 S5) IteratorClose §7.4.9 USER-arm dispatcher
+
+  // (#3123) Host-side class-member resolution surface for fnctor-subclass
+  // instances (`class C extends F`, F a top-level plain function — the test262
+  // Iterator-shim shape). The runtime's `_resolveClassMemberOnInstance` reads
+  // `inst.next` / `inst.return` through these:
+  //   __member_kind_<key>(recv) -> i32 : 0 none / 1 method / 2 getter
+  //   __call_get_<key>(recv) -> externref : runs the compiled getter
+  // (the plain-method CALL goes through the existing __call_<key> dispatchers
+  // above). Gated on the module actually containing a fnctor subclass so every
+  // other module's emitted bytes are IDENTICAL.
+  if (!ctx.standalone && !ctx.wasi && moduleHasFnctorSubclass(ctx)) {
+    // The iterator protocol keys plus every instance method / accessor name
+    // of the module's fnctor-subclass classes (a widened binding dispatches
+    // ALL its member calls dynamically — see fnctorWidenedLocals).
+    const keys = new Set<string>(["next", "return"]);
+    for (const className of ctx.classParentMap.keys()) {
+      if (fnctorAncestorOfClass(ctx, className) === undefined) continue;
+      for (const m of ctx.classMethodNames.get(className) ?? []) keys.add(m);
+      const accPrefix = `${className}_`;
+      for (const acc of ctx.classAccessorSet) {
+        if (acc.startsWith(accPrefix)) keys.add(acc.slice(accPrefix.length));
+      }
+    }
+    emitClassMemberKindExports(ctx, dispatchTypeIdx, [...keys].sort());
+  }
+}
+
+/**
+ * (#3123) Emit, per member key, the `__member_kind_<key>` discriminator and
+ * (when any struct carries a getter of that name) the `__call_get_<key>`
+ * getter dispatcher. Mirrors `emitIteratorMethodExport`'s per-struct
+ * ref.test cascade. Only 1-param (self-only) methods/getters are reported —
+ * that is what the 0-arg `__call_<key>` / `__call_get_<key>` dispatchers can
+ * actually invoke; a parameterized `next(v)` stays unreported (kind 0) so the
+ * host falls back instead of emitting an arity-invalid call.
+ */
+function emitClassMemberKindExports(ctx: CodegenContext, dispatchTypeIdx: number, keys: string[]): void {
+  const mod = ctx.mod;
+  const skipStruct = (structName: string): boolean =>
+    structName.startsWith("Wrapper") ||
+    structName === "$AnyValue" ||
+    structName.startsWith("__vec_") ||
+    structName.startsWith("__arr_");
+
+  type KindEntry = { typeIdx: number; funcIdx: number; resultType: ValType };
+  const collect = (nameOf: (structName: string) => string): KindEntry[] => {
+    const entries: KindEntry[] = [];
+    for (const [structName] of ctx.structFields) {
+      const typeIdx = ctx.structMap.get(structName);
+      if (typeIdx === undefined || skipStruct(structName)) continue;
+      const fullName = nameOf(structName);
+      if (ctx.staticMethodSet.has(fullName)) continue; // instance surface only
+      const funcIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName));
+      if (funcIdx === undefined) continue;
+      const funcDef = definedFuncAt(ctx, funcIdx);
+      const funcType = funcDef ? mod.types[funcDef.typeIdx] : undefined;
+      if (!funcType || funcType.kind !== "func") continue;
+      if (funcType.params.length !== 1) continue; // self-only (0-arg dispatch)
+      const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
+      entries.push({ typeIdx, funcIdx, resultType });
+    }
+    return entries;
+  };
+
+  const kindTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$member_kind_type");
+
+  for (const key of keys) {
+    if (ctx.funcMap.has(`__member_kind_${key}`)) continue; // idempotent
+    const methodEntries = collect((s) => `${s}_${key}`);
+    const getterEntries = collect((s) => `${s}_get_${key}`);
+    if (methodEntries.length === 0 && getterEntries.length === 0) continue;
+
+    // __member_kind_<key>: ref.test cascade → 1 (method) / 2 (getter) / 0.
+    {
+      const funcIdx = ctx.numImportFuncs + mod.functions.length;
+      let current: Instr[] = [{ op: "i32.const", value: 0 } as Instr];
+      const arm = (typeIdx: number, kind: number, tail: Instr[]): Instr[] => [
+        { op: "local.get", index: 1 } as Instr,
+        { op: "ref.test", typeIdx } as Instr,
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [{ op: "i32.const", value: kind } as Instr],
+          else: tail,
+        } as Instr,
+      ];
+      for (const e of methodEntries) current = arm(e.typeIdx, 1, current);
+      for (const e of getterEntries) current = arm(e.typeIdx, 2, current);
+      const exportName = `__member_kind_${key}`;
+      mod.functions.push({
+        name: exportName,
+        typeIdx: kindTypeIdx,
+        locals: [{ name: "__any", type: { kind: "anyref" } }],
+        body: [
+          { op: "local.get", index: 0 } as Instr,
+          { op: "any.convert_extern" } as Instr,
+          { op: "local.set", index: 1 } as Instr,
+          ...current,
+        ],
+        exported: true,
+      } as WasmFunction);
+      mod.exports.push({ name: exportName, desc: { kind: "func", index: funcIdx } });
+      ctx.funcMap.set(exportName, funcIdx);
+    }
+
+    // __call_get_<key>: run the compiled getter, box-coerce to externref.
+    if (getterEntries.length > 0) {
+      const funcIdx = ctx.numImportFuncs + mod.functions.length;
+      let current: Instr[] = [{ op: "ref.null.extern" } as Instr];
+      for (const e of getterEntries) {
+        const callArm: Instr[] = [
+          { op: "local.get", index: 1 } as Instr,
+          { op: "ref.cast", typeIdx: e.typeIdx } as Instr,
+          { op: "call", funcIdx: e.funcIdx } as Instr,
+        ];
+        if (e.resultType.kind === "ref" || e.resultType.kind === "ref_null") {
+          callArm.push({ op: "extern.convert_any" } as Instr);
+        } else if (e.resultType.kind === "f64") {
+          const boxIdx = ctx.funcMap.get("__box_number");
+          if (boxIdx !== undefined) callArm.push({ op: "call", funcIdx: boxIdx } as Instr);
+        } else if (e.resultType.kind === "i32") {
+          callArm.push({ op: "f64.convert_i32_s" } as Instr);
+          const boxIdx = ctx.funcMap.get("__box_number");
+          if (boxIdx !== undefined) callArm.push({ op: "call", funcIdx: boxIdx } as Instr);
+        }
+        current = [
+          { op: "local.get", index: 1 } as Instr,
+          { op: "ref.test", typeIdx: e.typeIdx } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: callArm,
+            else: current,
+          } as Instr,
+        ];
+      }
+      const exportName = `__call_get_${key}`;
+      mod.functions.push({
+        name: exportName,
+        typeIdx: dispatchTypeIdx,
+        locals: [{ name: "__any", type: { kind: "anyref" } }],
+        body: [
+          { op: "local.get", index: 0 } as Instr,
+          { op: "any.convert_extern" } as Instr,
+          { op: "local.set", index: 1 } as Instr,
+          ...current,
+        ],
+        exported: true,
+      } as WasmFunction);
+      mod.exports.push({ name: exportName, desc: { kind: "func", index: funcIdx } });
+      ctx.funcMap.set(exportName, funcIdx);
+    }
+  }
 }
 
 /**
@@ -16239,6 +16392,71 @@ function inferLetConstInitializerWasmType(
   return { kind: "ref_null", typeIdx: receiverType.typeIdx };
 }
 
+/**
+ * (#3123) When `varType` names a fnctor-subclass class (`class C extends F`,
+ * F a top-level plain function), return the compiled class name; else
+ * undefined. Class-expression synthetic names resolve through
+ * `classExprNameMap` like the method-call ladder does.
+ */
+function fnctorSubclassNameOfType(ctx: CodegenContext, varType: ts.Type): string | undefined {
+  let clsName = varType.getSymbol()?.name;
+  if (clsName !== undefined && !ctx.classSet.has(clsName)) {
+    clsName = ctx.classExprNameMap.get(clsName) ?? clsName;
+  }
+  if (clsName === undefined || !ctx.classSet.has(clsName)) return undefined;
+  return fnctorAncestorOfClass(ctx, clsName) !== undefined ? clsName : undefined;
+}
+
+/**
+ * (#3123) True when the let-binding `decl` (named `name`, declared as class
+ * `clsName`) is re-assigned somewhere in its containing function with a RHS
+ * whose static type is NOT that class — i.e. the slot can hold a foreign
+ * (usually host-object) value at runtime. Symbol-matched like `needsTdzFlag`
+ * so shadowing same-named inner bindings don't false-positive.
+ */
+function bindingHasForeignReassignment(
+  ctx: CodegenContext,
+  decl: ts.VariableDeclaration,
+  name: string,
+  clsName: string,
+): boolean {
+  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+  const declFunc = getContainingFunctionForTdz(decl);
+  const funcBody = declFunc && "body" in declFunc ? (declFunc as { body?: ts.Node }).body : undefined;
+  const scope = funcBody ?? decl.getSourceFile();
+  let foreign = false;
+  const visit = (node: ts.Node): void => {
+    if (foreign) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name &&
+      node.left !== decl.name
+    ) {
+      const sym = ctx.checker.getSymbolAtLocation(node.left);
+      if (symbol === undefined || sym === symbol) {
+        let rhsName: string | undefined;
+        try {
+          rhsName = ctx.checker.getTypeAtLocation(node.right).getSymbol()?.name;
+        } catch {
+          rhsName = undefined;
+        }
+        if (rhsName !== undefined && !ctx.classSet.has(rhsName)) {
+          rhsName = ctx.classExprNameMap.get(rhsName) ?? rhsName;
+        }
+        if (rhsName !== clsName) {
+          foreign = true;
+          return;
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  if (scope) forEachChild(scope, visit);
+  return foreign;
+}
+
 function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement): void {
   if (ts.isVariableStatement(stmt)) {
     const list = stmt.declarationList;
@@ -16329,7 +16547,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
         if (initIsAccessorLiteral || initIsHostSpreadLiteral) {
           ctx.externrefAccessorVars.add(name);
         }
-        const wasmType: ValType =
+        let wasmType: ValType =
           initIsAccessorLiteral || initIsHostSpreadLiteral
             ? { kind: "externref" }
             : isI32Coerced
@@ -16337,6 +16555,29 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
               : isNullablePrimitiveType(varType)
                 ? { kind: "externref" }
                 : (inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ?? resolveWasmType(ctx, varType));
+        // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance
+        // (`class C extends F`, F a top-level plain function) that is
+        // REASSIGNED with another static type can hold a HOST object at
+        // runtime (`iterator = iterator.drop(0)` — the Iterator-helper
+        // wrapper minted by F's live prototype methods). A `(ref $C)` slot
+        // would NULL that host value through the guarded cast — widen the
+        // slot to externref and record the name so the method-call ladder
+        // dispatches on it dynamically. Host lane only (standalone has no
+        // host objects to hold). Typed use sites still recover the struct
+        // through their own guarded casts, so a never-host value is
+        // unaffected beyond the extra cast.
+        if (
+          (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
+          !ctx.standalone &&
+          !ctx.wasi &&
+          (list.flags & ts.NodeFlags.Let) !== 0
+        ) {
+          const fnctorCls = fnctorSubclassNameOfType(ctx, varType);
+          if (fnctorCls !== undefined && bindingHasForeignReassignment(ctx, decl, name, fnctorCls)) {
+            wasmType = { kind: "externref" };
+            (fctx.fnctorWidenedLocals ??= new Set()).add(name);
+          }
+        }
         const valueSlot = allocLocal(fctx, name, wasmType);
         // (#2814) Record the pre-hoisted slot for THIS declaration so
         // compileVariableStatement can reuse it when saveBlockScopedShadows later
