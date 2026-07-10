@@ -1,8 +1,9 @@
 {
   "id": "3127",
   "assignee": "ttraenkler/fable-shepherd",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3127-proxy-passthrough-harness",
   "claimed_at": "2026-07-10T00:26:55Z",
-  "updated_at": "2026-07-10T00:26:55Z"
+  "updated_at": "2026-07-10T01:27:10Z",
+  "released_at": "2026-07-10T01:27:10Z"
 }
