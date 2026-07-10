@@ -57,8 +57,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11734,
-    "fail": 3508,
+    "pass": 11737,
+    "fail": 3505,
     "ce": 143,
     "skip": 1,
     "total": 15386,
@@ -129,12 +129,12 @@
       },
       {
         "name": "Proxy",
-        "pass": 202,
-        "fail": 222,
+        "pass": 205,
+        "fail": 219,
         "ce": 2,
         "skip": 0,
         "total": 426,
-        "pct": 47
+        "pct": 48
       },
       {
         "name": "Reflect.construct",
@@ -3925,9 +3925,9 @@
   {
     "edition": "Proposals",
     "pass": 1346,
-    "fail": 3316,
+    "fail": 3325,
     "ce": 215,
-    "skip": 105,
+    "skip": 96,
     "total": 4982,
     "pct": 27
   }

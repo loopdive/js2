@@ -3022,6 +3022,41 @@ function emitExternDefinePropertyNoValue(
       if (accFuncIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: accFuncIdx });
       }
+
+      // (#3125) STANDALONE closed-struct receiver: the runtime
+      // `__defineProperty_accessor` above stores into the open-`$Object`
+      // `$PropEntry` sidecar — but a CLOSED-struct receiver (an inline object
+      // literal, `Object.defineProperty({}, 'then', {get})` — the test262
+      // poisoned-thenable pattern) fails its `ref.test $Object` and the
+      // accessor is silently DROPPED. Mirror the getter/setter closures into
+      // the #1888 S5c per-(struct,prop) module globals so runtime consumers
+      // that dispatch on the struct shape (the #3125
+      // `__promise_has_callable_then` predicate, the S5c read/write sites)
+      // still see the accessor. `_structName` resolves HERE (post-obj-compile)
+      // because compiling the literal registered its anon type; when it does
+      // not resolve, behaviour is unchanged (pre-#3125: accessor dropped).
+      // The TS-type resolution (`_structName`) misses an anonymous inline
+      // literal; the COMPILED wasm type of the receiver identifies its closed
+      // struct directly.
+      const mirrorStructName =
+        _structName ??
+        (objType.kind === "ref" || objType.kind === "ref_null"
+          ? ctx.typeIdxToStructName.get(objType.typeIdx)
+          : undefined);
+      if (S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone && mirrorStructName && _propName !== undefined) {
+        if (getNode) {
+          const getGlobalIdx = ensureStructAccessorGlobal(ctx, mirrorStructName, _propName, "get");
+          if (buildAccessorClosure(ctx, fctx, getNode as unknown as ts.FunctionExpression)) {
+            fctx.body.push({ op: "global.set", index: getGlobalIdx });
+          }
+        }
+        if (setNode) {
+          const setGlobalIdx = ensureStructAccessorGlobal(ctx, mirrorStructName, _propName, "set");
+          if (buildAccessorClosure(ctx, fctx, setNode as unknown as ts.FunctionExpression)) {
+            fctx.body.push({ op: "global.set", index: setGlobalIdx });
+          }
+        }
+      }
       return { kind: "externref" };
     }
 

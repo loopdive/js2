@@ -62762,7 +62762,7 @@
       "compileSuccess": false,
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#89DDFF\">new</span><span style=\"color:#82AAFF\"> Proxy</span><span style=\"color:#BABED8\">(target</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8\"> handler)</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#464B5D;font-style:italic\"> // not supported</span></span></code></pre>",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 676,
+      "passCount": 679,
       "totalCount": 1072,
       "tests": [
         {

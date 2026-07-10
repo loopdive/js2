@@ -38,6 +38,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
+import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) IsCallable arms
 import type { CodegenContext } from "./context/types.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -870,4 +871,243 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     ];
     void (dispFn as WasmFunction);
   }
+}
+
+/**
+ * (#3125) Fill the reserved `__promise_has_callable_then(value) -> i32`
+ * predicate at FINALIZE — the §27.2.1.3.2 steps 8–11 "Get(resolution, "then")
+ * + IsCallable(then)" test for the native-Promise resolve path
+ * (`__promise_resolve_value`, async-scheduler.ts).
+ *
+ * Lives HERE (not async-scheduler.ts) so its arms are built from the SAME
+ * collectors as `__call_m_then_vararg` — the dispatcher the thenable job
+ * invokes — and the two can never drift apart:
+ *   - a closed struct with a compiled `<Struct>_then` METHOD (any declared
+ *     arity — matching the vararg dispatcher's `exactArity: null`) → callable;
+ *   - a closed struct whose externref FIELD `then` holds a closure (#3117
+ *     `o.then = function(){}` on a pre-shaped literal, and the dominant
+ *     `{ then: function(resolve){…} }` object-literal shape) → test the stored
+ *     value against the closure base wrappers (#2175 single classifier);
+ *   - an open `$Object` → `__extern_get(value, "then")` — which RUNS a stored
+ *     accessor, so a poisoned getter THROWS out of this predicate (the caller
+ *     catches and rejects, step 9) — then the closure test;
+ *   - anything else (strings, boxed primitives, vecs, closures, null) → 0.
+ *
+ * Only READS funcMap/type space (#1719): `__extern_get` + the "then" string
+ * constant were registered at reserve time (`reserveClosedMethodDispatchVararg`
+ * from `ensurePromiseThenableSubstrate`). No-op unless the substrate reserved
+ * the predicate (`ctx.promiseThenableReserved` — standalone/wasi only, so
+ * gc/host stays byte-identical).
+ */
+export function fillPromiseThenableHelpers(ctx: CodegenContext): void {
+  if (!ctx.promiseThenableReserved) return;
+  const predIdx = ctx.funcMap.get("__promise_has_callable_then");
+  if (predIdx === undefined) return;
+  const predFn = definedFuncAt(ctx, predIdx);
+  if (!predFn) return;
+
+  // ── `__promise_peel_value(value) -> externref` ─────────────────────────
+  // Unwrap an `$AnyValue`-boxed resolution so the predicate / thenable-job
+  // dispatch `ref.test` the RAW payload: tag 6 → refval (the GC object),
+  // tag 5 → externval (string OR tag-5-carried object — the classifier arms
+  // below reject non-objects anyway), every other tag / non-box → unchanged.
+  // Left as the identity placeholder when `$AnyValue` was never registered.
+  const peelIdx = ctx.funcMap.get("__promise_peel_value");
+  const peelFn = peelIdx !== undefined ? definedFuncAt(ctx, peelIdx) : undefined;
+  const anyValueTypeIdx = ctx.anyValueTypeIdx;
+  if (peelFn && anyValueTypeIdx >= 0) {
+    // $AnyValue field layout (ensureAnyValueType): 0 tag · 3 refval · 4 externval.
+    const AV_TAG = 0;
+    const AV_REF = 3;
+    const AV_EXT = 4;
+    const peelAnyLocal = 1;
+    peelFn.locals = [{ name: "__any", type: { kind: "anyref" } }];
+    peelFn.body = [
+      { op: "local.get", index: 0 } as Instr,
+      { op: "ref.is_null" } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "local.get", index: 0 } as Instr, { op: "return" } as Instr],
+      } as Instr,
+      { op: "local.get", index: 0 } as Instr,
+      { op: "any.convert_extern" } as Instr,
+      { op: "local.set", index: peelAnyLocal } as Instr,
+      { op: "local.get", index: peelAnyLocal } as Instr,
+      { op: "ref.test", typeIdx: anyValueTypeIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // tag 6 (object) → extern.convert_any(refval)
+          { op: "local.get", index: peelAnyLocal } as Instr,
+          { op: "ref.cast", typeIdx: anyValueTypeIdx } as Instr,
+          { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: AV_TAG } as Instr,
+          { op: "i32.const", value: 6 } as Instr,
+          { op: "i32.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: peelAnyLocal } as Instr,
+              { op: "ref.cast", typeIdx: anyValueTypeIdx } as Instr,
+              { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: AV_REF } as Instr,
+              { op: "extern.convert_any" } as Instr,
+              { op: "return" } as Instr,
+            ],
+          } as Instr,
+          // tag 5 (string/extern payload) → externval
+          { op: "local.get", index: peelAnyLocal } as Instr,
+          { op: "ref.cast", typeIdx: anyValueTypeIdx } as Instr,
+          { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: AV_TAG } as Instr,
+          { op: "i32.const", value: 5 } as Instr,
+          { op: "i32.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: peelAnyLocal } as Instr,
+              { op: "ref.cast", typeIdx: anyValueTypeIdx } as Instr,
+              { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: AV_EXT } as Instr,
+              { op: "return" } as Instr,
+            ],
+          } as Instr,
+        ],
+      } as Instr,
+      { op: "local.get", index: 0 } as Instr,
+    ];
+  }
+
+  // ── `__promise_has_callable_then(value) -> i32` ────────────────────────
+  const peeledLocalIdx = 1; // param 0 = value externref
+  const anyLocalIdx = 2;
+  const thenAnyLocalIdx = 3;
+  const body: Instr[] = [
+    // peeled = __promise_peel_value(value) — classify the RAW payload.
+    { op: "local.get", index: 0 } as Instr,
+    ...(peelIdx !== undefined ? [{ op: "call", funcIdx: peelIdx } as Instr] : []),
+    { op: "local.set", index: peeledLocalIdx } as Instr,
+    // null externref (JS null / absent) → not a thenable.
+    { op: "local.get", index: peeledLocalIdx } as Instr,
+    { op: "ref.is_null" } as Instr,
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: 0 } as Instr, { op: "return" } as Instr],
+    } as Instr,
+    { op: "local.get", index: peeledLocalIdx } as Instr,
+    { op: "any.convert_extern" } as Instr,
+    { op: "local.set", index: anyLocalIdx } as Instr,
+  ];
+
+  // Shared tail: test the externref left on the stack against the closure
+  // base wrappers; 1 on a hit, else 0.
+  const closureTest = (loadThen: Instr[]): Instr[] => [
+    ...loadThen,
+    { op: "any.convert_extern" } as Instr,
+    { op: "local.set", index: thenAnyLocalIdx } as Instr,
+    ...buildClosureRefTestArms(ctx, thenAnyLocalIdx, [
+      { op: "i32.const", value: 1 } as Instr,
+      { op: "return" } as Instr,
+    ]),
+    { op: "i32.const", value: 0 } as Instr,
+    { op: "return" } as Instr,
+  ];
+
+  // Closed-struct METHOD arms — a compiled `then` method is always callable.
+  const seenMethodType = new Set<number>();
+  for (const entry of collectMethodEntries(ctx, "then", null)) {
+    if (seenMethodType.has(entry.typeIdx)) continue;
+    seenMethodType.add(entry.typeIdx);
+    body.push({ op: "local.get", index: anyLocalIdx } as Instr);
+    body.push({ op: "ref.test", typeIdx: entry.typeIdx } as Instr);
+    body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: 1 } as Instr, { op: "return" } as Instr],
+    } as Instr);
+  }
+
+  // Closed-struct ACCESSOR arms (#1888 S5c) — MUST run BEFORE the field arms:
+  // `Object.defineProperty(o, 'then', {get})` on a closed-struct target stores
+  // the getter closure in a per-(struct,prop) module GLOBAL
+  // (`ctx.structAccessorClosure`), invisible to `__extern_get` — while the
+  // struct may ALSO carry a pre-shaped (runtime-null) `then` FIELD that would
+  // wrongly classify it non-thenable if tested first. Spec Get REQUIRES running
+  // the getter here — a poisoned getter must throw OUT of this predicate
+  // (resolve-poisoned-then), and a returned closure classifies the value as a
+  // thenable. A runtime-null getter global (define-site never executed) falls
+  // through to the field/$Object arms below.
+  const callAccessorGetIdx = ctx.funcMap.get("__call_accessor_get");
+  if (callAccessorGetIdx !== undefined) {
+    for (const [key, entry] of ctx.structAccessorClosure) {
+      if (!key.endsWith("_then") || entry.getGlobal === undefined) continue;
+      const structName = key.slice(0, -"_then".length);
+      const structTypeIdx = ctx.structMap.get(structName);
+      if (structTypeIdx === undefined) continue;
+      body.push({ op: "local.get", index: anyLocalIdx } as Instr);
+      body.push({ op: "ref.test", typeIdx: structTypeIdx } as Instr);
+      body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "global.get", index: entry.getGlobal } as Instr,
+          { op: "ref.is_null" } as Instr,
+          { op: "i32.eqz" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: closureTest([
+              // then = getter.call(value) — §7.3.2 GetV via the S5b driver.
+              { op: "local.get", index: peeledLocalIdx } as Instr,
+              { op: "global.get", index: entry.getGlobal } as Instr,
+              { op: "call", funcIdx: callAccessorGetIdx } as Instr,
+            ]),
+          } as Instr,
+        ],
+      } as Instr);
+    }
+  }
+
+  // Closed-struct FIELD arms — `{ then: <value> }`: callable iff the stored
+  // value is a closure.
+  for (const fe of collectFieldEntries(ctx, "then")) {
+    body.push({ op: "local.get", index: anyLocalIdx } as Instr);
+    body.push({ op: "ref.test", typeIdx: fe.typeIdx } as Instr);
+    body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: closureTest([
+        { op: "local.get", index: anyLocalIdx } as Instr,
+        { op: "ref.cast", typeIdx: fe.typeIdx } as Instr,
+        { op: "struct.get", typeIdx: fe.typeIdx, fieldIdx: fe.fieldIdx } as Instr,
+      ]),
+    } as Instr);
+  }
+
+  // Open `$Object` arm — spec Get (runs accessors; a poisoned getter throws
+  // OUT of this predicate) + closure test.
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  if (externGetIdx !== undefined && objectTypeIdx !== undefined) {
+    body.push({ op: "local.get", index: anyLocalIdx } as Instr);
+    body.push({ op: "ref.test", typeIdx: objectTypeIdx } as Instr);
+    body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: closureTest([
+        { op: "local.get", index: peeledLocalIdx } as Instr,
+        ...(stringConstantExternrefInstrs(ctx, "then") as Instr[]),
+        { op: "call", funcIdx: externGetIdx } as Instr,
+      ]),
+    } as Instr);
+  }
+
+  body.push({ op: "i32.const", value: 0 } as Instr);
+  predFn.locals = [
+    { name: "__peeled", type: { kind: "externref" } },
+    { name: "__any", type: { kind: "anyref" } },
+    { name: "__thenAny", type: { kind: "anyref" } },
+  ];
+  predFn.body = body;
 }
