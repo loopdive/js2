@@ -1,8 +1,9 @@
 {
   "id": "3138",
   "assignee": "ttraenkler/fable-harvest2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3138-fnctor-descriptor-protochain",
   "claimed_at": "2026-07-10T22:47:11Z",
-  "updated_at": "2026-07-10T22:47:11Z"
+  "updated_at": "2026-07-10T23:45:36Z",
+  "released_at": "2026-07-10T23:45:36Z"
 }
