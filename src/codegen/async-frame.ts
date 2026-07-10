@@ -765,8 +765,13 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
   // (#2906 slice 3d-i) An async GENERATOR builds its CFG from the yield-aware
   // `planAsyncGenCfg` (settleYield/settleDone terminators); every other async fn
   // uses the linear/while/for-await `planAsyncCfg`.
+  // (#3120) The implicit §27.6.3.8 yield-operand await is classified ONLY on
+  // the native-`$Promise` CARRIER lane — the same predicate the admission gate
+  // (`isAsyncGenDriveCandidate`) keyed the body's shape check on, so gate and
+  // planner always see the same segment split. Type queries go through
+  // `ctx.oracle` (the #1930 boundary), not the raw checker.
   const cfg = info.asyncGen
-    ? planAsyncGenCfg(info.decl)
+    ? planAsyncGenCfg(info.decl, isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null)
     : planAsyncCfg(ctx, info.decl, plan, { allowLoops: !info.host });
   if (cfg === null) {
     reportError(ctx, info.decl, "internal: async-frame resume built on an unsupported body shape (#2906 slice 1/3a)");
@@ -1763,6 +1768,9 @@ export function isAsyncGenDriveCandidate(ctx: CodegenContext, decl: ts.FunctionL
   // — those bodies keep the legacy path (correct-or-legacy, #680 CE) until the
   // measured carrier widen. An await-free body is carrier-independent: every
   // promise the machine touches is minted by `__async_gen_next_<name>` itself.
+  // (#3120: a Promise-typed plain `yield P` deliberately stays PLAIN — and
+  // driven, byte-identically — on this lane; its implicit-await value gap is
+  // the carrier widen's to close. See ImplicitYieldAwaitMode in async-cps.ts.)
   if (isAsyncDriveActive(ctx)) return isAwaitFreeAsyncGenBody(decl) && spillsSafe();
   return false;
 }
