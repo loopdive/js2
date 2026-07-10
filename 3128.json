@@ -1,8 +1,8 @@
 {
   "id": "3128",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-10T01:51:41Z",
-  "updated_at": "2026-07-10T01:51:41Z"
+  "assignee": "ttraenkler/fable-3128",
+  "status": "in-progress",
+  "branch": "issue-3128-rhs-closure-self-capture",
+  "claimed_at": "2026-07-10T07:25:45Z",
+  "updated_at": "2026-07-10T07:25:45Z"
 }
