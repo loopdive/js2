@@ -176,12 +176,15 @@ describe("#2001 S1 — sparse-array literal holes ($Hole sentinel, any[] only)",
       ).toBe("undefined");
     });
 
-    it("forEach callback receives undefined (visited, not the sentinel)", async () => {
+    // (#2001 S2) The HasProperty skip-methods (forEach/filter/some/every/reduce/
+    // indexOf/lastIndexOf) now SKIP holes rather than visit them as undefined —
+    // superseding the pre-S2 visit behavior these cases originally asserted.
+    it("forEach SKIPS the hole (§23.1.3.15 — callback not called for an absent index)", async () => {
       expect(
         await run(
           `export function run(): string { const a: any[] = [1, , 3]; let r = ""; a.forEach((x) => { r += typeof x; }); return r; }`,
         ),
-      ).toBe("numberundefinednumber");
+      ).toBe("numbernumber");
     });
 
     it("map produces undefined at a hole's index in S1", async () => {
@@ -192,25 +195,27 @@ describe("#2001 S1 — sparse-array literal holes ($Hole sentinel, any[] only)",
       ).toBe("number,undefined,number");
     });
 
-    it("filter callback sees undefined", async () => {
+    it("filter SKIPS the hole (never added to the result)", async () => {
       expect(
         await run(
           `export function run(): number { const a: any[] = [1, , 3]; return a.filter((x) => x === undefined).length; }`,
         ),
-      ).toBe(1);
+      ).toBe(0);
     });
 
-    it("some/every observe undefined at a hole", async () => {
+    it("some/every SKIP the hole (§23.1.3.28/6)", async () => {
+      // some: the hole is skipped, so `x === undefined` is never observed → false.
       expect(
         await run(
           `export function run(): boolean { const a: any[] = [1, , 3]; return a.some((x) => x === undefined); }`,
         ),
-      ).toBe(1);
+      ).toBe(0);
+      // every: the hole is skipped, so it can't falsify `x !== undefined` → true.
       expect(
         await run(
           `export function run(): boolean { const a: any[] = [1, , 3]; return a.every((x) => x !== undefined); }`,
         ),
-      ).toBe(0);
+      ).toBe(1);
     });
 
     it("find returns the undefined element for a matching hole", async () => {
@@ -221,16 +226,22 @@ describe("#2001 S1 — sparse-array literal holes ($Hole sentinel, any[] only)",
       ).toBe("undefined");
     });
 
-    it("indexOf/includes treat a hole as undefined (Get semantics)", async () => {
+    it("indexOf/includes treat a hole as undefined (S1 — S2 skip DEFERRED for indexOf)", async () => {
+      // indexOf hole-skip is deferred (its test262 coverage relies on
+      // prototype-inherited indices we can't model — see the S2 boundary note),
+      // so indexOf keeps the S1 `$Hole → undefined` map and matches at the hole.
       expect(
         await run(`export function run(): number { const a: any[] = [1, , 3]; return a.indexOf(undefined); }`),
       ).toBe(1);
+      // includes uses Get → the hole reads as undefined → matches (unchanged).
       expect(
         await run(`export function run(): boolean { const a: any[] = [1, , 3]; return a.includes(undefined); }`),
       ).toBe(1);
     });
 
-    it("reduce folds the hole as undefined", async () => {
+    it("reduce folds the hole as undefined (S1 — S2 skip DEFERRED for reduce)", async () => {
+      // reduce hole-skip is deferred alongside indexOf; it keeps folding the hole
+      // as `undefined` (the S1 read map).
       expect(
         await run(
           `export function run(): string { const a: any[] = [1, , 3]; return a.reduce((acc, x) => acc + "," + typeof x, "s"); }`,

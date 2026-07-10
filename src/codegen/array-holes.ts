@@ -57,18 +57,78 @@ import { emitUndefined } from "./expressions/late-imports.js";
  */
 export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
   const visit = (node: ts.Node): void => {
-    if (ctx.usesArrayHoles) return;
+    if (ctx.usesArrayHoles && ctx.arrayProtoIndexDirty) return;
     if (ts.isArrayLiteralExpression(node)) {
       for (const el of node.elements) {
         if (ts.isOmittedExpression(el)) {
           ctx.usesArrayHoles = true;
-          return;
+          break;
         }
       }
+    }
+    if (!ctx.arrayProtoIndexDirty && isArrayProtoIndexWrite(node)) {
+      ctx.arrayProtoIndexDirty = true;
     }
     forEachChild(node, visit);
   };
   visit(root);
+}
+
+/** Structurally `Array.prototype` (`PropertyAccess(Identifier "Array", "prototype")`). */
+function isArrayPrototypeExpr(node: ts.Node): boolean {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "prototype" &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "Array"
+  );
+}
+
+/**
+ * (#2001 S2 / PR #2832 park) Does this node WRITE an index property onto
+ * `Array.prototype`? Detects the shapes test262 uses to make a hole's index
+ * visible through the prototype chain (`HasProperty(O, k)` true although the
+ * own slot is absent):
+ *
+ *   - `Object.defineProperty(Array.prototype, "0", …)` (and `defineProperties`
+ *     / `Reflect.defineProperty`);
+ *   - `Array.prototype[0] = …` / `Array.prototype["0"] = …` (any assignment
+ *     operator; the index need not be a literal — `Array.prototype[i] = …`
+ *     also counts).
+ *
+ * Property-name writes (`Array.prototype.foo = …`) do NOT set the flag — they
+ * cannot make an integer index inherited. Reads (`Array.prototype.slice`) are
+ * ignored entirely. This is a deliberate static over-approximation: a module
+ * that dirties `Array.prototype` indices anywhere loses the HOF hole
+ * visit-skip everywhere (falling back to the pre-S2 visit-with-`undefined`
+ * behavior), because the flat vec cannot check the prototype per element at
+ * runtime. See `arrayProtoIndexDirty` in context/types.ts.
+ */
+function isArrayProtoIndexWrite(node: ts.Node): boolean {
+  // Object.defineProperty(Array.prototype, …) / Object.defineProperties /
+  // Reflect.defineProperty — first argument is Array.prototype.
+  if (ts.isCallExpression(node) && node.arguments.length > 0 && isArrayPrototypeExpr(node.arguments[0])) {
+    const callee = node.expression;
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      (callee.expression.text === "Object" || callee.expression.text === "Reflect") &&
+      (callee.name.text === "defineProperty" || callee.name.text === "defineProperties")
+    ) {
+      return true;
+    }
+  }
+  // Array.prototype[…] = … — element-access assignment target (any assignment op).
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+    ts.isElementAccessExpression(node.left) &&
+    isArrayPrototypeExpr(node.left.expression)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**

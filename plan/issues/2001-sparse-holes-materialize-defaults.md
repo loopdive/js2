@@ -1,10 +1,11 @@
 ---
 id: 2001
 title: "sparse arrays: holes materialize as element-type defaults and HOFs visit them — [1,,3].forEach runs 3×, b[5]=9 join shows zeros"
-status: ready
-sprint: 64
+status: in-progress
+assignee: ttraenkler/fable-2773t
+sprint: current
 created: 2026-06-10
-updated: 2026-06-21
+updated: 2026-07-09
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -21,9 +22,14 @@ origin: "2026-06-10 spec-conformance sweep (arrays agent): verified on main"
 ## Problem
 
 ```ts
-const a: any[] = [1, , 3]; let c = 0; a.forEach(() => c++); c
+const a: any[] = [1, , 3];
+let c = 0;
+a.forEach(() => c++);
+c;
 // wasm: 3   node: 2
-const b: any[] = [1]; b[5] = 9; b.join(",")
+const b: any[] = [1];
+b[5] = 9;
+b.join(",");
 // wasm: "1,0,0,0,0,9"   node: "1,,,,,9"
 ```
 
@@ -71,12 +77,12 @@ RE-VALIDATED per the s63 verify-still-repros-first discipline. The repro is
 **still live** — all four documented cases reproduce on current main
 (sprint-62 value-rep work did NOT fix it):
 
-| Case | wasm (got) | node (exp) |
-|---|---|---|
-| `[1,,3].forEach(()=>c++)` count | `3` | `2` |
-| `b=[1]; b[5]=9; b.join(",")` | `"1,0,0,0,0,9"` | `"1,,,,,9"` |
-| `const [p,q]=[1]; String(q)` | `"0"` | `"undefined"` |
-| `const [a=5,b=6]=[undefined,null]; String(b)` | `"0"` | `"null"` |
+| Case                                          | wasm (got)      | node (exp)    |
+| --------------------------------------------- | --------------- | ------------- |
+| `[1,,3].forEach(()=>c++)` count               | `3`             | `2`           |
+| `b=[1]; b[5]=9; b.join(",")`                  | `"1,0,0,0,0,9"` | `"1,,,,,9"`   |
+| `const [p,q]=[1]; String(q)`                  | `"0"`           | `"undefined"` |
+| `const [a=5,b=6]=[undefined,null]; String(b)` | `"0"`           | `"null"`      |
 
 **Disposition: NOT a developer point-fix despite the task framing.** The
 issue's "Fix direction" gates this behind a representation decision (hole
@@ -102,28 +108,28 @@ Before specifying, the four documented repros plus four discriminating cases
 were re-run with `compile()` + `buildImports()` + `setExports()` (the
 `tests/array-methods.test.ts` harness). Results sharpen the root cause:
 
-| Case | got | node | note |
-|---|---|---|---|
-| `[1,,3].forEach(()=>c++)` count | `3` | `2` | **true bug** — HOF visits the hole |
-| `[1,,3].map(x=>x).join(",")` | `"1,,3"` | `"1,,3"` | looks right, but only because `x=>x` is idempotent and undefined ToStrings to `""`; callback still *fires* on the hole |
-| `[1,,3].join(",")` (literal) | `"1,,3"` | `"1,,3"` | **right by coincidence** — hole stored as externref-`undefined`, observationally `==` explicit `undefined` |
-| `[1,undefined,3].join(",")` | `"1,,3"` | `"1,,3"` | identical to the hole case — proving hole ≡ undefined today |
-| `typeof a[1]` (hole read) | `"undefined"` | `"undefined"` | right by coincidence (undefined-storage) |
-| `b=[1]; b[5]=9; b.join(",")` (`any[]`) | `"1,0,0,0,0,9"` | `"1,,,,,9"` | **true bug** — index-grow gap fills with element default, not holes |
-| `b=[1]; b[5]=9; b.forEach(()=>c++)` | `6` | `2` | grow-gap is reachable (length jumped to 6) and visited |
-| `const [p,q]=[1] as any[]; typeof q` | `"undefined"` | `"undefined"` | already correct for **externref** element |
-| `const [p,q]=[1]; String(q)` (numeric tuple) | `"0"` | `"undefined"` | **addendum bug** — numeric default bound |
+| Case                                         | got             | node          | note                                                                                                                   |
+| -------------------------------------------- | --------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `[1,,3].forEach(()=>c++)` count              | `3`             | `2`           | **true bug** — HOF visits the hole                                                                                     |
+| `[1,,3].map(x=>x).join(",")`                 | `"1,,3"`        | `"1,,3"`      | looks right, but only because `x=>x` is idempotent and undefined ToStrings to `""`; callback still _fires_ on the hole |
+| `[1,,3].join(",")` (literal)                 | `"1,,3"`        | `"1,,3"`      | **right by coincidence** — hole stored as externref-`undefined`, observationally `==` explicit `undefined`             |
+| `[1,undefined,3].join(",")`                  | `"1,,3"`        | `"1,,3"`      | identical to the hole case — proving hole ≡ undefined today                                                            |
+| `typeof a[1]` (hole read)                    | `"undefined"`   | `"undefined"` | right by coincidence (undefined-storage)                                                                               |
+| `b=[1]; b[5]=9; b.join(",")` (`any[]`)       | `"1,0,0,0,0,9"` | `"1,,,,,9"`   | **true bug** — index-grow gap fills with element default, not holes                                                    |
+| `b=[1]; b[5]=9; b.forEach(()=>c++)`          | `6`             | `2`           | grow-gap is reachable (length jumped to 6) and visited                                                                 |
+| `const [p,q]=[1] as any[]; typeof q`         | `"undefined"`   | `"undefined"` | already correct for **externref** element                                                                              |
+| `const [p,q]=[1]; String(q)` (numeric tuple) | `"0"`           | `"undefined"` | **addendum bug** — numeric default bound                                                                               |
 
 **Refined diagnosis.** The dense vec is `struct(field0 length:i32, field1
 data:(ref $__arr_<elem>))`. For `any[]` the element type is `externref`, and a
 literal elision (`OmittedExpression`) is lowered through
 `compileExpression(el, externref)` → `expressions.ts:851` → `emitUndefined` →
 the slot holds JS `undefined`. So **a hole is stored identically to an explicit
-`undefined`**. That makes *reads* and *join* look correct, but it is
+`undefined`**. That makes _reads_ and _join_ look correct, but it is
 impossible for any HOF to honour §-step "HasProperty(O, ‹k›) is false ⇒ skip"
 because the hole carries no distinguishing mark. The visit-skip semantics
 (forEach/map/filter/some/every/reduce/indexOf) are the irreducible part that
-*requires* a representation change; join/read correctness then rides on the
+_requires_ a representation change; join/read correctness then rides on the
 same mark (and becomes robust rather than coincidental).
 
 ### Root cause (one line)
@@ -144,7 +150,7 @@ NativeString, `$Object`, closures, `i31ref`). A vec slot equal to `$Hole`
 **Why this and not the alternatives:**
 
 - **vs. side bitmap** (a parallel `(array i8)`/bitset of presence bits per
-  vec): doubles the vec footprint, must be threaded through *every* vec
+  vec): doubles the vec footprint, must be threaded through _every_ vec
   producer (literal, `array.new_fixed`, push/pop/shift/unshift/splice/slice/
   concat/fill/copyWithin/with/toReversed/toSorted/toSpliced, spread, grow) and
   kept in lockstep on every mutation — a large, error-prone surface with a
@@ -170,11 +176,11 @@ $Hole)` on an `anyref`/`externref` (after `any.convert_extern` when the value
 is in externref interchange form). Do **not** reuse i31ref or a magic boxed
 number — those collide with real small ints/NaN (the #1852 G3 hazard notes).
 
-**Critical invariant — a hole is never observed *as* the sentinel.** Per
+**Critical invariant — a hole is never observed _as_ the sentinel.** Per
 §ToObject/Get, reading `a[i]` for an absent `i` yields `undefined`, NOT the
 sentinel. Therefore **every value-producing read of a vec slot that may hold
 `$Hole` must map `$Hole → undefined` at the read boundary.** The sentinel is
-an *internal* in-array marker; it must not leak into a binding, a callback
+an _internal_ in-array marker; it must not leak into a binding, a callback
 argument, an arithmetic coercion, or `===`. This is the single most important
 correctness rule for implementers and is the gating check in S1's tests.
 
@@ -190,7 +196,7 @@ slot contents; holes count toward length exactly as the spec requires.
   hole representable: an `any`/`unknown` element may legitimately be "absent".
 - **Out of scope (accepted divergence):** typed `number[]`, `boolean[]`,
   `string[]`, struct `T[]` — their element ValType is `f64`/`i32`/`ref`, and
-  TS's type system guarantees every element *is* a `number`/`boolean`/… so a
+  TS's type system guarantees every element _is_ a `number`/`boolean`/… so a
   hole is unrepresentable in the source type anyway. `[1,,3]` declared
   `number[]` keeps materializing `0` at the hole and HOFs keep visiting it.
   This matches V8-vs-typed-array intuition and keeps the **dense numeric
@@ -206,7 +212,7 @@ slot contents; holes count toward length exactly as the spec requires.
 
 This is the foundation: introduce the sentinel and make literal holes real,
 without yet changing HOF visit semantics (so no behavior regresses; join stays
-`"1,,3"`, reads stay `undefined`, but now *because* of the sentinel).
+`"1,,3"`, reads stay `undefined`, but now _because_ of the sentinel).
 
 - **Register the type + global.** Add `$Hole` struct type and `$__hole`
   global + `__hole_sentinel`/`ref.test`-helper registration alongside the
@@ -219,7 +225,7 @@ without yet changing HOF visit semantics (so no behavior regresses; join stays
 - **Literal lowering — `src/codegen/literals.ts:3318-3330`** (the no-spread
   `array.new_fixed` path). Today every element (incl. an `OmittedExpression`)
   goes through `compileExpression(el, elemWasm)`. Add: **iff `elemWasm.kind ===
-  "externref"` AND `ts.isOmittedExpression(el)`**, push `$Hole`
+"externref"` AND `ts.isOmittedExpression(el)`**, push `$Hole`
   (`call __hole_sentinel; extern.convert_any` to land it as the externref the
   `array.new_fixed` expects) instead of `emitUndefined`. An explicit
   `undefined` literal element is NOT a hole — keep its current `emitUndefined`.
@@ -242,13 +248,13 @@ without yet changing HOF visit semantics (so no behavior regresses; join stays
   step "If element is undefined or null, let R be ''… (and a hole is treated as
   undefined)", add a `ref.test (ref $Hole)` ahead of the `__extern_toString`
   call: hole ⇒ empty native string; else existing path. (Today this is right
-  only because the hole *is* undefined; after S1 the slot is `$Hole`, so this
+  only because the hole _is_ undefined; after S1 the slot is `$Hole`, so this
   branch is REQUIRED to keep `"1,,3"` — S1 must land join-awareness in the same
   PR or join regresses to `"[object Object]"`/garbage.)
 - **Acceptance (S1):** `[1,,3].join(",") === "1,,3"`; `typeof [1,,3][1] ===
-  "undefined"`; `[1,,3][1] === undefined` (strict-eq must see undefined, not
+"undefined"`; `[1,,3][1] === undefined` (strict-eq must see undefined, not
   the sentinel — exercises the read-boundary invariant); `String([1,,3][1])
-  === ""`; `[1,,3].length === 3`. Plus a typed-array guard:
+=== ""`; `[1,,3].length === 3`. Plus a typed-array guard:
   `([1,,3] as number[]).join(",") === "1,0,3"` UNCHANGED.
 
 ### S1 landed (2026-06-21, sendev-holes-s1)
@@ -269,10 +275,10 @@ op-unchanged guards).
 `a[i]` + join.** The spec scoped S1 to "literal store + element-read + join" and
 deferred all HOFs to S2. Implementing it revealed that **storing `$Hole`
 regresses every value-producing reader that was not simultaneously updated** —
-`for-of`, array destructuring, and *all* HOFs (`forEach`/`map`/`filter`/`some`/
+`for-of`, array destructuring, and _all_ HOFs (`forEach`/`map`/`filter`/`some`/
 `every`/`find`/`findLast`/`findIndex`/`reduce`/`reduceRight`/`indexOf`/
 `lastIndexOf`/`includes`), plus `at`/`pop`/`shift` — because before S1 a hole was
-stored *as* `undefined`, so all of them already read `undefined`; after S1 they
+stored _as_ `undefined`, so all of them already read `undefined`; after S1 they
 read the raw `$Hole` struct (`typeof === "object"`). A hole reaching an
 un-mapped reader between S1 and S2 landing is a real regression, so the
 representation change is **not independently landable as "store-only"**. S1 was
@@ -282,8 +288,8 @@ mapping** at every value boundary (the reusable `emitHoleToUndefined` /
 the §ToObject/Get invariant ("an absent index reads as `undefined`, never the
 sentinel"), now enforced everywhere.
 
-What S1 does **NOT** do (still genuinely S2/S3/S4 — visit *semantics*, not value
-leaking): the HOF **visit-skip** (`forEach` still *visits* the hole, observing
+What S1 does **NOT** do (still genuinely S2/S3/S4 — visit _semantics_, not value
+leaking): the HOF **visit-skip** (`forEach` still _visits_ the hole, observing
 `undefined`; spec wants the callback NOT called) (#2001 S2); `map` producing a
 **result-hole** at the hole index rather than `undefined` (S2); `indexOf`
 **skipping** holes rather than reading them as undefined (S2 — note `includes`
@@ -297,10 +303,11 @@ Key implementation note for follow-ups: `holeToUndefinedInstrs` calls
 **detached** instruction-list builder (the HOF callback-arg path,
 `indexOf`/`lastIndexOf`/`includes` loop bodies, `reduce`/`reduceRight`), the
 caller **must pre-register + flush `__get_undefined`** (via `ensureGetUndefined`
-+ `flushLateImportShifts`, or rely on `setupArrayLoop` which now does it) BEFORE
-building the detached list — otherwise the flush shifts an already-captured
-closure/import funcIdx out from under a baked `call_ref`/`call` → runtime
-null-deref. This is done at every such site.
+
+- `flushLateImportShifts`, or rely on `setupArrayLoop` which now does it) BEFORE
+  building the detached list — otherwise the flush shifts an already-captured
+  closure/import funcIdx out from under a baked `call_ref`/`call` → runtime
+  null-deref. This is done at every such site.
 
 Tests: `tests/issue-2001-s1-hole-literal.test.ts` (host + standalone, 31 cases —
 literal read/join/length, the read-boundary invariant across for-of /
@@ -325,7 +332,7 @@ machinery — `__extern_has_idx` + `gatedBody`/`hasIdxCheck`
   `loopBody` with `gateHoleSkip(loop, inner)` at the call sites
   (`compileArrayForEach:6654`, `compileArrayMap:6164`, `compileArrayFilter`,
   etc.). The hole index is simply skipped (fall through to `loopIncrement`).
-- **Per-method spec nuances** (cite §23.1.3.* in the PR):
+- **Per-method spec nuances** (cite §23.1.3.\* in the PR):
   - `forEach`/`some`/`every`/`find`/`findIndex`: callback NOT called for holes;
     `some`/`find` keep scanning, `every` does not falsify on a hole.
   - `map`/`filter`: a hole in the source produces a **hole in the result** at
@@ -340,7 +347,7 @@ machinery — `__extern_has_idx` + `gatedBody`/`hasIdxCheck`
     Get (holes ⇒ undefined), so `[,].includes(undefined) === true` — do NOT
     hole-skip includes; let it read `$Hole→undefined` via S1's read mapping.
 - **Callback argument is undefined, never the sentinel** — but since holes are
-  *skipped*, the callback never receives a slot value for a hole. The only
+  _skipped_, the callback never receives a slot value for a hole. The only
   place the sentinel could leak to a callback is `map`'s result read-back or a
   non-skipping method; covered by the S1 read-boundary mapping. Add an explicit
   test that a callback that records `typeof arg` never sees anything for a hole
@@ -351,7 +358,129 @@ machinery — `__extern_has_idx` + `gatedBody`/`hasIdxCheck`
   undefined) BUT `[1,undefined,3].some(x=>x===undefined) === true`;
   `[1,,3].indexOf(undefined) === -1`; `[1,,3].includes(undefined) === true`;
   `[5,,,2].reduce((a,b)=>a+b) === 7`. Typed guard: `([1,,3] as
-  number[]).forEach` count stays `3`.
+number[]).forEach` count stays `3`.
+
+### S2 landed (2026-07-09, fable-2773t) — visit-skip, NARROWED to net-0
+
+**Done — for forEach / filter / some / every.** `indexOf` / `lastIndexOf` /
+`reduce` / `reduceRight` hole-skip and `map`'s result-hole are **DEFERRED** —
+see the boundary reasoning below.
+
+**Why narrowed (measured).** The full S2 (all 8 HasProperty methods) was
+implemented and A/B-swept over 2,080 Array HOF/search test262 files (branch vs
+same-harness main): **0 wins, 2 regressions**
+(`reduceRight/15.4.4.22-8-c-4.js` — all-hole reduceRight must NOT throw;
+`indexOf/15.4.4.14-9-b-i-21.js` — `[,].indexOf(undefined) === 0`). **Both
+combine a hole with a prototype-INHERITED index**
+(`Object.defineProperty(Array.prototype,"N",…)` / `Array.prototype[N]=…`) —
+a feature the flat WasmGC vec **cannot model**. They passed on main only
+_coincidentally_ (S1's `$Hole → undefined` map matched the spec's
+inherited-`undefined`); a spec-correct skip regresses them. Critically,
+**test262 has ZERO clean bare-literal sparse HOF tests** — it exercises holes
+via getters / prototype inheritance / `delete`, none of which the vec models —
+so the search/throw skip-methods have no offsetting win. The net-0 subset is the
+four **pure visit-skip** methods (no observable search/throw effect that a
+prototype-inheritance test can hit): forEach / filter / some / every.
+
+Mechanism (`src/codegen/array-methods.ts`), all gated on `shouldHoleSkip(ctx,
+elemType)` = `usesArrayHoles && elemType.kind === "externref"` (so typed
+`number[]`/`boolean[]` and hole-free modules are **byte-identical** —
+prove-emit-identity **39/39**):
+
+- **`gateHoleSkip(loop, arrTypeIdx, elemType, inner)`** — wraps a no-value /
+  no-escaping-`br` body in `if (present) { inner }`. Used by **forEach**.
+- **`gateHoleFlag(loop, …, flagInner)`** — for bodies that leave an `i32`
+  truthy/falsy flag (**filter/some/every**): a hole yields flag `0`, so the
+  caller's following match/break/push `if` does nothing — crucially WITHOUT
+  adding a control-flow level around the caller's escaping `br` (its depths are
+  unshifted). This was the key hazard: a naive `if(present){…}` wrapper would
+  shift `some`/`every`'s `br 2` to `br 3`.
+
+**DEFERRED skip-methods (kept on S1 `$Hole → undefined`, net-0):**
+`indexOf`/`lastIndexOf` (a hole reads undefined and matches — spec wants skip),
+`reduce`/`reduceRight` (fold the hole as undefined; no first/last-present seed
+seek). The seek + match-flag + all-hole-throw implementations exist in git
+history (reverted here) and can be re-landed once prototype-index inheritance is
+modeled, or once the regression is accepted as an unmodelable-feature divergence.
+
+**NOT skip methods (spec-correct as-is):** `find`/`findIndex` use `[[Get]]`
+(ES6) — they VISIT holes as `undefined` (the S1 read map); `includes` likewise
+uses Get (`[,].includes(undefined) === true`). The architect spec's grouping
+listed find/findIndex as skip-methods, but that is incorrect per §23.1.3.9/10
+(Get, not HasProperty); verified against Node — they visit.
+
+**map result-hole — DEFERRED (boundary):** §23.1.3.19 preserves absent indices
+(`[1,,3].map(x=>x*10)` should `join` `"10,,30"`). Representing that needs the
+result vec to be **externref** (to hold the `$Hole` sentinel), but TS types
+`[1,,3].map(x=>x*10)` as `number[]`, so every downstream consumer (`.join`,
+element read, arithmetic) is compiled against an **f64** result and mis-reads a
+forced-externref result (the `.join` reads the boxed-externref slots as f64 →
+garbage/NaN; verified). Closing it cleanly requires threading the widened
+result type through the downstream type-flow — a separate slice. Until then map
+**visits** the hole (S1 read map → callback sees `undefined`), unchanged from
+pre-S2. `[1,,3].map(x=>x*10)` still joins `"10,NaN,30"`.
+
+**Validation:** `tests/issue-2001-s2-hof-hole-skip.test.ts` (host+standalone:
+forEach/filter/some/every skip both directions, real-undefined-still-matches,
+find/findIndex/includes visit, typed `number[]` byte-path guard, and the
+DEFERRED indexOf/lastIndexOf/reduce behavior pinned). Updated 4 S1 read-boundary
+cases (forEach/filter/some/every) from visit→skip; kept indexOf/reduce on S1.
+prove-emit-identity **39/39** byte-identical; tsc / oracle-ratchet /
+ir-fallbacks clean. A/B sweep over the Array HOF+search dirs: **net-0** (the two
+narrowed regressions re-pass). Broad-impact gate is `merge_group`.
+
+**S2 status: landed (this PR) for forEach/filter/some/every.
+indexOf/lastIndexOf/reduce/reduceRight skip + map result-hole DEFERRED (need
+prototype-index inheritance modeling, or acceptance of the divergence). S3
+(index-grow → `$Hole`) and S4 (destructuring numeric default) remain. Note:
+#2773 S7 already fills the index-grow gap with JS `undefined` (observationally
+`typeof === "undefined"`), so the S3 gap-fill now only needs `undefined → $Hole`
+so the grown gap is HOF-skipped rather than visited.**
+
+### S2 merge-group park + fix (2026-07-10, fable-shepherd) — `arrayProtoIndexDirty` static gate
+
+PR #2832 was auto-parked by the merge_group (net **-3**, all `assertion_fail`,
+run 29060112238): `built-ins/Array/prototype/every/15.4.4.16-7-c-i-22.js`,
+`filter/15.4.4.20-9-c-i-22.js`, `some/15.4.4.17-7-c-i-22.js`. These are the
+**prototype-inherited-index** shape the S2 notes above deferred indexOf/reduce
+for — `Object.defineProperty(Array.prototype, "0", { set(){}, configurable })`
+then `[, ].some(cb)`: `HasProperty(O, "0")` is TRUE via the prototype, so the
+callback MUST be visited (with `undefined` — the accessor has no getter), but
+the S2 visit-skip skipped it. The same family exists for the net-0 subset, not
+only the deferred methods; forEach's `-c-i-22` was already failing on main
+(never passed → could not regress), which is why the park listed exactly 3.
+
+**Why PR-level CI was green:** the last full test262 PR run predated the final
+merge commits — the `Test262 Sharded` runs at `aaa3777`/`eebfade` SKIPPED all
+shards (`detect test262-relevant changes` saw only baseline-regen diffs), so
+the regression surfaced only in the merge_group's fresh full run. NOT a #2830
+interaction (repro: S2 + pre-#2830 main fails the trio identically; post-#2830
+main alone passes).
+
+**Fix (compile-time, zero runtime cost):** the `scanForArrayHoles` pre-scan now
+also sets `ctx.arrayProtoIndexDirty` when the module WRITES an `Array.prototype`
+index (`Object.defineProperty(Array.prototype, …)` / `Object.defineProperties`
+/ `Reflect.defineProperty` with `Array.prototype` as first arg, or any
+`Array.prototype[…] = …` assignment). `shouldHoleSkip` adds
+`!ctx.arrayProtoIndexDirty` — a dirtying module falls back module-wide to the
+S1 visit-with-`undefined` behavior (observationally correct for the dominant
+inherited-accessor-without-getter shape, and exactly main's pre-S2 behavior),
+while clean modules keep the spec-correct skip byte-for-byte. Rejected
+alternatives: per-element prototype check (needs a host import + standalone
+global plumbing — a runtime cost on every hole for a test-only shape) and
+reverting the 3 methods to S1 (loses the genuine-hole spec correctness the
+slice exists for). Property-NAME writes (`Array.prototype.foo = …`) and reads
+do not set the flag.
+
+**Unit-test realm hazard (recorded for future HOF tests):** in host mode the
+compiled module executes `defineProperty(Array.prototype, "0", …)` against the
+vitest worker's REAL `Array.prototype`; the inherited index-0 no-op setter then
+silently drops element 0 of every later host array index-write — the TS
+compiler itself crashes on its next parse (`isFileProbablyExternalModule` →
+`node.kind` of undefined), and an `afterEach` delete is insufficient (async
+runtime state corrupts while poisoned). The new dirty-module tests therefore
+run **standalone** (per-instance in-module prototype model, zero host
+pollution); only the read-control runs in host mode.
 
 #### S3 — index-grow past length writes holes, not element defaults. **[independently landable after S1]**
 
@@ -366,10 +495,10 @@ externref vec that is `ref.null extern` (which currently ToStrings via
 - **Only for externref-element vecs**, after the grow `array.copy` and before
   the `array.set data[idx]=val`, **fill the gap `[oldLen, idx)` with `$Hole`**.
   Emit a tiny fill loop (or `array.fill $arr data $hole start=oldLen
-  count=idx-oldLen` if `array.fill` is in the Instr union — grep
+count=idx-oldLen` if `array.fill` is in the Instr union — grep
   `"array.fill"`; the existing `compileArrayFill` at array-methods.ts:7652 uses
   it). Note: the gap is `[currentLength, idx)`, where `currentLength` is
-  `vec.length` *before* the bump, NOT `oldCap` — capacity may already exceed
+  `vec.length` _before_ the bump, NOT `oldCap` — capacity may already exceed
   length from a prior shrink. Read `field0` into a local before the grow `if`
   and use it as the fill start.
 - The grown trailing capacity `(idx, newCap)` stays `array.new_default`; it is
@@ -378,7 +507,7 @@ externref vec that is `ref.null extern` (which currently ToStrings via
   divergence). Gate the whole fill on `elemWasm.kind === "externref"`.
 - **Acceptance (S3):** `b=[1] as any[]; b[5]=9; b.join(",") === "1,,,,,9"`;
   same `b`, `forEach` count `2`; `typeof b[3] === "undefined"`; `b.length ===
-  6`; `b[5] === 9`. Typed guard: `b:number[]=[1]; b[5]=9; b.join(",")` stays
+6`; `b[5] === 9`. Typed guard: `b:number[]=[1]; b[5]=9; b.join(",")` stays
   `"1,0,0,0,0,9"`.
 
 #### S4 — destructuring past source length binds `undefined`, not the numeric default. **[independently landable; addendum]**
@@ -415,7 +544,7 @@ yields JS `undefined` for **externref** element types (probe confirms `const
     issue's `String(q)` repro when `q` is untyped), and **explicitly document**
     that a statically `number`-typed OOB binding yields `NaN` (accepted
     divergence, same root as typed holes). The `const [a=5,b=6]=[undefined,
-    null]` sub-case is a *different* axis (explicit `null`/`undefined` element,
+null]` sub-case is a _different_ axis (explicit `null`/`undefined` element,
     not OOB) — `b` should be `null` (default not applied to `null`); that is the
     null-erasure path in literals.ts:3150-3159 (`hasNullLiteral` widening) and
     should already widen `[undefined,null]` to externref — verify with a test;
@@ -449,7 +578,7 @@ standalone variant of at least one S1 and one S2 acceptance test (the
   locally.
 - **Guard test (per the #1852 §3 pattern):** an op-count / WAT snapshot on a
   typed numeric kernel — e.g. `const a=[1,2,3,4]; let s=0; a.forEach(x=>{s+=x});
-  return s;` — asserting the emitted forEach loop body is unchanged by S1–S4.
+return s;` — asserting the emitted forEach loop body is unchanged by S1–S4.
   Put it in the S2 PR (the one that touches `setupArrayLoop`).
 - **Dead-elim / type-index safety:** registering `$Hole` adds a type; follow
   `project_type_index_shift_and_deadelim` — register late and once, after class
@@ -478,7 +607,7 @@ standalone variant of at least one S1 and one S2 acceptance test (the
   `number[]` forEach count unchanged; the op-count snapshot above.
 - **test262 family** (the conformance lift — non-failing dashboard, but track
   the delta): `built-ins/Array/prototype/{forEach,map,filter,some,every,
-  reduce,reduceRight,indexOf}/` — each has ~3 sparse/HasProperty-skip cases
+reduce,reduceRight,indexOf}/` — each has ~3 sparse/HasProperty-skip cases
   (e.g. `forEach/15.4.4.18-2-9.js`, the `*-9-b-*` "does not visit deleted/absent
   elements" family); `language/expressions/array/S11.1.4_A*` (elision length /
   trailing-comma length). NB: most of these create holes via `delete`/
@@ -502,7 +631,7 @@ standalone variant of at least one S1 and one S2 acceptance test (the
 - **S3:** small-medium (~60 LOC) — one fill loop in the grow path, gated.
   Risk: low. Independently landable after S1.
 - **S4:** small (~40 LOC) — one OOB-branch sentinel swap, plus a `[undefined,
-  null]` widening verification. Risk: low-medium (the typed-binding `NaN`
+null]` widening verification. Risk: low-medium (the typed-binding `NaN`
   divergence must be documented, not "fixed"). Independently landable.
 - **Overall:** `hard` confirmed, but **decomposed into one medium-hard slice
   (S2) and three small/medium independently-landable slices.** Recommended
