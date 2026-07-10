@@ -165,6 +165,34 @@ the struct (no `%Object.prototype%` link), so `p.hasOwnProperty(...)` on
 such receivers resolves only through the `_OBJECT_PROTO_KEYS` special-cases,
 not a real chain hop.
 
+### Cluster-flip measurement (honest, verify-first)
+
+A/B over the natural home cluster — `built-ins/Iterator/prototype` +
+`built-ins/Object/create` (693 files) — via the REAL `runTest262File`
+harness, base = this branch's `#3049`-merged runtime (isolating ONLY the
+#3124 delta), fixed = HEAD:
+
+- **base 321/693, fixed 321/693 — ZERO net flip** (pass sets byte-identical;
+  no regressions, no gains).
+
+This is NOT a harness artifact: a synthetic test262-shaped file carrying the
+exact pattern (`var p = Object.create({greet(){…}, n}); typeof p.greet; …`)
+flips `fail ("greet not fn: undefined") → pass` through the SAME
+`runTest262File` runner. So the harness reaches the fix and the fix flips
+files that contain the pattern — **the test262 corpus in this cluster simply
+does not exercise inherited reads over a `Object.create(<compiled struct>)`
+link in a failing conformance test.**
+
+Interpretation: this is the same shape as the #3049 handback (fable-3022
+found the prototype-chain fix yielded +0 alone, gated by a distinct wall).
+Here the inherited-READ gap is real and now closed, but the cluster's
+failing files are gated by OTHER walls — chiefly #3129 (inherited CLASS-
+method calls trap in-wasm before reaching the host) and deeper #3049
+residuals — not by the read gap in isolation. The value of this PR is a
+correct, zero-risk, byte-identical substrate fix that (a) closes a genuine
+gap provable at unit/probe level and (b) is the read-side prerequisite for
+#3129's dispatch fix. It is NOT a conformance-yield PR on its own.
+
 ### Latent main-side failures found during validation (NOT from this PR)
 
 Both fail identically on pristine origin/main (42c8ab99ae696) and are
