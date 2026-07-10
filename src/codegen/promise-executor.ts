@@ -32,132 +32,22 @@
 
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
-import { compileArrowAsClosure, getOrCreateFuncRefWrapperTypes } from "./closures.js";
+import { compileArrowAsClosure } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { coerceType, emitGuardedFuncRefCast, pushDefaultValue } from "./type-coercion.js";
 import { emitNullCheckThrow } from "./property-access.js";
 import {
   PROMISE_STATE_PENDING,
-  ensurePromiseSettleFunctions,
-  getOrRegisterPromiseType,
+  // (#3125) `ensurePromiseExecutorClosures` + its interface moved to
+  // async-scheduler.ts: the thenable-assimilation job (built inside
+  // `ensurePromiseSettleFunctions`) needs the same settle closures, and this
+  // module already imports from async-scheduler (the reverse import would be
+  // an eval-time cycle).
+  ensurePromiseExecutorClosures,
   isStandalonePromiseActive,
 } from "./async-scheduler.js";
-
-/**
- * Per-module cache of the two synthesised settle-closure funcs + the capturing
- * wrapper struct type. Minted once and reused for every `new Promise` in the
- * module, so the module carries a single `__promise_resolve_cl` /
- * `__promise_reject_cl` pair regardless of executor count.
- */
-interface PromiseExecutorClosures {
-  /** `__promise_resolve_cl` funcIdx — settles the captured promise via resolve-value (assimilating). */
-  resolveClFuncIdx: number;
-  /** `__promise_reject_cl` funcIdx — settles the captured promise via reject. */
-  rejectClFuncIdx: number;
-  /** The `$__promise_settle_cap` struct typeIdx (subtype of the canonical `(externref)->()` wrapper). */
-  capTypeIdx: number;
-  /** `$Promise` struct typeIdx. */
-  promiseTypeIdx: number;
-  /** `__promise_reject(promise, reason) -> reason` funcIdx (used by the executor-throw catch). */
-  rejectFuncIdx: number;
-}
-
-/**
- * Idempotently mint the two capturing settle-closure trampolines and register
- * the `$__promise_settle_cap` wrapper subtype. Cached on the context.
- *
- * `$__promise_settle_cap` is a struct subtype of the canonical `(externref)->()`
- * func-ref wrapper (`getOrCreateFuncRefWrapperTypes(ctx,[externref],[])`), so a
- * value of this type passes the executor's `ref.test (ref $wrap)` and dispatches
- * natively. It inherits field 0 (`func: funcref`) and adds field 1
- * (`cap_promise: (ref $Promise)`).
- *
- * Each trampoline has EXACTLY the canonical lifted func type
- * (`(ref null $wrap, externref) -> ()`) so the executor's
- * `ref.cast (ref $wrapFuncType); call_ref` at the resolve/reject call site
- * succeeds; the body downcasts self to the `cap` subtype to recover the promise.
- */
-function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecutorClosures | null {
-  const cache = ctx as unknown as { __promiseExecutorClosures?: PromiseExecutorClosures };
-  if (cache.__promiseExecutorClosures) return cache.__promiseExecutorClosures;
-
-  ensurePromiseSettleFunctions(ctx);
-  const resolveValueFuncIdx = ctx.funcMap.get("__promise_resolve_value");
-  const rejectFuncIdx = ctx.funcMap.get("__promise_reject");
-  if (resolveValueFuncIdx === undefined || rejectFuncIdx === undefined) return null;
-
-  const promiseTypeIdx = getOrRegisterPromiseType(ctx);
-
-  // Canonical `(externref) -> ()` wrapper — the SAME struct the executor body
-  // ref.tests / ref.casts `resolve`/`reject` against (shared via the signature
-  // cache). Our cap struct subtypes it so the native dispatch matches.
-  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [{ kind: "externref" }], []);
-  if (!wrapper) return null;
-
-  const capTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: "$__promise_settle_cap",
-    fields: [
-      // Field 0 is inherited from the wrapper root (funcref); it MUST be
-      // redeclared identically in the subtype.
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      { name: "cap_promise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
-    ],
-    superTypeIdx: wrapper.structTypeIdx,
-  });
-
-  // Mint both trampolines UP-FRONT (stable-regime handles) before any code
-  // references them, mirroring ensurePromiseSettleFunctions' discipline.
-  const resolveClFuncIdx = mintDefinedFunc(ctx);
-  const rejectClFuncIdx = mintDefinedFunc(ctx);
-
-  // Body: recover captured promise from self (downcast to the cap subtype),
-  // then settle it with the incoming value. resolve routes through
-  // __promise_resolve_value (assimilation: resolve(aPromise) chains); reject
-  // routes through __promise_reject. The already-settled guard lives in the
-  // settle helpers (buildPromiseSettleBody), so double-settle / settle-after-
-  // throw is a spec-correct no-op by construction.
-  const makeBody = (settleFuncIdx: number): Instr[] => [
-    { op: "local.get", index: 0 }, // self: (ref null $wrap)
-    { op: "ref.cast", typeIdx: capTypeIdx }, // downcast to the cap subtype (non-null)
-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: 1 }, // captured (ref $Promise)
-    { op: "local.get", index: 1 }, // value: externref
-    { op: "call", funcIdx: settleFuncIdx }, // settle -> externref
-    { op: "drop" }, // trampoline result type is () — discard the settled value
-  ];
-
-  pushDefinedFunc(ctx, resolveClFuncIdx, {
-    name: "__promise_resolve_cl",
-    typeIdx: wrapper.liftedFuncTypeIdx,
-    locals: [],
-    body: makeBody(resolveValueFuncIdx),
-    exported: false,
-  });
-  ctx.funcMap.set("__promise_resolve_cl", resolveClFuncIdx);
-
-  pushDefinedFunc(ctx, rejectClFuncIdx, {
-    name: "__promise_reject_cl",
-    typeIdx: wrapper.liftedFuncTypeIdx,
-    locals: [],
-    body: makeBody(rejectFuncIdx),
-    exported: false,
-  });
-  ctx.funcMap.set("__promise_reject_cl", rejectClFuncIdx);
-
-  const result: PromiseExecutorClosures = {
-    resolveClFuncIdx,
-    rejectClFuncIdx,
-    capTypeIdx,
-    promiseTypeIdx,
-    rejectFuncIdx,
-  };
-  cache.__promiseExecutorClosures = result;
-  return result;
-}
 
 /**
  * #2959 — Emit the native standalone `new Promise(executor)` lowering.

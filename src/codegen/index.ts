@@ -57,7 +57,7 @@ import { collectClosureBaseWrapperTypeIdxs, buildClosureRefTestArms } from "./cl
 import { ensureNativeIteratorRuntime, fillNativeIteratorLateArms } from "./iterator-native.js";
 import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
-import { fillClosedMethodDispatch } from "./closed-method-dispatch.js";
+import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillMemberSetDispatch, reserveVecFieldMaterializers } from "./member-set-dispatch.js";
 import { fillMemberGetDispatch } from "./member-get-dispatch.js";
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
@@ -2462,6 +2462,13 @@ export function generateModule(
     // at reserve time), so no funcIdx churn. No-op when no any-receiver call site
     // reserved a dispatcher (standalone/wasi only).
     fillClosedMethodDispatch(ctx);
+
+    // (#3125) Fill the reserved `__promise_has_callable_then` predicate — the
+    // native-Promise resolve path's §27.2.1.3.2 Get("then")+IsCallable test —
+    // from the SAME struct/closure collectors as the `__call_m_then_vararg`
+    // dispatcher the thenable job invokes. Read-only over funcMap. No-op unless
+    // the async scheduler's thenable substrate reserved it (standalone/wasi).
+    fillPromiseThenableHelpers(ctx);
 
     // (#2664) Fill the reserved `__set_member_<name>` member-WRITE dispatchers now
     // that EVERY struct type (incl. late-registered fnctor structs like acorn's

@@ -1239,6 +1239,17 @@ export interface CodegenContext {
    */
   proxyDispatchReserved?: boolean;
   /**
+   * (#3125) Set when the native-Promise thenable-assimilation substrate
+   * reserved its `__promise_has_callable_then` predicate placeholder
+   * (`ensurePromiseThenableSubstrate`, async-scheduler.ts). The predicate needs
+   * the FULL closed-struct + closure shape sets, which are only complete at
+   * FINALIZE, so the body is filled by `fillPromiseThenableHelpers`
+   * (closed-method-dispatch.ts) — same reserve-then-fill pattern as
+   * `applyClosureReserved` (#1719). Only set under standalone/wasi, so the
+   * GC/host path stays byte-identical.
+   */
+  promiseThenableReserved?: boolean;
+  /**
    * (#2151) Method names for which a closed-struct `__call_m_<name>` dispatcher
    * was reserved at an any-receiver call site (standalone/wasi). The placeholder
    * body is filled by `fillClosedMethodDispatch` at FINALIZE (after all

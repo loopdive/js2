@@ -42,6 +42,7 @@ import {
   emitTimerAdd,
   emitTimerCallbackWrapper,
   emitTimerCancel,
+  ensurePromiseSettleFunctions,
   ensureTimerHeap,
   getDrainFuncIdxForWasiStart,
   getOrRegisterPromiseType,
@@ -9553,10 +9554,20 @@ function compileCallExpression(
         // of the JS-host `Promise_{resolve,reject}_import` (unsatisfiable in
         // WASI). (#2980 async-gen fallback lives in `isStandalonePromiseActive`.)
         if (isStandalonePromiseActive(ctx)) {
+          // (#3125) `Promise.resolve` now routes through the spec Resolve
+          // (`__promise_resolve_value` — thenable assimilation / poisoned-then
+          // reject / promise passthrough), which needs the settle-function
+          // substrate. Ensure it BEFORE compiling the argument into the
+          // detached side buffer, so the substrate's minted-func registration
+          // can never land while `argInstrs` is off `fctx.body`/liveBodies.
+          if (methodName === "resolve") {
+            ensurePromiseSettleFunctions(ctx);
+          }
           // Compile the value/reason argument FIRST into a side buffer
           // so the helper controls the final Wasm op order
           // (state | value | null | struct.new | extern.convert_any).
           const argInstrs: Instr[] = [];
+          ctx.liveBodies.add(argInstrs);
           const savedBody = fctx.body;
           fctx.body = argInstrs;
           try {
@@ -9568,10 +9579,14 @@ function compileCallExpression(
           } finally {
             fctx.body = savedBody;
           }
-          if (methodName === "resolve") {
-            emitStandalonePromiseResolve(ctx, fctx, argInstrs);
-          } else {
-            emitStandalonePromiseReject(ctx, fctx, argInstrs);
+          try {
+            if (methodName === "resolve") {
+              emitStandalonePromiseResolve(ctx, fctx, argInstrs);
+            } else {
+              emitStandalonePromiseReject(ctx, fctx, argInstrs);
+            }
+          } finally {
+            ctx.liveBodies.delete(argInstrs);
           }
           return { kind: "externref" };
         }
