@@ -1,8 +1,9 @@
 {
   "id": "2984",
   "assignee": "ttraenkler/fable-2984b",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2984-gopd-proto-receivers",
   "claimed_at": "2026-07-10T11:45:26Z",
-  "updated_at": "2026-07-10T11:45:26Z"
+  "updated_at": "2026-07-10T12:41:35Z",
+  "released_at": "2026-07-10T12:41:35Z"
 }
