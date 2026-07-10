@@ -1,8 +1,8 @@
 {
   "id": "3130",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-10T08:31:54Z",
-  "updated_at": "2026-07-10T08:31:54Z"
+  "assignee": "ttraenkler/fable-3130",
+  "status": "in-progress",
+  "branch": "issue-3130-standalone-error-ctor-name",
+  "claimed_at": "2026-07-10T09:00:49Z",
+  "updated_at": "2026-07-10T09:00:49Z"
 }
