@@ -1,8 +1,8 @@
 {
   "id": "3129",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-10T08:11:30Z",
-  "updated_at": "2026-07-10T08:11:30Z"
+  "assignee": "ttraenkler/fable-3124",
+  "status": "in-progress",
+  "branch": "issue-3129-any-recv-classmethod-dispatch",
+  "claimed_at": "2026-07-10T09:34:30Z",
+  "updated_at": "2026-07-10T09:34:30Z"
 }
