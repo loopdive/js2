@@ -1203,7 +1203,21 @@ function coerceArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValTyp
       return;
     }
     case "i32": {
-      // boolean / small int → box as number for now (slice 1 number/string).
+      // (#2712 I2) A BRANDED boolean boxes via __box_boolean so the element/key
+      // reifies as a boolean, not the number 1/0 — `new Set([(n<2)]).has(1)` must
+      // be false and `.has(true)` true (SameValueZero on a boolean, not a number).
+      // __box_boolean is registered alongside __box_number by the callers'
+      // addUnionImports (same note as below), so a funcMap lookup avoids a
+      // mid-body import shift; falls through to the number box if absent.
+      if (t.boolean === true) {
+        const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+        if (boxBoolIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: boxBoolIdx });
+          fctx.body.push({ op: "any.convert_extern" } as Instr);
+          return;
+        }
+      }
+      // small int → box as number.
       fctx.body.push({ op: "f64.convert_i32_s" } as Instr);
       const boxIdx = ctx.funcMap.get("__box_number");
       if (boxIdx !== undefined) {

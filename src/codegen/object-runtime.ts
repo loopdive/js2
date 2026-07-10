@@ -7236,6 +7236,7 @@ const PROXY_CALL_ISEXT = "__proxy_call_isext"; // (#1355 Slice D) isExtensible
 const PROXY_CALL_PREVEXT = "__proxy_call_prevext"; // (#1355 Slice D) preventExtensions
 const PROXY_CALL_OWNKEYS = "__proxy_call_ownkeys"; // (#1355 Slice E) ownKeys
 const PROXY_CALL_DEFINE = "__proxy_call_define"; // (#1355 Slice F) defineProperty
+const PROXY_CALL_APPLY = "__proxy_call_apply"; // (#3031 apply slice) apply — §10.5.12 [[Call]]
 
 /**
  * (#1100) Standalone Proxy meta-object dispatch runtime — Phase 1.
@@ -7325,8 +7326,10 @@ function ensureProxyRuntime(
   // (`fillProxyDispatch`) call it to run the user trap closure with the handler
   // bound as `this` — the same bridge `__extern_method_call` uses. Reserving here
   // guarantees the bridge + its `__call_fn_method_N` arms exist when a standalone
-  // `new Proxy` is the only closure-call site in the module.
-  reserveApplyClosure(ctx);
+  // `new Proxy` is the only closure-call site in the module. (#3031) The apply
+  // dispatch below bakes this reserved funcIdx for its trap-absent forward arm
+  // (§10.5.12 step 6 `Call(target, thisArgument, argumentsList)`).
+  const applyClosureIdx = reserveApplyClosure(ctx);
 
   // Field indices on the standalone $Proxy struct:
   // ptag(0) ptarget(1) phandler(2) ptraps(3) revoked(4).
@@ -7338,6 +7341,7 @@ function ensureProxyRuntime(
   const TRAP_GET = 0;
   const TRAP_SET = 1;
   const TRAP_HAS = 2;
+  const TRAP_APPLY = 3; // (#3031 apply slice) wired at __proxy_create since #1100; dispatched here
   const TRAP_DELETE = 4; // (#1355 Slice A)
   const TRAP_GOPD = 5; // (#1355 Slice B) getOwnPropertyDescriptor
   const TRAP_GPO = 6; // (#1355 Slice C) getPrototypeOf
@@ -7403,6 +7407,12 @@ function ensureProxyRuntime(
   // key, desc) → __call_fn_method_3 (§10.5.6 step 9 `Call(trap, handler, «target,
   // P, descObj»)`). Returns the trap's booleanish result externref.
   const callDefineIdx = reserveDriver(PROXY_CALL_DEFINE, [externref, externref, externref, externref, externref]);
+  // (#3031 apply slice) apply driver — 3 trap args: (handler, trap, target,
+  // thisArg, argArray) → __call_fn_method_3 (§10.5.12 step 8 `Call(trap,
+  // handler, «target, thisArgument, argArray»)`). Returns the trap's result
+  // externref unchanged (a [[Call]] result is any language value — no invariant
+  // to enforce, unlike [[Construct]]'s must-be-Object).
+  const callApplyIdx = reserveDriver(PROXY_CALL_APPLY, [externref, externref, externref, externref, externref]);
   ctx.proxyDispatchReserved = true;
 
   // Builds a dispatch helper body. `trapFieldIdx` selects the trap closure;
@@ -8027,6 +8037,81 @@ function ensureProxyRuntime(
     buildDefineDispatch(),
   );
 
+  // (#3031 apply slice) __proxy_apply_dispatch(proxyExtern, thisArg, argsVec)
+  // -> externref. §10.5.12 [[Call]] — the 12th trap, wired at `__proxy_create`
+  // since #1100 (field 3) but never dispatched (#3099 pinned it as the one dark
+  // trap after handler materialization landed):
+  //   revoked → throw TypeError (§10.5.12 step 2-3 via the null handler);
+  //   trap absent → step 6 `Call(target, thisArgument, argumentsList)` through
+  //     the `__apply_closure` bridge. That bridge carries the $Proxy front-guard
+  //     (fillApplyClosure), so a proxy-of-proxy target re-enters this dispatch
+  //     one hop at a time, and a non-callable target resolves to the bridge's S1
+  //     undefined sentinel (no-throw discipline, same as fillApplyClosure);
+  //   trap present → step 8 `Call(trap, handler, «target, thisArgument,
+  //     argArray»)` via the reserved 3-arg driver.
+  // `argsVec` is the native `$ObjVec` args carrier every closure-call consumer
+  // uses (`__apply_closure` reads it via `__extern_length`/`__extern_get_idx`).
+  // The trap receives that vec as its argArray — a CreateArrayFromList
+  // array-exotic COPY (§10.5.12 step 7) is a documented boundary for the
+  // invariant slice (G), like the other traps' raw-value key passing.
+  // params: 0=proxyExtern 1=thisArg 2=argsVec ; locals: 3=p 4=trap.
+  registerNative("__proxy_apply_dispatch", [externref, externref, externref], [externref], dispatchLocals(), [
+    // p = ref.cast $Proxy(any.convert_extern(proxyExtern))
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: proxyTypeIdx },
+    { op: "local.set", index: 3 },
+    // if p.revoked: throw TypeError
+    { op: "local.get", index: 3 },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
+    { op: "if", blockType: { kind: "empty" }, then: throwRevoked() } as Instr,
+    // trap = p.ptraps==null ? null : p.ptraps.apply
+    { op: "local.get", index: 3 },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [{ op: "ref.null.extern" } as Instr],
+      else: [
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
+        { op: "ref.as_non_null" } as Instr,
+        { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: TRAP_APPLY },
+      ],
+    } as Instr,
+    { op: "local.set", index: 4 },
+    // if trap == null: forward Call(target, thisArg, args); else invoke trap
+    { op: "local.get", index: 4 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [
+        // __apply_closure(target, thisArg, argsVec)
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+        { op: "extern.convert_any" } as Instr,
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: applyClosureIdx },
+      ],
+      else: [
+        // driver(handler, trap, target, thisArg, argArray)
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PHANDLER },
+        { op: "extern.convert_any" } as Instr,
+        { op: "local.get", index: 4 },
+        { op: "local.get", index: 3 },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+        { op: "extern.convert_any" } as Instr,
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: callApplyIdx },
+      ],
+    } as Instr,
+  ]);
+
   // ── __proxy_create(target, handler) -> externref ──────────────────────────
   //
   // §28.2.1.1 ProxyCreate. Reads get/set/has/apply off `handler` via
@@ -8602,6 +8687,7 @@ export function fillProxyDispatch(ctx: CodegenContext): void {
   fill(PROXY_CALL_PREVEXT, 1); // (#1355 Slice D) preventExtensions (target)
   fill(PROXY_CALL_OWNKEYS, 1); // (#1355 Slice E) ownKeys (target)
   fill(PROXY_CALL_DEFINE, 3); // (#1355 Slice F) defineProperty (target, key, desc)
+  fill(PROXY_CALL_APPLY, 3); // (#3031 apply slice) apply (target, thisArg, argArray)
 }
 
 /**
@@ -8921,6 +9007,36 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "local.set", index: 3 } as Instr,
     ...dispatch,
   ];
+
+  // (#3031 apply slice) $Proxy front-guard — the §0.1 ladder-step-1 pattern for
+  // [[Call]]. A proxy `fn` value must intercept EVERY call routed through this
+  // bridge (method calls on open receivers via `__extern_method_call`, a proxy
+  // installed as another proxy's trap, groupBy/accessor drivers, …), so test it
+  // AHEAD of the arity dispatch and route to `__proxy_apply_dispatch(fn, recv,
+  // args)`. The dispatch's trap-absent forward arm calls back into this bridge
+  // with the proxy's target, unwrapping proxy-of-proxy chains one guard hop at a
+  // time. No-op (guard not emitted) when the proxy runtime is absent — byte-
+  // identical for proxy-free modules.
+  const proxyApplyIdx = ctx.funcMap.get("__proxy_apply_dispatch");
+  const proxyGuardTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  if (proxyApplyIdx !== undefined && proxyGuardTypeIdx !== undefined) {
+    body.unshift(
+      { op: "local.get", index: 0 } as Instr,
+      { op: "any.convert_extern" } as Instr,
+      { op: "ref.test", typeIdx: proxyGuardTypeIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 } as Instr,
+          { op: "local.get", index: 1 } as Instr,
+          { op: "local.get", index: 2 } as Instr,
+          { op: "call", funcIdx: proxyApplyIdx } as Instr,
+          { op: "return" } as Instr,
+        ],
+      } as Instr,
+    );
+  }
 
   bridgeFn.body = body;
   bridgeFn.locals = [{ name: "n", type: { kind: "i32" } }];
