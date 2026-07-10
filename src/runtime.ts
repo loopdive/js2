@@ -5777,6 +5777,63 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
 }
 
 /**
+ * (#3124) Inherited member resolution over a host prototype chain that
+ * contains a compiled WasmGC struct. `Object.create(<struct>)` builds a REAL
+ * host object whose `[[Prototype]]` is an opaque struct: V8 sees the struct as
+ * an exotic object with no own properties and a null prototype, so the native
+ * MOP walk (`key in obj` / `obj[key]`) skips right past every compiled field.
+ * The struct-aware arms in `__extern_get` / `__extern_method_call` only fire
+ * when the RECEIVER itself is a struct — never when a struct sits mid-chain —
+ * so inherited reads resolved `undefined` (and inherited method calls threw
+ * "is not a function").
+ *
+ * Walk the chain manually, starting at the receiver's prototype (the caller
+ * has already exhausted own-member resolution). At each hop that is a WasmGC
+ * struct, resolve OWN members through the exact machinery the direct-receiver
+ * path uses (`_resolveHostField`: defineProperty accessors → sidecar →
+ * `__sget_<key>` field getter → vivified fnctor prototype), honoring the
+ * delete tombstone (a deleted own member does not stop the walk — per
+ * §10.1.8.1 OrdinaryGet the lookup continues up the chain). Plain-object hops
+ * are NOT re-checked: the caller's native walk already consulted them.
+ *
+ * Returns `{ value, holder }` on a hit so method-call sites can distinguish
+ * the holder from the receiver; `undefined` on a miss. The walk is bounded
+ * (cycle/pathology guard) and every `getPrototypeOf` is try-wrapped (revoked
+ * proxies mid-chain).
+ */
+function _protoChainStructResolve(
+  receiver: any,
+  key: any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): { value: any; holder: any } | undefined {
+  if (receiver == null || (typeof receiver !== "object" && typeof receiver !== "function")) return undefined;
+  const exports = callbackState?.getExports();
+  let hop: any;
+  try {
+    hop = Object.getPrototypeOf(receiver);
+  } catch {
+    return undefined;
+  }
+  let guard = 0;
+  while (hop != null && guard++ < 32) {
+    if (typeof hop === "object" && _isWasmStruct(hop)) {
+      const tomb = _wasmStructDeletedKeys.get(hop);
+      const tombstoned = tomb !== undefined && tomb.has(typeof key === "symbol" ? key : String(key));
+      if (!tombstoned) {
+        const v = _resolveHostField(hop, key, exports);
+        if (v !== undefined) return { value: v, holder: hop };
+      }
+    }
+    try {
+      hop = Object.getPrototypeOf(hop);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
  * (#1627) Build a clean, GetSetRecord-faithful set-like object from a WasmGC
  * struct argument to a Set set-algebra method. The default `_wrapForHost` proxy
  * masks EVERY wasm-struct field value as a callable `closureBridge` (the generic
@@ -9097,7 +9154,19 @@ assert._isSameValue = isSameValue;
           // Try struct getter exports as fallback for WasmGC opaque fields
           if (obj == null || typeof obj !== "object") return undefined;
           try {
-            if (Object.getPrototypeOf(obj) !== null) return undefined;
+            if (Object.getPrototypeOf(obj) !== null) {
+              // (#3124) A non-null-proto receiver is a REAL host object, not a
+              // struct — but its chain may contain a compiled struct
+              // (`Object.create(<struct>)`), whose fields the native walk
+              // above cannot see. Resolve inherited members through the
+              // struct-aware chain walk before conceding undefined. Values
+              // return RAW (numbers/strings as-is, closures as raw structs) —
+              // identical to what the direct struct-receiver path below
+              // returns — so `__typeof` / `__is_closure` / call machinery see
+              // the same representation either way.
+              const hit = _protoChainStructResolve(obj, key, callbackState);
+              return hit !== undefined ? hit.value : undefined;
+            }
           } catch {
             return undefined;
           }
@@ -9436,6 +9505,32 @@ assert._isSameValue = isSameValue;
           // Inherited Object.prototype members for any non-null object value.
           if (typeof key === "string" && (typeof obj === "object" || typeof obj === "function") && obj !== null) {
             if (_OBJECT_PROTO_KEYS.has(key)) return 1;
+          }
+          // (#3124) `in` over a compiled-struct prototype link: the native
+          // HasProperty walk above cannot see struct hops. Consult the same
+          // tombstone-aware own-property oracle struct RECEIVERS use, at each
+          // struct hop of the chain (key-based, value-independent — §7.3.12).
+          if ((typeof obj === "object" || typeof obj === "function") && obj !== null) {
+            let hop: any = null;
+            try {
+              hop = Object.getPrototypeOf(obj);
+            } catch {
+              hop = null;
+            }
+            let guard = 0;
+            while (hop != null && guard++ < 32) {
+              if (
+                typeof hop === "object" &&
+                _isWasmStruct(hop) &&
+                _wasmStructHasOwn(hop, key, callbackState?.getExports())
+              )
+                return 1;
+              try {
+                hop = Object.getPrototypeOf(hop);
+              } catch {
+                break;
+              }
+            }
           }
           return 0;
         };
@@ -11372,6 +11467,25 @@ assert._isSameValue = isSameValue;
                     if (dvMatch[1] === "set") return undefined;
                     return result;
                   }
+                }
+              }
+            }
+            // (#3124) Inherited method over a compiled-struct prototype link
+            // (`Object.create(<struct>)` receivers): the native
+            // `wrappedObj[method]` read walked past the opaque struct hop, so
+            // the method resolved undefined. Resolve through the struct-aware
+            // chain walk and dispatch with the ORIGINAL receiver as `this`
+            // (the method-arity bridge threads it as `__current_this`).
+            // Shape-specialized method bodies whose `this.<field>` reads
+            // REQUIRE a struct receiver remain out of reach — that boundary
+            // is documented in the #3124 issue file.
+            {
+              const inherited = _protoChainStructResolve(obj, method, callbackState);
+              if (inherited !== undefined) {
+                const resolved = _maybeWrapCallableUnknownArity(inherited.value, callbackState);
+                if (typeof resolved === "function") {
+                  const ret = resolved.apply(obj, wrappedArgs);
+                  return ret === obj ? obj : _unwrapForHost(ret);
                 }
               }
             }
@@ -14306,6 +14420,29 @@ assert._isSameValue = isSameValue;
     case "dynamic_import":
       return (specifier: any) => import(/* @vite-ignore */ specifier);
     case "typeof_check":
+      // (#3124, mirrors #1594A/#1896) The fused `typeof x === "function"`
+      // compare must agree with `__typeof`: a compiled closure struct is
+      // natively `typeof === "object"`, but the spec answer is "function".
+      // `__typeof` and the STANDALONE `__typeof_function` were both taught
+      // the `__is_closure` probe; this host-intent twin never was, so
+      // `typeof p.greet === "function"` failed on a raw closure struct even
+      // while `console.log(typeof p.greet)` printed "function".
+      if (intent.targetType === "function") {
+        return (v: any) => {
+          if (typeof v === "function") return 1;
+          if (v != null && typeof v === "object" && _isWasmStruct(v)) {
+            const isClosureFn = callbackState?.getExports()?.__is_closure as ((x: any) => number) | undefined;
+            if (typeof isClosureFn === "function") {
+              try {
+                if (isClosureFn(v) === 1) return 1;
+              } catch {
+                /* fall through */
+              }
+            }
+          }
+          return 0;
+        };
+      }
       // biome-ignore lint/suspicious/useValidTypeof: targetType is a runtime string from compiled code
       return (v: any) => (typeof v === intent.targetType ? 1 : 0);
     case "box":
@@ -14403,7 +14540,15 @@ assert._isSameValue = isSameValue;
         }
         if (obj == null || typeof obj !== "object") return undefined;
         try {
-          if (Object.getPrototypeOf(obj) !== null) return undefined;
+          if (Object.getPrototypeOf(obj) !== null) {
+            // (#3124) A non-null-proto receiver is a REAL host object whose
+            // chain may contain a compiled struct (`Object.create(<struct>)`)
+            // the native walk above cannot see through. Resolve inherited
+            // members via the struct-aware chain walk before conceding
+            // undefined (mirrors the name-based `__extern_get` arm).
+            const hit = _protoChainStructResolve(obj, key, callbackState);
+            return hit !== undefined ? hit.value : undefined;
+          }
         } catch {
           return undefined;
         }
