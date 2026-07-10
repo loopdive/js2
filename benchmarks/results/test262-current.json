@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-07-10T04:18:23.930Z",
-  "baseline_generated_at": "2026-07-10T04:18:23.930Z",
-  "baseline_sha": "bd05c7bccbef5de7c800b4e7ed8768502108c0fb",
+  "timestamp": "2026-07-10T07:39:12.390Z",
+  "baseline_generated_at": "2026-07-10T07:39:12.390Z",
+  "baseline_sha": "42c8ab99ae696058a5a099925744ae09ec715b38",
   "oracle_version": 2,
   "mode": {
     "target": "gc",
-    "include_proposals": 1,
-    "label": "official test262 + proposals"
+    "include_proposals": 0,
+    "label": "official test262 (default scope)"
   },
   "summary": {
     "total": 43106,
@@ -49,11 +49,11 @@
       "proposal": {
         "total": 4982,
         "pass": 1346,
-        "fail": 3325,
+        "fail": 3316,
         "compile_error": 214,
         "compile_timeout": 1,
-        "skip": 96,
-        "compilable": 4671,
+        "skip": 105,
+        "compilable": 4662,
         "host_free_pass": 193,
         "leaky_pass": 1153,
         "stale": 0,
@@ -75,11 +75,11 @@
       "full": {
         "total": 48088,
         "pass": 33834,
-        "fail": 13563,
+        "fail": 13554,
         "compile_error": 495,
         "compile_timeout": 81,
-        "skip": 115,
-        "compilable": 47397,
+        "skip": 124,
+        "compilable": 47388,
         "host_free_pass": 4552,
         "leaky_pass": 29282,
         "stale": 0,
@@ -102,11 +102,11 @@
   "full_summary": {
     "total": 48088,
     "pass": 33834,
-    "fail": 13563,
+    "fail": 13554,
     "compile_error": 495,
     "compile_timeout": 81,
-    "skip": 115,
-    "compilable": 47397,
+    "skip": 124,
+    "compilable": 47388,
     "host_free_pass": 4552,
     "leaky_pass": 29282,
     "stale": 0
@@ -139,11 +139,11 @@
     "proposal": {
       "total": 4982,
       "pass": 1346,
-      "fail": 3325,
+      "fail": 3316,
       "compile_error": 214,
       "compile_timeout": 1,
-      "skip": 96,
-      "compilable": 4671,
+      "skip": 105,
+      "compilable": 4662,
       "host_free_pass": 193,
       "leaky_pass": 1153,
       "stale": 0
@@ -793,10 +793,10 @@
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
       "pass": 1150,
-      "fail": 3311,
+      "fail": 3302,
       "compile_error": 62,
       "compile_timeout": 1,
-      "skip": 0,
+      "skip": 9,
       "total": 4524,
       "host_free_pass": 0
     },
@@ -1198,15 +1198,15 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 6049,
+    "assertion_fail": 6051,
     "illegal_cast": 94,
     "negative_test_fail": 55,
     "null_deref": 213,
-    "oob": 62,
-    "other": 5387,
+    "oob": 58,
+    "other": 5385,
     "promise_error": 24,
-    "range_error": 37,
-    "runtime_error": 1133,
+    "range_error": 27,
+    "runtime_error": 1132,
     "type_error": 258,
     "unreachable": 20,
     "wasm_compile": 726
@@ -1215,6 +1215,7 @@
   "skip_reasons": {
     "compiler hang (see HANGING_TESTS)": 1,
     "dynamic-import + sloppy-script var/fn redecl + fixture path (#1696)": 18,
+    "Proposal excluded from default scope: proposal feature: Temporal": 9,
     "proposal feature: import defer (no test harness)": 96
   }
 }

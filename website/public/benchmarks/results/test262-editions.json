@@ -3925,9 +3925,9 @@
   {
     "edition": "Proposals",
     "pass": 1346,
-    "fail": 3325,
+    "fail": 3316,
     "ce": 215,
-    "skip": 96,
+    "skip": 105,
     "total": 4982,
     "pct": 27
   }

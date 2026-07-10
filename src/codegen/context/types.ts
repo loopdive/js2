@@ -1035,6 +1035,22 @@ export interface CodegenContext {
    */
   usesArrayHoles: boolean;
   /**
+   * (#2001 S2 / merge-group park on PR #2832) Set by the same
+   * `scanForArrayHoles` pre-scan when the module WRITES an index property onto
+   * `Array.prototype` (`Object.defineProperty(Array.prototype, "0", …)`,
+   * `Array.prototype[0] = …`, `Reflect.defineProperty(Array.prototype, …)`).
+   * §23.1.3.* HOF visit-skips are keyed on `HasProperty(O, k)` — which is TRUE
+   * for a hole whose index is inherited from `Array.prototype` — but the flat
+   * WasmGC vec cannot model prototype-index inheritance. When this flag is set
+   * the module-wide HOF hole visit-skip (`shouldHoleSkip`) is disabled and
+   * holes fall back to the S1 visit-with-`undefined` behavior, which matches
+   * the observable result for the dominant test262 shape (inherited accessor
+   * without a getter ⇒ [[Get]] yields `undefined`). Clear — the common case —
+   * keeps the spec-correct skip. See the regressed trio
+   * `built-ins/Array/prototype/{every,filter,some}/*-c-i-22.js`.
+   */
+  arrayProtoIndexDirty: boolean;
+  /**
    * (#2083) Set true the first time `getOrRegisterVecType` is asked for a vec
    * type from a genuine usage site (an array literal, array method, for-of over
    * an array, TypedArray, etc.) — i.e. the module materialises at least one
