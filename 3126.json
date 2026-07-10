@@ -1,8 +1,9 @@
 {
   "id": "3126",
   "assignee": "ttraenkler/fable-3098r",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3126-typed-refelem-hof-closure",
   "claimed_at": "2026-07-10T00:24:41Z",
-  "updated_at": "2026-07-10T00:24:41Z"
+  "updated_at": "2026-07-10T01:36:49Z",
+  "released_at": "2026-07-10T01:36:49Z"
 }
