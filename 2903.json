@@ -1,8 +1,9 @@
 {
   "id": "2903",
   "assignee": "ttraenkler/fable-harvest1",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2903-then-chain-deleak",
   "claimed_at": "2026-07-10T21:19:16Z",
-  "updated_at": "2026-07-10T21:19:16Z"
+  "updated_at": "2026-07-10T22:04:56Z",
+  "released_at": "2026-07-10T22:04:56Z"
 }
