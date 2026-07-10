@@ -6796,7 +6796,14 @@ function _hostProxyConstruct(
   // non-callable target keeps the raw struct as before (identity-preserving, no
   // behavior change).
   const { proxyTarget, rawTarget } = _proxyTargetFor(target, callbackState);
-  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget);
+  // (#3127) When the [[ProxyTarget]] stays the RAW WasmGC struct (non-callable
+  // target, no wrapper substitution), the host engine's ordinary internal
+  // methods cannot see its fields — the struct is opaque to V8, so a
+  // trap-ABSENT `p.x` read `undefined` for every field (`new Proxy(t, {}).x`
+  // === 0 after unbox). Hand the struct to the bridge builder so it can
+  // install a struct-aware default `get` forwarder for that case.
+  const structTarget = rawTarget === undefined && _isWasmStruct(target) ? target : undefined;
+  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
   const proxy = new Proxy(proxyTarget, bridgeHandler);
   _userProxies.add(proxy);
   return proxy;
@@ -6818,7 +6825,9 @@ function _hostProxyConstructRevocable(
   // proxy callable/constructable; use its JS wrapper as [[ProxyTarget]] and
   // restore the raw struct in the apply/construct traps.
   const { proxyTarget, rawTarget } = _proxyTargetFor(target, callbackState);
-  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget);
+  // (#3127) Same struct-aware trap-absent `get` forwarding as `_hostProxyConstruct`.
+  const structTarget = rawTarget === undefined && _isWasmStruct(target) ? target : undefined;
+  const bridgeHandler = _buildProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
   const rv = Proxy.revocable(proxyTarget, bridgeHandler);
   if (rv && typeof rv.proxy === "object" && rv.proxy !== null) _userProxies.add(rv.proxy);
   return rv;
@@ -6890,13 +6899,25 @@ function _buildProxyBridgeHandler(
   // `assert.sameValue(trapTarget, target)` holds. `undefined` ⇒ no substitution
   // (non-callable target, identity-preserving — the prior behavior).
   rawTarget?: any,
+  // (#3127) The user's target when it is a RAW WasmGC struct kept as the
+  // [[ProxyTarget]] (no callable substitution). Such a target is OPAQUE to the
+  // host engine's ordinary internal methods, so "missing trap ⇒ target's
+  // default behavior" (§7.3.10) silently reads `undefined` for every field —
+  // `new Proxy(structTarget, {}).x` returned 0 instead of the field value.
+  // When set, the builders install a struct-aware default `get` forwarder for
+  // the trap-absent case. `undefined` ⇒ non-struct target (host default is
+  // already correct) or substituted callable wrapper (readable by the host).
+  structTarget?: any,
 ): any {
   // Plain JS handler (created host-side, not a WasmGC struct) already exposes
   // its traps directly. BUT if the [[ProxyTarget]] is a substituted callable
   // wrapper, even a plain-JS handler's apply/construct trap would observe the
   // wrapper as `target` — so wrap just those two traps to restore the raw
   // target. With no substitution this returns the handler verbatim (identity /
-  // `this` untouched, exactly as before).
+  // `this` untouched, exactly as before). (#3127) Trap-absent struct-target
+  // forwarding for plain-JS handlers is a known residual gap — compiled
+  // programs produce WasmGC-struct handlers, so the struct-handler paths below
+  // cover the live shapes.
   if (!_isWasmStruct(handler)) {
     return rawTarget === undefined ? handler : _wrapPlainHandlerForRawTarget(handler, rawTarget);
   }
@@ -6927,13 +6948,27 @@ function _buildProxyBridgeHandler(
   // a proxy built inside an exported function) is unchanged: the eager branch
   // below is byte-for-byte the prior logic.
   if (!exports) {
-    return _buildLazyProxyBridgeHandler(handler, callbackState, rawTarget);
+    return _buildLazyProxyBridgeHandler(handler, callbackState, rawTarget, structTarget);
   }
 
   const bridge: Record<string, any> = {};
   for (const name of _PROXY_TRAP_NAMES) {
     const rawTrap = _structFieldRaw(handler, name, exports);
-    if (rawTrap == null) continue; // undefined/null → genuine absence, host forwards to target (§7.3.10)
+    if (rawTrap == null) {
+      // undefined/null → genuine absence, host forwards to target (§7.3.10).
+      // (#3127) EXCEPT `get` on a raw WasmGC-struct [[ProxyTarget]]: the host's
+      // ordinary [[Get]] cannot see the opaque struct's fields, so forward the
+      // read through the canonical struct-field resolution (`_resolveHostField`
+      // — accessor getter → sidecar → `__sget_*` field getter → well-known-
+      // symbol sidecar → vivified prototype; the same precedence `_wrapForHost`
+      // uses). Invariant validation still runs against the opaque target, which
+      // exposes no own descriptors — so no §10.5.8 conflicts arise.
+      if (name === "get" && structTarget !== undefined) {
+        bridge[name] = (_t: any, key: any, _receiver: any): any =>
+          _resolveHostField(structTarget, key, callbackState?.getExports());
+      }
+      continue;
+    }
     const callable = _maybeWrapCallableUnknownArity(rawTrap, callbackState);
     if (typeof callable !== "function") {
       // (#2616) §7.3.10 GetMethod: a present-but-non-callable trap value (`{}`,
@@ -7010,6 +7045,9 @@ function _buildLazyProxyBridgeHandler(
   handler: any,
   callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
   rawTarget?: any,
+  // (#3127) See `_buildProxyBridgeHandler` — the raw WasmGC-struct target kept
+  // as [[ProxyTarget]], for struct-aware trap-absent `get` forwarding.
+  structTarget?: any,
 ): any {
   const bridge: Record<string, any> = {};
   for (const name of _PROXY_TRAP_NAMES) {
@@ -7022,6 +7060,12 @@ function _buildLazyProxyBridgeHandler(
         // method. `args[0]` is the [[ProxyTarget]] (the callable WRAPPER when a
         // wasm-closure target was substituted) — forward through it unchanged so
         // a default apply/construct lands on a host-callable value.
+        // (#3127) EXCEPT `get` on a raw WasmGC-struct [[ProxyTarget]] — opaque
+        // to the host's ordinary [[Get]]; read through the canonical
+        // struct-field resolution (see the eager builder).
+        if (name === "get" && structTarget !== undefined) {
+          return _resolveHostField(structTarget, args[1], lateExports);
+        }
         return _proxyForwardDefault(name, args);
       }
       // (#2618) restore the raw target for apply/construct (see eager path) only
