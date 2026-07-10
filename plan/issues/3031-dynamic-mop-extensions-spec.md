@@ -5,6 +5,7 @@ status: ready
 sprint: Backlog
 created: 2026-07-04
 updated: 2026-07-09
+assignee: ttraenkler/fable-3031 (apply slice only — released on merge; umbrella stays open)
 priority: high
 horizon: xl
 feasibility: hard
@@ -526,3 +527,91 @@ State advances since this spec was written — re-ground before dispatching:
    `Reflect.getPrototypeOf`-on-proxy standalone CE/trap (P4). K1's locus
    (inbound arg-marshalling) is adjacent to the in-flight #3087 (dynamic
    `new` on the gc lane) — claim-check #3087's branch before starting K1.
+
+## Apply slice — LANDED (fable-3031, 2026-07-09)
+
+**Scope**: the standalone `apply`-trap / dynamic-apply slice (the #3099
+follow-up: the 12th dark trap). K1 (host lane), K2 (construct), P3/P4/P5 and
+Parts 2–3 remain open — this umbrella issue stays `ready`.
+
+### What was actually broken (verify-first findings — the spec's "K1/K2" framing was partly off for this lane)
+
+The standalone `p(...)`-on-`any`-callee path (`tryEmitInlineDynamicCall`,
+`src/codegen/expressions/calls.ts`) had **three stacked defects**, only the
+third of which is the trap-dispatch gap the spec describes:
+
+1. **Stale captured helper indices → invalid Wasm** (why BOTH handler shapes
+   "emit invalid Wasm" per #3099's handoff): `__box_number`/`__unbox_number`
+   funcIdx were captured BEFORE `ensureLateImport("__get_undefined")` inserted
+   a real import; `flushLateImportShifts` repaired `funcMap` + emitted bodies
+   but NOT the captured locals, so every dispatch arm baked `call <box−1>` —
+   which lands on `__str_to_number` — and the module failed validation
+   (`call[0] expected externref, found call_ref of type f64`). The
+   stack-balance repair pass then *appended* a real `call __box_number` to fix
+   the arm's block-result type, masking the shape further. **Fix**: capture
+   AFTER the flush. (Host lane was immune: box/unbox are imports there, and
+   import indices don't shift on later import appends.)
+2. **`env.__get_undefined` host-import leak**: the arity-pad path called
+   `ensureLateImport` directly, bypassing `ensureGetUndefined`'s
+   `nativeStrings` gate — every padded standalone module demanded an env
+   import and was un-instantiable host-free. **Fix**: resolve the pad exactly
+   like `emitUndefined` (host import on host lane; #2106 S1 singleton or
+   `ref.null.extern` standalone).
+3. **No Proxy arm anywhere on the [[Call]] surface.** Fixed per the §0.1
+   front-guard ruling, three pieces:
+   - `__proxy_apply_dispatch(proxy, thisArg, argsVec)` native
+     (`object-runtime.ts`, §10.5.12): revoked → TypeError; `apply` trap
+     (field 3, wired at `__proxy_create` since #1100 but never dispatched) →
+     `Call(trap, handler, «target, thisArgument, argArray»)` via the new
+     reserved `__proxy_call_apply` driver (filled at FINALIZE →
+     `__call_fn_method_3`, same reserve-then-fill as the other 11); trap
+     absent → forward `Call(target, thisArg, args)` through `__apply_closure`.
+   - **$Proxy front-guard on `__apply_closure`** (fillApplyClosure) — the
+     bridge is a MOP entry point ([[Call]]), so EVERY consumer (method calls
+     on open receivers, a proxy installed as another proxy's trap,
+     groupBy/accessor drivers) intercepts proxy callees for free, and
+     proxy-of-proxy chains unwrap one guard hop at a time (no self-recursion
+     needed in the dispatch).
+   - **OUTERMOST `ref.test $Proxy` arm** at the inline dynamic-call site,
+     gated `ctx.standalone` AND (funcMap has `__proxy_create` OR a per-file
+     syntactic `new Proxy`/`Proxy.revocable` scan — the funcMap check alone
+     misses same-file call-before-creation compile order, the #2754 class).
+     Proxy-free programs never grow the arm.
+
+### Validation (PR #2815 — branch `issue-3031-proxy-apply-trap`)
+
+- **12/12 method-shorthand handler traps fire** (was 11/12 after #3099);
+  arrow-property parity too.
+- Trap semantics probed: argArray `.length`/indexing, target-callable-in-trap,
+  thisArg === undefined, absent-trap forward, proxy-of-proxy, proxy-as-method
+  (`o.m(…)` where `m` is a proxy — the front-guard path). All pass;
+  `tests/issue-3031-proxy-apply.test.ts` (11 cases) pins them.
+- **prove-emit-identity**: gc lane byte-identical across the whole corpus
+  (33/39 identical); 6 standalone/wasi drifts are the additive
+  `__proxy_apply_dispatch` + driver + front-guard growth in modules already
+  carrying the (unconditionally-registered) proxy runtime — same import sets,
+  all valid, consistent with how `__extern_get`'s guards keep the other 11
+  dispatchers live.
+- **Scoped test262 `built-ins/Proxy` standalone**: 67 pass / 53 CE → 67 pass /
+  50 CE, **zero pass→fail regressions**; the 3 flips are `*-realm.js` CE→fail
+  (the documented `$262.createRealm` deferral — now they compile).
+
+### Boundary — measured next levers for the dynamic-apply surface
+
+- **`.call`/`.apply` on ANY dynamic callable** — `f.call(...)` on a bare
+  `any`-typed closure silently returns undefined on main (pre-existing,
+  NOT proxy-specific; `__extern_method_call` answers only `$Object`
+  receivers and no Function.prototype MOP exists for callable values).
+  8 of the 14 `built-ins/Proxy/apply/*` rows hinge on exactly this. This is
+  the highest-leverage NEXT sub-slice of the dynamic-apply surface — fix it
+  generally (Function.prototype.call/apply/bind on the callable-classifier
+  arm, cf. #3098's spine), not proxy-only.
+- **Dynamic-call result → declared-`string` coercion** — pre-existing
+  ("Cannot convert object to primitive value" for bare closures too); the
+  trap's string RESULT is fine when consumed as `any`.
+- **Present-but-non-callable trap TypeError** (`trap-is-not-callable.js`) —
+  slice G / §1.6, unchanged.
+- **`*-realm.js`** — `$262.createRealm`, deferred as documented.
+- K1 (host-lane inbound marshalling), K2 (`construct` + `$ProxyTraps` field
+  13), P3 (revocable — still CE "#1472 Phase C"), P4 (Reflect.*), P5
+  (invariants): open, unchanged by this slice.

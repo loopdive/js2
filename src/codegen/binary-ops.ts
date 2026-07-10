@@ -39,13 +39,57 @@ import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringImports, addUnionImports, resolveNativeTypeAnnotation, resolveWasmType } from "./index.js";
 import type { InnerResult } from "./shared.js";
-import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts } from "./shared.js";
+import { coerceType, compileExpression, ensureAnyHelpers, flushLateImportShifts, VOID_RESULT } from "./shared.js";
 import { isLogicalAssignNamedEvalNameRead, resolveStructNameForExpr } from "./property-access.js";
 import { compileStringBinaryOp, emitHoistedCharCodeAtRead, matchHoistedCharRead } from "./string-ops.js";
 import { emitAnyEqFromExternTemps, emitLooseEq, emitStrictEq } from "./coercion-engine.js";
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 
 // ── Binary operations ─────────────────────────────────────────────────
+
+/**
+ * (#2712 I1) Binary operators whose result is ALWAYS a JS boolean: relational
+ * (`<` `>` `<=` `>=`), equality (`==` `===` `!=` `!==`), `in`, `instanceof`.
+ * Their `compileBinaryExpression` result is a bare `{kind:"i32"}` today (only
+ * literals #2795 + declared storage brand); branding it at the single dispatch
+ * chokepoint (`brandBooleanBinaryResult`, called from expressions.ts) makes the
+ * boolean brand TOTAL for computed predicates so downstream boxing (Set/Map
+ * keys, property keys, Object.values) reifies a boolean, not the number 1/0.
+ * Arithmetic/bitwise/logical (`&&`/`||` return the operand type) are deliberately
+ * excluded — branding a number as boolean would be a bug.
+ */
+const BOOLEAN_PRODUCING_BINARY_OPS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.InKeyword,
+  ts.SyntaxKind.InstanceOfKeyword,
+]);
+
+/**
+ * (#2712 I1) Brand a comparison/equality/relational/`in`/`instanceof` result as
+ * a boolean. No-op for a non-boolean operator, a null/VOID result, or an already
+ * -branded / non-i32 result. Idempotent + structurally inert (the brand still
+ * matches every `.kind === "i32"` check). Called at the single dispatch site in
+ * expressions.ts so all boolean-producing binary results are branded uniformly.
+ */
+export function brandBooleanBinaryResult(op: ts.SyntaxKind, result: InnerResult): InnerResult {
+  if (
+    result !== null &&
+    result !== VOID_RESULT &&
+    result.kind === "i32" &&
+    result.boolean !== true &&
+    BOOLEAN_PRODUCING_BINARY_OPS.has(op)
+  ) {
+    return { ...result, boolean: true };
+  }
+  return result;
+}
 
 /**
  * (#2741) `key in rval` throws a TypeError when `Type(rval)` is not Object

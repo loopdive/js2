@@ -64,7 +64,7 @@ import { compileConditionalExpression, compileYieldExpression } from "./expressi
 import { compileArrowFunction } from "./closures.js";
 
 // Property access + binary ops (used inside compileExpressionInner)
-import { compileBinaryExpression } from "./binary-ops.js";
+import { brandBooleanBinaryResult, compileBinaryExpression } from "./binary-ops.js";
 import { compileArrayLiteral, compileObjectLiteral } from "./literals.js";
 import { compileElementAccess, compilePropertyAccess, maybeWrapAnyReadEqualityCarrier } from "./property-access.js";
 import { compileTaggedTemplateExpression, compileTemplateExpression } from "./string-ops.js";
@@ -1216,7 +1216,7 @@ function compileExpressionInner(
         return compileHostInstanceOf(ctx, fctx, expr);
       }
     }
-    return compileBinaryExpression(ctx, fctx, expr);
+    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr));
   }
 
   if (ts.isTypeOfExpression(expr)) {

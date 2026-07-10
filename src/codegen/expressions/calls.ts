@@ -223,7 +223,14 @@ import {
   tryRegExpConstructorCall,
 } from "./calls-guards.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
-import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
+import {
+  emitUndefined,
+  ensureGetUndefined,
+  ensureLateImport,
+  flushLateImportShifts,
+  shiftLateImportIndices,
+} from "./late-imports.js";
+import { undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
 import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
@@ -403,6 +410,47 @@ function receiverMayBeProxy(ctx: CodegenContext, argExpr: ts.Expression): boolea
     }
   }
   return false;
+}
+
+/**
+ * (#3031) Per-source-file syntactic gate for the standalone Proxy [[Call]] arm:
+ * does this file contain `new Proxy(...)` or a `Proxy.revocable(...)` call?
+ * Cached per SourceFile (WeakMap). This complements the "`__proxy_create`
+ * already registered" check in `tryEmitInlineDynamicCall`: a dynamic call site
+ * can compile BEFORE the same file's `new Proxy` site (the #2754
+ * registration-order class), while a proxy compiled in an earlier file is
+ * caught by the funcMap check. A proxy has no TS-type brand
+ * (`project_proxy_no_ts_type_brand`), so the gate is syntactic by design.
+ */
+const sourceCreatesProxyCache = new WeakMap<ts.SourceFile, boolean>();
+function sourceCreatesProxy(sf: ts.SourceFile): boolean {
+  const cached = sourceCreatesProxyCache.get(sf);
+  if (cached !== undefined) return cached;
+  let found = false;
+  // Cheap text pre-filter before the AST walk.
+  if (sf.text.includes("Proxy")) {
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy") {
+        found = true;
+        return;
+      }
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "revocable" &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "Proxy"
+      ) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  sourceCreatesProxyCache.set(sf, found);
+  return found;
 }
 
 /**
@@ -3059,7 +3107,20 @@ function tryEmitInlineDynamicCall(
     if (!ok) continue;
     allCandidates.push({ structTypeIdx: typeIdx, info });
   }
-  if (allCandidates.length === 0) return null;
+
+  // (#3031) Standalone Proxy [[Call]] arm gate — §0.1 ladder step 1: a Proxy
+  // must intercept everything, including a dynamic call of the proxy value
+  // itself (`p(...)`). Armed when the module can contain a live `$Proxy`:
+  // `__proxy_create` already registered (an earlier-compiled / cross-file
+  // `new Proxy`) OR this source file syntactically creates one (a call site can
+  // compile BEFORE the same file's `new Proxy` site, so funcMap presence alone
+  // misses the registration-order case — the #2754 class). Proxy-free programs
+  // never grow the arm (byte-identical, the #2175 S0 discipline). Host lane is
+  // untouched: a host proxy is a host externref whose [[Call]] belongs to the
+  // K1 inbound-marshalling keystone, not this dispatch.
+  const wantProxyArm =
+    ctx.standalone === true && (ctx.funcMap.has("__proxy_create") || sourceCreatesProxy(expr.getSourceFile()));
+  if (allCandidates.length === 0 && !wantProxyArm) return null;
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
   // base wrapper; one dispatch arm per unique funcref type is enough.
@@ -3075,22 +3136,36 @@ function tryEmitInlineDynamicCall(
   // wider, undefined-padded one.
   candidates.sort((a, b) => a.info.paramTypes.length - arity - (b.info.paramTypes.length - arity));
 
-  // Ensure box/unbox helpers.
+  // Ensure box/unbox helpers exist (standalone: registered as native defined
+  // functions, no import; host: late imports). Their indices are captured AFTER
+  // the flush below — capturing them here, BEFORE a real import insertion (the
+  // `__get_undefined` pad import), left the captured locals stale-low by the
+  // insertion count while `flushLateImportShifts` repaired only `funcMap` and
+  // already-emitted bodies. Every dispatch arm then baked `call <box-1>` — the
+  // adjacent string-to-number native instead of the box helper — and the
+  // module failed validation ("call[0] expected externref, found call_ref
+  // of type f64"; the #3031 dynamic-apply invalid-module class).
+  const UNBOX_NUMBER = "__unbox_number";
   addUnionImports(ctx);
-  const boxNumberIdx = ctx.funcMap.get("__box_number");
-  const unboxNumberIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
+  if (ensureLateImport(ctx, UNBOX_NUMBER, [{ kind: "externref" }], [{ kind: "f64" }]) === undefined) {
+    return null;
+  }
 
   // (#820/#1543) `undefined` externref source for padding missing trailing
-  // args (call arity < a candidate's formal count). Host mode pulls it from
-  // `__get_undefined`; if that import can't be added, `ref.null.extern`
-  // stands in (a wasm method's `__extern_is_undefined` default-param guard
-  // treats host `undefined` and a null externref alike).
+  // args (call arity < a candidate's formal count), and (#3031) for the Proxy
+  // arm's `thisArgument` (a bare `p(...)` call has `this = undefined`). Host
+  // mode pulls it from `__get_undefined`; standalone / native-strings MUST NOT
+  // add that env import (it made the module un-instantiable host-free — the
+  // #3031 leak): `ensureGetUndefined` gates the import exactly like
+  // `emitUndefined`, and the standalone representation is the (#2106 S1)
+  // $undefined singleton when active, else `ref.null.extern` (a wasm method's
+  // `__extern_is_undefined` default-param guard treats host `undefined` and a
+  // null externref alike).
   const maxFormals = candidates.reduce((m, c) => Math.max(m, c.info.paramTypes.length), 0);
   const needsUndefinedPad = maxFormals > arity;
-  const undefinedIdx = needsUndefinedPad
-    ? ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }])
-    : undefined;
+  const needsUndefined = needsUndefinedPad || wantProxyArm;
+  const undefinedIdx = needsUndefined ? ensureGetUndefined(ctx) : undefined;
+  const undefinedSingletonPad = needsUndefined && undefinedIdx === undefined ? undefinedExternInstrs(ctx) : undefined;
   // (#2611) Flush the deferred late-import shift NOW — every other late-import
   // call site in this file flushes after the add, but this one historically did
   // not, leaving `ctx.pendingLateImportShift` dangling. `ensureLateImport`
@@ -3112,14 +3187,41 @@ function tryEmitInlineDynamicCall(
   // destructuring-param trigger that reaches here, but the flush is correct for
   // every path. (Mirrors `emitUndefined`, which already flushes after the same
   // `ensureGetUndefined` add.)
-  if (undefinedIdx !== undefined) flushLateImportShifts(ctx, fctx);
+  flushLateImportShifts(ctx, fctx);
+  // Capture the helper indices AFTER the flush: the flush re-bases `funcMap`
+  // for defined functions, so these are the settled, final indices (see the
+  // stale-capture note above).
+  const boxNumberIdx = ctx.funcMap.get("__box_number");
+  const unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
+  if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
+
   const pushUndefinedExternref = (body: Instr[]): void => {
     if (undefinedIdx !== undefined) {
       body.push({ op: "call", funcIdx: undefinedIdx } as Instr);
+    } else if (undefinedSingletonPad !== undefined) {
+      // FRESH Instr objects per use — the singleton sequence lands in multiple
+      // dispatch arms, and a shared Instr aliased into two branches gets
+      // double-remapped by finalize index walks (the
+      // `reference_shared_instr_object_dce_double_remap` class).
+      for (const ins of undefinedSingletonPad) body.push({ ...ins });
     } else {
       body.push({ op: "ref.null.extern" } as Instr);
     }
   };
+
+  // (#3031) Materialize the Proxy [[Call]] pieces while the gate is live. The
+  // object/proxy runtime registers DEFINED functions only (no import → no index
+  // shift), so this is safe after the flush + captures above.
+  let proxyArm: { proxyTypeIdx: number; dispatchIdx: number; vecNewIdx: number; vecPushIdx: number } | undefined;
+  if (wantProxyArm) {
+    const vecBuilders = ensureObjVecBuilders(ctx);
+    const dispatchIdx = ctx.funcMap.get("__proxy_apply_dispatch");
+    const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+    if (dispatchIdx !== undefined && proxyTypeIdx !== undefined) {
+      proxyArm = { proxyTypeIdx, dispatchIdx, vecNewIdx: vecBuilders.newIdx, vecPushIdx: vecBuilders.pushIdx };
+    }
+  }
+  if (candidates.length === 0 && proxyArm === undefined) return null;
 
   // Compile callee (externref) → anyref → temp local.
   const calleeType = compileExpression(ctx, fctx, expr.expression);
@@ -3253,6 +3355,40 @@ function tryEmitInlineDynamicCall(
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
         then: callBody,
+        else: dispatch,
+      } as Instr,
+    ];
+  }
+
+  // (#3031) Standalone Proxy [[Call]] — the OUTERMOST arm (§0.1 ladder step 1,
+  // ahead of every closure-shape candidate): `p(...)` where `p` is a live
+  // `$Proxy` packs the saved args into the native `$ObjVec` carrier and routes
+  // to `__proxy_apply_dispatch(p, undefined, argsVec)` — the §10.5.12 apply
+  // trap when installed, a transparent forward to the target otherwise. The
+  // `thisArgument` of a bare call is `undefined`.
+  if (proxyArm !== undefined) {
+    const vecLocal = allocLocal(fctx, `__dyn_pargs_${fctx.locals.length}`, { kind: "externref" });
+    const armBody: Instr[] = [
+      { op: "call", funcIdx: proxyArm.vecNewIdx } as Instr,
+      { op: "local.set", index: vecLocal } as Instr,
+    ];
+    for (const argLocal of argLocals) {
+      armBody.push({ op: "local.get", index: vecLocal } as Instr);
+      armBody.push({ op: "local.get", index: argLocal } as Instr);
+      armBody.push({ op: "call", funcIdx: proxyArm.vecPushIdx } as Instr);
+    }
+    armBody.push({ op: "local.get", index: anyLocal } as Instr);
+    armBody.push({ op: "extern.convert_any" } as Instr);
+    pushUndefinedExternref(armBody); // thisArgument = undefined
+    armBody.push({ op: "local.get", index: vecLocal } as Instr);
+    armBody.push({ op: "call", funcIdx: proxyArm.dispatchIdx } as Instr);
+    dispatch = [
+      { op: "local.get", index: anyLocal } as Instr,
+      { op: "ref.test", typeIdx: proxyArm.proxyTypeIdx } as Instr,
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: armBody,
         else: dispatch,
       } as Instr,
     ];

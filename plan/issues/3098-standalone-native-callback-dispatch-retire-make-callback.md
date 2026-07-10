@@ -233,12 +233,13 @@ root: `eliminateDeadImports` strips it when nothing calls it.)
 and 3-param callbacks all correct, `.tmp/probe-3098-extended.mts` 26/27).
 
 **Validation:**
+
 - `tests/issue-3098.test.ts` — 15 tests, all pass (host-free asserted via
   zero-import check + empty import object).
 - Byte-identity: `prove-emit-identity` main-vs-branch — IDENTICAL, all 39
   (file,target) hashes across gc/standalone/wasi on the playground corpus.
 - Cluster (runTest262File, standalone lane): `built-ins/Array/prototype/{map,
-  filter,forEach,reduce,every,some,find*}` (1,439 non-skip files) — ZERO
+filter,forEach,reduce,every,some,find*}` (1,439 non-skip files) — ZERO
   regressions, zero flips. The sampled 81 "only-`__make_callback`" leak rows
   from the 2026-06-16 standalone JSONL also show 0 flips: each depends on an
   ADJACENT gap (see boundaries below). The value of this slice is the
@@ -246,6 +247,7 @@ and 3-param callbacks all correct, `.tmp/probe-3098-extended.mts` 26/27).
   the same dispatch arm.
 
 **Boundaries / residuals (named, for S4/S5 + adjacent owners):**
+
 - **Typed `string[]` receivers of `find`/`filter`/`findIndex`/`findLast*`/
   `every`/`some`/`reduce*`/`forEach` still leak `__make_callback`** — the
   typed inline impls in `array-methods.ts:3350-3440` gate on
@@ -254,6 +256,11 @@ and 3-param callbacks all correct, `.tmp/probe-3098-extended.mts` 26/27).
   `str-filter` leak; `str-map` is native via the #2688-widened gate). Fixing
   this is typed-lane work (result-rep: typed callers expect a
   `$NativeString` ref back, not externref) — S5 candidate, separate PR.
+  **→ RETIRED by #3126** (gates widened to ref/ref_null on the
+  standalone/wasi lanes under a closure-provability check; the gc host lane
+  deliberately keeps the `__make_callback` fallback — it is the only path
+  that resolves host globals like `Temporal`/`TemporalHelpers` inside
+  callback bodies; see #3126's merge-group reversal note).
 - `sort(cmp)`, `flatMap`, `Array.from(x, mapFn)` — S4, not landed.
 - TypedArray dyn-view callback methods (#3058 BANKED) — S3's other half, not
   landed (coordinate with #3058's two-arm).

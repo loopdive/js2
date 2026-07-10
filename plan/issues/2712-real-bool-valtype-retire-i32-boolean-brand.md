@@ -1,7 +1,9 @@
 ---
 id: 2712
 title: "Introduce a real bool ValType; retire the optional i32 boolean brand"
-status: ready
+status: done
+completed: 2026-07-09
+assignee: ttraenkler/fable-3058
 # was blocked_on the architect ValType-registration decision — RESOLVED 2026-07-03,
 # see ## Architect Decision below: NO {kind:"bool"}; brand ratified, made total at producers
 sprint: current
