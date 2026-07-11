@@ -1,8 +1,9 @@
 {
   "id": "2903",
   "assignee": "ttraenkler/fable-finally",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2903-native-finally",
   "claimed_at": "2026-07-10T23:02:32Z",
-  "updated_at": "2026-07-10T23:02:32Z"
+  "updated_at": "2026-07-11T01:25:14Z",
+  "released_at": "2026-07-11T01:25:14Z"
 }
