@@ -1,8 +1,9 @@
 {
   "id": "3139",
   "assignee": "ttraenkler/fable-harvest2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3139-fnctor-receiver-method-inference",
   "claimed_at": "2026-07-10T23:42:09Z",
-  "updated_at": "2026-07-10T23:42:09Z"
+  "updated_at": "2026-07-11T00:19:17Z",
+  "released_at": "2026-07-11T00:19:17Z"
 }
