@@ -180,6 +180,7 @@ import {
   resolveExternrefVecArg,
   type NativeCombinator,
 } from "../promise-combinators.js";
+import { emitStandalonePromiseCapabilityCombinator } from "../promise-capability.js"; // (#3141) reflective capability-ctor combinators
 import { emitWasiErrorConstructor } from "../registry/error-types.js"; // (#2922) native TypeError for not-iterable reject
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import {
@@ -2134,6 +2135,51 @@ function calleeIsPromiseExecutorParam(ctx: CodegenContext, expr: ts.Expression):
  * source file. Only such functions are entered as capability constructors with
  * host-supplied params; ordinary callable params never match.
  */
+/**
+ * (#3141) Find the module's `C.resolve = <expr>` static assignment for the
+ * reflective-combinator capability lowering. Fnctor statics have no native
+ * runtime representation under standalone (see #2976 / the #3141 issue file),
+ * so the capability machinery binds `C.resolve` at COMPILE TIME to the
+ * assignment's RHS — sound for the cluster's side-effect-free function
+ * literals; exotic RHSs (builtin statics like `Promise.resolve`) return
+ * undefined so the call site falls through to the pre-existing refusal.
+ * Unwraps `as`/paren on both the receiver (`(C as any).resolve = …`) and the
+ * RHS.
+ */
+function findStaticResolveAssignment(sf: ts.SourceFile, cName: string): ts.Expression | undefined {
+  let found: ts.Expression | undefined;
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    let cur = e;
+    while (ts.isAsExpression(cur) || ts.isParenthesizedExpression(cur) || ts.isNonNullExpression(cur)) {
+      cur = cur.expression;
+    }
+    return cur;
+  };
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      node.left.name.text === "resolve"
+    ) {
+      const recv = unwrap(node.left.expression);
+      if (ts.isIdentifier(recv) && recv.text === cName) {
+        const rhs = unwrap(node.right);
+        // Only function literals are compile-time-bindable (side-effect-free,
+        // capture-safe via module globals). Anything else → no binding.
+        if (ts.isFunctionExpression(rhs) || ts.isArrowFunction(rhs)) {
+          found = rhs;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
 function calleeIsCapabilityCtorParam(ctx: CodegenContext, expr: ts.Expression): boolean {
   if (!ts.isIdentifier(expr)) return false;
   const sym = ctx.checker.getSymbolAtLocation(expr);
@@ -9603,6 +9649,88 @@ function compileCallExpression(
           return { kind: "externref" };
         }
         return fallbackReturn(3, "extern-null");
+      }
+    }
+
+    // (#3141) Reflective combinator over a CUSTOM capability constructor —
+    // `Promise.<all|race>.call(C, iterable)` (§27.2.1.5 NewPromiseCapability +
+    // §25.6.4.1.1 PerformPromiseAll/Race). The whole observable flow is
+    // user-space (C's executor records resolve/reject, C.resolve maps
+    // elements, the elements are user thenables), so it lowers to the native
+    // capability machinery in promise-capability.ts with no promise carrier
+    // involved. Requires a module-scan binding for `C.resolve = <fn>` (fnctor
+    // statics have no native runtime rep — #2976 / the #3141 issue file);
+    // without one, fall through to the existing paths (refusal stub).
+    if (isStandalonePromiseActive(ctx) && propAccess.name.text === "call" && expr.arguments.length >= 1) {
+      // Unwrap `as`/paren on the combinator receiver so the TS-cast form
+      // `(Promise.all as any).call(C, …)` matches the bare JS form too.
+      let combRecv: ts.Expression = propAccess.expression;
+      while (
+        ts.isAsExpression(combRecv) ||
+        ts.isParenthesizedExpression(combRecv) ||
+        ts.isNonNullExpression(combRecv)
+      ) {
+        combRecv = combRecv.expression;
+      }
+      if (
+        ts.isPropertyAccessExpression(combRecv) &&
+        ts.isIdentifier(combRecv.expression) &&
+        combRecv.expression.text === "Promise" &&
+        (combRecv.name.text === "all" || combRecv.name.text === "race")
+      ) {
+        const method = combRecv.name.text as "all" | "race";
+        let cArg: ts.Expression = expr.arguments[0]!;
+        while (ts.isAsExpression(cArg) || ts.isParenthesizedExpression(cArg) || ts.isNonNullExpression(cArg)) {
+          cArg = cArg.expression;
+        }
+        const resolveRhs = ts.isIdentifier(cArg)
+          ? findStaticResolveAssignment(cArg.getSourceFile(), cArg.text)
+          : undefined;
+        if (resolveRhs !== undefined) {
+          const liveBuffers: Instr[][] = [];
+          try {
+            const compileBuffer = (emitInto: () => void): Instr[] => {
+              const instrs: Instr[] = [];
+              liveBuffers.push(instrs);
+              ctx.liveBodies.add(instrs);
+              const savedBody = fctx.body;
+              fctx.savedBodies.push(savedBody);
+              fctx.body = instrs;
+              try {
+                emitInto();
+              } finally {
+                fctx.savedBodies.pop();
+                fctx.body = savedBody;
+              }
+              return instrs;
+            };
+            const capabilityCArg = cArg;
+            const cInstrs = compileBuffer(() => {
+              const t = compileExpression(ctx, fctx, capabilityCArg, { kind: "externref" });
+              if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+            });
+            const iterInstrs = compileBuffer(() => {
+              const iterArg = expr.arguments[1];
+              if (iterArg === undefined) {
+                fctx.body.push({ op: "ref.null.extern" } as Instr);
+                return;
+              }
+              const t = compileExpression(ctx, fctx, iterArg, { kind: "externref" });
+              if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+            });
+            const resolveFnInstrs = compileBuffer(() => {
+              const t =
+                ts.isArrowFunction(resolveRhs) || ts.isFunctionExpression(resolveRhs)
+                  ? compileArrowAsClosure(ctx, fctx, resolveRhs)
+                  : compileExpression(ctx, fctx, resolveRhs);
+              if (t && t.kind !== "externref") coerceType(ctx, fctx, t as ValType, { kind: "externref" });
+            });
+            emitStandalonePromiseCapabilityCombinator(ctx, fctx, method, cInstrs, iterInstrs, resolveFnInstrs);
+            return { kind: "externref" };
+          } finally {
+            for (const b of liveBuffers) ctx.liveBodies.delete(b);
+          }
+        }
       }
     }
 

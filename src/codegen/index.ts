@@ -71,6 +71,7 @@ import {
   fillProxyDispatch,
 } from "./object-runtime.js";
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
+import { fillPromiseCapabilityCall1 } from "./promise-capability.js"; // (#3141)
 import { fillClassToPrimitive } from "./class-to-primitive.js";
 import {
   fixupExternConvertAny,
@@ -2473,6 +2474,11 @@ export function generateModule(
     // `__call_fn_method_0..4` are registered. No-op when no standalone open-any
     // method-dispatch site reserved the bridge (`ctx.applyClosureReserved`).
     fillApplyClosure(ctx);
+
+    // (#3141) Fill the reserved `__pcap_call1` plain-application bridge now
+    // that `__call_fn_1` is registered. No-op when no reflective
+    // capability-combinator site registered the runtime.
+    fillPromiseCapabilityCall1(ctx);
 
     // (#1100) Fill the reserved standalone Proxy trap-invoke drivers
     // (`__proxy_call_{get,set,has}`) now that `__call_fn_method_2/3/4` are

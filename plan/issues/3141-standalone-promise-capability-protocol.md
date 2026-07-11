@@ -128,6 +128,54 @@ cluster.)
   capturing-inner-resolve variants; `species-get-error` (species lookup).
   Realistic semantic subset: ~25-40 of 69.
 
+## WIP state (fable-finally, 2026-07-11 — branch `issue-3141-standalone-promise-capability`, stacked on merged #2883)
+
+**Working end-to-end in TYPED replicas** (probes in `.tmp/probe-3141*.mts` on
+the branch worktree): capability record + executor (void-2-arg wrapper
+subtype) + null-validation TypeError + identity `C.resolve` (module-scan
+binding) + all-element one-shot aggregation + race direct-capability arms.
+Landed plumbing:
+
+- `src/codegen/promise-capability.ts` — the runtime + call-site emitter.
+- calls.ts detection (`Promise.<all|race>.call(C, iter)`, unwraps as/paren)
+  gated on the `C.resolve = <fnexpr>` module scan (`findStaticResolveAssignment`).
+- **Pre-body registration is LOAD-BEARING**: declarations.ts scan flag
+  (`ctx.moduleHasReflectiveCapabilityCombinator`) + collect-finalize
+  `ensurePromiseCapabilityRuntime` — the dynamic-call cascade
+  (`tryEmitInlineDynamicCall`) enumerates closure shapes known at ITS
+  emission, so the executor's 2-arg-void wrapper arm must exist before user
+  bodies compile (measured: nested `executor(resolve, reject)` call silently
+  no-ops otherwise).
+- **`__apply_closure` is method-ABI-only** (illegal cast on plain closures) —
+  all 1-arg applications route through the RESERVED `__pcap_call1`, FILLED at
+  finalize (`fillPromiseCapabilityCall1`, hooked in index.ts next to
+  `fillApplyClosure`) by delegating to the raw-pushed `__call_fn_1` (located
+  by NAME SCAN — the closure-call exports have no funcMap entries).
+- `next` is PEELED (`__promise_peel_value`) before the vararg-then dispatch
+  (module-global elements arrive `$AnyValue`-boxed; substrate pulled via
+  `ensurePromiseSettleFunctions`).
+
+**BLOCKER (bisected precisely, matrix probe `.tmp/probe-3141v.mts`)**: an
+UNTYPED object-literal thenable — plain-JS `var p1 = { then: function(f, r)
+{…} }`, i.e. every real test262 file — is NOT matched by
+`__call_m_then_vararg`'s closed-struct arm: the fill picked a struct type
+(`(struct (mut externref))`) that p1's actual construction never uses, so
+dispatch falls to the `__extern_method_call` HOST arm → silent no-invoke
+(and, with `Test262Error.thrower` registered, a downstream
+`__call_fn_1`-string-param illegal cast when the machinery's
+IfAbruptRejectPromise applies thrower to a non-string reason). With
+`var p1: any = {...}` the SAME module works fully (ret 11 / 1111 probes). Next
+step: root-cause how an untyped literal with a function-expression member
+registers vs what `fillClosedMethodDispatch` enumerates (closed-method-
+dispatch.ts) — compare the `p1: any` lowering (works) with the untyped one
+(misses). Secondary (after that): the `__call_fn_N` string-param arm hard-cast
+(`ref.cast (ref null $AnyString)` unguarded — thrower applied with an Error
+reason traps; guard standalone-only).
+
+Measured cluster (69 files): pass 0→2 (species-get-error all/race), 0 host-free
+yet — the untyped-literal dispatch gap holds back the ~15-25 semantic wins the
+typed replicas prove out.
+
 ## Acceptance
 
 - Measured fail→pass flips in the 69-cluster (standalone lane, runTest262File),

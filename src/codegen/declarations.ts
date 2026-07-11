@@ -60,6 +60,7 @@ import {
   unwrapGeneratorYieldType,
 } from "./index.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js";
+import { ensurePromiseCapabilityRuntime } from "./promise-capability.js"; // (#3141) reflective capability-ctor combinators
 import { ensureNativeStringExternBridge, ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
@@ -1142,6 +1143,32 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     }
   }
 
+  // (#3141) Pre-body detection of the reflective capability-combinator shape
+  // `Promise.<all|race>.call(…)` — drives the collect-finalize registration of
+  // the capability runtime's wrapper types (see the finalize block), which
+  // MUST precede every function-body compile for the dynamic-call cascade to
+  // carry the executor/element wrapper arms.
+  if (
+    (ctx.standalone === true || ctx.wasi === true) &&
+    ctx.moduleHasReflectiveCapabilityCombinator !== true &&
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "call"
+  ) {
+    let combRecv: ts.Expression = node.expression.expression;
+    while (ts.isAsExpression(combRecv) || ts.isParenthesizedExpression(combRecv) || ts.isNonNullExpression(combRecv)) {
+      combRecv = combRecv.expression;
+    }
+    if (
+      ts.isPropertyAccessExpression(combRecv) &&
+      ts.isIdentifier(combRecv.expression) &&
+      combRecv.expression.text === "Promise" &&
+      (combRecv.name.text === "all" || combRecv.name.text === "race")
+    ) {
+      ctx.moduleHasReflectiveCapabilityCombinator = true;
+    }
+  }
+
   // (#2903 finally sub-front) A `class X extends Promise` in the module is a
   // host-promise producer in its own right: subclass construction and the
   // inherited statics (`X.resolve()`/`X.reject()`) route through host imports
@@ -1936,6 +1963,20 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
     const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
     addImport(ctx, "env", importName, { kind: "func", typeIdx });
+  }
+
+  // ── (#3141) reflective-capability-combinator finalize ──
+  // `Promise.<all|race>.call(C, iterable)` needs the capability runtime's
+  // canonical wrapper types registered BEFORE any function body compiles: the
+  // dynamic-call cascade (`tryEmitInlineDynamicCall`) enumerates the closure
+  // shapes known AT ITS OWN emission, so the user constructor's
+  // `executor(resolve, reject)` call — which typically compiles BEFORE the
+  // reflective call site — would otherwise lack the 2-arg-void wrapper arm and
+  // silently never invoke the native executor. Placed LAST in this finalize so
+  // every upfront `addImport` above precedes the runtime's defined-function
+  // mints (import-before-defined index discipline).
+  if (ctx.moduleHasReflectiveCapabilityCombinator === true && isStandalonePromiseActive(ctx)) {
+    ensurePromiseCapabilityRuntime(ctx);
   }
 }
 

@@ -4335,4 +4335,15 @@ export function shiftAsyncSideChannelFuncIdxs(ctx: CodegenContext, importsBefore
       if (typeof v === "number" && inLiveShiftRange(v, importsBefore)) comb[k] = v + added;
     }
   }
+  // (#3141) Capability-protocol runtime (promise-capability.ts) — same lockstep
+  // requirement (later reflective-combinator call sites bake ref.func/call from
+  // these). Key list mirrored HERE (not imported) to avoid the async-scheduler
+  // → promise-capability → promise-combinators → async-scheduler import cycle.
+  const pcap = (ctx as unknown as { __promiseCapability?: Record<string, number> }).__promiseCapability;
+  if (pcap) {
+    for (const k of ["executorFuncIdx", "allElemFuncIdx", "pcapNewFuncIdx", "rejectWithFuncIdx", "pcapCall1FuncIdx"]) {
+      const v = pcap[k];
+      if (typeof v === "number" && inLiveShiftRange(v, importsBefore)) pcap[k] = v + added;
+    }
+  }
 }

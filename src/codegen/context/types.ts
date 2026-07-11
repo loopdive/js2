@@ -1634,6 +1634,14 @@ export interface CodegenContext {
    */
   standaloneNativeFinallyNodes?: Set<ts.Node>;
   /**
+   * (#3141) Pre-body scan flag: the module contains the reflective
+   * capability-combinator shape `Promise.<all|race>.call(…)`. Drives the
+   * collect-finalize registration of the capability runtime (its canonical
+   * wrapper types must exist before any function body compiles so the
+   * dynamic-call cascade carries the executor/element arms).
+   */
+  moduleHasReflectiveCapabilityCombinator?: boolean;
+  /**
    * Function declarations pre-registered during module-pass eager class body
    * compilation. The entry has a reserved `mod.functions` slot and signature,
    * but its body still belongs to the normal nested-function hoist pass.
