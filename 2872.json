@@ -1,8 +1,9 @@
 {
   "id": "2872",
   "assignee": "ttraenkler/fable-harvest3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2872-standalone-typedarray-proto",
   "claimed_at": "2026-07-10T22:30:45Z",
-  "updated_at": "2026-07-10T22:30:45Z"
+  "updated_at": "2026-07-11T00:21:17Z",
+  "released_at": "2026-07-11T00:21:17Z"
 }
