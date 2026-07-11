@@ -1,8 +1,9 @@
 {
   "id": "3140",
   "assignee": "ttraenkler/fable-harvest3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3140-standalone-closure-bind",
   "claimed_at": "2026-07-10T23:56:06Z",
-  "updated_at": "2026-07-10T23:56:06Z"
+  "updated_at": "2026-07-11T00:41:57Z",
+  "released_at": "2026-07-11T00:41:57Z"
 }
