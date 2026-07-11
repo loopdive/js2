@@ -1,8 +1,9 @@
 {
   "id": "2967",
   "assignee": "ttraenkler/fable-2967",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2967-slice2-closure-host-drive",
   "claimed_at": "2026-07-10T22:44:21Z",
-  "updated_at": "2026-07-10T22:44:21Z"
+  "updated_at": "2026-07-11T00:12:57Z",
+  "released_at": "2026-07-11T00:12:57Z"
 }
