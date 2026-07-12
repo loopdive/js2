@@ -1,8 +1,8 @@
 {
   "id": "3183",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T15:56:18Z",
-  "updated_at": "2026-07-12T15:56:18Z"
+  "assignee": "ttraenkler/dev-vec-arms",
+  "status": "in-progress",
+  "branch": "issue-3183-forin-vec-arms",
+  "claimed_at": "2026-07-12T17:08:25Z",
+  "updated_at": "2026-07-12T17:08:25Z"
 }
