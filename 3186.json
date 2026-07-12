@@ -1,8 +1,8 @@
 {
   "id": "3186",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T16:28:44Z",
-  "updated_at": "2026-07-12T16:28:44Z"
+  "assignee": "ttraenkler/dev-forin-sound",
+  "status": "in-progress",
+  "branch": "issue-3186-host-forin-wrongvalue",
+  "claimed_at": "2026-07-12T17:16:42Z",
+  "updated_at": "2026-07-12T17:16:42Z"
 }
