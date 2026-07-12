@@ -1,8 +1,9 @@
 {
   "id": "3172",
   "assignee": "ttraenkler/dev-collections-brand",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3172-setalgebra-getorinsert",
   "claimed_at": "2026-07-12T13:21:42Z",
-  "updated_at": "2026-07-12T13:21:42Z"
+  "updated_at": "2026-07-12T14:42:14Z",
+  "released_at": "2026-07-12T14:42:14Z"
 }
