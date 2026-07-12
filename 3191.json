@@ -1,8 +1,8 @@
 {
   "id": "3191",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T17:53:05Z",
-  "updated_at": "2026-07-12T17:53:05Z"
+  "assignee": "ttraenkler/dev-number-resid",
+  "status": "in-progress",
+  "branch": "issue-3191-unify-error-throw",
+  "claimed_at": "2026-07-12T18:24:45Z",
+  "updated_at": "2026-07-12T18:24:45Z"
 }
