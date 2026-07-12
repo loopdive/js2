@@ -81,10 +81,10 @@ Mechanism (no new imports, no funcidx shifts, no body-splitting):
 - **Eligibility gates (learned from PR #2625's first merge_group cycle —
   41 regressions in three buckets, all fixed by gating):** lazy only when
   `!isAsync && parameters.length === 0 && !closureBodyUsesArguments(body)
-  && !genBodyReferencesThis(body)`. `arguments` (zero-declared-param
+&& !genBodyReferencesThis(body)`. `arguments` (zero-declared-param
   generators still see call-site args — `gen-func-expr-args-trailing-comma-*`)
   and `this`/`super` (`Array.prototype[Symbol.iterator] = function*(){
-  ...this[0]... }` — the `iter-val-array-prototype` cluster) are call-time
+...this[0]... }` — the `iter-val-array-prototype` cluster) are call-time
   state the deferred `__call_fn_0` re-invocation cannot rebind; W2 spills
   them. ALSO: the cached `ctx.genEagerFlagGlobalIdx` MUST be kept in step by
   `fixupModuleGlobalIndices` (registry/imports.ts) — a string-constant
@@ -173,12 +173,13 @@ for a gc-host generator FUNCTION DECLARATION (`function* g() {...}` nested
 inside the test wrapper falls here after failing native candidacy).
 
 **Change**:
+
 1. Extract the Slice-1 wrap into a shared helper
    `wrapGeneratorEagerSeqLazy(ctx, fctx, bodyEmitter, selfClosureEmitter)`
    in closures.ts (parameterize what :2886-2960 does inline today): capture
    the eager sequence into a fresh `Instr[]`, then emit
    `if (global.get $__gen_eager_mode) { <eager seq, clears flag at top> }
-   else { <return __create_generator(<self as externref>, null)> }`.
+else { <return __create_generator(<self as externref>, null)> }`.
 2. Apply it in the function-body.ts arm. The one W3-specific problem is the
    THUNK SELF value: a declaration-form generator is a plain defined func,
    not a closure struct, so there is no `__self` param to pass to
@@ -207,6 +208,7 @@ inside the test wrapper falls here after failing native candidacy).
    hoisting isn't already handled).
 
 **Hazards** (from the Slice-1 PR #2625 lessons, all still live):
+
 - `ctx.genEagerFlagGlobalIdx` staleness across string-constant imports —
   `fixupModuleGlobalIndices` (src/codegen/registry/imports.ts) already
   covers the cached idx; any NEW cached global here must be added there.

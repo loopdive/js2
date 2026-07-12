@@ -207,7 +207,7 @@ receiver mid-algorithm — spec fixes `size` and snapshots per-method reads)
 and `set-like-iter-return` (abrupt completion must call the keys iterator's
 `return()` — IteratorClose).
 
-**Change**: in `ensureSetAlgebraAnyDispatch` (:780) kernels: (a) read + 
+**Change**: in `ensureSetAlgebraAnyDispatch` (:780) kernels: (a) read +
 ToNumber `size` ONCE into a local before iteration (verify current fill
 order — likely already correct from `size-is-a-number`); (b) snapshot the
 receiver's backing entries where §24.2.4.x prescribes (intersection/

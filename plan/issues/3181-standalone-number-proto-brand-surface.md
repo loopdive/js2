@@ -75,9 +75,9 @@ Measurement method: real `wrapTest` + `compile({target:"standalone"})` over ever
 ### D. toExponential / toPrecision no-arg + coercion (~8 files)
 
 - `toExponential/{undefined-fractiondigits,return-values,tointeger-fractiondigits,
-  return-abrupt-tointeger-fractiondigits-symbol}`,
+return-abrupt-tointeger-fractiondigits-symbol}`,
   `toPrecision/{undefined-precision-arg,exponential,tointeger-precision,
-  precision-cannot-be-coerced-to-a-number-in-range}`, plus
+precision-cannot-be-coerced-to-a-number-in-range}`, plus
   `toFixed/toFixed-tonumber-throws-typeerror-{bigint,toprimitive}`.
 - The standalone no-arg render is a documented **6-digit approximation**
   (`number-format-native.ts`: "shortest round-trip out of scope"), so
@@ -135,6 +135,7 @@ touches the table. The bug is NOT Number-specific: measured
 `Array.prototype.toString.length` is also NaN on main today.
 
 **Change** (`src/codegen/array-object-proto.ts`):
+
 - Make the arity tables immune to prototype pollution: give
   `PROTO_METHOD_LENGTH` (:399) and `TYPED_ARRAY_PROTO_METHOD_LENGTH` (:380)
   a null prototype (`Object.assign(Object.create(null), {...})` keeping the
@@ -175,11 +176,12 @@ queries (`hasOwnProperty("toString")`, `hasOwnProperty("constructor")`,
 enumeration) — only direct method dispatch works.
 
 **Change** (`src/codegen/array-object-proto.ts`):
+
 - The `$NativeProto` machinery already models `Array.prototype`/
   `String.prototype` as objects — `makeGlue` at :1434, per-builtin
   registrations at :1527-1709; the Number one is
   `ensureNumberNativeProtoGlue` at :1561 (`registerNativeProtoBuiltin(ctx,
-  makeGlue(ctx, brand, "Number", NUMBER_PROTO_METHODS))`). Extend the same
+makeGlue(ctx, brand, "Number", NUMBER_PROTO_METHODS))`). Extend the same
   reflective arms for the Number brand: `hasOwnProperty(name)` over the
   glue's member table + `"constructor"`, and
   `Number.prototype.constructor === Number` identity.
@@ -207,6 +209,7 @@ that call them" block; the plan's earlier name `ensureNumberFormatHelpers`
 does not exist) and was reverted with a CE.
 
 **Change** (`src/codegen/number-format-native.ts`):
+
 - In `emitNativeNumberFormat` (:379), the dependency edges are the
   `needRadix`/`needPrecision`/`needFixed`/`needExp` derivations (:388-405).
   NOTE (verified): `number_toPrecision` ALREADY transitively emits
@@ -247,6 +250,7 @@ runs without the brand gate.
 
 **Change** (corrected pointers, Fable review 2026-07-12 — the value-mint
 machinery is NOT in array-object-proto.ts; it already exists end-to-end):
+
 1. `Number.prototype.<m>` VALUE reads already materialize as closures today:
    `tryCompileStandaloneBuiltinProtoMemberRead` (property-access.ts:1162) →
    `resolveStandaloneProtoMemberValueClosure`
