@@ -1,9 +1,8 @@
 {
   "id": "3033",
-  "assignee": "ttraenkler/dev-3051c",
-  "status": "released",
-  "branch": "issue-3033-bug2b-keyword-after-dot",
-  "claimed_at": "2026-07-12T11:10:08Z",
-  "updated_at": "2026-07-12T11:29:00Z",
-  "released_at": "2026-07-12T11:29:00Z"
+  "assignee": "ttraenkler/dev-b2b-memberread",
+  "status": "in-progress",
+  "branch": "issue-3033-b2b-memberread",
+  "claimed_at": "2026-07-12T11:33:08Z",
+  "updated_at": "2026-07-12T11:33:08Z"
 }
