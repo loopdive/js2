@@ -1,8 +1,9 @@
 {
   "id": "3051",
   "assignee": "ttraenkler/dev-3051c",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3051-regexp-symbol-coercion",
   "claimed_at": "2026-07-12T03:09:19Z",
-  "updated_at": "2026-07-12T03:09:19Z"
+  "updated_at": "2026-07-12T09:44:47Z",
+  "released_at": "2026-07-12T09:44:47Z"
 }
