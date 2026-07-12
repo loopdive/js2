@@ -1,8 +1,8 @@
 {
   "id": "3162",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T10:20:15Z",
-  "updated_at": "2026-07-12T10:20:15Z"
+  "assignee": "ttraenkler/agent-a30d0acc00d3c78c5",
+  "status": "in-progress",
+  "branch": "issue-3162-dynview-find-soundness",
+  "claimed_at": "2026-07-12T10:28:01Z",
+  "updated_at": "2026-07-12T10:28:01Z"
 }
