@@ -1,8 +1,9 @@
 {
   "id": "3186",
   "assignee": "ttraenkler/dev-forin-sound",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3186-host-forin-wrongvalue",
   "claimed_at": "2026-07-12T17:16:42Z",
-  "updated_at": "2026-07-12T17:16:42Z"
+  "updated_at": "2026-07-12T17:25:58Z",
+  "released_at": "2026-07-12T17:25:58Z"
 }
