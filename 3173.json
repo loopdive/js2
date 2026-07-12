@@ -1,8 +1,9 @@
 {
   "id": "3173",
   "assignee": "ttraenkler/dev-dataview",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3173-standalone-dataview",
   "claimed_at": "2026-07-12T12:36:53Z",
-  "updated_at": "2026-07-12T12:36:53Z"
+  "updated_at": "2026-07-12T15:25:53Z",
+  "released_at": "2026-07-12T15:25:53Z"
 }
