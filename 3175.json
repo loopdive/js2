@@ -1,8 +1,8 @@
 {
   "id": "3175",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T12:22:03Z",
-  "updated_at": "2026-07-12T12:22:03Z"
+  "assignee": "ttraenkler/dev-number",
+  "status": "in-progress",
+  "branch": "issue-3175-standalone-number-prototype",
+  "claimed_at": "2026-07-12T13:03:05Z",
+  "updated_at": "2026-07-12T13:03:05Z"
 }
