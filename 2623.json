@@ -1,8 +1,9 @@
 {
   "id": "2623",
   "assignee": "ttraenkler/dev-p7b-realm",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2623-p7b-observable-resolve",
   "claimed_at": "2026-07-12T05:24:15Z",
-  "updated_at": "2026-07-12T05:24:15Z"
+  "updated_at": "2026-07-12T10:05:55Z",
+  "released_at": "2026-07-12T10:05:55Z"
 }
