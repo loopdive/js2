@@ -1,8 +1,8 @@
 {
   "id": "3190",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T17:43:21Z",
-  "updated_at": "2026-07-12T17:43:21Z"
+  "assignee": "ttraenkler/dev-vec-arms",
+  "status": "in-progress",
+  "branch": "issue-3190-extern-set-vec-write",
+  "claimed_at": "2026-07-12T17:54:51Z",
+  "updated_at": "2026-07-12T17:54:51Z"
 }
