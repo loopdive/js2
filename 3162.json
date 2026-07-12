@@ -1,8 +1,9 @@
 {
   "id": "3162",
   "assignee": "ttraenkler/dev-find-wasm",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3162-find-two-arm-wasm",
   "claimed_at": "2026-07-12T17:09:25Z",
-  "updated_at": "2026-07-12T17:09:25Z"
+  "updated_at": "2026-07-12T18:06:27Z",
+  "released_at": "2026-07-12T18:06:27Z"
 }
