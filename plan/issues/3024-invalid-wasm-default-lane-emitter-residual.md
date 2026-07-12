@@ -18,6 +18,7 @@ test262_ce: 131
 related: []
 loc-budget-allow:
   - src/codegen/expressions/calls.ts
+  - src/codegen/index.ts
 ---
 
 # #3024 — invalid Wasm binary emission residual (default lane)
@@ -496,4 +497,70 @@ ALWAYS invalid Wasm, so no valid module changes shape.
 - The remaining 72 invalid-Wasm files: 7-file `fN.ne` cross-statement
   eval-promotion family (banked, broad-impact), then ≤4-file singletons
   (`__obj_meth_tramp_*_valueOf`, `struct.set (ref null #)`, `call expected
-  externref found ref.func`, Atomics `__cb_#` fallthru, `i#.lt_s` …).
+externref found ref.func`, Atomics `__cb_#` fallthru, `i#.lt_s` …).
+
+---
+
+## Landed: anon object-literal method stable-handle pre-mint (fable-wasm, 2026-07-11, slice 3)
+
+**PR:** `issue-3024-anon-method-stable-handle` — clears the 4-file
+`__obj_meth_tramp_*_valueOf` cluster (`built-ins/Array/prototype/{pop,push,
+shift,unshift}/S15.4.4.x_A2_*`; `call[0] expected externref/f64, found if of
+type (ref null N)` in the trampoline). Harvest: 4 files flip CE → valid Wasm
+(they now fail only on a distinct ToPrimitive/array-like-receiver semantic, not
+a compile error).
+
+### Root cause (live-regime pre-mint during the declaration scan)
+
+`ensureStructForType` (index.ts) pre-mints an anonymous object-literal method's
+defined function with the LIVE-REGIME index `numImportFuncs + functions.length`.
+That pre-mint runs during the DECLARATION SCAN — reached via the
+`collectEmptyObjectWidening` / `collectGrowableObjectLiterals` pre-passes'
+`resolveWasmType` — which is BEFORE the import collectors run. When a later
+collector (`collectUsedExternImports`, or the native-string/union import passes)
+prepends an `env` import via raw `addImport`, the import boundary moves but
+`addImport` does NOT shift existing defined-function indices, and no later shift
+walker repairs a 0-based index (`inLiveShiftRange(0, importsBefore>0)` is false).
+The pre-minted funcMap entry (e.g. `__anon_0_valueOf` = 0) is now stranded in
+the import range: `definedFuncAt` fails to resolve it at literal-compile time
+(forking a duplicate method body), while the method trampoline keeps forwarding
+`call 0` into an unrelated import (`__extern_get` / `__register_prototype`).
+Verified by instrument (`set __anon_0_valueOf=0` at `ensureStructForType`, then
+`addImport __extern_get -> idx 0`).
+
+The `arguments`/`obj[0] = …` element write and (independently) a user `class`
+declaration are the ingredients that force the extra imports which move the
+boundary — hence the cluster only appearing on those shapes.
+
+### Fix (index.ts, stable handle)
+
+Mint the method with `mintDefinedFunc` / `pushDefinedFunc` (#1916 S3) instead of
+the live-regime arithmetic. A stable handle is layout-independent: every
+late-import shift walker skips the stable range, and resolution to a concrete
+index happens at emit (`resolve-layout.ts`). This is the established idiom for
+any funcIdx minted before the import space is final.
+
+### Proofs
+
+- 3 repro shapes (element-write, borrowed-`pop`, `class`-preamble) VALIDATE;
+  all previously-valid controls unchanged.
+- All 4 target test262 files flip CE → valid Wasm.
+- Full 214-candidate re-harvest confirms the 4 valueOf files cleared, no new
+  invalid signatures.
+- 12-program corpus **byte-identical** (sha256) to main.
+- New `tests/issue-3024-anon-method-stable-handle.test.ts` (5 tests); adjacent
+  object-method / toPrimitive suites (issue-1602, 1602-regress, 1989, 1394,
+  2194-objlit-method-host-leak, 2358-array-toprimitive, 1917-any-param-
+  toprimitive — 51 tests) pass, plus 3121/3039/2160/2194 + the equivalence
+  suite.
+- `loc-budget-allow` granted for `index.ts` (#3131; +11 net on a god-file).
+
+### Still open (roll forward)
+
+The 4 valueOf files now fail on a DISTINCT semantic (Array.prototype method on a
+non-array `arguments`-like receiver whose `length` is an object with `valueOf` —
+ToPrimitive on the length). The remaining invalid-Wasm files: the 7-file `fN.ne`
+cross-statement eval-promotion family (banked, broad-impact) and ≤4-file
+per-root-cause singletons (`struct.set (ref null #)`, `call expected externref
+found ref.func`, Atomics `__cb_#` fallthru, `i#.lt_s`, `__vec_from_extern`
+element-rep).
