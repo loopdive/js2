@@ -1,9 +1,8 @@
 {
   "id": "2903",
-  "assignee": "ttraenkler/fable-finally",
-  "status": "released",
-  "branch": "issue-2903-native-finally",
-  "claimed_at": "2026-07-10T23:02:32Z",
-  "updated_at": "2026-07-11T01:25:14Z",
-  "released_at": "2026-07-11T01:25:14Z"
+  "assignee": "ttraenkler/agent-a30d0acc00d3c78c5",
+  "status": "in-progress",
+  "branch": "issue-2903-standalone-callback-leak",
+  "claimed_at": "2026-07-12T03:35:39Z",
+  "updated_at": "2026-07-12T03:35:39Z"
 }
