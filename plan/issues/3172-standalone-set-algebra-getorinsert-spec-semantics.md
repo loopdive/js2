@@ -120,8 +120,8 @@ Standalone lane (`TEST262_TARGET=standalone`, filter
 ## Implementation Plan — residual buckets as independently claimable plan-lets
 
 (arch, 2026-07-12. The protocol layer landed — PR merged as
-`src/codegen/collections-es2025.ts` (1,248 lines): `ensureSetRecFieldGetters`
-reserve at :558-600, `fillSetRecFieldGetters` finalize fill at :613,
+`src/codegen/collections-es2025.ts` (1,248 lines): `reserveSetRecFieldGetters`
+(the reserve fn's actual name) at :569, `fillSetRecFieldGetters` finalize fill at :613,
 `__setrec_check_callable` fill at :683, `ensureSetAlgebraAnyDispatch` at
 :780, `ensureGetOrInsertKernels` at :160, `compileCollectionGetOrInsert` at
 :342. Each bucket below is a separate S/M slice, one PR each; all
@@ -153,20 +153,27 @@ dispatches through `__apply_closure` — only the field READ is the gap.
 `set-like-class-order.js` (also asserts read/call ORDER: size → has → keys,
 then keys() iteration last — the fill must preserve GetSetRecord step order).
 
-### Plan-let R2 — `set-like-array` (~7 tests, S)
+### Plan-let R2 — `set-like-array` (~7 tests, RE-SCOPED: not S, capability missing)
 
 **Gap**: expando `size`/`has`/`keys` properties written onto a vec-backed
 array (`const a = [1,2]; a.size = 2; a.has = ...`). The `__setrec_field_*`
 readers miss expando fields on vec carriers.
 
-**Change**: extend the fill's receiver dispatch with the vec-expando arm —
-the sidecar/expando lookup that `__extern_get` already performs for
-vec-backed arrays (grep object-runtime.ts for the vec expando arm used by
-`__extern_get`; reuse that helper by funcidx, per the #2108
-coercion-sites discipline).
+**CORRECTION (Fable review 2026-07-12)**: the previously-cited reuse — "the
+vec-expando lookup `__extern_get` already performs" — **does not exist**.
+`grep expando|sidecar src/codegen/object-runtime.ts` → 0 hits, and a
+measured standalone probe (`const a: any = [1,2]; a.size = 42; return
+a.size`) returns **0**, not 42: expando writes on vec-backed arrays are
+dropped module-wide today, independent of set-records. So R2 is NOT a
+one-call fill extension; the underlying capability (a vec→prop-map sidecar
+for expando reads/writes in `__extern_set`/`__extern_get`) is missing.
 
-**Reuse**: the existing vec-expando read arm in object-runtime.ts —
-one `call`, no new reader.
+**Action**: re-triage — file/point these ~7 rows at a separate
+"standalone expando-props-on-vec-backed-arrays" capability issue (general
+`__extern_set` vec arm writing into an associated `$Object` prop map, with
+`__extern_get` reading it back), and make this R2 a dependent one-call fill
+extension only AFTER that lands. Do not build the sidecar inside
+collections code.
 
 ### Plan-let R3 — getOrInsert boxed-any value rows (~10 tests, S–M, may be a no-op here)
 
@@ -215,7 +222,9 @@ use) rather than a new close path.
 
 ### Sequencing / ownership
 
-R2 (S) → R1 (M) → R5 (M–L) independent of each other; R3 is triage-first;
-R4 blocks on #3181 cluster A/B landing. Each PR: scoped standalone sweep of
+R1 (M) → R5 (M–L) independent of each other; R3 is triage-first; R2 is
+re-triage-first (blocked on the missing vec-expando capability — see the
+correction above); R4 blocks on #3181 cluster A/B landing. Each PR: scoped
+standalone sweep of
 `built-ins/{Map,Set,WeakMap}/prototype` vs the 559/700 post-#3172 baseline,
 0 host-lane regressions, `tests/issue-3172.test.ts` stays green.

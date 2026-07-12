@@ -106,47 +106,67 @@ Measurement method: real `wrapTest` + `compile({target:"standalone"})` over ever
 
 ## Implementation Plan
 
-(arch, 2026-07-12. Anchors verified on `origin/main` pre-#2933; PR #2933 is
-in-flight and only touches `plan/issues/3175-*` + its own code — re-grep
-anchors after it lands, and pick up `buildThrowJsErrorInstrs` from it.)
+(arch, 2026-07-12. Anchors re-verified post-#2933 by Fable review — PR #2933
+has LANDED on main; `buildThrowJsErrorInstrs` lives at
+`src/codegen/expressions/helpers.ts:231`. Cluster C's root cause was
+re-diagnosed empirically and corrected — see the cluster.)
 
 Ship order: **C → B → D → A** (effort-ascending; each cluster is an
 independently mergeable PR-let).
 
 ### Cluster C — method `.length` (3 files, S)
 
-**Root cause**: for `Number.prototype.toString.length` the generic `.length`
-property handler in `src/codegen/property-access.ts` runs BEFORE the
-builtin-proto-member meta fold. The fold itself works — `.name` already
-returns `"toString"` via `tryCompileStandaloneBuiltinProtoMemberMeta`
-(property-access.ts:1104, called at :4186).
+**Root cause (empirically pinned, Fable review 2026-07-12 — the earlier
+"dispatch-order interception" theory is WRONG; there is NO `.length` arm
+between `compilePropertyAccess`'s start (:3492) and the meta fold call
+(:4186), and an instrumented compile shows the fold IS reached and emits for
+`.length`)**: the fold emits garbage, not the wrong handler. In `makeGlue`
+(`src/codegen/array-object-proto.ts:1434`),
+`memberLength: (member) => PROTO_METHOD_LENGTH[member] ?? 1` indexes the
+plain-object-literal table `PROTO_METHOD_LENGTH` (:399). For
+`member === "toString" | "valueOf" | "toLocaleString"` the lookup hits the
+**prototype-INHERITED `Object.prototype` methods** (the table has no own
+entry for them), so `?? 1` never fires and `memberLength` returns a JS
+**Function**. The fold (property-access.ts:1153-1154) then pushes
+`{op: "f64.const", value: <Function>}` → the emitter encodes NaN.
+Instrumented proof: `FOLD EMIT length toString [Function: toString]`.
+`.name` works because it goes through `compileStringLiteral`, which never
+touches the table. The bug is NOT Number-specific: measured
+`Array.prototype.toString.length` is also NaN on main today.
 
-**Change** (`src/codegen/property-access.ts`):
-- Locate the generic `.length` arm that intercepts the shape (grep for the
-  `.length` dispatch ABOVE line 4186 in `compilePropertyAccess`'s ladder).
-  Add a narrow deferral: when the receiver is itself a property access on a
-  builtin prototype surface (`Number.prototype.<m>` /
-  `<numLiteral|Number-typed expr>.<m>` resolving into the `$NativeProto` glue
-  member set), skip the generic arm so control reaches the meta fold at
-  :4186. Prefer a helper predicate `isBuiltinProtoMemberShape(expr)` shared
-  with the fold rather than duplicating the shape test.
-- In the glue (`src/codegen/array-object-proto.ts`, `NUMBER_PROTO_METHODS`
-  at :208, registered via `makeGlue(...)` at :1550): verify
-  `memberLength` (consumed at property-access.ts:1153) returns **0** for
-  `valueOf` and `toLocaleString`, **1** for `toString`. The issue notes a
-  `?? 1` default — add explicit per-member lengths instead of the fallback.
+**Change** (`src/codegen/array-object-proto.ts`):
+- Make the arity tables immune to prototype pollution: give
+  `PROTO_METHOD_LENGTH` (:399) and `TYPED_ARRAY_PROTO_METHOD_LENGTH` (:380)
+  a null prototype (`Object.assign(Object.create(null), {...})` keeping the
+  `Readonly<Record<string, number>>` annotation), or equivalently switch the
+  lookups to `Object.hasOwn(T, m) ? T[m] : default`. Null-prototyping the
+  table fixes every consumer at once and is preferred.
+- Add explicit own entries `valueOf: 0` and `toLocaleString: 0` to
+  `PROTO_METHOD_LENGTH` (spec §21.1.3.4/§21.1.3.7 — and 0 is also correct
+  for every other builtin family sharing this table). `toString` needs NO
+  entry: after the null-proto fix the `?? 1` default yields 1, correct for
+  `Number.prototype.toString` (§21.1.3.6). (Known shared-table nuance, out
+  of scope for the 3 target files: Array/Object/Error `toString.length` is
+  spec-0 but will report the default 1 — a per-glue override can follow.)
+- Same-hazard audit (one grep, same PR): any other member-keyed
+  plain-object table consulted with user-visible property names —
+  `BUILTIN_STATIC_METHOD_ARITY` (builtin-fn-meta.ts:80, inner records are
+  plain literals: `Number.toString.length`-shape reads hit the same
+  inherited-Function path at property-access.ts:1126 and
+  builtin-static-gopd.ts:302) — null-proto those inner records too.
+
+**No dispatch-order change is needed** — do not add a deferral predicate.
 
 **Reuse**: `tryCompileStandaloneBuiltinProtoMemberMeta`
-(property-access.ts:1104) and the `NUMBER_PROTO_METHODS` glue table
+(property-access.ts:1104, called at :4186; `memberLength` consumed at
+:1153) and the `NUMBER_PROTO_METHODS` glue table
 (array-object-proto.ts:208) — extend, do not add a new fold.
 
-**Edge cases**: don't reorder `.length` for arrays/strings/arguments
-(regression-sensitive); gate the deferral on the builtin-proto-member shape
-only, standalone-gated like the fold itself.
-
 **Tests**: `built-ins/Number/prototype/toString/length.js`,
-`valueOf/length` (0), `toLocaleString/length` (0); scoped standalone sweep
-of `built-ins/Number/prototype/**` + a host-lane byte-identity spot-check.
+`valueOf/length` (0), `toLocaleString/length` (0); plus an equivalence probe
+asserting `Array.prototype.toString.length` no longer NaNs (the
+generalized-bug canary); scoped standalone sweep of
+`built-ins/Number/prototype/**` + a host-lane byte-identity spot-check.
 
 ### Cluster B — property surface (~12 files, M)
 
@@ -156,18 +176,21 @@ enumeration) — only direct method dispatch works.
 
 **Change** (`src/codegen/array-object-proto.ts`):
 - The `$NativeProto` machinery already models `Array.prototype`/
-  `String.prototype` as objects (see `registerNativeProtoBuiltin` at :1550).
-  Extend the same reflective arms for the Number brand:
-  `hasOwnProperty(name)` over the glue's member table + `"constructor"`,
-  and `Number.prototype.constructor === Number` identity.
+  `String.prototype` as objects — `makeGlue` at :1434, per-builtin
+  registrations at :1527-1709; the Number one is
+  `ensureNumberNativeProtoGlue` at :1561 (`registerNativeProtoBuiltin(ctx,
+  makeGlue(ctx, brand, "Number", NUMBER_PROTO_METHODS))`). Extend the same
+  reflective arms for the Number brand: `hasOwnProperty(name)` over the
+  glue's member table + `"constructor"`, and
+  `Number.prototype.constructor === Number` identity.
 - Grep how `Array.prototype`-surface tests pass today (the glue's
   `hasOwnProperty` arm) and mirror it — the member list is
-  `NUMBER_PROTO_METHODS` ∪ {`constructor`, `toLocaleString`, ...} exactly as
-  registered.
+  `NUMBER_PROTO_METHODS` ∪ {`constructor`} exactly as registered
+  (`toLocaleString` is already in `NUMBER_PROTO_METHODS`, :208-216).
 
 **Reuse**: `registerNativeProtoBuiltin` / `makeGlue`
-(array-object-proto.ts:1550) — one table drives dispatch AND reflection; do
-not build a parallel descriptor store.
+(array-object-proto.ts:1434, Number registration :1561) — one table drives
+dispatch AND reflection; do not build a parallel descriptor store.
 
 **Tests**: `S15.7.4_A3.1..A3.7`, `S15.7.3.1_A2_T1/T2`, `S15.7.3.1_A3`,
 `15.7.3.1-2`, `S15.7.4_A1`.
@@ -177,19 +200,25 @@ not build a parallel descriptor store.
 **Root cause** (two parts): (1) the no-arg render in
 `src/codegen/number-format-native.ts` is a 6-digit approximation, not the
 spec shortest/`ToString(x)` form; (2) the previous attempt to delegate
-`toPrecision(undefined)` → `number_toString` hit the
-`number_toString` ← `number_toString_radix` emit-order dependency
-(number-format-native.ts:374-395: `ensureNumberFormatHelpers(which)` — the
-"must run before" registration block) and was reverted with a CE.
+`toPrecision(undefined)` → `number_toString` hit an emit-graph collision
+around the helper-registration function `emitNativeNumberFormat`
+(number-format-native.ts:379 — the "must run before any function bodies
+that call them" block; the plan's earlier name `ensureNumberFormatHelpers`
+does not exist) and was reverted with a CE.
 
 **Change** (`src/codegen/number-format-native.ts`):
-- In the helper-registration block (:374-395), make
-  `number_toPrecision`/`number_toExponential` declare a dependency on
-  `number_toString` the same way `number_toFixed` already does (":392 —
-  number_toFixed needs number_toString for its |x| >= 1e21 branch"): add the
-  name to `which` before minting, so registration order is topological, not
-  incidental. This dissolves the emit-graph collision that killed the #3175
-  attempt.
+- In `emitNativeNumberFormat` (:379), the dependency edges are the
+  `needRadix`/`needPrecision`/`needFixed`/`needExp` derivations (:388-405).
+  NOTE (verified): `number_toPrecision` ALREADY transitively emits
+  `number_toString` (`needFixed = toFixed || needPrecision` at :397, and
+  toString is emitted when `needFixed`, :398) — so for the toPrecision
+  delegation the topological edge exists today; re-diagnose what the #3175
+  CE actually was before assuming emit ORDER (candidates: a caller invoking
+  the kernel by funcMap name before `emitNativeNumberFormat` ran, or a
+  `which`-set at the `declarations.ts:1400` call site missing the member).
+  The one genuinely missing edge is `number_toExponential` →
+  `number_toString` (`needExp` at :404 does not imply toString): add it if
+  the no-arg toExponential render delegates to ToString.
 - `toPrecision(undefined)` → emit `call number_toString` (§21.1.3.5 step 2).
 - `toExponential()` no-arg: implement trailing-zero-trim on the 6-digit
   render (sufficient for the cited test262 rows; full shortest-round-trip
@@ -197,9 +226,10 @@ spec shortest/`ToString(x)` form; (2) the previous attempt to delegate
 - Symbol/BigInt fractionDigits/precision args → real TypeError instance via
   `buildThrowJsErrorInstrs` (from PR #2933) before ToIntegerOrInfinity.
 
-**Reuse**: `ensureNumberFormatHelpers` registration block
-(number-format-native.ts:374-395); `buildThrowJsErrorInstrs` (#3175/PR
-#2933); the existing ToIntegerOrInfinity truncation from #3175.
+**Reuse**: `emitNativeNumberFormat` registration block
+(number-format-native.ts:379-406); `buildThrowJsErrorInstrs`
+(src/codegen/expressions/helpers.ts:231, landed with #3175/PR #2933); the
+existing ToIntegerOrInfinity truncation from #3175.
 
 **Tests**: `toExponential/{undefined-fractiondigits,return-values,
 tointeger-fractiondigits,return-abrupt-tointeger-fractiondigits-symbol}`,
@@ -215,26 +245,40 @@ receiver at CALL time (§21.1.3 "not generic" TypeError). Today the method
 only exists as compile-time dispatch; a transferred reference either CEs or
 runs without the brand gate.
 
-**Change**:
-1. Materialize `Number.prototype.<m>` reads (value position, not call
-   position) as closures via the glue's member minting — the same path that
-   already gives `.name`/`.length` their function-object identity
-   (`tryCompileStandaloneBuiltinProtoMemberMeta` sits beside the read arm;
-   grep array-object-proto.ts for where Array.prototype method VALUES are
-   minted for transfer — follow that pattern for Number).
-2. Inside each minted wrapper body, FIRST emit the receiver brand gate:
+**Change** (corrected pointers, Fable review 2026-07-12 — the value-mint
+machinery is NOT in array-object-proto.ts; it already exists end-to-end):
+1. `Number.prototype.<m>` VALUE reads already materialize as closures today:
+   `tryCompileStandaloneBuiltinProtoMemberRead` (property-access.ts:1162) →
+   `resolveStandaloneProtoMemberValueClosure`
+   (src/codegen/native-proto-value-read.ts:52) →
+   `ensureStandaloneNativeMethodClosure(..., {refusalBodyFallback: true})`.
+   What the Number glue lacks is a REAL wrapper body: `makeGlue`'s
+   `emitMemberBody` (array-object-proto.ts:1456-1462) routes Number to
+   `emitProtoMemberBodyRefusal` (:659) — every transferred Number method
+   currently throws TypeError for ALL receivers, valid numbers included.
+   The work = add an `emitNumberProtoMemberBody` arm to that ternary,
+   following the `emitStringProtoMemberBody` receiver-unbox pattern
+   (:771-1116 — it shows exactly how a wrapper body recovers a boxed
+   primitive receiver).
+2. Inside `emitNumberProtoMemberBody`, FIRST emit the receiver brand gate:
    `emitReceiverBrandCheck` (src/codegen/receiver-brand.ts:58) /
-   `emitReceiverBrandThrow` (:146) against the boxed-Number brand
-   (`$BoxedNumber` ref.test + raw-f64 receiver accept), throwing a real
-   TypeError via `buildThrowJsErrorInstrs` on mismatch.
+   `emitReceiverBrandThrow` (:146) against the boxed-Number brand — note
+   the gate's primitive-scalar arm throws unconditionally for a raw f64
+   receiver (receiver-brand.ts ~:75-81), so the raw-f64-accept path must be
+   handled BEFORE/around the gate, mirroring how #3175's direct-dispatch
+   receiver `[[NumberData]]` recovery (PR #2933) accepts it. TypeError on
+   mismatch as a real instance via `buildThrowJsErrorInstrs`
+   (src/codegen/expressions/helpers.ts:231). Then delegate to the existing
+   number-format kernels (number-format-native.ts) with the recovered f64.
 3. Dynamic dispatch of the transferred value goes through the existing
    closure/`__apply_closure` bridge — no new calling convention.
 
 **Reuse**: `emitReceiverBrandCheck`/`emitReceiverBrandThrow`
 (receiver-brand.ts:58/:146 — the #3171/#3174 shared gate, landed);
-`NUMBER_PROTO_METHODS` glue; the closure-mint machinery of
-`array-object-proto.ts` (`registerNativeProtoBuiltin`). Do NOT hand-roll a
-per-method brand test.
+`NUMBER_PROTO_METHODS` glue + `emitMemberBody` hook (array-object-proto.ts
+:1456); `resolveStandaloneProtoMemberValueClosure`
+(native-proto-value-read.ts:52); the `number_*` kernels
+(number-format-native.ts). Do NOT hand-roll a per-method brand test.
 
 **Edge cases**: receiver is a raw f64 (accept); receiver is a `$BoxedNumber`
 (accept, unwrap `[[NumberData]]`); `String` object / plain object / null →

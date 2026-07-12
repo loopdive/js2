@@ -191,9 +191,20 @@ inside the test wrapper falls here after failing native candidacy).
    capture cells for free; the call sites (`g()`) already compile
    identifier-call-of-closure.
 3. Eligibility gates: same as Slice 1 (`!isAsync`, no `arguments`, no
-   `this`/`super` — reuse `closureBodyUsesArguments` +
-   `genBodyReferencesThis`, both already exported for the :2886 gate), PLUS
-   `parameters.length === 0` until W2 lands.
+   `this`/`super` — reuse `closureBodyUsesArguments` (closures.ts:4968) +
+   `genBodyReferencesThis` (:1758); NOTE both are module-LOCAL functions in
+   closures.ts, not exported — route (a-i) sidesteps that by re-entering
+   `compileArrowAsClosure`, which applies the :2886 gate itself; only
+   route (a-ii) would need them exported), PLUS `parameters.length === 0`
+   until W2 lands.
+4. Hoisting edge case (route a-i specific): a nested `function* g() {...}`
+   DECLARATION is hoisted — `g()` may legally appear before the declaration
+   in source order. Minting `g` as a closure VALUE at the declaration site
+   changes that unless the mint is hoisted to the top of the enclosing
+   function body (follow however the compiler already hoists nested
+   function declarations compiled as closures; verify with a
+   call-before-declaration probe, and keep the eager arm for the shape if
+   hoisting isn't already handled).
 
 **Hazards** (from the Slice-1 PR #2625 lessons, all still live):
 - `ctx.genEagerFlagGlobalIdx` staleness across string-constant imports —
