@@ -1,8 +1,8 @@
 {
   "id": "3198",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T17:54:11Z",
-  "updated_at": "2026-07-12T17:54:11Z"
+  "assignee": "ttraenkler/dev-vec-arms",
+  "status": "in-progress",
+  "branch": "issue-3198-promise-combinator-drive",
+  "claimed_at": "2026-07-12T18:11:48Z",
+  "updated_at": "2026-07-12T18:11:48Z"
 }
