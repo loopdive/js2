@@ -1,8 +1,9 @@
 {
   "id": "2740",
   "assignee": "ttraenkler/agent-a30d0acc00d3c78c5",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2740-instanceof-residual",
   "claimed_at": "2026-07-12T03:30:08Z",
-  "updated_at": "2026-07-12T03:30:08Z"
+  "updated_at": "2026-07-12T03:54:19Z",
+  "released_at": "2026-07-12T03:54:19Z"
 }
