@@ -1,8 +1,9 @@
 {
   "id": "3189",
   "assignee": "ttraenkler/dev-forin-sound",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3189-trap-ratchet",
   "claimed_at": "2026-07-12T17:32:41Z",
-  "updated_at": "2026-07-12T17:32:41Z"
+  "updated_at": "2026-07-12T17:48:31Z",
+  "released_at": "2026-07-12T17:48:31Z"
 }
