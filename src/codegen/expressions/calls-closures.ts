@@ -1101,6 +1101,8 @@ export function tryExternClassMethodOnAny(
     methodName === "map" ||
     methodName === "reduce" ||
     methodName === "reduceRight" ||
+    methodName === "find" ||
+    methodName === "findIndex" ||
     methodName === "indexOf" ||
     methodName === "lastIndexOf"
   ) {

@@ -1,7 +1,9 @@
 ---
 id: 3162
 title: "[SOUNDNESS] dyn-view find/findIndex through the #3058 two-arm emits INVALID wasm (fallthru type i32 vs ref) on a mutating predicate"
-status: ready
+status: done
+completed: 2026-07-12
+assignee: ttraenkler/dev-find-wasm
 sprint: current
 created: 2026-07-12
 priority: high
@@ -13,6 +15,12 @@ language_feature: typed-arrays, array-methods
 test262_category: built-ins/TypedArray/prototype/find
 related: [2872, 3058]
 parent: 2872
+# (#3162) The soundness fix extends `emitDynViewMethodTwoArm` in place (the
+# Implementation Plan mandates "extend in place; do not fork a per-method
+# two-arm"), so the two-arm's home file grows by the find/findIndex THEN-arm
+# routing. Intended, sanctioned growth of the god-file for this change-set.
+loc-budget-allow:
+  - src/codegen/array-methods.ts
 ---
 
 # #3162 — dyn-view `find`/`findIndex` two-arm emits INVALID wasm
@@ -232,3 +240,49 @@ Per the issue's Acceptance section, plus:
   shared two-arm — verify the hoist emits byte-identical modules for
   programs without dyn views, which it does by construction since the
   two-arm gate requires `ctx.moduleUsesDynTaView`).
+
+## Resolution (2026-07-12, dev-find-wasm)
+
+Implemented per the Implementation Plan (Fix B, THEN arm through the #3098
+substrate). Root cause on current main was NOT only the fallthru type error but
+the ELSE arm's `any.find(cb)` re-dispatch binding to a host `env.<TA>_find` +
+`env.__make_callback` (invalid standalone module). Two changes:
+
+1. **`src/codegen/expressions/calls-closures.ts`** — added `find`/`findIndex`
+   to the #3014/#3139 extern-class dispatch refusal list. `any`-receiver
+   `find`/`findIndex` no longer first-match-bind to a host %TypedArray% method;
+   they fall to the generic dynamic dispatch → the native `__hof_find`/
+   `__hof_findIndex` loop (standalone-clean). This fixes the ELSE arm (and any
+   dynamic-receiver find, matching the forEach/some/every precedent).
+2. **`src/codegen/array-methods.ts`** — added `find`/`findIndex` to
+   `DYN_VIEW_READ_METHODS` (standalone-gated), and the THEN arm now routes the
+   materialized `$__vec_f64` through `__hof_<name>(recv, cb, thisArg)` instead
+   of re-entering `compileArrayFind`. `__hof_find` returns an externref result
+   with the spec `undefined` (`ref.null.extern`) not-found sentinel and threads
+   `thisArg` — fixing the legacy re-entry's NaN-boxed miss (`__box_number`,
+   which failed `assert.sameValue(result, undefined)`) and dropped thisArg. The
+   HOF is pre-ensured before the arm split (funcIdx space settled up front).
+   `reduce`/`reduceRight` keep their existing re-entry (byte-identical).
+
+Mutating-predicate semantics: the two-arm materializes a snapshot copy, so a
+predicate that mutates the view mid-iteration sees the copy (the plan's Fix-B
+caveat (c) — "same semantics the measured +13 already had"). This is soundness-
+correct (valid wasm, host-import-free) which is the acceptance target.
+
+## Test Results
+
+- `tests/issue-3162.test.ts` — 9/9 pass (mutating predicate, matched element,
+  not-found → undefined, findIndex found/-1, arrow, identifier callback,
+  thisArg accepted, reduce undisturbed). Each asserts the module is VALID +
+  host-import-free.
+- Comprehensive `.tmp` probes: find/findIndex over genuine ArrayBuffer-backed
+  dyn views compile to valid, `env`-import-free standalone wasm and return
+  correct values.
+- `prove-emit-identity` — IDENTICAL (39/39 gc/wasi/standalone corpus emits
+  byte-inert; the two-arm change is dyn-view-gated, the refusal change touches
+  no corpus file).
+- Regression sweep: dyn-view (#3058/#3057), #2872, #3098, #3139/#3014,
+  functional-array-methods, findlast, flatmap — all green. The 3 pre-existing
+  failures in closed-imports/#1119 (incremental-compiler manifest) also fail on
+  base — not introduced here.
+- `tsc --noEmit` clean.
