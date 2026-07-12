@@ -1,8 +1,8 @@
 {
   "id": "3192",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T17:53:21Z",
-  "updated_at": "2026-07-12T17:53:21Z"
+  "assignee": "ttraenkler/dev-find-wasm",
+  "status": "in-progress",
+  "branch": "issue-3192-dataview-regexp-brand",
+  "claimed_at": "2026-07-12T19:09:46Z",
+  "updated_at": "2026-07-12T19:09:46Z"
 }
