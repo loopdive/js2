@@ -1,8 +1,9 @@
 {
   "id": "3195",
   "assignee": "ttraenkler/dev-find-wasm",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3195-closure-iterable-drainers",
   "claimed_at": "2026-07-12T18:43:17Z",
-  "updated_at": "2026-07-12T18:43:17Z"
+  "updated_at": "2026-07-12T19:12:16Z",
+  "released_at": "2026-07-12T19:12:16Z"
 }
