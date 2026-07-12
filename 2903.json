@@ -1,8 +1,9 @@
 {
   "id": "2903",
   "assignee": "ttraenkler/agent-a30d0acc00d3c78c5",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2903-standalone-callback-leak",
   "claimed_at": "2026-07-12T03:35:39Z",
-  "updated_at": "2026-07-12T03:35:39Z"
+  "updated_at": "2026-07-12T09:45:39Z",
+  "released_at": "2026-07-12T09:45:39Z"
 }
