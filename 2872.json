@@ -1,8 +1,9 @@
 {
   "id": "2872",
   "assignee": "ttraenkler/agent-a30d0acc00d3c78c5",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-2872-standalone-typedarray-hof",
   "claimed_at": "2026-07-12T09:48:05Z",
-  "updated_at": "2026-07-12T09:48:05Z"
+  "updated_at": "2026-07-12T14:29:48Z",
+  "released_at": "2026-07-12T14:29:48Z"
 }
