@@ -1,8 +1,9 @@
 {
   "id": "3056",
   "assignee": "ttraenkler/dev-vec-arms",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3056-standalone-numeric-assert",
   "claimed_at": "2026-07-12T17:52:33Z",
-  "updated_at": "2026-07-12T17:52:33Z"
+  "updated_at": "2026-07-12T17:54:45Z",
+  "released_at": "2026-07-12T17:54:45Z"
 }
