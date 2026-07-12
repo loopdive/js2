@@ -88,6 +88,39 @@ fresh budget window. The meter is the prioritiser: re-run
 (or set `JS2WASM_IR_POSTCLAIM_LOG` during an equivalence run) to rank by real
 frequency before picking the next slice.
 
+## ROUTING MAP for the next-window selector-precision pickup (grounded 2026-07-12)
+
+**READ THIS FIRST when resuming the #3143 selector-precision track.** Each
+remaining divergence class below is a from-ast throw the static selector
+doesn't mirror; fix it EITHER by making it lowerable (option a, shrinks the
+fallback bucket too — preferred) OR by selector-rejecting the shape (option b,
+byte-inert, needs receiver/operand TYPE info in `select.ts` which today it
+lacks — see the `TypeMap`/`resolveHostGlobal` seam in
+`IrSelectionOptions`). Verify EVERY slice with IR-vs-legacy runtime parity +
+byte-diff proof (legacy is the proven oracle — see `.tmp` probes' method);
+a wrong claim is a HARD TRAP under IR-first, not a silent demote.
+
+**CRITICAL corpus insight:** the DENSE post-claim divergence corpus is the
+**equivalence suite**, NOT test262. test262 functions overwhelmingly reject at
+the SELECTOR (`body-shape-rejected`/`external-call`), so the post-claim meter
+is sparse there (the first census found only the TypedArray-store class over
+154 test262 files). Point the meter at equivalence: set
+`JS2WASM_IR_POSTCLAIM_LOG=<path>` during a `tests/equivalence/` run (or feed the
+equivalence source corpus to `ir-postclaim-meter.mts`). That is where the
+#3143 A/B measured its 50+ divergences.
+
+| # | class (from-ast throw) | size | the work |
+| - | ---------------------- | ---- | -------- |
+| 1 | string wasm:js-string methods — `.charCodeAt`, `.substring` (`method call .X(...) on string not in slice 4`) | **M-L** | NOT in `STRING_METHOD_TABLE`; they lower via `wasm:js-string.substring` / `.charCodeAt` BUILTINS (i32 index args, `ref_extern` result), NOT the env `string_<method>` family the IR table + `stringMethodPlan` use. Needs a NEW resolver-plan variant that (a) targets the js-string import via **`ctx.jsStringImports.get(name)`** — the collision-safe map legacy uses on purpose (#1072: a bare `funcMap.get("substring")` resolve would be hijacked by a user function named `substring`); (b) handles funcIdx-shift (re-resolve by name post-late-import, like `resolveFunc`'s helper arm); (c) i32 arg rep (from-ast already truncates f64→i32 when `indexArgRep==="i32"`); (d) `ref_extern`→`IrType.string` result; (e) **charCodeAt's i32→f64 + out-of-range→NaN** semantics (legacy does this "inline" in `string-ops.ts` ~:2225 — match it exactly). Native mode uses `__str_substring` (already resolvable) — `substring` clamp/swap semantics verified matching JS via legacy oracle. Do `substring` first (string→string, no NaN); `charCodeAt` second. |
+| 2 | string relational `<` / `>` / `<=` / `>=` (`string operator '<' not in slice 1`) | **M-L** | Legacy is mode-split: host `wasm:js-string` compare vs native `__str_compare` (`binary-ops.ts` ~:3790), WITH mixed-operand `ToNumber` (§7.2.15 string-vs-number) + NaN-incomparable handling. Faithful lowering must replicate both arms. Alternatively option (b): selector-reject when either operand's `TypeMap` type is string. |
+| 3 | unary `+` coercion on non-number (`unary '+' expects number`) | **M** | `+s` is `ToNumber(s)` — a host call (host mode) / native `__str_to_number` path. Mode-dependent. Option (b) reject needs operand type. |
+| 4 | element store on a TypedArray view (`element store on a TypedArray view not in IR scope`) | **defer** | Already a documented **#2856-C2 residual** (per-view ToUint8/clamp conversions stay legacy). Only class the test262 sample surfaced (`examples/native-messaging/nm_js2wasm_node_fs.ts`). Low frequency; leave last. |
+
+Recommended order: **1-substring → 1-charCodeAt → 3-unary+ → 2-relational**
+(ascending real risk; string methods are the highest-frequency class per the
+#3143 diagnosis). Each is one PR, ratchet `body-shape`/post-claim via
+`check:ir-fallbacks --update-on-decrease`, land green, next.
+
 ## Files
 
 - `scripts/ir-postclaim-meter.mts` (new) — the census script.
