@@ -1,8 +1,9 @@
 {
   "id": "3188",
   "assignee": "ttraenkler/dev-find-wasm",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3188-wraptest-export-collision",
   "claimed_at": "2026-07-12T18:06:55Z",
-  "updated_at": "2026-07-12T18:06:55Z"
+  "updated_at": "2026-07-12T18:32:40Z",
+  "released_at": "2026-07-12T18:32:40Z"
 }
