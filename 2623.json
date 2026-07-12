@@ -1,8 +1,9 @@
 {
   "id": "2623",
   "assignee": "ttraenkler/dev-promise-p7",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2623-promise-capability-multihop",
   "claimed_at": "2026-07-12T03:09:44Z",
-  "updated_at": "2026-07-12T03:09:44Z"
+  "updated_at": "2026-07-12T05:21:22Z",
+  "released_at": "2026-07-12T05:21:22Z"
 }
