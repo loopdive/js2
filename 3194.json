@@ -1,8 +1,9 @@
 {
   "id": "3194",
   "assignee": "ttraenkler/dev-find-wasm",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3194-super-dispatch-core",
   "claimed_at": "2026-07-12T18:28:50Z",
-  "updated_at": "2026-07-12T18:28:50Z"
+  "updated_at": "2026-07-12T18:47:13Z",
+  "released_at": "2026-07-12T18:47:13Z"
 }
