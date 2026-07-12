@@ -1,8 +1,8 @@
 {
   "id": "3176",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T12:22:10Z",
-  "updated_at": "2026-07-12T12:22:10Z"
+  "assignee": "ttraenkler/dev-json",
+  "status": "in-progress",
+  "branch": "issue-3176-standalone-json-residual",
+  "claimed_at": "2026-07-12T13:02:44Z",
+  "updated_at": "2026-07-12T13:02:44Z"
 }
