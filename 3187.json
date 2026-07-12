@@ -1,8 +1,9 @@
 {
   "id": "3187",
   "assignee": "ttraenkler/dev-forin-sound",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3187-error-category-split",
   "claimed_at": "2026-07-12T17:21:32Z",
-  "updated_at": "2026-07-12T17:21:32Z"
+  "updated_at": "2026-07-12T17:36:03Z",
+  "released_at": "2026-07-12T17:36:03Z"
 }
