@@ -1,8 +1,9 @@
 {
   "id": "3162",
   "assignee": "ttraenkler/agent-a30d0acc00d3c78c5",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3162-dynview-find-soundness",
   "claimed_at": "2026-07-12T10:28:01Z",
-  "updated_at": "2026-07-12T10:28:01Z"
+  "updated_at": "2026-07-12T14:29:23Z",
+  "released_at": "2026-07-12T14:29:23Z"
 }
