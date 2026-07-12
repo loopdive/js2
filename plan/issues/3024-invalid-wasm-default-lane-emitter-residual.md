@@ -19,6 +19,7 @@ related: []
 loc-budget-allow:
   - src/codegen/expressions/calls.ts
   - src/codegen/index.ts
+  - src/codegen/property-access.ts
 ---
 
 # #3024 — invalid Wasm binary emission residual (default lane)
@@ -498,6 +499,60 @@ ALWAYS invalid Wasm, so no valid module changes shape.
   eval-promotion family (banked, broad-impact), then ≤4-file singletons
   (`__obj_meth_tramp_*_valueOf`, `struct.set (ref null #)`, `call expected
 externref found ref.func`, Atomics `__cb_#` fallthru, `i#.lt_s` …).
+
+---
+
+## Landed: static-method-named-`constructor` as a value (fable-wasm, 2026-07-11, slice 4)
+
+**PR:** `issue-3024-static-ctor-genmeth` — clears the 4-file
+`grammar-static-ctor-{gen,async-gen}-meth-valid` cluster
+(`language/{expressions,statements}/class/elements/syntax/valid/`;
+`call[N] expected externref, found ref.func of type (ref M)` in `test`).
+
+### Root cause (funcref through `extern.convert_any`)
+
+A class may declare a STATIC method literally named `constructor`
+(`static * constructor() {}` — legal ES, distinct from the instance
+constructor). Reading it as a value (`C.constructor`, e.g. the harness'
+`assert.notSameValue(C.prototype.constructor, C.constructor)`) must box it like
+any other static method: a closure struct → `extern.convert_any` (the
+`emitFuncRefAsClosure` arm at property-access.ts ~5005). But the
+`ClassName.constructor` arm (property-access.ts ~4980) fired FIRST and took a
+raw path — `ref.func <C_constructor>` + `extern.convert_any`. A funcref is NOT
+in the anyref hierarchy, so `extern.convert_any` on a funcref is invalid, and
+the invalid value surfaced at the CONSUMER as `call[N] expected externref,
+found ref.func of (ref M)`.
+
+### Fix (property-access.ts)
+
+Guard the raw ctor-ref arm with `&& !ctx.staticMethodSet.has(fullName)` so a
+class that owns a static `constructor` method falls through to the
+static-method closure arm (correct funcref → closure-struct → externref
+boxing). Plain classes (no static `constructor`) are unaffected — byte-inert.
+
+### Proofs
+
+- Repro (`sink(C.constructor)` with `static * constructor`) VALIDATES; plain-class
+  `C.constructor` and ordinary static-method-value controls unchanged.
+- All 4 target test262 files flip CE → valid Wasm (they now fail only on a
+  distinct `C.prototype.hasOwnProperty('constructor')` semantic, not a compile
+  error).
+- Full 214-candidate re-harvest: the 4 `ref.func` files cleared, zero new
+  invalid signatures (72 → 68 on the slice-1+2 base).
+- 12-program corpus **byte-identical** (sha256) to main.
+- New `tests/issue-3024-static-ctor-method-value.test.ts` (4 tests); adjacent
+  class-static-method suites (issue-1394, 2933-reflect-static-method-value,
+  3133-instance-constructor-identity, 846-class-static-prototype, 2587,
+  test262-runner-static-gen-yield — 51 tests) pass. The class-elements-619
+  failures are PRE-EXISTING on main (verified by control run).
+- `loc-budget-allow` granted for `property-access.ts` (#3131; +11 net).
+
+### Still open (roll forward)
+
+The remaining invalid-Wasm files: the banked 7-file `fN.ne` cross-statement
+eval-promotion family (broad-impact) and ≤4-file per-root-cause singletons
+(`struct.set (ref null #)`, Atomics `__cb_#` fallthru, `i#.lt_s`,
+`__vec_from_extern` element-rep, async-gen `__closure_#`).
 
 ---
 

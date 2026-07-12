@@ -895,6 +895,33 @@ function runPipeline(input: PipelineInput): CompileResult {
       mod = result.module;
       capturedFallbackCounts = result.fallbackCounts;
       capturedIrPostClaimErrors = result.irPostClaimErrors;
+      // (#3153) Post-claim demotion telemetry sink. When
+      // `JS2WASM_IR_POSTCLAIM_LOG=<path>` is set, append one JSONL record per
+      // post-claim demotion (selector claimed, from-ast/resolve/lower threw —
+      // exactly the #3143 IR-first divergence population) so a whole test-suite
+      // run doubles as an empirical throw-site meter. Same env-gated telemetry
+      // pattern as JS2WASM_LOG_IR_FALLBACKS; inert (no fs touch) when unset.
+      if (process.env.JS2WASM_IR_POSTCLAIM_LOG && capturedIrPostClaimErrors?.length) {
+        try {
+          // Dynamic import kept out of the module graph on purpose: this is
+          // node-only telemetry and `compiler.ts` is also bundled for the
+          // browser playground, where `node:fs` must not be a static dep.
+          // `createRequire` via process.getBuiltinModule (node >= 20.16) or a
+          // guarded globalThis require both work; simplest portable form:
+          const fs = (
+            globalThis as { process?: { getBuiltinModule?: (m: string) => unknown } }
+          ).process?.getBuiltinModule?.("node:fs") as typeof import("node:fs") | undefined;
+          if (!fs) throw new Error("node:fs unavailable");
+          const { appendFileSync } = fs;
+          const file = options.fileName ?? "<source>";
+          const lines = capturedIrPostClaimErrors
+            .map((e) => JSON.stringify({ file, func: e.func, kind: e.kind, message: e.message }))
+            .join("\n");
+          appendFileSync(process.env.JS2WASM_IR_POSTCLAIM_LOG, lines + "\n");
+        } catch {
+          // Telemetry must never fail a compile.
+        }
+      }
       capturedIrCompiledFuncs = result.irCompiledFuncs;
       capturedIrFirstSkipped = multiAst
         ? undefined // generateMultiModule has no IR overlay yet — the #2138 multi seam is a follow-on slice

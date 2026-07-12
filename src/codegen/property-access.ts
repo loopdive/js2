@@ -4976,8 +4976,19 @@ export function compilePropertyAccess(
         fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };
       }
-      // ClassName.constructor — return the constructor function reference
-      if (propName === "constructor") {
+      // ClassName.constructor — return the constructor function reference.
+      // (#3024) A class may declare a STATIC method literally named
+      // `constructor` (`static * constructor() {}` — legal, distinct from the
+      // instance constructor; the `grammar-static-ctor-*-meth-valid` test262
+      // family). `C.constructor` then reads that static method as a value and
+      // must be boxed like any other static method (a closure struct →
+      // `extern.convert_any`, the arm below). The legacy raw path here emitted
+      // `ref.func <C_constructor>` + `extern.convert_any` — but a funcref is
+      // NOT in the anyref hierarchy, so `extern.convert_any` on it is invalid
+      // Wasm (`call[N] expected externref, found ref.func of (ref M)`). Skip
+      // the raw path when a static method owns the name, letting the
+      // static-method closure arm below handle it correctly.
+      if (propName === "constructor" && !ctx.staticMethodSet.has(fullName)) {
         const ctorName = `${resolvedClass}_constructor`;
         const funcIdx = ctx.funcMap.get(ctorName);
         if (funcIdx !== undefined) {
