@@ -1,8 +1,8 @@
 {
   "id": "3179",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T13:28:06Z",
-  "updated_at": "2026-07-12T13:28:06Z"
+  "assignee": "ttraenkler/dev-boxed-index",
+  "status": "in-progress",
+  "branch": "issue-3179-boxed-index-read",
+  "claimed_at": "2026-07-12T15:35:43Z",
+  "updated_at": "2026-07-12T15:35:43Z"
 }
