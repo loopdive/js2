@@ -1,9 +1,8 @@
 {
   "id": "3146",
-  "assignee": "ttraenkler/dev-3051c",
-  "status": "released",
+  "assignee": "ttraenkler/dev-iterators",
+  "status": "in-progress",
   "branch": "issue-3146-standalone-iterator-helpers",
-  "claimed_at": "2026-07-12T04:35:53Z",
-  "updated_at": "2026-07-12T04:37:10Z",
-  "released_at": "2026-07-12T04:37:10Z"
+  "claimed_at": "2026-07-12T04:37:50Z",
+  "updated_at": "2026-07-12T04:37:50Z"
 }
