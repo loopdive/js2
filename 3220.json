@@ -1,8 +1,8 @@
 {
   "id": "3220",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-13T03:39:23Z",
-  "updated_at": "2026-07-13T03:39:23Z"
+  "assignee": "ttraenkler/opus-promiserep",
+  "status": "in-progress",
+  "branch": "issue-3220-promise-return-double-wrap",
+  "claimed_at": "2026-07-13T03:40:22Z",
+  "updated_at": "2026-07-13T03:40:22Z"
 }
