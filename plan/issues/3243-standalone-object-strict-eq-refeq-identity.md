@@ -1,7 +1,8 @@
 ---
 id: 3243
 title: "standalone: native object === identity — extend #2734 ref.eq fast path to inline strict-eq (retire tag-5 string-content fold for objects)"
-status: in-progress
+status: done
+completed: 2026-07-13
 sprint: current
 priority: high
 feasibility: hard
