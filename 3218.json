@@ -1,8 +1,9 @@
 {
   "id": "3218",
   "assignee": "ttraenkler/opus-ta",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3218-standalone-ta-detached-validate",
   "claimed_at": "2026-07-13T02:55:14Z",
-  "updated_at": "2026-07-13T02:55:14Z"
+  "updated_at": "2026-07-13T03:26:47Z",
+  "released_at": "2026-07-13T03:26:47Z"
 }
