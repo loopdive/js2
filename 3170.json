@@ -1,8 +1,8 @@
 {
   "id": "3170",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T12:21:29Z",
-  "updated_at": "2026-07-12T12:21:29Z"
+  "assignee": "ttraenkler/opus-3170",
+  "status": "in-progress",
+  "branch": "issue-3170-standalone-array-search-value-arraylike",
+  "claimed_at": "2026-07-13T06:39:35Z",
+  "updated_at": "2026-07-13T06:39:35Z"
 }
