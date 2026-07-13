@@ -1,8 +1,8 @@
 {
   "id": "3103",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-09T10:44:42Z",
-  "updated_at": "2026-07-09T10:44:42Z"
+  "assignee": "ttraenkler/opus-splitrt",
+  "status": "in-progress",
+  "branch": "issue-3103-split-runtime",
+  "claimed_at": "2026-07-13T07:51:45Z",
+  "updated_at": "2026-07-13T07:51:45Z"
 }
