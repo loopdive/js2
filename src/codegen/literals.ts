@@ -394,11 +394,34 @@ export function materializeStructAsDynamicObject(
   ctx: CodegenContext,
   fctx: FunctionContext,
   structTypeIdx: number,
+  opts?: { skipInternalFields?: boolean },
 ): boolean {
   const structName = ctx.typeIdxToStructName.get(structTypeIdx);
   if (structName === undefined) return false;
-  const fields = ctx.structFields.get(structName);
-  if (!fields || fields.length === 0) return false;
+  const allFields = ctx.structFields.get(structName);
+  if (!allFields || allFields.length === 0) return false;
+
+  // (#3222 C1) When materializing for own-property ENUMERATION (spread / object
+  // rest in standalone), skip synthetic/internal slots (`__tag`, class brand,
+  // method-table entries — every `__`-prefixed field) so they never surface as
+  // own keys. This mirrors the `userFields` filter in `compileObjectKeysOrValues`
+  // (object-ops.ts). Real own-enumerable data + method fields keep their struct
+  // field index for the `struct.get` below. The default (no opts) copies ALL
+  // fields, preserving the existing `__to_primitive` materialize behaviour.
+  const fields = opts?.skipInternalFields
+    ? allFields.map((f, i) => ({ f, i })).filter((e) => !e.f.name.startsWith("__"))
+    : allFields.map((f, i) => ({ f, i }));
+  if (fields.length === 0) {
+    // Struct had only internal fields — still produce a valid empty $Object so
+    // the caller's downstream enumeration path sees a proper open object.
+    const newObjOnly = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (newObjOnly === undefined) return false;
+    // Drop the incoming struct ref (materialize consumes it) and push a fresh obj.
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__new_plain_object") ?? newObjOnly });
+    return true;
+  }
 
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
   const setIdx = ensureLateImport(
@@ -424,8 +447,7 @@ export function materializeStructAsDynamicObject(
   fctx.body.push({ op: "call", funcIdx: finalNew });
   fctx.body.push({ op: "local.set", index: objLocal });
 
-  for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
-    const field = fields[fieldIdx]!;
+  for (const { f: field, i: fieldIdx } of fields) {
     // Read the field value: struct.get, then coerce to externref so __extern_set
     // can store it. A method field (eqref/ref closure) coerces via the engine's
     // ref→externref arm (extern.convert_any) — the same closure value the
@@ -616,7 +638,39 @@ function compileObjectLiteralWithAccessors(
       // Compile spread source and call __object_assign(target, [source])
       const srcType = compileExpression(ctx, fctx, prop.expression);
       if (srcType) {
-        if (srcType.kind !== "externref") {
+        // (#3222 C1) In standalone/WASI, a spread source whose STATIC type is a
+        // closed-shape struct (`{...typedObj}`) would otherwise be reinterpreted
+        // as an externref via `coerceType` and handed to `__object_assign`, whose
+        // native enumeration walks only the open-`$Object` hash — so it copies
+        // NOTHING (the struct fields are invisible to `__object_keys`). Instead
+        // materialize the struct into a real open `$Object` first (own-enumerable
+        // fields only) so `__object_assign` enumerates and copies them correctly.
+        // Host/gc lanes keep the byte-identical `extern.convert_any` + host
+        // `__object_assign` (host reflection reads closed structs already).
+        //
+        // Gated on `ctx.standalone` ONLY (not wasi): this handler's array-builder
+        // + `__object_assign` merge below is itself host-free only under
+        // `ctx.standalone` (the `else` branch takes the `__js_array_new` host
+        // import), so `--target wasi` object-spread has a SEPARATE pre-existing
+        // gap (even open-`$Object` spread is empty under wasi). Materializing here
+        // would produce a correct `$Object` the wasi downstream still can't merge,
+        // so we scope this to the mode where the whole path is native. (The
+        // object-REST fix IS `standalone || wasi` — its `__extern_rest_object`
+        // downstream is native in both.)
+        const spreadStructIdx =
+          ctx.standalone &&
+          (srcType.kind === "ref" || srcType.kind === "ref_null") &&
+          typeof (srcType as { typeIdx?: number }).typeIdx === "number" &&
+          ctx.typeIdxToStructName.has((srcType as { typeIdx: number }).typeIdx)
+            ? (srcType as { typeIdx: number }).typeIdx
+            : undefined;
+        if (
+          spreadStructIdx !== undefined &&
+          materializeStructAsDynamicObject(ctx, fctx, spreadStructIdx, { skipInternalFields: true })
+        ) {
+          // $Object now on the stack (externref) — fall through to the existing
+          // __object_assign(target, [$Object]) merge.
+        } else if (srcType.kind !== "externref") {
           coerceType(ctx, fctx, srcType, { kind: "externref" });
         }
         let arrNewIdx: number | undefined;

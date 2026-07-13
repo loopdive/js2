@@ -37,6 +37,7 @@ import {
   coerceType,
   compileExpression,
   emitBoundsCheckedArrayGet,
+  materializeStructAsObject,
   registerEmitDefaultValueCheck,
   registerEmitNestedBindingDefault,
   registerEnsureBindingLocals,
@@ -815,6 +816,30 @@ export function compileObjectDestructuring(
   const hasRestElement = pattern.elements.some((e) => ts.isBindingElement(e) && !!e.dotDotDotToken);
   if (hasRestElement) {
     if (resultType.kind === "ref" || resultType.kind === "ref_null") {
+      // (#3222 C1) In standalone/WASI, the externref rest path collects the rest
+      // binding via `__extern_rest_object` → `__object_keys`, which walks only
+      // the open-`$Object` hash. A CLOSED-shape struct source (`{a,...rest} =
+      // {a:1,b:2,c:3}`) reinterpreted as externref via `extern.convert_any` is
+      // invisible to that enumeration, so `rest` came out EMPTY. Instead
+      // materialize the struct into a real open `$Object` first (own-enumerable
+      // fields only) so both the named-binding `__extern_get`s and the
+      // `__extern_rest_object` collection see every property. Host/gc lanes keep
+      // the byte-identical `extern.convert_any` (the host `__extern_rest_object`
+      // enumerates closed structs via `__sget_*` reflection already).
+      if ((ctx.standalone || ctx.wasi) && structTypeIdx !== undefined) {
+        // Match the materialize helper's local type (ref_null <structTypeIdx>);
+        // an anonymous-literal source may have a different resultType.typeIdx.
+        if ((resultType as { typeIdx?: number }).typeIdx !== structTypeIdx) {
+          fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx } as Instr);
+        }
+        if (materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
+          compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+          return;
+        }
+        // materialize declined — fall back to the plain externref reinterpret.
+        // The struct ref is still on the stack (ref.cast, if any, is a no-op for
+        // enumeration purposes here); convert and route through the host path.
+      }
       fctx.body.push({ op: "extern.convert_any" } as Instr);
       compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
       return;

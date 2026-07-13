@@ -355,7 +355,13 @@ export function coerceType(
 // materialization (struct consumed, `$Object` externref left on the stack),
 // false if it declined (caller falls back to `extern.convert_any`).
 
-type MaterializeStructAsObjectFn = (ctx: CodegenContext, fctx: FunctionContext, structTypeIdx: number) => boolean;
+type MaterializeStructAsObjectOpts = { skipInternalFields?: boolean };
+type MaterializeStructAsObjectFn = (
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  structTypeIdx: number,
+  opts?: MaterializeStructAsObjectOpts,
+) => boolean;
 
 let _materializeStructAsObject: MaterializeStructAsObjectFn = () => false;
 
@@ -364,8 +370,13 @@ export function registerMaterializeStructAsObject(fn: MaterializeStructAsObjectF
   markRegistered("materializeStructAsObject");
 }
 
-export function materializeStructAsObject(ctx: CodegenContext, fctx: FunctionContext, structTypeIdx: number): boolean {
-  return _materializeStructAsObject(ctx, fctx, structTypeIdx);
+export function materializeStructAsObject(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  structTypeIdx: number,
+  opts?: MaterializeStructAsObjectOpts,
+): boolean {
+  return _materializeStructAsObject(ctx, fctx, structTypeIdx, opts);
 }
 
 // ── ensureLateImport / flushLateImportShifts delegates ───────────────

@@ -1,7 +1,9 @@
 ---
 id: 3222
 title: "standalone: native closed-shape struct field enumeration — Object.keys/values/entries/spread/rest all return empty for typed objects (~989 test262 files touch the surface)"
-status: ready
+status: done
+assignee: ttraenkler/opus-c1
+completed: 2026-07-13
 sprint: current
 model: opus
 created: 2026-07-13
@@ -13,8 +15,16 @@ task_type: bugfix
 area: codegen, runtime
 language_feature: objects, property enumeration, spread, destructuring
 goal: standalone-mode
-related: [3218, 2515, 1472, 2714, 987, 2158]
+related: [3218, 2515, 1472, 2714, 987, 2158, 3229]
 test262_bucket: standalone-closed-struct-enumeration
+# (#3222 C1) Intended growth: the enumerable-own materialize option lives on the
+# existing `materializeStructAsDynamicObject` (literals.ts) beside its default
+# ToPrimitive caller; the two call sites (object-spread in literals.ts, object-rest
+# in statements/destructuring.ts) are the correct homes for the standalone-gated
+# closed-struct enumeration.
+loc-budget-allow:
+  - src/codegen/literals.ts
+  - src/codegen/statements/destructuring.ts
 ---
 
 # #3222 — native closed-shape struct field enumeration (standalone)
@@ -92,3 +102,72 @@ and the representation tradeoffs are acceptable.
 - Broad-impact → validate on the merge_group standalone floor.
 - Once landed, #3218's `__extern_rest_object` handles closed-struct sources
   automatically (it delegates to `__object_keys`).
+
+## Implementation (C1 landed) — WHY, and the measure-first scope correction
+
+**Measure-first correction (important).** Re-probed on FRESH main before coding
+(the "keys returns 0" symptom is a classic stale-source artifact). Findings on
+current main, `--target standalone`:
+
+- `Object.keys({a:1,b:2,c:3}).length` → **3** already (a bare object LITERAL
+  compiles to an open `$Object`; native `__object_keys` walks it fine).
+- `Object.keys(typedLocal)` already returns a CORRECT vec via the existing
+  compile-time struct fast-path in `compileObjectKeysOrValues`
+  (`object-ops.ts`) — `const k = Object.keys(o); k.length` → **3**.
+- So `Object.keys`/`values`/`entries` are LARGELY NOT broken. The genuinely
+  empty standalone cases are **object-SPREAD `{...closedStruct}`** (copied
+  nothing) and **object-REST `{a, ...rest}` of a closed struct** (empty rest).
+  Both funnel runtime enumeration through native `__object_keys`, which has no
+  closed-struct arm, so a struct erased to externref is invisible to them.
+
+C1 therefore narrowed to **spread + rest** (the actually-broken surface), NOT
+all of keys/values/entries.
+
+**The fix (one primitive, two sites, all `standalone`-gated).** Reuse the
+existing `materializeStructAsDynamicObject` (`literals.ts`) — which already
+copies a closed struct into a real open `$Object` via `__new_plain_object` +
+`__extern_set` — with a new `{ skipInternalFields: true }` option that drops
+`__`-prefixed brand/tag/method-table slots (mirrors the `userFields` filter in
+`compileObjectKeysOrValues`). Once the source is an OPEN `$Object`, the existing
+host-free open-hash helpers enumerate it correctly:
+
+1. **Spread** (`literals.ts`, `compileObjectLiteralWithAccessors` spread arm):
+   when the spread source's emitted type is a closed struct, materialize →
+   `$Object` before the existing `__object_assign(target, [src])` merge. Gated
+   on `ctx.standalone` ONLY: this handler's array-builder + `__object_assign`
+   merge is host-free only under `standalone` (the `else` arm takes the
+   `__js_array_new` host import), so `--target wasi` object-spread has a
+   SEPARATE pre-existing gap (open-`$Object` spread is also empty under wasi) —
+   out of C1 scope, tracked as a follow-up.
+2. **Rest** (`statements/destructuring.ts`, the `hasRestElement` bail): instead
+   of `extern.convert_any` (which reinterprets the struct as an opaque externref
+   `__object_keys` can't read), materialize → `$Object`, then run the existing
+   `compileExternrefObjectDestructuringDecl`. Gated on `ctx.standalone ||
+   ctx.wasi` — the rest downstream `__extern_rest_object` is native in BOTH
+   (#3223), so wasi rest works too (verified). A `ref.cast` to the resolved
+   struct type precedes materialize when the anon-literal source's `typeIdx`
+   differs from the resolved `structTypeIdx`.
+
+**Why NET ≥ 0 by construction.** Every change is behind a `standalone`/`wasi`
+guard, and the shared helper's DEFAULT path (no opts) is unchanged (all fields,
+same struct-field indices/order) so its existing ToPrimitive caller is
+untouched. PROVEN byte-identical: host & gc emitted-Wasm SHAs are IDENTICAL to
+origin/main on a spread/rest corpus (`b613c0288ad335fc`); only
+standalone/wasi bytes change (+the feature). Host/gc cannot regress.
+
+**Correctness validated** (standalone, instantiated with `{}`): spread
+keys=3/values=6, spread+override=13 (one key per name, override value wins),
+2-struct merge=3; rest keys=2/values=5 (excluded key dropped), nested/multi
+rest=2; wasi rest=2. Own-enumerable order = struct declaration order (numeric-
+key ascending-first reordering is a pre-existing shared limitation of the
+static path, not introduced here).
+
+**Discovered + split off: #3229** — `Object.keys(o).length` read INLINE on the
+call result returns 0 (the static keys fast-path returns a vec-of-externref;
+`.length` dispatches on the vec-of-string type → `ref.test` fails → `f64.const
+0`). Mode-AGNOSTIC (host too), so fixing it changes host bytes — deliberately
+kept OUT of C1 to preserve byte-identity. Filed separately.
+
+**C2 (follow-on, NOT this slice):** a runtime closed-struct arm in
+`__object_keys` for sources erased to externref across a function boundary
+(approach 2 above).
