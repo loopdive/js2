@@ -1,8 +1,9 @@
 {
   "id": "3205",
   "assignee": "ttraenkler/opus-closures",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3205-property-call-wrapper-root",
   "claimed_at": "2026-07-13T00:40:16Z",
-  "updated_at": "2026-07-13T00:40:16Z"
+  "updated_at": "2026-07-13T01:37:19Z",
+  "released_at": "2026-07-13T01:37:19Z"
 }
