@@ -1,8 +1,9 @@
 {
   "id": "3215",
   "assignee": "ttraenkler/opus-date",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3215-standalone-date-reflective-getters",
   "claimed_at": "2026-07-13T02:39:18Z",
-  "updated_at": "2026-07-13T02:39:18Z"
+  "updated_at": "2026-07-13T03:15:42Z",
+  "released_at": "2026-07-13T03:15:42Z"
 }
