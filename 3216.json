@@ -1,8 +1,8 @@
 {
   "id": "3216",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-13T02:41:14Z",
-  "updated_at": "2026-07-13T02:41:14Z"
+  "assignee": "ttraenkler/opus-substrate",
+  "status": "in-progress",
+  "branch": "issue-3216-any-native-string-strict-eq",
+  "claimed_at": "2026-07-13T02:41:49Z",
+  "updated_at": "2026-07-13T02:41:49Z"
 }
