@@ -1,8 +1,8 @@
 {
   "id": "3215",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-13T02:38:40Z",
-  "updated_at": "2026-07-13T02:38:40Z"
+  "assignee": "ttraenkler/opus-date",
+  "status": "in-progress",
+  "branch": "issue-3215-standalone-date-reflective-getters",
+  "claimed_at": "2026-07-13T02:39:18Z",
+  "updated_at": "2026-07-13T02:39:18Z"
 }
