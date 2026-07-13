@@ -1,8 +1,9 @@
 {
   "id": "3208",
   "assignee": "ttraenkler/opus-standalone",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3208-standalone-string-trim-reflective",
   "claimed_at": "2026-07-13T01:38:17Z",
-  "updated_at": "2026-07-13T01:38:17Z"
+  "updated_at": "2026-07-13T02:10:39Z",
+  "released_at": "2026-07-13T02:10:39Z"
 }
