@@ -1,8 +1,9 @@
 {
   "id": "3230",
   "assignee": "ttraenkler/opus-3022",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3230-defineproperty-dynamic-descriptor-read",
   "claimed_at": "2026-07-13T07:08:27Z",
-  "updated_at": "2026-07-13T07:08:27Z"
+  "updated_at": "2026-07-13T07:44:43Z",
+  "released_at": "2026-07-13T07:44:43Z"
 }
