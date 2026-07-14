@@ -3901,7 +3901,7 @@ document.body.appendChild(el);</pre
 import { compile } from "js2wasm";
 import { buildImports } from "js2wasm/runtime";
 
-const result = compile(sourceCode, {
+const result = await compile(sourceCode, {
   fileName: "app.js"
 });
 
