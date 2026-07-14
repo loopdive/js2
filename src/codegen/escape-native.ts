@@ -131,7 +131,7 @@ export function emitNativeEscape(ctx: CodegenContext): void {
   ];
 
   const nibble = (shift: number): Instr[] => {
-    const src = shift === 0 ? [get(L_C)] : [get(L_C), c(shift), { op: "i32.shr_u" }];
+    const src: Instr[] = shift === 0 ? [get(L_C)] : [get(L_C), c(shift), { op: "i32.shr_u" }];
     return hexDigit([...src, c(0xf), { op: "i32.and" }]);
   };
 

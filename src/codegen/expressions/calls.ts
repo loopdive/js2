@@ -1861,7 +1861,7 @@ function tryEmitJsonStringifyPrimitive(
         { op: "local.get", index: valLocal },
         { op: "call", funcIdx: numToStrIdx },
         ...(ctx.standalone || ctx.wasi
-          ? [{ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx }]
+          ? ([{ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx }] satisfies Instr[])
           : []),
       ],
       else: nullBody,

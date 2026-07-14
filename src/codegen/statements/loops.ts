@@ -5312,11 +5312,11 @@ function compileForOfDirectIterator(
   // reference_shared_instr_object_dce_double_remap).
   const closeCallInstrs = (): Instr[] => [
     { op: "local.get", index: iterLocal },
-    ...(iterResultType.kind === "ref_null" ? [{ op: "ref.as_non_null" }] : []),
+    ...(iterResultType.kind === "ref_null" ? ([{ op: "ref.as_non_null" }] satisfies Instr[]) : []),
     { op: "call", funcIdx: returnMethodIdx! },
     // Drop the return value only when return() actually yields one
     // (#2978 / #2934-3b — a void return() has nothing to drop).
-    ...(returnMethodResultArity > 0 ? [{ op: "drop" }] : []),
+    ...(returnMethodResultArity > 0 ? ([{ op: "drop" }] satisfies Instr[]) : []),
   ];
 
   const blockLoop: Instr = {

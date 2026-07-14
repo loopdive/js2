@@ -1481,7 +1481,7 @@ function emitCollectionSizeGetterBody(ctx: CodegenContext, fctx: FunctionContext
   // (ref $Map) on the stack → size (i32) → boxed number externref.
   fctx.body.push({ op: "call", funcIdx: sizeIdx });
   fctx.body.push({ op: "f64.convert_i32_s" });
-  fctx.body.push({ op: "call", funcIdx: boxIdx });
+  fctx.body.push({ op: "call", funcIdx: boxIdx! });
   return resultType;
 }
 

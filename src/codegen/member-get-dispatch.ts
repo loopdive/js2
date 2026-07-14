@@ -391,7 +391,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         { op: "local.get", index: mresLocal },
         { op: "ref.is_null" },
         ...(isUndefIdx !== undefined
-          ? [
+          ? ([
               {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "i32" } as ValType },
@@ -401,7 +401,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
                   { op: "call", funcIdx: isUndefIdx },
                 ],
               },
-            ]
+            ] satisfies Instr[])
           : []),
       ];
       return [
@@ -464,7 +464,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         cand.fieldType.kind === "i32" && cand.fieldType.boolean === true ? ctx.funcMap.get("__box_boolean") : undefined;
       // (#2963) When method arms exist, local 2 is the `__mres` externref
       // scratch; the sentinel f64 scratch then lives at local 3.
-      const box = useSentinelBox
+      const box: Instr[] = useSentinelBox
         ? sentinelAwareF64BoxInstrs(f64ScratchIdx, boxNumIdx)
         : boxBoolIdx !== undefined
           ? [{ op: "call", funcIdx: boxBoolIdx }]
