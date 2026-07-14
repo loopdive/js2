@@ -719,7 +719,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       },
       // else if (boxed number) return number_toString(__unbox_number(key))
       ...(boxNumTypeIdx >= 0
-        ? [
+        ? ([
             { op: "local.get", index: 1 },
             { op: "ref.test", typeIdx: boxNumTypeIdx },
             {
@@ -732,7 +732,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "return" },
               ],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // #2042 R2 — object-key arm. A computed access with an OBJECT key
       // (`obj[{valueOf:()=>2}]`) reaches here as a `$Object` externref; the
@@ -796,7 +796,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "any.convert_extern" },
       { op: "local.tee", index: 7 },
       ...(symbolKeysEnabled
-        ? [
+        ? ([
             { op: "ref.test", typeIdx: symbolTypeIdx },
             {
               op: "if",
@@ -810,7 +810,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "return" },
               ],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // str = flatten(cast<$AnyString>(keyAny))
       { op: "local.get", index: 7 },
@@ -977,7 +977,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     { op: "any.convert_extern" },
     { op: "local.set", index: searchAnyLocal },
     ...(symbolKeysEnabled
-      ? [
+      ? ([
           { op: "local.get", index: searchAnyLocal },
           { op: "ref.test", typeIdx: symbolTypeIdx },
           { op: "local.tee", index: isSymLocal },
@@ -999,15 +999,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               { op: "local.set", index: fkeyLocal },
             ],
           },
-        ]
-      : [
+        ] satisfies Instr[])
+      : ([
           { op: "i32.const", value: 0 },
           { op: "local.set", index: isSymLocal },
           { op: "local.get", index: searchAnyLocal },
           { op: "ref.cast", typeIdx: anyStrTypeIdx },
           { op: "call", funcIdx: strFlattenIdx },
           { op: "local.set", index: fkeyLocal },
-        ]),
+        ] satisfies Instr[])),
   ];
 
   // (#2866) Leave an i32 (1/0) on the stack: does `entryLocal`'s (non-null) key
@@ -1191,7 +1191,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // builtin function value answers its spec metadata (host-free). Non-meta
       // receivers/keys fall through unchanged (the helper returns null).
       ...(bfnGetMetaIdx !== undefined
-        ? [
+        ? ([
             { op: "local.get", index: 0 },
             { op: "local.get", index: 1 },
             { op: "call", funcIdx: bfnGetMetaIdx },
@@ -1203,7 +1203,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: 6 }, { op: "return" }],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // any = any.convert_extern(obj)
       { op: "local.get", index: 0 },
@@ -2088,7 +2088,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // properties are configurable, §10.2.9) and reports success. Other
       // receivers/keys fall through (the helper returns 0).
       ...(bfnDeleteIdx !== undefined
-        ? [
+        ? ([
             { op: "local.get", index: 0 },
             { op: "local.get", index: 1 },
             { op: "call", funcIdx: bfnDeleteIdx },
@@ -2097,7 +2097,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               blockType: { kind: "empty" },
               then: [{ op: "i32.const", value: 1 }, { op: "return" }],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // any = any.convert_extern(obj) ; if !ref.test $Object → return 1 (no-op success)
       { op: "local.get", index: 0 },
@@ -2361,7 +2361,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // builtin function value (until deleted). get_meta returns non-null
       // exactly when the own property exists.
       ...(bfnGetMetaIdx !== undefined
-        ? [
+        ? ([
             { op: "local.get", index: 0 },
             { op: "local.get", index: 1 },
             { op: "call", funcIdx: bfnGetMetaIdx },
@@ -2372,7 +2372,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               blockType: { kind: "empty" },
               then: [{ op: "i32.const", value: 1 }, { op: "return" }],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // any = any.convert_extern(obj); if !ref.test $Object → 0
       { op: "local.get", index: 0 },
@@ -2752,13 +2752,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 // it; else fall through to "return unchanged" (a struct/closure
                 // with no user ToPrimitive — today's behaviour, no regression).
                 ...(classToPrimIdx >= 0
-                  ? [
+                  ? ([
                       { op: "local.get", index: 0 },
                       ...isStringHint,
                       { op: "call", funcIdx: classToPrimIdx },
                       { op: "local.set", index: L_RESULT },
                       ...returnIfPrimitive(L_RESULT),
-                    ]
+                    ] satisfies Instr[])
                   : []),
                 // Any other non-$Object value (a struct/closure without a user
                 // ToPrimitive) returns unchanged as before.
@@ -3501,7 +3501,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                   // enumerable check — omitted for __obj_ordered_all (#2042 S3)
                   ...(includeNonEnum
                     ? []
-                    : [
+                    : ([
                         { op: "local.get", index: 4 },
                         { op: "ref.as_non_null" },
                         { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
@@ -3510,19 +3510,19 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                         { op: "i32.eqz" },
                         { op: "i32.eqz" },
                         { op: "i32.and" },
-                      ]),
+                      ] satisfies Instr[])),
                   // (#2866) AND is-string-key: exclude `$Symbol` keys from the
                   // string-key enumeration order (Object.keys/values/entries/
                   // getOwnPropertyNames/for-in/JSON — §10.1.11.1 lists string keys
                   // here; symbols come only from getOwnPropertySymbols).
                   ...(symbolKeysEnabled
-                    ? [
+                    ? ([
                         { op: "local.get", index: 4 },
                         { op: "ref.as_non_null" },
                         { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
                         { op: "ref.test", typeIdx: anyStrTypeIdx },
                         { op: "i32.and" },
-                      ]
+                      ] satisfies Instr[])
                     : []),
                   {
                     op: "if",
@@ -5971,7 +5971,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "call", funcIdx: externGetIdx },
       // (#2106 S1) normalize missing/undefined descriptor fields back to the
       // legacy null convention so downstream null-keyed logic is unchanged.
-      ...(ctx.funcMap.has("__nullish_to_null") ? [{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] : []),
+      ...(ctx.funcMap.has("__nullish_to_null")
+        ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+        : []),
     ];
     const setFlag = (bit: number): Instr[] => [
       { op: "local.get", index: L_FLAGS },
@@ -6001,10 +6003,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         blockType: { kind: "empty" },
         then: [
           ...(marksData
-            ? [
+            ? ([
                 { op: "i32.const", value: 1 },
                 { op: "local.set", index: L_HAS_DATA },
-              ]
+              ] satisfies Instr[])
             : []),
           ...setFlag(specifiedBit),
           ...getField(key),
@@ -6044,7 +6046,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           { op: "local.set", index: L_HAS_ACCESSOR },
           ...setFlag(specifiedBit),
           ...(dpUndefTagTypeIdx >= 0
-            ? [
+            ? ([
                 ...rawField(key),
                 { op: "local.set", index: localIdx },
                 { op: "local.get", index: localIdx },
@@ -6085,8 +6087,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     },
                   ],
                 },
-              ]
-            : [
+              ] satisfies Instr[])
+            : ([
                 ...getField(key),
                 { op: "local.tee", index: localIdx },
                 { op: "ref.is_null" },
@@ -6105,7 +6107,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     },
                   ],
                 },
-              ]),
+              ] satisfies Instr[])),
         ],
       },
     ];
@@ -6470,7 +6472,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "call", funcIdx: externGetIdx },
       // (#2106 S1) normalize missing/undefined descriptor fields back to the
       // legacy null convention so downstream null-keyed logic is unchanged.
-      ...(ctx.funcMap.has("__nullish_to_null") ? [{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] : []),
+      ...(ctx.funcMap.has("__nullish_to_null")
+        ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+        : []),
     ];
     const setFlag = (bit: number): Instr[] => [
       { op: "local.get", index: L_FLAGS },
@@ -6497,10 +6501,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         then: [
           ...setFlag(specifiedBit),
           ...(marksData
-            ? [
+            ? ([
                 { op: "i32.const", value: 1 },
                 { op: "local.set", index: L_HAS_DATA },
-              ]
+              ] satisfies Instr[])
             : []),
           ...getField(key),
           { op: "call", funcIdx: isTruthyIdx },
@@ -6538,7 +6542,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           { op: "local.set", index: L_HAS_ACCESSOR },
           ...setFlag(specifiedBit),
           ...(undefTagTypeIdx >= 0
-            ? [
+            ? ([
                 ...rawField(key),
                 { op: "local.set", index: localIdx },
                 // tag-1 $AnyValue box (the undefined singleton)?
@@ -6580,8 +6584,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     },
                   ],
                 },
-              ]
-            : [
+              ] satisfies Instr[])
+            : ([
                 ...getField(key),
                 { op: "local.tee", index: localIdx },
                 { op: "ref.is_null" },
@@ -6600,7 +6604,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     },
                   ],
                 },
-              ]),
+              ] satisfies Instr[])),
         ],
       },
     ];
@@ -6905,7 +6909,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // The helper is filled at finalize; non-meta receivers return null and
       // fall through to the `$Object` path below.
       ...(bfnGopdIdx !== undefined
-        ? [
+        ? ([
             { op: "local.get", index: 0 },
             { op: "local.get", index: 1 },
             { op: "call", funcIdx: bfnGopdIdx },
@@ -6917,7 +6921,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: 6 }, { op: "return" }],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // any = any.convert_extern(obj) ; if !$Object → return undefined (null)
       { op: "local.get", index: 0 },
@@ -7175,7 +7179,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       // keys are ["length", "name"] in spec order (minus deleted ones). The
       // filled helper pushes them into the vec and returns 1 on a hit.
       ...(bfnPushOwnNamesIdx !== undefined
-        ? [
+        ? ([
             { op: "local.get", index: 0 },
             { op: "local.get", index: 7 },
             { op: "call", funcIdx: bfnPushOwnNamesIdx },
@@ -7184,7 +7188,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: 7 }, { op: "return" }],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -7623,7 +7627,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // (#2106 S1) a missing method resolves to the undefined singleton —
           // normalize to null so __apply_closure keeps its legacy null path.
           ...(ctx.funcMap.has("__nullish_to_null")
-            ? [{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }]
+            ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
             : []),
           // __apply_closure(m, recv, args)
           { op: "local.get", index: 0 },
@@ -8700,7 +8704,9 @@ function ensureProxyRuntime(
       { op: "call", funcIdx: externGetIdx },
       // (#2106 S1) a missing trap resolves to the undefined singleton —
       // normalize to null so the trap-dispatch null checks keep working.
-      ...(ctx.funcMap.has("__nullish_to_null") ? [{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] : []),
+      ...(ctx.funcMap.has("__nullish_to_null")
+        ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+        : []),
     ];
     const proxyCreateBody: Instr[] = [
       // if target == null → throw
@@ -9366,7 +9372,7 @@ export function ensureObjectGroupBy(ctx: CodegenContext): number {
             // (#2106 S1) group-absent = undefined singleton → normalize to
             // null so the presence check below keeps its legacy shape.
             ...(ctx.funcMap.has("__nullish_to_null")
-              ? [{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }]
+              ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
               : []),
             { op: "local.set", index: 7 },
             // if group is null → group = __objvec_new(); __extern_set(out, key, group)
@@ -10451,7 +10457,7 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
           { op: "ref.cast", typeIdx },
           { op: "struct.get", typeIdx, fieldIdx: 1 },
           { op: "local.get", index: 4 },
-          { op: getOp, typeIdx: arrTypeIdx },
+          { op: getOp, typeIdx: arrTypeIdx } as Instr, // computed-op
           ...boxOps,
           { op: "return" },
         ],
@@ -10667,14 +10673,14 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
         : [];
     const strKeyBody: Instr[] = [
       ...(lenArm
-        ? [
+        ? ([
             ...lenArm,
             {
               op: "if",
               blockType: { kind: "empty" },
               then: [{ op: "i32.const", value: 1 }, { op: "return" }],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       ...numericArm,
     ];
