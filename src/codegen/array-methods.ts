@@ -1146,22 +1146,22 @@ export function compileArrayLikePrototypeCall(
     { op: "local.get", index: closureTmp },
     // Only push elem if callback expects at least 1 param (0-param callback causes Wasm validation error)
     ...(numParams >= 1
-      ? [
+      ? ([
           { op: "local.get", index: elemTmp },
           ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[0] ?? { kind: "externref" }, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     ...(numParams >= 2
-      ? [
+      ? ([
           { op: "local.get", index: iTmp },
           ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[1] ?? { kind: "i32" }, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     ...(numParams >= 3
-      ? [
+      ? ([
           { op: "local.get", index: receiverTmp },
           ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[2] ?? { kind: "externref" }, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     { op: "local.get", index: closureTmp },
     { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
@@ -1354,7 +1354,7 @@ export function compileArrayLikePrototypeCall(
                 ...loadElem,
                 ...withThisInstalled(callClosure),
                 // drop return value if any
-                ...(closureInfo.returnType !== null ? [{ op: "drop" }] : []),
+                ...(closureInfo.returnType !== null ? ([{ op: "drop" }] satisfies Instr[]) : []),
               ]),
               ...incrI,
             ],
@@ -1689,28 +1689,28 @@ export function compileArrayLikePrototypeCall(
       const reduceCallClosure: Instr[] = [
         { op: "local.get", index: closureTmp },
         ...(reduceNumParams >= 1
-          ? [
+          ? ([
               { op: "local.get", index: accTmp },
               ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[0] ?? { kind: "externref" }, fctx),
-            ]
+            ] satisfies Instr[])
           : []),
         ...(reduceNumParams >= 2
-          ? [
+          ? ([
               { op: "local.get", index: elemTmp },
               ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[1] ?? { kind: "externref" }, fctx),
-            ]
+            ] satisfies Instr[])
           : []),
         ...(reduceNumParams >= 3
-          ? [
+          ? ([
               { op: "local.get", index: iTmp },
               ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[2] ?? { kind: "i32" }, fctx),
-            ]
+            ] satisfies Instr[])
           : []),
         ...(reduceNumParams >= 4
-          ? [
+          ? ([
               { op: "local.get", index: receiverTmp },
               ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[3] ?? { kind: "externref" }, fctx),
-            ]
+            ] satisfies Instr[])
           : []),
         { op: "local.get", index: closureTmp },
         { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
@@ -1849,28 +1849,28 @@ export function compileArrayLikePrototypeCall(
       const rrCallClosure: Instr[] = [
         { op: "local.get", index: closureTmp },
         ...(rrNumParams >= 1
-          ? [
+          ? ([
               { op: "local.get", index: accTmp },
               ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[0] ?? { kind: "externref" }, fctx),
-            ]
+            ] satisfies Instr[])
           : []),
         ...(rrNumParams >= 2
-          ? [
+          ? ([
               { op: "local.get", index: elemTmp },
               ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[1] ?? { kind: "externref" }, fctx),
-            ]
+            ] satisfies Instr[])
           : []),
         ...(rrNumParams >= 3
-          ? [
+          ? ([
               { op: "local.get", index: iTmp },
               ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[2] ?? { kind: "i32" }, fctx),
-            ]
+            ] satisfies Instr[])
           : []),
         ...(rrNumParams >= 4
-          ? [
+          ? ([
               { op: "local.get", index: receiverTmp },
               ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[3] ?? { kind: "externref" }, fctx),
-            ]
+            ] satisfies Instr[])
           : []),
         { op: "local.get", index: closureTmp },
         { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
@@ -2731,23 +2731,23 @@ function compileArrayPrototypeEvery(
     // Gate elem/index/array on numParams — 0-param callback must not receive them.
     { op: "local.get", index: closureTmp },
     ...(numParams >= 1
-      ? [
+      ? ([
           { op: "local.get", index: dataTmp },
           { op: "local.get", index: iTmp },
           { op: getOp, typeIdx: arrTypeIdx },
           ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     // Push index (2nd user param) if callback expects it
     ...(numParams >= 2
-      ? [
+      ? ([
           { op: "local.get", index: iTmp },
           ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[1] ?? { kind: "i32" }, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     // Push array (3rd user param) if callback expects it
     ...(numParams >= 3
-      ? [
+      ? ([
           { op: "local.get", index: vecTmp },
           ...coercionInstrs(
             ctx,
@@ -2755,7 +2755,7 @@ function compileArrayPrototypeEvery(
             closureInfo.paramTypes[2] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
             fctx,
           ),
-        ]
+        ] satisfies Instr[])
       : []),
     // Get function ref from closure struct field 0 and call_ref
     { op: "local.get", index: closureTmp },
@@ -2765,11 +2765,11 @@ function compileArrayPrototypeEvery(
     { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
 
     // Check if result is falsy (0 for i32, 0.0 for f64)
-    ...(closureInfo.returnType?.kind === "f64"
+    ...((closureInfo.returnType?.kind === "f64"
       ? [{ op: "f64.const", value: 0 }, { op: "f64.eq" }]
       : closureInfo.returnType?.kind === "i32"
         ? [{ op: "i32.eqz" }]
-        : [{ op: "i32.eqz" }]),
+        : [{ op: "i32.eqz" }]) satisfies Instr[]),
 
     {
       op: "if",
@@ -2859,23 +2859,23 @@ function compileArrayPrototypeSome(
     { op: "br_if", depth: 1 },
     { op: "local.get", index: closureTmp },
     ...(numParams >= 1
-      ? [
+      ? ([
           { op: "local.get", index: dataTmp },
           { op: "local.get", index: iTmp },
           { op: getOp, typeIdx: arrTypeIdx },
           ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     // Push index (2nd user param) if callback expects it
     ...(numParams >= 2
-      ? [
+      ? ([
           { op: "local.get", index: iTmp },
           ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[1] ?? { kind: "i32" }, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     // Push array (3rd user param) if callback expects it
     ...(numParams >= 3
-      ? [
+      ? ([
           { op: "local.get", index: vecTmp },
           ...coercionInstrs(
             ctx,
@@ -2883,15 +2883,17 @@ function compileArrayPrototypeSome(
             closureInfo.paramTypes[2] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
             fctx,
           ),
-        ]
+        ] satisfies Instr[])
       : []),
     { op: "local.get", index: closureTmp },
     { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
     ...guardedFuncRefCastInstrs(fctx, closureInfo.funcTypeIdx),
     { op: "ref.as_non_null" },
     { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
-    ...(closureInfo.returnType?.kind === "f64" ? [{ op: "f64.const", value: 0 }, { op: "f64.ne" }] : []),
-    ...(closureInfo.returnType?.kind === "i32" ? [] : [{ op: "i32.eqz" }, { op: "i32.eqz" }]),
+    ...((closureInfo.returnType?.kind === "f64"
+      ? [{ op: "f64.const", value: 0 }, { op: "f64.ne" }]
+      : []) satisfies Instr[]),
+    ...((closureInfo.returnType?.kind === "i32" ? [] : [{ op: "i32.eqz" }, { op: "i32.eqz" }]) satisfies Instr[]),
     {
       op: "if",
       blockType: { kind: "empty" },
@@ -2974,23 +2976,23 @@ function compileArrayPrototypeForEach(
     { op: "br_if", depth: 1 },
     { op: "local.get", index: closureTmp },
     ...(numParams >= 1
-      ? [
+      ? ([
           { op: "local.get", index: dataTmp },
           { op: "local.get", index: iTmp },
           { op: getOp, typeIdx: arrTypeIdx },
           ...coercionInstrs(ctx, elemType, closureInfo.paramTypes[0] ?? elemType, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     // Push index (2nd user param) if callback expects it
     ...(numParams >= 2
-      ? [
+      ? ([
           { op: "local.get", index: iTmp },
           ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[1] ?? { kind: "i32" }, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     // Push array (3rd user param) if callback expects it
     ...(numParams >= 3
-      ? [
+      ? ([
           { op: "local.get", index: vecTmp },
           ...coercionInstrs(
             ctx,
@@ -2998,7 +3000,7 @@ function compileArrayPrototypeForEach(
             closureInfo.paramTypes[2] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
             fctx,
           ),
-        ]
+        ] satisfies Instr[])
       : []),
     { op: "local.get", index: closureTmp },
     { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
@@ -3006,7 +3008,7 @@ function compileArrayPrototypeForEach(
     { op: "ref.as_non_null" },
     { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
     // Drop the result if there is one
-    ...(closureInfo.returnType ? [{ op: "drop" }] : []),
+    ...(closureInfo.returnType ? ([{ op: "drop" }] satisfies Instr[]) : []),
     { op: "local.get", index: iTmp },
     { op: "i32.const", value: 1 },
     { op: "i32.add" },
@@ -6935,7 +6937,7 @@ interface ArrayLoopLocals {
    */
   logicalLenTmp: number;
   iTmp: number;
-  getOp: string;
+  getOp: "array.get_u" | "array.get_s" | "array.get";
 }
 
 /**
@@ -7071,12 +7073,12 @@ function buildClosureCallInstrs(
     ...(numParams >= 1
       ? [
           ...(elemSource.kind === "local"
-            ? [{ op: "local.get", index: elemSource.index }]
-            : [
+            ? ([{ op: "local.get", index: elemSource.index }] satisfies Instr[])
+            : ([
                 { op: "local.get", index: loop.dataTmp },
                 { op: "local.get", index: loop.iTmp },
                 { op: loop.getOp, typeIdx: arrTypeIdx },
-              ]),
+              ] satisfies Instr[])),
           // (#2001 S1) Map a `$Hole` slot back to `undefined` before it reaches
           // the callback — a visited hole must present as `undefined`, never the
           // sentinel struct (forEach/map/etc still VISIT holes in S1; S2 adds
@@ -7087,14 +7089,14 @@ function buildClosureCallInstrs(
       : []),
     // Index (2nd user param)
     ...(numParams >= 2
-      ? [
+      ? ([
           { op: "local.get", index: loop.iTmp },
           ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[1] ?? { kind: "i32" }, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     // Array (3rd user param)
     ...(numParams >= 3
-      ? [
+      ? ([
           { op: "local.get", index: loop.vecTmp },
           ...coercionInstrs(
             ctx,
@@ -7102,7 +7104,7 @@ function buildClosureCallInstrs(
             closureInfo.paramTypes[2] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
             fctx,
           ),
-        ]
+        ] satisfies Instr[])
       : []),
     { op: "local.get", index: closureTmp },
     { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
@@ -7248,13 +7250,13 @@ function buildBridgeCallInstrs(
   return [
     { op: "local.get", index: setup.cbTmp! },
     ...(elemSource.kind === "local"
-      ? [{ op: "local.get", index: elemSource.index }, ...conv]
-      : [
+      ? ([{ op: "local.get", index: elemSource.index }, ...conv] satisfies Instr[])
+      : ([
           { op: "local.get", index: loop.dataTmp },
           { op: "local.get", index: loop.iTmp },
           { op: loop.getOp, typeIdx: arrTypeIdx },
           ...conv,
-        ]),
+        ] satisfies Instr[])),
     { op: "call", funcIdx: setup.callBridgeIdx! },
   ];
 }
@@ -7848,26 +7850,26 @@ function compileArrayReduce(
     callInstrs = [
       { op: "local.get", index: setup.closureTmp },
       // Accumulator (1st user param) — gate on numParams >= 1.
-      ...(numParams >= 1 ? [{ op: "local.get", index: accTmp }, ...accCoerce] : []),
+      ...(numParams >= 1 ? ([{ op: "local.get", index: accTmp }, ...accCoerce] satisfies Instr[]) : []),
       // Element (2nd user param) — gate on numParams >= 2.
       ...(numParams >= 2
-        ? [
+        ? ([
             { op: "local.get", index: loop.dataTmp },
             { op: "local.get", index: loop.iTmp },
             { op: loop.getOp, typeIdx: arrTypeIdx },
             // (#2001 S1) A `$Hole` element reaches the reducer as `undefined`.
             ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
             ...elemCoerce,
-          ]
+          ] satisfies Instr[])
         : []),
       ...(numParams >= 3
-        ? [
+        ? ([
             { op: "local.get", index: loop.iTmp },
             ...coercionInstrs(ctx, { kind: "i32" }, ci.paramTypes[2] ?? { kind: "i32" }, fctx),
-          ]
+          ] satisfies Instr[])
         : []),
       ...(numParams >= 4
-        ? [
+        ? ([
             { op: "local.get", index: loop.vecTmp },
             ...coercionInstrs(
               ctx,
@@ -7875,7 +7877,7 @@ function compileArrayReduce(
               ci.paramTypes[3] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
               fctx,
             ),
-          ]
+          ] satisfies Instr[])
         : []),
       { op: "local.get", index: setup.closureTmp },
       { op: "struct.get", typeIdx: setup.closureTypeIdx, fieldIdx: 0 },
@@ -8061,25 +8063,25 @@ function compileArrayReduceRight(
     const elemCoerce = ci.paramTypes[1] ? coercionInstrs(ctx, elemType, ci.paramTypes[1], fctx) : [];
     callInstrs = [
       { op: "local.get", index: setup.closureTmp },
-      ...(numParams >= 1 ? [{ op: "local.get", index: accTmp }, ...accCoerce] : []),
+      ...(numParams >= 1 ? ([{ op: "local.get", index: accTmp }, ...accCoerce] satisfies Instr[]) : []),
       ...(numParams >= 2
-        ? [
+        ? ([
             { op: "local.get", index: dataTmp },
             { op: "local.get", index: iTmp },
             { op: getOp, typeIdx: arrTypeIdx },
             // (#2001 S1) A `$Hole` element reaches the reducer as `undefined`.
             ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
             ...elemCoerce,
-          ]
+          ] satisfies Instr[])
         : []),
       ...(numParams >= 3
-        ? [
+        ? ([
             { op: "local.get", index: iTmp },
             ...coercionInstrs(ctx, { kind: "i32" }, ci.paramTypes[2] ?? { kind: "i32" }, fctx),
-          ]
+          ] satisfies Instr[])
         : []),
       ...(numParams >= 4
-        ? [
+        ? ([
             { op: "local.get", index: vecTmp },
             ...coercionInstrs(
               ctx,
@@ -8087,7 +8089,7 @@ function compileArrayReduceRight(
               ci.paramTypes[3] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
               fctx,
             ),
-          ]
+          ] satisfies Instr[])
         : []),
       { op: "local.get", index: setup.closureTmp },
       { op: "struct.get", typeIdx: setup.closureTypeIdx, fieldIdx: 0 },
@@ -8293,7 +8295,7 @@ function compileArrayFind(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: elemTmpLocal },
-        ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" }] : []),
+        ...(!ctx.fast && elemType.kind === "i32" ? ([{ op: "f64.convert_i32_s" }] satisfies Instr[]) : []),
         { op: "local.set", index: findResTmp },
         { op: "br", depth: 2 },
       ],
@@ -8361,7 +8363,7 @@ function compileArrayFindIndex(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: loop.iTmp },
-        ...(ctx.fast ? [] : [{ op: "f64.convert_i32_s" }]),
+        ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_s" }] satisfies Instr[])),
         { op: "local.set", index: fiResTmp },
         { op: "br", depth: 2 },
       ],
@@ -8503,7 +8505,7 @@ function compileArrayFindLast(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: elemTmpLocal },
-        ...(!ctx.fast && elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" }] : []),
+        ...(!ctx.fast && elemType.kind === "i32" ? ([{ op: "f64.convert_i32_s" }] satisfies Instr[]) : []),
         { op: "local.set", index: findResTmp },
         { op: "br", depth: 2 },
       ],
@@ -8572,7 +8574,7 @@ function compileArrayFindLastIndex(
       blockType: { kind: "empty" },
       then: [
         { op: "local.get", index: loop.iTmp },
-        ...(ctx.fast ? [] : [{ op: "f64.convert_i32_s" }]),
+        ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_s" }] satisfies Instr[])),
         { op: "local.set", index: fliResTmp },
         { op: "br", depth: 2 },
       ],
