@@ -9105,7 +9105,7 @@ function buildWasiStringEncodeToScratch(
   const storeByte = (offsetFromO: number, value: Instr[]): Instr[] => [
     { op: "i32.const", value: WASI_WRITE_SCRATCH_START },
     { op: "local.get", index: O },
-    ...(offsetFromO === 0 ? [] : [{ op: "i32.const", value: offsetFromO }, { op: "i32.add" }]),
+    ...(offsetFromO === 0 ? [] : ([{ op: "i32.const", value: offsetFromO }, { op: "i32.add" }] satisfies Instr[])),
     { op: "i32.add" },
     ...value,
     { op: "i32.store8", align: 0, offset: 0 },
@@ -9568,7 +9568,7 @@ export function ensureWasiWriteAnyStringFdHelper(ctx: CodegenContext): number {
     ...buildWasiStringEncodeToScratch(flattenIdx, strTypeIdx, strDataTypeIdx, layout),
     // return bytes-written for write(fd, WASI_WRITE_SCRATCH_START, O).
     ...(directWrite
-      ? [
+      ? ([
           // iovec.base = scratch at memory[0]; iovec.len = O at memory[4].
           { op: "i32.const", value: 0 },
           { op: "i32.const", value: WASI_WRITE_SCRATCH_START },
@@ -9592,14 +9592,14 @@ export function ensureWasiWriteAnyStringFdHelper(ctx: CodegenContext): number {
               { op: "i32.load", align: 2, offset: 0 },
             ],
           },
-        ]
-      : [
+        ] satisfies Instr[])
+      : ([
           // writeSync(fd, WASI_WRITE_SCRATCH_START, O) — bytes written.
           { op: "local.get", index: FD },
           { op: "i32.const", value: WASI_WRITE_SCRATCH_START },
           { op: "local.get", index: layout.O },
           { op: "call", funcIdx: ctx.nodeFsWriteSyncIdx },
-        ]),
+        ] satisfies Instr[])),
   ];
 
   ctx.mod.functions.push({
@@ -9739,7 +9739,7 @@ export function ensureWasiWriteUint8ArrayHelper(
             { op: "local.get", index: DATA },
             { op: "local.get", index: I },
             { op: elemKind === "i8" ? "array.get_u" : "array.get", typeIdx: arrTypeIdx },
-            ...(elemKind === "f64" ? [{ op: "i32.trunc_sat_f64_s" }] : []),
+            ...(elemKind === "f64" ? ([{ op: "i32.trunc_sat_f64_s" }] satisfies Instr[]) : []),
 
             { op: "i32.store8", align: 0, offset: 0 },
 
@@ -10964,7 +10964,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
         ],
       },
       ...(strToNumberIdx !== undefined && ctx.anyStrTypeIdx >= 0
-        ? [
+        ? ([
             // StringToNumber (§7.1.4.1): object ToPrimitive can yield a native
             // string; parse it with the existing pure-Wasm scanner before the
             // opaque-ref NaN fallback.
@@ -10975,7 +10975,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: strToNumberIdx }, { op: "return" }],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // not a recognized boxed number → NaN (matches Number(opaque))
       { op: "f64.const", value: NaN },
@@ -11193,7 +11193,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       // ref default (truthy). Without this arm the non-null `$undefined`
       // singleton would be truthy — `if (undefined)` taking the then-branch.
       ...(s1AnyValIdx >= 0
-        ? [
+        ? ([
             { op: "local.get", index: 0 },
             { op: "any.convert_extern" },
             { op: "local.tee", index: 1 },
@@ -11210,7 +11210,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
                 { op: "return" },
               ],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // any = any.convert_extern(param)
       { op: "local.get", index: 0 },
@@ -11273,7 +11273,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       // empty string is wrongly truthy. Guarded on anyStrTypeIdx so the GC /
       // host-string path (no native-string type registered) is unaffected.
       ...(ctx.anyStrTypeIdx >= 0
-        ? [
+        ? ([
             { op: "local.get", index: 1 },
             { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
             {
@@ -11288,7 +11288,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
                 { op: "return" },
               ],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // any other non-null ref → truthy
       { op: "i32.const", value: 1 },
@@ -11397,7 +11397,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       },
       // (#2106 S1) the tag-1 `$undefined` singleton is NOT an object.
       ...(s1AnyValIdx >= 0
-        ? [
+        ? ([
             { op: "local.get", index: 0 },
             { op: "any.convert_extern" },
             { op: "local.tee", index: 1 },
@@ -11418,7 +11418,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
                 },
               ],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -11449,7 +11449,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       // wrongly held and `=== "string"` was the only true arm via the separate
       // __typeof_string helper, so both string-tagged comparisons disagreed.
       ...(ctx.anyStrTypeIdx >= 0
-        ? [
+        ? ([
             { op: "local.get", index: 1 },
             { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
             {
@@ -11457,7 +11457,7 @@ function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
               blockType: { kind: "empty" },
               then: [{ op: "i32.const", value: 0 }, { op: "return" }],
             },
-          ]
+          ] satisfies Instr[])
         : []),
       // non-null, not a boxed primitive → object
       { op: "i32.const", value: 1 },
