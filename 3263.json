@@ -1,8 +1,8 @@
 {
   "id": "3263",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T03:06:21Z",
-  "updated_at": "2026-07-14T03:06:21Z"
+  "assignee": "ttraenkler/sendev-split",
+  "status": "in-progress",
+  "branch": "issue-3263-split",
+  "claimed_at": "2026-07-14T03:06:49Z",
+  "updated_at": "2026-07-14T03:06:49Z"
 }
