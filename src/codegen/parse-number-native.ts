@@ -1007,12 +1007,12 @@ function emitRadixPrefixParse(
                 { op: "local.get", index: L_END },
                 { op: "i32.ge_s" },
                 { op: "br_if", depth: 1 },
-                ...[
+                ...([
                   { op: "local.get", index: L_DATA },
                   { op: "local.get", index: L_I },
                   { op: "array.get_u", typeIdx: strDataTypeIdx },
                   { op: "local.set", index: L_C },
-                ],
+                ] satisfies Instr[]),
                 ...emitDigitValue(L_C, L_DIG),
                 // invalid digit or >= radix → NaN
                 { op: "local.get", index: L_DIG },
@@ -1503,13 +1503,13 @@ function emitParseInt(ctx: CodegenContext, flattenIdx: number, strTypeIdx: numbe
   ];
 
   const body: Instr[] = [
-    ...[
+    ...([
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
       { op: "call", funcIdx: flattenIdx },
       { op: "local.set", index: L_FLAT },
-    ],
+    ] satisfies Instr[]),
     { op: "local.get", index: L_FLAT },
     { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
     { op: "local.set", index: L_DATA },
