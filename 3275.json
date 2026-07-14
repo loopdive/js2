@@ -1,9 +1,9 @@
 {
   "id": "3275",
   "assignee": "ttraenkler/sendev-natstr",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3275-split-native-strings",
-  "reserved_at": "2026-07-14T10:54:12Z",
   "claimed_at": "2026-07-14T10:54:12Z",
-  "updated_at": "2026-07-14T10:54:12Z"
+  "updated_at": "2026-07-14T11:30:31Z",
+  "released_at": "2026-07-14T11:30:31Z"
 }
