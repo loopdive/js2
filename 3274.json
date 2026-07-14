@@ -1,8 +1,8 @@
 {
   "id": "3274",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T10:53:28Z",
-  "updated_at": "2026-07-14T10:53:28Z"
+  "assignee": "ttraenkler/Dev-WaveB-ObjRuntime",
+  "status": "in-progress",
+  "branch": "issue-3274-split-object-runtime",
+  "claimed_at": "2026-07-14T11:09:58Z",
+  "updated_at": "2026-07-14T11:09:58Z"
 }
