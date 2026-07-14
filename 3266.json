@@ -1,8 +1,8 @@
 {
   "id": "3266",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T03:09:32Z",
-  "updated_at": "2026-07-14T03:09:32Z"
+  "assignee": "ttraenkler/sendev-splitassign",
+  "status": "in-progress",
+  "branch": "issue-3266-split",
+  "claimed_at": "2026-07-14T03:11:52Z",
+  "updated_at": "2026-07-14T03:11:52Z"
 }
