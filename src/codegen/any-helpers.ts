@@ -615,7 +615,7 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
     // typeof_bigint arm) served the comparison. Mixed bigint/number operands
     // fall through — the classification keeps them unequal, matching
     // `1n === 1` → false.
-    ...(ctx.nativeBigIntTypeIdx >= 0
+    ...((ctx.nativeBigIntTypeIdx >= 0
       ? [
           { op: "local.get", index: 2 },
           { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx },
@@ -637,7 +637,7 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
             ],
           },
         ]
-      : []),
+      : []) satisfies Instr[]),
     // Primitive comparison (numbers unified via f64.eq, strings by content,
     // booleans, null/undefined by tag) for everything the fast path didn't match.
     { op: "local.get", index: 0 },
@@ -816,7 +816,7 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
     // tag-0 back (not the legacy tag-1). Tag 1 (undefined) stays wrapped: an
     // extern-wrapped tag-1 `$AnyValue` IS the regime's undefined representation
     // (all predicates are tag-keyed, not identity-keyed).
-    ...(undefinedSingletonActive(ctx)
+    ...((undefinedSingletonActive(ctx)
       ? [
           { op: "local.get", index: 1 },
           { op: "i32.eqz" },
@@ -826,7 +826,7 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
             then: [{ op: "ref.null.extern" }, { op: "return" }],
           },
         ]
-      : []),
+      : []) satisfies Instr[]),
     // Tags 0 (null), 1 (undefined), 5 (string), 6 (GC ref): keep the WHOLE
     // $AnyValue box wrapped via extern.convert_any. Standalone/WASI has no host
     // that needs unwrapped values, and __any_from_extern recovers the wrapped
@@ -1275,7 +1275,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
             },
           ],
         },
-        ...(ctx.nativeBoxNumberTypeIdx >= 0
+        ...((ctx.nativeBoxNumberTypeIdx >= 0
           ? [
               // UNDEF_F64-sentinel $BoxedNumber → undefined (tag-1 singleton).
               { op: "local.get", index: 1 },
@@ -1298,7 +1298,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                 ],
               },
             ]
-          : []),
+          : []) satisfies Instr[]),
         // legacy tag-5 wrap (byte-equivalent to __any_box_string)
         { op: "i32.const", value: 5 },
         { op: "i32.const", value: 0 },
@@ -1510,7 +1510,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
               // read, bit-compatible with the host baseline. Comparison
               // helpers stay BoxedNumber-blind on purpose — see the NOTE in
               // type-coercion.ts (#1888 regression −788).
-              ...(ctx.nativeBoxNumberTypeIdx >= 0
+              ...((ctx.nativeBoxNumberTypeIdx >= 0
                 ? [
                     { op: "local.get", index: 1 },
                     { op: "i32.const", value: 5 },
@@ -1596,7 +1596,7 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                     // tag 0 (null) → f64val (0.0), tag 3 (f64) → f64val
                     { op: "local.get", index: 0 },
                     { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
-                  ]),
+                  ]) satisfies Instr[]),
             ],
           },
         ],
@@ -1851,13 +1851,13 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
         else: [
           { op: "local.get", index: 4 },
           { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
-          ...(ctx.nativeBoxBooleanTypeIdx >= 0
+          ...((ctx.nativeBoxBooleanTypeIdx >= 0
             ? [
                 { op: "local.get", index: 4 },
                 { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
                 { op: "i32.or" },
               ]
-            : []),
+            : []) satisfies Instr[]),
           { op: "i32.eqz" },
         ],
       },

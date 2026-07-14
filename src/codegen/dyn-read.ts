@@ -852,7 +852,7 @@ function emitDynMemberGetSelfTestStandalone(
   const aliasedIdentity = (k1: string, k2: string, distinct: boolean): Instr[] => [
     ...newObj(),
     { op: "local.set", index: 1 }, // inner
-    ...(distinct ? [...newObj(), { op: "local.set", index: 2 }] : []), // inner2 (distinct only)
+    ...((distinct ? [...newObj(), { op: "local.set", index: 2 }] : []) satisfies Instr[]), // inner2 (distinct only)
     ...newObj(),
     { op: "local.set", index: 0 }, // o
     { op: "local.get", index: 0 },
