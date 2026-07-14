@@ -507,12 +507,14 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
             : [
                 { op: "local.get", index: 0 }, // recv
                 { op: "local.get", index: 1 }, // cb
-                ...(methodName === "reduce"
+                ...((methodName === "reduce"
                   ? [
-                      ...(arity >= 2 ? [{ op: "local.get", index: 2 }] : [{ op: "ref.null.extern" }]), // init
+                      ...((arity >= 2
+                        ? [{ op: "local.get", index: 2 }]
+                        : [{ op: "ref.null.extern" }]) satisfies Instr[]), // init
                       { op: "i32.const", value: arity >= 2 ? 1 : 0 }, // hasInit
                     ]
-                  : []),
+                  : []) satisfies Instr[]),
                 { op: "call", funcIdx: iterHofIdx },
               ];
         // isNotIterTarget = null ∨ ref.test $Object ∨ ref.test $__vec_base ∨
@@ -942,8 +944,8 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         const hofCall: Instr[] = [
           { op: "local.get", index: 0 }, // recv (externref)
           { op: "local.get", index: 1 }, // cb
-          ...(arity >= 2 ? [{ op: "local.get", index: 2 }] : [{ op: "ref.null.extern" }]), // thisArg | init
-          ...(isReduceForm ? [{ op: "i32.const", value: arity >= 2 ? 1 : 0 }] : []), // hasInit
+          ...((arity >= 2 ? [{ op: "local.get", index: 2 }] : [{ op: "ref.null.extern" }]) satisfies Instr[]), // thisArg | init
+          ...((isReduceForm ? [{ op: "i32.const", value: arity >= 2 ? 1 : 0 }] : []) satisfies Instr[]), // hasInit
           { op: "call", funcIdx: hofFuncIdx },
         ];
         current = [
@@ -1036,7 +1038,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
               { op: "local.get", index: fnLocalIdx },
               { op: "local.get", index: 0 },
               ...argVec,
-              { op: "call", funcIdx: applyClosureIdx },
+              { op: "call", funcIdx: applyClosureIdx! },
             ],
           },
         ];
@@ -1119,7 +1121,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
               { op: "local.get", index: fnLocalIdx },
               { op: "local.get", index: 0 },
               { op: "local.get", index: argsLocalIdx },
-              { op: "call", funcIdx: applyClosureIdx },
+              { op: "call", funcIdx: applyClosureIdx! },
             ],
           },
         ];
@@ -1272,7 +1274,7 @@ export function fillPromiseThenableHelpers(ctx: CodegenContext): void {
   const body: Instr[] = [
     // peeled = __promise_peel_value(value) — classify the RAW payload.
     { op: "local.get", index: 0 },
-    ...(peelIdx !== undefined ? [{ op: "call", funcIdx: peelIdx }] : []),
+    ...((peelIdx !== undefined ? [{ op: "call", funcIdx: peelIdx }] : []) satisfies Instr[]),
     { op: "local.set", index: peeledLocalIdx },
     // null externref (JS null / absent) → not a thenable.
     { op: "local.get", index: peeledLocalIdx },

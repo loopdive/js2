@@ -136,13 +136,13 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
   const buildArgs: Instr[] = [
     { op: "call", funcIdx: objVecNewIdx },
     { op: "local.set", index: L.args },
-    ...(isReduce
+    ...((isReduce
       ? [
           { op: "local.get", index: L.args },
           { op: "local.get", index: L.acc },
           { op: "call", funcIdx: objVecPushIdx },
         ]
-      : []),
+      : []) satisfies Instr[]),
     { op: "local.get", index: L.args },
     { op: "local.get", index: L.val },
     { op: "call", funcIdx: objVecPushIdx },
@@ -157,7 +157,7 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
   // invoke: __apply_closure(cb, thisArg | undefined, args)
   const invoke: Instr[] = [
     { op: "local.get", index: 1 },
-    ...(isReduce ? [{ op: "ref.null.extern" }] : [{ op: "local.get", index: 2 }]),
+    ...((isReduce ? [{ op: "ref.null.extern" }] : [{ op: "local.get", index: 2 }]) satisfies Instr[]),
     { op: "local.get", index: L.args },
     { op: "call", funcIdx: applyClosureIdx },
     { op: "local.set", index: isReduce ? L.acc : L.res },
@@ -308,7 +308,7 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
             then: [{ op: "ref.null.extern" }, { op: "return" }],
           },
           // acc = first-in-iteration-order element; i = the next one
-          ...(backward
+          ...((backward
             ? [
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: L.len },
@@ -328,7 +328,7 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
                 { op: "local.set", index: L.acc },
                 { op: "f64.const", value: 1 },
                 { op: "local.set", index: L.i },
-              ]),
+              ]) satisfies Instr[]),
         ],
       },
     );

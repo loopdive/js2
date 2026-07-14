@@ -250,7 +250,7 @@ export function ensureGetOrInsertKernels(ctx: CodegenContext): void {
       rejectTests.push(
         { op: "local.get", index: 0 },
         { op: "ref.test", typeIdx },
-        ...(rejectTests.length > 0 ? [{ op: "i32.or" }] : []),
+        ...((rejectTests.length > 0 ? [{ op: "i32.or" }] : []) satisfies Instr[]),
       );
     };
     if (ctx.nativeBoxNumberTypeIdx >= 0) pushRejectTest(ctx.nativeBoxNumberTypeIdx);
@@ -268,7 +268,7 @@ export function ensureGetOrInsertKernels(ctx: CodegenContext): void {
         blockType: { kind: "val", type: { kind: "i32" } },
         then: [{ op: "i32.const", value: 0 }],
         else: [
-          ...(rejectTests.length > 0
+          ...((rejectTests.length > 0
             ? [
                 ...rejectTests,
                 {
@@ -296,7 +296,7 @@ export function ensureGetOrInsertKernels(ctx: CodegenContext): void {
                       : [{ op: "i32.const", value: 1 }],
                 },
               ]
-            : [{ op: "i32.const", value: 1 }]),
+            : [{ op: "i32.const", value: 1 }]) satisfies Instr[]),
         ],
       },
     ];
@@ -727,14 +727,14 @@ function ensureSetRecSize(ctx: CodegenContext): number | undefined {
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "empty" }, then: throwArm },
     // BigInt size → TypeError
-    ...(ctx.nativeBigIntTypeIdx >= 0
+    ...((ctx.nativeBigIntTypeIdx >= 0
       ? [
           { op: "local.get", index: 1 },
           { op: "any.convert_extern" },
           { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx },
           { op: "if", blockType: { kind: "empty" }, then: throwArm2 },
         ]
-      : []),
+      : []) satisfies Instr[]),
     // n = __unbox_number(prim); NaN → TypeError
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: unboxIdx },
