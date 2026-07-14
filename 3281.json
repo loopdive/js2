@@ -1,8 +1,8 @@
 {
   "id": "3281",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T16:26:40Z",
-  "updated_at": "2026-07-14T16:26:40Z"
+  "assignee": "ttraenkler/Dev-WaveC-New",
+  "status": "in-progress",
+  "branch": "issue-3281-split-new-super",
+  "claimed_at": "2026-07-14T16:27:00Z",
+  "updated_at": "2026-07-14T16:27:00Z"
 }
