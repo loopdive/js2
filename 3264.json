@@ -1,8 +1,8 @@
 {
   "id": "3264",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T03:07:08Z",
-  "updated_at": "2026-07-14T03:07:08Z"
+  "assignee": "ttraenkler/sendev-array-split",
+  "status": "in-progress",
+  "branch": "issue-3264-split",
+  "claimed_at": "2026-07-14T03:12:40Z",
+  "updated_at": "2026-07-14T03:12:40Z"
 }
