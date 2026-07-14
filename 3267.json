@@ -1,8 +1,8 @@
 {
   "id": "3267",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T03:13:00Z",
-  "updated_at": "2026-07-14T03:13:00Z"
+  "assignee": "ttraenkler/senior-dev-split",
+  "status": "in-progress",
+  "branch": "issue-3267-split",
+  "claimed_at": "2026-07-14T03:13:23Z",
+  "updated_at": "2026-07-14T03:13:23Z"
 }
