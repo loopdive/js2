@@ -1,8 +1,8 @@
 {
   "id": "3271",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T04:10:03Z",
-  "updated_at": "2026-07-14T04:10:03Z"
+  "assignee": "ttraenkler/senior-dev-3271",
+  "status": "in-progress",
+  "branch": "issue-3271-refactor",
+  "claimed_at": "2026-07-14T04:11:44Z",
+  "updated_at": "2026-07-14T04:11:44Z"
 }
