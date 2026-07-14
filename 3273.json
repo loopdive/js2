@@ -1,8 +1,8 @@
 {
   "id": "3273",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T05:54:29Z",
-  "updated_at": "2026-07-14T05:54:29Z"
+  "assignee": "ttraenkler/senior-dev-oracle",
+  "status": "in-progress",
+  "branch": "issue-3273-oracle-ratchet-change-scoped",
+  "claimed_at": "2026-07-14T05:54:56Z",
+  "updated_at": "2026-07-14T05:54:56Z"
 }
