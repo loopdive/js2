@@ -1,8 +1,9 @@
 {
   "id": "3148",
   "assignee": "ttraenkler/senior-dev-3148",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3148-bigint-asintn",
   "claimed_at": "2026-07-14T02:35:42Z",
-  "updated_at": "2026-07-14T02:35:42Z"
+  "updated_at": "2026-07-14T03:14:46Z",
+  "released_at": "2026-07-14T03:14:46Z"
 }
