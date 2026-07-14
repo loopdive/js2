@@ -1,8 +1,8 @@
 {
   "id": "3272",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T04:12:47Z",
-  "updated_at": "2026-07-14T04:12:47Z"
+  "assignee": "ttraenkler/sendev-godfile",
+  "status": "in-progress",
+  "branch": "issue-3272-refactor",
+  "claimed_at": "2026-07-14T04:13:42Z",
+  "updated_at": "2026-07-14T04:13:42Z"
 }
