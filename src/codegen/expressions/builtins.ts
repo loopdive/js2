@@ -2678,7 +2678,7 @@ function compileDateMethodCall(
       }
     }
 
-    const fmtIdx = ensureLateImport(ctx, "__date_format", [{ kind: "i64" }, { kind: "i32" }], [{ kind: "externref" }]);
+    const fmtIdx = ensureLateImport(ctx, "__date_format", [{ kind: "i64" }, { kind: "i32" }], [{ kind: "externref" }])!;
     flushLateImportShifts(ctx, fctx);
 
     // toJSON returns `null` (not "Invalid Date", not a throw) for an Invalid
@@ -3303,7 +3303,7 @@ function compileMathCall(
   // → generic call handling (which resolves `Math.hasOwnProperty` correctly).
   if (Object.hasOwn(nativeUnary, method) && expr.arguments.length >= 1) {
     compileExpression(ctx, fctx, expr.arguments[0]!, f64Hint);
-    fctx.body.push({ op: nativeUnary[method]! });
+    fctx.body.push({ op: nativeUnary[method]! } as Instr); // computed-op
     return { kind: "f64" };
   }
 
@@ -3781,7 +3781,7 @@ function compileMathMinMaxSpread(
               { op: "local.get", index: dataLocal },
               { op: "local.get", index: idxLocal },
               { op: "array.get", typeIdx: info.arrTypeIdx },
-              ...(info.elemType.kind === "i32" ? [{ op: "f64.convert_i32_s" }] : []),
+              ...(info.elemType.kind === "i32" ? ([{ op: "f64.convert_i32_s" }] satisfies Instr[]) : []),
               ...buildFoldInstrs(fctx, accLocal, nanLocal, wasmOp),
               // idx++
               { op: "local.get", index: idxLocal },

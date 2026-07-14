@@ -1053,9 +1053,9 @@ function compilePrefixUpdate(
                   typeIdx: boxedPP.refCellTypeIdx,
                   fieldIdx: 0,
                 },
-                ...(boxedPP.valType.kind === "i32"
+                ...((boxedPP.valType.kind === "i32"
                   ? [{ op: "i32.const", value: 1 }, { op: "i32.add" }]
-                  : [{ op: "f64.const", value: 1 }, { op: "f64.add" }]),
+                  : [{ op: "f64.const", value: 1 }, { op: "f64.add" }]) satisfies Instr[]),
                 { op: "local.tee", index: ppTmp },
                 {
                   op: "struct.set",
@@ -1269,9 +1269,9 @@ function compilePrefixUpdate(
                   typeIdx: boxed.refCellTypeIdx,
                   fieldIdx: 0,
                 },
-                ...(boxed.valType.kind === "i32"
+                ...((boxed.valType.kind === "i32"
                   ? [{ op: "i32.const", value: 1 }, { op: arithOpI32 }]
-                  : [{ op: "f64.const", value: 1 }, { op: arithOp }]),
+                  : [{ op: "f64.const", value: 1 }, { op: arithOp }]) satisfies Instr[]),
                 { op: "local.tee", index: tmp },
                 {
                   op: "struct.set",
@@ -1576,10 +1576,10 @@ function compilePostfixUnary(
             fieldIdx: 0,
           },
           { op: "local.tee", index: oldTmp },
-          ...(boxedPost.valType.kind === "i32"
+          ...((boxedPost.valType.kind === "i32"
             ? [{ op: "i32.const", value: 1 }, { op: arithOpI32 }]
-            : [{ op: "f64.const", value: 1 }, { op: arithOp }]),
-          ...(() => {
+            : [{ op: "f64.const", value: 1 }, { op: arithOp }]) satisfies Instr[]),
+          ...((): Instr[] => {
             const newTmp = allocLocal(fctx, `__postnew_${fctx.locals.length}`, boxedPost.valType);
             return [
               { op: "local.set", index: newTmp },

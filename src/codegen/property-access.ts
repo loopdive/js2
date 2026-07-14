@@ -2685,11 +2685,11 @@ export function compileOptionalPropertyAccess(
                 ],
                 else: [
                   // Type mismatch at runtime — emit a safe default (sNaN sentinel for f64 #866)
-                  ...(fields[fieldIdx]!.type.kind === "f64"
+                  ...((fields[fieldIdx]!.type.kind === "f64"
                     ? [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }]
                     : fields[fieldIdx]!.type.kind === "i32"
                       ? [{ op: "i32.const", value: 0 }]
-                      : [{ op: "ref.null.extern" }]),
+                      : [{ op: "ref.null.extern" }]) satisfies Instr[]),
                 ],
               });
             } else {
@@ -5562,7 +5562,7 @@ export function compilePropertyAccess(
               ? [
                   { op: "local.get", index: extTmpIdx },
                   { op: "call", funcIdx: lengthFuncIdx },
-                  ...(ctx.fast ? [{ op: "i32.trunc_sat_f64_s" }] : []),
+                  ...(ctx.fast ? ([{ op: "i32.trunc_sat_f64_s" }] satisfies Instr[]) : []),
                   { op: "local.set", index: lenTmp2 },
                 ]
               : [
@@ -5578,7 +5578,7 @@ export function compilePropertyAccess(
               { op: "local.get", index: anyTmpIdx },
               { op: "ref.cast", typeIdx: vecTypeIdx },
               { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-              ...(ctx.fast ? [] : [{ op: "f64.convert_i32_s" }]),
+              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_s" }] satisfies Instr[])),
               { op: "local.set", index: lenTmp2 },
             ],
             else: fallbackInstrs2,
@@ -5606,7 +5606,7 @@ export function compilePropertyAccess(
               { op: "local.get", index: lenTmp },
               { op: "ref.cast", typeIdx: vecTypeIdx },
               { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
-              ...(ctx.fast ? [] : [{ op: "f64.convert_i32_s" }]),
+              ...(ctx.fast ? [] : ([{ op: "f64.convert_i32_s" }] satisfies Instr[])),
             ],
             else: [{ op: ctx.fast ? "i32.const" : "f64.const", value: 0 }],
           });
@@ -6367,11 +6367,11 @@ export function compilePropertyAccess(
               { op: "local.get", index: protoLocal },
               ...stringConstantExternrefInstrs(ctx, propName),
               { op: "call", funcIdx: getIdx },
-              ...(effectiveResult.kind === "f64" && unboxIdx !== undefined
+              ...((effectiveResult.kind === "f64" && unboxIdx !== undefined
                 ? [{ op: "call", funcIdx: unboxIdx }]
                 : effectiveResult.kind === "i32" && unboxIdx !== undefined
                   ? [{ op: "call", funcIdx: unboxIdx }, { op: "i32.trunc_sat_f64_s" }]
-                  : []),
+                  : []) satisfies Instr[]),
             ],
           });
 
@@ -8204,7 +8204,7 @@ export function compileElementAccessBody(
             // "1000" ≠ "1e3"). String keys keep the exact old miss.
             ...[ctx.anyStrTypeIdx, ctx.nativeStrTypeIdx]
               .filter((t) => t >= 0)
-              .flatMap((strTypeIdx) => [
+              .flatMap((strTypeIdx): Instr[] => [
                 { op: "local.get", index: keyLocal },
                 { op: "any.convert_extern" },
                 { op: "ref.test", typeIdx: strTypeIdx },

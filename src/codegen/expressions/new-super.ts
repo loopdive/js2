@@ -1337,7 +1337,7 @@ function compileNewFunctionDeclaration(
     name: ctorName,
     typeIdx: ctorTypeIdx,
     locals: [] as { name: string; type: ValType }[],
-    body: [],
+    body: [] as Instr[],
     exported: false,
   };
   pushDefinedFunc(ctx, ctorFuncIdx, ctorFunc);
@@ -5518,7 +5518,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         const wrapWindow: Instr[] = [
           // buf (ref null vec) — the cast is safe under the ref.test gate below.
           { op: "local.get", index: bufLocal },
-          ...(!isStructBuf ? [{ op: "any.convert_extern" }] : []),
+          ...(!isStructBuf ? ([{ op: "any.convert_extern" }] satisfies Instr[]) : []),
           { op: "ref.cast", typeIdx: vecTypeIdx },
           // byteOffset (i32) — offsetF64 is already ToIndex-normalized & validated.
           { op: "local.get", index: offsetF64 },
@@ -5535,7 +5535,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         ];
         const passThrough: Instr[] = [
           { op: "local.get", index: bufLocal },
-          ...(isStructBuf ? [{ op: "extern.convert_any" }] : []),
+          ...(isStructBuf ? ([{ op: "extern.convert_any" }] satisfies Instr[]) : []),
         ];
         // Gate: is the buffer (a subtype of) the i32_byte vec?
         fctx.body.push({ op: "local.get", index: bufLocal });
