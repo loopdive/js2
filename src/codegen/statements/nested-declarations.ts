@@ -971,7 +971,7 @@ export function compileNestedFunctionDeclaration(
     // shift the absolute funcIdx, but the array entry's identity is
     // preserved). funcMap auto-shifts during addUnionImports.
     const reservedFuncIdx = mintDefinedFunc(ctx);
-    const reservedEntry = {
+    const reservedEntry: WasmFunction = {
       name: funcName,
       typeIdx: funcTypeIdx,
       locals: [] as Array<{ name: string; type: ValType }>,
@@ -2397,8 +2397,8 @@ export function emitSetExtrasArgv(
                   { op: "struct.get", typeIdx: slot.vecTi, fieldIdx: 1 },
                   { op: "local.get", index: sIdx },
                   ...(slot.elemKind === "i8" || slot.elemKind === "i16"
-                    ? [{ op: "array.get_s", typeIdx: slot.arrTi }]
-                    : [{ op: "array.get", typeIdx: slot.arrTi }]),
+                    ? ([{ op: "array.get_s", typeIdx: slot.arrTi }] satisfies Instr[])
+                    : ([{ op: "array.get", typeIdx: slot.arrTi }] satisfies Instr[])),
                   ...boxVecElem(slot.elemKind),
                   { op: "array.set", typeIdx: ati },
                   // wIdx++

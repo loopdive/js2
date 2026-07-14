@@ -166,8 +166,8 @@ export function fillArrayToPrimitive(ctx: CodegenContext): void {
             // NON-null externref — test nullish, not bare null, or join would
             // render it as "undefined".
             ...(ctx.funcMap.has("__extern_is_nullish")
-              ? [{ op: "call", funcIdx: ctx.funcMap.get("__extern_is_nullish")! }]
-              : [{ op: "ref.is_null" }]),
+              ? ([{ op: "call", funcIdx: ctx.funcMap.get("__extern_is_nullish")! }] satisfies Instr[])
+              : ([{ op: "ref.is_null" }] satisfies Instr[])),
             { op: "i32.eqz" },
             {
               op: "if",

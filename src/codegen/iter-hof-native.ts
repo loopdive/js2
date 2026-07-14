@@ -154,11 +154,11 @@ export function ensureNativeIterHof(ctx: CodegenContext, methodName: string): nu
     { op: "call", funcIdx: objVecNewIdx },
     { op: "local.set", index: L.args },
     ...(isReduce
-      ? [
+      ? ([
           { op: "local.get", index: L.args },
           { op: "local.get", index: L.acc },
           { op: "call", funcIdx: objVecPushIdx },
-        ]
+        ] satisfies Instr[])
       : []),
     { op: "local.get", index: L.args },
     { op: "local.get", index: L.val },
@@ -317,21 +317,21 @@ export function ensureNativeIterHof(ctx: CodegenContext, methodName: string): nu
       then: [{ op: "ref.null.extern" }, { op: "return" }],
     },
     ...(isToArray
-      ? [
+      ? ([
           { op: "call", funcIdx: objVecNewIdx },
           { op: "local.set", index: L.out },
-        ]
-      : [
+        ] satisfies Instr[])
+      : ([
           { op: "f64.const", value: 0 },
           { op: "local.set", index: L.counter },
-        ]),
+        ] satisfies Instr[])),
     ...(isReduce
-      ? [
+      ? ([
           { op: "local.get", index: 3 }, // hasInit
           { op: "local.set", index: L.hasAcc },
           { op: "local.get", index: 2 }, // init (null.extern when absent)
           { op: "local.set", index: L.acc },
-        ]
+        ] satisfies Instr[])
       : []),
     {
       op: "block",
