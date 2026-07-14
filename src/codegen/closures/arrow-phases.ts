@@ -14,11 +14,21 @@
  * after module initialization.
  */
 import { ts, forEachChild } from "../../ts-api.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
-import type { ValType } from "../../ir/types.js";
-import { addFuncType, getOrRegisterRefCellType } from "../index.js";
+import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import {
+  addFuncType,
+  destructureParamArray,
+  destructureParamObjectExternref,
+  getArrTypeIdxFromVec,
+  getOrRegisterRefCellType,
+  resolveWasmType,
+} from "../index.js";
 import { addFunctionOwnLocals } from "../binding-info.js";
 import { getOrCreateFuncRefWrapperTypes } from "./funcref-wrapper-types.js";
+import { allocLocal } from "../context/locals.js";
+import { emitBoundsCheckedArrayGet } from "../shared.js";
+import { spliceNullGuarded } from "./param-emit-helpers.js";
 import {
   arrowOwnLocals,
   buildCaptureFieldDef,
@@ -442,4 +452,376 @@ export function mintClosureStructTypes(
     }
   }
   return { structTypeIdx, liftedFuncTypeIdx, liftedParams };
+}
+
+/**
+ * Phase 4 of compileArrowAsClosure: destructuring-parameter initialization for
+ * binding-pattern params (`function([x, y])` / `function({a, b})`). Delegates
+ * to the shared destructuring implementations (array / tuple-struct / object /
+ * externref-host) so defaults, nested patterns, rest elements and
+ * ReferenceError-on-unresolvable-default behave uniformly with function
+ * declarations. Emits into `liftedFctx.body`.
+ */
+export function emitClosureParamDestructuring(
+  ctx: CodegenContext,
+  liftedFctx: FunctionContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  arrowParams: ValType[],
+): void {
+  // Fallback: allocate externref locals for each name in a binding pattern.
+  // Used when the param type doesn't match any known struct/vec — locals are
+  // initialized to null/undefined (best-effort; the type is unknown at compile time).
+  function allocBindingLocals(pattern: ts.BindingPattern): void {
+    for (const element of pattern.elements) {
+      if (ts.isOmittedExpression(element)) continue;
+      if (!ts.isBindingElement(element)) continue;
+      if (ts.isIdentifier(element.name)) {
+        allocLocal(liftedFctx, element.name.text, { kind: "externref" });
+      } else {
+        allocBindingLocals(element.name);
+      }
+    }
+  }
+
+  // Destructuring parameter initialization: for parameters with binding patterns
+  // (e.g. function([x, y]) or function({a, b})), extract values from the parameter
+  // and assign them to local variables. Delegate to the shared destructuring
+  // implementations (same as function declarations) so that default initializers,
+  // nested patterns, rest elements, and ReferenceError-on-unresolvable defaults
+  // all work uniformly across function declarations, function expressions, and
+  // arrow functions (#ref-error-A).
+  for (let pi = 0; pi < arrow.parameters.length; pi++) {
+    const param = arrow.parameters[pi]!;
+    if (ts.isIdentifier(param.name)) continue; // simple param, already handled
+
+    const paramIdx = pi + 1; // +1 for __self
+    const paramType = arrowParams[pi]!;
+
+    // Helper: allocate locals for all identifiers in a binding pattern
+    // using TS type inference for each element. Fallback used when the
+    // Wasm type doesn't provide enough info to extract values.
+    const allocBindingLocals = (pattern: ts.BindingPattern) => {
+      for (const element of pattern.elements) {
+        if (ts.isOmittedExpression(element)) continue;
+        if (ts.isIdentifier(element.name)) {
+          const localName = element.name.text;
+          if (!liftedFctx.localMap.has(localName)) {
+            const elemTsType = ctx.checker.getTypeAtLocation(element);
+            const elemWasmType = resolveWasmType(ctx, elemTsType);
+            allocLocal(liftedFctx, localName, elemWasmType);
+          }
+        } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
+          allocBindingLocals(element.name);
+        }
+      }
+    };
+
+    if (ts.isArrayBindingPattern(param.name)) {
+      // Array destructuring: function([a, b, c]) { ... }
+      let handled = false;
+
+      // For externref params (e.g. typed as `any`), delegate to destructureParamArray
+      // which handles multi-type vec conversion with ref.test guards.
+      // A bare ref.cast to a single vec type (e.g. __vec_f64) will trap at runtime
+      // if the actual value is a different vec type (e.g. __vec_externref from []).
+      if (paramType.kind === "externref") {
+        destructureParamArray(ctx, liftedFctx, paramIdx, param.name, paramType);
+        handled = true;
+      }
+
+      let resolvedParamType = paramType;
+      let srcParamIdx = paramIdx;
+      if (!handled && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
+        resolvedParamType = paramType;
+        srcParamIdx = paramIdx;
+      }
+
+      if (resolvedParamType.kind === "ref" || resolvedParamType.kind === "ref_null") {
+        const typeIdx = resolvedParamType.typeIdx;
+        const typeDef = ctx.mod.types[typeIdx];
+        if (typeDef && typeDef.kind === "struct") {
+          const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
+          const arrDef = ctx.mod.types[arrTypeIdx];
+          if (arrDef && arrDef.kind === "array") {
+            const elemType = arrDef.element;
+            const savedBodyFPAD = liftedFctx.body;
+            const fpadInstrs: Instr[] = [];
+            liftedFctx.body = fpadInstrs;
+            for (let ei = 0; ei < param.name.elements.length; ei++) {
+              const element = param.name.elements[ei]!;
+              if (ts.isOmittedExpression(element)) continue;
+              if (!ts.isBindingElement(element)) continue;
+
+              // Handle rest element: function([a, ...rest])
+              if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
+                const restName = element.name.text;
+                const restLenLocal = allocLocal(liftedFctx, `__rest_len_${liftedFctx.locals.length}`, { kind: "i32" });
+                // Compute rest length: max(0, param.length - ei)
+                liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
+                liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // length
+                liftedFctx.body.push({ op: "i32.const", value: ei });
+                liftedFctx.body.push({ op: "i32.sub" });
+                liftedFctx.body.push({ op: "local.set", index: restLenLocal });
+                // Clamp to 0 if negative
+                liftedFctx.body.push({ op: "i32.const", value: 0 });
+                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
+                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
+                liftedFctx.body.push({ op: "i32.const", value: 0 });
+                liftedFctx.body.push({ op: "i32.lt_s" });
+                liftedFctx.body.push({ op: "select" });
+                liftedFctx.body.push({ op: "local.set", index: restLenLocal });
+
+                // Create new data array
+                const restArrLocal = allocLocal(liftedFctx, `__rest_arr_${liftedFctx.locals.length}`, {
+                  kind: "ref",
+                  typeIdx: arrTypeIdx,
+                });
+                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
+                liftedFctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+                liftedFctx.body.push({ op: "local.set", index: restArrLocal });
+
+                // array.copy(restArr, 0, srcData, ei, restLen)
+                liftedFctx.body.push({ op: "local.get", index: restArrLocal });
+                liftedFctx.body.push({ op: "i32.const", value: 0 });
+                liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
+                liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // src data
+                liftedFctx.body.push({ op: "i32.const", value: ei });
+                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
+                liftedFctx.body.push({ op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx });
+
+                // Create new vec struct: struct.new(restLen, restArr)
+                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
+                liftedFctx.body.push({ op: "local.get", index: restArrLocal });
+                liftedFctx.body.push({ op: "struct.new", typeIdx });
+
+                const vecType: ValType = { kind: "ref_null", typeIdx };
+                const restLocal = allocLocal(liftedFctx, restName, vecType);
+                liftedFctx.body.push({ op: "local.set", index: restLocal });
+                continue;
+              }
+
+              if (!ts.isIdentifier(element.name)) continue;
+              const localName = element.name.text;
+              const localIdx = allocLocal(liftedFctx, localName, elemType);
+              liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
+              liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
+              liftedFctx.body.push({ op: "i32.const", value: ei });
+              emitBoundsCheckedArrayGet(liftedFctx, arrTypeIdx, elemType);
+              liftedFctx.body.push({ op: "local.set", index: localIdx });
+            }
+            liftedFctx.body = savedBodyFPAD;
+            spliceNullGuarded(liftedFctx, srcParamIdx, resolvedParamType.kind === "ref_null", fpadInstrs);
+            handled = true;
+          } else if (typeDef.fields.length > 0 && typeDef.fields[0]!.name === "_0") {
+            // Tuple struct destructuring: extract positional fields via struct.get
+            const savedBodyFPAD = liftedFctx.body;
+            const fpadInstrs: Instr[] = [];
+            liftedFctx.body = fpadInstrs;
+            for (let ei = 0; ei < param.name.elements.length; ei++) {
+              const element = param.name.elements[ei]!;
+              if (ts.isOmittedExpression(element)) continue;
+              if (!ts.isBindingElement(element)) continue;
+              if (ei >= typeDef.fields.length) break;
+
+              const fieldType = typeDef.fields[ei]!.type;
+              if (!ts.isIdentifier(element.name)) continue;
+              const localName = element.name.text;
+              const localIdx = allocLocal(liftedFctx, localName, fieldType);
+              liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
+              liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: ei });
+              liftedFctx.body.push({ op: "local.set", index: localIdx });
+            }
+            liftedFctx.body = savedBodyFPAD;
+            spliceNullGuarded(liftedFctx, srcParamIdx, resolvedParamType.kind === "ref_null", fpadInstrs);
+            handled = true;
+          }
+        }
+      }
+      if (!handled) {
+        allocBindingLocals(param.name);
+      }
+    } else if (ts.isObjectBindingPattern(param.name)) {
+      // Object destructuring: function({a, b}) { ... }
+      let handled = false;
+
+      // Externref params (e.g. callback from JS host or `: any`-typed) need
+      // the host-import-driven extraction path that mirrors the array case
+      // above. Without this, the object pattern's binding locals get
+      // allocated but never written, so any code reading w/x/y/z sees the
+      // default-zero/null value of the local instead of the property pulled
+      // off the argument object. (#43 cluster — function-expression dstr
+      // on `any` params)
+      if (paramType.kind === "externref") {
+        destructureParamObjectExternref(ctx, liftedFctx, paramIdx, param.name);
+        handled = true;
+      }
+
+      if (!handled && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
+        const typeIdx = paramType.typeIdx;
+        const typeDef = ctx.mod.types[typeIdx];
+        if (typeDef && typeDef.kind === "struct") {
+          let allFound = true;
+          const savedBodyFPOD = liftedFctx.body;
+          const fpodInstrs: Instr[] = [];
+          liftedFctx.body = fpodInstrs;
+          for (const element of param.name.elements) {
+            if (ts.isOmittedExpression(element)) continue;
+            if (!ts.isIdentifier(element.name)) continue;
+            const localName = element.name.text;
+            const propName = element.propertyName
+              ? ts.isIdentifier(element.propertyName)
+                ? element.propertyName.text
+                : localName
+              : localName;
+            const fieldIdx = typeDef.fields.findIndex((f: any) => f.name === propName);
+            if (fieldIdx < 0) {
+              allFound = false;
+              continue;
+            }
+            const fieldType = typeDef.fields[fieldIdx]!.type;
+            const localIdx = allocLocal(liftedFctx, localName, fieldType);
+            liftedFctx.body.push({ op: "local.get", index: paramIdx });
+            liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
+            liftedFctx.body.push({ op: "local.set", index: localIdx });
+          }
+          liftedFctx.body = savedBodyFPOD;
+          spliceNullGuarded(liftedFctx, paramIdx, paramType.kind === "ref_null", fpodInstrs);
+          handled = allFound;
+        }
+      }
+      if (!handled) {
+        allocBindingLocals(param.name);
+      }
+    }
+  }
+}
+
+/**
+ * Phase 6a of compileArrowAsClosure: construction-site emit. At the closure's
+ * creation site (in the ENCLOSING `fctx.body`) push `ref.func` + each capture
+ * value (boxing mutable captures into ref cells, re-aiming the outer local),
+ * then the TDZ-flag ref cells, then `struct.new` the closure struct.
+ */
+export function emitClosureConstruction(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  captures: ArrowClosureCapture[],
+  liftedFuncIdx: number,
+  structTypeIdx: number,
+): void {
+  // 7. At the creation site, emit struct.new with funcref + captured values
+  fctx.body.push({ op: "ref.func", funcIdx: liftedFuncIdx });
+  for (const cap of captures) {
+    if (cap.mutable) {
+      // Check if the outer scope already has this variable boxed (nested closure case)
+      if (fctx.boxedCaptures?.has(cap.name)) {
+        // Already a ref cell — pass the ref cell reference directly
+        fctx.body.push({ op: "local.get", index: cap.localIdx });
+      } else {
+        // Wrap the current value in a ref cell
+        const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
+        fctx.body.push({ op: "local.get", index: cap.localIdx });
+        fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
+        // Also box the outer local so subsequent reads/writes go through the ref cell
+        const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, { kind: "ref_null", typeIdx: refCellTypeIdx });
+        // Duplicate: we need the ref cell for the closure struct AND for the outer local
+        fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
+        // Re-register the original name to point to the boxed local
+        fctx.localMap.set(cap.name, boxedLocalIdx);
+        if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+        fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
+      }
+    } else {
+      fctx.body.push({ op: "local.get", index: cap.localIdx });
+    }
+  }
+
+  // #1177: After all value fields, push the boxed TDZ flag refs (one per
+  // TDZ-flagged capture). For freshly captured flags, allocate the box now
+  // and re-aim the outer fctx's `tdzFlagLocals` + `boxedTdzFlags` so
+  // subsequent set/get of the flag in the outer scope routes through the
+  // same ref cell that the closure holds.
+  {
+    const tdzFlaggedCapturesAtConstruct = captures.filter((c) => c.hasTdzFlag);
+    if (tdzFlaggedCapturesAtConstruct.length > 0) {
+      const i32RefCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "i32" });
+      for (const cap of tdzFlaggedCapturesAtConstruct) {
+        const existingBox = fctx.boxedTdzFlags?.get(cap.name);
+        if (existingBox) {
+          // Already boxed by an enclosing closure construction — reuse.
+          fctx.body.push({ op: "local.get", index: existingBox.localIdx });
+        } else {
+          // Fresh box: read current i32 flag, struct.new an i32 ref cell,
+          // tee into a new outer-fctx local, and re-aim the flag entry.
+          const oldFlagIdx = fctx.tdzFlagLocals!.get(cap.name)!;
+          fctx.body.push({ op: "local.get", index: oldFlagIdx });
+          fctx.body.push({ op: "struct.new", typeIdx: i32RefCellTypeIdx });
+          const flagBoxLocal = allocLocal(fctx, `__tdz_box_${cap.name}`, {
+            kind: "ref_null",
+            typeIdx: i32RefCellTypeIdx,
+          });
+          fctx.body.push({ op: "local.tee", index: flagBoxLocal });
+          if (!fctx.boxedTdzFlags) fctx.boxedTdzFlags = new Map();
+          fctx.boxedTdzFlags.set(cap.name, { refCellTypeIdx: i32RefCellTypeIdx, localIdx: flagBoxLocal });
+          // Re-aim tdzFlagLocals so subsequent emitLocalTdzInit/Check in
+          // fctx routes through the boxed path (set/get flag in ref cell).
+          fctx.tdzFlagLocals!.set(cap.name, flagBoxLocal);
+        }
+      }
+    }
+  }
+
+  fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+}
+
+/**
+ * Phase 6b of compileArrowAsClosure: closure-info registration. Register the
+ * `ClosureInfo` by struct type index (for valueOf coercion / anonymous closures)
+ * and, when the closure is bound to a variable / assigned to a local or module
+ * global, in `ctx.closureMap` so call sites emit `call_ref`.
+ */
+export function registerClosureBindingInfo(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  structTypeIdx: number,
+  liftedFuncTypeIdx: number,
+  closureReturnType: ValType | null,
+  arrowParams: ValType[],
+): void {
+  // 8. Register closure info so call sites can emit call_ref
+  const closureInfo: ClosureInfo = {
+    structTypeIdx,
+    funcTypeIdx: liftedFuncTypeIdx,
+    returnType: closureReturnType,
+    paramTypes: arrowParams,
+  };
+
+  // Always register by struct type index (for valueOf coercion and anonymous closures)
+  ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
+
+  const parent = arrow.parent;
+  if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+    ctx.closureMap.set(parent.name.text, closureInfo);
+  } else if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(parent.left)
+  ) {
+    // Assignment expression: f = function() { ... }
+    // Register if the target variable is a local in the current function context
+    // (not a boxed capture) OR a module-level global variable (#852).
+    const assignName = parent.left.text;
+    const currentFctx = ctx.currentFunc!;
+    const localIdx = currentFctx.localMap.get(assignName);
+    if (localIdx !== undefined && !currentFctx.boxedCaptures?.has(assignName)) {
+      // It's a local variable (not a boxed capture) — safe to register as closure
+      ctx.closureMap.set(assignName, closureInfo);
+    } else if (ctx.moduleGlobals.has(assignName)) {
+      // Module-level global: `var f; f = () => {...}` — register for closure dispatch
+      ctx.closureMap.set(assignName, closureInfo);
+    }
+  } else if (ts.isPropertyAssignment(parent) && ts.isIdentifier(parent.name)) {
+    // Object literal: { fn: function() { ... } }
+    // Don't register in closureMap (property, not variable)
+  }
 }

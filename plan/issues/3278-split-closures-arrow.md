@@ -95,8 +95,27 @@ not reproduce the block's state threading → fix or revert.
   (a function-body-only import cycle, safe).
 - `scripts/prove-emit-identity.mjs check`: **IDENTICAL — 39/39** (gc/standalone/wasi),
   control = origin/main.
-- `tsc --noEmit`: 0 errors.
+- `tsc --noEmit`: 0 errors. LOC-budget gate OK. biome clean.
 - `tests/issue-3278.test.ts`: 10/10 green (no-capture concise, immutable/mutable
   captures, outer-write boxing, nested transitive captures, named-funcexpr
   recursion, self-recursive const arrow, array-destructuring param, default
   param, generator function-expression).
+- CI (PR #3082, slice-1 state): all required checks GREEN.
+
+### Slice 2 — emitClosureParamDestructuring + emitClosureConstruction + registerClosureBindingInfo
+
+- Phases 4 / 6a / 6b lifted verbatim into `src/codegen/closures/arrow-phases.ts`:
+  - `emitClosureParamDestructuring` — binding-pattern param destructuring
+    (array / tuple-struct / object / externref-host).
+  - `emitClosureConstruction` — construction-site emit (ref.func + capture
+    values + TDZ-flag ref cells + struct.new).
+  - `registerClosureBindingInfo` — closure-info registration (by-type-idx +
+    variable/assignment/global closureMap).
+- `src/codegen/closures.ts`: 3,472 → 2,814 LOC (−658 total);
+  `compileArrowAsClosure` body **1,311 → 638 LOC** (halved). Two orphaned
+  imports (`destructureParamArray`, `destructureParamObjectExternref`) removed.
+- `scripts/prove-emit-identity.mjs check`: **IDENTICAL — 39/39**, control =
+  origin/main. tsc 0, LOC-budget OK, biome clean, smoke 10/10.
+
+Both slices ship in PR #3082 (one cohesive decomposition; not stacked, to avoid
+merge-queue ordering fragility).
