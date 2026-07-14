@@ -2888,7 +2888,7 @@ function buildRunLoopBodyWithFdReactor(state: AsyncSchedulerState): Instr[] {
     // moves buffered bytes into the stream and dispatches 'readable'/'data'/'end'
     // callbacks. Skipped (byte-identical to Phase 2) when no reader is registered.
     ...(state.stdinReaderHookGlobalIdx >= 0
-      ? [
+      ? ([
           { op: "global.get", index: state.stdinReaderHookGlobalIdx },
           { op: "ref.is_null" },
           {
@@ -2905,7 +2905,7 @@ function buildRunLoopBodyWithFdReactor(state: AsyncSchedulerState): Instr[] {
               { op: "drop" },
             ],
           },
-        ]
+        ] satisfies Instr[])
       : []),
 
     // Fire due timers (callbacks may read the buffered stdin bytes), then drain.
@@ -3013,12 +3013,12 @@ function buildStdinDrainBody(ctx: CodegenContext, state: AsyncSchedulerState): I
         { op: "global.set", index: state.stdinNonblockSetGlobalIdx },
         ...(setFlagsIdx === undefined || setFlagsIdx < 0
           ? []
-          : [
+          : ([
               { op: "i32.const", value: 0 }, // fd 0
               { op: "i32.const", value: FDFLAG_NONBLOCK },
               { op: "call", funcIdx: setFlagsIdx },
               { op: "drop" }, // ignore errno (best-effort)
-            ]),
+            ] satisfies Instr[])),
       ],
     },
 
