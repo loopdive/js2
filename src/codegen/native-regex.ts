@@ -325,7 +325,7 @@ export function ensureRegexRun(ctx: CodegenContext): number {
     { op: "local.get", index: PC },
     { op: "i32.const", value: 3 },
     { op: "i32.mul" },
-    ...(k === 0 ? [] : [{ op: "i32.const", value: k }, { op: "i32.add" }]),
+    ...((k === 0 ? [] : [{ op: "i32.const", value: k }, { op: "i32.add" }]) satisfies Instr[]),
     { op: "array.get", typeIdx: i32Arr },
   ];
 
@@ -856,7 +856,7 @@ export function ensureRegexRun(ctx: CodegenContext): number {
           { op: "local.get", index: SOFF },
           { op: "local.get", index: SP },
           { op: "i32.add" },
-          ...(eol ? [] : [{ op: "i32.const", value: 1 }, { op: "i32.sub" }]),
+          ...((eol ? [] : [{ op: "i32.const", value: 1 }, { op: "i32.sub" }]) satisfies Instr[]),
           { op: "array.get_u", typeIdx: strDataIdx },
           { op: "local.set", index: CH },
           ...isLineTerm(CH),

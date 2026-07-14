@@ -1715,7 +1715,7 @@ export function tryCompileNativeCollectionForEach(
     // externref first, then coerce to the param type — externref→f64 unboxes via
     // `__unbox_number`, externref→string casts to the native string, etc.
     ...(numParams >= 1
-      ? [
+      ? ([
           { op: "local.get", index: entryTmp },
           {
             op: "struct.get",
@@ -1724,10 +1724,10 @@ export function tryCompileNativeCollectionForEach(
           },
           { op: "extern.convert_any" },
           ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[0] ?? anyref, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     ...(numParams >= 2
-      ? [
+      ? ([
           // Map: key field; Set: value === key.
           { op: "local.get", index: entryTmp },
           {
@@ -1737,13 +1737,13 @@ export function tryCompileNativeCollectionForEach(
           },
           { op: "extern.convert_any" },
           ...coercionInstrs(ctx, { kind: "externref" }, closureInfo.paramTypes[1] ?? anyref, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     ...(numParams >= 3
-      ? [
+      ? ([
           { op: "local.get", index: mTmp },
           ...coercionInstrs(ctx, { kind: "ref", typeIdx: ctx.mapTypeIdx }, closureInfo.paramTypes[2] ?? anyref, fctx),
-        ]
+        ] satisfies Instr[])
       : []),
     { op: "local.get", index: closureTmp },
     { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
@@ -1751,7 +1751,7 @@ export function tryCompileNativeCollectionForEach(
     { op: "ref.as_non_null" },
     { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
     // forEach ignores the callback result; drop whatever it returned.
-    ...(closureInfo.returnType === null ? [] : [{ op: "drop" }]),
+    ...((closureInfo.returnType === null ? [] : [{ op: "drop" }]) satisfies Instr[]),
   ];
 
   // i = 0; loop { if i >= entryCount break; entry = entries[i]; i++;

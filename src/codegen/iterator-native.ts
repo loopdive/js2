@@ -781,10 +781,10 @@ function buildArrayFromIterNBody(
         // iterator breaks via the done-branch below without reaching the
         // bound) → IteratorClose per §8.5.2/§13.15.5.2.
         ...(iteratorReturnIdx !== undefined
-          ? [
+          ? ([
               { op: "local.get", index: 2 },
               { op: "call", funcIdx: iteratorReturnIdx },
-            ]
+            ] satisfies Instr[])
           : []),
         { op: "br", depth: 2 },
       ],
@@ -1903,7 +1903,7 @@ function buildIteratorBody(
         // (#3146) When NO struct in the module carries `[Symbol.iterator]`
         // the dispatcher was never emitted (`callIteratorIdx` undefined) —
         // the subject is then its own iterator (bare `{next()}` carrier).
-        ...(deps.callIteratorIdx !== undefined
+        ...((deps.callIteratorIdx !== undefined
           ? [
               { op: "local.get", index: 0 },
               { op: "call", funcIdx: deps.callIteratorIdx },
@@ -1917,14 +1917,14 @@ function buildIteratorBody(
                 else: [{ op: "local.get", index: 2 }],
               },
             ]
-          : [{ op: "local.get", index: 0 }]),
+          : [{ op: "local.get", index: 0 }]) satisfies Instr[]),
         { op: "local.set", index: 2 },
         // (#3146) kind selection: a closed iterable's `@@iterator` can return
         // a PLAIN-`$Object` iterator (closure-property `next`/`return`) — the
         // closed-struct USER dispatchers cannot drive that; route it through
         // the property-read OBJ arms instead. Non-`$Object` iterators keep the
         // USER kind (closed-struct type-switch dispatch).
-        ...(objDeps
+        ...((objDeps
           ? [
               { op: "local.get", index: 2 },
               { op: "any.convert_extern" },
@@ -1936,7 +1936,7 @@ function buildIteratorBody(
                 else: [{ op: "i32.const", value: ITER_KIND_USER }],
               },
             ]
-          : [{ op: "i32.const", value: ITER_KIND_USER }]),
+          : [{ op: "i32.const", value: ITER_KIND_USER }]) satisfies Instr[]),
         // $IterRec{kind, vec:null, idx:0, userIter}
         { op: "ref.null", typeIdx: vecTypeIdx },
         { op: "i32.const", value: 0 },
@@ -2705,14 +2705,14 @@ function buildIteratorNextBody(
     { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
     { op: "call", funcIdx: deps.callNextIdx },
     { op: "local.set", index: 6 },
-    ...(objDeps
+    ...((objDeps
       ? [
           { op: "local.get", index: 6 },
           { op: "any.convert_extern" },
           { op: "ref.test", typeIdx: objDeps.objectTypeIdx },
           { op: "if", blockType: { kind: "empty" }, then: userReadObjArm, else: userReadStructArm },
         ]
-      : userReadStructArm),
+      : userReadStructArm) satisfies Instr[]),
   ];
 
   return [
@@ -2847,7 +2847,7 @@ function buildIteratorRestBodyWithUserArm(
       { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
       { op: "i32.const", value: kind },
       { op: "i32.eq" },
-      ...(i > 0 ? [{ op: "i32.or" }] : []),
+      ...(i > 0 ? ([{ op: "i32.or" }] satisfies Instr[]) : []),
     ]),
     { op: "if", blockType: { kind: "empty" }, then: userDrain, else: [] },
     // VEC record → the existing tail-copy, reading rec from local 1

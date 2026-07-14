@@ -2654,12 +2654,20 @@ export function compileBinaryExpression(
         { op: "local.get", index: lTmp },
         { op: "call", funcIdx: typeofNum },
         ...(looseNullish
-          ? [{ op: "local.get", index: lTmp }, { op: "call", funcIdx: typeofBool }, { op: "i32.or" }]
+          ? ([
+              { op: "local.get", index: lTmp },
+              { op: "call", funcIdx: typeofBool },
+              { op: "i32.or" },
+            ] satisfies Instr[])
           : []),
         { op: "local.get", index: rTmp },
         { op: "call", funcIdx: typeofNum },
         ...(looseNullish
-          ? [{ op: "local.get", index: rTmp }, { op: "call", funcIdx: typeofBool }, { op: "i32.or" }]
+          ? ([
+              { op: "local.get", index: rTmp },
+              { op: "call", funcIdx: typeofBool },
+              { op: "i32.or" },
+            ] satisfies Instr[])
           : []),
         { op: "i32.and" },
         {
@@ -3214,9 +3222,9 @@ export function compileBinaryExpression(
           // Identity check produced 0 or 1 — use it directly
           // For != / !==, negate
           { op: "local.get", index: identityResult },
-          ...(isNeqOp ? [{ op: "i32.eqz" }] : []),
+          ...(isNeqOp ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
         ],
-        else: (() => {
+        else: ((): Instr[] => {
           // Host equality fallback — two host externrefs (e.g. functions
           // like `Array === Array`) are not WasmGC eqrefs, so ref.eq cannot
           // compare them. For strict equality, `__host_eq` calls JS `===`.
@@ -3257,7 +3265,7 @@ export function compileBinaryExpression(
             return [
               { op: "local.get", index: tmpLeft },
               { op: "local.get", index: tmpRight },
-              { op: "call", funcIdx: finalHostEqIdx },
+              { op: "call", funcIdx: finalHostEqIdx! },
               {
                 op: "if",
                 blockType: { kind: "val", type: { kind: "i32" } },
@@ -3331,8 +3339,8 @@ export function compileBinaryExpression(
             return [
               { op: "local.get", index: tmpLeft },
               { op: "local.get", index: tmpRight },
-              { op: "call", funcIdx: finalHostLooseEqIdx },
-              ...(isNeqOp ? [{ op: "i32.eqz" }] : []),
+              { op: "call", funcIdx: finalHostLooseEqIdx! },
+              ...(isNeqOp ? ([{ op: "i32.eqz" }] satisfies Instr[]) : []),
             ];
           }
         })(),
@@ -3753,7 +3761,7 @@ export function emitAnyAdd(ctx: CodegenContext, fctx: FunctionContext, expr: ts.
 
       const emitToAnyString = (tmp: number): Instr[] => [
         { op: "local.get", index: tmp },
-        { op: "call", funcIdx: finalToStr },
+        { op: "call", funcIdx: finalToStr! },
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
       ];
@@ -3778,7 +3786,7 @@ export function emitAnyAdd(ctx: CodegenContext, fctx: FunctionContext, expr: ts.
       const boxNum = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
       flushLateImportShifts(ctx, fctx);
       const finalBoxNum = ctx.funcMap.get("__box_number") ?? boxNum;
-      numericArm.push({ op: "call", funcIdx: finalBoxNum });
+      numericArm.push({ op: "call", funcIdx: finalBoxNum! });
 
       fctx.body.push({ op: "local.get", index: lPrim });
       fctx.body.push({ op: "call", funcIdx: typeofStr });
