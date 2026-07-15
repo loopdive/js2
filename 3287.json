@@ -1,8 +1,8 @@
 {
   "id": "3287",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-15T09:33:54Z",
-  "updated_at": "2026-07-15T09:33:54Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3287-wrong-error-type",
+  "claimed_at": "2026-07-15T09:40:08Z",
+  "updated_at": "2026-07-15T09:40:08Z"
 }
