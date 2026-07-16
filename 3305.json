@@ -1,8 +1,8 @@
 {
   "id": "3305",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T11:37:00Z",
-  "updated_at": "2026-07-16T11:37:00Z"
+  "assignee": "ttraenkler/sendev-3256",
+  "status": "in-progress",
+  "branch": "issue-3305-selfhost-parse-format",
+  "claimed_at": "2026-07-16T11:40:14Z",
+  "updated_at": "2026-07-16T11:40:14Z"
 }
