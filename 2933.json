@@ -1,9 +1,8 @@
 {
   "id": "2933",
-  "assignee": "ttraenkler/dev-3023",
-  "status": "done",
-  "branch": "issue-2933-standalone-namespace-static-value",
-  "claimed_at": "2026-07-04T21:40:09Z",
-  "updated_at": "2026-07-04T22:04:14Z",
-  "released_at": "2026-07-04T22:04:14Z"
+  "assignee": "ttraenkler/sendev-3149-takeover",
+  "status": "in-progress",
+  "branch": "issue-2933-variadic-math-value",
+  "claimed_at": "2026-07-16T15:21:32Z",
+  "updated_at": "2026-07-16T15:21:32Z"
 }
