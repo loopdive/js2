@@ -1,8 +1,9 @@
 {
   "id": "3304",
   "assignee": "ttraenkler/sendev-date-3174",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3304-standalone-string-index",
   "claimed_at": "2026-07-16T11:26:59Z",
-  "updated_at": "2026-07-16T11:26:59Z"
+  "updated_at": "2026-07-16T14:04:06Z",
+  "released_at": "2026-07-16T14:04:06Z"
 }
