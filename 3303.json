@@ -1,8 +1,9 @@
 {
   "id": "3303",
   "assignee": "ttraenkler/sendev-3303",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3303-regressions-allow",
   "claimed_at": "2026-07-16T11:11:37Z",
-  "updated_at": "2026-07-16T11:11:37Z"
+  "updated_at": "2026-07-16T14:04:51Z",
+  "released_at": "2026-07-16T14:04:51Z"
 }
