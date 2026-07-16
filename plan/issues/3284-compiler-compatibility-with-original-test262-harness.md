@@ -1,7 +1,8 @@
 ---
 id: 3284
 title: "Make the compiler compatible with the original (unmodified) test262 harness — assert.js property-call dispatch + Promise.then microtask gap"
-status: ready
+status: in-progress
+assignee: ttraenkler/sendev-3256
 sprint: current
 created: 2026-07-15
 priority: high
