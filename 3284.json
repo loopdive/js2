@@ -1,8 +1,8 @@
 {
   "id": "3284",
-  "assignee": "ttraenkler/senior-dev",
+  "assignee": "ttraenkler/sendev-3256",
   "status": "in-progress",
-  "branch": "issue-3284-rc1-property-call-dispatch",
-  "claimed_at": "2026-07-15T00:47:38Z",
-  "updated_at": "2026-07-15T00:47:38Z"
+  "branch": "issue-3284-rc1-native-fnobj-dispatch",
+  "claimed_at": "2026-07-16T11:57:29Z",
+  "updated_at": "2026-07-16T11:57:29Z"
 }
