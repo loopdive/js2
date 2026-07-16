@@ -1,8 +1,9 @@
 {
   "id": "1102",
   "assignee": "ttraenkler/sendev-1102",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-1102-eval-aot-strategy",
   "claimed_at": "2026-07-16T08:24:37Z",
-  "updated_at": "2026-07-16T08:24:37Z"
+  "updated_at": "2026-07-16T09:18:44Z",
+  "released_at": "2026-07-16T09:18:44Z"
 }
