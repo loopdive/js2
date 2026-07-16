@@ -1,8 +1,8 @@
 {
   "id": "3317",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T15:02:51Z",
-  "updated_at": "2026-07-16T15:02:51Z"
+  "assignee": "ttraenkler/fable-3317",
+  "status": "in-progress",
+  "branch": "issue-3317-array-search-tonumber-coercion",
+  "claimed_at": "2026-07-16T20:19:56Z",
+  "updated_at": "2026-07-16T20:19:56Z"
 }
