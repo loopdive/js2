@@ -1,8 +1,8 @@
 {
   "id": "3328",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T22:26:03Z",
-  "updated_at": "2026-07-16T22:26:03Z"
+  "assignee": "ttraenkler/sendev-date-3174",
+  "status": "in-progress",
+  "branch": "issue-3328-capturing-closure-toprimitive-dispatch",
+  "claimed_at": "2026-07-16T22:26:45Z",
+  "updated_at": "2026-07-16T22:26:45Z"
 }
