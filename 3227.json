@@ -1,8 +1,8 @@
 {
   "id": "3227",
-  "assignee": "ttraenkler/sendev-3161-conflict",
+  "assignee": "ttraenkler/sendev-3165-conflict",
   "status": "in-progress",
-  "branch": "issue-3227-async-harness-slice1",
-  "claimed_at": "2026-07-16T17:38:42Z",
-  "updated_at": "2026-07-16T17:38:42Z"
+  "branch": "issue-3227-s2-await-nan",
+  "claimed_at": "2026-07-16T19:39:22Z",
+  "updated_at": "2026-07-16T19:39:22Z"
 }
