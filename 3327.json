@@ -1,8 +1,8 @@
 {
   "id": "3327",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T21:53:05Z",
-  "updated_at": "2026-07-16T21:53:05Z"
+  "assignee": "ttraenkler/fable-3317",
+  "status": "in-progress",
+  "branch": "issue-3327-coercion-plan-cast-null",
+  "claimed_at": "2026-07-16T21:56:18Z",
+  "updated_at": "2026-07-16T21:56:18Z"
 }
