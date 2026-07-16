@@ -1,9 +1,8 @@
 {
   "id": "3177",
-  "assignee": "ttraenkler/sendev-1102",
-  "status": "released",
-  "branch": "issue-3177-standalone-typedarray-ctors",
-  "claimed_at": "2026-07-16T09:36:37Z",
-  "updated_at": "2026-07-16T11:06:32Z",
-  "released_at": "2026-07-16T11:06:32Z"
+  "assignee": "ttraenkler/fable-3177",
+  "status": "in-progress",
+  "branch": "issue-3177-slice2-ctor-arg-protocols",
+  "claimed_at": "2026-07-16T11:12:50Z",
+  "updated_at": "2026-07-16T11:12:50Z"
 }
