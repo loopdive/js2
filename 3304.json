@@ -1,8 +1,8 @@
 {
   "id": "3304",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T11:26:35Z",
-  "updated_at": "2026-07-16T11:26:35Z"
+  "assignee": "ttraenkler/sendev-date-3174",
+  "status": "in-progress",
+  "branch": "issue-3304-standalone-string-index",
+  "claimed_at": "2026-07-16T11:26:59Z",
+  "updated_at": "2026-07-16T11:26:59Z"
 }
