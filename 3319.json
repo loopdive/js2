@@ -1,8 +1,9 @@
 {
   "id": "3319",
   "assignee": "ttraenkler/fable-3316",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3319-standalone-gopd-miss-undefined-singleton",
   "claimed_at": "2026-07-16T15:35:25Z",
-  "updated_at": "2026-07-16T15:35:25Z"
+  "updated_at": "2026-07-16T18:57:54Z",
+  "released_at": "2026-07-16T18:57:54Z"
 }
