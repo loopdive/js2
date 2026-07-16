@@ -1,9 +1,8 @@
 {
   "id": "3305",
-  "assignee": "ttraenkler/sendev-3256",
-  "status": "released",
-  "branch": "issue-3305-selfhost-parse-format",
-  "claimed_at": "2026-07-16T11:40:14Z",
-  "updated_at": "2026-07-16T11:56:05Z",
-  "released_at": "2026-07-16T11:56:05Z"
+  "assignee": "ttraenkler/fable-3305",
+  "status": "in-progress",
+  "branch": "issue-3305-selfhost-tofixed",
+  "claimed_at": "2026-07-16T11:59:19Z",
+  "updated_at": "2026-07-16T11:59:19Z"
 }
