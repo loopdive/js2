@@ -1,8 +1,9 @@
 {
   "id": "3306",
   "assignee": "ttraenkler/sendev-date-3174",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3306-standalone-tostring-only-tonumber",
   "claimed_at": "2026-07-16T14:05:45Z",
-  "updated_at": "2026-07-16T14:05:45Z"
+  "updated_at": "2026-07-16T22:21:36Z",
+  "released_at": "2026-07-16T22:21:36Z"
 }
