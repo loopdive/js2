@@ -1,8 +1,9 @@
 {
   "id": "3288",
   "assignee": "ttraenkler/codex-senior-3288",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3288-porffor-p0-compat",
   "claimed_at": "2026-07-16T03:53:50Z",
-  "updated_at": "2026-07-16T03:53:50Z"
+  "updated_at": "2026-07-16T04:30:06Z",
+  "released_at": "2026-07-16T04:30:06Z"
 }
