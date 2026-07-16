@@ -1,8 +1,8 @@
 {
   "id": "3303",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T11:07:44Z",
-  "updated_at": "2026-07-16T11:07:44Z"
+  "assignee": "ttraenkler/sendev-3303",
+  "status": "in-progress",
+  "branch": "issue-3303-regressions-allow",
+  "claimed_at": "2026-07-16T11:11:37Z",
+  "updated_at": "2026-07-16T11:11:37Z"
 }
