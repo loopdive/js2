@@ -1,8 +1,9 @@
 {
   "id": "3174",
   "assignee": "ttraenkler/sendev-date-3174",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3174-standalone-date-brand",
   "claimed_at": "2026-07-16T08:23:09Z",
-  "updated_at": "2026-07-16T08:23:09Z"
+  "updated_at": "2026-07-16T11:32:41Z",
+  "released_at": "2026-07-16T11:32:41Z"
 }
