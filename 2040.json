@@ -1,9 +1,8 @@
 {
   "id": "2040",
-  "assignee": "ttraenkler/cascade-lead",
-  "status": "done",
-  "branch": "issue-2040-tag5-classifier",
-  "claimed_at": "2026-06-22T18:43:02Z",
-  "updated_at": "2026-06-22T19:11:12Z",
-  "released_at": "2026-06-22T19:11:12Z"
+  "assignee": "ttraenkler/sendev-3164-conflict",
+  "status": "in-progress",
+  "branch": "issue-2040-tag5-classifier-flip",
+  "claimed_at": "2026-07-16T19:39:02Z",
+  "updated_at": "2026-07-16T19:39:03Z"
 }
