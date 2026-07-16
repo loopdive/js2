@@ -1,8 +1,9 @@
 {
   "id": "3320",
   "assignee": "ttraenkler/fable-3316",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3320-1888-guardrails-refusal-closures",
   "claimed_at": "2026-07-16T16:16:34Z",
-  "updated_at": "2026-07-16T16:16:34Z"
+  "updated_at": "2026-07-16T16:59:28Z",
+  "released_at": "2026-07-16T16:59:28Z"
 }
