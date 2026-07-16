@@ -1,8 +1,8 @@
 {
   "id": "3177",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-12T12:22:16Z",
-  "updated_at": "2026-07-12T12:22:16Z"
+  "assignee": "ttraenkler/sendev-1102",
+  "status": "in-progress",
+  "branch": "issue-3177-standalone-typedarray-ctors",
+  "claimed_at": "2026-07-16T09:36:37Z",
+  "updated_at": "2026-07-16T09:36:37Z"
 }
