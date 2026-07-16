@@ -1,8 +1,8 @@
 {
   "id": "3315",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T14:53:06Z",
-  "updated_at": "2026-07-16T14:53:06Z"
+  "assignee": "ttraenkler/fable-a419",
+  "status": "in-progress",
+  "branch": "issue-3315-standalone-extra-arg-dstr-corruption",
+  "claimed_at": "2026-07-16T22:33:34Z",
+  "updated_at": "2026-07-16T22:33:34Z"
 }
