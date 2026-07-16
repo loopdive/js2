@@ -1,8 +1,8 @@
 {
   "id": "3295",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T04:22:47Z",
-  "updated_at": "2026-07-16T04:22:47Z"
+  "assignee": "ttraenkler/codex-senior-3295",
+  "status": "in-progress",
+  "branch": "issue-3288-porffor-p0-compat",
+  "claimed_at": "2026-07-16T04:29:43Z",
+  "updated_at": "2026-07-16T04:29:43Z"
 }
