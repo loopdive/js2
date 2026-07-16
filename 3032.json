@@ -1,9 +1,8 @@
 {
   "id": "3032",
-  "assignee": "ttraenkler/sendev-3032-w3",
-  "status": "released",
-  "branch": "issue-3032-tdz-native-threading",
-  "claimed_at": "2026-07-16T08:23:56Z",
-  "updated_at": "2026-07-16T11:24:14Z",
-  "released_at": "2026-07-16T11:24:14Z"
+  "assignee": "ttraenkler/sendev-3032-w4",
+  "status": "in-progress",
+  "branch": "issue-3032-w4-method-generators",
+  "claimed_at": "2026-07-16T14:06:00Z",
+  "updated_at": "2026-07-16T14:06:00Z"
 }
