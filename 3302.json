@@ -1,8 +1,9 @@
 {
   "id": "3302",
   "assignee": "ttraenkler/sendev-3302",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3302-native-capturing-generators",
   "claimed_at": "2026-07-16T11:26:08Z",
-  "updated_at": "2026-07-16T11:26:08Z"
+  "updated_at": "2026-07-16T14:04:31Z",
+  "released_at": "2026-07-16T14:04:31Z"
 }
