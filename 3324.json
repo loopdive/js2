@@ -1,8 +1,8 @@
 {
   "id": "3324",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T19:53:17Z",
-  "updated_at": "2026-07-16T19:53:17Z"
+  "assignee": "ttraenkler/fable-3317",
+  "status": "in-progress",
+  "branch": "issue-3324-booltostring-init-cycle",
+  "claimed_at": "2026-07-16T21:25:47Z",
+  "updated_at": "2026-07-16T21:25:47Z"
 }
