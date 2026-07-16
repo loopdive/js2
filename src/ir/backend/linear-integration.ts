@@ -39,10 +39,14 @@
 
 import { ts } from "../../ts-api.js";
 import type { LinearContext } from "../../codegen-linear/context.js";
-import { LINEAR_IR_VEC_INIT_F64_FN } from "../../codegen-linear/runtime.js";
+import {
+  LINEAR_IR_OBJ_INIT_F64_FN,
+  LINEAR_IR_OBJ_NEW_FN,
+  LINEAR_IR_VEC_INIT_F64_FN,
+} from "../../codegen-linear/runtime.js";
 import { lowerFunctionAstToIr, type IrFromAstResolver, typeNodeToIr } from "../from-ast.js";
 import { lowerIrFunctionBody, type IrLowerResolver } from "../lower.js";
-import type { IrFuncRef, IrGlobalRef, IrType, IrTypeRef } from "../nodes.js";
+import type { IrFuncRef, IrGlobalRef, IrType, IrTypeRef, IrObjectShape } from "../nodes.js";
 import { planIrCompilation } from "../select.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
@@ -191,6 +195,8 @@ export function compileLinearIrFunctions(ctx: LinearContext, sourceFile: ts.Sour
         const emitter = new LinearEmitter({
           vecNewFuncIdx: ctx.funcMap.get("__arr_new"),
           vecInitF64FuncIdx: ctx.funcMap.get(LINEAR_IR_VEC_INIT_F64_FN),
+          objNewFuncIdx: ctx.funcMap.get(LINEAR_IR_OBJ_NEW_FN),
+          objInitF64FuncIdx: ctx.funcMap.get(LINEAR_IR_OBJ_INIT_F64_FN),
         });
         const body = lowerIrFunctionBody<Instr[]>(main, resolver, emitter);
         const vecScratchLocals = new Set(emitter.getVecScratchLocalIndices());
@@ -278,6 +284,11 @@ function makeLinearIrResolver(ctx: LinearContext): IrLowerResolver & IrFromAstRe
     elementValType: { kind: "f64" },
   };
 
+  const objectLayouts = new Map<
+    string,
+    ReturnType<NonNullable<IrLowerResolver["resolveObject"]>> & { fieldCount: number }
+  >();
+
   return {
     resolveFunc(ref: IrFuncRef): number {
       // (#2956 L2) Vec MUTATION rides from-ast's element-store helper call
@@ -333,6 +344,31 @@ function makeLinearIrResolver(ctx: LinearContext): IrLowerResolver & IrFromAstRe
       const idx = ctx.mod.types.length;
       ctx.mod.types.push(def);
       return idx;
+    },
+    // (#2956 L2 aggregates) Fixed-shape anonymous object -> IR-internal
+    // linear layout: i32 arena pointer value; uniform 8-byte f64 slots at
+    // 8 + 8*i in the shape's canonical (name-sorted) field order. Legality
+    // has already rejected non-f64 fields and boundary-crossing objects,
+    // so this hook is total for everything that reaches lowering. Memoized
+    // per shape-KEY (field names) — layouts are structural.
+    resolveObject(shape: IrObjectShape) {
+      const key = shape.fields.map((f) => f.name).join(",");
+      let layout = objectLayouts.get(key);
+      if (!layout) {
+        const indexByName = new Map(shape.fields.map((f, i) => [f.name, i] as const));
+        layout = {
+          typeIdx: 0,
+          valueType: { kind: "i32" } as const,
+          fieldCount: shape.fields.length,
+          fieldIdx(name: string): number {
+            const idx = indexByName.get(name);
+            if (idx === undefined) throw new Error(`linear-ir: object shape has no field '${name}'`);
+            return idx;
+          },
+        };
+        objectLayouts.set(key, layout);
+      }
+      return layout;
     },
     resolveVec(valType: ValType): IrVecLowering | null {
       return valType.kind === "i32" ? f64VecLayout : null;

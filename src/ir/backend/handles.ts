@@ -63,6 +63,11 @@ export interface IrObjectStructLowering {
   readonly typeIdx: number;
   /** Field index for each field name in the shape's canonical order. */
   fieldIdx(name: string): number;
+  /** (#2956 L2) Optional backend override for the VALUE representation of
+   *  this object type. WasmGC leaves it absent (objects are `(ref $struct)`
+   *  over `typeIdx`); the linear backend supplies `{kind:"i32"}` — an arena
+   *  pointer, like vecs. Consumed by `lowerIrTypeToValType`. */
+  readonly valueType?: ValType;
 }
 
 /**

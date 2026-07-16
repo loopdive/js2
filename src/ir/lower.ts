@@ -3410,7 +3410,9 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     if (!obj) {
       throw new Error(`ir/lower: resolver cannot lower object<${describeShape(t.shape)}> (${funcName})`);
     }
-    return { kind: "ref", typeIdx: obj.typeIdx };
+    // (#2956 L2) A backend may override the value representation (linear:
+    // i32 arena pointer). WasmGC leaves valueType absent -> (ref $struct).
+    return obj.valueType ?? { kind: "ref", typeIdx: obj.typeIdx };
   }
   if (t.kind === "closure") {
     // Slice 3 (#1169c): a closure value lowers to a (ref $base_struct)

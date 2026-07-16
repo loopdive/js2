@@ -315,3 +315,39 @@ the divergence with #3332-referencing assertions instead of masking it.
 
 **Remaining after this sub-slice**: refcells + aggregates via `layout.ts`
 (the L2 remainder), L3 strings (after #2955), L4 default-ON flip.
+
+## Execution status — L2 AGGREGATES sub-slice (2026-07-17, fable-epsilon)
+
+Fixed-shape anonymous OBJECT literals + field get/set on selector-claimed
+functions now lower through the linear-IR overlay under
+`JS2WASM_LINEAR_IR=1` (stacked on the vec-mutation sub-slice PR):
+
+- **Layout (IR-internal by design)**: i32 arena pointer; header 8B (tag
+  0x10 u8 @0, payload u32 @4 — the direct literal path's exact header);
+  uniform 8-byte f64 slots at `8 + 8*i` in the IR shape's canonical
+  (name-sorted) field order. Because the direct path lays fields out in
+  CHECKER order, object values must never cross the IR<->direct seam:
+  `verifyIrBackendLegality` rejects object-typed params/results for linear
+  (interior values legal), and this slice's legality arm restricts fields
+  to f64 (bool/i32/string fields demote).
+- **Emitter** (`linear-emitter.ts`): `emitAggregateNew` = `__linear_ir_obj_new`
+  (malloc+tag+size, returns ptr ON TOP of the stacked field values) + a
+  value-first `__linear_ir_obj_init_f64(value, ptr, offset) -> ptr` fold —
+  zero scratch locals; `emitFieldGet`/`emitFieldSet` are single
+  `f64.load`/`f64.store` at the immediate offset.
+- **Shared-code change of substance**: `IrObjectStructLowering` grew an
+  optional `valueType` and `lowerIrTypeToValType` honors it
+  (`obj.valueType ?? (ref $struct)`) — WasmGC layouts leave it absent, so
+  the gc lane is untouched (`check:ir-fallbacks` OK).
+- **Net-new capability**: field WRITES on anonymous literals — the direct
+  linear path fail-louds on them ("Unknown property assignment",
+  classLayouts-only support); the overlay compiles and runs them
+  (spec-value asserted). Reads/loops parity-checked against the direct path.
+
+Validated: `tests/issue-2956.test.ts` 15/15; linear basic/array/classes +
+cross-backend-diff 46/46; tsc clean; both ratchets OK (linear-ir 6/6
+build:4 — corpus rows unchanged; ir-fallbacks no increases).
+
+**Remaining**: refcells (blocked on linear closure design — lifted-closures
+demote), L3 strings (after #2955), L4 default-ON flip + fold the direct
+path's reject list into the ratchet.

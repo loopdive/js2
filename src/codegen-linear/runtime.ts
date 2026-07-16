@@ -1093,6 +1093,62 @@ export function addLinearIrVecRuntime(mod: WasmModule): void {
   ]);
 }
 
+export const LINEAR_IR_OBJ_NEW_FN = "__linear_ir_obj_new";
+export const LINEAR_IR_OBJ_INIT_F64_FN = "__linear_ir_obj_init_f64";
+
+/**
+ * (#2956 L2 aggregates) Allocate a fixed-shape anonymous object:
+ * `__linear_ir_obj_new(payloadBytes) -> ptr`. Mirrors the direct path's
+ * object-literal allocation (`__malloc(8+payload)`, tag byte 0x10, payload
+ * size u32 at +4). Field slots are zeroed by the bump allocator.
+ *
+ * `__linear_ir_obj_init_f64(value, ptr, byteOffset) -> ptr` is the
+ * value-first field initializer for `LinearEmitter.emitAggregateNew`:
+ * lower.ts leaves field values on the stack in canonical order, and the
+ * helper RETURNS the pointer so the emitter can fold the store loop with
+ * zero scratch locals (stack: ..., value, ptr -> push offset -> call ->
+ * ..., ptr).
+ */
+export function addLinearIrObjRuntime(mod: WasmModule): void {
+  if (!mod.functions.some((fn) => fn.name === LINEAR_IR_OBJ_NEW_FN)) {
+    const mallocIdx = findFuncIndex(mod, "__malloc");
+    addRuntimeFunc(mod, LINEAR_IR_OBJ_NEW_FN, [{ kind: "i32" }], [{ kind: "i32" }], [{ kind: "i32" }], (first) => [
+      // ptr = __malloc(8 + payloadBytes)
+      { op: "i32.const", value: 8 },
+      { op: "local.get", index: 0 },
+      { op: "i32.add" },
+      { op: "call", funcIdx: mallocIdx },
+      { op: "local.set", index: first },
+      // tag byte 0x10 (anonymous object), same as the direct literal path.
+      { op: "local.get", index: first },
+      { op: "i32.const", value: 0x10 },
+      { op: "i32.store8", align: 0, offset: 0 },
+      // payload size u32 at +4.
+      { op: "local.get", index: first },
+      { op: "local.get", index: 0 },
+      { op: "i32.store", align: 2, offset: 4 },
+      { op: "local.get", index: first },
+    ]);
+  }
+  if (!mod.functions.some((fn) => fn.name === LINEAR_IR_OBJ_INIT_F64_FN)) {
+    addRuntimeFunc(
+      mod,
+      LINEAR_IR_OBJ_INIT_F64_FN,
+      [{ kind: "f64" }, { kind: "i32" }, { kind: "i32" }],
+      [{ kind: "i32" }],
+      [],
+      () => [
+        { op: "local.get", index: 1 },
+        { op: "local.get", index: 2 },
+        { op: "i32.add" },
+        { op: "local.get", index: 0 },
+        { op: "f64.store", align: 3, offset: 0 },
+        { op: "local.get", index: 1 },
+      ],
+    );
+  }
+}
+
 /**
  * Add String runtime functions to the module.
  * Layout: [header 8B][len:u32 at +8][utf8 bytes at +12...]

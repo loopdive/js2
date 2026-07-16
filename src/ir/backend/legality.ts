@@ -29,8 +29,24 @@ export function verifyIrBackendLegality(func: IrFunction, backend: IrBackendKind
     checkNestedTypeShapes(type, block, where, checkType);
   };
 
-  for (const p of func.params) checkType(p.type, undefined, `param ${p.name}`);
-  for (let i = 0; i < func.resultTypes.length; i++) checkType(func.resultTypes[i]!, undefined, `result ${i}`);
+  // (#2956 L2) Function-BOUNDARY check: linear object values are i32 arena
+  // pointers with an IR-internal (name-sorted) layout that intentionally
+  // DIFFERS from the direct linear path's checker-order layout — an object
+  // must never cross the IR<->direct seam, so object-typed params/results
+  // are illegal on linear even though interior object values are legal.
+  const checkBoundaryType = (type: IrType, block: number | undefined, where: string): void => {
+    if (backend === "linear" && type.kind === "object") {
+      errors.push({
+        message: `${where}: linear backend does not support object types at function boundaries (IR-internal layout)`,
+        func: func.name,
+        block,
+      });
+      return;
+    }
+    checkType(type, block, where);
+  };
+  for (const p of func.params) checkBoundaryType(p.type, undefined, `param ${p.name}`);
+  for (let i = 0; i < func.resultTypes.length; i++) checkBoundaryType(func.resultTypes[i]!, undefined, `result ${i}`);
   for (const slot of func.slots ?? [])
     checkValType(backend, slot.type, errors, func.name, undefined, `slot ${slot.name}`);
 
@@ -114,6 +130,17 @@ function linearInstrError(instr: IrInstr): string | null {
     case "vec.new_fixed":
     case "vec.len":
     case "vec.get":
+    // #2956 L2 (aggregates): fixed-shape object values are i32 arena
+    // pointers in the linear resolver — construction + field get/set lower
+    // through LinearEmitter (inline __malloc + offset load/store, the
+    // direct path's exact layout discipline). Function-BOUNDARY object
+    // types stay rejected (see verifyIrBackendLegality's boundary check):
+    // the IR shape is name-sorted while the direct path lays fields out in
+    // checker order, so an object value must never cross the IR<->direct
+    // seam.
+    case "object.new":
+    case "object.get":
+    case "object.set":
     case "while.loop":
     case "for.loop":
     // #2952 slice 2 — br.label lowers to a core-Wasm `br` (depth derived by
@@ -186,6 +213,21 @@ function bytecodeBinopLegal(op: IrBinop): boolean {
 function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
   if (backend === "wasmgc") return null;
   if (backend === "linear") {
+    // #2956 L2: interior object values are legal (i32 arena pointers); the
+    // field types are recursed by checkNestedTypeShapes, so a shape with a
+    // non-linear-legal field (string/closure/...) still rejects. This slice
+    // additionally restricts fields to f64 (the uniform 8-byte slot the
+    // emitter's obj-init helper stores); bool/i32 fields demote. Boundary
+    // positions (params/results) reject object separately — see
+    // verifyIrBackendLegality.
+    if (type.kind === "object") {
+      for (const f of type.shape.fields) {
+        if (!(f.type.kind === "val" && f.type.val.kind === "f64")) {
+          return `linear object field '${f.name}' must be f64 in this slice (got '${f.type.kind === "val" ? f.type.val.kind : f.type.kind}')`;
+        }
+      }
+      return null;
+    }
     const v = asVal(type);
     if (!v) return `${backend} backend does not support IR type '${type.kind}'`;
     return linearValTypeError(v);

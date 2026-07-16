@@ -266,3 +266,88 @@ describe("#2956 L2: selector-claimed vec MUTATION (element store + push)", () =>
     expect(await run(binary)).toBe(2);
   });
 });
+
+const AGG_READ_SRC = `export function objRead(): number {
+  const p = { x: 3, y: 4 };
+  return p.x * 10 + p.y;
+}
+export function objLoop(): number {
+  const p = { hi: 2.5, lo: 0.5 };
+  let s = 0;
+  for (let i = 0; i < 3; i++) { s = s + p.hi - p.lo; }
+  return s;
+}
+export function test(): number { return objRead() + objLoop(); }`;
+
+// Field WRITES on an anonymous object literal are a NET-NEW capability of
+// the IR overlay: the direct linear path fail-louds on them ("Unknown
+// property assignment") — see compilePropertyAssignment's classLayouts-only
+// support. So the write module has no direct-path twin to parity against.
+const AGG_WRITE_SRC = `export function objWrite(): number {
+  const p = { a: 1, b: 2 };
+  p.a = 7;
+  p.b = p.a + 1;
+  return p.a * 10 + p.b;
+}
+export function test(): number { return objWrite(); }`;
+
+describe("#2956 L2: selector-claimed fixed-shape object AGGREGATES", () => {
+  it("flag ON lowers object literal + field reads with direct-path value parity", async () => {
+    const directBinary = await compileLinear(AGG_READ_SRC, false);
+    const irBinary = await compileLinear(AGG_READ_SRC, true);
+    const report = getLastLinearIrReport();
+    expect(report?.rejected ?? []).toEqual([]);
+    expect([...(report?.compiled ?? [])].sort()).toEqual(["objLoop", "objRead", "test"]);
+
+    const direct = await exportedFunctions(directBinary);
+    const ir = await exportedFunctions(irBinary);
+    for (const name of ["objRead", "objLoop", "test"]) {
+      expect(callNumber(ir, name), `${name} IR value`).toBe(callNumber(direct, name));
+    }
+    expect(callNumber(ir, "objRead")).toBe(34);
+    expect(callNumber(ir, "objLoop")).toBe(6);
+  });
+
+  it("flag ON adds field WRITES the direct path fail-louds on (net-new capability)", async () => {
+    // Direct path: compile error (documented gap).
+    delete process.env[FLAG];
+    const direct = await compile(AGG_WRITE_SRC, { target: "linear" });
+    expect(direct.success).toBe(false);
+    expect(direct.errors.map((e) => e.message).join("; ")).toContain("Unknown property assignment");
+    // IR overlay: compiles and computes the spec value.
+    const irBinary = await compileLinear(AGG_WRITE_SRC, true);
+    const report = getLastLinearIrReport();
+    expect(report?.rejected ?? []).toEqual([]);
+    expect([...(report?.compiled ?? [])].sort()).toEqual(["objWrite", "test"]);
+    const ir = await exportedFunctions(irBinary);
+    expect(callNumber(ir, "objWrite")).toBe(78);
+  });
+
+  it("JS2WASM_LINEAR_IR=0 keeps aggregate modules byte-identical to an unset flag", async () => {
+    const unset = await compileLinear(AGG_READ_SRC, false);
+    const zero = await compileLinear(AGG_READ_SRC, "0");
+    const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+    expect(sha(zero)).toBe(sha(unset));
+  });
+
+  it("non-f64 fields demote via the legality gate; boundary-crossing objects demote at build", async () => {
+    const source = `function mk(): { x: number } { return { x: 1 }; }
+    export function boundaryDemotes(): number { return mk().x; }
+    export function boolFieldDemotes(): number {
+      const p = { on: true, v: 2 };
+      return p.v;
+    }
+    export function test(): number { return boundaryDemotes() + boolFieldDemotes(); }`;
+    const binary = await compileLinear(source, true);
+    const report = getLastLinearIrReport();
+    expect(report?.compiled ?? []).not.toContain("boolFieldDemotes");
+    expect(report?.compiled ?? []).not.toContain("mk");
+    expect(
+      report?.rejected.some(
+        (rejection) => rejection.func === "boolFieldDemotes" && rejection.reason.startsWith("illegal"),
+      ),
+    ).toBe(true);
+    // The whole module still runs correctly through the direct fallback.
+    expect(await run(binary)).toBe(3);
+  });
+});

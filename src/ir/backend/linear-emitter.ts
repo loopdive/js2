@@ -68,6 +68,33 @@ export interface LinearEmitterOptions {
   readonly vecNewFuncIdx?: number;
   /** Flag-gated `(value:f64, ptr:i32, index:i32) -> void` initializer. */
   readonly vecInitF64FuncIdx?: number;
+  /** (#2956 L2 aggregates) `__linear_ir_obj_new(payloadBytes) -> ptr`. */
+  readonly objNewFuncIdx?: number;
+  /** (#2956 L2 aggregates) `__linear_ir_obj_init_f64(value, ptr, offset) -> ptr`. */
+  readonly objInitF64FuncIdx?: number;
+}
+
+/**
+ * (#2956 L2 aggregates) The linear object layout the resolver hands the
+ * emitter: fixed-shape anonymous object, header 8B (tag u8 @0 + payload
+ * size u32 @4), uniform 8-byte f64 field slots at 8 + 8*fieldIdx in the IR
+ * shape's canonical (name-sorted) order. This layout is IR-INTERNAL — it
+ * deliberately differs from the direct path's checker-order layout, which
+ * is why object values are illegal at function boundaries (legality.ts).
+ */
+export interface LinearObjectLayout {
+  readonly typeIdx: number;
+  fieldIdx(name: string): number;
+  readonly valueType: ValType;
+  /** Number of fields (payload = 8 * fieldCount bytes). */
+  readonly fieldCount: number;
+}
+
+const LINEAR_OBJECT_HEADER_SIZE = 8;
+const LINEAR_OBJECT_FIELD_SIZE = 8;
+
+function isLinearObjectLayout(l: unknown): l is LinearObjectLayout {
+  return typeof l === "object" && l !== null && typeof (l as LinearObjectLayout).fieldCount === "number";
 }
 
 /** Element byte size (stride) for a linear-memory element ValType. */
@@ -356,14 +383,50 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
 
   // struct/object family — WasmGC `struct.new`/`struct.get`/`struct.set`; the
   // linear backend lowers objects to a bump-allocated memory layout (#2956).
-  emitAggregateNew(): void {
-    notImplemented("emitAggregateNew");
+  // ---- aggregates (#2956 L2) — fixed-shape anonymous objects -------------
+  //
+  // Stack discipline mirrors the WasmGC struct ops with zero scratch locals:
+  //   object.new — lower.ts stacked f0..fN-1; `__linear_ir_obj_new` pushes
+  //     the fresh pointer ON TOP, and the value-first init helper
+  //     `(value, ptr, offset) -> ptr` consumes (fI, ptr) pairs from the top
+  //     while RETURNING the pointer, so the loop folds naturally and the
+  //     final stack is exactly [ptr].
+  //   field get — [ptr] -> f64.load at the immediate offset.
+  //   field set — [ptr, value] -> f64.store at the immediate offset.
+  emitAggregateNew(layout: unknown, fieldCount: number, out: Instr[]): void {
+    if (!isLinearObjectLayout(layout)) {
+      notImplemented("emitAggregateNew (non-linear object layout)");
+    }
+    const { objNewFuncIdx, objInitF64FuncIdx } = this.options;
+    if (objNewFuncIdx === undefined || objInitF64FuncIdx === undefined) {
+      throw new Error("LinearEmitter: emitAggregateNew requires the linear object runtime");
+    }
+    out.push({ op: "i32.const", value: LINEAR_OBJECT_FIELD_SIZE * fieldCount });
+    out.push({ op: "call", funcIdx: objNewFuncIdx });
+    for (let index = fieldCount - 1; index >= 0; index--) {
+      out.push({ op: "i32.const", value: LINEAR_OBJECT_HEADER_SIZE + LINEAR_OBJECT_FIELD_SIZE * index });
+      out.push({ op: "call", funcIdx: objInitF64FuncIdx });
+    }
   }
-  emitFieldGet(): void {
-    notImplemented("emitFieldGet");
+  emitFieldGet(layout: unknown, name: string, out: Instr[]): void {
+    if (!isLinearObjectLayout(layout)) {
+      notImplemented("emitFieldGet (non-linear object layout)");
+    }
+    out.push({
+      op: "f64.load",
+      align: 3,
+      offset: LINEAR_OBJECT_HEADER_SIZE + LINEAR_OBJECT_FIELD_SIZE * layout.fieldIdx(name),
+    });
   }
-  emitFieldSet(): void {
-    notImplemented("emitFieldSet");
+  emitFieldSet(layout: unknown, name: string, out: Instr[]): void {
+    if (!isLinearObjectLayout(layout)) {
+      notImplemented("emitFieldSet (non-linear object layout)");
+    }
+    out.push({
+      op: "f64.store",
+      align: 3,
+      offset: LINEAR_OBJECT_HEADER_SIZE + LINEAR_OBJECT_FIELD_SIZE * layout.fieldIdx(name),
+    });
   }
 
   // try-throw family — WasmGC exception handling (`throw`/`try`/`rethrow`); the
