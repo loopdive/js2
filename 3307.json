@@ -1,9 +1,9 @@
 {
   "id": "3307",
   "assignee": "ttraenkler/sendev-3303",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-trap-tolerance-guards",
-  "reserved_at": "2026-07-16T14:17:17Z",
   "claimed_at": "2026-07-16T14:17:17Z",
-  "updated_at": "2026-07-16T14:17:17Z"
+  "updated_at": "2026-07-16T15:03:04Z",
+  "released_at": "2026-07-16T15:03:04Z"
 }
