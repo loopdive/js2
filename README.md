@@ -18,7 +18,7 @@ Conformance is tracked along the two compile paths — both figures auto-update 
 The line above is the **JS-host path** (default `gc` target): runs alongside the js2wasm JS runtime, which supplies host imports for some built-ins.
 
 <!-- AUTO:conformance-standalone-start -->
-**standalone (host-free) test262 conformance**: 24,711 / 43,106 (57.3 %)
+**standalone (host-free) test262 conformance**: 4,312 / 43,106 (10.0 %)
 <!-- AUTO:conformance-standalone-end -->
 
 The line above is the **standalone path** (`--target standalone`/`wasi`): pure WasmGC with no JS host, measured host-free on the same official denominator. Lower today and actively hardening — this is where the current gap is.
