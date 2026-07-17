@@ -6,6 +6,7 @@ created: 2026-05-20
 updated: 2026-05-20
 priority: medium
 feasibility: hard
+model: fable
 reasoning_effort: high
 goal: compiler-architecture
 sprint: Backlog

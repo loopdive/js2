@@ -6,6 +6,7 @@ created: 2026-05-23
 updated: 2026-05-23
 priority: low
 feasibility: hard
+model: fable
 reasoning_effort: high
 task_type: investigation
 area: compiler

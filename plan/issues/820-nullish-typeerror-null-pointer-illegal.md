@@ -7,6 +7,7 @@ created: 2026-03-28
 updated: 2026-06-21
 priority: critical
 feasibility: hard
+model: fable
 reasoning_effort: max
 goal: async-model
 sprint: 64

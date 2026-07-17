@@ -9,6 +9,7 @@ updated: 2026-07-12
 priority: high
 horizon: l
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: refactor
 area: ir, codegen, stdlib

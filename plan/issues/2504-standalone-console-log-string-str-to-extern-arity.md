@@ -2,6 +2,7 @@
 id: 2504
 title: "standalone: console.log(string) emits invalid Wasm — __str_to_extern body calls a stale (shifted) funcIdx (need-3-got-2)"
 status: ready
+sprint: Backlog
 assignee: ""
 needs_role: senior-developer
 created: 2026-06-19

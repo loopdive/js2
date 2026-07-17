@@ -2,9 +2,11 @@
 id: 3371
 title: "standalone: Reflect.construct (with NewTarget) refused — ~160 tests (proto-from-ctor-realm, subclassing) on the #1472 Phase-C refusal path"
 status: ready
+sprint: Backlog
 priority: medium
 horizon: l
 feasibility: hard
+model: fable
 task_type: feature
 area: codegen, runtime
 language_feature: reflect, constructors, prototype chain

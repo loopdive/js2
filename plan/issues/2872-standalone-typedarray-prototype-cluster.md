@@ -8,6 +8,7 @@ updated: 2026-07-12
 priority: high
 task_type: bug
 feasibility: hard
+model: fable
 area: codegen
 goal: standalone
 sprint: current

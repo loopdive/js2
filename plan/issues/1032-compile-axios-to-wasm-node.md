@@ -7,6 +7,7 @@ created: 2026-04-11
 updated: 2026-07-17
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: high
 goal: npm-library-support
 sprint: current

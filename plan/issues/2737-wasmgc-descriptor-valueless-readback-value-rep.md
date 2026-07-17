@@ -2,9 +2,11 @@
 id: 2737
 title: "WasmGC-struct property descriptor read-back: a value-less data descriptor reads `value` as null (not undefined) and booleans as 0/1 (value-representation substrate)"
 status: ready
+sprint: Backlog
 created: 2026-06-27
 priority: medium
 feasibility: hard
+model: fable
 reasoning_effort: high
 task_type: bug
 area: codegen/runtime

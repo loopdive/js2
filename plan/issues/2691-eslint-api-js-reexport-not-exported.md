@@ -2,6 +2,7 @@
 id: 2691
 title: "ESLint api.js: re-export 'ESLint' declared locally but not exported (compile error)"
 status: blocked
+sprint: Backlog
 created: 2026-06-26
 updated: 2026-06-26
 priority: low

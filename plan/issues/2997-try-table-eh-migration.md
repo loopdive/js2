@@ -7,6 +7,7 @@ created: 2026-07-02
 priority: medium
 horizon: xl
 feasibility: hard
+model: fable
 task_type: refactor
 area: codegen
 language_feature: exceptions

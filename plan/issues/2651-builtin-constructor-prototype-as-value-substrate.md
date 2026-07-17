@@ -10,6 +10,7 @@ sprint: current
 created: 2026-06-24
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: feature
 area: codegen, runtime, value-rep

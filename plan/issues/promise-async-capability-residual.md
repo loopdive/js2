@@ -2,7 +2,7 @@
 id: promise-async-capability-residual
 title: "Promise residual: NewPromiseCapability(C) for custom constructors + resolver-element-function object semantics (~163 fails)"
 status: blocked
-sprint: 67
+sprint: Backlog
 created: 2026-06-17
 updated: 2026-06-24
 priority: medium

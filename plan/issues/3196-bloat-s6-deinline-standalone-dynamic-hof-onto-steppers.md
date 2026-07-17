@@ -6,6 +6,7 @@ created: 2026-07-12
 updated: 2026-07-17
 priority: medium
 feasibility: hard
+model: fable
 task_type: refactor
 area: codegen
 es_edition: n/a

@@ -2,6 +2,7 @@
 id: 3059
 title: "codegen: concrete-vec any-receiver — dynamic property-write and dynamic method-call box the receiver with different host identities (sidecar prop lost); breaks aliased-function-property idiom (~19+ slice/toString test262)"
 status: ready
+sprint: Backlog
 created: 2026-07-06
 updated: 2026-07-06
 priority: medium

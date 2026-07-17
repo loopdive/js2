@@ -6,6 +6,7 @@ sprint: Backlog
 priority: medium
 horizon: l
 feasibility: hard
+model: fable
 task_type: bug
 area: codegen
 language_feature: new-function

@@ -9,6 +9,7 @@ updated: 2026-07-04
 priority: medium
 horizon: m
 feasibility: hard
+model: fable
 reasoning_effort: high
 task_type: feature
 area: codegen, ir
