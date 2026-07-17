@@ -1,7 +1,9 @@
 ---
 id: 3310
 title: "G2 — args-passing on the standalone generic method-call path + `__apply_closure` arity>4 lift (wantArgs is host-gated)"
-status: ready
+status: done
+assignee: ttraenkler/senior-dev
+completed: 2026-07-17
 created: 2026-07-16
 priority: high
 horizon: m
@@ -80,3 +82,60 @@ Two independent caps on the standalone generic `(any, …) → any` call surface
 G1 (#3309) covers the Map/Set brand arms; G3 is done (#3098). This slice is
 the remaining "args actually flow" half of the #2927 audit's headline gap 2.
 Umbrella: #2927 → #1584.
+
+## Implementation notes (senior-dev, 2026-07-17)
+
+**Root-cause reframe — the issue's Problem #1 mis-located the reachable gap.**
+Problem #1 blamed `emitWrapperDynamicMethodCall`'s `wantArgs` host-gate
+(`calls.ts` ~2664) for standalone args being dropped. That function is real,
+but on current `main` **all three of its callers are JS-host-gated**, so its
+standalone args branch is never reached today:
+
+- `calls.ts` #2838 dynamic-`this` site — gated `!noJsHost(ctx)`;
+- `calls-closures.ts` #1712 fnctor-instance site — gated `!ctx.standalone && !ctx.wasi`;
+- `call-receiver-method.ts` #1397 wrapper-reassignment site — passes **no**
+  `callExpr`, so `wantArgs` is always `false` there (arg-less).
+
+The **genuinely-reachable** standalone open-`$Object` args lane is the #799 WI3
+generic bridge in `call-receiver-method.ts` (~3070), which *already* builds the
+arg vec with the native `$ObjVec` builders (`ensureObjVecBuilders`, gated
+`ctx.standalone`) and always packs args — so args ≤4 were **already flowing** in
+standalone. Verified empirically: on `main`, an open-object stored-closure call
+returns the correct value for 1–4 args (0 host imports) but returns the
+undefined sentinel (`0` in numeric ctx) for **5–6 args**.
+
+So the one reachable blocker was **the `__apply_closure` arity ceiling** — the
+arity switch only dispatched `n = __extern_length(args)` to
+`__call_fn_method_0..4`; 5+ args fell through to the undefined sentinel. The
+higher `__call_fn_method_5..8` exports **already exist** (`index.ts` #2687 cap =
+`min(moduleMaxClosureArity, 8)`) but the switch never reached them.
+
+**What landed:**
+
+1. **Arity lift (the fix)** — `fillApplyClosure` (`object-runtime.ts`) now
+   extends the arity switch from a hard `4` up to the highest emitted
+   `__call_fn_method_N` (`callMethod(n) !== undefined`, i.e. the #2687 cap),
+   **gated `ctx.standalone || ctx.wasi`**. Host modules keep the 0..4 ceiling →
+   byte-identical (verified: host binaries for open-object / Map.forEach /
+   Array.map are SHA-identical main-vs-branch). `buildArm(n)`/`ARG_OF(k)`
+   already source args positionally from the vec via `__extern_get_idx` and
+   thread recv→thisVal / fn→closure for arbitrary `n`, so this is purely a
+   loop-bound change wiring up dispatchers that already existed.
+2. **`emitWrapperDynamicMethodCall` args builder (latent/defensive)** — dropped
+   the `&& !ctx.standalone && !ctx.wasi` gate on `wantArgs` and select the
+   native `$ObjVec` push under `ctx.standalone`, mirroring the reachable #799
+   lane. This changes **no existing module** (the helper isn't reached in
+   standalone today) but makes it correct-by-construction if a standalone caller
+   is wired in. Kept the gating on `ctx.standalone` only (NOT `standalone||wasi`)
+   so the arg-less #1397 wrapper site's pre-existing wasi behaviour is unchanged.
+
+**Deliberately out of scope:** the `if (ctx.standalone)` (vs `standalone||wasi`)
+host-builder-in-wasi mismatch at `call-receiver-method.ts` ~3085 is a separate
+pre-existing bug on a target not in this issue's acceptance criteria; left as a
+follow-up to avoid untested wasi byte-risk.
+
+**Validation:** `tests/issue-3310.test.ts` — open-`$Object` stored closure with
+1–6 args, standalone, asserting correct positional sum + **zero host imports**;
+the 5-/6-arg cases are the regression guard (returned `0` on main). A distinct-
+digit arity-5 case (`12345`) proves positional fidelity. Host byte-stability
+diffed separately (identical).

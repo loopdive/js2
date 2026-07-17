@@ -2653,17 +2653,36 @@ export function emitWrapperDynamicMethodCall(
   callExpr?: ts.CallExpression,
 ): ValType | null {
   // (#1888 Slice 2) Standalone routes __extern_method_call native, which reads
-  // its args over a $ObjVec — build the (empty) args list with the native
-  // $ObjVec builder, not the host __js_array_new. JS-host keeps the host import.
+  // its args over a $ObjVec — build the args list with the native $ObjVec
+  // builders (__objvec_new / __objvec_push), not the host __js_array_new /
+  // __js_array_push. JS-host keeps the host imports (byte-identical).
+  //
+  // (#3310) LATENT/DEFENSIVE — the standalone empty-args restriction that used
+  // to gate `wantArgs` off (`&& !ctx.standalone && !ctx.wasi`) is lifted so this
+  // helper is correct-by-construction if a standalone caller is ever wired in.
+  // It changes NO existing module: all three current callers are JS-host-gated
+  // (the #2838 dynamic-`this` site is `!noJsHost`, the #1712 fnctor-instance
+  // site is `!ctx.standalone && !ctx.wasi`, and the #1397 wrapper-reassignment
+  // site passes NO callExpr → `wantArgs` is always false there), so the native
+  // args branch below is not reached today. The genuinely-reachable standalone
+  // open-`$Object` args lane is the #799 WI3 generic bridge in
+  // call-receiver-method.ts (which already flows args natively); the reachable
+  // gap #3310 fixes is the `__apply_closure` arity ceiling, not this helper.
+  // Gating stays on `ctx.standalone` (mirroring that reachable lane) so the
+  // pre-existing wasi behaviour of the arg-less #1397 path is unchanged.
   const arrNewIdx = ctx.standalone
     ? ensureObjVecBuilders(ctx).newIdx
     : ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  // (#1712) Args support: when a call expression with arguments is supplied,
-  // pack them into the args array via __js_array_push. JS-host only — the
-  // standalone $ObjVec path stays empty-args until it grows a native push.
-  const wantArgs = callExpr !== undefined && callExpr.arguments.length > 0 && !ctx.standalone && !ctx.wasi;
+  // Args support: when a call expression with arguments is supplied, pack them
+  // into the args vector. Under standalone this uses the native $ObjVec push
+  // (__objvec_push, void result — same stack shape as the host __js_array_push).
+  // `arrNewIdx` and `arrPushIdx` MUST come from the SAME domain: a native
+  // __objvec_push on a host array (or vice-versa) would type-mismatch/crash.
+  const wantArgs = callExpr !== undefined && callExpr.arguments.length > 0;
   const arrPushIdx = wantArgs
-    ? ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], [])
+    ? ctx.standalone
+      ? ensureObjVecBuilders(ctx).pushIdx
+      : ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], [])
     : undefined;
   const methodCallIdx = ensureLateImport(
     ctx,

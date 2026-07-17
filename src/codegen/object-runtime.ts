@@ -4306,8 +4306,17 @@ export function reserveApplyClosure(ctx: CodegenContext): number {
  *   n = i32(__extern_length(args))
  *   if n==0: __call_fn_method_0(recv, fn)
  *   if n==1: __call_fn_method_1(recv, fn, idx0)
- *   ... up to 4 ...
- *   else (n>4): return undefined (sentinel)
+ *   ... up to the highest emitted arity ...
+ *   else (n above cap): return undefined (sentinel)
+ *
+ * (#3310) Arity lift: the dispatch now extends past 4 to the highest
+ * `__call_fn_method_N` export that index.ts emits (#2687 cap =
+ * min(moduleMaxClosureArity, 8)) so a 5+-arg dynamic method call no longer falls
+ * off the bridge. Gated to standalone/wasi — host modules that emit this bridge
+ * keep the 0..4 ceiling and stay byte-identical. This is the E5 prerequisite for
+ * the #2928 interpreter's `CallBuiltin`, whose calling convention is exactly this
+ * bridge's `(fn, recv, argsVec)`: the lift removes the arity-4 cap that would
+ * otherwise clip a builtin's argument surface.
  *
  * S1 SCOPE — NO THROWS. This bridge returns the undefined sentinel
  * (`ref.null.extern`) for the not-a-function and arity-overflow cases rather
@@ -4378,9 +4387,25 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     return ops;
   };
 
-  // if n==0 .. n==4 else undefined. Nest as if/else chain.
+  // (#3310) Arity lift. Arities 0..4 always dispatch (byte-identical to the
+  // pre-#3310 bridge). Under standalone/wasi ONLY, extend the arity switch to the
+  // higher `__call_fn_method_N` exports that index.ts already emits (#2687 cap =
+  // min(moduleMaxClosureArity, 8)) so a 5+-arg dynamic call no longer falls off
+  // the bridge and returns undefined (headline gap 2). An n>=5 arm is added only
+  // when its dispatcher was actually emitted (`callMethod(n) !== undefined`) — a
+  // missing one means no closure of that arity exists in the module, so the arm
+  // would be dead. Host mode is gated OUT (keeps the 0..4 ceiling), so host
+  // modules that emit this bridge stay byte-identical. Above the highest emitted
+  // arity the undefined sentinel still stands (S1 no-throw discipline, see header).
+  let maxDispatchArity = 4;
+  if (ctx.standalone || ctx.wasi) {
+    for (let n = 5; n <= 8; n++) {
+      if (callMethod(n) !== undefined) maxDispatchArity = n;
+    }
+  }
+  // if n==0 .. n==maxDispatchArity else undefined. Nest as if/else chain.
   let dispatch: Instr[] = armUnsupported;
-  for (let n = 4; n >= 0; n--) {
+  for (let n = maxDispatchArity; n >= 0; n--) {
     dispatch = [
       { op: "local.get", index: 3 },
       { op: "i32.const", value: n },
