@@ -1,8 +1,9 @@
 {
   "id": "3041",
   "assignee": "ttraenkler/dev-conform",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3041-any-receiver-getter",
   "claimed_at": "2026-07-17T17:18:22Z",
-  "updated_at": "2026-07-17T17:18:22Z"
+  "updated_at": "2026-07-17T17:53:48Z",
+  "released_at": "2026-07-17T17:53:48Z"
 }
