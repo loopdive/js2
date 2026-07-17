@@ -1,9 +1,8 @@
 {
   "id": "2662",
-  "assignee": "ttraenkler/sd-typedarray",
-  "status": "released",
-  "branch": "issue-2662-host-gen-lazy",
-  "claimed_at": "2026-06-25T21:20:23Z",
-  "updated_at": "2026-06-25T21:28:22Z",
-  "released_at": "2026-06-25T21:28:22Z"
+  "assignee": "ttraenkler/fable-dev-1",
+  "status": "in-progress",
+  "branch": "issue-2662-gc-lazy-generators",
+  "claimed_at": "2026-07-17T21:54:57Z",
+  "updated_at": "2026-07-17T21:54:57Z"
 }
