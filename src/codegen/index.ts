@@ -2922,32 +2922,31 @@ export function generateModule(
 }
 
 /**
- * (#2094) Post-link import-section scan — the emit-time backstop for the
- * `addImport` gate.
+ * (#2094) Post-link import-section scan — emit-time backstop for the `addImport`
+ * gate. A host import that survived dead-import elimination bypassed the per-call
+ * gate (stale funcMap index / direct `mod.imports.push`) and would fail
+ * instantiation in a hostless runtime (#2073/#2075); this turns that into a clean
+ * `success: false` CE.
  *
- * Gated on `ctx.strictNoHostImports` ONLY, deliberately matching the per-call
- * `addImport` gate's trigger (`src/codegen/registry/imports.ts`). Under strict
- * mode (auto-on for `--target wasi`, opt-in via `--no-host-imports`) the build
- * contract is "no JS-host imports", so a host import that survived dead-import
- * elimination bypassed the gate (stale funcMap index / direct `mod.imports.push`)
- * and would fail instantiation in a hostless runtime (#2073/#2075). This scan
- * turns that into a clean `success: false` CE instead.
- *
- * It does NOT fire on plain `--target standalone` (which is NOT strict by
- * default): standalone builds today still tolerate a set of `env` imports that
- * the test harness satisfies, and rejecting them here would regress thousands
- * of currently-passing standalone tests. The scan is a backstop for the strict
- * contract, not a new policy — when standalone is run strictly
- * (`strictNoHostImports`) it is covered. No-op for host/WasmGC builds.
+ * Severity by target: wasi / explicit `--no-host-imports` (`strictNoHostImports`)
+ * → **error** (fails the build). Plain `--target standalone` → **warning**
+ * (#2961 phase 1): every leak gets a source-located advisory but the binary is
+ * emitted UNCHANGED (the addImport gate stays strict-only, nothing dropped), so
+ * the `host_free_pass` floor cannot move. #2961 ratchets standalone to a hard
+ * error once the allowlist stabilizes; `JS2WASM_STANDALONE_LEAK_SCAN=0` disables
+ * the standalone scan for A/B. No-op for host/WasmGC builds.
  */
 function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
-  if (!ctx.strictNoHostImports) return;
-  // #2783 — pass `ctx.linkedNamespaces` so an arbitrary `--link`'d namespace's
-  // imports survive the strict gate (left as link-time imports for a preloaded
-  // provider) instead of being rejected as leaked host imports.
+  const severity: "error" | "warning" | null = ctx.strictNoHostImports
+    ? "error"
+    : ctx.standalone && process.env.JS2WASM_STANDALONE_LEAK_SCAN !== "0"
+      ? "warning"
+      : null;
+  if (severity === null) return;
+  // #2783 — `--link`'d namespaces survive as link-time imports, not leaks.
   const leaks = scanForLeakedHostImports(mod.imports, ctx.linkedNamespaces);
   for (const leak of leaks) {
-    reportErrorNoNode(ctx, buildLeakedHostImportError(leak));
+    reportErrorNoNode(ctx, buildLeakedHostImportError(leak, severity), severity);
   }
 }
 
