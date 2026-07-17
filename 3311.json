@@ -1,8 +1,9 @@
 {
   "id": "3311",
   "assignee": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3311-string-vec-push-pop",
   "claimed_at": "2026-07-17T06:49:59Z",
-  "updated_at": "2026-07-17T06:49:59Z"
+  "updated_at": "2026-07-17T07:22:13Z",
+  "released_at": "2026-07-17T07:22:13Z"
 }
