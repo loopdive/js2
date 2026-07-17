@@ -1,8 +1,9 @@
 {
   "id": "3310",
   "assignee": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3310-g2-standalone-args-arity",
   "claimed_at": "2026-07-17T06:53:50Z",
-  "updated_at": "2026-07-17T06:53:50Z"
+  "updated_at": "2026-07-17T12:43:50Z",
+  "released_at": "2026-07-17T12:43:50Z"
 }
