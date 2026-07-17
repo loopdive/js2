@@ -1,8 +1,9 @@
 {
   "id": "2690",
   "assignee": "ttraenkler/dev-2961",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2690-poly-return-widening",
   "claimed_at": "2026-07-17T18:48:36Z",
-  "updated_at": "2026-07-17T18:48:36Z"
+  "updated_at": "2026-07-17T18:54:47Z",
+  "released_at": "2026-07-17T18:54:47Z"
 }
