@@ -126,6 +126,20 @@ function optimizeBody(body: Instr[], localTypes?: ValType[]): number {
       continue;
     }
 
+    // Pattern 2b: global.get N; drop — dead load, remove both (#908). Reading a
+    // Wasm global is side-effect-free, so pushing a global's value and then
+    // immediately dropping it is pure dead value traffic — the exact `global.set
+    // N; global.get N; drop` tail codegen leaves for a discarded compound
+    // assignment to a module global (e.g. `result += squared(10)` as an
+    // expression statement). Removing the get/drop pair leaves the `global.set`
+    // that precedes it untouched, so the store still lands. Mirror of Pattern 2.
+    if (cur.op === "global.get" && next.op === "drop") {
+      body.splice(i, 2);
+      removed += 2;
+      // Don't increment i — recheck at same position (new pair may have formed)
+      continue;
+    }
+
     // Pattern 3: local.tee N; drop — pushed copy is unused, replace with local.set
     if (cur.op === "local.tee" && next.op === "drop") {
       body.splice(i, 2, { op: "local.set", index: cur.index });
