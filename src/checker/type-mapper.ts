@@ -21,6 +21,13 @@ const BUILTIN_TYPES = new Set([
   "Uint32Array",
   "Float32Array",
   "Float64Array",
+  // (#2401) BigInt64Array / BigUint64Array are native i64-element vecs (#838),
+  // so — like the other typed arrays — they must NOT be claimed as extern
+  // classes. Without these, `isExternalDeclaredClass` routes their prototype
+  // methods (subarray / at / fill / …) to `env.BigInt64Array_<m>` host imports,
+  // which are unsatisfiable under `--target standalone`.
+  "BigInt64Array",
+  "BigUint64Array",
   "ArrayBuffer",
   "DataView",
   "Date",

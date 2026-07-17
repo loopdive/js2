@@ -52,6 +52,42 @@ typed-array element representation).
 - Standalone: no `env.BigInt64Array_*` / `env.BigUint64Array_*` leaks.
 - `BigUint64Array` unsigned semantics on read.
 
+## Progress — residual (a) native method-routing (2026-07-17, WIP branch `issue-2401-native-method-routing`, stacked on #838)
+
+Adding `BigInt64Array` / `BigUint64Array` to `BUILTIN_TYPES`
+(`src/checker/type-mapper.ts`) stops `isExternalDeclaredClass` claiming them, so
+prototype methods route to the **native** typed-array array-method paths instead
+of the unsatisfiable `env.<View>_<method>` host imports. This eliminates ALL the
+standalone host-import leaks (verified: `subarray` / `at` / `fill` / `slice` /
+`reverse` / `set` no longer leak).
+
+**But it is NOT a clean, contained landing** — it exposes 6 methods whose native
+codegen assumes an i32/f64 element and emits **invalid Wasm** on an i64 element:
+
+| native method-routing status (standalone, i64 element) | methods |
+|---|---|
+| ✅ valid + correct | `subarray`*, `at`, `fill`, `slice`, `set`, `reverse`, `map`, `filter`, `forEach`, `find`, `findIndex`, `some`, `every`, `copyWithin`, `sort` |
+| ❌ INVALID Wasm | `indexOf`, `includes`, `lastIndexOf` (element compare: `array-methods.ts:2483` `eqOp = f64?"f64.eq":"i32.eq"` has no `i64.eq` arm; the search value also needs i64 typing), `reduce` (accumulator i64 threading), `toString` / `join` (element→string needs BigInt ToString, not the f64/i32 path) |
+
+`*` `subarray(...).length` direct-chain length is the separate #2649 bug (fixed
+generically by #3285) — the subarray VIEW itself + its element reads are correct
+for i64.
+
+The callback methods (`map`/`filter`/`find`/…) already work because the callback
+receives the element as a properly-branded `{i64,bigint}` value. The 6 broken
+methods all touch element **comparison / stringification / accumulation** — the
+exact "thread the element ValType through the array-method paths" work this issue
+scoped as representation-scale. Fixing all 6 correctly (SameValueZero for
+`includes`, ToString §7.1.19 for `join`/`toString`, i64 accumulator for `reduce`,
+i64 search-value compilation for the compare trio) is a proper sized task, not a
+one-PR routing tweak.
+
+**Recommendation**: land `BUILTIN_TYPES` registration TOGETHER WITH the 6-method
+i64 fixes as one coherent PR (so no method ever regresses to invalid Wasm), or
+split the 6 fixes into their own sub-issue. The WIP branch has the
+`BUILTIN_TYPES` change + this analysis; it is deliberately NOT PR'd because it
+would make those 6 methods emit invalid modules.
+
 ## Source
 
 #2379 sweep, sd3, 2026-06-19.
