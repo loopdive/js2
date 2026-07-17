@@ -1,7 +1,8 @@
 ---
 id: 3261
 title: "standalone: __host_loose_eq / __extern_toString / __date_format leak env::* imports (missing native-helper set membership)"
-status: ready
+status: done
+completed: 2026-07-17
 sprint: current
 created: 2026-07-14
 priority: medium
@@ -85,3 +86,42 @@ Do NOT add a new host import without a standalone fallback. Behaviour-preserving
   sub-part and overlaps the standalone Date cluster — do it under / alongside **#3174**
   (Date-native) rather than block this issue on it. #3261's core deliverable is the two
   routing fixes (loose-eq + extern-toString).
+
+## Resolution (2026-07-17, opus-c) — verified already host-free; locked with a regression guard
+
+**Acceptance criterion #1 (measure first) does NOT reproduce on current main
+for the two core helpers.** A `WebAssembly.Module.imports` probe over ~30 varied
+`target: "standalone"` programs — covering every arm the issue names
+(any==any, str/num/bool loose-eq, concrete string⇄primitive, wrapper objects,
+`"" + obj`, `String(any)`, template literals, `a.join(",")`) — shows **zero**
+`env::__host_loose_eq` and **zero** `env::__extern_toString` imports. Each module
+instantiates against an **empty** import object `{}` and returns the correct,
+JS-parity result. The identical programs on the gc-host lane still (correctly)
+import `env::__host_loose_eq` / `env::__extern_to_string_default`, confirming the
+probe is valid and the standalone lane is genuinely host-free here.
+
+The behavioral gaps were closed by the intervening native standalone work,
+*before* this issue was picked up:
+
+- `__host_loose_eq` → the native IsLooselyEqual tail: the two-`any`-externref arm
+  routes through `emitAnyEqFromExternTemps` → `__any_eq` (#2081 / #1917), and the
+  concrete string⇄number / string⇄boolean arm lowers to the native
+  `__str_to_number` scanner + `f64.eq` under `noJsHost` (`binary-ops.ts` #2073).
+- `__extern_toString` → its native `registerNative` registration in
+  `ensureObjectRuntime` (`object-runtime.ts`), reached by the native ToString
+  cascade in `coercion-engine.ts` (`emitToString`) for the dynamic-externref arm.
+
+**No codegen change was needed** — adding a `noJsHost` guard to the residual
+un-reached arms (concretely-typed wrapper-object equality, the
+`eitherIsString`-loose typed-dispatch arm) would be dead code that the any-
+dispatch / native blocks already shadow, and risks a host-lane byte change for
+no benefit. Per the issue's own "byte-identity host lane" guidance the honest
+outcome is: verify + lock, not speculative routing.
+
+**Delivered:** `tests/issue-3261.test.ts` (the permanent guard required by the
+#2093 probe-coverage gate) — asserts the representative equality + ToString
+standalone programs emit no `env::*` host imports, instantiate against `{}`, and
+produce the correct result (ToString correctness checked in-wasm via a native
+`===` compare since a standalone string export is an opaque `ref $AnyString`).
+
+`__date_format` remains carved out to **#3174** (Date-native), unchanged.

@@ -4,10 +4,10 @@ title: "array-pattern destructuring DRAINS the source iterator (materialize-then
 status: ready
 sprint: current
 created: 2026-07-11
-updated: 2026-07-11
+updated: 2026-07-17
 priority: medium
-horizon: m
-feasibility: medium
+horizon: xl
+feasibility: hard
 reasoning_effort: high
 task_type: bugfix
 area: codegen
@@ -20,6 +20,46 @@ origin: "2026-07-11 #3024 slice-2 (fable-wasm): the 3 *-ptrn-elision.js files fl
 ---
 
 # #3152 — array destructuring drains the iterator instead of stepping it
+
+## ⚠️ Root-cause CORRECTION (2026-07-17, opus-a) — re-scoped m → xl
+
+The "bounded drain" framing below is a **misdiagnosis**. Verified on current
+main (d17ba4d2): the actual test262 files
+(`meth-ary-ptrn-elision.js` etc.) use a **closure-mutating** generator:
+
+```js
+var first = 0, second = 0;
+function* g() { first += 1; yield; second += 1; }
+obj.method(g());   // method([,]) asserts second === 0
+```
+
+A generator that **mutates outer-scope variables** does NOT pass the
+native-resumable shape gate (`generators-native-ast-scan.ts`) — it bails to the
+**eager-buffer host path** (`__create_generator` / `__gen_create_buffer` /
+`__gen_push_ref`). The eager path **runs the ENTIRE generator body at the
+`g()` call site** and buffers every yield *before destructuring ever sees the
+result* (confirmed via WAT: the destructure reads a pre-filled buffer struct,
+never calls `__array_from_iter_n`). So `second += 1` has already executed by the
+time `[,]` binds — there is **no lazy stepping to bound**.
+
+Consequences:
+- The suggested `__array_from_iter_n(maxCount)` / `emitNativeGeneratorToVec`
+  bound (below) is **inert** for these tests: those paths only run for the
+  *native-resumable* generator subset, and in that subset the over-drain is
+  **unobservable** (values are still correct; only wasted resumes) precisely
+  because side-effecting generators are forced eager. I prototyped the bound and
+  it changed nothing observable — reverted.
+- The real fix requires the **eager-path generator to become lazy/resumable**
+  when it (a) has observable side effects and (b) is consumed by a spec
+  observer that steps lazily (destructuring / manual `.next()`). That is the
+  lazy-generator work (native-resumable shape-gate widening for
+  closure-mutating bodies, or a lazy-thunk host path — see #2865 / the
+  `eager-gen` slices), **not** an M-horizon drain-bound. Re-scoped to `xl`,
+  `feasibility: hard`.
+
+Everything below is the ORIGINAL (superseded) framing, kept for history.
+
+---
 
 ## Problem
 
