@@ -25,9 +25,12 @@
 // as a boolean; the no-`env::*`-leak property is verified by instantiating
 // against an empty `{}` import object (a leaked import would throw a LinkError).
 //
-// Carve-out: `Object.values(o).join(...)` currently routes through a distinct
-// TypedArray-join misclassification (leaks `env::Uint8ClampedArray_join`) that
-// is unrelated to this externref-join fix — tracked separately, out of scope.
+// Carve-out (RESOLVED by #3342): the `as any`-cast form
+// `(Object.values(o) as any).join(...)` routed through a distinct
+// TypedArray-join misclassification in `tryExternClassMethodOnAny` (leaked
+// `env::Uint8ClampedArray_join`). Fixed in #3342 by routing `.join` on an
+// `any` receiver to this same native externref walk under standalone/WASI —
+// see `tests/issue-3342.test.ts`.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 

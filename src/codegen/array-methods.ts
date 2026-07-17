@@ -3888,6 +3888,35 @@ function compileArrayJoinExternNative(
   return { kind: "externref" };
 }
 
+/**
+ * (#3342) Standalone/WASI entry point for `.join(sep?)` on an `any`-typed
+ * receiver that reaches the extern-class-method-on-`any` dispatcher
+ * ({@link tryExternClassMethodOnAny}). Without this, the first-match loop there
+ * binds `.join` to the first registered extern class declaring a `join` method
+ * — a TypedArray (`Uint8ClampedArray_join`) — whose `env::*` host import is
+ * unsatisfiable in standalone mode, so the module fails to instantiate. The
+ * concrete leak: `(Object.values(o) as any).join(",")` /
+ * `(Object.getOwnPropertyNames(o) as any).join(",")`, whose receiver is a boxed
+ * externref host array.
+ *
+ * This walks the externref array host-free via the #3155 native path
+ * (`__extern_length` / `__extern_get_idx` / `__extern_toString`), identical to
+ * the receiver's own host-free `.length` read. Returns `null` (⇒ caller keeps
+ * its existing behaviour) only OUTSIDE `noJsHost` or when the native string
+ * helpers are unavailable — and it returns null BEFORE emitting any
+ * instructions, so a null result never leaves a partially-compiled receiver on
+ * the stack.
+ */
+export function compileArrayJoinExternForAny(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+): ValType | null {
+  if (!noJsHost(ctx)) return null;
+  return compileArrayJoinExternNative(ctx, fctx, propAccess, callExpr);
+}
+
 function compileArrayJoinExtern(
   ctx: CodegenContext,
   fctx: FunctionContext,

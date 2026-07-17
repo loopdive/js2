@@ -1,7 +1,9 @@
 ---
 id: 3342
 title: "standalone: Object.values(o).join / Object.getOwnPropertyNames(o).join misclassify receiver as Uint8ClampedArray → leak env::Uint8ClampedArray_join"
-status: ready
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/dev-1044
 sprint: current
 created: 2026-07-17
 priority: medium
@@ -13,6 +15,9 @@ area: codegen
 language_feature: standalone-completeness, array-join, type-inference
 goal: standalone-parity
 related: [3155, 3170]
+loc-budget-allow:
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/calls-closures.ts
 origin: "carved out of #3155 (fix-standalone-object-keys-join, opus-c 2026-07-17) — Object.keys().join was fixed via the native externref-join path, but Object.values()/getOwnPropertyNames() take a DIFFERENT, distinct-root-cause path."
 ---
 
@@ -68,9 +73,41 @@ runtime shape.
 
 ## Acceptance
 
-1. `Object.values(o).join(sep)` and `Object.getOwnPropertyNames(o).join(sep)`
+1. [x] `Object.values(o).join(sep)` and `Object.getOwnPropertyNames(o).join(sep)`
    compile with `target: "standalone"` to a module with **no** `env::*` import
    and produce the correct joined string (verified in-wasm, mirroring
    `tests/issue-3155.test.ts`).
-2. Add coverage to `tests/issue-3155.test.ts` (or a new `tests/issue-3342.test.ts`).
-3. No test262 regression; host-lane byte-identity.
+2. [x] Add coverage — new `tests/issue-3342.test.ts` (8 cases).
+3. [x] No test262 regression; host-lane byte-identity.
+
+## Resolution (2026-07-17, dev-1044)
+
+**Root cause was NOT return-type inference** — it was the `as any` cast (and
+any `any`-typed array receiver). With the receiver statically `string[]`
+(no cast), `.join` rides the native array-`join` dispatch (`receiverIsExternref`
+arm, #3155) and is already host-free. With the receiver statically `any`, the
+call reaches `tryExternClassMethodOnAny` (`calls-closures.ts`), whose
+first-match loop bound `.join` to the FIRST registered extern class declaring a
+`join` method — a TypedArray, `Uint8ClampedArray` — emitting the unsatisfiable
+`env::Uint8ClampedArray_join`.
+
+**Fix**: in `tryExternClassMethodOnAny`, under `ctx.standalone || ctx.wasi`,
+route `methodName === "join"` to the #3155 native externref-array walk via the
+new `compileArrayJoinExternForAny` (`array-methods.ts`, gated on `noJsHost`,
+returns null before emitting when unavailable). This mirrors the existing
+`get`/`set`/`has`/… standalone refusal block above it. A genuine TypedArray
+receiver typed `any` rides the same native walk correctly, so it is a general
+externref-array-`join` fix, not an Object.values special-case.
+
+**Host lane**: the guard is skipped when neither `standalone` nor `wasi`, so
+JS-host still binds `Uint8ClampedArray_join` (satisfiable there) — byte-identical.
+
+**Note on wasi**: `Object.values`/`Object.keys` themselves currently return an
+empty result under `--target wasi` (a pre-existing object-model limitation that
+also affects the #3155 non-cast path — orthogonal to this issue). The fix
+converts the cast-path wasi *crash* (unsatisfiable import) into that same
+contained empty-result behaviour; standalone is fully correct.
+
+Files: `src/codegen/array-methods.ts` (new `compileArrayJoinExternForAny`),
+`src/codegen/expressions/calls-closures.ts` (dispatch + import),
+`tests/issue-3342.test.ts`.

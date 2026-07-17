@@ -11,6 +11,7 @@ import { ts } from "../../ts-api.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { getFuncRefWrapperRootTypeIdx, getOrCreateFuncRefWrapperTypes } from "../closures.js";
+import { compileArrayJoinExternForAny } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
 import { allocLocal } from "../context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
@@ -1454,6 +1455,22 @@ export function tryExternClassMethodOnAny(
       methodName === "clear")
   ) {
     return null;
+  }
+
+  // (#3342) `.join(sep?)` on an `any`-typed receiver in standalone/WASI. The
+  // first-match loop below would bind it to the first registered extern class
+  // declaring a `join` method — a TypedArray, `Uint8ClampedArray_join` — whose
+  // `env::*` host import is unsatisfiable standalone, so the module fails to
+  // instantiate. The concrete leak: `(Object.values(o) as any).join(",")` /
+  // `(Object.getOwnPropertyNames(o) as any).join(",")`, whose receiver is a
+  // boxed externref host array. Route to the #3155 native externref-array join
+  // (host-free, via `__extern_length`/`__extern_get_idx`/`__extern_toString`),
+  // matching the receiver's own host-free `.length`. Returns null (fall through
+  // unchanged) outside `noJsHost` or when the native helpers are unavailable —
+  // and never after emitting, so no partial receiver is stranded on the stack.
+  if ((ctx.standalone || ctx.wasi) && methodName === "join") {
+    const native = compileArrayJoinExternForAny(ctx, fctx, propAccess, expr);
+    if (native !== null) return native;
   }
 
   // (#3033) If the program's OWN code defines a function-valued member of this
