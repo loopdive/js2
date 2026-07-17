@@ -76,6 +76,6 @@ category) are NOT in scope here — only the reasons already at zero.
 - Full test suite green; `check:ir-fallbacks` gate green.
 - Stale line-number citations in `ir-adoption.md` and `codegen-axes.md`
   corrected.
-- `plan/issues/2855-*.md` updated to reflect this slice as done against its
-  own AC (don't close #2855 itself — `body-shape-rejected` remains open via
-  #2856).
+- `plan/issues/2855-ir-frontend-migration-ratchet-buckets-to-zero.md` updated
+  to reflect this slice as done against its own AC (don't close #2855 itself
+  — `body-shape-rejected` remains open via #2856).
