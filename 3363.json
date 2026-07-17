@@ -1,9 +1,9 @@
 {
   "id": "3363",
   "assignee": "codex/root",
-  "status": "in-progress",
+  "status": "done",
   "branch": "agent/test262-original-harness-parity",
-  "reserved_at": "2026-07-17T16:51:38Z",
   "claimed_at": "2026-07-17T16:51:38Z",
-  "updated_at": "2026-07-17T16:51:38Z"
+  "updated_at": "2026-07-17T17:26:25Z",
+  "released_at": "2026-07-17T17:26:25Z"
 }
