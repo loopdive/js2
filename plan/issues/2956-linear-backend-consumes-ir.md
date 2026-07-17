@@ -1,7 +1,8 @@
 ---
 id: 2956
 title: "Linear backend consumes the IR front-end: wire the selector + LinearEmitter into generateLinearModule"
-status: in-review
+status: done
+completed: 2026-07-17
 sprint: current
 created: 2026-07-02
 updated: 2026-07-17
