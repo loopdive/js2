@@ -3962,6 +3962,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       "Uint32Array",
       "Float32Array",
       "Float64Array",
+      // (#838) BigInt views — i64-element storage via `typedArrayVecStorage`.
+      "BigInt64Array",
+      "BigUint64Array",
     ]);
     if (className && TYPED_ARRAY_CTORS.has(className)) {
       // (#2593) packed integer storage standalone/WASI — see the matching

@@ -355,7 +355,24 @@ const TYPED_ARRAY_PACKED_STORAGE: Readonly<Record<string, { key: string; type: V
   Uint32Array: { key: "i32_elem", type: { kind: "i32" } },
 };
 
+/**
+ * (#838) The two BigInt typed-array views. Unlike the numeric views these can
+ * NOT fall back to `f64` element storage — an f64 cannot hold an arbitrary
+ * 64-bit BigInt. They always use a dedicated `i64` element vec in BOTH the
+ * host/gc and standalone/WASI lanes (BigInt is represented as a first-class
+ * `{ kind: "i64", bigint: true }` value throughout the compiler, so `array.get`/
+ * `array.set` on the i64 backing array need no packing/unpacking). `BigInt64Array`
+ * stores signed 64-bit two's-complement; `BigUint64Array` stores the same 64 raw
+ * bits interpreted unsigned — the wasm i64 element holds identical bits either
+ * way (ToBigInt64/ToBigUint64 both reduce mod 2^64, which i64 arithmetic already
+ * does), so both map to the same `i64` storage.
+ */
+export const BIGINT_TYPED_ARRAY_NAMES: ReadonlySet<string> = new Set(["BigInt64Array", "BigUint64Array"]);
+
 export function typedArrayVecStorage(ctx: CodegenContext, name: string): { key: string; type: ValType } {
+  // (#838) BigInt views always use i64 storage, independent of target mode —
+  // f64 cannot represent a 64-bit BigInt.
+  if (BIGINT_TYPED_ARRAY_NAMES.has(name)) return { key: "i64", type: { kind: "i64" } };
   if (ctx.wasi || ctx.standalone) {
     const packed = TYPED_ARRAY_PACKED_STORAGE[name];
     if (packed) return packed;
@@ -5458,7 +5475,11 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // storage; other typed arrays keep the legacy f64 representation.
     // Covers: Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array,
     //         Int32Array, Uint32Array, Float32Array, Float64Array
-    if (sym?.name && TYPED_ARRAY_NAMES.has(sym.name)) {
+    // (#838) BigInt64Array/BigUint64Array resolve to an i64-element vec (they are
+    // deliberately kept OUT of `TYPED_ARRAY_NAMES` so the f64-assuming host
+    // marshalling classifier treats them as "other"; `typedArrayVecStorage`
+    // returns i64 for them).
+    if (sym?.name && (TYPED_ARRAY_NAMES.has(sym.name) || BIGINT_TYPED_ARRAY_NAMES.has(sym.name))) {
       const storage = typedArrayVecStorage(ctx, sym.name);
       const vecIdx = getOrRegisterVecType(ctx, storage.key, storage.type);
       return { kind: "ref_null", typeIdx: vecIdx };

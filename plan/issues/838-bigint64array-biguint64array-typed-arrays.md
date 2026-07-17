@@ -1,8 +1,9 @@
 ---
 id: 838
 title: "BigInt64Array / BigUint64Array typed arrays"
-status: in-progress
+status: done
 assignee: ttraenkler/dev-spec
+completed: 2026-07-17
 created: 2026-03-28
 updated: 2026-07-17
 priority: low
@@ -52,3 +53,40 @@ Register BigInt64Array and BigUint64Array as TypedArray constructors with i64 el
 - Element access returns BigInt values
 - 19 skipped tests unskipped
 - 25 constructor compile errors eliminated
+
+## Implementation
+
+Both BigInt views use a dedicated **i64 element vec** (`typedArrayVecStorage`
+returns `{ key: "i64", type: { kind: "i64" } }` for them) in BOTH the host/gc
+and standalone/WASI lanes — an f64 cannot hold a 64-bit BigInt. BigInt is
+already a first-class `{ kind: "i64", bigint: true }` value in the compiler, so
+`array.get`/`array.set` on the i64 backing array need no packing/unpacking, and
+ToBigInt64/ToBigUint64 (both reduce mod 2^64) come free from i64 wraparound.
+
+Changes (all in `src/codegen/`):
+
+- `index.ts` — new exported `BIGINT_TYPED_ARRAY_NAMES` set; `typedArrayVecStorage`
+  returns i64 storage for the two views unconditionally; `resolveWasmType` maps
+  the two view types to the i64 vec. Deliberately kept OUT of `TYPED_ARRAY_NAMES`
+  so the f64-assuming host marshalling classifier treats them as "other".
+- `expressions/new-builtin-globals.ts` — added the two names to the native
+  TypedArray count/copy constructor set; added an **i64/bigint dest arm** to the
+  array-literal copy conversion matrix (boxed source elements go through §7.1.13
+  ToBigInt via `__to_bigint`, not ToNumber).
+- `expressions/new-super.ts` — added the two names to the count-constructor set.
+
+### Known representation limit
+
+Shared with `BigInt.asUintN(64, …)` (#3148): the compiler's BigInt IS a signed
+wasm i64, so a `BigUint64Array` element ≥ 2^63 reads back as its signed i64
+interpretation (2^64-1 reads as -1n). ToBigUint64 mod-2^64 write semantics are
+still correct, and every value < 2^63 round-trips exactly.
+
+## Test Results
+
+`tests/issue-838.test.ts` — 11/11 pass (host + standalone): count + array-literal
+constructors for both views, element write/read, `.length`/`.byteLength`,
+`BYTES_PER_ELEMENT`, ToBigInt64/ToBigUint64 mod-2^64 wrapping, for-loop
+write/read with `BigInt()` coercion, max/min i64 round-trip, standalone compile.
+No regressions in `bigint.test.ts` or the numeric typed-array paths
+(Float64Array/Int32Array/Uint8Array verified unchanged host + standalone).
