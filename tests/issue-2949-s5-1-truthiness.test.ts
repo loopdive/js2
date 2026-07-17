@@ -33,7 +33,7 @@ import { addUnionImports, createCodegenContext } from "../src/codegen/index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
-import { JsTag } from "../src/codegen/js-tag.js";
+import { JsTag } from "../src/ir/js-tag.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
 import { peepholeOptimize } from "../src/codegen/peephole.js";

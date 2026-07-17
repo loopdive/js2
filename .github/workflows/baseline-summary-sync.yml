@@ -76,8 +76,14 @@ jobs:
           # 1) Drift check — semantic compare (ignores volatile timestamp/sha
           #    metadata). Unchanged on both lanes → nothing to do this hour.
           HOST_UNCHANGED=0
+          # Compare against the PUBLIC file this job overwrites (mirrors the
+          # standalone check below), NOT the in-repo baseline. Comparing the
+          # in-repo copy let public/ strand: when a forced refresh updated the
+          # baselines repo and the in-repo copy in lockstep, this check saw
+          # "unchanged" and skipped the copy, freezing the landing page on a
+          # stale/inflated number while the job reported success (#3375).
           node scripts/compare-test262-artifact.mjs --type report \
-            --baseline benchmarks/results/test262-current.json \
+            --baseline public/benchmarks/results/test262-report.json \
             --candidate /tmp/js2wasm-baselines/test262-current.json && HOST_UNCHANGED=1
           STANDALONE_UNCHANGED=0
           node scripts/compare-test262-artifact.mjs --type report \

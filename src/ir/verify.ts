@@ -25,7 +25,7 @@ import type { ValType } from "./types.js";
 // #2949 slice 1 — canonical JsTag policy for the dynamic-operand rules
 // (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
 // from the dependency-free leaf, so this adds no codegen module-graph pull.
-import { JsTag, jsTagUnboxKind } from "../codegen/js-tag.js";
+import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 
 /**
  * #1850 — successor block ids of a block, derived from its terminator.

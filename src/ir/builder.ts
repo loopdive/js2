@@ -37,7 +37,7 @@ import {
 } from "./nodes.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import type { Instr, ValType } from "./types.js";
-import { JsTag, jsTagUnboxKind } from "../codegen/js-tag.js";
+import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 
 interface OpenBlock {
   readonly id: IrBlockId;
