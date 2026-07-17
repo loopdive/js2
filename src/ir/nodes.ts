@@ -15,10 +15,10 @@
 
 import type { ValType } from "./types.js";
 // #2949 slice 1 — the canonical JS-type tag enum, from the dependency-free
-// leaf `codegen/js-tag.ts` (extracted there precisely so this pure-leaf
-// module can carry it without importing the codegen policy chain). Type-only:
+// leaf `ir/js-tag.ts` (#3113 moved it below the IR layer so IR core files
+// consume it without the IR→codegen import inversion). Type-only:
 // nodes.ts stays free of value imports.
-import type { JsTag } from "../codegen/js-tag.js";
+import type { JsTag } from "./js-tag.js";
 
 // ---------------------------------------------------------------------------
 // Symbolic references

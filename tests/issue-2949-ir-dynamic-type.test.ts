@@ -21,7 +21,7 @@ import {
   type IrType,
   type IrValueId,
 } from "../src/ir/index.js";
-import { JsTag, jsTagUnboxKind } from "../src/codegen/js-tag.js";
+import { JsTag, jsTagUnboxKind } from "../src/ir/js-tag.js";
 import { JsTag as JsTagReexport } from "../src/codegen/value-tags.js";
 import type { FuncTypeDef, ValType } from "../src/ir/types.js";
 

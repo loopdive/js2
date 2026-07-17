@@ -41,7 +41,7 @@ import {
   emitToBoolean as emitCoercionToBoolean,
   emitToNumber as emitCoercionToNumber,
 } from "../codegen/coercion-engine.js";
-import { JsTag, jsTagUnboxKind } from "../codegen/js-tag.js";
+import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import { ensureVecElemSet, VEC_ELEM_SET_PREFIX } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand element-store helper
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
