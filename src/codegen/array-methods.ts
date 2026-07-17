@@ -3888,7 +3888,7 @@ function compileArrayJoinExternNative(
   return { kind: "externref" };
 }
 
-function compileArrayJoinExtern(
+export function compileArrayJoinExtern(
   ctx: CodegenContext,
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression,

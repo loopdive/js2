@@ -1,7 +1,9 @@
 ---
 id: 3342
 title: "standalone: Object.values(o).join / Object.getOwnPropertyNames(o).join misclassify receiver as Uint8ClampedArray → leak env::Uint8ClampedArray_join"
-status: ready
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/opus-e
 sprint: current
 created: 2026-07-17
 priority: medium
@@ -14,6 +16,8 @@ language_feature: standalone-completeness, array-join, type-inference
 goal: standalone-parity
 related: [3155, 3170]
 origin: "carved out of #3155 (fix-standalone-object-keys-join, opus-c 2026-07-17) — Object.keys().join was fixed via the native externref-join path, but Object.values()/getOwnPropertyNames() take a DIFFERENT, distinct-root-cause path."
+loc-budget-allow:
+  - src/codegen/expressions/calls-closures.ts
 ---
 
 # #3342 — standalone `Object.values(o).join` / `Object.getOwnPropertyNames(o).join` leak `env::Uint8ClampedArray_join`
@@ -74,3 +78,29 @@ runtime shape.
    `tests/issue-3155.test.ts`).
 2. Add coverage to `tests/issue-3155.test.ts` (or a new `tests/issue-3342.test.ts`).
 3. No test262 regression; host-lane byte-identity.
+
+## Resolution (2026-07-17, opus-e)
+
+**Root cause (confirmed):** the `as any` cast on the receiver — not the choice
+of `Object.values`/`getOwnPropertyNames` vs `keys` — is the trigger. Without a
+cast, all three infer a concrete array type and dispatch through the
+array-methods native externref path (host-free since #3155). With `as any` the
+receiver is `any`-typed, so the call reaches the `any`-receiver fallback
+`tryExternClassMethodOnAny` (`src/codegen/expressions/calls-closures.ts`). That
+helper iterates `ctx.externClasses` in insertion order and first-matches any
+class declaring a `join` method with all-externref params. A TypedArray view
+(`Uint8ClampedArray`) is registered before `Array`, so the call bound
+`env::Uint8ClampedArray_join` — an unsatisfiable host import under standalone.
+(All three of keys/values/getOwnPropertyNames leaked identically once cast.)
+
+**Fix:** added a `noJsHost`-gated guard in `tryExternClassMethodOnAny` that
+routes a `join` on an `any`-typed receiver to the native externref `join`
+(`compileArrayJoinExtern`, host-free under `noJsHost` since #3155) *before* the
+first-match loop can bind the TypedArray host import. The JS-host lane is
+untouched (byte-identical). `compileArrayJoinExtern` was exported from
+`array-methods.ts` for reuse.
+
+**Files:** `src/codegen/expressions/calls-closures.ts`,
+`src/codegen/array-methods.ts` (export), `tests/issue-3342.test.ts` (new, 7
+cases: values/getOwnPropertyNames/keys as-any, multi-char + default separator,
+empty object, plain-array-as-any regression guard).

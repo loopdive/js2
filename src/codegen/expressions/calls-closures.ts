@@ -11,7 +11,9 @@ import { ts } from "../../ts-api.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { getFuncRefWrapperRootTypeIdx, getOrCreateFuncRefWrapperTypes } from "../closures.js";
+import { compileArrayJoinExtern } from "../array-methods.js";
 import { tryCompileNativeDisposableStackAnyMethodCall } from "../disposable-runtime.js";
+import { noJsHost } from "../js-errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
@@ -1502,6 +1504,16 @@ export function tryExternClassMethodOnAny(
   if (ctx.nativeStrings && ctx.externClasses.get("DisposableStack")?.methods.has(methodName)) {
     const dsAny = tryCompileNativeDisposableStackAnyMethodCall(ctx, fctx, propAccess, expr, methodName);
     if (dsAny !== undefined) return dsAny;
+  }
+
+  // (#3342) `join` on an `any` receiver: the first-match loop below binds the
+  // first extern class declaring it — a TypedArray (`env::Uint8ClampedArray_join`),
+  // unsatisfiable standalone (e.g. `(Object.values(o) as any).join(",")`). Route
+  // to the native externref `join` (host-free under noJsHost since #3155); host
+  // lane keeps the existing binding (byte-identical).
+  if (noJsHost(ctx) && methodName === "join") {
+    const nativeJoin = compileArrayJoinExtern(ctx, fctx, propAccess, expr);
+    if (nativeJoin !== null) return nativeJoin;
   }
 
   for (const [key, info] of ctx.externClasses) {
