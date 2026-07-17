@@ -1,14 +1,15 @@
 ---
 id: 838
 title: "BigInt64Array / BigUint64Array typed arrays"
-status: ready
+status: in-progress
+assignee: ttraenkler/dev-spec
 created: 2026-03-28
-updated: 2026-04-28
+updated: 2026-07-17
 priority: low
 feasibility: medium
 reasoning_effort: high
 goal: spec-completeness
-sprint: Backlog
+sprint: current
 test262_skip: 19
 test262_ce: 25
 ---
