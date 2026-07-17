@@ -98,6 +98,7 @@ import {
   getArrTypeIdxFromVec,
   getOrRegisterResizableAbType,
   getOrRegisterVecType,
+  isSubviewTypeIdx,
   isTaViewTypeIdx,
   taCtorKindOf,
 } from "./registry/types.js";
@@ -2378,6 +2379,21 @@ export function tryLengthAndNameReads(
           (exprResult.kind === "ref" || exprResult.kind === "ref_null") &&
           (exprResult as any).typeIdx !== vecTypeIdx
         ) {
+          // (#2649) The compiled receiver has a KNOWN concrete ref type that
+          // differs from the static TS-derived vec type. The canonical case:
+          // `a.subarray(1)` is TS-typed `Int8Array` (→ plain `$__vec`) but
+          // compiles to a `$__subview` struct. A `$__subview` carries its
+          // windowed element count at field 0 (`{length, data, byteOffset}`),
+          // so read field 0 off the ACTUAL type directly — a `ref.test` against
+          // the mismatched static vec type below would miss and wrongly yield 0.
+          // (`$__ta_view` is excluded: its field 0 can be a resizable-length
+          // sentinel and is handled by the auto-length local arm above.)
+          const actualIdx = (exprResult as { typeIdx: number }).typeIdx;
+          if (isSubviewTypeIdx(ctx, actualIdx)) {
+            fctx.body.push({ op: "struct.get", typeIdx: actualIdx, fieldIdx: 0 });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          }
           const lenTmp = allocLocal(fctx, `__len_tmp_${fctx.locals.length}`, { kind: "anyref" });
           fctx.body.push({ op: "local.set", index: lenTmp });
           fctx.body.push({ op: "local.get", index: lenTmp });

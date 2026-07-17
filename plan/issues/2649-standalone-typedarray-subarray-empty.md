@@ -1,8 +1,9 @@
 ---
 id: 2649
 title: "Standalone: TypedArray.prototype.subarray returns an empty view (.length === 0)"
-status: ready
-sprint: Backlog
+status: in-progress
+assignee: dev-refactor
+sprint: current
 priority: medium
 feasibility: medium
 reasoning_effort: medium
