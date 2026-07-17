@@ -1,8 +1,9 @@
 {
   "id": "3308",
   "assignee": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3308-e0-inwasm-probe",
   "claimed_at": "2026-07-17T07:01:29Z",
-  "updated_at": "2026-07-17T07:01:29Z"
+  "updated_at": "2026-07-17T13:36:26Z",
+  "released_at": "2026-07-17T13:36:26Z"
 }
