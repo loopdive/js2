@@ -20,6 +20,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
+import { nativeStrVecKey } from "./vec-access-exports.js";
 
 /**
  * Emit the two write-back exports. `mutEntries` is the caller's filtered
@@ -64,15 +65,26 @@ export function emitVecDefineWritebackExports(
         { name: `__vse_ndata_${vecTypeIdx}`, type: { kind: "ref_null", typeIdx: arrTypeIdx } },
       );
       // value unboxing per element kind (value param is local 2)
+      // (#3311) native-string carrier mirrors __vec_push: recover the GC string
+      // ref from the externref value and narrow to `(ref null $AnyString)` — a
+      // numeric unbox+trunc here would emit an i32 into a ref array (invalid Wasm)
+      // for any module that has BOTH a `string[]` and `Object.defineProperty`.
+      const nsKey = nativeStrVecKey(ctx);
       const valueInstrs: Instr[] =
         elemKey === "externref"
           ? [{ op: "local.get", index: 2 }]
-          : elemKey === "f64"
+          : nsKey !== null && elemKey === nsKey
             ? [
                 { op: "local.get", index: 2 },
-                { op: "call", funcIdx: unboxNumIdx! },
+                { op: "any.convert_extern" },
+                { op: "ref.cast_null", typeIdx: ctx.anyStrTypeIdx },
               ]
-            : [{ op: "local.get", index: 2 }, { op: "call", funcIdx: unboxNumIdx! }, { op: "i32.trunc_sat_f64_s" }];
+            : elemKey === "f64"
+              ? [
+                  { op: "local.get", index: 2 },
+                  { op: "call", funcIdx: unboxNumIdx! },
+                ]
+              : [{ op: "local.get", index: 2 }, { op: "call", funcIdx: unboxNumIdx! }, { op: "i32.trunc_sat_f64_s" }];
       const thenBranch: Instr[] = [
         { op: "local.get", index: 3 },
         { op: "ref.cast", typeIdx: vecTypeIdx },

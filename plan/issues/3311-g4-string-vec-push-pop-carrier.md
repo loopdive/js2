@@ -1,8 +1,10 @@
 ---
 id: 3311
 title: "G4 — `string[]` push/pop under standalone is a no-op: native-string vec carrier missing from `__vec_push`/`__vec_pop` mutEntries"
-status: ready
+status: done
+assignee: ttraenkler/senior-dev
 created: 2026-07-16
+completed: 2026-07-17
 priority: high
 horizon: s
 feasibility: medium
@@ -60,11 +62,11 @@ fall-through also returned `undefined`); this issue is the actual fix.
 
 ## Acceptance criteria
 
-- [ ] `string[]` push/pop via the any-receiver brand arm works standalone
+- [x] `string[]` push/pop via the any-receiver brand arm works standalone
       (values, length, return values correct; host-free).
-- [ ] The `-1` sentinel path still returns `undefined` for genuinely
+- [x] The `-1` sentinel path still returns `undefined` for genuinely
       unsupported carriers (no bogus boxed `-1` length).
-- [ ] Existing #2927 push/pop suite (`tests/issue-2927-standalone-any-push-pop.test.ts`)
+- [x] Existing #2927 push/pop suite (`tests/issue-2927-standalone-any-push-pop.test.ts`)
       stays green.
 
 ## Notes
@@ -72,3 +74,56 @@ fall-through also returned `undefined`); this issue is the actual fix.
 Filed under #2784 lineage per the #2927 audit ("fix belongs in the
 `__vec_push`/`__vec_pop` carrier set, not the brand arm"). Umbrella:
 #2927 → #1584.
+
+## Implementation notes (senior-dev)
+
+**Root cause precision.** The audit note's "`ref $NativeString` elements" is
+imprecise: a `string[]` under `nativeStrings` lowers to a vec whose backing
+array element type is `(ref null $AnyString)` — the `$AnyString` *supertype*
+that covers flat native strings, cons strings, and slices — registered with
+the `vecTypeMap` key `ref_<anyStrTypeIdx>` (native-strings.ts:1218,
+native-strings-rewrite.ts:565), **not** `nativeStrTypeIdx`. The fix keys on
+`ref_<anyStrTypeIdx>` and casts to `anyStrTypeIdx`, so all three string reps
+round-trip.
+
+**Why the gap was push/pop-only.** `__vec_get` already handles this carrier:
+its non-externref, non-numeric `else` arm boxes `array.get` → externref via
+`extern.convert_any`, and the element `(ref null $AnyString)` is an anyref
+subtype, so reads worked. `__vec_len` reads field-0 (i32) generically, and
+`__vec_set_len` grows via `array.new_default` (nullable-ref-safe). Only the
+three **value-marshaling** sites needed a carrier arm:
+1. `__vec_push` `valueInstrs` — recover the GC string ref from the externref
+   value: `any.convert_extern` + `ref.cast_null $AnyString` before `array.set`
+   (no numeric unbox — the boxed side is already a GC string ref). `ref.cast_null`
+   (not `ref.cast`) matches the nullable element type and tolerates a pushed
+   `null`/`undefined`.
+2. `__vec_pop` `boxInstrs` — box the popped element straight back with
+   `extern.convert_any` (anyref subtype; no `__box_number`).
+3. `__vec_set_elem` (`vec-define-writeback.ts`) `valueInstrs` — **critical**:
+   this consumes the same `mutEntries`, and its default arm does
+   `__unbox_number` + `i32.trunc` → an i32 into a `(ref null $AnyString)` array =
+   **invalid Wasm**. Any module with BOTH a `string[]` and `Object.defineProperty`
+   would fail validation without a native-string arm here. Mirrors push's arm.
+
+`mutEntries` (also feeding `__vec_mut_supported`) admits the carrier when
+`nativeStrings && anyStrTypeIdx >= 0`. The new `nativeStrVecKey(ctx)` helper
+(exported from vec-access-exports.ts) is the single source of the key across all
+sites. The new `ref.test` arm is a sibling type under `$__vec_base`, so it can't
+cross-match the existing externref/numeric carriers — order-independent, no
+regression to those arms. The `-1` sentinel path is untouched for genuinely
+unsupported carriers (e.g. `i64`).
+
+## Test Results
+
+- New `tests/issue-3311-string-vec-push-pop.test.ts` — 8 tests, all pass
+  (host + standalone-host-free; push length, append, indexed read+equality,
+  repeated push, pop value+equality, pop shrink, push/pop round-trip, typed
+  control). Every standalone case asserts **0 function imports**.
+- `tests/issue-2927-standalone-any-push-pop.test.ts` — 7/7 still green.
+- `array-methods`, `array-prototype-methods`, `issue-1539-standalone-array-coercion`
+  — green. (`array-capacity.test.ts` has 4 pre-existing failures unrelated to
+  this change — a stale harness missing a `string_constants` import; verified
+  identical with these files reverted to base.)
+- Writeback validity: a module with both `string[]` and `Object.defineProperty`
+  compiles to valid Wasm, host-free.
+- `tsc --noEmit` clean.
