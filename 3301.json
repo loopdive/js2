@@ -1,8 +1,8 @@
 {
   "id": "3301",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-16T08:53:48Z",
-  "updated_at": "2026-07-16T08:53:48Z"
+  "assignee": "ttraenkler/dev-conform",
+  "status": "in-progress",
+  "branch": "issue-3301-eval-regex-flags",
+  "claimed_at": "2026-07-17T18:16:06Z",
+  "updated_at": "2026-07-17T18:16:06Z"
 }
