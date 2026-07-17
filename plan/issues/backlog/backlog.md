@@ -15,16 +15,34 @@ dispatchable gaps:
   issue titles/sprints still route target-neutral planner work through the
   Porffor backend wave.
 - [#3337](../3337-wasi-process-argv-args-get.md) - WASI `process.argv` must
-  lower through `args_get` instead of the invalid native-string path. Highest
-  correctness value because the real-world WASI suite currently carries an
-  `it.fails` invalid-binary sentinel and the previous owner explicitly deferred
-  this as a separate issue; #1532 is tests-only and cannot fix the runtime path.
+  materialize through `args_get` instead of silently returning an empty,
+  import-free vector. A second-pass runtime probe corrected the original
+  invalid-binary premise: validity is fixed, argv semantics are not.
+- [#3338](../3338-cli-refuse-invalid-wasm-artifacts.md) - CLI must validate the
+  final binary before writing any artifacts. Verified in both default `-O3` and
+  `--no-optimize`: the CLI exits zero and writes the same invalid private-field
+  module; #3024 owns the producer, not this systemic publication boundary.
+- [#3339](../3339-compileproject-axios-core-oom.md) - bound `compileProject`
+  graph expansion on Axios core. The current probe exhausts a 512 MB heap after
+  about 85 seconds, blocking four Tier 1 entries; architect phase attribution
+  is required before implementation.
+- [#3340](../3340-issue-tests-unexpected-pass-baseline.md) - keep inverted
+  expected-failure sentinels out of the root issue-test baseline. Two #2143
+  programs now validate and the WASI validity check now passes, but all three
+  improvements are stored as accepted failures because the gate has no
+  unexpected-pass class.
 
 Investigated, no new issue filed: cross-backend parity as a required advisory
 gate is already owned by #2711; the linear-IR overlay ratchet and flag-on
 coverage are active in #2956 (PR #3200 has landed for the L2 aggregate/ref-cell
 slice, with later slices still tracked there), so a separate gate-hardening
 issue would duplicate current work.
+
+The stronger-model second pass also rechecked CLI emission, Axios Tier 1,
+root-suite baseline semantics, current test262 categories, and active PRs. It
+did not file separate issues for producer-specific invalid Wasm, Axios
+validator sub-buckets, or full root-suite required gating because #3024,
+#1571's other proposed blockers, and #3008 already own those scopes.
 
 ## 2026-07-03 — `/harvest-errors` sweep (both lanes, fresh baselines)
 

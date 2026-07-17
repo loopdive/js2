@@ -56,10 +56,13 @@ displace the #2860 standalone-vs-js-host sprint focus above, but they are high
 leverage backlog candidates because each removes a planning or correctness risk
 that can otherwise misdirect larger implementation work.
 
-| Issue | Area                          | Priority | Horizon | Status | Dependency note                                                                                                                              |
-| ----- | ----------------------------- | -------- | ------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| #3336 | planning / IR / linear memory | high     | s       | ready  | No code deps. Must be done before dispatching target-neutral `LinearMemoryPlan` work as Porffor-only work. Related: #3288/#3298/#3300/#2956. |
-| #3337 | WASI argv correctness         | high     | m       | ready  | No hard deps. #1482 is the env precedent; #1801 explicitly deferred this argv invalid-binary defect; #1532 is tests-only.                    |
+| Issue | Area                          | Priority | Horizon | Status  | Dependency note                                                                                                                              |
+| ----- | ----------------------------- | -------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| #3336 | planning / IR / linear memory | high     | s       | ready   | No code deps. Must be done before dispatching target-neutral `LinearMemoryPlan` work as Porffor-only work. Related: #3288/#3298/#3300/#2956. |
+| #3337 | WASI argv correctness         | high     | m       | ready   | No hard deps. Validity now passes, but argv is an empty import-free vector; #1482 is the env precedent and #1532 is tests-only.              |
+| #3338 | CLI artifact validation       | high     | s       | ready   | No code deps. Protects users from every malformed-Wasm producer while #3024 and related emitter issues fix individual families.              |
+| #3339 | Axios project nontermination  | high     | l       | backlog | Architect spec required: identify the unbounded resolver/lowering/emitter phase before dispatch; parent #1032, survey #1571.                 |
+| #3340 | Root baseline classification  | high     | s       | ready   | No hard deps. Ratchets stale #2143 and WASI expected-pass IDs; coordinates with #3337 but does not implement argv.                           |
 
 ## IR front-end migration — fallback-bucket ratchet (added 2026-06-30, DEMOTED to `priority: low` 2026-06-30)
 
