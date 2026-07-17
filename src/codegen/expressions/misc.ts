@@ -6,6 +6,7 @@
 import { ts } from "../../ts-api.js";
 import { isStringType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import type { TypeFact } from "../../checker/oracle.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
@@ -91,6 +92,24 @@ function compileConditionalExpression(
               typeIdx: (thenType as { typeIdx: number }).typeIdx,
             }
           : thenType;
+    } else if (
+      ctx.unionAnyRep &&
+      ctx.anyValueTypeIdx >= 0 &&
+      ((f: TypeFact): boolean =>
+        f.kind === "union" &&
+        f.parts.every((p) => p.kind === "number" || p.kind === "string" || p.kind === "boolean") &&
+        new Set(f.parts.map((p) => p.kind)).size >= 2)(ctx.oracle.typeFactOf(expr))
+    ) {
+      // (#745 S4, flag-gated) A mixed-kind ternary whose own type is a
+      // heterogeneous primitive union (`k > 0 ? 7 : "neg"` in a
+      // `number | string` position) joins on the `$AnyValue` carrier, NOT
+      // externref: each arm boxes via its statically-known kind (f64 →
+      // tag-3, native string → tag-5, boolean-branded i32 → tag-4), so the
+      // runtime tag is honest. The old externref join re-boxed at the
+      // return/assignment coercion through the legacy #1888 tag-5 default —
+      // a returned NUMBER became a tag-5 "string" and `typeof r ===
+      // "number"` answered false (the S4 retUnion row).
+      resultValType = { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx };
     } else {
       // Fallback: coerce both to externref
       resultValType = { kind: "externref" };

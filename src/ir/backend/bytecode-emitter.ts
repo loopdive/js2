@@ -53,10 +53,22 @@
 // #1715 test. It does NOT touch `lower.ts`, `WasmGcEmitter`, or the default
 // compile pipeline, so it carries zero conformance risk (issue AC #5).
 
-import type { IrBinop, IrInstr, IrUnop } from "../nodes.js";
+import type { IrBinop, IrInstr, IrType, IrUnop } from "../nodes.js";
 import type { BlockType, Instr } from "../types.js";
+import type { TypeConverter } from "./contract.js";
 import type { BackendEmitter } from "./emitter.js";
 import type { IrClassLowering, IrObjectStructLowering } from "./handles.js";
+
+/** The proof VM carries every legal IR value in one JavaScript number slot. */
+export type BytecodeValueSlot = "number";
+
+export class BytecodeTypeConverter implements TypeConverter<BytecodeValueSlot> {
+  readonly backend = "bytecode" as const;
+
+  convertType(_type: IrType): readonly BytecodeValueSlot[] {
+    return ["number"];
+  }
+}
 
 // ── Opcodes ───────────────────────────────────────────────────────────────
 // A flat `number[]` instruction stream. Each opcode is one int; inline operands

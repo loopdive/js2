@@ -328,6 +328,35 @@ jobs:
         # equivalence shards.
         run: pnpm exec vitest run tests/issue-1580.test.ts
 
+      - name: Changed root test files must pass (#3008)
+        # Per-PR half of the #3008 wiring (the post-merge half is
+        # .github/workflows/issue-tests.yml): any tests/*.test.ts file this PR
+        # ADDS or MODIFIES must pass, so a per-issue regression test cannot be
+        # born broken (and touching a rotted one means fixing it — the
+        # fix-on-touch ratchet). Root files only; tests/equivalence/ has its
+        # own gate (#1659) and linear-*/c-abi/simd* run in `linear-tests`.
+        # Mass edits (>20 files, e.g. a repo-wide reformat) skip with a
+        # warning — the post-merge detector covers them.
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          BASE=$(git merge-base origin/main HEAD 2>/dev/null || echo "")
+          if [ -z "$BASE" ]; then echo "No merge base resolvable — skipping."; exit 0; fi
+          CHANGED=$(git diff --name-only --diff-filter=AM "$BASE" HEAD -- tests/ \
+            | grep -E '^tests/[^/]+\.test\.ts$' \
+            | grep -vE '^tests/(linear-|c-abi\.|simd)' || true)
+          if [ -z "$CHANGED" ]; then echo "No root test files changed."; exit 0; fi
+          N=$(echo "$CHANGED" | wc -l)
+          if [ "$N" -gt 20 ]; then
+            echo "::warning::$N root test files changed (>20, likely a mass edit) — skipping the per-PR gate; the post-merge issue-tests detector covers them."
+            exit 0
+          fi
+          echo "Running $N changed root test file(s):"
+          echo "$CHANGED"
+          # Invoke vitest directly (not `pnpm test --`) so the file list is
+          # scoped to vitest and not consumed by pnpm (see PR #432).
+          pnpm exec vitest run $CHANGED --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+
       - name: Conformance numbers in sync (#1522)
         run: pnpm run sync:conformance:check
 

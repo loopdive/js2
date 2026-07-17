@@ -11,7 +11,7 @@ task_type: test
 area: runtime, dogfood
 language_feature: eval
 goal: runtime-eval
-sprint: Backlog
+sprint: current
 parent: 2927
 related: [2928, 1584, 1710, 1712, 2841, 2851, 2852, 2847]
 ---

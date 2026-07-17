@@ -2510,9 +2510,12 @@ export function compileReceiverMethodCall(
   // Fallback for method calls on any-typed / externref / unresolvable receivers.
   // This handles patterns like: ref(args).next(), anyObj.someMethod(), etc.
   // Common in test262 where variables are typed as `any` or inferred as `any`.
+  // (#3201) recvTsType/recvWasm are hoisted out of the arm's block so the
+  // end-of-ladder native-receiver arm below reuses the SAME checker resolution
+  // (oracle ratchet #1930/#3273: no net-new direct checker usage).
+  const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
+  const recvWasm = resolveWasmType(ctx, recvTsType);
   {
-    const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
-    const recvWasm = resolveWasmType(ctx, recvTsType);
     const isAnyOrExternref = (recvTsType.flags & ts.TypeFlags.Any) !== 0 || recvWasm.kind === "externref";
 
     if (isAnyOrExternref) {
@@ -3161,6 +3164,68 @@ export function compileReceiverMethodCall(
         fctx.body.push({ op: "ref.null.extern" });
         return { kind: "externref" };
       }
+    }
+  }
+
+  // (#3201) Unknown-method fallback for NATIVE (ref/ref_null) receivers on
+  // the JS-host lane. Every arm above has declined — historically this fell
+  // through to the calls.ts "graceful fallback" (compile callee + args for
+  // side effects, return null), which silently nulled Sputnik's expando-
+  // classifier idiom (`arr.getClass = Object.prototype.toString;
+  // arr.getClass()` — 65+ test262 fails across splice/slice/concat) and any
+  // other method stored as an expando on a struct/vec. The host mirror DOES
+  // carry expando writes (`__extern_set_strict`) and reads (`__extern_get`),
+  // so delegate to the same `__extern_method_call(recv, name, args)` generic
+  // the any/externref ladder (#799 WI3) and the fnctor-subclass miss (#3123)
+  // use — `fn.apply(recv, args)` with correct `this` binding on the host
+  // side. Host (gc) lane only: #3201's scope is the default lane and its
+  // acceptance forbids standalone regressions (the native dispatcher's
+  // struct-expando coverage is a follow-up).
+  if (!ctx.standalone && !ctx.wasi) {
+    // recvWasm hoisted above the any-arm block — one checker resolution
+    // serves both fallbacks (oracle ratchet #1930/#3273).
+    //
+    // (#3176 merge-queue park) The arm must only claim TRUE expandos —
+    // methods NOT declared on the static receiver type. The original
+    // unconditional delegation hijacked calls the downstream compiled paths
+    // handled correctly (compiled class instance methods like Temporal's
+    // polyfill `since`/`until`, and static class fields like
+    // `class C { static f = () => this }` — C.f is a declared member) into
+    // `__extern_method_call`, whose host mirror does NOT carry compiled
+    // class methods → "since is not a function" / null cascades: 215
+    // merge_group regressions (211 Temporal + class static-field arrows).
+    // `recvTsType.getProperty` / `.isClass` are Type-object reads on the
+    // ALREADY-hoisted resolution — no net-new direct checker usage
+    // (ratchet #1930/#3273). The Sputnik classifier idiom
+    // (`arr.getClass = …` on a vec/struct or object literal) is by
+    // definition undeclared on the receiver's type, so the #3201 wins keep
+    // hitting the arm.
+    //
+    // Class-declared instance types are ALSO declined even when getProperty
+    // misses: a class extending an unresolvable base (e.g.
+    // `class X extends Temporal.PlainYearMonth` — no TS lib typings for the
+    // base) has an incomplete member set, so a getProperty miss is not
+    // evidence of an expando (Temporal/PlainYearMonth/prototype/equals/
+    // use-internal-slots.js regressed exactly this way). Declining restores
+    // the pre-#3201 downstream path, which handled these correctly.
+    if (
+      (recvWasm.kind === "ref" || recvWasm.kind === "ref_null") &&
+      recvTsType.getProperty(propAccess.name.text) === undefined &&
+      !(recvTsType.isClass?.() ?? false)
+    ) {
+      // rawStructReceiver: the expando sidecar (`_wasmStructProps`) is keyed
+      // by the RAW struct ref — an externref expected-type compile would
+      // route a vec receiver through `__make_iterable`'s copy, losing the
+      // identity the sidecar lookup needs.
+      const delegated = emitFnctorSubclassDynamicMethodCall(
+        ctx,
+        fctx,
+        expr,
+        propAccess,
+        propAccess.name.text,
+        /* rawStructReceiver */ true,
+      );
+      if (delegated !== undefined) return delegated;
     }
   }
   return undefined;

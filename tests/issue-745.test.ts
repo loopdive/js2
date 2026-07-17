@@ -288,3 +288,55 @@ describe("#745 S3 — flag ON, carrier-agnostic consumers (standalone)", () => {
     await expect(WebAssembly.instantiate(r.binary!, {})).resolves.toBeDefined();
   });
 });
+
+// ───────────────────────────── S4 ─────────────────────────────
+// Union params/returns + union→any boundaries on the `$AnyValue` carrier —
+// the last three rows of the S2 gap table.
+describe("#745 S4 — flag ON, union params/returns/any-boundary (standalone)", () => {
+  async function run(src: string): Promise<unknown> {
+    const r = await compile(src, { fileName: "t.ts", target: "standalone", unionAnyRep: true });
+    expect(r.success).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary!, {});
+    return (instance.exports as { test?: () => unknown }).test?.();
+  }
+
+  it("union PARAM: typeof-dispatch + as-cast string member read across two call sites", async () => {
+    expect(
+      await run(`function f(v: number | string): number { return typeof v === "number" ? v * 2 : (v as string).length; }
+export function test(): number { let x: number | string = 21; const a = f(x); x = "abc"; const b = f(x); return a === 42 && b === 3 ? 1 : 0; }`),
+    ).toBe(1);
+  });
+
+  it("union RETURN: mixed-kind ternary keeps honest runtime tags", async () => {
+    expect(
+      await run(`function g(k: number): number | string { return k > 0 ? 7 : "neg"; }
+export function test(): number { const a = g(1); const b = g(-1); return (typeof a === "number" && a === 7 && b === "neg") ? 1 : 0; }`),
+    ).toBe(1);
+  });
+
+  it("union → any assignment: typeof survives the boundary", async () => {
+    expect(
+      await run(`export function test(): number {
+  let x: number | string = 9; let y: any = x; x = "z"; let w: any = x;
+  return (typeof y === "number" && typeof w === "string") ? 1 : 0;
+}`),
+    ).toBe(1);
+  });
+
+  it("boolean|string union param round-trip (tag-4 brand preserved)", async () => {
+    expect(
+      await run(`function h(v: boolean | string): number { return v === true ? 1 : (v === "b" ? 2 : 0); }
+export function test(): number { let x: boolean | string = true; const a = h(x); x = "b"; const b = h(x); return a === 1 && b === 2 ? 1 : 0; }`),
+    ).toBe(1);
+  });
+
+  it("S4 paths stay host-import-free", async () => {
+    const r = await compile(
+      `function g(k: number): number | string { return k > 0 ? k * 2 : "neg"; }
+export function test(): number { const a = g(2); return typeof a === "number" && a === 4 ? 1 : 0; }`,
+      { fileName: "t.ts", target: "standalone", unionAnyRep: true },
+    );
+    expect(r.success).toBe(true);
+    await expect(WebAssembly.instantiate(r.binary!, {})).resolves.toBeDefined();
+  });
+});

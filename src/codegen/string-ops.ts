@@ -10,7 +10,8 @@ import { ts } from "../ts-api.js";
 import { emitIsUndefinedSingletonExternAt, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
 import { compileNumericBinaryOp } from "./binary-ops.js";
 import { reserveClosedMethodDispatch } from "./closed-method-dispatch.js";
-import { compileAndEmitToString, emitToString, registerStringHelperEmitters } from "./coercion-engine.js";
+import { compileAndEmitToString, emitToString } from "./coercion-engine.js";
+import { registerStringHelperEmitters } from "./string-emitter-registry.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
@@ -3587,9 +3588,8 @@ export function compileGuardedNativeStringMethodCall(
 // string constants without importing string-ops.ts directly (cycle prevention).
 registerCompileStringLiteral(compileStringLiteral);
 
-// #1917 Step 1 — register the two leaf string emitters the coercion engine
-// needs (both defined here and not exported; string-ops.ts imports the engine,
-// so the engine binds them lazily to avoid a module cycle).
+// #1917 Step 1 / #3324 — bind the leaf string emitters (defined here, not
+// exported) into the import-free registry: safe while the engine is mid-init.
 registerStringHelperEmitters({
   boolToString: emitBoolToString,
   nativeStringRefFromExternref: emitNativeStringRefFromExternref,

@@ -37,7 +37,7 @@
  * arguments fall through to the existing path (the dispatcher is not used).
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper } from "./any-helpers.js";
+import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3125) IsCallable arms
 import type { CodegenContext } from "./context/types.js";
 import { ensureNativeArrayHof, NATIVE_HOF_METHODS } from "./hof-native.js";
@@ -1030,13 +1030,18 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
           helperCall.push({ op: "any.convert_extern" });
         }
         helperCall.push({ op: "call", funcIdx: helperIdx });
+        const undefExternCol = undefinedExternInstrs(ctx);
         if (resultShape === "bool") {
           helperCall.push({ op: "call", funcIdx: boxBoolIdx as number }); // i32 → externref
         } else if (resultShape === "void") {
-          helperCall.push({ op: "ref.null.extern" }); // undefined
+          // (#3331) JS-visible `undefined` result — materialize the singleton
+          // under the #2106 regime; legacy keeps `ref.null.extern`.
+          helperCall.push(...(undefExternCol ?? [{ op: "ref.null.extern" } as Instr]));
         } else {
           // anyref value (get) or the chainable `ref $Map` receiver (set/add)
-          // — both anyref subtypes.
+          // — both anyref subtypes. A `get` MISS arrives as the $undefined
+          // singleton from `__map_get` itself under the #2106 regime (#3331,
+          // producer-honest miss), so no boundary materialization is needed.
           helperCall.push({ op: "extern.convert_any" });
         }
         let mapArmBody: Instr[];

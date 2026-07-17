@@ -1,7 +1,7 @@
 ---
 id: 3022
 title: "UMBRELLA: Object.defineProperty(ies) descriptor fidelity + non-object-receiver tail (~728 default-lane fails)"
-status: ready
+status: done
 sprint: current
 created: 2026-07-03
 updated: 2026-07-05
@@ -19,6 +19,8 @@ test262_fail: 728
 related: [1334, 1629, 1629a, 1631, 2726]
 children: [3042, 3043, 3044, 3045, 3046, 3116]
 ---
+
+> **Reconciled 2026-07-16 (carried in #745 S4 PR):** all dev children (#3042-#3046, #3116) are `status: done`; remaining residuals are senior/arch-scoped and tracked in those issues. Umbrella closed per tech-lead direction.
 
 > **UMBRELLA (decomposed 2026-07-05, dev-2726).** This 728-fail blob is NOT a
 > single dispatchable task — it fragments into distinct root causes across two

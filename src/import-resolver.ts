@@ -68,10 +68,78 @@ export const NODE_BUILTIN_MODULES = new Set([
  *
  * Adding a new module/function: extend this table.
  */
+/**
+ * (#1794) Named node-builtin CLASS imports (`import { EventEmitter } from
+ * "node:events"`). The generic fallback bound the local name to `declare
+ * const X: any` (a null externref — every method call silently no-opped).
+ * Instead, substitute the established #1044 extern-class shape:
+ *
+ *   declare namespace events { class EventEmitter { …typed members… } }
+ *   declare const EventEmitter: typeof events.EventEmitter;
+ *
+ * `collectExternClass` registers the class with `namespacePath: ["events"]`,
+ * so construction lowers to the `events_EventEmitter_new` host import whose
+ * ImportIntent carries the namespace path — `runtime.ts`
+ * `_resolveNamespacedClass` resolves it via `deps.events` ??
+ * `require("events")`. Instance methods ride the extern-method imports;
+ * listener closures cross via the #1382 callback bridge, and the
+ * listener-registering methods are on the #1695 deferred-callback allowlist
+ * (persistent capture writebacks) — see closures/callback-classification.ts.
+ * The `typeof` const makes the BARE name resolve to the same class symbol,
+ * so `new EventEmitter()` and `new events.EventEmitter()` are one path.
+ *
+ * Adding a new module/class: extend this table (members are the declare-class
+ * body). Keep members typed — the extern collector maps them to Wasm sigs.
+ */
+const NODE_BUILTIN_CLASS_TYPED_STUBS: Record<string, Record<string, string>> = {
+  events: {
+    EventEmitter: [
+      "constructor();",
+      "on(event: string, listener: any): any;",
+      "once(event: string, listener: any): any;",
+      "off(event: string, listener: any): any;",
+      "addListener(event: string, listener: any): any;",
+      "removeListener(event: string, listener: any): any;",
+      "removeAllListeners(event?: string): any;",
+      "prependListener(event: string, listener: any): any;",
+      "prependOnceListener(event: string, listener: any): any;",
+      "emit(event: string, a0?: any, a1?: any, a2?: any): boolean;",
+      "listenerCount(event: string): number;",
+      "listeners(event: string): any;",
+      "eventNames(): any;",
+      "setMaxListeners(n: number): any;",
+    ].join("\n    "),
+  },
+};
+
+/** (#1794) Lookup: is `name` a known node-builtin class export of `moduleName`? */
+function nodeBuiltinClassStub(moduleName: string, name: string): string | null {
+  const members = NODE_BUILTIN_CLASS_TYPED_STUBS[moduleName]?.[name];
+  if (!members) return null;
+  return (
+    `declare namespace ${moduleName} {\n  class ${name} {\n    ${members}\n  }\n}\n` +
+    `declare const ${name}: typeof ${moduleName}.${name};`
+  );
+}
+
 const NODE_BUILTIN_FN_TYPED_STUBS: Record<
   string,
   Record<string, { params: string; returns: string; passthrough: string }>
 > = {
+  // #1795 — node:http/https Tier 0 (client GET round-trip, the axios
+  // unblocker). `get`/`request` take a wasm-closure callback; the
+  // `node_builtin_fn` runtime adapter wraps closure-shaped args as JS
+  // callables (identity-cached), and the response object flows back into the
+  // callback as an externref whose `.on(...)` listeners ride the same
+  // closure-callback contract as #1794 EventEmitter.
+  http: {
+    get: { params: "url: any, cb: any", returns: "any", passthrough: "url, cb" },
+    request: { params: "url: any, cb: any", returns: "any", passthrough: "url, cb" },
+  },
+  https: {
+    get: { params: "url: any, cb: any", returns: "any", passthrough: "url, cb" },
+    request: { params: "url: any, cb: any", returns: "any", passthrough: "url, cb" },
+  },
   crypto: {
     randomBytes: { params: "size: number", returns: "Uint8Array", passthrough: "size" },
     randomUUID: { params: "", returns: "string", passthrough: "" },
@@ -761,11 +829,19 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
     // A shimmed path import must NOT also register the `__node_path` host import
     // (it would create a conflicting global for the same local name).
     if (isNodeBuiltin(moduleSpec) && !shimPath) {
-      nodeBuiltins.push({
-        localName: defaultName || namedBindings[0] || normalizeNodeBuiltin(moduleSpec),
-        moduleName: normalizeNodeBuiltin(moduleSpec),
-        namedBindings: namedBindings.length > 0 ? namedBindings : undefined,
-      });
+      // (#1794) Named bindings served by an extern-CLASS stub must not double-bind
+      // the local name to the module-object thunk (`__node_<mod>` declaredGlobal) —
+      // the class identifier would then resolve to the MODULE externref instead of
+      // the class. Exclude them; skip the registration entirely when nothing is left.
+      const mod = normalizeNodeBuiltin(moduleSpec);
+      const nonClassBindings = namedBindings.filter((n) => nodeBuiltinClassStub(mod, n) === null);
+      if (defaultName || nonClassBindings.length > 0 || namedBindings.length === 0) {
+        nodeBuiltins.push({
+          localName: defaultName || nonClassBindings[0] || mod,
+          moduleName: mod,
+          namedBindings: nonClassBindings.length > 0 ? nonClassBindings : undefined,
+        });
+      }
     }
   }
 
@@ -1093,6 +1169,16 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
       for (const name of imp.namedBindings) {
         // Skip if the name is already defined as a function/variable/class in source
         if (definedNames.has(name)) continue;
+
+        // (#1794) Known node-builtin CLASS exports → extern-class declare stub
+        // (namespaced, so the runtime resolves `require(module)[Class]`).
+        if (isBuiltin) {
+          const classStub = nodeBuiltinClassStub(moduleName, name);
+          if (classStub) {
+            lines.push(classStub);
+            continue;
+          }
+        }
 
         const typed = nodeBuiltinFnTypedStub(name);
         if (typed) {

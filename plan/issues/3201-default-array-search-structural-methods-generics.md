@@ -1,9 +1,10 @@
 ---
 id: 3201
 title: "default lane: Array.prototype search + structural generics (indexOf/lastIndexOf/slice/splice/sort/concat/pop) (~312 fails)"
-status: ready
+status: in-progress
+assignee: ttraenkler/fable-b
 created: 2026-07-12
-updated: 2026-07-12
+updated: 2026-07-17
 priority: high
 feasibility: hard
 task_type: bug
@@ -15,7 +16,15 @@ sprint: current
 horizon: m
 umbrella: 3185
 related: [3185, 3169, 3180, 2036]
-loc-budget-allow: [src/codegen/array-methods.ts]
+# expando-method slice (fable-b): unknown-method host delegation lives in the
+# receiver-method ladder + the shared #3123 emitter; the vec host view's
+# sidecar traps live in runtime.ts. NOTE: keep this a block list — the
+# gate's parseFrontmatterList does not read multi-line flow arrays.
+loc-budget-allow:
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/calls.ts
+  - src/runtime.ts
 origin: "2026-07-12 Fable codebase audit §F2; method-family slice of #3185"
 ---
 
@@ -225,3 +234,91 @@ Still open in this family (documented above, left `ready`): huge sparse-index
 WRITES (trap on the densely-growing-backing write path), the harness-entangled
 `Array.prototype`-mutation `illegal cast` cluster, revoked-Proxy casts
 (deferred, #1355/#1472), and `splice`/`pop` sparse reads.
+
+## Progress — expando-method dispatch (Sputnik getClass cluster, ~75 files) landed (fable-b, 2026-07-17)
+
+Root cause of the single largest remaining coherent cluster (65 "result is
+Array object. Actual: null" + 10 getClass-value fails across
+splice/slice/concat `S15.4.4.*`): the Sputnik classifier idiom
+`arr.getClass = Object.prototype.toString; arr.getClass()` silently produced
+`null` — an UNKNOWN method on a statically-typed struct/vec receiver had no
+arm in the receiver-method ladder and fell to the calls.ts graceful
+drop+null fallback. Three coordinated fixes (JS-host lane only; standalone
+untouched per acceptance #5):
+
+1. `call-receiver-method.ts` — end-of-ladder arm delegates unknown methods on
+   ref/ref_null receivers to the generic `__extern_method_call` (#799 WI3 /
+   #3123 machinery).
+2. `calls.ts emitFnctorSubclassDynamicMethodCall` gains `rawStructReceiver`:
+   the receiver marshals as the RAW wasm ref, not coerceType's
+   `__make_iterable` COPY — the `_wasmStructProps` expando sidecar is keyed
+   by raw struct identity, so a copy never finds the stored method.
+3. `runtime.ts _wrapVecForHost` — the vec's array-backed host view surfaces
+   sidecar expandos in get/has (own expando shadows Array.prototype, spec
+   lookup order), callable-wrapping raw closure structs at read time
+   (module-init writes run before setExports, so write-time wrapping can't
+   resolve exports).
+
+Validated: 13/14 sampled cluster files flip fail→pass via runTest262File
+(the 14th is a different mechanism — expando `splice` on array-like, still
+open); tests/issue-3201-expando-method.test.ts 5/5; array-methods /
+object-literals / object-methods / getters-setters / prior #3201 trap-safety
+suites all green (anon-struct's 3 fails pre-exist on clean main).
+
+Still open in this family: coercion/observable semantics (fromIndex
+ToInteger, HasProperty-before-Get, SameValueZero), array-like `.call`
+receivers, sort string-order cluster (14), result species/prototype
+fidelity, huge sparse-index writes, Array.prototype-mutation casts,
+revoked-Proxy casts (deferred).
+
+## Progress — inherited-length array-like `.call` cluster: `__extern_length` unsound probe (fable-e, 2026-07-17)
+
+Mechanism-1 slice (array-like receivers via `.call(obj, …)`). Root cause found
+by live instrumentation: `__extern_length`'s struct arm resolved own `length`
+with a raw `__sget_length` try/catch probe. On a fnctor instance struct
+(`var Con = function(){}; Con.prototype = {length: 2}; new Con()`) the probe
+CAST-SUCCEEDS via structural canonicalization on some registered
+`__sget_length` getter and reads a **zero-initialized unrelated slot** —
+returning own length 0 (a non-null, non-throwing wrong answer, so no
+null-check gate can catch it) and SHADOWING the inherited `length` that
+`_fnctorProtoLookup` (#3139) resolves correctly one line below. This is the
+`#1629` unsound-`__sget_*`-probe anti-pattern.
+
+Fix: resolve own `length` through the #1629-safe `_readOwnDescriptor` (vec
+live length via `__vec_len`, sidecar, shape-gated struct field via
+`_getStructFieldNames`), then the fnctor prototype chain. Flips the
+`15.4.4.14-2-{6,8,9}` + `15.4.4.15-2-{6,8,9}` inherited-length clusters
+(6 verified per-process flips on the 97-test indexOf/lastIndexOf
+baseline-fail sample); also feeds every array-like borrow loop (forEach/map/
+filter etc. — #3200's families).
+
+**Coordination (agreed with fable-2, 2026-07-17):** the SAME unsound-probe
+class exists in `__extern_get_idx` (wrong-shape null served as a real
+element, masking inherited indices) and `__extern_has_idx` (`return 1` on
+any non-throwing probe visits holes as own) — those two arms are **fable-2's**
+(branch issue-3200-array-iteration-generics); `__extern_length` is this
+branch. The remaining ~19 `.call`-cluster fails in this family hinge on
+those two arms plus the element-kind mechanisms.
+
+Suites: `issue-3201-inherited-length` 5/5 (new), `issue-1360` +
+`issue-3138` + `issue-3116` + `issue-1629-S1` + `issue-3139` + `issue-1629`
++ `issue-1629a` 76/76, tsc clean.
+
+## Progress — len==0 before ToInteger(fromIndex) (fable-e, 2026-07-17, same PR)
+
+Mechanism-2 slice, same PR (#3194). §23.1.3.14/.20 step 3: on an empty array,
+`return -1` precedes step 4's `ToIntegerOrInfinity(fromIndex)`, so a throwing
+`valueOf` on the fromIndex object must not be observed
+(`{indexOf,lastIndexOf}/length-zero-returns-minus-one.js` — both flip to
+pass). `compileArrayIndexOf`/`compileArrayLastIndexOf` compiled the fromIndex
+coercion (whose f64 path embeds ToPrimitive → `valueOf`) unconditionally;
+now the coercion+clamp instrs are compiled into the main body then spliced
+into a `len != 0` guard arm (safe: nested `then`/`else` arms ARE walked by
+`flushLateImportShifts`' recursive `shiftBody`, so no detached-array funcIdx
+staleness — only never-embedded arrays are hazardous, per the #2001
+pre-ensure note). len==0 arms: indexOf iTmp=0 (loop bound 0 → -1);
+lastIndexOf iTmp=-1 (same as the empty default `len-1`).
+
+Suites: `issue-3201-inherited-length` 8/8 (3 new ordering tests incl. the
+positive valueOf-IS-observed control), the five issue-3201* suites +
+`issue-1360` + `array-prototype-methods` 91/91, tsc clean.

@@ -1,7 +1,7 @@
 ---
 id: 2992
 title: "Standalone defineProperties MOP residual (~250: array/arguments own-prop MOP + accessor-attribute fidelity + destructive verifyProperty/tombstone survival)"
-status: ready
+status: in-progress
 sprint: Backlog
 priority: high
 horizon: l
@@ -9,10 +9,21 @@ feasibility: hard
 area: codegen, runtime
 goal: standalone-mode
 related: [2965, 2985, 2667]
+oracle-ratchet-allow:
+  # S6 pre-pass stores raw ts.Type INSTANCES in objectHashConsumerTypes
+  # (identity-keyed, #2944 provenance guard via symbol.declarations) — oracle
+  # TypeFacts cannot express that; OracleTypeKey migration is #1930 Slice 5.
+  # property-access.ts needs NO allowance: its S6 callable-prop gate routes
+  # through ctx.oracle.signatureOf.
+  - src/codegen/declarations/object-shape-widening.ts
 loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/object-runtime.ts
   - src/codegen/object-ops.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/property-access.ts
+  - src/codegen/binary-ops-in.ts
+  - src/codegen/typeof-delete.ts
 origin: "#2985 sizing-pass split — the substrate-scale MOP remainder after the illegal-cast slice shipped in #2985"
 ---
 
@@ -229,6 +240,46 @@ documented pre-existing `delete-sentinel` string-property case).
 {get…})`) — closed-struct-literal shape, same class as the slice-4
   non-empty-literal residual (the widening pre-pass only decides empty-`{}`
   vars; `collectGrowableObjectLiterals` guards would need their own pass).
+
+## Slice 6 findings (measured 2026-07-17 on main 279731ac1a, fable-epsilon)
+
+The slice-4/5-documented **non-empty-literal receiver** residual is fixed for
+the standalone lane (branch `issue-2992-s6-nonempty-literal-widening`):
+
+- `collectGrowableObjectLiterals` grew a standalone-gated S6 arm: a non-empty
+  PURE-DATA literal var that is a `delete` target (prop or elem form) or an
+  accessor-define target (reusing the S4/S5 markers) is routed to the
+  externref `$Object` builder (`growableObjectLiteralVars`) AND its checker
+  type is struct-refused (`objectHashConsumerTypes`, #2944
+  provenance-guarded) so every position stays externref. Consumer-safety:
+  a genuine concrete-struct-typed value use (call/new arg, return,
+  assignment) suppresses the marking (#1897 discipline); `Object.<mop>(o,…)`
+  args are excluded from that guard (generic `T` binding is not a struct
+  consumer).
+- Three checker-type folds were unsound for such receivers and got
+  growable-root guards (standalone-gated): the member-read result coercion
+  (new `tryStandaloneGrowableDynamicGet` in property-access.ts returns the
+  RAW externref — the #2179 gc-lane fix's standalone analogue), the `in`
+  operator's `tsTypeHasProperty` fold (binary-ops-in.ts → `__extern_has`),
+  and the `typeof`-comparison fold (typeof-delete.ts).
+
+Measured: 14/14 semantic probes (delete num/str/typeof/in/hasOwnProperty/
+elem/redefine/any-typed, accessor infn + const-alias, forin-after-delete,
+struct-consumer guard); `tests/issue-2992-s6-nonempty-literal.test.ts` 11/11;
+2992 suites 56 pass + 2 documented skips (accessor-merge 18/18); delete
+family 41/41; 290-file standalone A/B (delete dir + every-8th
+defineProperty/defineProperties) **0 flips, 0 regressions** vs base; host
+lane byte-identical (4/4 SHA probes).
+
+**Documented residuals (unchanged):**
+
+- gc/host-lane twin (the `delete-sentinel` string-property equivalence
+  failure) — fails identically on base; host poison needs the #2937/#2944
+  escape discipline (separate risk profile).
+- Struct-consumer-guarded vars keep the closed-struct path and its
+  delete/accessor gap (when-in-doubt-don't-mark).
+- Slice-2 wall (exotic descriptor receivers, array-index/length attribute
+  MOP) — #2986 substrate, not touched.
 
 ## Test Results (slice 1)
 

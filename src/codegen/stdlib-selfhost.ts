@@ -156,8 +156,31 @@ const NATIVE_STRING_METHOD_PLANS: ReadonlyMap<
 ]);
 
 const NATIVE_STRINGS_FROMAST_RESOLVER: IrFromAstResolver = {
-  nativeStrings(): boolean {
-    return true;
+  // (#2955 slices 3/4) The de-polymorphed from-ast arms consult these
+  // resolver-owned predicates instead of `nativeStrings()`. This build
+  // resolver MUST implement them explicitly: the from-ast reads preserve
+  // their legacy resolver-ABSENT defaults, and for `stringIsExternref` that
+  // default (host-shaped → pass-through) is the OPPOSITE of what a
+  // native-strings build wants — omitting it would let a `(ref $AnyString)`
+  // silently flow into an externref-expected position instead of surfacing
+  // the loud demote-throw this resolver's scope-guard discipline relies on.
+  stringIsExternref(): boolean {
+    return false;
+  },
+  // Native-strings builds own no JS-host imports: no f64⇄externref box pair,
+  // no `number_toString`. (The absent-defaults already demote for these —
+  // implemented explicitly so the capability surface is total, not luck.)
+  hasHostNumberBox(): boolean {
+    return false;
+  },
+  hasHostNumberToString(): boolean {
+    return false;
+  },
+  // (#2955 slice 5) Native-strings builds iterate strings via the
+  // `__str_charAt` counter loop — the plan-absent default is iter-host
+  // (`__iterator` host import), which a host-free build must never emit.
+  stringForOfPlan(): "char-loop" | "iter-host" {
+    return "char-loop";
   },
   stringMethodPlan(method: string) {
     return NATIVE_STRING_METHOD_PLANS.get(method) ?? null;

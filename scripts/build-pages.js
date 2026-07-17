@@ -252,8 +252,41 @@ copyFile(join(WEBSITE, "getting-started", "index.html"), join(PAGES_DIST, "getti
 copyFile(join(WEBSITE, "blog", "index.html"), join(PAGES_DIST, "blog", "index.html"));
 
 // Static whitepaper page — self-contained styled HTML, same pattern as the
-// "Get started" and blog pages above.
-copyFile(join(WEBSITE, "docs", "whitepaper.html"), join(PAGES_DIST, "docs", "whitepaper.html"));
+// "Get started" and blog pages above — EXCEPT (#3260) the conformance figures
+// + report date are substituted at build time from the committed, promote-
+// baseline-refreshed summaries, so the public whitepaper can never rot behind
+// the live numbers again (it sat at 73.5% for two months while the real number
+// climbed to 76.5%). Sources (both in-repo, both refreshed on every push to
+// main by test262-sharded.yml):
+//   - JS-host lane:    benchmarks/results/test262-current.json (official_summary)
+//   - Standalone lane: benchmarks/results/test262-standalone-highwater.json
+//     (official_pass/official_total — the reviewed host-free floor, #3322)
+// The SOURCE whitepaper.{html,md} carry {{TOKENS}}, never baked figures.
+{
+  const fmt = (n) => n.toLocaleString("en-US");
+  const cur = JSON.parse(readFileSync(join(ROOT, "benchmarks", "results", "test262-current.json"), "utf8"));
+  const hostPass = cur.official_summary?.pass ?? cur.summary?.pass;
+  const hostTotal = cur.official_summary?.total ?? cur.summary?.total;
+  const sa = JSON.parse(readFileSync(join(ROOT, "benchmarks", "results", "test262-standalone-highwater.json"), "utf8"));
+  const saPass = sa.official_pass ?? sa.pass;
+  const saTotal = sa.official_total ?? hostTotal;
+  const reportDate = new Date(cur.baseline_generated_at ?? cur.timestamp ?? Date.now()).toISOString().slice(0, 10);
+  const subst = (text) =>
+    text
+      .replaceAll("{{TEST262_PCT}}", ((hostPass / hostTotal) * 100).toFixed(1))
+      .replaceAll("{{TEST262_PASS}}", fmt(hostPass))
+      .replaceAll("{{TEST262_TOTAL}}", fmt(hostTotal))
+      .replaceAll("{{STANDALONE_PCT}}", ((saPass / saTotal) * 100).toFixed(1))
+      .replaceAll("{{STANDALONE_PASS}}", fmt(saPass))
+      .replaceAll("{{REPORT_DATE}}", reportDate);
+  const wpHtml = subst(readFileSync(join(WEBSITE, "docs", "whitepaper.html"), "utf8"));
+  mkdirSync(join(PAGES_DIST, "docs"), { recursive: true });
+  writeFileSync(join(PAGES_DIST, "docs", "whitepaper.html"), wpHtml);
+  // Emit the substituted .md alongside (single tokenized source, two rendered
+  // artifacts — the repo copy keeps tokens so it never re-stales).
+  const wpMd = subst(readFileSync(join(WEBSITE, "docs", "whitepaper.md"), "utf8"));
+  writeFileSync(join(PAGES_DIST, "docs", "whitepaper.md"), wpMd);
+}
 
 // Overwrite Vite-built report pages with the latest public/ versions (which include
 // web components like <t262-donut> that Vite doesn't process).

@@ -574,6 +574,25 @@ export function getOrRegisterRefCellType(ctx: CodegenContext, valType: ValType):
   return typeIdx;
 }
 
+/**
+ * (#3328) The VALUE type a mutable-capture ref cell carries — its field-0
+ * type. The authoritative fallback for a boxed capture's `valType` when the
+ * outer scope's `boxedCaptures` entry is not populated yet (the lifted body
+ * compiles BEFORE the construct site boxes the outer local, so
+ * `fctx.boxedCaptures.get(name)` misses and the legacy `?? {kind:"f64"}`
+ * default silently retyped e.g. a captured STRING as a number — `log += 'y'`
+ * inside the closure then compiled as `f64.add` with a `ref.null` +
+ * `ref.as_non_null` placeholder for the string result, a guaranteed
+ * "dereferencing a null pointer" trap the first time any capturing
+ * `toString`/`valueOf` ran). Returns undefined when `refCellTypeIdx` is not a
+ * cell-shaped struct so callers keep their final default.
+ */
+export function refCellValueType(ctx: CodegenContext, refCellTypeIdx: number): ValType | undefined {
+  const def = ctx.mod.types[refCellTypeIdx];
+  if (!def || def.kind !== "struct") return undefined;
+  return (def as StructTypeDef).fields[0]?.type;
+}
+
 /** Get the raw array type index from a vec struct type index. */
 export function getArrTypeIdxFromVec(ctx: CodegenContext, vecTypeIdx: number): number {
   const vecDef = ctx.mod.types[vecTypeIdx];

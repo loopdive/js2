@@ -315,9 +315,33 @@ export function isHostCallbackArgument(node: ts.Node, ctx: CodegenContext): bool
  * to persistent writebacks when the receiver type matches — e.g. a user-defined
  * `class Foo { defer(cb) {} }` calling `foo.defer(...)` must NOT be promoted.
  */
+/**
+ * (#1795) Listener-method names treated as deferred when the RECEIVER is
+ * `any`/`unknown` (no type symbol to key the per-class allowlist on) — the
+ * EventEmitter surface every Node stream/response exposes.
+ */
+const ANY_RECEIVER_DEFERRED_METHOD_NAMES: ReadonlySet<string> = new Set([
+  "on",
+  "once",
+  "off",
+  "addListener",
+  "removeListener",
+  "prependListener",
+  "prependOnceListener",
+]);
+
 const DEFERRED_CALLBACK_METHODS_BY_CLASS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["DisposableStack", new Set(["defer", "use", "adopt"])],
   ["AsyncDisposableStack", new Set(["defer", "use", "adopt"])],
+  // (#1794) node:events EventEmitter — every listener-registering method stores
+  // the callback; it fires later from `.emit(...)` (a DIFFERENT host call), so a
+  // one-shot pending writeback would resync the outer local before the listener
+  // ever ran (captured-mutable writes were lost: `got` stayed 0 in the Tier 0
+  // acceptance shape).
+  [
+    "EventEmitter",
+    new Set(["on", "once", "off", "addListener", "removeListener", "prependListener", "prependOnceListener"]),
+  ],
 ]);
 
 /**
@@ -338,6 +362,15 @@ export function isDeferredCallbackArgument(node: ts.Node, ctx: CodegenContext): 
     if (symName) {
       const methods = DEFERRED_CALLBACK_METHODS_BY_CLASS.get(symName);
       if (methods?.has(methodName)) return true;
+    }
+    // (#1795) UNTYPED receiver (`res: any` — e.g. the http.get response, or
+    // any duck-typed EventEmitter): no symbol to key the allowlist on, so
+    // fall back to the universal listener-method NAMES. Promoting a
+    // synchronous same-named user method is semantics-preserving (persistent
+    // writebacks are just extra resyncs; the #3329 cell rebind aliases reads
+    // and writes through one cell either way).
+    if (!symName && (recType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) {
+      if (ANY_RECEIVER_DEFERRED_METHOD_NAMES.has(methodName)) return true;
     }
     const baseTypes = recType.getBaseTypes?.();
     if (baseTypes) {

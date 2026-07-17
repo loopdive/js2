@@ -1,10 +1,12 @@
 ---
 id: 3296
 title: "Porffor backend P1: make generic lowering results genuinely non-Wasm"
-status: ready
+status: done
 sprint: porffor-backend
+pr: 3166
+completed: 2026-07-17
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-07-17
 priority: high
 horizon: l
 feasibility: hard

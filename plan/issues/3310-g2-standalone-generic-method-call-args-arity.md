@@ -11,7 +11,7 @@ task_type: feature
 area: codegen, standalone
 language_feature: dynamic-dispatch
 goal: runtime-eval
-sprint: Backlog
+sprint: current
 parent: 2927
 related: [2928, 1584, 2151, 1888, 3098]
 ---

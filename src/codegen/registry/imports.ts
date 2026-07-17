@@ -2064,8 +2064,28 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
   // after subsequent late imports are added — so `new UserClass(...)` lowers
   // to a call against an unrelated host import (e.g. `__extern_set`).
   const userClassNames = new Set<string>();
+  // (#1794) A class is only a USER class if it is not ambient. `declare class X`
+  // and classes inside `declare namespace N { class X }` ARE the extern-class
+  // declarations themselves — collecting them here made the #1284 shadow guard
+  // block its own extern registration, so every declare-namespace extern ctor
+  // lowered to `undefined` (funcMap miss → muted reportError → null) and every
+  // extern method/property import was suppressed. Latent since #1284
+  // (2026-05-02); surfaced by the tests/externref.test.ts suite (5/5 failing)
+  // while wiring node:events EventEmitter (#1794), which rides the
+  // declare-namespace extern path.
+  const isAmbientClassDecl = (node: ts.Node): boolean => {
+    // Ancestor walk for a `declare` modifier: covers `declare class X` (own
+    // modifier) and `declare namespace N { class X }` (the enclosing
+    // ModuleDeclaration carries it). The ts-api shim does not expose
+    // NodeFlags.Ambient, so the modifier walk is the portable check.
+    for (let cur: ts.Node | undefined = node; cur !== undefined; cur = cur.parent) {
+      const mods = (cur as { modifiers?: readonly ts.Node[] }).modifiers;
+      if (mods?.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword)) return true;
+    }
+    return false;
+  };
   function collectUserClassNames(node: ts.Node): void {
-    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name) {
+    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name && !isAmbientClassDecl(node)) {
       userClassNames.add(node.name.text);
     }
     forEachChild(node, collectUserClassNames);

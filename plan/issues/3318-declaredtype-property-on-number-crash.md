@@ -1,7 +1,9 @@
 ---
 id: 3318
 title: 'Compiler crash: "Cannot create property ''declaredType'' on number ''1''" (prototype-delete pattern)'
-status: ready
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/fable-s2
 sprint: current
 created: 2026-07-16
 priority: high
@@ -49,3 +51,36 @@ practice of not bundling drive-by fixes into an unrelated method-family PR.
   failure, not an internal exception).
 - No regressions in the existing array-prototype / shape-widening test
   suites.
+
+## Root cause + fix (2026-07-17, fable-s2)
+
+**Not a per-test compiler bug — an in-process realm-pollution crash.** The
+in-process runner (`runTest262File`) compiles AND executes tests in the
+caller's own realm. `lastIndexOf/15.4.4.15-8-a-14.js` leaves
+`Array.prototype[1] = 1` behind (verified: the file PASSES alone, and the
+SAME file re-run in the same process then fails `compile_error`). The next
+compile crashes inside the TypeScript checker's
+`getDeclaredTypeOfClassOrInterface` during `initializeTypeChecker`: its
+`symbolLinks` lookup is a plain array read, so `symbolLinks[1]` INHERITS the
+polluted `Array.prototype[1]` → `links = 1` →
+"Cannot create property 'declaredType' on number '1'".
+
+The sharded CI worker has had `restoreBuiltins()` for this class since
+#1153/#1154/#1160/#1220/#1221 (the official lane passes both files) — the
+in-process runner (baseline validator, smoke-tests, residual-harvest
+measurements like #3170's, where this crash was OBSERVED) had no counterpart,
+so harvests manufactured phantom `compile_error` records that depended on
+in-process test ORDER.
+
+**Fix:** `tests/test262-restore-builtins.ts` (module-load snapshot of 12 core
+prototypes; delete added keys/symbols incl. numeric Array indices, re-assign
+changed data values with descriptor-fallback) + an ENTRY call in
+`runTest262File`. The worker's version stays untouched (coupled to fork
+recycle); unification is #3182 territory.
+
+## Test Results
+
+- `tests/issue-3318.test.ts` (4): cited files back-to-back → pass/pass; same
+  file twice → pass/pass (was pass → compile_error); synthetic numeric
+  pollution cleared; replaced method value restored.
+- Runner-consumer sweep: issue-1049/1318-locator/1385/1450/1567 — 24/24.

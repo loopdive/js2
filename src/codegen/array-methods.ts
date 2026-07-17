@@ -2386,6 +2386,16 @@ function compileArrayIndexOf(
 
   // fromIndex (optional 2nd arg, default 0)
   if (callExpr.arguments.length >= 2) {
+    // (#3201) §23.1.3.14 step 3: if len is 0, return -1 BEFORE step 4's
+    // ToIntegerOrInfinity(fromIndex) — a throwing `valueOf` on the fromIndex
+    // object must NOT be observed on an empty array
+    // (indexOf/length-zero-returns-minus-one.js). Compile the coercion into
+    // the main body, then splice it into a `len != 0` guard arm — spliced
+    // instrs are immediately re-embedded in fctx.body (nested arms ARE
+    // walked by flushLateImportShifts' recursive shiftBody), so no detached-
+    // array funcIdx staleness. The len==0 arm leaves iTmp at 0; the loop
+    // bound (effLenTmp == 0) then falls through to the -1 result.
+    const guardStart = fctx.body.length;
     if (ctx.fast) {
       compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
     } else {
@@ -2418,10 +2428,22 @@ function compileArrayIndexOf(
       ],
     });
     fctx.body.push({ op: "local.get", index: fromTmp });
+    fctx.body.push({ op: "local.set", index: iTmp });
+    const guarded = fctx.body.splice(guardStart);
+    fctx.body.push({ op: "local.get", index: lenTmp });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: guarded,
+      else: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: iTmp },
+      ],
+    });
   } else {
     fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: iTmp });
   }
-  fctx.body.push({ op: "local.set", index: iTmp });
 
   // (#2648) Drive the packed i8/i16 load off the VIEW NAME signedness so a
   // signed Int8/Int16 value (`Int8Array([-1]).indexOf(-1)`) and an unsigned
@@ -7546,6 +7568,16 @@ function compileArrayLastIndexOf(
 
   if (callExpr.arguments.length >= 2) {
     // fromIndex provided -- clamp negative and clamp to length - 1
+    // (#3201) §23.1.3.20 step 3: if len is 0, return -1 BEFORE step 4's
+    // ToIntegerOrInfinity(fromIndex) — a throwing `valueOf` on the fromIndex
+    // object must NOT be observed on an empty array
+    // (lastIndexOf/length-zero-returns-minus-one.js). Same splice-into-guard
+    // pattern as compileArrayIndexOf: the spliced instrs are immediately
+    // re-embedded in fctx.body (nested arms ARE walked by
+    // flushLateImportShifts), so no detached-array funcIdx staleness. The
+    // len==0 arm sets iTmp to -1 (the same value the no-fromIndex default
+    // `len - 1` yields on an empty array), so the reverse loop never runs.
+    const guardStart = fctx.body.length;
     if (ctx.fast) {
       compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
     } else {
@@ -7580,6 +7612,17 @@ function compileArrayLastIndexOf(
         { op: "local.get", index: lenTmp },
         { op: "i32.const", value: 1 },
         { op: "i32.sub" },
+        { op: "local.set", index: iTmp },
+      ],
+    });
+    const guarded = fctx.body.splice(guardStart);
+    fctx.body.push({ op: "local.get", index: lenTmp });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: guarded,
+      else: [
+        { op: "i32.const", value: -1 },
         { op: "local.set", index: iTmp },
       ],
     });

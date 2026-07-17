@@ -144,6 +144,36 @@ function standaloneArrayLikeMethodRefused(methodName: string, callExpr: ts.CallE
  * Only handles callbacks that compile to Wasm closures (arrow functions, function declarations).
  * Returns undefined if the pattern is not handled (caller should fall through).
  */
+/**
+ * (#3317) Whether the borrow receiver statically resolves to a CLOSED struct
+ * carrying a plain (numeric/string/externref — i.e. non-object-ref) own
+ * `length` field. Such a receiver's §23.1.3 length coercion cannot throw, so
+ * any abrupt completion a wrapping assert_throws expects must come from an
+ * ELEMENT read — which the standalone closed-struct `__extern_get_idx` arms
+ * cannot model when the element is a `defineProperty` accessor expando. Used
+ * to keep the legacy assert_throws bail for exactly that receiver class.
+ */
+function receiverHasPlainClosedStructLength(ctx: CodegenContext, recvWasmType: ValType | undefined): boolean {
+  // The receiver's wasm type is resolved ONCE by the caller's `__vec_`/`__arr_`
+  // bailout block and threaded here — no additional checker access (the
+  // oracle-ratchet gate forbids net-new direct checker usage).
+  if (!recvWasmType) return false;
+  if (recvWasmType.kind !== "ref" && recvWasmType.kind !== "ref_null") return false;
+  const typeIdx = (recvWasmType as { typeIdx: number }).typeIdx;
+  const structName = ctx.typeIdxToStructName.get(typeIdx);
+  if (structName === undefined) return false;
+  const fields = ctx.structFields.get(structName);
+  if (!fields) return false;
+  const lengthField = fields.find((f) => f.name === "length");
+  if (!lengthField) return false;
+  // An object-ref length runs the (potentially abrupt) ToPrimitive walk in the
+  // native arm — that class must NOT keep the bail. String-ref lengths
+  // (`length: "2"`) coerce via StringToNumber (never abrupt) and count as plain.
+  if (lengthField.type.kind !== "ref" && lengthField.type.kind !== "ref_null") return true;
+  const lenTypeIdx = (lengthField.type as { typeIdx: number }).typeIdx;
+  return lenTypeIdx >= 0 && (lenTypeIdx === ctx.anyStrTypeIdx || lenTypeIdx === ctx.nativeStrTypeIdx);
+}
+
 export function compileArrayLikePrototypeCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -186,10 +216,14 @@ export function compileArrayLikePrototypeCall(
   // Those must be allowed through — the prior blanket bailout routed them
   // to `__proto_method_call`, which passes the callback as a `__fn_wrap`
   // externref that the host cannot invoke (regression from PR #195, #1152).
+  // The resolved receiver wasm type is reused by the (#3317) assert_throws
+  // narrowing below — resolved once here, no second checker access.
+  let borrowRecvWasmType: ValType | undefined;
   {
     const recvTsType = ctx.checker.getTypeAtLocation(receiverArg);
     if (recvTsType) {
       const recvWasmType = resolveWasmType(ctx, recvTsType);
+      borrowRecvWasmType = recvWasmType;
       if (recvWasmType.kind === "ref" || recvWasmType.kind === "ref_null") {
         const typeIdx = (recvWasmType as { typeIdx: number }).typeIdx;
         const typeDef = ctx.mod.types[typeIdx];
@@ -245,7 +279,30 @@ export function compileArrayLikePrototypeCall(
   // here. The structural fix (make `__extern_length` / `__extern_get_idx`
   // re-throw instead of swallow) is tracked in #1382 (Wasm closure / host
   // bridge gap).
-  {
+  //
+  // (#3317) Standalone/wasi SEARCH methods skip this bailout: the swallow
+  // hazard is a HOST-import property (`src/runtime.ts` wraps the getter in
+  // try/catch), while the standalone-native `__extern_length`/`__extern_get_idx`
+  // trio invokes accessor getters / `__to_primitive` as plain Wasm calls whose
+  // throws PROPAGATE. Bailing under standalone routes to the legacy
+  // `__proto_method_call` host bridge — a host-import leak that can never work
+  // there (includes/return-abrupt-get-length.js, return-abrupt-tonumber-length.js).
+  //
+  // NARROWING: the skip applies only when the receiver's abrupt completion can
+  // actually come from the native path's LENGTH read. A closed-struct receiver
+  // with a plain (non-object) own `length` field — `var obj = {length: 2}` plus
+  // `Object.defineProperty(obj, "0", {get(){throw …}})` — throws from an
+  // ELEMENT accessor the closed-struct `__extern_get_idx` arms cannot see
+  // (defineProperty expandos on closed structs are #3177 territory), so those
+  // KEEP the legacy assert_throws bail (indexOf/15.4.4.14-9-b-i-31.js,
+  // lastIndexOf/15.4.4.15-8-b-i-31.js pass through it on main).
+  if (
+    !(
+      (ctx.standalone || ctx.wasi) &&
+      ARRAY_LIKE_SEARCH_METHODS.has(methodName) &&
+      !receiverHasPlainClosedStructLength(ctx, borrowRecvWasmType)
+    )
+  ) {
     let p: ts.Node | undefined = callExpr.parent;
     while (p) {
       if (
@@ -1278,8 +1335,15 @@ function compileArrayLikePrototypeSearch(
   // `Array.prototype.METHOD.call(receiver, ...methodArgs)`, where
   // callExpr.arguments[0] is `receiver` (passed to us as `receiverArg`) and
   // [1+] are the method arguments. Search methods need at least one method
-  // argument: the search value.
-  if (callExpr.arguments.length < 2) return undefined;
+  // argument: the search value — except under standalone/wasi (#3317), where
+  // the no-search-arg form (`Array.prototype.indexOf.call(obj)` /
+  // `[].includes.call(obj)`) must STILL run the observable length coercion
+  // (§23.1.3.15/.17/.20 step 2 reads and ToLengths `obj.length` — a throwing
+  // valueOf/toString/getter propagates from there, e.g. indexOf/15.4.4.14-3-22
+  // and includes/return-abrupt-tonumber-length). The search element is simply
+  // `undefined` then. Host/gc keeps the legacy bail (its host bridge handles
+  // the form natively).
+  if (callExpr.arguments.length < 2 && !(ctx.standalone || ctx.wasi)) return undefined;
 
   // #1360 PR #274 follow-up: bail to the legacy `__proto_method_call` host
   // bridge when the search argument is statically null or undefined.
@@ -1290,7 +1354,7 @@ function compileArrayLikePrototypeSearch(
   // The host bridge invokes native `Array.prototype.lastIndexOf` which
   // honours HasProperty correctly. Until __extern_has_idx grows a
   // "field-defined-with-null" path (#1382), bail.
-  {
+  if (callExpr.arguments.length >= 2) {
     const searchArg = callExpr.arguments[1]!;
     const searchIsNullish =
       searchArg.kind === ts.SyntaxKind.NullKeyword ||
@@ -1370,30 +1434,36 @@ function compileArrayLikePrototypeSearch(
   const searchTmp = allocLocal(fctx, `__alis_search_${fctx.locals.length}`, { kind: "externref" });
   // `compileArrayLikePrototypeCall` shape: args[0] is the receiver (already
   // bound to receiverArg), args[1] is the search value, args[2] is fromIndex.
-  const searchExpr = callExpr.arguments[1]!;
-  const searchTsType = ctx.checker.getTypeAtLocation(searchExpr);
-  const searchIsBoolean =
-    searchTsType !== undefined &&
-    ((searchTsType.flags & ts.TypeFlags.Boolean) !== 0 || (searchTsType.flags & ts.TypeFlags.BooleanLiteral) !== 0);
-  const searchType = compileExpression(ctx, fctx, searchExpr, { kind: "externref" });
-  if (searchType === null) {
-    fctx.body.push({ op: "ref.null.extern" });
-  } else if (searchType.kind === "i32" && searchIsBoolean) {
-    // Box boolean as actual JS boolean. addUnionImports is idempotent and
-    // installs __box_boolean alongside the other any-value helpers.
-    addUnionImports(ctx);
-    const boxBoolIdx = ctx.funcMap.get("__box_boolean");
-    if (boxBoolIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: boxBoolIdx });
-    } else {
-      // Last-resort fallback: drops the i32 and pushes null so the program
-      // is still well-formed. Should never trigger in practice.
+  // (#3317) The standalone no-search-arg form searches for `undefined`.
+  const searchExpr = callExpr.arguments[1];
+  if (searchExpr === undefined) {
+    emitUndefined(ctx, fctx);
+    fctx.body.push({ op: "local.set", index: searchTmp });
+  } else {
+    const searchTsType = ctx.checker.getTypeAtLocation(searchExpr);
+    const searchIsBoolean =
+      searchTsType !== undefined &&
+      ((searchTsType.flags & ts.TypeFlags.Boolean) !== 0 || (searchTsType.flags & ts.TypeFlags.BooleanLiteral) !== 0);
+    const searchType = compileExpression(ctx, fctx, searchExpr, { kind: "externref" });
+    if (searchType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (searchType.kind === "i32" && searchIsBoolean) {
+      // Box boolean as actual JS boolean. addUnionImports is idempotent and
+      // installs __box_boolean alongside the other any-value helpers.
+      addUnionImports(ctx);
+      const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+      if (boxBoolIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: boxBoolIdx });
+      } else {
+        // Last-resort fallback: drops the i32 and pushes null so the program
+        // is still well-formed. Should never trigger in practice.
+        coerceType(ctx, fctx, searchType, { kind: "externref" });
+      }
+    } else if (searchType.kind !== "externref") {
       coerceType(ctx, fctx, searchType, { kind: "externref" });
     }
-  } else if (searchType.kind !== "externref") {
-    coerceType(ctx, fctx, searchType, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: searchTmp });
   }
-  fctx.body.push({ op: "local.set", index: searchTmp });
 
   // Loop index (f64) — always allocated; defaulted below. f64 lets the loop
   // walk huge array-like lengths up to 2^53-1 without truncation.
@@ -1684,12 +1754,31 @@ export function compileArrayPrototypeCall(
   const methodAccess = propAccess.expression; // Array.prototype.METHOD
   const methodName = methodAccess.name.text;
 
-  // Check that the receiver of .METHOD is Array.prototype
-  if (!ts.isPropertyAccessExpression(methodAccess.expression)) return undefined;
-  const protoAccess = methodAccess.expression; // Array.prototype
-  if (protoAccess.name.text !== "prototype") return undefined;
-  if (!ts.isIdentifier(protoAccess.expression)) return undefined;
-  if (protoAccess.expression.text !== "Array") return undefined;
+  // Check that the receiver of .METHOD is Array.prototype — or, under
+  // standalone/wasi (#3317), an EMPTY array literal: `[].includes.call(obj, x)`
+  // is the test262 corpus's canonical spelling of the same §23.1.3 generic
+  // borrow (`[].includes` IS `Array.prototype.includes` — the literal only
+  // supplies the prototype). The generic member-call path this form otherwise
+  // takes casts the borrowed receiver to the literal's vec type and TRAPS
+  // ("illegal cast", e.g. includes/return-abrupt-get-length.js), so route it
+  // through the same borrow compiler as the `Array.prototype.` spelling.
+  // Empty literals only — a non-empty literal's element expressions would need
+  // spec-order evaluation that dropping the literal here would skip. Host/gc
+  // is untouched (its generic path delegates to the real host method).
+  let protoExpr: ts.Expression = methodAccess.expression;
+  // Unwrap parens / `as` casts so `([] as any[]).includes.call(…)` matches the
+  // bare `[].includes.call(…)` corpus form.
+  while (ts.isParenthesizedExpression(protoExpr) || ts.isAsExpression(protoExpr) || ts.isNonNullExpression(protoExpr)) {
+    protoExpr = protoExpr.expression;
+  }
+  const isArrayProtoBorrow =
+    ts.isPropertyAccessExpression(protoExpr) &&
+    protoExpr.name.text === "prototype" &&
+    ts.isIdentifier(protoExpr.expression) &&
+    protoExpr.expression.text === "Array";
+  const isEmptyArrayLiteralBorrow =
+    (ctx.standalone || ctx.wasi) && ts.isArrayLiteralExpression(protoExpr) && protoExpr.elements.length === 0;
+  if (!isArrayProtoBorrow && !isEmptyArrayLiteralBorrow) return undefined;
 
   // First argument to .call() is the receiver object
   if (callExpr.arguments.length < 1) return undefined;

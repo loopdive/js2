@@ -41,6 +41,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { noJsHost } from "./expressions/helpers.js";
 import { addUnionImports, nativeStringType } from "./index.js";
 import { ensureAnyToStringHelper } from "./native-strings.js";
+import { getBoolToStringEmitter, getNativeStringRefFromExternrefEmitter } from "./string-emitter-registry.js";
 import {
   compileExpression,
   compileStringLiteral,
@@ -675,26 +676,25 @@ function pushStringLiteral(ctx: CodegenContext, fctx: FunctionContext, value: st
 
 // emitBoolToString and emitNativeStringRefFromExternref live in string-ops.ts
 // and are not exported (string-ops.ts imports this module, so a direct import
-// here would be a cycle). They are bound lazily by string-ops.ts at module load.
-let boolToStringEmitter: ((ctx: CodegenContext, fctx: FunctionContext) => void) | undefined;
-let nativeStringRefFromExternrefEmitter: ((ctx: CodegenContext, fctx: FunctionContext) => void) | undefined;
-
-export function registerStringHelperEmitters(emitters: {
-  boolToString: (ctx: CodegenContext, fctx: FunctionContext) => void;
-  nativeStringRefFromExternref: (ctx: CodegenContext, fctx: FunctionContext) => void;
-}): void {
-  boolToStringEmitter = emitters.boolToString;
-  nativeStringRefFromExternrefEmitter = emitters.nativeStringRefFromExternref;
-}
+// here would be a cycle). They are bound by string-ops.ts at module load into
+// the runtime-import-free string-emitter-registry leaf (#3324) — NOT into
+// module-level `let` slots here: string-ops.ts's top-level register call can
+// run while THIS module is still mid-initialization (entry paths that reach
+// coercion-engine before string-ops, e.g. via any-helpers), and assigning a
+// TDZ'd `let` crashed with "Cannot access 'boolToStringEmitter' before
+// initialization". The leaf registry has no imports, so it is always fully
+// initialized whenever either side touches it.
 
 function emitBoolToString(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!boolToStringEmitter) throw new Error("coercion-engine: bool-to-string emitter not registered");
-  boolToStringEmitter(ctx, fctx);
+  const emitter = getBoolToStringEmitter();
+  if (!emitter) throw new Error("coercion-engine: bool-to-string emitter not registered");
+  emitter(ctx, fctx);
 }
 
 function emitNativeStringRefFromExternref(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!nativeStringRefFromExternrefEmitter) {
+  const emitter = getNativeStringRefFromExternrefEmitter();
+  if (!emitter) {
     throw new Error("coercion-engine: native-string-ref emitter not registered");
   }
-  nativeStringRefFromExternrefEmitter(ctx, fctx);
+  emitter(ctx, fctx);
 }

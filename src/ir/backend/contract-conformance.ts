@@ -47,6 +47,7 @@ import type {
 import type { WasmGcEmitter } from "./wasmgc-emitter.js";
 import type { LinearEmitter } from "./linear-emitter.js";
 import type { BytecodeEmitter, BytecodeSink } from "./bytecode-emitter.js";
+import type { PorfforEmitter, PorfforSink } from "./porffor/sink.js";
 
 // ---------------------------------------------------------------------------
 // 1 — the three in-tree emitters conform (type-level; no runtime cost)
@@ -59,7 +60,9 @@ type Conforms<Impl, Contract> = Impl extends Contract ? true : never;
 const wasmGcEmitterConforms: Conforms<WasmGcEmitter, BackendEmitter<Instr[]>> = true;
 const linearEmitterConforms: Conforms<LinearEmitter, BackendEmitter<Instr[]>> = true;
 const bytecodeEmitterConforms: Conforms<BytecodeEmitter, BackendEmitter<BytecodeSink>> = true;
-export const emittersConform: boolean = wasmGcEmitterConforms && linearEmitterConforms && bytecodeEmitterConforms;
+const porfforEmitterConforms: Conforms<PorfforEmitter, BackendEmitter<PorfforSink>> = true;
+export const emittersConform: boolean =
+  wasmGcEmitterConforms && linearEmitterConforms && bytecodeEmitterConforms && porfforEmitterConforms;
 
 // ---------------------------------------------------------------------------
 // 2 — the stub backend
@@ -78,8 +81,8 @@ const STUB_KIND: IrBackendKind = "bytecode";
 
 type StubVecLayout = IrVecLowering | LinearVecLowering;
 
-class StubEmitter implements BackendEmitter<StubSink> {
-  readonly backend: IrBackendKind = STUB_KIND;
+export class StubEmitter implements BackendEmitter<StubSink> {
+  constructor(readonly backend: IrBackendKind = STUB_KIND) {}
   newSink(): StubSink {
     return [];
   }

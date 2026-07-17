@@ -2,7 +2,7 @@
 id: 3104
 title: "Re-split codegen/index.ts (16,566 LOC, regrown 2.6x) into subsystem modules; driver-only index"
 status: ready
-sprint: Backlog
+sprint: current
 created: 2026-07-09
 updated: 2026-07-09
 priority: high

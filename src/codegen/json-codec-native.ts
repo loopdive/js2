@@ -41,7 +41,7 @@
  *     TypeError-throwing seen-set is a follow-up (noted in the issue file).
  */
 import type { Instr, ValType } from "../ir/types.js";
-import { ensureAnyValueType } from "./any-helpers.js";
+import { ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import {
   ensureNativeStringHelpers,
@@ -780,9 +780,29 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
               // also be non-null, but JSON only meaningfully supports a function
               // here; the driver ref.casts to the closure wrapper and would trap
               // on a non-closure — so gate on ref.test against the closure base.
+              //
+              // (#3334, formerly #3328 — renumbered, id collision) Under the
+              // #2106 `$undefined`-singleton regime the
+              // MISS value of `__extern_get` is the tag-1 `$AnyValue` box —
+              // NON-NULL — so a plain null check read every missing `toJSON`
+              // as callable; the driver's closure ref.test then failed and
+              // returned null, so `JSON.stringify({...})` through the reified
+              // value / any-closure path serialised "null" for EVERY object.
+              // A `$AnyValue` box is never a callable closure, so exclude the
+              // whole carrier (tag-agnostic). Regime-gated: legacy modules
+              // stay byte-identical (miss value there is genuine null).
               { op: "local.get", index: L_TJM },
               { op: "ref.is_null" },
               { op: "i32.eqz" },
+              ...((undefinedSingletonActive(ctx) && anyValueTypeIdx >= 0
+                ? [
+                    { op: "local.get", index: L_TJM },
+                    { op: "any.convert_extern" },
+                    { op: "ref.test", typeIdx: anyValueTypeIdx },
+                    { op: "i32.eqz" },
+                    { op: "i32.and" },
+                  ]
+                : []) satisfies Instr[]),
               {
                 op: "if",
                 blockType: { kind: "empty" },

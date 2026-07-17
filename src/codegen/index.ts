@@ -1589,7 +1589,15 @@ interface IrOverlayPlan {
   readonly selection: import("../ir/select.js").IrSelection;
   readonly classShapes: Map<string, import("../ir/nodes.js").IrClassShape>;
   readonly overrideMap: Map<string, { params: IrType[]; returnType: IrType | null }>;
-  readonly safeSelection: { funcs: Set<string>; classMembers?: ReadonlySet<string> };
+  readonly safeSelection: {
+    funcs: Set<string>;
+    classMembers?: ReadonlySet<string>;
+    // (#3142 Slice 2) Claim-feeding module-init assessment, forwarded from
+    // `selection` so `compileIrPathFunctions` can lower + patch the
+    // `__module_init` slot. Cleared alongside funcs under the `new.target`
+    // coarse gate.
+    moduleInit?: import("../ir/select.js").IrModuleInitAssessment;
+  };
   readonly trackFallbacks: boolean;
   readonly declByName: ReadonlyMap<string, ts.FunctionDeclaration>;
 }
@@ -1913,9 +1921,18 @@ function planIrOverlay(ctx: CodegenContext, ast: TypedAST): IrOverlayPlan {
   // typed via the class shape, not the TypeMap-derived overrides);
   // the integration's class-member walk consults `classShapes`
   // directly. Pass the set unmodified.
-  const safeSelection: { funcs: Set<string>; classMembers?: ReadonlySet<string> } = {
+  const safeSelection: {
+    funcs: Set<string>;
+    classMembers?: ReadonlySet<string>;
+    moduleInit?: import("../ir/select.js").IrModuleInitAssessment;
+  } = {
     funcs: new Set<string>([...selection.funcs].filter((n) => overrideMap.has(n))),
     classMembers: selection.classMembers,
+    // (#3142 Slice 2) Forward the module-init claim. A resolve-time drop of
+    // one of the unit's callees is self-limiting: the integration builds
+    // `calleeTypes` from safeSelection.funcs, so a call to a dropped callee
+    // throws at build time and the unit demotes to the legacy body.
+    moduleInit: selection.moduleInit,
   };
   // (#2023) The IR `new C(...)` lowering does not thread the new.target
   // class-id (that machinery lives only on the legacy path). When the
@@ -1929,6 +1946,8 @@ function planIrOverlay(ctx: CodegenContext, ast: TypedAST): IrOverlayPlan {
   if (ctx.usesNewTarget) {
     safeSelection.funcs.clear();
     safeSelection.classMembers = new Set();
+    // (#3142 Slice 2) The module-init unit routes through legacy too.
+    safeSelection.moduleInit = undefined;
   }
   return { selection, classShapes, overrideMap, safeSelection, trackFallbacks, declByName };
 }

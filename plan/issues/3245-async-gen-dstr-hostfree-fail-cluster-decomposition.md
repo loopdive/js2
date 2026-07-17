@@ -1,7 +1,9 @@
 ---
 id: 3245
 title: "async-gen dstr host-free-FAIL cluster: root decomposition + error-path mirage + runner warm/cold artifact"
-status: ready
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/fable-s2
 sprint: current
 priority: medium
 feasibility: hard
@@ -29,13 +31,13 @@ host-free fails; classified by TRUE root (each verified by instrumenting the
 actual wrapped source + cold isolated repros — the per-assert line labels are
 unreliable, see Artifact A):
 
-| Root | ~files | Owner / disposition |
-| --- | --- | --- |
-| **any-boxed reference-element read** (#3244) | bulk | **#3244** (dominant gate) |
-| **any-strict-eq object identity** (`notSameValue`) | ~30 | opus-genproto3 (ref.eq object `===`, extends #2734) |
-| error-path throws (ReferenceError / TypeError) | ~29 | **MIRAGE — see below** |
-| `__array_from_iter_n` over-pull / IteratorClose | small | this issue (genuine, isolation-resistant) |
-| object-rest `{...rest}` exclusion | ~9 | this issue (verify vs #3244) |
+| Root                                               | ~files | Owner / disposition                                 |
+| -------------------------------------------------- | ------ | --------------------------------------------------- |
+| **any-boxed reference-element read** (#3244)       | bulk   | **#3244** (dominant gate)                           |
+| **any-strict-eq object identity** (`notSameValue`) | ~30    | opus-genproto3 (ref.eq object `===`, extends #2734) |
+| error-path throws (ReferenceError / TypeError)     | ~29    | **MIRAGE — see below**                              |
+| `__array_from_iter_n` over-pull / IteratorClose    | small  | this issue (genuine, isolation-resistant)           |
+| object-rest `{...rest}` exclusion                  | ~9     | this issue (verify vs #3244)                        |
 
 ## The error-path "root #2" is a MIRAGE (29 files)
 
@@ -67,7 +69,7 @@ into #3244; no independent error-machinery bug here.**
    iterator (`ary-init-iter-close.js`) traps "requested new array is too large
    in `__array_from_iter_n`" instead of pulling 1 + IteratorClose (`return()`).
    NOTE: the simplified local `const [x,y] = iter` and a plain-param `f([x])`
-   over an *incrementing* infinite iterator both work cold — this repro is
+   over an _incrementing_ infinite iterator both work cold — this repro is
    **isolation-resistant** (only the async-gen frame + the specific
    `{value:null,done:false}` iterator triggers it). Needs in-frame diagnosis.
 2. **object-rest `{a, b, ...rest}`** — `assert.sameValue(rest.a, undefined)`
@@ -107,3 +109,33 @@ genproto3 (any-eq). The residuals above are minor levers. Recommend landing
 `/workspace/.claude/worktrees/*/.tmp/`: `referr.mts`, `cold.mts`,
 `statebleed.mts`, `bitmask3.mts`, `iterpull.mts`, `parampull.mts`,
 `classify.mts`.
+
+## Post-#3244 cold re-measure (2026-07-17, fable-s2) — CLOSING
+
+#3244 is `done` on main. Cold isolated per-file re-runs (one process per
+file, `--target standalone`) of every residual this issue owned:
+
+| File                                                                   | Pre (#3245 filing) | Now                                  |
+| ---------------------------------------------------------------------- | ------------------ | ------------------------------------ |
+| `ary-init-iter-close.js` (residual 1: `__array_from_iter_n` over-pull) | trap               | **pass**                             |
+| `obj-ptrn-rest-val-obj.js` (residual 2: rest exclusion)                | fail               | **pass**                             |
+| `obj-ptrn-prop-obj-init.js` (#3244-rooted control)                     | fail cold          | **pass**                             |
+| `dflt-obj-ptrn-rest-val-obj.js`                                        | fail               | **still fails** (`rest.a` assert #1) |
+
+Both owned residuals collapsed with #3244's landing except the `dflt-`
+variant — and reduction shows that one is NOT a rest bug at all: the
+whole-pattern param **default OBJECT LITERAL never binds on standalone**
+(`function f({a,b}: any = {a:5,b:3}); f()` — even `a === 5` is false; the
+module-var default, host lane, and passed-arg variants all work). Filed as
+**#3333** with the full differential and a 6-line repro; that issue now owns
+the `dflt-*` dstr template family on the standalone lane.
+
+Artifact B (warm/cold order-dependence of the in-process runner) is at least
+partially addressed by #3318 (PR #3181): `restoreHostBuiltins()` at
+`runTest262File` entry removes cross-test REALM pollution, one confirmed
+order-dependence mechanism (it manufactured phantom compile_errors). If a
+non-pollution warm/cold flip is still observed after #3318 lands, measure it
+fresh — do not reopen this tracker.
+
+Disposition: analysis complete; all roots either landed (#3244), collapsed
+(error-path mirage), or precisely re-filed (#3333). Closing.

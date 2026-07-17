@@ -5694,6 +5694,18 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   const hasIdxFn = findFn("__extern_has_idx");
   if (!lenFn && !getIdxFn && !hasIdxFn) return;
   const unboxNumIdx = ctx.funcMap.get("__unbox_number");
+  // (#3317) OBJECT-valued `length` fields (`{1:true, length:{toString(){…}}}`,
+  // the test262 `-3-19/-3-20/-3-21/-3-22` indexOf/lastIndexOf family plus
+  // includes/return-abrupt-tonumber-length) run the observable §7.1.20
+  // ToLength(ToNumber(ToPrimitive(v, number))) walk: `__to_primitive` (its
+  // number hint = null-extern hint) dispatches the field's own valueOf →
+  // toString via the #2638 class driver — including the both-return-objects
+  // TypeError and abrupt-throw propagation — then the primitive converts via
+  // `__str_to_number` (string) / `__unbox_number` (number/boolean/null).
+  // All three helpers must exist for the arm to be minted; otherwise the
+  // ref-typed length field keeps today's not-a-candidate behaviour (length 0).
+  const toPrimIdx = ctx.funcMap.get("__to_primitive");
+  const typeofStringIdx = ctx.funcMap.get("__typeof_string");
   // (#3169) `length: "2"` (the test262 `-3-*` "length is a string containing a
   // number" family) stores a STRING-ref length field; ToLength applies ToNumber
   // first (§7.1.20 → §7.1.4), which is exactly the native `__str_to_number`
@@ -5741,7 +5753,13 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
         (f.type.kind === "f64" ||
           f.type.kind === "i32" ||
           f.type.kind === "externref" ||
-          (strToNumIdx !== undefined && isStringRefType(f.type))),
+          (strToNumIdx !== undefined && isStringRefType(f.type)) ||
+          // (#3317) object-valued length — ToNumber(ToPrimitive(v, number)).
+          (toPrimIdx !== undefined &&
+            typeofStringIdx !== undefined &&
+            unboxNumIdx !== undefined &&
+            (f.type.kind === "ref" || f.type.kind === "ref_null") &&
+            !isStringRefType(f.type))),
     );
     if (lengthFieldIdx < 0) continue;
     const numericFields: ArrayLikeCand["numericFields"] = [];
@@ -5773,12 +5791,54 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   // ── __extern_length arms (locals: 1=any, 2=lenF64, 3=lenTrunc) ──
   if (lenFn && hasPreamble(lenFn)) {
     const arms: Instr[] = [];
+    let lenPrimLocalAdded = false; // (#3317) L_PRIM scratch appended at most once
     for (const cand of cands) {
       // Read the length field as f64: i32 converts (a boolean-branded field
       // reads 1/0 — ToLength(ToNumber(true)) = 1); externref (an `any`-typed
       // `length` slot) unboxes via __unbox_number (NaN for non-numbers → the
       // clamp answers 0, matching ToLength(ToNumber) for the common cases);
       // a string ref (`length: "2"`) runs the §7.1.4 StringToNumber scanner.
+      // (#3317) object-ref length: ToNumber(ToPrimitive(v, hint number)). The
+      // hint is `ref.null.extern` — `__to_primitive`'s isStringHint treats a
+      // null hint as number/default (valueOf → toString), exactly §23.1.3's
+      // ToLength entry. The primitive result lands in the appended scratch
+      // local L_PRIM (index 4): a string reduces via `__str_to_number`
+      // (§7.1.4.1), everything else via `__unbox_number` (number/boolean/
+      // null → NaN handled by the shared clamp below). Abrupt completions
+      // (throwing valueOf/toString, both-objects TypeError) propagate as Wasm
+      // throws out of `__extern_length` to the borrow caller.
+      const L_PRIM = 4;
+      const isObjectRefLength =
+        (cand.lengthFieldType.kind === "ref" || cand.lengthFieldType.kind === "ref_null") &&
+        !isStringRefType(cand.lengthFieldType);
+      const objectRefRead: Instr[] =
+        toPrimIdx !== undefined && typeofStringIdx !== undefined && unboxNumIdx !== undefined
+          ? [
+              { op: "extern.convert_any" },
+              { op: "ref.null.extern" }, // hint: number/default
+              { op: "call", funcIdx: toPrimIdx },
+              { op: "local.tee", index: L_PRIM },
+              { op: "call", funcIdx: typeofStringIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "f64" } },
+                then:
+                  strToNumIdx !== undefined
+                    ? [
+                        { op: "local.get", index: L_PRIM },
+                        { op: "call", funcIdx: strToNumIdx },
+                      ]
+                    : [
+                        { op: "local.get", index: L_PRIM },
+                        { op: "call", funcIdx: unboxNumIdx },
+                      ],
+                else: [
+                  { op: "local.get", index: L_PRIM },
+                  { op: "call", funcIdx: unboxNumIdx },
+                ],
+              },
+            ]
+          : [{ op: "drop" }, { op: "f64.const", value: 0 }];
       const readAsF64: Instr[] =
         cand.lengthFieldType.kind === "i32"
           ? [{ op: "f64.convert_i32_s" }]
@@ -5788,7 +5848,16 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
               : [{ op: "drop" }, { op: "f64.const", value: 0 }]
             : isStringRefType(cand.lengthFieldType) && strToNumIdx !== undefined
               ? [{ op: "extern.convert_any" }, { op: "call", funcIdx: strToNumIdx }]
-              : [];
+              : isObjectRefLength
+                ? objectRefRead
+                : [];
+      if (isObjectRefLength && !lenPrimLocalAdded) {
+        // Scratch externref local for the ToPrimitive result — appended once.
+        // Registered locals are [any, lenF64, lenTrunc] after the single
+        // externref param, so the new local's index is 4 (= L_PRIM).
+        lenFn.locals.push({ name: "primExt", type: { kind: "externref" } });
+        lenPrimLocalAdded = true;
+      }
       arms.push(
         { op: "local.get", index: 1 },
         { op: "ref.test", typeIdx: cand.typeIdx },

@@ -1,0 +1,128 @@
+# #3008 — Root-test-suite (tests/*.test.ts) post-merge regression detector.
+#
+# The ~2,100 per-issue/feature test files at the tests/ root are the project's
+# regression memory, but no CI job ran them — four silent main-regressions of
+# this class were found on 2026-07-16 alone (#1284 ambient-shadow extern-class
+# break, JSON.stringify 3/9, #3307 accessor-merge casts, #3316 tagged-template
+# CEs). The full suite is ~9 CPU-hours single-fork — far too slow to gate
+# every PR — so the wiring is two-layered (decision recorded in
+# plan/issues/3008-issue-tests-not-in-required-ci.md):
+#
+#   1. THIS workflow: post-merge (push:main, burst-deduped) + 6-hourly cron +
+#      manual dispatch. Sharded single-fork run of the whole root suite,
+#      gated against a known-failures baseline stored in
+#      loopdive/js2wasm-baselines (workflows cannot push to main — GH013).
+#      Only NEW failures fail the run (the pre-existing rot backlog, ~40% of
+#      files sampled, is baselined and tracked for triage); newly-fixed tests
+#      auto-ratchet the baseline down. A regression goes red on main within
+#      one run instead of silently rotting.
+#   2. Per-PR (ci.yml `quality`): the tests/*.test.ts files a PR adds or
+#      modifies must pass — a test cannot be born broken, and new files are
+#      automatically inside this workflow's glob (no wiring step to forget).
+#
+# Concurrency: latest-wins, no per-SHA groups — unlike promote-baseline this
+# is a cumulative detector (the newest run covers all earlier merges), so
+# collapsing a merge burst to one run is correct and caps runner usage.
+name: issue-tests
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: issue-tests-main
+  cancel-in-progress: false
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # max-parallel keeps runners free for PR-critical jobs (test262 shards,
+      # quality); the detector's latency is not on any merge's critical path.
+      max-parallel: 6
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 25
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Run root-suite shard ${{ matrix.shard }}/12
+        env:
+          SHARD: ${{ matrix.shard }}/12
+          PARTIAL_OUT: issue-tests-partial-${{ matrix.shard }}.json
+        run: node scripts/issue-tests-gate.mjs
+      - name: Upload partial result
+        uses: actions/upload-artifact@v6
+        with:
+          name: issue-tests-partial-${{ matrix.shard }}
+          path: issue-tests-partial-${{ matrix.shard }}.json
+          retention-days: 3
+
+  gate:
+    needs: shard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 25
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Download shard partials
+        uses: actions/download-artifact@v7
+        with:
+          pattern: issue-tests-partial-*
+          path: issue-tests-partials
+          merge-multiple: true
+      - name: Fetch baseline from js2wasm-baselines
+        env:
+          BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
+        run: |
+          eval "$(ssh-agent -s)"
+          echo "$BASELINE_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git clone --depth=1 git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+      - name: Gate against baseline (bootstrap + auto-ratchet)
+        env:
+          MERGE_PARTIALS_DIR: issue-tests-partials
+          ISSUE_TESTS_BASELINE: /tmp/js2wasm-baselines/issue-tests-baseline.json
+          ALLOW_BOOTSTRAP: "1"
+        run: node scripts/issue-tests-gate.mjs --update-on-decrease
+      - name: Push ratcheted baseline back
+        # Runs even when the gate failed (new regressions) — a newly-fixed
+        # test's ratchet-down should still bank, and a bootstrap must persist.
+        if: always()
+        env:
+          BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
+        run: |
+          cd /tmp/js2wasm-baselines
+          git add issue-tests-baseline.json 2>/dev/null || exit 0
+          if git diff --cached --quiet; then
+            echo "Baseline unchanged."
+            exit 0
+          fi
+          eval "$(ssh-agent -s)"
+          echo "$BASELINE_DEPLOY_KEY" | ssh-add -
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(#3008): issue-tests baseline refresh (main@${{ github.sha }})"
+          # Latest-wins retry against concurrent baseline pushes.
+          for i in 1 2 3; do
+            git push && exit 0
+            git pull --rebase || { git rebase --abort 2>/dev/null; git fetch origin main; git reset --hard origin/main; git add issue-tests-baseline.json; git commit -m "chore(#3008): issue-tests baseline refresh (main@${{ github.sha }})"; }
+          done
+          git push

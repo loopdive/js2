@@ -25,12 +25,16 @@ loc-budget-allow:
   - src/codegen/type-coercion.ts
   - src/codegen/any-helpers.ts
   - src/codegen/string-ops.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/value-tags.ts
+  - src/codegen/expressions/misc.ts
 # S3's declared-union equality routing needs SYMBOL resolution (declared vs
 # narrowed type) — explicitly outside the oracle's v1 scope (#1930 D3). The
 # predicate body lives in src/checker/type-mapper.ts; the single ctx.checker
 # occurrence below is the argument at the call site.
 oracle-ratchet-allow:
   - src/codegen/binary-ops.ts
+  - src/codegen/expressions/identifiers.ts
 files:
   src/codegen/index.ts:
     new:
@@ -350,3 +354,25 @@ main re-verified after the changes.
 **S4 (unchanged scope)** — params/returns + boundaries (rows: union PARAM at
 call boundary Wasm validation error; union RETURN wrong result; union → `any`
 assignment wrong result).
+
+## S4 landed (2026-07-16, fable-gamma successor) — params/returns/any-boundary
+
+The last three gap-table rows now pass with the flag ON (all 10 probe rows
+green). Three flag-gated fixes:
+
+1. **identifiers** read-site narrowing unbox: an `$AnyValue` union local/param
+   narrowed to a single kind at the use site unboxes AT THE READ (number →
+   `__any_to_f64`, string → the S3-fixed externval coercion, boolean →
+   `__any_unbox_bool` with the i32 boolean brand). Oracle-classified
+   (`typeFactOf`); declared-union-gated so fast-lane `any` locals keep their
+   read path. Fixes the union-PARAM invalid `struct.get` and the union→any
+   boundary rows (the boundary boxes the concrete rep honestly).
+2. **value-tags** `boxToAny`: boolean-branded i32 boxes tag-4 under the flag
+   (kind-keyed dispatch produced tag-2).
+3. **misc** ternary join: a mixed-kind conditional whose own type-fact is a
+   heterogeneous primitive union joins on `ref_null $AnyValue` with per-arm
+   static boxing (honest tags) instead of the externref join + legacy #1888
+   tag-5 re-box that made a returned number `typeof`-report as string.
+
+Remaining #745 ladder: S5 (default-lane flip, HARD-GATED on #2141) and S6
+(endgame import retirement). The flag itself stays opt-in until S5.

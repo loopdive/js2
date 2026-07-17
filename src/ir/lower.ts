@@ -44,7 +44,8 @@
 // historically declared now live in `backend/handles.js` and are re-exported
 // below for backwards compatibility.
 import type { BackendEmitter } from "./backend/emitter.js";
-import { verifyIrBackendLegality } from "./backend/legality.js";
+import type { TypeConverter } from "./backend/contract.js";
+import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
 import type {
   IrBoxedLowering,
   IrClassLowering,
@@ -291,21 +292,58 @@ export interface IrLowerResult {
 }
 
 /**
- * #1584 (a0-tail): the backend-agnostic lowering result. `lowerIrFunctionBody`
- * is generic over the emitter sink `S`; it returns the lowered body in that
- * sink plus the backend-independent function metadata (`typeIdx`, `locals`,
- * `name`, `exported`). The WasmGC wrapper (`lowerIrFunctionToWasm`, `S =
- * Instr[]`) assembles the concrete `WasmFunction` from this; a bytecode driver
- * consumes `body: BytecodeSink` directly. The `typeIdx`, `locals`, `name`, and
- * `exported` fields are identical regardless of `S` — only `body` changes
- * representation, which is exactly the #1715 sink-is-the-one-seam finding.
+ * One named logical value in backend slot form. A backend may represent one
+ * IR value with more than one slot; the grouping is retained here so the
+ * generic result never has to manufacture a Wasm local index or `ValType`.
  */
-export interface IrLoweredBody<S> {
+export interface IrLoweredValue<Slot> {
+  readonly name: string;
+  readonly slots: readonly Slot[];
+}
+
+/**
+ * #1584/#3296: backend-neutral function-lowering result. The sink and value
+ * slot types are independent generic parameters. Function type interning and
+ * concrete local numbering belong to the backend wrapper/assembler, not this
+ * result; consequently there is no mandatory Wasm `typeIdx`, `LocalDef`, or
+ * `Instr[]` anywhere in the shape.
+ */
+export interface IrLoweredBody<S, Slot> {
   readonly name: string;
   readonly body: S;
-  readonly locals: LocalDef[];
-  readonly typeIdx: number;
+  readonly params: readonly IrLoweredValue<Slot>[];
+  readonly locals: readonly IrLoweredValue<Slot>[];
+  readonly results: readonly (readonly Slot[])[];
   readonly exported: boolean;
+}
+
+/**
+ * Wasm-shaped type conversion lives at the Wasm adapter edge. Linear-Wasm
+ * also uses this converter today because its scalar slots are Wasm ValTypes;
+ * non-Wasm consumers pass their own `TypeConverter` to the generic lowerer.
+ */
+export function wasmValueTypeConverter(
+  backend: IrBackendKind,
+  resolver: IrLowerResolver,
+  funcName: string,
+): TypeConverter<ValType> {
+  return {
+    backend,
+    convertType: (type: IrType): readonly ValType[] => [lowerIrTypeToValType(type, resolver, funcName)],
+  };
+}
+
+function flattenWasmValues(values: readonly IrLoweredValue<ValType>[]): LocalDef[] {
+  return values.flatMap((value) =>
+    value.slots.map((type, slot) => ({
+      name: slot === 0 ? value.name : `${value.name}$${slot}`,
+      type,
+    })),
+  );
+}
+
+function flattenSlots<Slot>(values: readonly (readonly Slot[])[]): Slot[] {
+  return values.flatMap((slots) => [...slots]);
 }
 
 /**
@@ -323,12 +361,19 @@ export function lowerIrFunctionToWasm(
   // #1714/#1715 pass an explicit emitter selected by compile target.
   emitter: BackendEmitter = new WasmGcEmitter(),
 ): IrLowerResult {
-  const lowered = lowerIrFunctionBody<Instr[]>(func, resolver, emitter);
+  const lowered = lowerIrFunctionBody(
+    func,
+    resolver,
+    emitter,
+    wasmValueTypeConverter(emitter.backend, resolver, func.name),
+  );
+  const params = flattenWasmValues(lowered.params).map((param) => param.type);
+  const results = flattenSlots(lowered.results);
   return {
     func: {
       name: lowered.name,
-      typeIdx: lowered.typeIdx,
-      locals: lowered.locals,
+      typeIdx: resolver.internFuncType({ kind: "func", params, results }),
+      locals: flattenWasmValues(lowered.locals),
       body: lowered.body,
       exported: lowered.exported,
     },
@@ -347,14 +392,20 @@ export function lowerIrFunctionToWasm(
  * WasmGC-only: on a non-`Instr[]` sink they throw the not-yet-migrated boundary
  * loudly. Each migrates behind a typed trait primitive in §2a (a1..a6).
  */
-export function lowerIrFunctionBody<S>(
+export function lowerIrFunctionBody<S, Slot>(
   func: IrFunction,
   resolver: IrLowerResolver,
-  // #1713: the active backend. Defaults to WasmGcEmitter (S = Instr[]) so every
-  // existing caller is unchanged and Phase 1 stays zero-delta. #1584 passes an
-  // explicit emitter (e.g. BytecodeEmitter) selected by compile target.
-  emitter: BackendEmitter<S> = new WasmGcEmitter() as unknown as BackendEmitter<S>,
-): IrLoweredBody<S> {
+  // #1713: the active backend emitter and #3296 TypeConverter are separate
+  // contract parts. Keeping both explicit prevents a non-Wasm caller from
+  // inheriting the old WasmGC metadata default accidentally.
+  emitter: BackendEmitter<S>,
+  typeConverter: TypeConverter<Slot>,
+): IrLoweredBody<S, Slot> {
+  if (typeConverter.backend !== emitter.backend) {
+    throw new Error(
+      `ir/lower: backend contract mismatch for ${func.name}: emitter=${emitter.backend}, type-converter=${typeConverter.backend}`,
+    );
+  }
   const legalityErrors = verifyIrBackendLegality(func, emitter.backend);
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
@@ -687,10 +738,15 @@ export function lowerIrFunctionBody<S>(
 
   // --- local allocation ---------------------------------------------------
   // Stable order: scan blocks then instrs. Every `needsLocal` value gets one
-  // Wasm local slot, placed after the function's parameter slots. The slot's
-  // Wasm type is the lowered ValType of the IR resultType (wrap unions /
-  // boxed types as refs to the corresponding WasmGC struct).
-  const locals: LocalDef[] = [];
+  // internal emission slot, placed after the function's parameter slots.
+  // Keep both its current Wasm-facing ValType and its logical IrType: the
+  // former still drives the existing index-based emitters, while the latter
+  // is what TypeConverter must see when assembling backend-neutral metadata.
+  // Reconstructing an IrType from a ValType would erase facts such as unsigned
+  // i32/i64, making a materialized Porffor local disagree with the same value
+  // when carried as a parameter or result.
+  type InternalLocalDef = LocalDef & { readonly logicalType: IrType };
+  const locals: InternalLocalDef[] = [];
   const localIdx = new Map<IrValueId, number>();
   // Slice 6 (#1169e): walk into `forof.vec` body buffers so SSA values
   // defined inside a body get Wasm locals allocated alongside the
@@ -705,6 +761,7 @@ export function lowerIrFunctionBody<S>(
       locals.push({
         name: `$ir${instr.result}`,
         type: lowerIrTypeToValType(instr.resultType, resolver, func.name),
+        logicalType: instr.resultType,
       });
       localIdx.set(instr.result, idx);
     }
@@ -759,7 +816,7 @@ export function lowerIrFunctionBody<S>(
   const slotBase = func.params.length + locals.length;
   const slotDefs = func.slots ?? [];
   for (const slot of slotDefs) {
-    locals.push({ name: `$slot_${slot.name}`, type: slot.type });
+    locals.push({ name: `$slot_${slot.name}`, type: slot.type, logicalType: { kind: "val", val: slot.type } });
   }
   const slotWasmIdx = (slotIndex: number): number => slotBase + slotIndex;
 
@@ -793,25 +850,29 @@ export function lowerIrFunctionBody<S>(
     const existing = vecNewFixedDataScratch.get(arrayTypeIdx);
     if (existing !== undefined) return existing;
     const idx = func.params.length + locals.length;
-    locals.push({ name: `$vec_data_${arrayTypeIdx}`, type: { kind: "ref_null", typeIdx: arrayTypeIdx } });
+    const type: ValType = { kind: "ref_null", typeIdx: arrayTypeIdx };
+    locals.push({ name: `$vec_data_${arrayTypeIdx}`, type, logicalType: { kind: "val", val: type } });
     vecNewFixedDataScratch.set(arrayTypeIdx, idx);
     return idx;
   };
   const ensureJsBitwiseScratch = (rhsIsI32: boolean): { rhs: number; tmp: number } => {
     if (jsBitwiseTmpIdx === null) {
       jsBitwiseTmpIdx = func.params.length + locals.length;
-      locals.push({ name: "$js_bitwise_tmp", type: { kind: "f64" } });
+      const type: ValType = { kind: "f64" };
+      locals.push({ name: "$js_bitwise_tmp", type, logicalType: { kind: "val", val: type } });
     }
     if (rhsIsI32) {
       if (jsBitwiseRhsIdxI32 === null) {
         jsBitwiseRhsIdxI32 = func.params.length + locals.length;
-        locals.push({ name: "$js_bitwise_rhs_i32", type: { kind: "i32" } });
+        const type: ValType = { kind: "i32" };
+        locals.push({ name: "$js_bitwise_rhs_i32", type, logicalType: { kind: "val", val: type } });
       }
       return { rhs: jsBitwiseRhsIdxI32, tmp: jsBitwiseTmpIdx };
     }
     if (jsBitwiseRhsIdxF64 === null) {
       jsBitwiseRhsIdxF64 = func.params.length + locals.length;
-      locals.push({ name: "$js_bitwise_rhs", type: { kind: "f64" } });
+      const type: ValType = { kind: "f64" };
+      locals.push({ name: "$js_bitwise_rhs", type, logicalType: { kind: "val", val: type } });
     }
     return { rhs: jsBitwiseRhsIdxF64, tmp: jsBitwiseTmpIdx };
   };
@@ -824,7 +885,7 @@ export function lowerIrFunctionBody<S>(
   const ensureDynTagScratch = (carrier: ValType): number => {
     if (dynTagScratchIdx === null) {
       dynTagScratchIdx = func.params.length + locals.length;
-      locals.push({ name: "$dyn_tag_scratch", type: carrier });
+      locals.push({ name: "$dyn_tag_scratch", type: carrier, logicalType: { kind: "val", val: carrier } });
     }
     return dynTagScratchIdx;
   };
@@ -836,7 +897,8 @@ export function lowerIrFunctionBody<S>(
   const ensureInstanceofTagScratch = (): number => {
     if (instanceofTagScratchIdx === null) {
       instanceofTagScratchIdx = func.params.length + locals.length;
-      locals.push({ name: "$instanceof_tag_scratch", type: { kind: "i32" } });
+      const type: ValType = { kind: "i32" };
+      locals.push({ name: "$instanceof_tag_scratch", type, logicalType: { kind: "val", val: type } });
     }
     return instanceofTagScratchIdx;
   };
@@ -1887,18 +1949,12 @@ export function lowerIrFunctionBody<S>(
       }
       // Slice 6 (#1169e): slot / vec / for-of ops.
       case "slot.read": {
-        emitter.pushRaw(out, {
-          op: "local.get",
-          index: slotWasmIdx(instr.slotIndex),
-        });
+        emitter.emitLocalGet(slotWasmIdx(instr.slotIndex), out);
         return;
       }
       case "slot.write": {
         emitValue(instr.value, out);
-        emitter.pushRaw(out, {
-          op: "local.set",
-          index: slotWasmIdx(instr.slotIndex),
-        });
+        emitter.emitLocalSet(slotWasmIdx(instr.slotIndex), out);
         return;
       }
       case "vec.len": {
@@ -2705,31 +2761,27 @@ export function lowerIrFunctionBody<S>(
       // are emitted in place).
       case "while.loop":
       case "for.loop": {
-        // #1584 (a0-tail): out-of-subset (embeds an Instr[] loop body). S = Instr[].
-        const wasmOut = requireInstrSink(out);
-        const loopBody: Instr[] = [];
+        // #3297: generic structured-control-flow path. Nested buffers stay in
+        // the backend's own sink type; no raw Instr[] or Wasm-only eqz push is
+        // required for scalar loops.
+        const loopBody: S = emitter.newSink();
 
         // Helper: emit a body buffer (cond / body / update) into a
-        // target ops array using the standard SSA materialisation
-        // rules (mirrors the `forof.*` body emission). `target` is a local
-        // Instr[] sub-buffer; the arm asserted S = Instr[] so the cast to S
-        // on the recursive emit is sound (#1584 §2a).
-        const emitBodyBuffer = (bodyInstrs: readonly IrInstr[], target: Instr[]): void => {
+        // backend sink using the standard SSA materialisation rules (mirrors
+        // the `forof.*` body emission).
+        const emitBodyBuffer = (bodyInstrs: readonly IrInstr[], target: S): void => {
           for (const bodyInstr of bodyInstrs) {
             if (bodyInstr.result === null) {
-              emitInstrTree(bodyInstr, target as unknown as S);
+              emitInstrTree(bodyInstr, target);
             } else if (crossBlock.has(bodyInstr.result)) {
-              emitInstrTree(bodyInstr, target as unknown as S);
-              target.push({
-                op: "local.set",
-                index: localIdx.get(bodyInstr.result)!,
-              });
+              emitInstrTree(bodyInstr, target);
+              emitter.emitLocalSet(localIdx.get(bodyInstr.result)!, target);
               materialized.add(bodyInstr.result);
             } else if ((totalUses.get(bodyInstr.result) ?? 0) === 0 && isSideEffecting(bodyInstr)) {
               // (#2856) Zero-use side-effecting instr — eager emit + drop,
               // same contract as `emitBlockBody` (see the if-arm variant).
-              emitInstrTree(bodyInstr, target as unknown as S);
-              emitter.emitDrop(target as unknown as S);
+              emitInstrTree(bodyInstr, target);
+              emitter.emitDrop(target);
             }
             // Intra-block multi-use: handled at use site via tee pattern.
           }
@@ -2759,11 +2811,11 @@ export function lowerIrFunctionBody<S>(
         ctrlStack.push(preTestWhile && label !== undefined ? { kind: "continue", label } : { kind: "plain" });
         const emitLoopBodyStatements = (): void => {
           if (needsContinueBlock) {
-            const bodyOps: Instr[] = [];
+            const bodyOps: S = emitter.newSink();
             ctrlStack.push({ kind: "continue", label: label! });
             emitBodyBuffer(instr.body, bodyOps);
             ctrlStack.pop();
-            emitter.emitBlock({ kind: "empty" }, bodyOps as unknown as S, loopBody as unknown as S);
+            emitter.emitBlock({ kind: "empty" }, bodyOps, loopBody);
           } else {
             emitBodyBuffer(instr.body, loopBody);
           }
@@ -2776,9 +2828,9 @@ export function lowerIrFunctionBody<S>(
           // 2. Cond instructions (re-evaluated each iteration, after body).
           emitBodyBuffer(instr.cond, loopBody);
           // 3. Push the cond value, invert (i32.eqz), then br_if 1 to exit.
-          emitValue(instr.condValue, loopBody as unknown as S);
-          loopBody.push({ op: "i32.eqz" });
-          emitter.emitBrIf(1, loopBody as unknown as S);
+          emitValue(instr.condValue, loopBody);
+          emitter.emitUnary("i32.eqz", loopBody);
+          emitter.emitBrIf(1, loopBody);
         } else {
           // Pre-test (`while` / `for`): cond first, exit before running body.
           // 1. Cond instructions (re-evaluated each iteration).
@@ -2786,9 +2838,9 @@ export function lowerIrFunctionBody<S>(
 
           // 2. Push the cond value, invert (i32.eqz), then br_if 1 to exit.
           //    #1584 (a3): the control-flow ops route through the trait.
-          emitValue(instr.condValue, loopBody as unknown as S);
-          loopBody.push({ op: "i32.eqz" });
-          emitter.emitBrIf(1, loopBody as unknown as S);
+          emitValue(instr.condValue, loopBody);
+          emitter.emitUnary("i32.eqz", loopBody);
+          emitter.emitBrIf(1, loopBody);
 
           // 3. Body instructions (for `for`, continue falls to the update).
           emitLoopBodyStatements();
@@ -2800,14 +2852,14 @@ export function lowerIrFunctionBody<S>(
         }
 
         // 5. Continue back to the loop header.
-        emitter.emitBr(0, loopBody as unknown as S);
+        emitter.emitBr(0, loopBody);
         ctrlStack.pop(); // loop frame
         ctrlStack.pop(); // break frame
 
         // 6. Wrap in `block { loop { ... } }` via the trait (#1584 a3).
-        const loopWrap: Instr[] = [];
-        emitter.emitLoop({ kind: "empty" }, loopBody as unknown as S, loopWrap as unknown as S);
-        emitter.emitBlock({ kind: "empty" }, loopWrap as unknown as S, wasmOut as unknown as S);
+        const loopWrap: S = emitter.newSink();
+        emitter.emitLoop({ kind: "empty" }, loopBody, loopWrap);
+        emitter.emitBlock({ kind: "empty" }, loopWrap, out);
         return;
       }
       // (#1373b Phase C Slice 1) Async / await IR node lowering.
@@ -2909,7 +2961,8 @@ export function lowerIrFunctionBody<S>(
           awaitScratchPromiseIdx = func.params.length + locals.length;
           locals.push({
             name: "$await_promise",
-            type: { kind: "ref", typeIdx: promiseTypeIdx } as ValType,
+            type: { kind: "ref", typeIdx: promiseTypeIdx },
+            logicalType: { kind: "val", val: { kind: "ref", typeIdx: promiseTypeIdx } },
           });
         }
         wasmOut.push({ op: "local.tee", index: awaitScratchPromiseIdx });
@@ -3100,19 +3153,26 @@ export function lowerIrFunctionBody<S>(
     }
   }
 
-  const paramTypes: ValType[] = func.params.map((p) => lowerIrTypeToValType(p.type, resolver, func.name));
-  const resultTypes: ValType[] = func.resultTypes.map((t) => lowerIrTypeToValType(t, resolver, func.name));
-  const typeIdx = resolver.internFuncType({
-    kind: "func",
-    params: paramTypes,
-    results: resultTypes,
-  });
+  const convertSlots = (type: IrType, where: string): readonly Slot[] => {
+    const slots = typeConverter.convertType(type);
+    if (slots.length === 0) {
+      throw new Error(`ir/lower: ${emitter.backend} type converter produced no slots for ${where} in ${func.name}`);
+    }
+    return [...slots];
+  };
 
   return {
     name: func.name,
     body,
-    locals,
-    typeIdx,
+    params: func.params.map((param) => ({
+      name: param.name,
+      slots: convertSlots(param.type, `param ${param.name}`),
+    })),
+    locals: locals.map((local) => ({
+      name: local.name,
+      slots: convertSlots(local.logicalType, `local ${local.name}`),
+    })),
+    results: func.resultTypes.map((type, index) => convertSlots(type, `result ${index}`)),
     exported: func.exported,
   };
 }

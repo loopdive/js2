@@ -103,9 +103,17 @@ export interface IrExternClassMeta {
  * yet at Phase-1 build time — into the from-ast layer.
  *
  * Phase-1 callable methods only:
- *   - `nativeStrings()` — backend mode discriminator
  *   - `resolveString()` — `IrType.string` ValType (extern vs native struct ref)
  *   - `resolveVec(valType)` — vec struct shape recovery
+ *
+ * (#2955) The raw `nativeStrings()` mode discriminator is deliberately NOT
+ * on this interface anymore: every former from-ast mode read is now a
+ * narrow resolver-owned capability/rep/strategy query (`stringIsExternref`,
+ * `hasHostNumberBox`, `hasHostNumberToString`, `stringMethodPlan`,
+ * `stringForOfPlan`). Keeping the raw discriminator off the front-end
+ * surface makes a new representation-polymorphic IR-build branch a compile
+ * error instead of a drift channel. (`IrLowerResolver` still carries it —
+ * the lower side legitimately owns mode knowledge.)
  *
  * Slice 10 (#1169i) adds:
  *   - `getExternClassInfo(name)` — extern-class metadata for slice-10
@@ -119,7 +127,6 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver {
-  nativeStrings?(): boolean;
   resolveString?(): ValType;
   /**
    * (#2955 number-box slice) Capability predicate: does this compile's lane
@@ -135,6 +142,63 @@ export interface IrFromAstResolver {
    * standalone `$AnyValue` boxing) is a semantic follow-up tracked in #2955.
    */
   hasHostNumberBox?(): boolean;
+  /**
+   * (#2955 slice 3) Rep predicate: is `IrType.string`'s carrier ValType
+   * externref (the host-strings backend), so a string SSA value can flow
+   * unchanged into an externref-expected position (host-call args,
+   * `__extern_is_undefined` operands)? The two from-ast string-rep arms
+   * (`coerceToExpectedExtern` string→externref pass-through,
+   * `tryLowerUndefinedCompare` externref-shaped test) previously read
+   * `nativeStrings` directly for this — a mode read the #2955 grep gate
+   * wants out of the front-end. The mode knowledge now lives on the
+   * resolver/lower side (`integration.ts`); from-ast only asks the rep
+   * question and demotes (or takes the native fold path) when the answer
+   * is no. The answer MUST stay a build-time answer: the native arm of
+   * `coerceToExpectedExtern` is a demote throw (claim/demote decisions
+   * have no lower-time channel — same constraint as `stringMethodPlan` /
+   * `hasHostNumberBox`). Implementation is intentionally
+   * `!ctx.nativeStrings` today (byte-inert relocation); a native string
+   * (`(ref $AnyString)`) can NEVER satisfy an externref host-arg position,
+   * so unlike the number-box capability there is no widening follow-up on
+   * the coercion arm — only the undefined-test's fold could ever move to a
+   * true abstract op (tracked in #2955's remaining-slices map).
+   */
+  stringIsExternref?(): boolean;
+  /**
+   * (#2955 slice 4) Capability predicate: does this compile's lane own the
+   * `number_toString` `(f64) -> externref` host import (pre-registered by
+   * the legacy source scan whenever a checker-number `.toString()` appears
+   * in source)? The from-ast `<number>.toString()` arm previously read
+   * `nativeStrings?.() === false` as a PROXY for this — the import is
+   * host-lane-only AND its return is host-mode's string carrier
+   * (externref), so the mode read was doing capability duty. Same shape as
+   * `hasHostNumberBox`: the answer MUST stay a build-time answer (the
+   * native arm is a demote — no lower-time demote channel), the
+   * implementation is intentionally `!ctx.nativeStrings` today (byte-inert
+   * relocation), and widening (a native number formatter whose return is
+   * the `(ref $AnyString)` carrier) is a semantic follow-up tracked in
+   * #2955's remaining-slices map, to be validated against the standalone
+   * floor.
+   */
+  hasHostNumberToString?(): boolean;
+  /**
+   * (#2955 slice 5) Strategy query: how does this mode iterate a
+   * `string`-typed for-of iterable? `"char-loop"` = the native fast path
+   * (counter loop over `__str_charAt`, slice 6 part 4 — #1183);
+   * `"iter-host"` = the host-iterator protocol (`__iterator` import; the
+   * host-mode string is already externref-shaped so it feeds the import
+   * unchanged). `lowerForOfStatement` previously read `nativeStrings()`
+   * directly for this — the LAST functional mode read in from-ast; both
+   * loop builders stay here, only the selection is resolver-owned (same
+   * shape as `stringMethodPlan`: the selection must be settled at build
+   * time since the two strategies build structurally different IR).
+   * Resolver-absent default: `iter-host` (preserving the legacy falsy
+   * fallthrough). Implementations: integration =
+   * `nativeStrings ? "char-loop" : "iter-host"`; the selfhost
+   * native-strings build resolver pins `"char-loop"`; linear omits it
+   * (iter-host fallthrough, as before).
+   */
+  stringForOfPlan?(): "char-loop" | "iter-host";
   resolveVec?(valType: ValType): IrVecLowering | null;
   /**
    * #1804 — register-or-recover the vec struct for an element ValType so
@@ -395,6 +459,46 @@ export interface AstToIrOptions {
    * unset, which is inert at lowering (byte-identical output).
    */
   readonly allocRegistry?: AllocSiteRegistry;
+  /**
+   * (#3142 Slice 2) The function being lowered is the synthetic
+   * `<module-init>` claim unit (the top-level statement population wrapped
+   * by `makeModuleInitSynthetic`). Mirrors the constructor-body precedent:
+   * every statement lowers as a plain body statement via `lowerStmt` (no
+   * tail requirement) and the builder terminates with an empty `return`.
+   * Requires `returnTypeOverride: null` (the unit is void) and a
+   * `moduleBindings` map for the top-level declared names.
+   */
+  readonly moduleInitUnit?: boolean;
+  /**
+   * (#3142 Slice 2) Module-scope bindings → the Wasm global the legacy
+   * backend allocated for each (`__mod_<name>`, plus the `__tdz_<name>`
+   * flag when legacy tracks one). A top-level `let`/`const` declaration
+   * for a name in this map lowers as a symbolic `global.set` against that
+   * SAME storage slot (and binds in scope as a `moduleGlobal`
+   * ScopeBinding), so every other function — legacy or IR — observes the
+   * initialized value exactly as it does with the legacy `__module_init`
+   * body. Slice 2 restricts entries to f64/i32-backed globals (the
+   * integration layer builds the map and throws → demotes for anything
+   * else).
+   */
+  readonly moduleBindings?: ReadonlyMap<string, ModuleBindingGlobal>;
+}
+
+/**
+ * (#3142 Slice 2) One module-scope binding's legacy storage description.
+ * Built by the integration layer from `ctx.moduleGlobals` / `ctx.mod.globals`.
+ */
+export interface ModuleBindingGlobal {
+  /** The Wasm global's symbolic name (`__mod_<name>`), resolvable by the
+   *  lowerer's `resolveGlobal`. */
+  readonly globalName: string;
+  /** The `__tdz_<name>` flag global when legacy tracks a TDZ flag for this
+   *  binding, else null. The declaration lowering mirrors legacy
+   *  `emitTdzInit`: after the value write, set the flag to 1. */
+  readonly tdzGlobalName: string | null;
+  /** The binding's IrType — derived from (and Wasm-identical to) the
+   *  global's ValType. Slice 2: f64 or i32 only. */
+  readonly type: IrType;
 }
 
 /**
@@ -596,6 +700,7 @@ export function lowerFunctionAstToIr(
     generatorBufferSlot,
     checker: options.checker,
     allocRegistry: options.allocRegistry,
+    moduleBindings: options.moduleInitUnit ? options.moduleBindings : undefined,
   };
   // #1372 — emit destructuring preamble for binding-pattern params. Each
   // leaf becomes a `local` ScopeBinding via `lowerBindingPattern`; the
@@ -605,6 +710,50 @@ export function lowerFunctionAstToIr(
   // so the body sees the leaves in scope from statement #0.
   for (const { pattern, value } of pendingDestructures) {
     lowerBindingPattern(pattern, value, cx);
+  }
+
+  // (#3142 Slice 2) `<module-init>` unit — constructor-body precedent: every
+  // population statement is a plain body statement (`lowerStmt`, the same
+  // dispatcher the selector's `isPhase1BodyStatement` mirrors), no tail
+  // requirement, implicit empty return. Top-level declarations bind through
+  // `cx.moduleBindings` (see `lowerVarDecl`) so the legacy `__mod_<name>`
+  // globals receive the initialized values.
+  if (options.moduleInitUnit) {
+    if (returnType !== null) {
+      throw new Error(`ir/from-ast: module-init unit must be void (${name})`);
+    }
+    // `var` gate: a `var` anywhere in the unit (including for-init /
+    // nested blocks, where the lowering below would bind it as a
+    // loop-local slot) is FUNCTION-scoped on the legacy path — it hoists
+    // to a module global other functions can observe. Slice 2 does not
+    // model that; demote the whole unit. `var`s inside nested
+    // function-likes are local to those functions and stay fine.
+    const findVarDecl = (node: ts.Node): boolean => {
+      if (
+        ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node)
+      ) {
+        return false;
+      }
+      if (ts.isVariableDeclarationList(node) && (node.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+        return true;
+      }
+      return ts.forEachChild(node, findVarDecl) === true;
+    };
+    for (const s of stmts) {
+      if (findVarDecl(s)) {
+        throw new Error(`ir/from-ast: module-init unit contains a var declaration — not in Slice 2 scope (${name})`);
+      }
+    }
+    for (const s of stmts) {
+      lowerStmt(s, cx);
+      // A top-level break/continue can't appear (no enclosing loop — the
+      // selector rejects it), so no dead-code guard is needed.
+    }
+    builder.terminate({ kind: "return", values: [] });
+    return { main: builder.finish(), lifted };
   }
 
   if (isCtor) {
@@ -1057,6 +1206,18 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
 type ScopeBinding =
   | { kind: "local"; value: IrValueId; type: IrType }
   | {
+      /**
+       * (#3142 Slice 2) A module-scope binding inside the `<module-init>`
+       * unit. Reads emit a symbolic `global.get` and writes a symbolic
+       * `global.set` against the legacy-allocated `__mod_<name>` global, so
+       * the IR-lowered init body and every other function (legacy or IR)
+       * share the exact same storage. Slice 2 restricts `type` to f64/i32.
+       */
+      kind: "moduleGlobal";
+      globalName: string;
+      type: IrType;
+    }
+  | {
       kind: "nestedFunc";
       liftedName: string;
       signature: IrClosureSignature;
@@ -1201,6 +1362,15 @@ interface LowerCtx {
    * `earlyReturnBarrierDepth` so accepted shapes always lower.
    */
   readonly noEarlyReturn?: boolean;
+  /**
+   * (#3142 Slice 2) Module-scope binding storage map — present only when
+   * lowering the `<module-init>` unit. `lowerVarDecl` consults it: a
+   * declared name with an entry binds as a `moduleGlobal` ScopeBinding
+   * (symbolic global.set) instead of a local/slot. Names WITHOUT an entry
+   * (loop-scoped `let i` in a for-init, block-scoped inner lets) keep the
+   * ordinary local/slot lowering.
+   */
+  readonly moduleBindings?: ReadonlyMap<string, ModuleBindingGlobal>;
 }
 
 /**
@@ -1275,6 +1445,28 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
       if (!d.initializer) {
         throw new Error(`ir/from-ast: binding pattern requires an initializer (${cx.funcName})`);
       }
+      // (#3142 Slice 2) Top-level destructuring in the module-init unit:
+      // the leaves are module globals on the legacy path, but the pattern
+      // lowerer binds them as plain locals — demote instead of splitting
+      // the storage.
+      if (cx.moduleBindings) {
+        const leafIsModuleBinding = (pattern: ts.BindingPattern): boolean => {
+          for (const element of pattern.elements) {
+            if (ts.isOmittedExpression(element)) continue;
+            if (ts.isIdentifier(element.name)) {
+              if (cx.moduleBindings!.has(element.name.text)) return true;
+            } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
+              if (leafIsModuleBinding(element.name)) return true;
+            }
+          }
+          return false;
+        };
+        if (leafIsModuleBinding(d.name)) {
+          throw new Error(
+            `ir/from-ast: module-level destructuring declaration not in module-init Slice 2 scope (${cx.funcName})`,
+          );
+        }
+      }
       // Hint: pass an externref so the initializer's actual IrType (object,
       // class, vec ref, etc.) flows through unchanged. The pattern lowerer
       // dispatches on the inferred IrType.
@@ -1291,6 +1483,17 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     }
     if (!d.initializer) {
       throw new Error(`ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`);
+    }
+    // (#3142 Slice 2) A module-scope binding initialized with a
+    // function-like value: the legacy path stores its closure where other
+    // functions can reach it (closureMap / the `__mod_<name>` global), and
+    // the IR closure binding below would keep it purely local to the init
+    // body — the observable storage would never be written. Demote.
+    const moduleBinding = cx.moduleBindings?.get(name);
+    if (moduleBinding && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
+      throw new Error(
+        `ir/from-ast: module-level closure binding '${name}' not in module-init Slice 2 scope (${cx.funcName})`,
+      );
     }
     // Slice 3 (#1169c): closure-literal initializer. Lifted to a
     // top-level IR function and bound in scope as an IrType.closure
@@ -1332,7 +1535,10 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
         },
       );
     }
-    const hint: IrType = annotated ?? irVal({ kind: "f64" });
+    // (#3142 Slice 2) A module binding's hint is its GLOBAL's type — the
+    // storage slot is fixed by the legacy allocation, so the initializer
+    // must land on exactly that representation (checked below).
+    const hint: IrType = annotated ?? moduleBinding?.type ?? irVal({ kind: "f64" });
     const value = lowerExpr(d.initializer, cx, hint);
     const inferred = cx.builder.typeOf(value);
     if (annotated) {
@@ -1370,6 +1576,28 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
           `number representation is unsound (the ${boundKind} Wasm kind conflates number / boolean / ` +
           `any); demote to the SAFE boxed legacy lowering in ${cx.funcName} (#2782/#2790)`,
       );
+    }
+    // (#3142 Slice 2) Module-scope binding: write the legacy-allocated
+    // `__mod_<name>` global (symbolic ref — the lowerer's `resolveGlobal`
+    // maps it to the concrete index) and bind as `moduleGlobal` so body
+    // reads/writes route through global.get/set. Mutation needs no slot —
+    // the global IS the mutable storage. Mirrors legacy `emitTdzInit`: when
+    // a TDZ flag global exists for the name, set it to 1 AFTER the value
+    // write so cross-function TDZ checks observe initialization.
+    if (moduleBinding) {
+      if (!irTypeEquals(inferred, moduleBinding.type)) {
+        throw new Error(
+          `ir/from-ast: module binding '${name}' initializer is ${describeIrType(inferred)} but its global is ` +
+            `${describeIrType(moduleBinding.type)} in ${cx.funcName}`,
+        );
+      }
+      cx.builder.emitGlobalSet({ kind: "global", name: moduleBinding.globalName }, value);
+      if (moduleBinding.tdzGlobalName) {
+        const one = cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
+        cx.builder.emitGlobalSet({ kind: "global", name: moduleBinding.tdzGlobalName }, one);
+      }
+      cx.scope.set(name, { kind: "moduleGlobal", globalName: moduleBinding.globalName, type: moduleBinding.type });
+      continue;
     }
     // Slice 6 part 2 (#1181): mutable `let` bindings whose name is
     // reassigned anywhere in the function body bind as a `slot`
@@ -1813,6 +2041,11 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
         return cx.builder.emitSlotReadAs(p.slotIndex, p.asType);
       }
       return cx.builder.emitSlotRead(p.slotIndex);
+    }
+    // (#3142 Slice 2) Module-scope binding inside the `<module-init>` unit:
+    // reads come from the legacy-allocated global (symbolic ref).
+    if (p.kind === "moduleGlobal") {
+      return cx.builder.emitGlobalGet({ kind: "global", name: p.globalName }, p.type);
     }
     if (p.kind !== "local") {
       // Slice 3 (#1169c): nestedFunc bindings are name-only — they have
@@ -3364,12 +3597,18 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
   if (got && got.kind === expected.kind) {
     return value;
   }
-  // String → externref: in host-strings mode, IrType.string is already
-  // externref; the verifier sees the SSA type as `string` but the Wasm
-  // valtype is externref so the host call accepts it transparently.
-  // We keep the SSA type as-is and rely on the lowerer's ValType
-  // resolution.
-  if (expected.kind === "externref" && t.kind === "string" && !cx.resolver?.nativeStrings?.()) {
+  // String → externref: when the string carrier IS externref (host-strings
+  // mode), the verifier sees the SSA type as `string` but the Wasm valtype
+  // is externref so the host call accepts it transparently. We keep the
+  // SSA type as-is and rely on the lowerer's ValType resolution. When the
+  // carrier is the native `(ref $AnyString)` struct, a string can never
+  // satisfy an externref host-arg position → fall through to the demote
+  // throw. (#2955 slice 3: the rep question is resolver-owned —
+  // `stringIsExternref` — so from-ast reads no `nativeStrings` here. The
+  // `!== false` polarity deliberately preserves the legacy resolver-absent
+  // default of this site's old `!cx.resolver?.nativeStrings?.()` read:
+  // no resolver → host-shaped → pass-through.)
+  if (expected.kind === "externref" && t.kind === "string" && cx.resolver?.stringIsExternref?.() !== false) {
     return value;
   }
   // extern → externref: extern values are externref-shaped.
@@ -3578,18 +3817,22 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   // (#2856) `<number>.toString()` (no radix) on an f64 receiver → the
   // `number_toString` `(f64) -> externref` host import, pre-registered by the
   // legacy source scan whenever a checker-number `.toString()` appears in
-  // source (src/codegen/index.ts ~9100). Host-strings mode only: the import
-  // returns a HOST string (externref), which is exactly `IrType.string`'s
+  // source (src/codegen/index.ts ~9100). The import is host-lane-only and
+  // its return is a HOST string (externref), which is exactly `IrType.string`'s
   // carrier there — so the result composes with the string `+` proof arms
-  // (`"n=" + i.toString()`). Native-strings mode has a `(ref $AnyString)`
-  // carrier and demotes here (native number formatting is a follow-up arm);
+  // (`"n=" + i.toString()`). (#2955 slice 4: that availability question is
+  // resolver-owned — `hasHostNumberToString` — so from-ast reads no
+  // `nativeStrings` here. The `=== true` polarity preserves the legacy
+  // resolver-absent default of this site's old `nativeStrings?.() === false`
+  // read: no resolver → demote.) Lanes without the import (native strings:
+  // `(ref $AnyString)` carrier, no native number formatter yet) demote here;
   // radix args likewise demote.
   if (
     methodName === "toString" &&
     expr.arguments.length === 0 &&
     recvType.kind === "val" &&
     recvType.val.kind === "f64" &&
-    cx.resolver?.nativeStrings?.() === false
+    cx.resolver?.hasHostNumberToString?.() === true
   ) {
     const r = cx.builder.emitCall({ kind: "func", name: "number_toString" }, [recv], { kind: "string" });
     if (r === null) {
@@ -4448,12 +4691,15 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
   //                                    shape; if it isn't a vec, lowering
   //                                    throws and the function falls back
   //                                    to legacy.
-  //   - `string` (native mode)      → string fast path (slice 6 part 4 — #1183).
-  //                                    Counter loop with `__str_charAt`.
-  //   - `string` (host mode)         → fall through to iter-host. The
-  //                                    string IR value is already
-  //                                    externref-backed in host mode, so
-  //                                    no coercion is needed.
+  //   - `string`                     → per the resolver's `stringForOfPlan`
+  //                                    (#2955 slice 5): `"char-loop"` =
+  //                                    string fast path (slice 6 part 4 —
+  //                                    #1183), counter loop with
+  //                                    `__str_charAt`; `"iter-host"` (or no
+  //                                    resolver) = fall through to
+  //                                    iter-host — the host-mode string IR
+  //                                    value is already externref-backed,
+  //                                    so no coercion is needed.
   //   - `(val) externref`           → iter-host (slice 6 part 3 — #1182).
   //   - `class` / `object`           → iter-host (with extern.convert_any
   //                                    coercion).
@@ -4464,16 +4710,18 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
     return;
   }
   if (iterableT.kind === "string") {
-    if (cx.resolver?.nativeStrings?.()) {
+    // (#2955 slice 5) The strategy selection is resolver-owned; from-ast
+    // reads no `nativeStrings` here. Resolver-absent → iter-host, preserving
+    // the legacy falsy fallthrough of the old `nativeStrings?.()` read.
+    if (cx.resolver?.stringForOfPlan?.() === "char-loop") {
       lowerForOfString(stmt, cx, iterableV, loopVarName);
       return;
     }
-    // Host-strings mode: fall through to iter-host. The string's
-    // underlying ValType is already externref, so no coercion is
-    // needed — the iter-host arm passes `iterableV` straight to
-    // `__iterator`. We bind the loop variable as externref (host
-    // strings only have host-side string semantics; the iter-host
-    // element is opaque externref by design).
+    // Iter-host strategy: the string's underlying ValType is already
+    // externref, so no coercion is needed — the iter-host arm passes
+    // `iterableV` straight to `__iterator`. We bind the loop variable as
+    // externref (host strings only have host-side string semantics; the
+    // iter-host element is opaque externref by design).
     lowerForOfIterFromExternrefValue(stmt, cx, iterableV, loopVarName, /* alreadyExternref */ true);
     return;
   }
@@ -5287,6 +5535,18 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   if (!binding) {
     throw new Error(`ir/from-ast: assignment to undeclared identifier "${id.text}" in ${cx.funcName}`);
   }
+  // (#3142 Slice 2) Module-scope binding — write the legacy global.
+  if (binding.kind === "moduleGlobal") {
+    const newValue = lowerExpr(rhs, cx, binding.type);
+    const newType = cx.builder.typeOf(newValue);
+    if (!irTypeEquals(newType, binding.type)) {
+      throw new Error(
+        `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(binding.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
+      );
+    }
+    cx.builder.emitGlobalSet({ kind: "global", name: binding.globalName }, newValue);
+    return;
+  }
   if (binding.kind !== "slot") {
     throw new Error(
       `ir/from-ast: assignment to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
@@ -5321,7 +5581,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   if (!binding) {
     throw new Error(`ir/from-ast: compound assign to undeclared identifier "${id.text}" in ${cx.funcName}`);
   }
-  if (binding.kind !== "slot") {
+  if (binding.kind !== "slot" && binding.kind !== "moduleGlobal") {
     throw new Error(
       `ir/from-ast: compound assign to non-slot binding "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
     );
@@ -5333,8 +5593,12 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     );
   }
 
-  // Desugar: read the slot, lower the RHS, apply the binop, write back.
-  const lhs = cx.builder.emitSlotRead(binding.slotIndex);
+  // Desugar: read the slot (or, #3142, the module-binding global), lower the
+  // RHS, apply the binop, write back.
+  const lhs =
+    binding.kind === "moduleGlobal"
+      ? cx.builder.emitGlobalGet({ kind: "global", name: binding.globalName }, binding.type)
+      : cx.builder.emitSlotRead(binding.slotIndex);
   const rhsValue = lowerExpr(rhs, cx, binding.type);
   const rhsType = cx.builder.typeOf(rhsValue);
   if (asVal(rhsType)?.kind !== "f64") {
@@ -5359,6 +5623,10 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
       throw new Error(`ir/from-ast: unsupported compound assign op ${ts.SyntaxKind[compoundOp]} in ${cx.funcName}`);
   }
   const result = cx.builder.emitBinary(binop, lhs, rhsValue, irVal({ kind: "f64" }));
+  if (binding.kind === "moduleGlobal") {
+    cx.builder.emitGlobalSet({ kind: "global", name: binding.globalName }, result);
+    return;
+  }
   cx.builder.emitSlotWrite(binding.slotIndex, result);
 }
 
@@ -5376,7 +5644,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   if (!binding) {
     throw new Error(`ir/from-ast: increment/decrement of undeclared "${id.text}" in ${cx.funcName}`);
   }
-  if (binding.kind !== "slot") {
+  if (binding.kind !== "slot" && binding.kind !== "moduleGlobal") {
     throw new Error(
       `ir/from-ast: increment/decrement of non-slot "${id.text}" — mutation pre-pass should have detected it (${cx.funcName})`,
     );
@@ -5391,12 +5659,19 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
       `ir/from-ast: increment/decrement of non-f64 slot "${id.text}" (${describeIrType(binding.type)}) not in slice 12 (${cx.funcName})`,
     );
   }
-  const lhs = cx.builder.emitSlotRead(binding.slotIndex);
+  const lhs =
+    binding.kind === "moduleGlobal"
+      ? cx.builder.emitGlobalGet({ kind: "global", name: binding.globalName }, binding.type)
+      : cx.builder.emitSlotRead(binding.slotIndex);
   const isAdd = op === ts.SyntaxKind.PlusPlusToken;
   const oneIr: IrType = irVal({ kind: "f64" });
   const one = cx.builder.emitConst({ kind: "f64", value: 1 }, oneIr);
   const binop: IrBinop = isAdd ? "f64.add" : "f64.sub";
   const result = cx.builder.emitBinary(binop, lhs, one, oneIr);
+  if (binding.kind === "moduleGlobal") {
+    cx.builder.emitGlobalSet({ kind: "global", name: binding.globalName }, result);
+    return;
+  }
   cx.builder.emitSlotWrite(binding.slotIndex, result);
 }
 
@@ -6339,10 +6614,15 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     return isStrictNeq ? cx.builder.emitUnary("i32.eqz", flag, irVal({ kind: "i32" })) : flag;
   }
   const tv = asVal(t);
+  // (#2955 slice 3) The string arm asks the resolver-owned rep predicate
+  // (`stringIsExternref`) instead of reading `nativeStrings` directly. The
+  // `=== true` polarity deliberately preserves the legacy resolver-absent
+  // default of this site's old `nativeStrings?.() === false` read: no
+  // resolver → NOT externref-shaped → fall to the fold path / demote.
   const externrefShaped =
     (tv !== null && tv.kind === "externref") ||
     t.kind === "extern" ||
-    (t.kind === "string" && cx.resolver?.nativeStrings?.() === false);
+    (t.kind === "string" && cx.resolver?.stringIsExternref?.() === true);
   if (externrefShaped) {
     const flag = cx.builder.emitCall({ kind: "func", name: "__extern_is_undefined" }, [v], irVal({ kind: "i32" }));
     if (flag === null) {

@@ -620,7 +620,7 @@ export function resolveStructName(ctx: CodegenContext, tsType: ts.Type): string 
  * `growableObjectLiteralVars` (not all externref vars) to keep the #2837 change
  * from perturbing unrelated accessor/Proxy member dispatch.
  */
-function chainRootIsGrowable(ctx: CodegenContext, expr: ts.Expression): boolean {
+export function chainRootIsGrowable(ctx: CodegenContext, expr: ts.Expression): boolean {
   let e: ts.Expression = expr;
   for (;;) {
     while (
@@ -2587,6 +2587,75 @@ export function taViewReceiverTypeIdx(
   return undefined;
 }
 
+/**
+ * (#2992 S6, standalone) Dynamic member READ off a growable-object-literal
+ * receiver (a non-empty pure-data literal var poisoned by the S6 delete /
+ * accessor-define pre-pass in object-shape-widening.ts). The receiver is an
+ * externref `$Object`, but the CHECKER still types `o.a` with the literal's
+ * static prop type — so the default read coerces the native `__extern_get`
+ * result to f64 (`__unbox_number`), turning a tombstoned/undefined read into
+ * NaN, and the `!== undefined` comparison arm then const-folds on the number
+ * type (the exact #2179 gc-lane bug, which is `!ctx.standalone`-gated). Return
+ * the RAW externref instead — real `undefined` stays observable, `typeof`
+ * stays dynamic, and numeric consumers coerce through the normal any→f64
+ * path. Reserved accessors and callable props keep their dedicated lowerings
+ * (mirrors tryEmitDeleteAwareDynamicGet's gates).
+ */
+function tryStandaloneGrowableDynamicGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+): ValType | null | undefined {
+  if (!ctx.standalone) return undefined;
+  if (!chainRootIsGrowable(ctx, expr.expression)) return undefined;
+  if (
+    propName === "length" ||
+    propName === "constructor" ||
+    propName === "__proto__" ||
+    propName === "prototype" ||
+    propName === "name"
+  ) {
+    return undefined;
+  }
+  // Callable props keep their dedicated lowerings. Routed through the oracle
+  // (#1930): `signatureOf` is `undefined` exactly when the checker type has no
+  // call signature — the same gate tryEmitDeleteAwareDynamicGet expresses via
+  // the raw checker's `getCallSignatures().length > 0`.
+  if (ctx.oracle.signatureOf(expr) !== undefined) return undefined;
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  if (getIdx === undefined) return undefined;
+  addStringConstantGlobal(ctx, propName);
+  flushLateImportShifts(ctx, fctx);
+  const recvType = compileExpression(ctx, fctx, expr.expression);
+  if (!recvType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (recvType.kind !== "externref") {
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
+  }
+  // §13.3 member access on null/undefined throws TypeError (keep parity with
+  // the default read path's null guard).
+  const recvTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: recvTmp });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: typeErrorThrowInstrs(ctx, expr),
+    else: [],
+  });
+  fctx.body.push({ op: "local.get", index: recvTmp });
+  releaseTempLocal(fctx, recvTmp);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  return { kind: "externref" };
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2614,6 +2683,11 @@ export function compilePropertyAccess(
   {
     const __r = tryConstructorPrototypeIdentity(ctx, fctx, expr, propName, objType);
     if (__r !== PA_FALLTHROUGH) return __r;
+  }
+
+  {
+    const __r = tryStandaloneGrowableDynamicGet(ctx, fctx, expr, propName);
+    if (__r !== undefined) return __r;
   }
 
   {

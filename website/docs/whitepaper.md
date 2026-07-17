@@ -13,7 +13,7 @@ That position differs from the two dominant alternatives in the space:
 1. compiling or embedding a JavaScript interpreter inside Wasm
 2. narrowing the language into a TypeScript-like subset or replacement dialect
 
-`js²` is aimed at a harder target: **full ECMAScript language compatibility over time, with TypeScript source compatibility on top**, reached through direct compilation rather than runtime emulation or language reduction. The intended endpoint is not a custom JavaScript sub- or superset; it is mainstream JavaScript semantics defined by ECMAScript and validated through public conformance work, with Test262 used as the current measurement baseline [[2]](https://tc39.es/ecma262/) [[3]](https://github.com/tc39/test262). That matters not only for language purity, but for ecosystem fit: broad compatibility with JavaScript is a cornerstone of compatibility with the wider JavaScript ecosystem, including real-world npm packages and existing application code. The project is still in active development, but it already exposes a public playground, public benchmark and compatibility reporting, and a public ECMAScript conformance milestone of **76.5% Test262 compliance** on the JS-host path, with a separately tracked standalone (host-free) path at **53.6%**.
+`js²` is aimed at a harder target: **full ECMAScript language compatibility over time, with TypeScript source compatibility on top**, reached through direct compilation rather than runtime emulation or language reduction. The intended endpoint is not a custom JavaScript sub- or superset; it is mainstream JavaScript semantics defined by ECMAScript and validated through public conformance work, with Test262 used as the current measurement baseline [[2]](https://tc39.es/ecma262/) [[3]](https://github.com/tc39/test262). That matters not only for language purity, but for ecosystem fit: broad compatibility with JavaScript is a cornerstone of compatibility with the wider JavaScript ecosystem, including real-world npm packages and existing application code. The project is still in active development, but it already exposes a public playground, public benchmark and compatibility reporting, and a public ECMAScript conformance milestone of **{{TEST262_PCT}}% Test262 compliance** on the JS-host path, with a separately tracked standalone (host-free) path at **{{STANDALONE_PCT}}%**.
 
 This whitepaper explains the architectural thesis behind the compiler, why WebAssembly GC is the right target, what deployment profile this enables, where the approach fits, and what tradeoffs still remain.
 
@@ -179,11 +179,11 @@ That size tax also matters at the granularity of composition. If the engine is e
 
 The current public standalone Wasmtime benchmark surface is easiest to read as a packaging and runtime comparison. The Wasmtime rows use precompiled Wasmtime artifacts (`wasmtime compile` / `--allow-precompiled`) with runtime JIT compilation disabled. That is intentional: it approximates a serverless deployment shape where code is prepared before the request path, and the measured cost is packaging, instantiation, startup, and execution without on-demand runtime compilation. The benchmark programs are deliberately small, behavior-oriented kernels: iterative numeric looping, recursive calls, array allocation/fill/summation, object allocation and field access churn, and string concatenation plus character-code hashing.
 
-| Deployment pattern | What it represents | Module / runtime size | Cold start | Runtime |
-| --- | --- | ---: | ---: | ---: |
-| Direct `js²` AOT WasmGC | Compiled WasmGC output, no JavaScript engine in the module | **0.34 kB** | **13.7 ms** | **21.7 ms** |
-| Dynamic imported-interpreter module | Small module calling a shared interpreter/runtime plugin | **2.98 kB** per module plus about **1.2 MB** shared runtime/plugin | **24.7 ms** | **272 ms** |
-| Preinitialized and specialized bundled JS engine | Bundled engine with ComponentizeJS/Wizer/weval-style preinitialization and specialization | **14.4 MB** | **24.7 ms** | **297 ms** |
+| Deployment pattern                               | What it represents                                                                        |                                              Module / runtime size |  Cold start |     Runtime |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- | -----------------------------------------------------------------: | ----------: | ----------: |
+| Direct `js²` AOT WasmGC                          | Compiled WasmGC output, no JavaScript engine in the module                                |                                                        **0.34 kB** | **13.7 ms** | **21.7 ms** |
+| Dynamic imported-interpreter module              | Small module calling a shared interpreter/runtime plugin                                  | **2.98 kB** per module plus about **1.2 MB** shared runtime/plugin | **24.7 ms** |  **272 ms** |
+| Preinitialized and specialized bundled JS engine | Bundled engine with ComponentizeJS/Wizer/weval-style preinitialization and specialization |                                                        **14.4 MB** | **24.7 ms** |  **297 ms** |
 
 In the same benchmark set, native JavaScript in Node/V8 with JIT enabled is **12.4 ms** on the runtime metric and **20.8 ms** on cold start. That remains the native runtime baseline to beat on hot execution.
 
@@ -213,8 +213,8 @@ The project tracks ECMAScript compatibility through Test262, the standard confor
 
 Conformance is measured along **two independent paths** (see §5), and both are reported publicly:
 
-- **JS-host path** (default target, host imports allowed): **76.5% Test262 compliance** (32,990 / 43,106 official conformance tests passing in the current public report)
-- **Standalone / host-free path** (pure WasmGC, no JS host): **53.6%** (23,109 / 43,106), measured host-free on the same official denominator
+- **JS-host path** (default target, host imports allowed): **{{TEST262_PCT}}% Test262 compliance** ({{TEST262_PASS}} / {{TEST262_TOTAL}} official conformance tests passing in the current public report, generated {{REPORT_DATE}})
+- **Standalone / host-free path** (pure WasmGC, no JS host): **{{STANDALONE_PCT}}%** ({{STANDALONE_PASS}} / {{TEST262_TOTAL}}), measured host-free on the same official denominator
 
 These are distinct metrics on different targets and are never summed. The JS-host figure is the headline conformance number; the standalone figure is lower today because host-assisted operations are counted as failures unless a Wasm-native implementation exists, and closing that gap is where the current effort concentrates (§5.2, §12.2). Both improve as host fallbacks are replaced with compiled Wasm-native behavior.
 
@@ -279,14 +279,14 @@ The nearest Wasm-GC direct-compilation analogues we track are JAWSM [[22]](https
 
 The architectural difference can be summarized like this:
 
-| Dimension | Interpreter-in-Wasm | Custom sub- or superset | Direct AOT to Wasm GC (`js²`) |
-| --- | --- | --- | --- |
-| Ships a JS engine in the artifact | Yes | No | No |
-| Targets full ECMAScript compatibility over time | Usually inherits engine semantics | Usually no | Yes |
-| Garbage collection model | Engine-owned GC inside the bundled runtime | Usually custom or language-specific | Host-provided WasmGC |
-| Wasm-native deployment profile | Weak | Strong | Strong |
-| Compatibility ceiling | High | Limited by design | High, but reached incrementally |
-| Product risk | large artifacts and runtime overhead | language adoption friction | compiler and conformance complexity |
+| Dimension                                       | Interpreter-in-Wasm                        | Custom sub- or superset             | Direct AOT to Wasm GC (`js²`)       |
+| ----------------------------------------------- | ------------------------------------------ | ----------------------------------- | ----------------------------------- |
+| Ships a JS engine in the artifact               | Yes                                        | No                                  | No                                  |
+| Targets full ECMAScript compatibility over time | Usually inherits engine semantics          | Usually no                          | Yes                                 |
+| Garbage collection model                        | Engine-owned GC inside the bundled runtime | Usually custom or language-specific | Host-provided WasmGC                |
+| Wasm-native deployment profile                  | Weak                                       | Strong                              | Strong                              |
+| Compatibility ceiling                           | High                                       | Limited by design                   | High, but reached incrementally     |
+| Product risk                                    | large artifacts and runtime overhead       | language adoption friction          | compiler and conformance complexity |
 
 `js²` deliberately accepts the last category of risk. It chooses compiler complexity over runtime bulk and over language substitution.
 
@@ -320,7 +320,7 @@ The current tradeoffs are straightforward:
 
 ### 11.1 Conformance is still incomplete
 
-At 76.5% Test262 compliance on the JS-host path — and 53.6% on the standalone, host-free path — the compiler is credible but not complete. There is still significant work to do across language semantics, built-ins, and host-sensitive behaviors, and the standalone gap in particular is a primary focus (§5.2, §12.2).
+At {{TEST262_PCT}}% Test262 compliance on the JS-host path — and {{STANDALONE_PCT}}% on the standalone, host-free path — the compiler is credible but not complete. There is still significant work to do across language semantics, built-ins, and host-sensitive behaviors, and the standalone gap in particular is a primary focus (§5.2, §12.2).
 
 ### 11.2 Wasm GC runtime support is required
 
@@ -376,29 +376,29 @@ The current public milestone is enough to make the direction concrete. The next 
 
 ## 14. References
 
-- **[1]** Andreas Rossberg, Ben L. Titzer, Andreas Haas, Derek L. Schuff, Dan Gohman, Luke Wagner, Alon Zakai, J. F. Bastien, Michael Holman. [*Bringing the Web Up to Speed with WebAssembly*](https://cacm.acm.org/research/bringing-the-web-up-to-speed-with-webassembly/). Communications of the ACM, 2018.
-- **[2]** TC39. [*ECMAScript Language Specification*](https://tc39.es/ecma262/).
-- **[3]** TC39. [*Test262: Official ECMAScript Conformance Test Suite*](https://github.com/tc39/test262).
-- **[4]** WebAssembly Community Group. [*WebAssembly Core Specification*](https://webassembly.github.io/spec/core/).
-- **[5]** WebAssembly Community Group. [*Component Model design and specification*](https://github.com/WebAssembly/component-model/).
-- **[6]** Lucy Menon, Luke Wagner. [*The WebAssembly Component Model*](https://popl25.sigplan.org/details/waw-2025-papers/4/The-WebAssembly-Component-Model). WebAssembly Workshop at POPL, 2025.
-- **[7]** Bytecode Alliance. [*Javy*](https://github.com/bytecodealliance/javy/).
-- **[8]** Bytecode Alliance. [*StarlingMonkey*](https://github.com/bytecodealliance/StarlingMonkey/).
-- **[9]** Bytecode Alliance. [*Wizer*](https://github.com/bytecodealliance/wizer/).
-- **[10]** Chris Fallin, Maxwell Bernstein. [*Partial Evaluation, Whole-Program Compilation*](https://pldi25.sigplan.org/details/pldi-2025-papers/14/Partial-Evaluation-Whole-Program-Compilation). PLDI, 2025.
-- **[11]** Wasmer. [*Edge.js: Running Node apps inside a WebAssembly Sandbox*](https://wasmer.io/posts/edgejs-safe-nodejs-using-wasm-sandbox). 2026.
-- **[12]** Jay Bosamiya, Wen Shih Lim, Bryan Parno. [*Provably-Safe Multilingual Software Sandboxing using WebAssembly*](https://www.usenix.org/conference/usenixsecurity22/presentation/bosamiya). USENIX Security, 2022.
-- **[13]** Daniel Lehmann, Johannes Kinder, Michael Pradel. [*Everything Old is New Again: Binary Security of WebAssembly*](https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann). USENIX Security, 2020.
-- **[14]** Nusrat Zahan, Tom Zimmermann, Patrice Godefroid, Brendan Murphy, Chandra Maddila, Laurie Williams. [*What are Weak Links in the npm Supply Chain?*](https://www.microsoft.com/en-us/research/publication/what-are-weak-links-in-the-npm-supply-chain/). ICSE, 2022.
-- **[15]** Abdullah AlHamdan, Cristian-Alexandru Staicu. [*SandDriller: A Fully-Automated Approach for Testing Language-Based JavaScript Sandboxes*](https://www.usenix.org/system/files/usenixsecurity23-alhamdan_1.pdf). USENIX Security, 2023.
-- **[16]** Joe Gibbs Politz, Spiridon Aristides Eliopoulos, Arjun Guha, Shriram Krishnamurthi. [*ADsafety: Type-Based Verification of JavaScript Sandboxing*](https://www.usenix.org/conference/usenix-security-11/adsafety-type-based-verification-javascript-sandboxing). USENIX Security, 2011.
-- **[17]** Steven Van Acker, Andrei Sabelfeld. [*Javascript sandboxing: Isolating and restricting client-side javascript*](https://research.chalmers.se/en/publication/246300). FOSAD, 2016.
-- **[18]** Feng Xiao, Jianwei Huang, Yichang Xiong, Guangliang Yang, Hong Hu, Guofei Gu, Wenke Lee. [*Abusing Hidden Properties to Attack the Node.js Ecosystem*](https://www.usenix.org/conference/usenixsecurity21/presentation/xiao). USENIX Security, 2021.
-- **[19]** Andreas Haas, Andreas Rossberg, Derek Schuff, Ben L. Titzer, Dan Gohman, Luke Wagner, Alon Zakai, J. F. Bastien, Michael Holman. [*Bringing the Web up to Speed with WebAssembly*](https://pldi17.sigplan.org/details/pldi-2017-papers/48/Bringing-the-Web-up-to-Speed-with-WebAssembly). PLDI, 2017.
-- **[20]** Neil D. Jones. [*An Introduction to Partial Evaluation*](https://cir.nii.ac.jp/crid/1361418520481560832). ACM Computing Surveys, 1996.
-- **[21]** W3C. [*Web-interoperable Runtimes Community Group*](https://www.w3.org/community/wintercg/).
-- **[22]** [*JAWSM: Javascript to WebAssembly compiler*](https://github.com/drogus/jawsm).
-- **[23]** [*Wasmnizer-ts: A TypeScript-to-WebAssembly compiler*](https://github.com/web-devkits/Wasmnizer-ts).
+- **[1]** Andreas Rossberg, Ben L. Titzer, Andreas Haas, Derek L. Schuff, Dan Gohman, Luke Wagner, Alon Zakai, J. F. Bastien, Michael Holman. [_Bringing the Web Up to Speed with WebAssembly_](https://cacm.acm.org/research/bringing-the-web-up-to-speed-with-webassembly/). Communications of the ACM, 2018.
+- **[2]** TC39. [_ECMAScript Language Specification_](https://tc39.es/ecma262/).
+- **[3]** TC39. [_Test262: Official ECMAScript Conformance Test Suite_](https://github.com/tc39/test262).
+- **[4]** WebAssembly Community Group. [_WebAssembly Core Specification_](https://webassembly.github.io/spec/core/).
+- **[5]** WebAssembly Community Group. [_Component Model design and specification_](https://github.com/WebAssembly/component-model/).
+- **[6]** Lucy Menon, Luke Wagner. [_The WebAssembly Component Model_](https://popl25.sigplan.org/details/waw-2025-papers/4/The-WebAssembly-Component-Model). WebAssembly Workshop at POPL, 2025.
+- **[7]** Bytecode Alliance. [_Javy_](https://github.com/bytecodealliance/javy/).
+- **[8]** Bytecode Alliance. [_StarlingMonkey_](https://github.com/bytecodealliance/StarlingMonkey/).
+- **[9]** Bytecode Alliance. [_Wizer_](https://github.com/bytecodealliance/wizer/).
+- **[10]** Chris Fallin, Maxwell Bernstein. [_Partial Evaluation, Whole-Program Compilation_](https://pldi25.sigplan.org/details/pldi-2025-papers/14/Partial-Evaluation-Whole-Program-Compilation). PLDI, 2025.
+- **[11]** Wasmer. [_Edge.js: Running Node apps inside a WebAssembly Sandbox_](https://wasmer.io/posts/edgejs-safe-nodejs-using-wasm-sandbox). 2026.
+- **[12]** Jay Bosamiya, Wen Shih Lim, Bryan Parno. [_Provably-Safe Multilingual Software Sandboxing using WebAssembly_](https://www.usenix.org/conference/usenixsecurity22/presentation/bosamiya). USENIX Security, 2022.
+- **[13]** Daniel Lehmann, Johannes Kinder, Michael Pradel. [_Everything Old is New Again: Binary Security of WebAssembly_](https://www.usenix.org/conference/usenixsecurity20/presentation/lehmann). USENIX Security, 2020.
+- **[14]** Nusrat Zahan, Tom Zimmermann, Patrice Godefroid, Brendan Murphy, Chandra Maddila, Laurie Williams. [_What are Weak Links in the npm Supply Chain?_](https://www.microsoft.com/en-us/research/publication/what-are-weak-links-in-the-npm-supply-chain/). ICSE, 2022.
+- **[15]** Abdullah AlHamdan, Cristian-Alexandru Staicu. [_SandDriller: A Fully-Automated Approach for Testing Language-Based JavaScript Sandboxes_](https://www.usenix.org/system/files/usenixsecurity23-alhamdan_1.pdf). USENIX Security, 2023.
+- **[16]** Joe Gibbs Politz, Spiridon Aristides Eliopoulos, Arjun Guha, Shriram Krishnamurthi. [_ADsafety: Type-Based Verification of JavaScript Sandboxing_](https://www.usenix.org/conference/usenix-security-11/adsafety-type-based-verification-javascript-sandboxing). USENIX Security, 2011.
+- **[17]** Steven Van Acker, Andrei Sabelfeld. [_Javascript sandboxing: Isolating and restricting client-side javascript_](https://research.chalmers.se/en/publication/246300). FOSAD, 2016.
+- **[18]** Feng Xiao, Jianwei Huang, Yichang Xiong, Guangliang Yang, Hong Hu, Guofei Gu, Wenke Lee. [_Abusing Hidden Properties to Attack the Node.js Ecosystem_](https://www.usenix.org/conference/usenixsecurity21/presentation/xiao). USENIX Security, 2021.
+- **[19]** Andreas Haas, Andreas Rossberg, Derek Schuff, Ben L. Titzer, Dan Gohman, Luke Wagner, Alon Zakai, J. F. Bastien, Michael Holman. [_Bringing the Web up to Speed with WebAssembly_](https://pldi17.sigplan.org/details/pldi-2017-papers/48/Bringing-the-Web-up-to-Speed-with-WebAssembly). PLDI, 2017.
+- **[20]** Neil D. Jones. [_An Introduction to Partial Evaluation_](https://cir.nii.ac.jp/crid/1361418520481560832). ACM Computing Surveys, 1996.
+- **[21]** W3C. [_Web-interoperable Runtimes Community Group_](https://www.w3.org/community/wintercg/).
+- **[22]** [_JAWSM: Javascript to WebAssembly compiler_](https://github.com/drogus/jawsm).
+- **[23]** [_Wasmnizer-ts: A TypeScript-to-WebAssembly compiler_](https://github.com/web-devkits/Wasmnizer-ts).
 
 ## Public Surface
 

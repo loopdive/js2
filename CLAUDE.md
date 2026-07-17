@@ -91,7 +91,7 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 - Peephole pass removes redundant `ref.as_non_null` after `ref.cast`
 - Native type annotations: `type i32 = number` → emits i32 locals and i32 arithmetic
 - `nativeStrings` flag decouples WasmGC string arrays from fast mode (auto-enables for WASI)
-- **New codegen needing type info: use `ctx.oracle` (`src/checker/oracle.ts`), not the raw TS checker.** Raw `checker.getTypeAtLocation`/`ctxChecker` calls trip the oracle-ratchet gate (#1930/#3273) — 4+ independent PRs hit this same wall in one session (#3169/#3171/#3176/#3178) before landing, each needing the identical fix (route through `ctx.oracle.signatureOf`/equivalent, or grant `oracle-ratchet-allow:` only when the query genuinely needs raw `ts.Type` identity that the oracle can't express). Check the oracle's existing dispatch before reaching for `checker.*` directly.
+- **New codegen needing type info: use `ctx.oracle` (`src/checker/oracle.ts`), not the raw TS checker.** Raw `checker.getTypeAtLocation`/`ctxChecker` calls trip the oracle-ratchet gate (#1930/#3273) — 5+ independent PRs hit this same wall in one session (#3169/#3171/#3176/#3178/#3188) before landing, each needing the identical fix (route through `ctx.oracle.signatureOf`/equivalent, or grant `oracle-ratchet-allow:` only when the query genuinely needs raw `ts.Type` identity that the oracle can't express — e.g. a wasm-lowering `ValType` question, which is deliberately ABOVE what `ctx.oracle` can answer). Check the oracle's existing dispatch before reaching for `checker.*` directly.
 
 ## Type Coercion (now in `src/codegen/type-coercion.ts`)
 
@@ -408,7 +408,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 3. Update `plan/issues/backlog/backlog.md` if the issue was listed there
 
 <!-- AUTO:conformance-start -->
-**test262 conformance**: 32,504 / 43,106 (75.4 %)
+**test262 conformance**: 32,553 / 43,106 (75.5 %)
 <!-- AUTO:conformance-end -->
 
 ### Sprint History

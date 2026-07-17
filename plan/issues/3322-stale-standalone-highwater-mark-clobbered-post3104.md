@@ -83,6 +83,24 @@ report whose `sha` isn't a descendant of the currently-committed mark's
 by a merge. Not fixed in this issue — flagging for whoever owns #2097/#2879
 next.
 
+**Second confirmed instance, broader scope (2026-07-16, later same day):**
+the same class of scheduled `chore(test262): refresh sharded baseline` bot
+commit (`879cb67ac231b9`) silently reverted an unrelated `CLAUDE.md` doc-line
+edit (a tech-lead-authored note, landed in `89d3bf82`) that happened to sit
+in the gap between the bot's snapshot and its commit — with **no ratchet
+semantics involved at all**, ruling out "it's specific to the #2097
+mechanism" as the root cause. This generalizes the bug: the scheduled job
+appears to check out a snapshot at job start and commit+push at job end
+without re-fetching main's latest state immediately before the commit,
+silently overwriting ANY intervening edit to any file the sync script
+touches (`benchmarks/results/test262-standalone-highwater.json`,
+`CLAUDE.md`, presumably `README.md` and whatever else
+`sync-conformance-numbers.mjs` / the promote-baseline job writes). Re-added
+the CLAUDE.md line by hand after finding this (commit `048f715e`). Worth
+prioritizing the general fix (fetch+rebase immediately before commit, or a
+compare-and-swap on the base sha) over the narrower #2097-specific one
+above, since it's now confirmed to hit more than one file.
+
 ## Acceptance criteria
 
 - Committed mark reflects the true, current, verified standalone host-free

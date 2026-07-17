@@ -15,6 +15,7 @@ import { createContext, runInContext } from "node:vm";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
+import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 
 // #1310: per-shard global isolation for test262.
 //
@@ -4003,6 +4004,17 @@ export async function runTest262File(
   // path rejects any non-empty import manifest, matching the sharded worker.
   target?: "standalone",
 ): Promise<TestResult> {
+  // (#3318) ENTRY restore: the previous in-process run may have executed test
+  // code that poisoned the REAL builtin prototypes (this runner compiles and
+  // runs in the caller's realm). E.g. `Array.prototype[1] = 1` left behind by
+  // lastIndexOf/15.4.4.15-8-a-14.js crashes the NEXT compile inside the TS
+  // checker ("Cannot create property 'declaredType' on number '1'" — its
+  // symbolLinks array read inherits the polluted index). The sharded CI
+  // worker has its own restoreBuiltins; this is the in-process counterpart.
+  // NOTE: the FINAL call still leaves that test's pollution in the process —
+  // callers doing further compiles outside the runner should invoke
+  // restoreHostBuiltins() themselves.
+  restoreHostBuiltins();
   const totalStart = performance.now();
   const relPath = relative(TEST262_ROOT, filePath);
   const source = readFileSync(filePath, "utf-8");

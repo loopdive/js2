@@ -98,7 +98,7 @@ describe("five-part contract surface (#3029-S1)", () => {
   });
 
   it("legalityFor wraps the production legality checker per backend", () => {
-    for (const kind of ["wasmgc", "linear", "bytecode"] as const) {
+    for (const kind of ["wasmgc", "linear", "bytecode", "porffor"] as const) {
       const legality = legalityFor(kind);
       expect(legality.backend).toBe(kind);
       expect(typeof legality.checkFunction).toBe("function");

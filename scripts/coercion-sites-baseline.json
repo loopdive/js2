@@ -43,7 +43,7 @@
   "codegen/object-runtime-descriptors.ts": 2,
   "codegen/object-runtime-enumeration.ts": 6,
   "codegen/object-runtime-proxy.ts": 3,
-  "codegen/object-runtime.ts": 30,
+  "codegen/object-runtime.ts": 31,
   "codegen/parse-number-native.ts": 4,
   "codegen/promise-combinators.ts": 1,
   "codegen/property-access-dispatch.ts": 10,

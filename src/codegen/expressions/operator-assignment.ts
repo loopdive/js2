@@ -1808,6 +1808,72 @@ export function compileCompoundAssignment(
       }
     }
 
+    // (#3328) Native-strings analog of the #795 externref string-concat arm
+    // above. Under nativeStrings a captured string's cell valType is a
+    // `ref/ref_null $AnyString`-family type — NOT externref — so the #795 gate
+    // never fired and `log += 'y'` inside a capturing closure fell to the f64
+    // arithmetic below: the string cell value was coerced string→number,
+    // f64.add'd, and the f64→string writeback coercion has no arm, emitting a
+    // `ref.null` + `ref.as_non_null` placeholder — a GUARANTEED
+    // "dereferencing a null pointer" trap the first time any capturing
+    // toString/valueOf ran (blocked Date/UTC coercion-order.js and every
+    // capturing-ToPrimitive test262 row).
+    if (
+      op === ts.SyntaxKind.PlusEqualsToken &&
+      ctx.nativeStrings &&
+      ctx.anyStrTypeIdx >= 0 &&
+      (boxed.valType.kind === "ref" || boxed.valType.kind === "ref_null") &&
+      ((boxed.valType as { typeIdx: number }).typeIdx === ctx.anyStrTypeIdx ||
+        (boxed.valType as { typeIdx: number }).typeIdx === ctx.nativeStrTypeIdx)
+    ) {
+      // Oracle-routed (#1930 ratchet): fact kind "string" covers String |
+      // StringLiteral; the String wrapper object (`new String("x")`)
+      // classifies as builtin "String" — same coverage as isStringType.
+      const rhsFactN = ctx.oracle.typeFactOf(expr.right);
+      const lhsFactN = ctx.oracle.typeFactOf(expr.left);
+      const rhsIsStringN = rhsFactN.kind === "string" || (rhsFactN.kind === "builtin" && rhsFactN.name === "String");
+      const lhsIsStringN = lhsFactN.kind === "string" || (lhsFactN.kind === "builtin" && lhsFactN.name === "String");
+      const varHasStringAssignN = hasStringAssignment(name, expr) || hasStringAssignmentInParentScopes(name, expr);
+      const concatIdxN = ctx.nativeStrHelpers.get("__str_concat");
+      if (concatIdxN !== undefined && (rhsIsStringN || lhsIsStringN || varHasStringAssignN)) {
+        // Current cell value (ref/ref_null $AnyString) is on the stack from the
+        // null-guarded read above. RHS → non-null ref $AnyString (numbers via
+        // number_toString, booleans via emitBoolToString — the same coercions
+        // the unboxed native-string += uses).
+        const coercedRhs = compileAndCoerceToAnyStr(ctx, fctx, expr.right);
+        if (coercedRhs !== null) {
+          fctx.body.push({ op: "call", funcIdx: concatIdxN });
+          // A concrete $NativeString cell can't hold the ConsString concat
+          // result — flatten first. $AnyString cells store it directly.
+          if (
+            (boxed.valType as { typeIdx: number }).typeIdx === ctx.nativeStrTypeIdx &&
+            ctx.nativeStrTypeIdx !== ctx.anyStrTypeIdx
+          ) {
+            const flattenIdxN = ctx.nativeStrHelpers.get("__str_flatten");
+            if (flattenIdxN !== undefined) fctx.body.push({ op: "call", funcIdx: flattenIdxN });
+          }
+          const tmpStrN = allocLocal(fctx, `__box_cmp_${fctx.locals.length}`, boxed.valType);
+          fctx.body.push({ op: "local.set", index: tmpStrN });
+          fctx.body.push({ op: "local.get", index: localIdx });
+          fctx.body.push({ op: "ref.is_null" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [],
+            else: [
+              { op: "local.get", index: localIdx },
+              { op: "local.get", index: tmpStrN },
+              { op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 },
+            ],
+          });
+          fctx.body.push({ op: "local.get", index: tmpStrN });
+          return boxed.valType;
+        }
+        reportError(ctx, expr, "Failed to compile string += RHS");
+        return null;
+      }
+    }
+
     // The compound-op switch below emits f64 arithmetic, so any non-f64 cell
     // value (and its RHS) must be promoted to f64 first and coerced back on
     // writeback. This includes i32 (#2120): a captured i32 loop var that is

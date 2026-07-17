@@ -181,6 +181,13 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
   }
 
   // ── Wasm-kind-keyed dispatch (historical default, behaviour-preserving) ──
+  // (#745 S4, flag-gated) A BOOLEAN-branded i32 (e.g. the read-site unbox of a
+  // `boolean|string` union local, or a computed predicate) must re-box tag-4,
+  // not tag-2 — `__any_strict_eq`/`typeof` classify tag-2 as number. Gated on
+  // `unionAnyRep` so flag-off boxing stays byte-identical.
+  if (ctx.unionAnyRep && from.kind === "i32" && (from as { boolean?: true }).boolean === true) {
+    return emit("__any_box_bool");
+  }
   if (from.kind === "i32") return emit("__any_box_i32");
   if (from.kind === "f64") return emit("__any_box_f64");
   if (from.kind === "i64") return emit("__any_box_f64", [{ op: "f64.convert_i64_s" }]);

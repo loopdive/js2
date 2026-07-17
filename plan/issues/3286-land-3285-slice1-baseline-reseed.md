@@ -1,7 +1,9 @@
 ---
 id: 3286
 title: "Land #3285 slice-1 (PR #3104) — oracle-version bump alone doesn't clear the #3086 auto-rebase gate for wasm-changing verdict flips"
-status: ready
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/fable-s2
 sprint: current
 created: 2026-07-15
 priority: high
@@ -21,7 +23,7 @@ related: [3285, 3287]
 
 **[[3287]] may make this issue's lever-dance path unnecessary or much
 cheaper.** The ~2664 flips this issue is about are pass→fail because the
-compiler currently throws the *wrong* error type for those tests (#3287's
+compiler currently throws the _wrong_ error type for those tests (#3287's
 subject). If #3287's fixes land on `main` **before** PR #3104's harness
 tightening does, every test #3287 fixed would already throw the correct
 type — so tightening the check produces `pass→pass` (no flip) for those,
@@ -111,7 +113,7 @@ hit three independent gates:
 - `regressionsWasmChange > ORACLE_REBASE_DRIFT_TOLERANCE` (25,
   `diff-test262.ts:1040`) — empirically confirmed: a 100-flip probe at
   oracle 3→4 produced `GATE FAIL: re-baseline residual 100 non-excused
-  wasm-change regressions exceeds drift tolerance 25 (#3086)`, exit 1. The
+wasm-change regressions exceeds drift tolerance 25 (#3086)`, exit 1. The
   real flip count (2664-2668) is far larger.
 - Per-bucket concentration check (>50 in a single bucket — class/dstr 168,
   Temporal prototypes 63-115, object/dstr 84, async-generator/dstr 56).
@@ -172,3 +174,39 @@ it isn't lost, but fixing the gate doesn't unblock this landing.
 - #3285 slices 2 and 3 (`stripUndefinedAssert`, full `strip*` inventory) are
   reassessed against whichever landing mechanism worked here, since they are
   the same shape of change and will hit the same wall.
+
+## Resolution — verified landed (2026-07-17, fable-s2)
+
+**PR #3104 is MERGED** (`fd009846fe`). The landing path was none of options
+A/B/C as originally drafted — it was the **#3303 PR-scoped regressions-allow
+ceiling** (`1bd7943b80`), a mechanism built for exactly this shape: the PR
+declares a ceiling on non-excused wasm-change regressions in its OWN issue
+file's frontmatter (final landing state: ceiling 1450, reviewed floor 23515,
+ctor-name whitelist — `dea01e5dd0`), clearing the drift-tolerance,
+per-bucket, and #1668 gates in one reviewed, self-expiring declaration
+instead of raising global levers.
+
+Acceptance criteria, verified against upstream/main:
+
+1. **Merged + baseline re-seeded** — `benchmarks/results/test262-current.json`
+   on main carries `oracle_version: 6` (v4 = #3285 slice 1; v5 = #3227 S1;
+   v6 = #2961), `baseline_generated_at 2026-07-16T22:18Z`; the last completed
+   push-to-main test262-sharded run (21:33Z) succeeded through
+   promote-baseline.
+2. **No levers left raised** — `ORACLE_REBASE_DRIFT_TOLERANCE` is stock 25,
+   `CATASTROPHIC_REGRESSION_THRESHOLD` is stock 200; the ceiling is PR-scoped
+   (consulted only from issue files IN the PR diff) so nothing to revert.
+   The stale `regressions-allow` leftover in the #3227 issue file was
+   deliberately STRIPPED by the sendev-3165-conflict reconciliation — the
+   follow-up-strips-the-key contract is being honored.
+3. **No spurious auto-parks** — zero `hold`-labeled open PRs; multiple PRs
+   (#3161/v5, #2961/v6, #3165, #3167) merged cleanly after the v4 re-seed.
+4. **Slices 2/3 reassessment** — the landing mechanism for same-shape
+   verdict-tightening changes is now: oracle-version bump + #3303 declared
+   ceiling (measured, PR-scoped) + promote-baseline re-seed. #3285 slices 2
+   (`stripUndefinedAssert`) and 3 (full `strip*` inventory) should declare
+   their own measured ceilings — no lever dance required.
+
+Residual follow-up already tracked elsewhere: the #3003 gate false-negative
+(shim-body verdict changes unflagged) noted in this issue's "Related
+follow-up" — not folded in, per scope.

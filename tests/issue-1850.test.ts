@@ -10,13 +10,14 @@
 //   - single-block functions (the common Phase-1 shape) are unaffected.
 import { describe, expect, it } from "vitest";
 import { formatIrPathFallbackDiagnostic } from "../src/codegen/index.js";
-import { BytecodeEmitter, type BytecodeSink } from "../src/ir/backend/bytecode-emitter.js";
+import { BytecodeEmitter, BytecodeTypeConverter } from "../src/ir/backend/bytecode-emitter.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
 import {
   asBlockId,
   asValueId,
   irVal,
   lowerIrFunctionBody,
+  wasmValueTypeConverter,
   verifyIrFunction,
   verifyIrBackendLegality,
   type IrBlock,
@@ -222,9 +223,9 @@ describe("#1850 — per-backend IR legality and hard verifier fallback", () => {
 
     const errors = verifyIrBackendLegality(fn, "bytecode");
     expect(errors.some((e) => /instr string\.const/.test(e.message))).toBe(true);
-    expect(() => lowerIrFunctionBody<BytecodeSink>(fn, minimalResolver(), new BytecodeEmitter())).toThrow(
-      /bytecode backend legality failed.*string\.const/,
-    );
+    expect(() =>
+      lowerIrFunctionBody(fn, minimalResolver(), new BytecodeEmitter(), new BytecodeTypeConverter()),
+    ).toThrow(/bytecode backend legality failed.*string\.const/);
   });
 
   it("#2954: accepts a core-op (const) whole-function lowering through the linear boundary", () => {
@@ -242,7 +243,10 @@ describe("#1850 — per-backend IR legality and hard verifier fallback", () => {
     };
 
     expect(verifyIrBackendLegality(fn, "linear")).toEqual([]);
-    expect(() => lowerIrFunctionBody(fn, minimalResolver(), new LinearEmitter())).not.toThrow();
+    const resolver = minimalResolver();
+    expect(() =>
+      lowerIrFunctionBody(fn, resolver, new LinearEmitter(), wasmValueTypeConverter("linear", resolver, fn.name)),
+    ).not.toThrow();
   });
 
   it("#2954: still rejects a representation-divergent (object.new) instr on the linear boundary", () => {

@@ -1,9 +1,10 @@
 ---
 id: 2700
 title: "esquery@1.7.0 bundle fails to compile — multi-blocker (PEG parser codegen index-shift + syntax + hard-type errors)"
+horizon: l
 status: ready
 assignee: ""
-sprint: Backlog
+sprint: current
 created: 2026-06-26
 priority: high
 feasibility: hard

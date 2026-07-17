@@ -4314,6 +4314,18 @@ function _readOwnDescriptor(
   prop: string | symbol,
   exports: Record<string, Function> | undefined,
 ): PropertyDescriptor | undefined {
+  // (#3200 slice 2) Delete tombstone FIRST: `delete obj[k]` on a struct
+  // receiver records the key in `_wasmStructDeletedKeys` (#1334) but the
+  // struct FIELD still exists, so the field-name-registry step below would
+  // resurrect the deleted property as an own data descriptor. A deleted key
+  // is not an own property for gOPD, HasProperty, or the array-like index
+  // MOP (the test262 forEach `-7-b-*` "deleted properties are visible"
+  // family deletes mid-iteration through a `length` accessor). Mirrors the
+  // `_wasmStructHasOwn` ordering.
+  {
+    const tomb = _wasmStructDeletedKeys.get(obj);
+    if (tomb && tomb.has(typeof prop === "symbol" ? prop : String(prop))) return undefined;
+  }
   // 0. (#3116) Vec (compiled array) receiver: element and `length` descriptors
   // read LIVE from the vec (values live in the vec, attributes in the sidecar
   // table — see _vecDefineOwnProperty). Previously an in-bounds element with no
@@ -5175,6 +5187,29 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
     }
   };
   const target: any[] = [];
+  // (#3201) Expando sidecar lookup. Compiled writes of non-index properties
+  // onto a vec (`arr.getClass = Object.prototype.toString;` — the Sputnik
+  // classifier idiom, 65+ test262 files across splice/slice/concat) land in
+  // `_wasmStructProps` keyed by the RAW vec struct via `__extern_set*` →
+  // `_safeSet`. The array-backed view must surface them: an own expando
+  // shadows `Array.prototype` per ordinary property lookup order. Values were
+  // callable-wrapped at write time (`_maybeWrapCallableUnknownArity`); a raw
+  // struct value read back is defensively host-wrapped.
+  const sidecarGet = (key: string | symbol): { hit: boolean; value?: any } => {
+    const sc = _wasmStructProps.get(vec);
+    if (!sc || !(key in sc)) return { hit: false };
+    const val = (sc as Record<string | symbol, any>)[key as any];
+    if (val != null && typeof val === "object" && _isWasmStruct(val)) {
+      // A closure struct stored BEFORE setExports (module-init writes run
+      // during instantiation) could not be callable-wrapped at write time —
+      // wrap at read time, when the exports exist. Mirrors
+      // `__extern_method_call`'s wrapHostValue.
+      const callable = _maybeWrapCallableUnknownArity(val, { getExports: () => exports });
+      if (callable !== val) return { hit: true, value: callable };
+      return { hit: true, value: _wrapForHost(val, exports) };
+    }
+    return { hit: true, value: val };
+  };
   const handler: ProxyHandler<any[]> = {
     get(_t, key) {
       if (key === "length") return liveLen();
@@ -5182,6 +5217,8 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
         const idx = _asArrayIndex(key);
         if (idx !== undefined) return idx < liveLen() ? elemAt(idx) : undefined;
       }
+      const sc = sidecarGet(key);
+      if (sc.hit) return sc.value;
       // Array.prototype methods, Symbol.iterator, constructor, etc. — read from
       // the array target; native generics operate via the length/index traps.
       return (target as Record<string | symbol, any>)[key as any];
@@ -5192,6 +5229,7 @@ function _wrapVecForHost(vec: any, exports: Record<string, Function>): any {
         const idx = _asArrayIndex(key);
         if (idx !== undefined) return idx < liveLen();
       }
+      if (sidecarGet(key).hit) return true;
       return key in target;
     },
     ownKeys() {
@@ -6646,7 +6684,12 @@ function _warnTimerCallbackUnresolvable(mode: "timeout" | "interval"): void {
  *   shim does not have to special-case Buffer.
  * - All other functions are passed through unchanged.
  */
-function makeNodeBuiltinFnAdapter(moduleName: string, fnName: string, raw: (...args: any[]) => any): Function {
+function makeNodeBuiltinFnAdapter(
+  moduleName: string,
+  fnName: string,
+  raw: (...args: any[]) => any,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): Function {
   if (moduleName === "crypto" && fnName === "randomBytes") {
     return (n: number) => {
       const out = raw(n);
@@ -6660,7 +6703,15 @@ function makeNodeBuiltinFnAdapter(moduleName: string, fnName: string, raw: (...a
       return new Uint8Array(0);
     };
   }
-  return raw;
+  if (!callbackState) return raw;
+  // (#1795) Callback-taking node-builtin functions (http/https get/request,
+  // and any future callback-shaped surface): a compiled callback arrives as a
+  // WasmGC closure STRUCT (no [[Call]]); Node either throws on it or silently
+  // never invokes it. Wrap closure-shaped args as JS callables via the
+  // identity-cached dynamic bridge; non-closure args pass through untouched
+  // (`_maybeWrapCallableUnknownArity` uses the `__is_closure` export as the
+  // authoritative discriminator, so plain structs/values are unaffected).
+  return (...args: any[]) => raw(...args.map((a) => _maybeWrapCallableUnknownArity(a, callbackState)));
 }
 
 let _warnedNodeBuiltinFnFallback = false;
@@ -7761,6 +7812,32 @@ function resolveImport(
           return undefined;
         };
       }
+      // (#1794) node:events EventEmitter listener-registering methods — the
+      // listener argument may be a WasmGC closure struct (no [[Call]]); Node
+      // validates `typeof listener === "function"` and throws
+      // ERR_INVALID_ARG_TYPE on the raw struct. Wrap it as a JS callable via
+      // the identity-CACHED dynamic bridge (`_wasmClosureDynamicWrapperCache`),
+      // so `on(h)` and `off(h)` receive the SAME wrapper and removeListener
+      // identity-matches. Direct arrow args already crossed via
+      // `__make_callback`; this covers variable-held closures.
+      if (
+        intent.className === "EventEmitter" &&
+        (m === "on" ||
+          m === "once" ||
+          m === "off" ||
+          m === "addListener" ||
+          m === "removeListener" ||
+          m === "prependListener" ||
+          m === "prependOnceListener")
+      ) {
+        return (self: any, ...args: any[]) => {
+          if (self == null) return undefined;
+          const wrappedArgs = args.map((a) => _maybeWrapCallableUnknownArity(a, callbackState));
+          const fn = self[m] ?? _sidecarGet(self, m);
+          if (typeof fn === "function") return fn.call(self, ...wrappedArgs);
+          return undefined;
+        };
+      }
       return (self: any, ...args: any[]) => {
         if (self == null) return undefined;
         // Method call — check sidecar if direct method missing
@@ -8409,19 +8486,26 @@ assert._isSameValue = isSameValue;
             }
             return Number(v);
           };
-          // Reading .length on an opaque wasmGC struct throws — check sidecar first (#983)
+          // Reading .length on an opaque wasmGC struct throws — resolve through
+          // the #1629-safe own-descriptor reader (#983 sidecar + vec live length
+          // + shape-gated struct field), then the inherited chain.
           if (_isWasmStruct(obj)) {
-            const sc = _sidecarGet(obj, "length");
-            if (sc !== undefined) return toLength(coerceLen(sc));
             const exports = callbackState?.getExports();
-            const getter = exports?.[`__sget_length`];
-            if (typeof getter === "function") {
-              try {
-                return toLength(coerceLen(getter(obj)));
-              } catch {
-                /* not a field */
-              }
-            }
+            // (#3201) Own `length` via _readOwnDescriptor — NOT a raw
+            // `__sget_length` try/catch probe. The raw probe was the #1629
+            // anti-pattern and produced a REAL miss here: on a fnctor instance
+            // struct whose shape happens to cast-succeed for some registered
+            // `__sget_length` getter, the probe "succeeds" reading a
+            // zero-initialized unrelated slot and returns own length 0, which
+            // SHADOWS the inherited `length` on the ctor prototype
+            // (`Con.prototype = { length: 2 }; new Con()` — the
+            // indexOf/15.4.4.14-2-* array-like `.call` cluster). The
+            // descriptor reader serves the vec live length (step 0), sidecar
+            // values (step 1), and genuine struct `length` fields shape-gated
+            // via _getStructFieldNames (step 3), so every previously-correct
+            // own read stays served.
+            const own = _readOwnDescriptor(obj, "length", exports);
+            if (own) return toLength(coerceLen(own.get ? own.get.call(obj) : own.value));
             // (#3139) Inherited `length` through the fnctor instance→ctor
             // prototype chain (§7.3.2 Get is prototype-inclusive). The classic
             // shape: `foo.prototype = new Array(1,2,3); var f = new foo();
@@ -8479,9 +8563,22 @@ assert._isSameValue = isSameValue;
             }
           }
           // Try struct getter export __sget_N (for WasmGC struct fields like "0", "1", etc.)
+          // (#3200) Shape-gated via _readOwnDescriptor: `__sget_<k>` is a
+          // ref.test dispatch chain that answers null — or a zero-initialized
+          // slot on a structurally-colliding shape — WITHOUT trapping when the
+          // receiver's own shape lacks the field. Returning that raw probe
+          // result here masked INHERITED indices served by the fnctor /
+          // Object.prototype walks below (the map/filter/forEach `-c-i-*`
+          // array-like families). `_readOwnDescriptor` consults the field-name
+          // registry (#1589A discipline) so only a genuinely-own field answers.
           const exports = callbackState?.getExports();
-          const getter = exports?.[`__sget_${strKey}`];
-          if (typeof getter === "function") return getter(obj);
+          if (_isWasmStruct(obj)) {
+            const od = _readOwnDescriptor(obj, strKey, exports);
+            if (od) return od.get ? od.get.call(obj) : od.value;
+          } else {
+            const getter = exports?.[`__sget_${strKey}`];
+            if (typeof getter === "function") return getter(obj);
+          }
           // (#3139) Inherited index through the fnctor instance→ctor prototype
           // chain (`foo.prototype = new Array(11,22,33); new foo()[1]` → 22).
           // Sits BEFORE the Object.prototype extended-index table below because
@@ -8550,13 +8647,22 @@ assert._isSameValue = isSameValue;
           if (typeof exports?.[`__sget_${strKey}`] === "function") {
             try {
               // (#1589A) HasProperty (spec §7.3.12) is true for any own
-              // property regardless of value — including null/undefined. A
-              // struct getter that returns *at all* (even null) proves the
-              // field exists on this struct shape. Only a throw means "this
-              // field is not defined on this struct variant" (opaque-struct
-              // access error), so we fall through to `return 0` in that case.
-              exports[`__sget_${strKey}`](obj);
-              return 1;
+              // property regardless of value — including null/undefined.
+              // (#3200) BUT "the getter returned at all" is NOT proof of
+              // ownness: `__sget_<k>` is a ref.test dispatch chain that
+              // NEVER traps — it answers null (or a zero-initialized slot on
+              // a structurally-colliding shape) for a receiver whose own
+              // shape lacks the field. The old unconditional `return 1` made
+              // HasProperty answer true for EVERY struct whenever any shape
+              // in the module had the field — visiting holes/inherited-only
+              // indices as own. Gate on _readOwnDescriptor (field-name
+              // registry, #1589A discipline); a miss falls through to the
+              // prototype-chain arms below.
+              if (_isWasmStruct(obj)) {
+                if (_readOwnDescriptor(obj, strKey, exports) !== undefined) return 1;
+              } else if (exports[`__sget_${strKey}`](obj) !== undefined) {
+                return 1;
+              }
             } catch {
               /* getter not defined for this struct variant — fall through */
             }
@@ -14022,7 +14128,7 @@ assert._isSameValue = isSameValue;
       const fnName = intent.name;
       const depMod = deps?.[moduleName] as Record<string, unknown> | undefined;
       if (depMod && typeof depMod[fnName] === "function") {
-        return makeNodeBuiltinFnAdapter(moduleName, fnName, (depMod[fnName] as Function).bind(depMod));
+        return makeNodeBuiltinFnAdapter(moduleName, fnName, (depMod[fnName] as Function).bind(depMod), callbackState);
       }
       const req = _getNodeRequire();
       if (req) {
@@ -14030,7 +14136,7 @@ assert._isSameValue = isSameValue;
           const mod = req(moduleName);
           const raw = mod?.[fnName];
           if (typeof raw === "function") {
-            return makeNodeBuiltinFnAdapter(moduleName, fnName, raw.bind(mod));
+            return makeNodeBuiltinFnAdapter(moduleName, fnName, raw.bind(mod), callbackState);
           }
         } catch {
           // fall through to browser / standalone fallback

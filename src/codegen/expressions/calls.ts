@@ -6905,6 +6905,16 @@ export function emitFnctorSubclassDynamicMethodCall(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
   methodName: string,
+  // (#3201) Marshal the receiver as the RAW wasm ref (`extern.convert_any`)
+  // instead of compiling with an externref expected-type hint. The hint routes
+  // a vec receiver through coerceType's `__make_iterable` arm, which COPIES
+  // the vec into a fresh JS array — a new identity every crossing, so the
+  // `_wasmStructProps` expando sidecar (where `arr.getClass = …` writes land,
+  // keyed by the RAW struct) can never be found again at the call. The raw
+  // struct keeps identity stable; `__extern_method_call` live-mirrors it via
+  // `_wrapForHost` on the host side. Default false — the #3123
+  // fnctor-subclass call sites keep their existing bytes.
+  rawStructReceiver = false,
 ): InnerResult | undefined {
   let arrNewIdx: number | undefined;
   let arrPushIdx: number | undefined;
@@ -6930,11 +6940,17 @@ export function emitFnctorSubclassDynamicMethodCall(
   flushLateImportShifts(ctx, fctx);
   if (methodCallIdx === undefined || arrNewIdx === undefined || arrPushIdx === undefined) return undefined;
 
-  const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+  const recvType = rawStructReceiver
+    ? compileExpression(ctx, fctx, propAccess.expression)
+    : compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
   if (recvType === null) {
     fctx.body.push({ op: "ref.null.extern" });
-  } else if (recvType.kind !== "externref") {
+  } else if (recvType.kind === "ref" || recvType.kind === "ref_null" || recvType.kind === "anyref") {
     fctx.body.push({ op: "extern.convert_any" });
+  } else if (recvType.kind !== "externref") {
+    // Raw mode can surface a scalar (defensive — the #3201 arm gates on
+    // ref-typed receivers); box via the shared coercion path.
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
   const recvLocal = allocLocal(fctx, `__fsd_recv_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: recvLocal });

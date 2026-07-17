@@ -315,6 +315,79 @@ export function collectGrowableObjectLiterals(
           const shape = literalShapeNames(decl.initializer);
           if (!shape) continue; // not a pure data literal → skip (externref builder would decline)
 
+          // (#2992 S6, standalone) `delete varName.k` / `delete varName[e]` or
+          // an ACCESSOR-descriptor define on a NON-EMPTY pure-data literal var:
+          // the closed-struct representation cannot observe the deletion (the
+          // delete arm writes a type-shaped SENTINEL — NaN/null — into the
+          // fixed slot, so `o.k !== undefined` / `"k" in o` / hasOwnProperty /
+          // typeof / for-in all lie) nor accessor-ness (a struct field stores a
+          // plain value; reads never invoke the getter). This is the same
+          // defect slices 4/5 fixed for the empty-`{}`-widening shape — here
+          // the receiver is a non-empty literal, so instead of suppressing a
+          // widening we (a) route the literal to the recursive externref
+          // `$Object` builder (`growableObjectLiteralVars`) and (b) refuse
+          // struct resolution for the var's checker type
+          // (`objectHashConsumerTypes`, the #2944 escape discipline) so the
+          // local/receiver/return positions stay externref and EVERY consumer
+          // (delete, bracket, `in`, for-in, dot reads, defines) rides the
+          // dynamic `$Object` arms slices 1/3/4/5 proved correct. The #2837
+          // consumer-poison below (delete/bracket/for-in → "leave on the
+          // struct path") is a HOST-lane discipline — in standalone the struct
+          // path is precisely what cannot serve these consumers, so this arm
+          // runs first. Host lane is untouched (byte-inert).
+          if (ctx.standalone) {
+            const mopSet = new Set<string>();
+            for (const s of stmts) {
+              markStandaloneDeleteTargets(s, varName, mopSet);
+              markStandaloneAccessorDefineTargets(s, varName, mopSet);
+            }
+            // Consumer-safety (#1897/#2837): when the var ALSO flows into a
+            // CONCRETE nominal-struct-typed position (call/new arg, return,
+            // assignment), the externref `$Object` rep would fail that
+            // consumer's cast. Leave such vars on the struct path (their
+            // delete/accessor gap stays — documented residual), same
+            // when-in-doubt-don't-mark discipline as the growable pre-pass.
+            if (mopSet.has(varName)) {
+              let structConsumer = false;
+              const guardVisit = (node: ts.Node): void => {
+                if (
+                  ts.isIdentifier(node) &&
+                  node.text === varName &&
+                  isValueUseOfIdentifier(node) &&
+                  // An `Object.<mop>(varName, …)` argument is NOT a struct
+                  // consumer — TS's generic `defineProperty<T>(o: T, …)` binds
+                  // T to the literal type, so the contextual type LOOKS
+                  // concrete, but the MOP call is exactly what the `$Object`
+                  // rep serves. Only genuine user-typed positions count.
+                  !isObjectMopCallArg(node) &&
+                  typeRequiresStruct(checker.getContextualType(node))
+                ) {
+                  structConsumer = true;
+                }
+                forEachChild(node, guardVisit);
+              };
+              for (const s of stmts) guardVisit(s);
+              if (structConsumer) mopSet.delete(varName);
+            }
+            if (mopSet.has(varName)) {
+              ctx.growableObjectLiteralVars.add(varName);
+              // Type-refusal with the #2944 provenance guard: only poison a
+              // checker type whose provenance is THIS var's own initializer
+              // literal (fresh per-literal instance). An annotation type is a
+              // shared/interned instance — poisoning it would demote unrelated
+              // vars.
+              const vt = checker.getTypeAtLocation(decl.name);
+              if (!(vt.flags & ts.TypeFlags.Any) && vt.symbol?.declarations?.[0] === decl.initializer) {
+                ctx.objectHashConsumerTypes.add(vt);
+              }
+              const it = checker.getTypeAtLocation(decl.initializer);
+              if (!(it.flags & ts.TypeFlags.Any) && it.symbol?.declarations?.[0] === decl.initializer) {
+                ctx.objectHashConsumerTypes.add(it);
+              }
+              continue;
+            }
+          }
+
           let grows = false;
           let poisoned = false;
 
@@ -420,6 +493,18 @@ function isArithmeticOperator(kind: ts.SyntaxKind): boolean {
     kind === ts.SyntaxKind.SlashToken ||
     kind === ts.SyntaxKind.PercentToken ||
     kind === ts.SyntaxKind.AsteriskAsteriskToken
+  );
+}
+
+/** (#2992 S6) Is this identifier an argument of an `Object.<method>(...)`
+ * call (defineProperty / defineProperties / keys / gOPD / ...)? Those MOP
+ * receivers must not count as struct consumers in the S6 guard. */
+function isObjectMopCallArg(id: ts.Identifier): boolean {
+  const p = id.parent;
+  if (!ts.isCallExpression(p) || !p.arguments.includes(id)) return false;
+  const callee = p.expression;
+  return (
+    ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Object"
   );
 }
 

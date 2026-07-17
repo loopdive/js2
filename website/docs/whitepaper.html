@@ -1220,9 +1220,9 @@
           JavaScript implementations <a href="https://tc39.es/ecma262/">[2]</a>
           <a href="https://github.com/tc39/test262/">[3]</a>. Conformance is measured along two
           independent paths (see §5), and both are reported publicly: the <strong>JS-host path</strong>
-          (default target, host imports allowed) is at <strong>76.5% Test262 compliance</strong>
-          (32,990 of 43,106 official conformance tests passing), and the <strong>standalone / host-free
-          path</strong> (pure WasmGC, no JS host) is at <strong>53.6%</strong> (23,109 of 43,106),
+          (default target, host imports allowed) is at <strong>{{TEST262_PCT}}% Test262 compliance</strong>
+          ({{TEST262_PASS}} of {{TEST262_TOTAL}} official conformance tests passing; report generated {{REPORT_DATE}}), and the <strong>standalone / host-free
+          path</strong> (pure WasmGC, no JS host) is at <strong>{{STANDALONE_PCT}}%</strong> ({{STANDALONE_PASS}} of {{TEST262_TOTAL}}),
           measured host-free on the same official denominator. These are distinct metrics on different
           targets and are never summed; the JS-host figure is the headline number, and the standalone
           gap is where the current effort concentrates (§5.2, §12.2).
@@ -1363,8 +1363,8 @@
         <h2>11. Current tradeoffs</h2>
         <p>A useful whitepaper cannot ignore the hard parts.</p>
         <p>
-          <strong>Conformance is still incomplete.</strong> At 76.5% Test262 compliance on the JS-host
-          path &mdash; and 53.6% on the standalone, host-free path &mdash; the compiler is credible but
+          <strong>Conformance is still incomplete.</strong> At {{TEST262_PCT}}% Test262 compliance on the JS-host
+          path &mdash; and {{STANDALONE_PCT}}% on the standalone, host-free path &mdash; the compiler is credible but
           far from complete, and the standalone gap in particular is a primary focus (§5.2, §12.2).
         </p>
         <p>

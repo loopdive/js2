@@ -45,10 +45,10 @@ import {
   LINEAR_IR_VEC_INIT_F64_FN,
 } from "../../codegen-linear/runtime.js";
 import { lowerFunctionAstToIr, type IrFromAstResolver, typeNodeToIr } from "../from-ast.js";
-import { lowerIrFunctionBody, type IrLowerResolver } from "../lower.js";
-import type { IrFuncRef, IrGlobalRef, IrType, IrTypeRef, IrObjectShape } from "../nodes.js";
+import { lowerIrFunctionBody, type IrLowerResolver, wasmValueTypeConverter } from "../lower.js";
+import type { IrFuncRef, IrGlobalRef, IrObjectShape, IrType, IrTypeRef } from "../nodes.js";
 import { planIrCompilation } from "../select.js";
-import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
+import type { FuncTypeDef, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
 import { verifyIrBackendLegality } from "./legality.js";
 import { LinearEmitter } from "./linear-emitter.js";
@@ -198,9 +198,20 @@ export function compileLinearIrFunctions(ctx: LinearContext, sourceFile: ts.Sour
           objNewFuncIdx: ctx.funcMap.get(LINEAR_IR_OBJ_NEW_FN),
           objInitF64FuncIdx: ctx.funcMap.get(LINEAR_IR_OBJ_INIT_F64_FN),
         });
-        const body = lowerIrFunctionBody<Instr[]>(main, resolver, emitter);
+        const body = lowerIrFunctionBody(
+          main,
+          resolver,
+          emitter,
+          wasmValueTypeConverter("linear", resolver, main.name),
+        );
         const vecScratchLocals = new Set(emitter.getVecScratchLocalIndices());
-        const locals = body.locals.map((local, index) => {
+        const wasmLocals = body.locals.flatMap((local) =>
+          local.slots.map((type, slot) => ({
+            name: slot === 0 ? local.name : `${local.name}$${slot}`,
+            type,
+          })),
+        );
+        const locals = wasmLocals.map((local, index) => {
           const absoluteIndex = main.params.length + index;
           if (!vecScratchLocals.has(absoluteIndex)) return local;
           // The shared lowerer allocates this scratch as a WasmGC array ref.
@@ -210,7 +221,11 @@ export function compileLinearIrFunctions(ctx: LinearContext, sourceFile: ts.Sour
         });
         lowered.set(name, {
           name: body.name,
-          typeIdx: body.typeIdx,
+          typeIdx: resolver.internFuncType({
+            kind: "func",
+            params: body.params.flatMap((param) => [...param.slots]),
+            results: body.results.flatMap((result) => [...result]),
+          }),
           locals,
           body: body.body,
           exported: body.exported,

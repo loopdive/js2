@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { BytecodeEmitter, BytecodeSink, OP } from "../src/ir/backend/bytecode-emitter.js";
+import { BytecodeEmitter, BytecodeSink, BytecodeTypeConverter, OP } from "../src/ir/backend/bytecode-emitter.js";
 import { runSink } from "../src/ir/backend/bytecode-vm.js";
 import type { IrObjectStructLowering } from "../src/ir/backend/handles.js";
 import { type IrFunction, type IrLowerResolver, asBlockId, asValueId, irVal } from "../src/ir/index.js";
@@ -195,7 +195,7 @@ function numericResolver(): IrLowerResolver {
 
 /** Lower a hand-built IR function to a bytecode sink via the REAL lowerer. */
 function lowerToBytecode(fn: IrFunction): BytecodeSink {
-  return lowerIrFunctionBody<BytecodeSink>(fn, numericResolver(), new BytecodeEmitter()).body;
+  return lowerIrFunctionBody(fn, numericResolver(), new BytecodeEmitter(), new BytecodeTypeConverter()).body;
 }
 
 describe("#1584 (a0-tail) — REAL lower.ts drives the bytecode sink (triple equivalence)", () => {
@@ -433,7 +433,7 @@ describe("#1584 (a1) — real lower.ts drives OP.CALL through the BytecodeEmitte
       valueCount: 3,
     };
 
-    const sink = lowerIrFunctionBody<BytecodeSink>(main, callResolver(1), new BytecodeEmitter()).body;
+    const sink = lowerIrFunctionBody(main, callResolver(1), new BytecodeEmitter(), new BytecodeTypeConverter()).body;
     // The call's result is single-use in the return, so it inlines: the body is
     //   LOAD 0 ; LOAD 1 ; CALL 1 ; RET
     expect(sink.code).toEqual([OP.LOAD, 0, OP.LOAD, 1, OP.CALL, 1, OP.RET]);

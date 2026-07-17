@@ -143,7 +143,7 @@ export interface BackendLegality {
 }
 
 /**
- * The canonical `BackendLegality` for one of the three in-tree backends,
+ * The canonical `BackendLegality` for one of the four registered backends,
  * realized over the existing `verifyIrBackendLegality` free function
  * (call-site-neutral: lower.ts keeps calling the free function directly;
  * new consumers and out-of-tree backends use this interface form).

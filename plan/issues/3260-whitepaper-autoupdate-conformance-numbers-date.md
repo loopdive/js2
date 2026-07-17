@@ -1,7 +1,9 @@
 ---
 id: 3260
 title: "Whitepaper: auto-update Test262 numbers + date AND surface the JS-host vs standalone lane distinction with both figures"
-status: ready
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/fable-s2
 sprint: current
 priority: medium
 horizon: s
@@ -50,9 +52,9 @@ metric internally.
 The two lanes are distinct conformance metrics on different targets and must
 never be summed:
 
-| Lane | Live figure (2026-07-14) | Authoritative source |
-|------|--------------------------|----------------------|
-| **JS-host** (default `gc` target) | **32,990 / 43,106 = 76.5%** | `benchmarks/results/test262-current.json` (in-repo) |
+| Lane                                                 | Live figure (2026-07-14)     | Authoritative source                                                                     |
+| ---------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------- |
+| **JS-host** (default `gc` target)                    | **32,990 / 43,106 = 76.5%**  | `benchmarks/results/test262-current.json` (in-repo)                                      |
 | **Standalone** (`--no-host-imports`, host-free pass) | **~22,962 / 43,106 ≈ 53.3%** | `test262-standalone-current.json` in `loopdive/js2wasm-baselines` (fetched, not in-repo) |
 
 The conformance-figure prose should present **both**, each labeled with its lane,
@@ -122,3 +124,23 @@ baseline_sha            = "4bc8763166…"
 - Not touching the benchmark/perf sidebar (`playground-benchmark-sidebar.json`,
   already auto-refreshed by #1216) — this issue is only the whitepaper's
   conformance figures + date.
+
+## Implementation (2026-07-17, fable-s2)
+
+- Tokenized `website/docs/whitepaper.{md,html}`: `{{TEST262_PCT}}`,
+  `{{TEST262_PASS}}`, `{{TEST262_TOTAL}}`, `{{STANDALONE_PCT}}`,
+  `{{STANDALONE_PASS}}`, `{{REPORT_DATE}}` — no baked figures remain (the
+  only regex leftovers are SVG path coordinates).
+- `scripts/build-pages.js` substitutes at build from the two committed,
+  promote-baseline-refreshed summaries — scope option (a), NO network:
+  - JS-host: `test262-current.json` `official_summary` (+
+    `baseline_generated_at` → the visible report date)
+  - Standalone: `test262-standalone-highwater.json`
+    `official_pass/official_total` (the reviewed host-free floor, #3322)
+- Both lanes now render side-by-side and auto-update on every push to main
+  (promote-baseline commits → deploy-pages rebuilds, #1216). Verified live
+  values at implementation time: JS-host 75.4% (32,504/43,106; the honest
+  post-oracle-v6 number), standalone 57.2% (24,644) — the whitepaper now
+  tracks reality instead of flattering-but-stale marks.
+- The substituted `.md` is also emitted to `PAGES_DIST/docs/whitepaper.md`
+  (single tokenized source, two rendered artifacts).

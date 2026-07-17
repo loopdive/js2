@@ -1,18 +1,23 @@
 ---
 id: 3163
 title: "`new (Fn as any)()` on a function-style constructor returns null (dynamic-callee construct drops the instance)"
-status: ready
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/fable-b
 sprint: current
 priority: medium
 horizon: m
 feasibility: medium
 created: 2026-07-12
+updated: 2026-07-17
 task_type: bugfix
 area: codegen
 language_feature: function-constructors, new-expression, any-callee
 goal: self-hosting-dogfood
 related: [1725, 1632, 3033, 3005]
 origin: "blocked minimal repros while investigating #3033 Bug 2a (dev-3051c)"
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
 ---
 
 # #3163 — `new (Fn as any)()` on a fnctor returns null
@@ -67,3 +72,26 @@ ref.cast-null family).
 - `new (P as any)()` returns `{ v: 7 }` (not null); `new P()` regression-free.
 - A minimal fnctor-via-cast construct + field read round-trips.
 - No test262 regression.
+
+## Fix (fable-b, 2026-07-17)
+
+Root cause was simpler than the suggested dynamic-path theory: the CLASS and
+FNCTOR identifier arms in `compileNewExpression` (new-super.ts) gated on the
+RAW callee node — `ts.isIdentifier(expr.expression)` — so any cast/paren
+wrapper missed both arms entirely and fell to the dynamic path's null base.
+No host bridge was even reached (traced: zero imports fire; the null is
+static). The #1528b unwrap (`unwrappedNonId`) already existed for the
+non-constructor GUARDS; the fix routes the identifier ARMS through the same
+unwrapped node (`calleeIdent`), including the `getSymbolAtLocation`
+resolution (a cast node has no symbol of its own).
+
+Fixed shapes (tests/issue-3163.test.ts, 5/5): `new (P as any)()`,
+`new (P as any as { new(): any })()`, `new (C as any)()` for a compiled
+class (same raw-node gate), bare `new P()` unregressed, and the
+`new ((() => {}) as any)()` / `new (Math as any)()` TypeError guards still
+fire (they run before the arms).
+
+Observed pre-existing residual (NOT this issue, present on bare `new Pt(2,5)`
+too): a 2-arg fnctor whose ctor sums params yields the second arg only
+(`this.s = x + y` reads 5, not 7) — the cast path now matches the bare
+path's behavior exactly, which is this issue's acceptance bar.

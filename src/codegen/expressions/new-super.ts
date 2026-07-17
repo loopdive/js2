@@ -3069,8 +3069,18 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       className = mapped;
     }
   }
-  if ((!className || !ctx.classSet.has(className)) && ts.isIdentifier(expr.expression)) {
-    const idName = expr.expression.text;
+  // (#3163) Resolve the callee identifier THROUGH cast/paren wrappers —
+  // `new (P as any)()` must construct exactly like `new P()`. The raw-node
+  // `ts.isIdentifier(expr.expression)` gates below made every cast-wrapped
+  // identifier callee (the natural minimal-repro shape, and the "ctor stored
+  // behind an `any` cast" idiom) miss the class/fnctor arms and fall through
+  // to the dynamic path, which yielded null. `unwrappedNonId` is the #1528b
+  // unwrap (parens / `as` / `!` / type assertions) computed above; a cast
+  // never changes the runtime VALUE, so symbol resolution on the unwrapped
+  // identifier reflects the actual binding.
+  const calleeIdent = ts.isIdentifier(unwrappedNonId) ? unwrappedNonId : undefined;
+  if ((!className || !ctx.classSet.has(className)) && calleeIdent) {
+    const idName = calleeIdent.text;
     if (ctx.classSet.has(idName)) {
       className = idName;
     } else {
@@ -3185,8 +3195,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
 
   // Check if the identifier resolves to a function declaration used as constructor
   // (e.g. `function Foo() { this.x = 1; }; new Foo()`)
-  if ((!className || !ctx.classSet.has(className)) && ts.isIdentifier(expr.expression)) {
-    const fnName = expr.expression.text;
+  // (#3163) `calleeIdent` — the cast/paren-unwrapped identifier — so
+  // `new (Foo as any)()` takes the same fnctor build path as `new Foo()`.
+  if ((!className || !ctx.classSet.has(className)) && calleeIdent) {
+    const fnName = calleeIdent.text;
     // Check cache first — if we already built a constructor for this function
     const cachedFnCtor = ctx.funcConstructorMap.get(fnName);
     if (cachedFnCtor) {
@@ -3213,7 +3225,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     }
     // Resolve via type checker to find the function declaration
     if (!cachedFnCtor) {
-      const exprSymbol = ctx.checker.getSymbolAtLocation(expr.expression);
+      // (#3163) Resolve on the unwrapped identifier — a cast/paren node has no
+      // symbol of its own.
+      const exprSymbol = ctx.checker.getSymbolAtLocation(calleeIdent);
       const decls = exprSymbol?.getDeclarations();
       if (decls) {
         for (const decl of decls) {

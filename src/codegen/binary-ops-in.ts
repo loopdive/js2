@@ -242,7 +242,15 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
   // Static resolution: key is known at compile time
   if (staticKey !== null) {
     const hasInStruct = structFieldNames !== null && structFieldNames.includes(staticKey);
-    const has = hasInStruct || tsTypeHasProperty;
+    // (#2992 S6, standalone) A growable-object-literal receiver rides the
+    // dynamic `$Object` representation, where a shape key may have been
+    // DELETED at runtime — the checker-type fold (`tsTypeHasProperty`) is
+    // unsound for it. Force the runtime `__extern_has` arm below (which the
+    // slice-1 tombstone machinery answers correctly for both present and
+    // deleted keys).
+    const growableReceiver =
+      ctx.standalone && ts.isIdentifier(expr.right) && ctx.growableObjectLiteralVars.has(expr.right.text);
+    const has = !growableReceiver && (hasInStruct || tsTypeHasProperty);
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).

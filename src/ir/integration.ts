@@ -68,7 +68,13 @@ import {
   JSSTR_CHARCODEAT_FN,
   NATIVE_CHARCODEAT_FN,
 } from "../codegen/char-code-at-helpers.js";
-import { IR_STRING_COMPARE_FN, lowerFunctionAstToIr, STRING_METHOD_TABLE, type IrFromAstResolver } from "./from-ast.js";
+import {
+  IR_STRING_COMPARE_FN,
+  lowerFunctionAstToIr,
+  STRING_METHOD_TABLE,
+  type IrFromAstResolver,
+  type ModuleBindingGlobal,
+} from "./from-ast.js";
 import {
   lowerIrFunctionToWasm,
   lowerIrTypeToValType,
@@ -102,7 +108,13 @@ import { monomorphize } from "./passes/monomorphize.js";
 import { simplifyCFG } from "./passes/simplify-cfg.js";
 import { UnionStructRegistry } from "./passes/tagged-union-types.js";
 import { taggedUnions } from "./passes/tagged-unions.js";
-import { planIrCompilation, type IrSelection } from "./select.js";
+import {
+  collectModuleInitPopulation,
+  makeModuleInitSynthetic,
+  MODULE_INIT_UNIT_NAME,
+  planIrCompilation,
+  type IrSelection,
+} from "./select.js";
 import { verifyIrFunction } from "./verify.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
@@ -143,10 +155,16 @@ export function compileIrPathFunctions(
   classShapes?: ReadonlyMap<string, IrClassShape>,
 ): IrIntegrationReport {
   const selected = selection ?? planIrCompilation(sourceFile, { experimentalIR: true });
+  // (#3142 Slice 2) A claimable, non-empty module-init unit keeps the
+  // pipeline alive even with no claimed functions/class members.
+  const moduleInitClaim =
+    selected.moduleInit && selected.moduleInit.reason === null && selected.moduleInit.stmtCount > 0
+      ? selected.moduleInit
+      : undefined;
   // #1370 Phase B: don't short-circuit when only class members are claimed —
   // a source file may declare a class with IR-eligible methods but no
   // top-level FunctionDeclarations.
-  if (selected.funcs.size === 0 && (!selected.classMembers || selected.classMembers.size === 0)) {
+  if (selected.funcs.size === 0 && (!selected.classMembers || selected.classMembers.size === 0) && !moduleInitClaim) {
     return { compiled: [], errors: [] };
   }
 
@@ -230,6 +248,13 @@ export function compileIrPathFunctions(
      * lowerer chose (no legacy callers depending on it).
      */
     readonly classMember?: boolean;
+    /**
+     * (#3142 Slice 2) The synthetic `<module-init>` unit. Its target slot is
+     * the legacy `__module_init` function (located by NAME at Phase 3 — it
+     * is never in `ctx.funcMap`), patched in place with the same typeIdx
+     * parity guard class members use. Never allocated a fresh slot.
+     */
+    readonly moduleInit?: boolean;
   }
   const built: BuiltFn[] = [];
   for (const stmt of sourceFile.statements) {
@@ -423,6 +448,91 @@ export function compileIrPathFunctions(
     }
   }
 
+  // -------------------------------------------------------------------------
+  // (#3142 Slice 2) — Build the IR function for a claimable module-init unit.
+  //
+  // The unit lowers the SAME population the selector assessed
+  // (`collectModuleInitPopulation`) through the ordinary from-ast path in
+  // `moduleInitUnit` mode: statements lower as plain body statements
+  // (constructor-body precedent) and top-level `let`/`const` bindings write
+  // the legacy-allocated `__mod_<name>` globals via symbolic global refs, so
+  // every other function observes exactly the storage legacy init wrote.
+  //
+  // Integration-time gates (each throws → the whole unit demotes to the
+  // legacy body, which is ALWAYS still emitted — module-init is never in the
+  // IR-first skip set):
+  //   - the legacy `__module_init` slot must exist (legacy may drop
+  //     side-effect-free statements and emit nothing — then there is nothing
+  //     to patch and nothing to gain),
+  //   - no static class initializers / live-func-binding seeds (legacy
+  //     prepends those to the SAME body; replacing it would drop them),
+  //   - every top-level binding must map to an f64/i32-backed module global
+  //     (Slice 2 scope: numeric/boolean module state),
+  //   - no direct top-level `throw` outside WASI (legacy DROPS those — see
+  //     the #1789-adjacent collection note in declarations.ts; executing
+  //     them would diverge from the legacy baseline).
+  // -------------------------------------------------------------------------
+  if (moduleInitClaim) {
+    try {
+      if (!ctx.mod.functions.some((f) => f.name === "__module_init")) {
+        throw new Error("module-init: no legacy __module_init slot to patch (legacy collected no init statements)");
+      }
+      if (ctx.staticInitExprs.length > 0) {
+        throw new Error("module-init: static class initializers present — legacy body carries them");
+      }
+      if ((ctx.liveFuncBindingGlobals?.size ?? 0) > 0) {
+        throw new Error("module-init: live function-binding seeds present — legacy body carries them");
+      }
+      const population = collectModuleInitPopulation(sourceFile);
+      if (!ctx.wasi) {
+        for (const s of population) {
+          if (ts.isThrowStatement(s)) {
+            throw new Error("module-init: top-level throw is dropped by legacy outside WASI — keeping legacy body");
+          }
+        }
+      }
+      const moduleBindings = buildModuleBindingsMap(ctx, population);
+      const synthetic = makeModuleInitSynthetic(population);
+      const result = lowerFunctionAstToIr(synthetic, {
+        exported: false,
+        funcName: MODULE_INIT_UNIT_NAME,
+        returnTypeOverride: null,
+        moduleInitUnit: true,
+        moduleBindings,
+        calleeTypes,
+        classShapes,
+        resolver: fromAstResolver,
+        allocRegistry,
+        checker: ctx.checker,
+      });
+      const mainErrors = verifyIrFunction(result.main);
+      if (mainErrors.length > 0) {
+        for (const e of mainErrors) errors.push({ func: MODULE_INIT_UNIT_NAME, message: e.message, kind: "verify" });
+      } else {
+        let anyLiftedFailed = false;
+        for (const lifted of result.lifted) {
+          const liftedErrors = verifyIrFunction(lifted);
+          if (liftedErrors.length > 0) {
+            for (const e of liftedErrors) errors.push({ func: lifted.name, message: e.message, kind: "verify" });
+            anyLiftedFailed = true;
+          }
+        }
+        if (!anyLiftedFailed) {
+          built.push({ name: MODULE_INIT_UNIT_NAME, fn: result.main, moduleInit: true });
+          for (const lifted of result.lifted) {
+            built.push({ name: lifted.name, fn: lifted, synthesized: true });
+          }
+        }
+      }
+    } catch (e) {
+      errors.push({
+        func: MODULE_INIT_UNIT_NAME,
+        message: e instanceof Error ? e.message : String(e),
+        kind: "build",
+      });
+    }
+  }
+
   if (built.length === 0) return { compiled, errors };
 
   // -------------------------------------------------------------------------
@@ -449,6 +559,7 @@ export function compileIrPathFunctions(
       fn: optimized,
       synthesized: entry.synthesized,
       classMember: entry.classMember,
+      moduleInit: entry.moduleInit,
     });
   }
 
@@ -488,6 +599,7 @@ export function compileIrPathFunctions(
       fn: final,
       synthesized: before.synthesized,
       classMember: before.classMember,
+      moduleInit: before.moduleInit,
     });
   }
 
@@ -545,6 +657,7 @@ export function compileIrPathFunctions(
       fn: final,
       synthesized: before?.synthesized || wasCloned,
       classMember: before?.classMember,
+      moduleInit: before?.moduleInit,
     });
   }
 
@@ -595,6 +708,9 @@ export function compileIrPathFunctions(
     // legacy `class-bodies.ts` pass (`ctorFuncIdx` / `methodFuncIdx`).
     // Don't allocate a new slot — Phase 3 will patch the existing one.
     if (entry.classMember) continue;
+    // (#3142 Slice 2) The module-init unit patches the legacy
+    // `__module_init` slot (located by name at Phase 3) — never a fresh one.
+    if (entry.moduleInit) continue;
     if (ctx.funcMap.has(entry.name)) continue; // already registered (defensive)
     const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
     ctx.mod.functions.push({
@@ -751,7 +867,15 @@ export function compileIrPathFunctions(
   for (const entry of readyForLower) {
     const name = entry.name;
     try {
-      const funcIdx = ctx.funcMap.get(name);
+      // (#3142 Slice 2) The module-init unit's slot is the legacy
+      // `__module_init` function — located by NAME (it is never in
+      // `ctx.funcMap`; the slot was pushed directly by compileDeclarations).
+      const funcIdx = entry.moduleInit
+        ? (() => {
+            const local = ctx.mod.functions.findIndex((f) => f.name === "__module_init");
+            return local >= 0 ? ctx.numImportFuncs + local : undefined;
+          })()
+        : ctx.funcMap.get(name);
       if (funcIdx === undefined) {
         errors.push({ func: name, message: `no funcIdx allocated for ${name}` });
         continue;
@@ -783,10 +907,15 @@ export function compileIrPathFunctions(
       // Top-level FunctionDeclarations don't need this check — their
       // pre-allocated body was empty and no legacy callers depend on
       // the slot's prior typeIdx.
-      if (entry.classMember && wasmFunc.typeIdx !== existing.typeIdx) {
+      // (#3142 Slice 2) `__module_init` shares the guard: its slot's
+      // `()->()` typeIdx was interned by compileDeclarations and the wasm
+      // `start` section / `_start` wrapper depend on it. `addFuncType`
+      // dedups on shape, so the IR-lowered void unit lands on the same
+      // index; a mismatch means the lowering went wrong — keep legacy.
+      if ((entry.classMember || entry.moduleInit) && wasmFunc.typeIdx !== existing.typeIdx) {
         errors.push({
           func: name,
-          message: `class-method typeIdx parity mismatch: IR=${wasmFunc.typeIdx}, legacy=${existing.typeIdx} — keeping legacy body`,
+          message: `${entry.moduleInit ? "module-init" : "class-method"} typeIdx parity mismatch: IR=${wasmFunc.typeIdx}, legacy=${existing.typeIdx} — keeping legacy body`,
         });
         continue;
       }
@@ -796,12 +925,41 @@ export function compileIrPathFunctions(
       // TCO and deep recursion overflowed the Wasm stack. Apply the conversion
       // here, where the full module type info is available to enforce the same
       // guards (param-count + return-type match, never inside a try-with-handler).
-      const tcoBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
+      //
+      // (#3142 Slice 2) EXCEPT for the module-init unit: later pipeline passes
+      // APPEND epilogue instrs to the `__module_init` body — most critically
+      // `finalizeInModuleInitFlag` (#2800), which wraps the body with
+      // `__in_module_init = 1 … = 0`. The legacy body FALLS THROUGH; an
+      // explicit trailing `return` (the IR's void-return lowering) or a
+      // `return_call` rewrite would make every appended epilogue instr
+      // unreachable — the flag stays 1 forever and every delete-aware read
+      // misroutes (the PR #3168 merge_group regression:
+      // language/statements/for-in/order-simple-object.js). So: no TCO for
+      // module-init, strip the trailing `return`, and if ANY other
+      // return-class op remains anywhere in the body, keep the legacy body.
+      let finalBody: Instr[];
+      if (entry.moduleInit) {
+        finalBody = [...wasmFunc.body];
+        while (finalBody.length > 0 && finalBody[finalBody.length - 1]!.op === "return") {
+          finalBody.pop();
+        }
+        if (bodyContainsReturnClassOp(finalBody)) {
+          errors.push({
+            func: name,
+            message:
+              "module-init body contains a non-trailing return-class op — appended init epilogues would be skipped; keeping legacy body",
+            kind: "lower",
+          });
+          continue;
+        }
+      } else {
+        finalBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
+      }
       replaceDefinedFuncAt(ctx, funcIdx, {
         name: existing.name,
         typeIdx: wasmFunc.typeIdx,
         locals: wasmFunc.locals,
-        body: tcoBody,
+        body: finalBody,
         exported: existing.exported,
       });
       compiled.push(name);
@@ -828,6 +986,73 @@ export function compileIrPathFunctions(
 
 function hasExportModifier(fn: ts.FunctionDeclaration): boolean {
   return !!fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+}
+
+/**
+ * (#3142 Slice 2) Deep-scan a Wasm body for return-class ops (`return`,
+ * `return_call`, `return_call_ref`) inside nested blocks. The `__module_init`
+ * slot's body must FALL THROUGH — later passes append epilogue instrs
+ * (`finalizeInModuleInitFlag`'s flag-clear, #2800) that a mid-body return
+ * would skip. The selector's early-return barrier makes this unreachable in
+ * practice; the scan is the airtight backstop.
+ */
+function bodyContainsReturnClassOp(body: readonly Instr[]): boolean {
+  for (const instr of body) {
+    if (instr.op === "return" || instr.op === "return_call" || instr.op === "return_call_ref") return true;
+    const nested = instr as { then?: Instr[]; else?: Instr[]; body?: Instr[]; catchAll?: Instr[] };
+    if (nested.then && bodyContainsReturnClassOp(nested.then)) return true;
+    if (nested.else && bodyContainsReturnClassOp(nested.else)) return true;
+    if (nested.body && bodyContainsReturnClassOp(nested.body)) return true;
+    if (nested.catchAll && bodyContainsReturnClassOp(nested.catchAll)) return true;
+    const catches = (instr as { catches?: { body: Instr[] }[] }).catches;
+    if (catches) {
+      for (const c of catches) if (c.body && bodyContainsReturnClassOp(c.body)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * (#3142 Slice 2) Map every top-level declared binding in the module-init
+ * population to its legacy-allocated Wasm global (`__mod_<name>`, TDZ flag
+ * `__tdz_<name>` when tracked). Throws (→ whole-unit demote to the legacy
+ * body) when a binding has no module global or its global is not f64/i32
+ * backed — Slice 2's scope is numeric/boolean module state; string / ref /
+ * externref-backed bindings stay on legacy.
+ */
+function buildModuleBindingsMap(
+  ctx: CodegenContext,
+  population: readonly ts.Statement[],
+): Map<string, ModuleBindingGlobal> {
+  const map = new Map<string, ModuleBindingGlobal>();
+  for (const stmt of population) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    for (const d of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(d.name)) {
+        throw new Error("module-init: top-level destructuring declaration not in Slice 2 scope");
+      }
+      const name = d.name.text;
+      if (!ctx.moduleGlobals.has(name)) {
+        throw new Error(
+          `module-init: top-level binding '${name}' has no module global (shadowed or class-bound) — keeping legacy body`,
+        );
+      }
+      const globalName = `__mod_${name}`;
+      const g = ctx.mod.globals.find((gl) => gl.name === globalName);
+      if (!g || (g.type.kind !== "f64" && g.type.kind !== "i32")) {
+        throw new Error(
+          `module-init: top-level binding '${name}' is ${g ? g.type.kind : "missing"}-backed — not in Slice 2 scope (f64/i32 only)`,
+        );
+      }
+      const tdzGlobalName = ctx.mod.globals.some((gl) => gl.name === `__tdz_${name}`) ? `__tdz_${name}` : null;
+      map.set(name, {
+        globalName,
+        tdzGlobalName,
+        type: { kind: "val", val: { kind: g.type.kind } } as IrType,
+      });
+    }
+  }
+  return map;
 }
 
 /**
@@ -1009,9 +1234,10 @@ function externResultClassName(
 
 function makeFromAstResolver(ctx: CodegenContext, sourceFile?: ts.SourceFile): IrFromAstResolver {
   return {
-    nativeStrings(): boolean {
-      return ctx.nativeStrings;
-    },
+    // (#2955 slice 5) No raw `nativeStrings()` here anymore — from-ast's
+    // interface no longer carries the mode discriminator; every mode
+    // decision flows through the named capability/rep/strategy queries
+    // below.
     // (#2955 slice 2) The WHOLE string-prototype-method mode decision table,
     // relocated here from from-ast's `lowerStringMethodCall` so the front-end
     // reads no `nativeStrings` at that site. Byte-inert by construction: the
@@ -1130,6 +1356,44 @@ function makeFromAstResolver(ctx: CodegenContext, sourceFile?: ts.SourceFile): I
     // standalone floor (the demote arm is load-bearing there).
     hasHostNumberBox(): boolean {
       return !ctx.nativeStrings;
+    },
+    // (#2955 slice 3) Rep predicate: the string carrier is externref (host
+    // strings), so string SSA values flow unchanged into externref-expected
+    // positions (`coerceToExpectedExtern` host-call args) and take the
+    // externref-shaped `__extern_is_undefined` arm of the strict
+    // undefined-compare. The from-ast string-rep arms consult THIS
+    // predicate instead of reading `nativeStrings` directly — the mode
+    // knowledge lives here, on the lower/integration side, per #2955's
+    // de-polymorph direction. Implementation is deliberately the exact
+    // truth value the old in-place reads produced (byte-inert relocation).
+    // The demote arm this gates in `coerceToExpectedExtern` is a build-time
+    // claim/demote decision (no lower-time demote channel) and — unlike the
+    // number-box capability — has no widening follow-up: a native
+    // `(ref $AnyString)` can never satisfy an externref host-arg position.
+    stringIsExternref(): boolean {
+      return !ctx.nativeStrings;
+    },
+    // (#2955 slice 4) Capability: this lane owns the `number_toString`
+    // `(f64) -> externref` host import (legacy pre-registers it on any
+    // checker-number `.toString()` in source; its return IS host-mode's
+    // string carrier). The from-ast `<number>.toString()` arm consults THIS
+    // predicate instead of reading `nativeStrings` directly — same
+    // build-time capability shape as `hasHostNumberBox`, deliberately the
+    // exact truth value the old in-place `nativeStrings?.() === false` read
+    // produced (byte-inert relocation). Widening — a native number
+    // formatter returning the `(ref $AnyString)` carrier — is a semantic
+    // follow-up tracked in #2955 and must be validated against the
+    // standalone floor (the demote arm is load-bearing there).
+    hasHostNumberToString(): boolean {
+      return !ctx.nativeStrings;
+    },
+    // (#2955 slice 5) String for-of strategy — the LAST from-ast mode read,
+    // relocated. Native strings iterate via the `__str_charAt` counter loop;
+    // host strings feed the `__iterator` host protocol (already
+    // externref-shaped). Byte-inert: same truth table as the old in-place
+    // `nativeStrings?.()` read (absent → iter-host).
+    stringForOfPlan(): "char-loop" | "iter-host" {
+      return ctx.nativeStrings ? "char-loop" : "iter-host";
     },
     // (#2856 C2) TypedArray-view receiver detection for element STORES —
     // the same checker walk as the legacy `elementAccessTypedArrayName`

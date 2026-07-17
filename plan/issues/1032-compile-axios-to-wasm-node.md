@@ -1,6 +1,7 @@
 ---
 id: 1032
 title: "Compile axios to Wasm — Node builtins routed as host imports; harvest error patterns"
+horizon: l
 status: ready
 created: 2026-04-11
 updated: 2026-04-28
@@ -8,7 +9,7 @@ priority: high
 feasibility: hard
 reasoning_effort: high
 goal: npm-library-support
-sprint: Backlog
+sprint: current
 depends_on: [1044]
 ---
 # #1032 — Compile axios to Wasm as a real-world I/O stress test

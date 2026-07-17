@@ -204,14 +204,15 @@ export interface IrSelection {
    *  individually claimed); callers must treat a missing map as "no edge
    *  information" and behave conservatively. */
   readonly localCallees?: ReadonlyMap<string, ReadonlySet<string>>;
-  /** (#3142 Slice 1) Module-level (top-level statement) claim assessment —
-   *  gate G3 of the legacy-frontend retirement. Selector-only for now
-   *  (mirrors #1370 Phase A): the assessment is REPORTED so the
-   *  `check:ir-fallbacks` gate can ratchet a `module-level` bucket, but
-   *  `compileIrPathFunctions` does not yet lower the module-init unit —
-   *  Slice 2 wires the integration. Populated only when
-   *  `IrSelectionOptions.trackFallbacks` is true (production compiles skip
-   *  the extra walk entirely). */
+  /** (#3142) Module-level (top-level statement) claim assessment — gate G3
+   *  of the legacy-frontend retirement. Slice 1 added the assessment
+   *  (telemetry: the `check:ir-fallbacks` gate ratchets a `module-level`
+   *  bucket from it); Slice 2 made it CLAIM-FEEDING — it is populated on
+   *  every selection (production included) and `compileIrPathFunctions`
+   *  lowers a claimable non-empty unit through from-ast/lower, patching the
+   *  legacy `__module_init` slot in place. Any build/verify/lower failure
+   *  demotes the whole unit back to the legacy body (which is always still
+   *  emitted). */
   readonly moduleInit?: IrModuleInitAssessment;
 }
 
@@ -576,8 +577,14 @@ export function planIrCompilation(
     // class-member walk above may have populated `individuallyClaimedClassMembers`.
     // Emit a selection that carries those even though `funcs` is empty.
     if (!trackFallbacks) {
-      if (individuallyClaimedClassMembers.size === 0) return EMPTY;
-      return { funcs: new Set<string>(), classMembers: individuallyClaimedClassMembers };
+      // (#3142 Slice 2) The module-init assessment is claim-feeding now, so
+      // production selections carry it too — a module can have a claimable
+      // init unit (zero local calls) even with no claimed functions.
+      const prodModuleInit = assessModuleInit(sourceFile, new Set<string>(), declByName, localClasses);
+      if (individuallyClaimedClassMembers.size === 0) {
+        return { funcs: new Set<string>(), moduleInit: prodModuleInit };
+      }
+      return { funcs: new Set<string>(), classMembers: individuallyClaimedClassMembers, moduleInit: prodModuleInit };
     }
     const fallbacks: IrFallback[] = [];
     for (const [name, reason] of fallbackReasons) fallbacks.push({ name, reason, detail: fallbackDetails.get(name) });
@@ -703,9 +710,12 @@ export function planIrCompilation(
   const classMembers = individuallyClaimedClassMembers.size > 0 ? individuallyClaimedClassMembers : undefined;
 
   if (!trackFallbacks) {
+    // (#3142 Slice 2) Claim-feeding module-init assessment on the production
+    // path — same FINAL-claimed-set gating as the telemetry arm below.
+    const prodModuleInit = assessModuleInit(sourceFile, claimed, declByName, localClasses);
     return classMembers
-      ? { funcs: claimed, classMembers, localCallees: callees }
-      : { funcs: claimed, localCallees: callees };
+      ? { funcs: claimed, classMembers, localCallees: callees, moduleInit: prodModuleInit }
+      : { funcs: claimed, localCallees: callees, moduleInit: prodModuleInit };
   }
 
   const fallbacks: IrFallback[] = [];
@@ -3144,16 +3154,27 @@ function isPhase1BinaryOp(op: ts.SyntaxKind): boolean {
  *      callee's signature lives on the IR side of the fence — identical to
  *      the Step-2 closure for ordinary functions).
  *
- * Called only under `trackFallbacks` (telemetry), AFTER every per-function
- * body walk — so resetting the module-level walk state here mirrors
+ * Runs on PRODUCTION selections too since Slice 2 — the assessment is
+ * claim-feeding: `compileIrPathFunctions` lowers a claimable unit and
+ * patches the `__module_init` slot. It runs AFTER every per-function body
+ * walk, so resetting the module-level walk state here mirrors
  * `whyNotIrClaimable`'s per-subject reset without clobbering anything.
+ *
+ * (The helpers below are exported for Slice 2's integration.)
  */
-function assessModuleInit(
-  sourceFile: ts.SourceFile,
-  claimedFuncs: ReadonlySet<string>,
-  declByName: ReadonlyMap<string, ts.FunctionDeclaration>,
-  localClasses: ReadonlySet<string>,
-): IrModuleInitAssessment {
+/** (#3142) The synthetic claim-unit name for the module-level statement list. */
+export const MODULE_INIT_UNIT_NAME = "<module-init>";
+
+/**
+ * (#3142) The module-init population: every top-level statement that is not
+ * a function / class / type / import / export declaration — i.e. the
+ * statements the legacy path routes into `__module_init` (approximated
+ * syntactically; the legacy collection in `declarations.ts` additionally
+ * drops some side-effect-free forms, which only makes the assessment
+ * conservative). Exported so Slice 2's integration lowers EXACTLY the
+ * population the selector assessed — one definition, no drift.
+ */
+export function collectModuleInitPopulation(sourceFile: ts.SourceFile): ts.Statement[] {
   const population: ts.Statement[] = [];
   for (const stmt of sourceFile.statements) {
     if (
@@ -3176,6 +3197,35 @@ function assessModuleInit(
     }
     population.push(stmt);
   }
+  return population;
+}
+
+/**
+ * (#3142) Wrap the module-init population in a synthetic void
+ * `<module-init>` FunctionDeclaration. Shared by the selector's Gate-2
+ * call-graph scan and Slice 2's from-ast lowering so both see the same
+ * unit shape. Factory nodes are only ever walked downward via
+ * `forEachChild`, so the missing parent/position info is inert.
+ */
+export function makeModuleInitSynthetic(population: readonly ts.Statement[]): ts.FunctionDeclaration {
+  return ts.factory.createFunctionDeclaration(
+    /* modifiers */ undefined,
+    /* asteriskToken */ undefined,
+    MODULE_INIT_UNIT_NAME,
+    /* typeParameters */ undefined,
+    /* parameters */ [],
+    /* type */ undefined,
+    ts.factory.createBlock([...population], /* multiLine */ true),
+  );
+}
+
+function assessModuleInit(
+  sourceFile: ts.SourceFile,
+  claimedFuncs: ReadonlySet<string>,
+  declByName: ReadonlyMap<string, ts.FunctionDeclaration>,
+  localClasses: ReadonlySet<string>,
+): IrModuleInitAssessment {
+  const population = collectModuleInitPopulation(sourceFile);
   if (population.length === 0) return { stmtCount: 0, reason: null };
 
   // Gate 1 — shape.
@@ -3197,16 +3247,8 @@ function assessModuleInit(
   // verbatim (zero parity drift with the Step-2 scan); factory nodes are
   // only ever walked downward via `forEachChild`, so the missing
   // parent/position info on the wrapper is inert.
-  const syntheticName = "<module-init>";
-  const synthetic = ts.factory.createFunctionDeclaration(
-    /* modifiers */ undefined,
-    /* asteriskToken */ undefined,
-    syntheticName,
-    /* typeParameters */ undefined,
-    /* parameters */ [],
-    /* type */ undefined,
-    ts.factory.createBlock(population, /* multiLine */ true),
-  );
+  const syntheticName = MODULE_INIT_UNIT_NAME;
+  const synthetic = makeModuleInitSynthetic(population);
   const decls = new Map(declByName);
   decls.set(syntheticName, synthetic);
   const graph = buildLocalCallGraph(decls, localClasses);

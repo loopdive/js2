@@ -11,7 +11,7 @@ task_type: bugfix
 area: codegen, standalone
 language_feature: arrays
 goal: runtime-eval
-sprint: Backlog
+sprint: current
 parent: 2927
 related: [2784, 2928, 1584]
 ---

@@ -25,6 +25,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
+import { ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
@@ -692,6 +693,22 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
 
   // ── __map_get(m, key) -> anyref ─────────────────────────────────────────
   {
+    // (#3331) MISS value: under the #2106 `$undefined`-singleton regime a
+    // missing key answers the singleton (miss ≡ undefined per §24.1.3.6 step
+    // 5), keeping it DISTINCT from a stored `null` — the legacy null-miss
+    // made `m.get(missing) === undefined` false (fourth instance of the
+    // singleton null-guard class). Legacy lanes keep `ref.null` (their
+    // undefined representation) byte-identically. The one internal null-keyed
+    // consumer (Map.groupBy) treats the singleton as miss explicitly below.
+    const missInstrs: Instr[] = (() => {
+      if (undefinedSingletonActive(ctx)) {
+        if (ctx.undefinedGlobalIdx === undefined) ensureAnyValueType(ctx);
+        if (ctx.undefinedGlobalIdx !== undefined) {
+          return [{ op: "global.get", index: ctx.undefinedGlobalIdx }];
+        }
+      }
+      return [{ op: "ref.null", typeIdx: NONE_HEAP }]; // legacy: undefined → null
+    })();
     // idx(2)
     const body: Instr[] = [
       { op: "local.get", index: 0 },
@@ -703,7 +720,7 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
       {
         op: "if",
         blockType: { kind: "val", type: anyref },
-        then: [{ op: "ref.null", typeIdx: NONE_HEAP }], // undefined → null
+        then: missInstrs,
         else: [
           { op: "local.get", index: 0 },
           {
@@ -1299,8 +1316,15 @@ export function ensureMapGroupBy(ctx: CodegenContext): number {
             { op: "call", funcIdx: mapGetIdx },
             { op: "local.set", index: 8 },
             // if groupAny is null → group = __objvec_new(); __map_set(out, keyAny, any(group))
+            // (#3331) under the singleton regime the __map_get MISS is the
+            // $undefined singleton (a `$AnyValue` box) — a group slot is
+            // always an objvec, so `ref.test $AnyValue` ⇔ miss. The extra
+            // test is regime-gated away in legacy lanes (byte-identical).
             { op: "local.get", index: 8 },
             { op: "ref.is_null" },
+            ...((undefinedSingletonActive(ctx) && ctx.anyValueTypeIdx >= 0
+              ? [{ op: "local.get", index: 8 }, { op: "ref.test", typeIdx: ctx.anyValueTypeIdx }, { op: "i32.or" }]
+              : []) satisfies Instr[]),
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -1449,6 +1473,17 @@ export function compileCollectionElementArg(
     // Canonical anyref-subtype null matching the runtime's ABSENT/`undefined`
     // sentinel — bypasses the `compileExpression` typed-`ref.null` + externref
     // mismatch.
+    // (#3331) Under the #2106 singleton regime an UNDEFINED literal stores
+    // the $undefined singleton (distinct from null) so `m.get(k)` reads back
+    // `undefined`, not `null`; a NULL literal keeps the canonical ref.null.
+    // Legacy lanes conflate both to ref.null byte-identically.
+    if (argExpr.kind !== ts.SyntaxKind.NullKeyword && undefinedSingletonActive(ctx)) {
+      if (ctx.undefinedGlobalIdx === undefined) ensureAnyValueType(ctx);
+      if (ctx.undefinedGlobalIdx !== undefined) {
+        fctx.body.push({ op: "global.get", index: ctx.undefinedGlobalIdx });
+        return;
+      }
+    }
     fctx.body.push({ op: "ref.null", typeIdx: NONE_HEAP });
     return;
   }

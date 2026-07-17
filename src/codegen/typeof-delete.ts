@@ -4,6 +4,7 @@
  * Extracted from expressions.ts (issue #688 step 5).
  */
 import { ts } from "../ts-api.js";
+import { chainRootIsGrowable } from "./property-access.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
@@ -1549,6 +1550,19 @@ export function compileTypeofComparison(
     ts.isIdentifier(operand) &&
     (tsType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0 &&
     sourceHasIdentifierAssignment(operand.getSourceFile(), operand.text)
+  ) {
+    staticTypeof = null;
+  }
+  // (#2992 S6, standalone) A member/element read off a growable-object-literal
+  // receiver rides the dynamic `$Object` — a shape key may be DELETED at
+  // runtime, so the checker-type fold ("number") is unsound. Take the runtime
+  // path: the S6 read arm returns the raw externref (real undefined when
+  // tombstoned) and the dynamic typeof answers correctly.
+  if (
+    staticTypeof !== null &&
+    ctx.standalone &&
+    (ts.isPropertyAccessExpression(operand) || ts.isElementAccessExpression(operand)) &&
+    chainRootIsGrowable(ctx, operand.expression)
   ) {
     staticTypeof = null;
   }

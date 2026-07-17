@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
+// (#1794) The compiler now imports member-name string constants via the
+// `string_constants` namespace (immutable externref globals — V8 accepts raw
+// JS values for these). This suite instantiates with hand-rolled env stubs,
+// so satisfy any requested constant with its own name.
+const stringConstants = new Proxy(
+  {},
+  { get: (_t, p) => (typeof p === "string" ? p : undefined) },
+) as unknown as WebAssembly.Imports[string];
+
 describe("externref host imports", () => {
   it("extern class constructor returns externref", async () => {
     const result = await compile(`
@@ -21,6 +30,7 @@ describe("externref host imports", () => {
 
     const constructed: number[] = [];
     const { instance } = await WebAssembly.instantiate(result.binary, {
+      string_constants: stringConstants,
       env: {
         console_log_number: () => {},
         console_log_bool: () => {},
@@ -59,6 +69,7 @@ describe("externref host imports", () => {
 
     let count = 0;
     const { instance } = await WebAssembly.instantiate(result.binary, {
+      string_constants: stringConstants,
       env: {
         console_log_number: () => {},
         console_log_bool: () => {},
@@ -95,6 +106,7 @@ describe("externref host imports", () => {
     const setValues: Record<string, number> = {};
     const mockBox = {};
     const { instance } = await WebAssembly.instantiate(result.binary, {
+      string_constants: stringConstants,
       env: {
         console_log_number: () => {},
         console_log_bool: () => {},
@@ -134,6 +146,7 @@ describe("externref host imports", () => {
 
     const mockBox = {};
     const { instance } = await WebAssembly.instantiate(result.binary, {
+      string_constants: stringConstants,
       env: {
         console_log_number: () => {},
         console_log_bool: () => {},
@@ -174,6 +187,7 @@ describe("externref host imports", () => {
     const mockVec3 = { __type: "vec3" };
     const mockCam = { __type: "cam" };
     const { instance } = await WebAssembly.instantiate(result.binary, {
+      string_constants: stringConstants,
       env: {
         console_log_number: () => {},
         console_log_bool: () => {},
