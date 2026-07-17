@@ -1534,7 +1534,7 @@ export function compileArrayMethodCall(
       result = compileArrayIteratorMethod(ctx, fctx, methodAccess, methodName);
       break;
     case "flat":
-      result = compileArrayFlat(ctx, fctx, methodAccess, callExpr);
+      result = compileArrayFlat(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "flatMap":
       result = compileArrayFlatMap(ctx, fctx, methodAccess, callExpr);
@@ -7907,6 +7907,182 @@ function compileArrayLastIndexOf(
 }
 
 /**
+ * (#3363) Standalone-native depth-1 flatten of a statically-typed HOMOGENEOUS
+ * nested array `T[][]` — the common `[[…],[…]].flat()` case. `elemType` is the
+ * OUTER array's element type; when it resolves to a ref to an inner `$vec`
+ * struct (`{ len, data }`), each inner vec's elements are copied contiguously
+ * into a fresh result vec of the inner element kind (a straight concatenation,
+ * which is exactly a depth-1 flatten of an all-array array). Returns the result
+ * ValType on success, or `null` when the receiver is not a recognizable nested
+ * vec (the caller then refuses loudly — no silent wrong value).
+ *
+ * Only the DEFAULT depth (no `depth` argument) is handled; an explicit depth,
+ * deeper recursion, and heterogeneous array/scalar unions stay deferred to the
+ * larger #2717 follow-up.
+ */
+function tryCompileArrayFlatNativeDepth1(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
+): ValType | null {
+  // Default depth only — an explicit `depth` argument falls through to refusal.
+  if (callExpr.arguments.length > 0) return null;
+  // Outer element must be a ref to an inner vec struct.
+  if (elemType.kind !== "ref" && elemType.kind !== "ref_null") return null;
+  const innerVecTypeIdx = (elemType as { typeIdx?: number }).typeIdx;
+  if (innerVecTypeIdx === undefined) return null;
+  const innerArrTypeIdx = getArrTypeIdxFromVec(ctx, innerVecTypeIdx);
+  if (innerArrTypeIdx < 0) return null;
+  const innerArrDef = ctx.mod.types[innerArrTypeIdx];
+  if (!innerArrDef || innerArrDef.kind !== "array") return null;
+
+  const outerVec = allocLocal(fctx, `__arr_flat_ov_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
+  const outerData = allocLocal(fctx, `__arr_flat_od_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const outerLen = allocLocal(fctx, `__arr_flat_ol_${fctx.locals.length}`, { kind: "i32" });
+  const total = allocLocal(fctx, `__arr_flat_tot_${fctx.locals.length}`, { kind: "i32" });
+  const iTmp = allocLocal(fctx, `__arr_flat_i_${fctx.locals.length}`, { kind: "i32" });
+  const inner = allocLocal(fctx, `__arr_flat_in_${fctx.locals.length}`, { kind: "ref_null", typeIdx: innerVecTypeIdx });
+  const innerLen = allocLocal(fctx, `__arr_flat_il_${fctx.locals.length}`, { kind: "i32" });
+  const innerData = allocLocal(fctx, `__arr_flat_id_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: innerArrTypeIdx,
+  });
+  const resultData = allocLocal(fctx, `__arr_flat_rd_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: innerArrTypeIdx,
+  });
+  const pos = allocLocal(fctx, `__arr_flat_pos_${fctx.locals.length}`, { kind: "i32" });
+
+  // receiver -> outerVec (null-guarded), then unpack len/data.
+  compileExpression(ctx, fctx, propAccess.expression);
+  fctx.body.push({ op: "local.tee", index: outerVec });
+  emitReceiverNullGuard(ctx, fctx, outerVec);
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: outerLen });
+  fctx.body.push({ op: "local.get", index: outerVec });
+  fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: outerData });
+
+  // Pass 1: total = Σ (non-null) inner.length
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: total });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: iTmp });
+  const pass1: Instr[] = [
+    { op: "local.get", index: iTmp },
+    { op: "local.get", index: outerLen },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+    // inner = outerData[i]
+    { op: "local.get", index: outerData },
+    { op: "local.get", index: iTmp },
+    { op: "array.get", typeIdx: arrTypeIdx },
+    { op: "local.set", index: inner },
+    // if inner != null: total += inner.len
+    { op: "local.get", index: inner },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: total },
+        { op: "local.get", index: inner },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 0 },
+        { op: "i32.add" },
+        { op: "local.set", index: total },
+      ],
+      else: [],
+    },
+    { op: "local.get", index: iTmp },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: iTmp },
+    { op: "br", depth: 0 },
+  ];
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: pass1 }],
+  });
+
+  // resultData = new inner-element[total]
+  fctx.body.push({ op: "local.get", index: total });
+  fctx.body.push({ op: "array.new_default", typeIdx: innerArrTypeIdx });
+  fctx.body.push({ op: "local.set", index: resultData });
+
+  // Pass 2: copy each inner vec's elements contiguously into resultData.
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: pos });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: iTmp });
+  // When inner != null: unpack len/data, copy its elements into resultData[pos..],
+  // then advance pos by inner.length.
+  const copyInner: Instr[] = [
+    // innerLen = inner.len; innerData = inner.data
+    { op: "local.get", index: inner },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: innerLen },
+    { op: "local.get", index: inner },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: innerVecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: innerData },
+    // resultData[pos .. pos+innerLen) = innerData[0 .. innerLen)
+    { op: "local.get", index: resultData },
+    { op: "local.get", index: pos },
+    { op: "local.get", index: innerData },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: innerLen },
+    { op: "array.copy", dstTypeIdx: innerArrTypeIdx, srcTypeIdx: innerArrTypeIdx },
+    // pos += innerLen
+    { op: "local.get", index: pos },
+    { op: "local.get", index: innerLen },
+    { op: "i32.add" },
+    { op: "local.set", index: pos },
+  ];
+  const pass2: Instr[] = [
+    { op: "local.get", index: iTmp },
+    { op: "local.get", index: outerLen },
+    { op: "i32.ge_s" },
+    { op: "br_if", depth: 1 },
+    // inner = outerData[i]
+    { op: "local.get", index: outerData },
+    { op: "local.get", index: iTmp },
+    { op: "array.get", typeIdx: arrTypeIdx },
+    { op: "local.set", index: inner },
+    // if inner != null: copy its elements
+    { op: "local.get", index: inner },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: copyInner, else: [] },
+    // i++
+    { op: "local.get", index: iTmp },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.set", index: iTmp },
+    { op: "br", depth: 0 },
+  ];
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [{ op: "loop", blockType: { kind: "empty" }, body: pass2 }],
+  });
+
+  // return struct.new $innerVec(total, resultData)
+  fctx.body.push({ op: "local.get", index: total });
+  fctx.body.push({ op: "local.get", index: resultData });
+  fctx.body.push({ op: "ref.as_non_null" });
+  fctx.body.push({ op: "struct.new", typeIdx: innerVecTypeIdx });
+  return { kind: "ref_null", typeIdx: innerVecTypeIdx };
+}
+
+/**
  * Compile arr.flat(depth?) — delegates to __array_flat host import (#1136).
  * Converts WasmGC vec receiver to externref, passes depth arg, returns externref.
  */
@@ -7915,15 +8091,21 @@ function compileArrayFlat(
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  elemType: ValType,
 ): ValType | null {
-  // (#2717) `flat` has no Wasm-native arm — it delegates to the host
+  // (#2717) `flat` has no host-import Wasm-native arm — it delegates to the host
   // `__array_flat` import. Under `--target standalone`/`wasi` there is no JS host
   // to satisfy that import, so emitting it produces a module that traps at
   // instantiation. Per the #2711 fail-loud policy, refuse loudly instead of
-  // emitting an unsatisfiable import. A native recursive-flatten arm (depth +
-  // runtime IsArray + dynamic result-build over heterogeneous WasmGC element
-  // types) is a separate, larger follow-up. Host/gc mode is unchanged.
+  // emitting an unsatisfiable import.
   if (ctx.standalone || ctx.wasi) {
+    // (#3363) Native depth-1 homogeneous nested-array flatten first; falls
+    // through to the loud refusal below for depth args / non-nested / mixed
+    // receivers (the larger recursive/heterogeneous arm stays a #2717 follow-up).
+    const native = tryCompileArrayFlatNativeDepth1(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+    if (native) return native;
     reportError(
       ctx,
       callExpr,

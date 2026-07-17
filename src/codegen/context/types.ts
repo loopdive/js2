@@ -2112,9 +2112,19 @@ export interface CodegenContext {
   moduleUsesDynTaView: boolean;
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
-  /** Extra properties for empty object variables */
+  /**
+   * Extra properties for empty object variables.
+   *
+   * (#3364) Keyed by a PER-DECLARATION key (`widenedVarKey`, name + decl start
+   * offset), NOT the bare variable name. Acorn's parser reuses generic local
+   * names (`node`, `type`, …) across many functions, each building an object
+   * with a DIFFERENT field set; bare-name keying let the last widening win, so
+   * every other same-named var built the WRONG struct — dropping its real field
+   * values, so `.callee`/`.type`/… read back null (the in-Wasm AST walk then
+   * ran away). Per-declaration keys keep each var's shape distinct.
+   */
   widenedTypeProperties: Map<string, { name: string; type: ValType }[]>;
-  /** Map from widened variable name to its registered struct name */
+  /** Map from widened variable's per-declaration key (#3364) to its registered struct name */
   widenedVarStructMap: Map<string, string>;
   /** Widened empty-object fields introduced by Object.defineProperty rather than assignment. */
   widenedDefinePropertyKeys: Set<string>;

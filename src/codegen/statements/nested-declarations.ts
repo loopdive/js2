@@ -523,7 +523,7 @@ export function compileNestedFunctionDeclaration(
     if (param.questionToken || param.initializer) {
       const info: OptionalParamInfo = { index: i, type: paramTypes[i]! };
       if (param.initializer) {
-        const cd = extractConstantDefault(param.initializer, paramTypes[i]!);
+        const cd = extractConstantDefault(param.initializer, paramTypes[i]!, ctx);
         if (cd) {
           info.constantDefault = cd;
         } else {

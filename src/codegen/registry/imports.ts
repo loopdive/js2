@@ -8,6 +8,7 @@
 import type { Import, Instr, TagDef, ValType } from "../../ir/types.js";
 import type { CodegenContext, ExternClassInfo } from "../context/types.js";
 import { buildStrictHostImportError, isHostImportAllowed } from "../host-import-allowlist.js";
+import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "../../string-surrogate.js";
 import { addFuncType } from "./types.js";
 // #808 — dependencies of the import-collection/registration functions moved
@@ -2225,7 +2226,13 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
       const sym = objType.getSymbol();
       // Skip Array and tuple types — those use Wasm GC struct/array ops, not host import
       // Skip widened empty objects — those use struct.get, not host import
-      const isWidenedVar = ts.isIdentifier(node.expression) && ctx.widenedVarStructMap.has(node.expression.text);
+      // (#3364) resolve to the receiver's declaration key, not the bare name.
+      const isWidenedVar =
+        ts.isIdentifier(node.expression) &&
+        ((): boolean => {
+          const key = resolveWidenedVarKey(ctx, node.expression);
+          return key !== undefined && ctx.widenedVarStructMap.has(key);
+        })();
       if (
         !isCallCallee &&
         !isNativeStandaloneRegExpMatchArray &&

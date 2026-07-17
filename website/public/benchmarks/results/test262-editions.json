@@ -10,8 +10,8 @@
   },
   {
     "edition": "ES5",
-    "pass": 10319,
-    "fail": 2664,
+    "pass": 10331,
+    "fail": 2652,
     "ce": 92,
     "skip": 0,
     "total": 13075,
@@ -57,8 +57,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11818,
-    "fail": 3433,
+    "pass": 11823,
+    "fail": 3428,
     "ce": 134,
     "skip": 1,
     "total": 15386,
@@ -3191,8 +3191,8 @@
   },
   {
     "edition": "ES2025",
-    "pass": 1054,
-    "fail": 220,
+    "pass": 1063,
+    "fail": 211,
     "ce": 0,
     "skip": 0,
     "total": 1274,
@@ -3227,12 +3227,12 @@
       },
       {
         "name": "set-methods",
-        "pass": 159,
-        "fail": 27,
+        "pass": 168,
+        "fail": 18,
         "ce": 0,
         "skip": 0,
         "total": 186,
-        "pct": 85
+        "pct": 90
       },
       {
         "name": "import-attributes",
@@ -3416,12 +3416,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 0,
-        "fail": 2,
+        "pass": 2,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 2,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "async-functions",

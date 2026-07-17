@@ -102,11 +102,27 @@ already-wired `constantDefault` machinery (callee skips its default check; calle
 emits the value).
 
 **Safety guard (load-bearing):** the folder deliberately does NOT resolve
-arbitrary identifiers (`let`/`var`/`const` bindings) or any expression with a
-non-constant operand, so defaults with side effects (`= inc()`), references to
-other parameters (`= a + 1`), or const-var reads (`= K`) are never folded — they
-still evaluate at the callee, only when the argument is actually omitted (§10.2.11).
-Tests in `tests/issue-869.test.ts` assert both the folding and this preservation.
+arbitrary identifiers or any expression with a non-constant operand, so defaults
+with side effects (`= inc()`) or references to other parameters (`= a + 1`) are
+never folded — they still evaluate at the callee, only when the argument is
+actually omitted (§10.2.11). Tests in `tests/issue-869.test.ts` assert both the
+folding and this preservation.
+
+### Follow-on — 2026-07-17 (dev-869): immutable `const`-binding folding
+
+Extended `foldConstantNumericDefault` to also resolve **immutable `const`
+numeric bindings** (`const TIMEOUT_MS = 5000; function f(t = TIMEOUT_MS)`), plus
+chains (`const A = 5; const B = A * 2; … = B`). This is safe precisely because
+`const` cannot be reassigned — its value is fixed for the program lifetime.
+`const` resolution is delegated to a new `constInitializerOf` method on the
+`TypeOracle` (`src/checker/oracle.ts`) — the checker boundary — so the change
+adds **no `ctx.checker` usage in `src/codegen`** and passes the oracle-ratchet
+gate. `let`/`var` are still NEVER folded (a default over a reassignable binding
+must observe the CALL-TIME value); a const bound to a non-constant initializer
+(`const K = someLet`) is likewise not folded. Boundary locked by explicit
+non-fold guard tests. `extractConstantDefault` gained an optional `ctx` param
+(threaded from its 4 call sites); when absent, `const` folding is skipped
+(identical to prior behavior).
 
 **Still remaining (a separate, higher-risk pass — likely senior-dev):** fully
 removing the sNaN sentinel (`0x7FF00000DEADC0DE`) for internal-only f64 functions

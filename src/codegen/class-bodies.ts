@@ -239,7 +239,7 @@ function registerClassOptionalParams(
     if (!type) continue;
     const info: OptionalParamInfo = { index: i, type };
     if (param.initializer) {
-      const cd = extractConstantDefault(param.initializer, type);
+      const cd = extractConstantDefault(param.initializer, type, ctx);
       if (cd) info.constantDefault = cd;
       else info.hasExpressionDefault = true;
     }

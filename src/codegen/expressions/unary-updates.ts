@@ -11,6 +11,7 @@ import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryEmitLinearU8ElementUpdate } from "../linear-uint8-codegen.js";
+import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { reportError } from "../context/errors.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
@@ -481,8 +482,10 @@ function compileMemberIncDec(
     ensureStructForType(ctx, objType);
     let typeName = resolveStructName(ctx, objType);
     // Fallback: check widened variable struct map (matches compilePropertyAssignment)
+    // (#3364) keyed per-declaration, not by bare name.
     if (!typeName && ts.isIdentifier(operand.expression)) {
-      typeName = ctx.widenedVarStructMap.get(operand.expression.text);
+      const key = resolveWidenedVarKey(ctx, operand.expression);
+      if (key !== undefined) typeName = ctx.widenedVarStructMap.get(key);
     }
     if (!typeName) {
       // (#2656) Unresolvable static struct type — typically an `any`/`externref`

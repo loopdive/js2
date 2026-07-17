@@ -101,6 +101,17 @@ export interface TypeOracle {
   typeKeyOf(node: ts.Node): OracleTypeKey;
   /** Declared type NAME when the node's type has a named symbol. */
   declaredNameOf(node: ts.Node): string | undefined;
+  /**
+   * (#869) Immutable-`const` binding resolution for compile-time default-param
+   * folding. If `id` is an identifier that references a `const` variable
+   * declaration with an initializer, returns that initializer expression;
+   * otherwise `undefined`. Deliberately excludes `let`/`var` (reassignable — a
+   * default that reads them must observe the CALL-TIME value, §10.2.11),
+   * ambient/uninitialized consts, destructuring-bound consts, and non-variable
+   * bindings (parameters, enum members, functions). Returns an AST node, not a
+   * `ts.Type`, so it honors the no-checker-object-escapes contract.
+   */
+  constInitializerOf(id: ts.Node): ts.Expression | undefined;
 }
 
 /** Builtins with first-class compiler handling (mirrors type-mapper's set —
@@ -255,6 +266,23 @@ export class TsCheckerOracle implements TypeOracle {
       const t = this.checker.getTypeAtLocation(node);
       const name = t?.symbol?.name ?? t?.aliasSymbol?.name;
       return name && name !== "__type" && name !== "__object" ? name : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  constInitializerOf(id: ts.Node): ts.Expression | undefined {
+    try {
+      if (!ts.isIdentifier(id)) return undefined;
+      const sym = this.checker.getSymbolAtLocation(id);
+      const decl = sym?.valueDeclaration;
+      // Must be a `const` variable declaration with an initializer, bound to a
+      // plain identifier (not a destructuring pattern).
+      if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return undefined;
+      if (!ts.isIdentifier(decl.name)) return undefined;
+      const list = decl.parent;
+      if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) === 0) return undefined;
+      return decl.initializer;
     } catch {
       return undefined;
     }

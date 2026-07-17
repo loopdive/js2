@@ -5,6 +5,7 @@
  */
 import { ts } from "../ts-api.js";
 import { chainRootIsGrowable } from "./property-access.js";
+import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { reportError } from "./context/errors.js";
@@ -447,7 +448,9 @@ export function compileDeleteExpression(
     const objType = ctx.checker.getTypeAtLocation(inner.expression);
     let typeName = resolveStructName(ctx, objType);
     if (!typeName && ts.isIdentifier(inner.expression)) {
-      typeName = ctx.widenedVarStructMap.get(inner.expression.text);
+      // (#3364) keyed per-declaration, not by bare name.
+      const key = resolveWidenedVarKey(ctx, inner.expression);
+      if (key !== undefined) typeName = ctx.widenedVarStructMap.get(key);
     }
     if (typeName) {
       const structTypeIdx = ctx.structMap.get(typeName);
@@ -543,7 +546,9 @@ export function compileDeleteExpression(
     const objType = ctx.checker.getTypeAtLocation(inner.expression);
     let typeName = resolveStructName(ctx, objType);
     if (!typeName && ts.isIdentifier(inner.expression)) {
-      typeName = ctx.widenedVarStructMap.get(inner.expression.text);
+      // (#3364) keyed per-declaration, not by bare name.
+      const key = resolveWidenedVarKey(ctx, inner.expression);
+      if (key !== undefined) typeName = ctx.widenedVarStructMap.get(key);
     }
     if (typeName) {
       const structTypeIdx = ctx.structMap.get(typeName);

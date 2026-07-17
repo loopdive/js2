@@ -2,6 +2,27 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-07-17 - /harvest-errors (baselines run 20260717-151504, 32,139 pass)
+
+Harvested both lanes (default JS-host + standalone) from
+`loopdive/js2wasm-baselines`. One new >50 pattern filed; all other top
+patterns map to existing tracked issues.
+
+- [#3371](../3371-standalone-reflect-construct-newtarget.md) - standalone
+  `Reflect.construct` (with NewTarget) refused, **160 tests**, 0 in the default
+  lane. #1905 explicitly left construct out of scope; the refusal self-cites the
+  closed #1472, so there was no dedicated tracking issue. `goal: standalone-mode`,
+  umbrella #1781, builds on #3240.
+
+No other new issues warranted: the standalone host-import-leak cluster (5,715
+records citing #2961) is tracked under umbrella #3178 / #2864 / #2865 / #2867
+(in-progress); the default-lane vacuous async-callback cluster is #3227
+(in-progress) and **shrank** to 346 (from ~1,100 at the 2026-07-13 harvest) —
+active progress, not a regression. BigInt-TypedArray null-access (174 default /
+510 standalone) → #2939/#3089; ShadowRealm (61/58) → #1356; `with` (67) → #1387;
+Proxy standalone (374) → #1355; `Object.defineProperties` residual descriptor
+shapes (73) are #1906's deliberate fail-loud tail.
+
 ## 2026-07-17 - Current `origin/main` PO audit (verified high-leverage gaps)
 
 Audit scope: current `origin/main` after fetch, existing `plan/issues`, sprint

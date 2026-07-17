@@ -288,3 +288,104 @@ describe("Default params: constant-folded expression defaults (#869)", () => {
     ).toBe(10);
   });
 });
+
+/**
+ * #869 follow-on — fold **immutable `const` numeric bindings** referenced in a
+ * default. Safe because `const` cannot be reassigned, so its value is fixed for
+ * the program lifetime. `let`/`var` are NEVER folded (a default over a
+ * reassignable binding must observe the CALL-TIME value, §10.2.11) — the
+ * boundary is locked by explicit non-fold guard tests below.
+ */
+describe("Default params: immutable const-binding folding (#869)", () => {
+  it("folds a const numeric binding used as a default", async () => {
+    expect(
+      await runTest(`
+        const TIMEOUT_MS = 5000;
+        function f(t: number = TIMEOUT_MS): number { return t; }
+        export function test(): number { return f(); }
+      `),
+    ).toBe(5000);
+  });
+
+  it("folds a const whose initializer is itself a constant expression", async () => {
+    expect(
+      await runTest(`
+        const TIMEOUT_MS = 30 * 1000;
+        function f(t: number = TIMEOUT_MS): number { return t; }
+        export function test(): number { return f(); }
+      `),
+    ).toBe(30000);
+  });
+
+  it("folds a chain of const bindings (A → B = A * 2)", async () => {
+    expect(
+      await runTest(`
+        const A = 5;
+        const B = A * 2;
+        function f(x: number = B): number { return x; }
+        export function test(): number { return f(); }
+      `),
+    ).toBe(10);
+  });
+
+  it("folds a const binding for an i32 native-int param", async () => {
+    expect(
+      await runTest(`
+        type i32 = number;
+        const SHIFT = 3 << 2;
+        function f(a: i32 = SHIFT): i32 { return a; }
+        export function test(): i32 { return f(); }
+      `),
+    ).toBe(12);
+  });
+
+  it("supplied arg overrides a folded const-binding default", async () => {
+    expect(
+      await runTest(`
+        const K = 5000;
+        function f(t: number = K): number { return t; }
+        export function test(): number { return f(7); }
+      `),
+    ).toBe(7);
+  });
+
+  // --- boundary: mutable bindings must NOT be folded ---
+
+  it("does NOT fold a `let` binding — reads the call-time value after reassignment", async () => {
+    // If `base` were wrongly folded to its initializer (10), this would return
+    // 10. It must read the current value (20) at call time.
+    expect(
+      await runTest(`
+        let base = 10;
+        function f(a: number = base): number { return a; }
+        base = 20;
+        export function test(): number { return f(); }
+      `),
+    ).toBe(20);
+  });
+
+  it("does NOT fold a `var` binding — reads the call-time value after reassignment", async () => {
+    expect(
+      await runTest(`
+        var v = 1;
+        function f(a: number = v): number { return a; }
+        v = 99;
+        export function test(): number { return f(); }
+      `),
+    ).toBe(99);
+  });
+
+  it("does NOT fold a const bound to a mutable binding (non-constant initializer)", async () => {
+    // `K2`'s initializer is a `let` read, which is not compile-time constant, so
+    // K2 is not folded; the callee reads K2's real (frozen) value.
+    expect(
+      await runTest(`
+        let m = 3;
+        const K2 = m;
+        function f(a: number = K2): number { return a; }
+        m = 8;
+        export function test(): number { return f(); }
+      `),
+    ).toBe(3);
+  });
+});

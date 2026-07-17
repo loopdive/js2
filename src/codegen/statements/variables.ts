@@ -11,6 +11,7 @@ import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion }
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
+import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import {
   objectLiteralIsStandaloneAnyObjectCarrier,
   objectLiteralSpreadTakesHostPath,
@@ -180,7 +181,8 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
   if (ctx.growableObjectLiteralVars.has(name)) return { kind: "externref" };
   // A var whose properties were widened (empty-obj + later prop writes) gets a
   // synthesized struct; mirror it if the struct is registered, else bail.
-  const widenedStructName = ctx.widenedVarStructMap.get(name);
+  // (#3364) keyed per-declaration, not by bare name.
+  const widenedStructName = ctx.widenedVarStructMap.get(widenedVarKeyFromDecl(decl.name));
   if (widenedStructName !== undefined) {
     const idx = ctx.structMap.get(widenedStructName);
     return idx === undefined ? null : { kind: "ref_null", typeIdx: idx };
@@ -986,7 +988,10 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // Override type for string methods returning host arrays (e.g. split() returns
     // externref but TS types as string[] which resolveWasmType maps to GC vec struct)
     // Check if this variable has widened properties (empty obj with later prop assignments)
-    const widenedStructName = ctx.widenedVarStructMap.get(name);
+    // (#3364) keyed per-declaration, not by bare name.
+    const widenedStructName = ts.isIdentifier(decl.name)
+      ? ctx.widenedVarStructMap.get(widenedVarKeyFromDecl(decl.name))
+      : undefined;
     const widenedTypeIdx = widenedStructName !== undefined ? ctx.structMap.get(widenedStructName) : undefined;
     // #1197: i32-specialized number[] arrays get __vec_i32 instead of __vec_f64.
     // The override is applied AFTER the standard type computation so it stacks

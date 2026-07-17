@@ -684,28 +684,34 @@ export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean
  * — so defaults like `= 30 * 1000`, `= 1 << 4`, `= 60 * 60`, or `= Infinity`
  * take the clean caller-side direct-emit path instead of the sNaN sentinel.
  *
- * IMPORTANT — this deliberately does NOT resolve arbitrary identifiers (`let`,
- * `var`, or even `const` bindings). A default like `= base` must observe the
- * CURRENT value of `base` at call time (§10.2.11); folding it to the binding's
- * initializer would be a correctness regression. Only `NaN`/`Infinity`/
- * `undefined` are folded, which are non-writable numeric globals. Any operand
- * that is not itself constant-foldable makes the whole expression unfoldable
- * (returns `undefined`), so side-effecting operands (`void foo()`, `a + bar()`)
- * are never dropped — they fall through to the existing expression-default path.
+ * IMPORTANT — identifier handling is deliberately narrow. Only the read-only
+ * numeric globals (`NaN`/`Infinity`/`undefined`) and **immutable `const`
+ * numeric bindings** are folded. `let`/`var` are NEVER folded: a default like
+ * `= base` over a reassignable binding must observe the CURRENT value of `base`
+ * at call time (§10.2.11), so folding it to the binding's initializer would be a
+ * correctness regression. `const` is safe precisely because it cannot be
+ * reassigned — its value is fixed for the program's lifetime. `const` resolution
+ * is delegated to `ctx.oracle.constInitializerOf` (the checker boundary); when
+ * `ctx` is absent, `const` folding is simply skipped (identical to prior
+ * behavior). Any operand that is not itself constant-foldable makes the whole
+ * expression unfoldable (returns `undefined`), so side-effecting operands
+ * (`void foo()`, `a + bar()`) are never dropped — they fall through to the
+ * existing expression-default path.
  *
  * The evaluation uses native JS operators, which already apply the correct
  * ECMAScript coercions (ToInt32 for bitwise, IEEE-754 for arithmetic), so the
  * folded value byte-matches what the callee would have computed.
  */
-export function foldConstantNumericDefault(expr: ts.Expression): number | undefined {
+export function foldConstantNumericDefault(expr: ts.Expression, ctx?: CodegenContext, depth = 0): number | undefined {
   if (ts.isNumericLiteral(expr)) return Number(expr.text);
-  if (ts.isParenthesizedExpression(expr)) return foldConstantNumericDefault(expr.expression);
+  if (ts.isParenthesizedExpression(expr)) return foldConstantNumericDefault(expr.expression, ctx, depth);
   if (expr.kind === ts.SyntaxKind.TrueKeyword) return 1;
   if (expr.kind === ts.SyntaxKind.FalseKeyword) return 0;
   if (expr.kind === ts.SyntaxKind.NullKeyword) return 0;
   if (expr.kind === ts.SyntaxKind.UndefinedKeyword) return NaN;
   if (ts.isIdentifier(expr)) {
-    // Only the read-only numeric globals — never user bindings (see doc above).
+    // The read-only numeric globals first — never shadowable to a foldable
+    // value in practice, and cheap to special-case.
     switch (expr.text) {
       case "NaN":
         return NaN;
@@ -713,17 +719,23 @@ export function foldConstantNumericDefault(expr: ts.Expression): number | undefi
         return Infinity;
       case "undefined":
         return NaN;
-      default:
-        return undefined;
     }
+    // Immutable `const` numeric binding: resolve to the const's initializer and
+    // fold that. `let`/`var` are excluded by the oracle (reassignable → must
+    // read the call-time value). `depth` bounds pathological const chains.
+    if (ctx && depth < 16) {
+      const init = ctx.oracle.constInitializerOf(expr);
+      if (init) return foldConstantNumericDefault(init, ctx, depth + 1);
+    }
+    return undefined;
   }
   if (ts.isVoidExpression(expr)) {
     // `void <constant>` → undefined → NaN, but only when the operand is itself
     // foldable so a side-effecting operand (`void foo()`) is never dropped.
-    return foldConstantNumericDefault(expr.expression) === undefined ? undefined : NaN;
+    return foldConstantNumericDefault(expr.expression, ctx, depth) === undefined ? undefined : NaN;
   }
   if (ts.isPrefixUnaryExpression(expr)) {
-    const v = foldConstantNumericDefault(expr.operand);
+    const v = foldConstantNumericDefault(expr.operand, ctx, depth);
     if (v === undefined) return undefined;
     switch (expr.operator) {
       case ts.SyntaxKind.MinusToken:
@@ -739,9 +751,9 @@ export function foldConstantNumericDefault(expr: ts.Expression): number | undefi
     }
   }
   if (ts.isBinaryExpression(expr)) {
-    const l = foldConstantNumericDefault(expr.left);
+    const l = foldConstantNumericDefault(expr.left, ctx, depth);
     if (l === undefined) return undefined;
-    const r = foldConstantNumericDefault(expr.right);
+    const r = foldConstantNumericDefault(expr.right, ctx, depth);
     if (r === undefined) return undefined;
     switch (expr.operatorToken.kind) {
       case ts.SyntaxKind.PlusToken:
@@ -785,6 +797,7 @@ export function foldConstantNumericDefault(expr: ts.Expression): number | undefi
 export function extractConstantDefault(
   initializer: ts.Expression,
   paramType: ValType,
+  ctx?: CodegenContext,
 ): OptionalParamInfo["constantDefault"] {
   if (paramType.kind === "f64") {
     if (ts.isNumericLiteral(initializer)) {
@@ -825,8 +838,9 @@ export function extractConstantDefault(
       return { kind: "f64", value: Number(initializer.operand.text) };
     }
     // Compile-time-constant numeric expressions: `30 * 1000`, `1 << 4`,
-    // `Infinity`, etc. (#869) — emitted directly at the call site.
-    const folded = foldConstantNumericDefault(initializer);
+    // `Infinity`, immutable `const` numeric bindings, etc. (#869) — emitted
+    // directly at the call site.
+    const folded = foldConstantNumericDefault(initializer, ctx);
     if (folded !== undefined) return { kind: "f64", value: folded };
     return undefined;
   }
@@ -857,7 +871,7 @@ export function extractConstantDefault(
     // Compile-time-constant numeric expressions folded to a JS number, then
     // ToInt32-truncated (`| 0`) for the i32 slot — matches the callee's
     // coercion of the same default (#869). NaN/Infinity truncate to 0.
-    const folded = foldConstantNumericDefault(initializer);
+    const folded = foldConstantNumericDefault(initializer, ctx);
     if (folded !== undefined) return { kind: "i32", value: folded | 0 };
     return undefined;
   }

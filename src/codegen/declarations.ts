@@ -383,7 +383,7 @@ function registerBodylessFunctionDeclaration(
     if (param.questionToken || param.initializer) {
       const info: OptionalParamInfo = { index: i, type: params[i]! };
       if (param.initializer) {
-        const cd = extractConstantDefault(param.initializer, params[i]!);
+        const cd = extractConstantDefault(param.initializer, params[i]!, ctx);
         if (cd) info.constantDefault = cd;
         else info.hasExpressionDefault = true;
       }
@@ -803,7 +803,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if (param.questionToken || param.initializer) {
           const info: OptionalParamInfo = { index: i, type: params[i]! };
           if (param.initializer) {
-            const cd = extractConstantDefault(param.initializer, params[i]!);
+            const cd = extractConstantDefault(param.initializer, params[i]!, ctx);
             if (cd) {
               info.constantDefault = cd;
             } else {

@@ -9,6 +9,7 @@ import { forEachChild, ts } from "../../ts-api.js";
 import { resolveWasmType } from "../index.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType, registerStructType } from "../registry/types.js";
+import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 
@@ -178,7 +179,13 @@ export function collectEmptyObjectWidening(
           }
 
           if (extraProps.length > 0) {
-            ctx.widenedTypeProperties.set(varName, extraProps);
+            // (#3364) Key by the DECLARATION site, not the bare name — acorn
+            // reuses generic local names (`node`) across many functions with
+            // different shapes, and bare-name keying let the last widening
+            // clobber every other same-named var (foreign struct → dropped
+            // fields → null reads → runaway walk).
+            const varKey = widenedVarKeyFromDecl(decl.name);
+            ctx.widenedTypeProperties.set(varKey, extraProps);
 
             // Register the struct type now so that collectDeclarations
             // can resolve the variable type to a struct ref instead of externref
@@ -189,8 +196,8 @@ export function collectEmptyObjectWidening(
             }));
             const structName = `__anon_${ctx.anonTypeCounter++}`;
             registerStructType(ctx, structName, fields);
-            // Map variable name to struct name for later lookup
-            ctx.widenedVarStructMap.set(varName, structName);
+            // Map variable declaration key to struct name for later lookup
+            ctx.widenedVarStructMap.set(varKey, structName);
             // Also try to map TS types (may not match later due to type identity)
             // Skip `any` — it's a singleton type object shared by all any-typed vars,
             // so registering it would cause every any-typed var to resolve to this struct.

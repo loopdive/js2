@@ -23,6 +23,7 @@ import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.j
 import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
 import { emitMappedArgReverseSync } from "./expressions/logical-ops.js";
 import { resolveStructName } from "./expressions/misc.js";
+import { widenedStructNameForUse } from "./widened-var-key.js";
 import { addUnionImports, cacheStringLiterals, getOrRegisterTupleType, resolveWasmType } from "./index.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
@@ -1614,8 +1615,7 @@ export function compileObjectDefineProperty(
   // Check if obj is a struct type with the given field
   const objTsType = ctx.checker.getTypeAtLocation(objArg);
   let structName =
-    resolveStructName(ctx, objTsType) ||
-    (ts.isIdentifier(objArg) ? ctx.widenedVarStructMap.get(objArg.text) : undefined);
+    resolveStructName(ctx, objTsType) || (ts.isIdentifier(objArg) ? widenedStructNameForUse(ctx, objArg) : undefined);
 
   // (#1629 S3) Whether the receiver is *statically* struct-typed — i.e. resolved
   // WITHOUT the `any`/externref rescue fallbacks 1-3 below. This is the same
@@ -2972,8 +2972,7 @@ function emitExternDefinePropertyNoValue(
   // consult for `get: identifierRef` / `set: identifierRef` descriptors.
   const objTsType = ctx.checker.getTypeAtLocation(objArg);
   const _staticStructName = resolveStructName(ctx, objTsType);
-  const _structName =
-    _staticStructName || (ts.isIdentifier(objArg) ? ctx.widenedVarStructMap.get(objArg.text) : undefined);
+  const _structName = _staticStructName || (ts.isIdentifier(objArg) ? widenedStructNameForUse(ctx, objArg) : undefined);
   const _propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
   const _structTypeIdx = _structName ? ctx.structMap.get(_structName) : undefined;
   const _fields = _structName ? ctx.structFields.get(_structName) : undefined;
@@ -3509,7 +3508,7 @@ export function compileObjectDefineProperties(
         const objTsType = ctx.checker.getTypeAtLocation(objArg);
         const structName =
           resolveStructName(ctx, objTsType) ||
-          (ts.isIdentifier(objArg) ? ctx.widenedVarStructMap.get(objArg.text) : undefined);
+          (ts.isIdentifier(objArg) ? widenedStructNameForUse(ctx, objArg) : undefined);
         const structTypeIdx = structName ? ctx.structMap.get(structName) : undefined;
         const fields = structName ? ctx.structFields.get(structName) : undefined;
         const fieldIdx = fields && propName ? fields.findIndex((f) => f.name === propName) : -1;

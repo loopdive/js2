@@ -430,6 +430,36 @@ if (suppressedAllowlist > 0) {
   );
 }
 
+// #3338 — refuse to publish an invalid primary artifact. `result.success`
+// means codegen completed, NOT that the binary validates: on wasm-opt failure
+// the optimizer emits a warning and preserves the original (possibly invalid)
+// bytes (src/optimize.ts), and `--no-optimize` ships raw codegen with no
+// validator at all. Without this guard the CLI exits 0 and writes an
+// uninstantiable `.wasm` (plus `.wat`/`.d.ts`/imports helper). Validate the
+// final binary once here — before the `--wat` stdout path and before any
+// output file is written — so a malformed artifact never escapes with a
+// success exit code. Optimizer-availability warnings stay nonfatal because the
+// preserved binary they fall back to still reaches this check and validates.
+// Cast to BufferSource: under TS 5.7+ the typed-array generic types this as
+// `Uint8Array<ArrayBufferLike>`, which the lib `validate`/`Module` overloads
+// (param: BufferSource) don't structurally accept without the widening — the
+// same cast `optimizedBinaryValidates` uses in src/optimize.ts.
+const binaryForValidation = result.binary as unknown as BufferSource;
+if (!WebAssembly.validate(binaryForValidation)) {
+  let detail = "";
+  try {
+    // Constructing a Module surfaces the first engine validation detail that
+    // `WebAssembly.validate` (a bare boolean) does not expose.
+    new WebAssembly.Module(binaryForValidation);
+  } catch (err) {
+    detail = err instanceof Error ? err.message : String(err);
+  }
+  console.error(
+    `${absInput}: error: emitted WebAssembly failed validation and was not written` + (detail ? ` — ${detail}` : ""),
+  );
+  process.exit(1);
+}
+
 if (watOnly) {
   process.stdout.write(result.wat);
   process.exit(0);
