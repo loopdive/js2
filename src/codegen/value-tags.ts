@@ -38,7 +38,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
  * remains the tag POLICY home (classifier, boxing entry point, sentinel).
  * See `js-tag.ts` for the invariants (V1 tag fidelity, V2 numeric class).
  */
-export { JsTag, jsTagUnboxKind } from "./js-tag.js";
+export { JsTag, jsTagUnboxKind } from "../ir/js-tag.js";
 
 /** Static JS-type classification of an expression, resolved from its TS type. */
 export type JsStaticType =

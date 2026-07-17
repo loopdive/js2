@@ -21,7 +21,7 @@
 // Nothing here changes for Phase 1.
 
 import type { Instr, ValType } from "../types.js";
-import type { JsTag } from "../../codegen/js-tag.js";
+import type { JsTag } from "../js-tag.js";
 import type {
   LinearAllocationSitePlan,
   LinearRecordLayoutPlan,
