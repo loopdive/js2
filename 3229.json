@@ -1,8 +1,9 @@
 {
   "id": "3229",
   "assignee": "ttraenkler/dev-conform",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3229-objectkeys-length-vec-type",
   "claimed_at": "2026-07-17T17:39:53Z",
-  "updated_at": "2026-07-17T17:39:53Z"
+  "updated_at": "2026-07-17T18:21:45Z",
+  "released_at": "2026-07-17T18:21:45Z"
 }
