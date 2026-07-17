@@ -1,8 +1,9 @@
 {
   "id": "3342",
   "assignee": "ttraenkler/dev-1044",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3342-object-values-join",
   "claimed_at": "2026-07-17T13:48:02Z",
-  "updated_at": "2026-07-17T13:48:02Z"
+  "updated_at": "2026-07-17T14:08:35Z",
+  "released_at": "2026-07-17T14:08:35Z"
 }
