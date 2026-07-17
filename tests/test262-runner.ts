@@ -2077,11 +2077,21 @@ function __ta_makeCtorArgPassthrough(x: any): any {
   // "Cannot convert 40 to a BigInt" — flipping ~300 currently-passing BigInt
   // harness tests to runtime errors (measured 3/60 in the #3087 pass-sample
   // A/B). Until #1349 lands:
-  //   - arrays → null: exactly reproduces the pre-#3087 behavior for array
-  //     args (the dynamic-dispatch null-drop made every makeCtorArg call
-  //     return null), so the BigInt lane's pass/fail set is preserved
-  //     bit-for-bit — no new dishonesty is introduced, the existing
-  //     length-0-view coincidental passes just stay as they were;
+  //   - (#3335) arrays → x.length: builds a CORRECT-LENGTH zero-filled view
+  //     (`new TA(makeCtorArg([1n,2n,3n,4n]))` = `new BigInt64Array(4)`).
+  //     The previous `arrays → null` mapping built a LENGTH-0 view
+  //     (`new BigInt64Array(null)`), and the six
+  //     `TypedArray/prototype/set/BigInt/*` files then hit the host
+  //     RangeError "offset is out of bounds" from `.set(src, 0)` on the
+  //     empty view — a message the #3189 trap ratchet and the poison
+  //     classifier bin as an UNCATCHABLE oob trap (the 45→51 baseline flap
+  //     of #3335; the flap's other mode was realm-contamination making
+  //     `BigInt64Array` itself undefined). With the true length, a
+  //     subsequent element write fails as a CATCHABLE "Cannot convert N to
+  //     a BigInt" TypeError (numbers, not BigInts — #1349 rep gap), and
+  //     length-asserting tests observe the honest length. Element VALUES
+  //     are still zeros, not the literals — content-asserting tests keep
+  //     failing (honestly) until #1349;
   //   - primitives → identity: `makeCtorArg(8n)` lowers to `8` and
   //     `new TA(8)` builds the length-8 view the real harness would — a
   //     small honest win with no BigInt conversion involved.
@@ -2089,7 +2099,7 @@ function __ta_makeCtorArgPassthrough(x: any): any {
     p += `
 
 function __ta_makeCtorArgBigIntCompat(x: any): any {
-  if (Array.isArray(x)) { return null; }
+  if (Array.isArray(x)) { return x.length; }
   return x;
 }`;
   }

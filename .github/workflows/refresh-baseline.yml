@@ -337,6 +337,8 @@ jobs:
       - name: Deploy to baselines repo
         env:
           BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
+          # (#3335) Trap-growth gate tolerance — see check-baseline-trap-growth.ts.
+          BASELINE_TRAP_GROWTH_ALLOW: ${{ vars.BASELINE_TRAP_GROWTH_ALLOW || '0' }}
         run: |
           PASS=${{ steps.sanity.outputs.pass }}
           TOTAL=${{ steps.sanity.outputs.total }}
@@ -349,6 +351,19 @@ jobs:
 
           # Clone baselines repo (shallow — only need latest state)
           git clone --depth=1 git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+
+          # (#3335) Trap-growth gate: refuse to bake a main-side increase of any
+          # uncatchable-trap category into the baseline (it silently raises the
+          # #3189 ratchet floor — the 2026-07-17 45→51 oob flap). FORCED
+          # (emergency) refreshes bypass by design; intentional
+          # reclassifications set the repo var BASELINE_TRAP_GROWTH_ALLOW for
+          # one cycle.
+          if [ "${IS_FORCED}" != "true" ] && [ -f /tmp/js2wasm-baselines/test262-current.jsonl ]; then
+            npx tsx scripts/check-baseline-trap-growth.ts \
+              --baseline /tmp/js2wasm-baselines/test262-current.jsonl \
+              --candidate merged-reports/test262-results-merged.jsonl \
+              --allow "${BASELINE_TRAP_GROWTH_ALLOW:-0}"
+          fi
 
           # Copy fresh artifacts (JSONL lives here, not in the main repo)
           cp merged-reports/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-current.jsonl

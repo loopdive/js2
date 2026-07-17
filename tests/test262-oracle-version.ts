@@ -31,7 +31,7 @@
  * version or a date. Two runs with the same ORACLE_VERSION are guaranteed to
  * apply identical verdict logic, so their rows are directly comparable.
  */
-export const ORACLE_VERSION = 6;
+export const ORACLE_VERSION = 7;
 
 /**
  * Append-only log of what each oracle version means. Newest last.
@@ -151,5 +151,29 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
       "S1 async post-drain verdict re-read) — both landed/queued first, so this " +
       "change re-bumps to v6 per the whichever-lands-later-re-bumps convention " +
       "(v5 is intentionally skipped in this history, not reused: #3161 owns it).",
+  },
+  {
+    version: 7,
+    note:
+      "#3227 S4 — async post-drain verdict re-read in the CI WORKER lane. " +
+      "v5 (#3161, S1) added the __result() re-read to tests/test262-runner.ts " +
+      "(runTest262File) ONLY; the sharded-CI / pnpm test:262 path executes " +
+      "through scripts/test262-worker.mjs, which kept scoring the premature " +
+      "sync verdict — so the v5 policy never actually applied to baseline " +
+      "rows (1,679 rows stayed vacuous; the S1-sampled corpus flips 'nearly " +
+      "cancelled' because neither direction ever ran). The worker now mirrors " +
+      "S1 exactly: after a sync 1/-262 from an async-flagged test it drains " +
+      "two setImmediate rounds (capturing a deferred continuation throw as an " +
+      "honest fail for THAT test — the module-level unhandledRejection " +
+      "suppressor otherwise swallowed it) and re-reads the verdict via the " +
+      "wrapper's __result() export. Flips (v5's intended set, now real): " +
+      "vacuous → honest pass where continuations assert correctly, vacuous → " +
+      "honest assert-fail where they expose real bugs, and some sync-pass → " +
+      "honest assert-fail where a post-drain assertion genuinely fails " +
+      "(owner-approved honesty regression, precedent v2/#3086 and the S1 " +
+      "lead approval of 2026-07-16). No wasm change: the __result() export " +
+      "has been in the wrapper since v5, so these ARE same-wasm oracle-skew " +
+      "flips — the forward-monotonic bump auto-rebases in diff-test262.ts, " +
+      "and promote-baseline re-seeds the committed baseline at v7 on merge.",
   },
 ];

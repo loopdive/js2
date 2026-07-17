@@ -1416,7 +1416,66 @@ process.on("message", async (msg) => {
 
     // Run the test
     try {
-      const ret = testFn();
+      let ret = testFn();
+
+      // (#3227 S4) Async post-drain verdict re-read — CI-worker parity with
+      // `runTest262File` (S1, PR #3161). The JS-host lane schedules
+      // `.then`/await continuations on the HOST microtask queue, which cannot
+      // drain while `test()` is still on the Wasm→JS stack — so an async
+      // test's sync `1`/`-262` was read BEFORE its assertion-bearing
+      // callbacks ran. S1 added the fix to the local runner only; THIS worker
+      // (the path every sharded-CI baseline row goes through) kept the
+      // premature sync verdict, which is why the S1 corpus flips "nearly
+      // cancelled" and 1,679 rows stayed vacuous. For async-flagged tests the
+      // wrapper exports `__result()` (same verdict logic as the `test()`
+      // epilogue): yield to the event loop (two setImmediate rounds — the
+      // whole microtask queue plus one macrotask hop), then re-read. Sync
+      // assert failures (ret >= 2, `__fail` is sticky/first-wins) and
+      // runtime-negative tests keep their sync semantics.
+      const resultFn = instance.exports.__result;
+      if (!isRuntimeNegative && typeof resultFn === "function" && (ret === 1 || ret === -262)) {
+        // A post-return continuation can THROW (a wasm trap or a Test262Error
+        // escaping a .then reaction) — inside the drain window that surfaces
+        // as an uncaughtException/unhandledRejection. Capture it and score
+        // THIS test failed (the throw IS the test's async outcome; the
+        // module-level unhandledRejection suppressor above would otherwise
+        // swallow it into a silent vacuous/pass).
+        let deferredError = null;
+        const onDeferred = (err) => {
+          if (deferredError == null) deferredError = err;
+        };
+        process.on("uncaughtException", onDeferred);
+        process.on("unhandledRejection", onDeferred);
+        try {
+          await new Promise((r) => setImmediate(r));
+          await new Promise((r) => setImmediate(r));
+        } finally {
+          process.off("uncaughtException", onDeferred);
+          process.off("unhandledRejection", onDeferred);
+        }
+        if (deferredError != null) {
+          const msg =
+            deferredError?.message != null
+              ? `${deferredError.constructor?.name ?? "Error"}: ${String(deferredError.message)}`
+              : String(deferredError);
+          sendResult({
+            id,
+            status: "fail",
+            error: `${msg.slice(0, 600)} | async continuation threw after test() returned (#3227)`,
+            ret,
+            compileMs,
+            execMs: performance.now() - execStart,
+            ...buildResultMetadata(result, true),
+          });
+          return;
+        }
+        try {
+          ret = resultFn();
+        } catch {
+          // The re-read itself trapped — keep the sync verdict rather than
+          // crediting/blaming the re-read.
+        }
+      }
       const execMs = performance.now() - execStart;
 
       if (isRuntimeNegative) {

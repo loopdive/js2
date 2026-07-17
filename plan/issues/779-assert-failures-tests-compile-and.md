@@ -1,6 +1,7 @@
 ---
 id: 779
 title: "Assert failures: tests compile and run but produce wrong values (8,674 tests)"
+horizon: xl
 status: ready
 created: 2026-03-23
 updated: 2026-05-28
@@ -8,7 +9,7 @@ priority: critical
 feasibility: hard
 reasoning_effort: max
 goal: spec-completeness
-sprint: Backlog
+sprint: current
 test262_fail: 8674
 sprint_role: analysis-only
 ---

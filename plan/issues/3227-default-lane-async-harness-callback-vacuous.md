@@ -2,11 +2,14 @@
 id: 3227
 title: "default (JS-host) lane: async-completion harness callbacks never execute → 1,690 vacuous fails (#2940 detector), dominated by for-await-of / dynamic-import / Promise"
 status: in-progress
-assignee: ttraenkler/fable-s2
+assignee: ttraenkler/fable-s4
 loc-budget-allow:
   - src/codegen/async-cps.ts
   - src/codegen/expressions.ts
   - src/runtime.ts
+regressions-allow:
+  count: 1100
+  reason: "#3227 S4's own purpose (async post-drain verdict re-read in the CI worker lane, ORACLE_VERSION 6->7) produces exactly this reclassification shape -- the S1-approved honesty regression (lead-approved 2026-07-16, precedent #3086) finally materializing at corpus scale because S1's re-read never reached scripts/test262-worker.mjs. merge_group run 29558462964: 1007 non-excused wasm-change regressions, verified 100% async-flagged tests (0 non-async, checked per-file frontmatter against the merged report), categories assertion_fail 972 / other 15 / runtime_error 15 / type_error 4 / range_error 1 -- premature sync passes correctly becoming honest post-drain fails, clustered on async-gen yield* abrupt-completion shapes (class/elements 200+200, async-gen-method* 56x4, object/method-definition 58). Traps all flat (null_deref 184->184, illegal_cast 87->87, oob 51->51, unreachable 8->8), zero new. Net -659 (33294->32635), 348 improvements (vacuous->honest pass). Ceiling: 1007 + ~93 margin."
 sprint: current
 priority: high
 horizon: xl
@@ -313,3 +316,68 @@ origin/main -- <files>` is empty), so the auto-merge trivially kept the S2
   (compiler-side) compose by construction: S1 makes post-await assertions
   actually score; S2 makes `await Promise.resolve(x)` deliver x, so those
   assertions now pass.
+
+## S4 — S1's re-read never reached the CI lane (fable-s4, 2026-07-17)
+
+**Measurement first (fresh merged baseline, baseline_sha `956e09b9`,
+oracle v6, 2026-07-17 03:40Z — post-S1/S2/S3):** 1,861 async-flagged fail
+rows; **1,679 files still carry the vacuous verdict** — barely moved from the
+original 1,690, and the S1-sampled corpus flips (+420 / −875) "nearly
+cancelled" in the post-S1 promote-baseline. The per-path distribution is
+byte-identical to the original inventory (383 for-await-of, 234
+dynamic-import, …). Yet the issue-cited representatives PASS locally through
+`runTest262File`.
+
+**Root cause (verified through the real worker):** S1 (PR #3161) added the
+post-drain `__result()` re-read to `tests/test262-runner.ts` only. The
+authoritative sharded-CI baseline rows are produced by
+`scripts/test262-worker.mjs` (fork worker; used by `tests/test262-shared.ts`
+chunk shards), which still scored the premature sync `1`/`-262` — so the v5
+verdict policy structurally never applied to a single baseline row. The wasm
+side was fine all along (the `__result` export ships in every async wrapper
+since v5, and the disk cache keys on the WRAPPED source); only the read side
+was missing. Two smaller lanes had the same gap: the in-process fixture path
+in `tests/test262-shared.ts` and `scripts/wasm-exec-worker.mjs`
+(`tests/test262-vitest.test.ts` arm). The ESM module-goal worker delegates to
+`runTest262File` and was already covered.
+
+**Fix (this PR):** port the S1 drain + re-read into all three lanes —
+`scripts/test262-worker.mjs` (full parity incl. deferred-continuation-throw
+capture; the module-level `unhandledRejection` suppressor was silently
+swallowing those throws), `tests/test262-shared.ts` fixture path and
+`scripts/wasm-exec-worker.mjs` (minimal drain + re-read; no process-wide
+capture in concurrent/thread contexts). Verdict-logic change in the CI lane ⇒
+**ORACLE_VERSION 6 → 7** with its own history entry. No wasm change ⇒ the
+flips are same-wasm oracle skew; the forward-monotonic bump auto-rebases in
+`diff-test262.ts` (wasm-change drift tolerance untouched), and
+promote-baseline re-seeds at v7 on merge.
+
+**Measured on the REAL fixed worker (seed 3227, fork-worker protocol):**
+
+| Sample                                 | n   | → pass       | → honest fail | stays vacuous | skip/artifact                                     |
+| -------------------------------------- | --- | ------------ | ------------- | ------------- | ------------------------------------------------- |
+| A: baseline vacuous rows (1,680)       | 60  | 12           | ~35 (ret ≥ 2) | ~5 (−262)     | 4 Temporal-scope + ~4 probe module-resolution     |
+| B: baseline passing async rows (3,505) | 60  | 38 stay pass | 22 (ret ≥ 2)  | —             | 1 of the 22 is a probe module-resolution artifact |
+
+Extrapolated: ≈ +350 vacuous→pass, ≈ −1,200 pass→honest-fail, net ≈ −850 raw
+— the S1-approved honesty regression (lead-approved 2026-07-16, precedent
+#3086) finally materializing at corpus scale. The B-flips cluster on
+async-generator `yield*` abrupt-completion shapes (`yield-star-getiter-*`,
+`yield-star-next-then-*`, `yield-spread-arr-*`) — post-drain assertions
+exposing real delegation bugs; these are the S5+ feature-fix clusters.
+
+Side effect fixed: since S1, `validate-test262-baseline` (which runs through
+the S1-patched `runTest262File`) has been diverging from the v6 baseline on
+sampled async rows; once promote-baseline re-seeds at v7 the two agree again.
+
+### Test Results (S4)
+
+- `tests/issue-3227-s4.test.ts`: 4/4 (all three lanes carry the re-read,
+  positioned before the −262 scoring; oracle v7 entry present).
+- Real-worker samples above; representative
+  `for-await-of/async-func-decl-dstr-obj-rest-skip-non-enumerable.js`
+  vacuous → pass through both the fixed worker and `runTest262File`.
+- `check-verdict-oracle-bump` (#3003): pass (bump 6→7 detected).
+- `tests/issue-1862.test.ts` has 2 failures **pre-existing on upstream/main**
+  (its searched source-shape strings were removed by earlier PRs; verified
+  against `upstream/main` blobs — untouched by this PR).

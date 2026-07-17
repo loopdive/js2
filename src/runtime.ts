@@ -509,6 +509,67 @@ function _compiledAbToHostBuffer(vec: any, exports: Record<string, Function> | u
 }
 
 /**
+ * (#3335) Marshal one argument of a dynamic [[Construct]] on a HOST callee
+ * (`__construct` / `__construct_closure` / `__reflect_construct`).
+ *
+ * Order of conversions:
+ *   1. compiled-ArrayBuffer vec struct → canonical host ArrayBuffer (#3097);
+ *   2. compiled ARRAY (vec struct) → real host Array via the same
+ *      `__vec_len`/`__vec_get` materialization `_materializeIterable` uses.
+ *
+ * Without step 2, a host built-in receiving a raw vec struct treats it as a
+ * non-array-like (its `length` reads as undefined → 0): the six test262
+ * BigInt `TypedArray.prototype.set` files constructed a LENGTH-0
+ * `new BigInt64Array(compiledArr)` whose later `.set(src, 0)` threw the host
+ * RangeError "offset is out of bounds" — a message the #3189 ratchet (and
+ * the poison classifier) bins as an uncatchable oob TRAP. Materializing the
+ * array restores honest host semantics: either a correctly-sized view (when
+ * element marshalling suffices) or a deterministic, CATCHABLE host TypeError.
+ *
+ * Non-vec structs and host values pass through unchanged; compiled-closure
+ * callees never reach this (they re-enter Wasm with raw structs).
+ */
+function _marshalHostConstructArg(
+  a: any,
+  exports: Record<string, Function> | undefined,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+  hostCallee?: any,
+): any {
+  const buf = _compiledAbToHostBuffer(a, exports);
+  if (buf !== undefined) return buf;
+  if (a != null && typeof a === "object" && _isWasmStruct(a)) {
+    const mat = _materializeIterable(a, callbackState);
+    if (mat !== a) return mat;
+    // (#3335) Refuse loudly: the arg is a compiled struct NONE of the
+    // marshal probes can decode (not an AB vec, not a readable vec — e.g.
+    // the opaque box a value acquires crossing a host bound-function
+    // round-trip). Handing it to a host %TypedArray% constructor makes V8
+    // treat it as a non-array-like → a silent LENGTH-0 view whose later
+    // `.set()` throws "offset is out of bounds", which the #3189 ratchet
+    // and the poison classifier bin as an UNCATCHABLE oob trap. A
+    // deterministic, catchable TypeError is the honest bridging failure —
+    // and it is realm-state-independent, so the failure mode cannot flap
+    // between runs (the 45→51 oob baseline flap this guard resolves).
+    if (_isHostTypedArrayCtor(hostCallee)) {
+      const nm = typeof hostCallee.name === "string" && hostCallee.name ? hostCallee.name : "TypedArray";
+      throw new TypeError(`cannot marshal opaque compiled value to host ${nm} constructor`);
+    }
+  }
+  return a;
+}
+
+/** (#3335) Is `fn` a host %TypedArray% subclass constructor (Int8Array … BigUint64Array)? */
+function _isHostTypedArrayCtor(fn: any): boolean {
+  if (typeof fn !== "function") return false;
+  try {
+    const taBase = Object.getPrototypeOf(Int8Array);
+    return fn === taBase || Object.getPrototypeOf(fn) === taBase;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * (#3058) `maxByteLength` of a compiled-ArrayBuffer vec struct: field 2 of a
  * `$__resizable_ab` (≥ 0), or -1 when the struct is a fixed buffer / the module
  * has no resizable-buffer type (no `__ab_max_len` export). The -1 sentinel is
@@ -11229,10 +11290,11 @@ assert._isSameValue = isSameValue;
           const exports = callbackState?.getExports();
           const wrappedCtor = _isWasmStruct(ctor) ? _wrapForHost(ctor, exports) : ctor;
           let wrappedArgs = _isWasmStruct(args) ? _wrapForHost(args, exports) : args;
-          // (#3097) Host ctor target: compiled-ArrayBuffer vec struct args
-          // marshal to their canonical host ArrayBuffer (see __construct).
+          // (#3097/#3335) Host ctor target: compiled-ArrayBuffer vec structs
+          // marshal to their canonical host ArrayBuffer; compiled ARRAY vec
+          // structs materialize to real host Arrays (see __construct).
           if (!_isWasmStruct(ctor) && Array.isArray(wrappedArgs)) {
-            wrappedArgs = wrappedArgs.map((a: any) => _compiledAbToHostBuffer(a, exports) ?? a);
+            wrappedArgs = wrappedArgs.map((a: any) => _marshalHostConstructArg(a, exports, callbackState, wrappedCtor));
           }
           if (newTarget === undefined || newTarget === null) {
             return Reflect.construct(wrappedCtor, wrappedArgs ?? []);
@@ -11274,12 +11336,15 @@ assert._isSameValue = isSameValue;
             throw new TypeError(nm + " is not a constructor");
           }
           let wrappedArgs = _isWasmStruct(argsArray) ? _wrapForHost(argsArray, exports) : argsArray;
-          // (#3097) HOST callee: a compiled-ArrayBuffer vec struct arg must
-          // cross as its canonical host ArrayBuffer (`new TA(buffer, …)` on a
-          // non-buffer object builds a length-0 view). Compiled callees keep
-          // raw structs — they re-enter Wasm.
+          // (#3097/#3335) HOST callee: a compiled-ArrayBuffer vec struct arg
+          // must cross as its canonical host ArrayBuffer, and a compiled ARRAY
+          // vec struct as a real host Array (`new TA(buffer, …)` / `new
+          // TA(arr)` on an opaque struct builds a length-0 view). Compiled
+          // callees keep raw structs — they re-enter Wasm.
           if (!_isWasmStruct(callee) && Array.isArray(wrappedArgs)) {
-            wrappedArgs = wrappedArgs.map((a: any) => _compiledAbToHostBuffer(a, exports) ?? a);
+            wrappedArgs = wrappedArgs.map((a: any) =>
+              _marshalHostConstructArg(a, exports, callbackState, wrappedCallee),
+            );
           }
           return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
         };
@@ -11328,13 +11393,18 @@ assert._isSameValue = isSameValue;
             throw new TypeError(nm + " is not a constructor");
           }
           let wrappedArgs = _isWasmStruct(argsArray) ? _wrapForHost(argsArray, exports) : argsArray;
-          // (#3097) HOST constructor (e.g. the harness TypedArray ctor in
-          // `new TA(buffer, 0, 4)`): marshal compiled-ArrayBuffer vec struct
-          // args to their canonical host ArrayBuffer — V8 treats the raw
-          // struct as a non-buffer array-like and builds a LENGTH-0 view.
-          // A compiled-closure callee keeps raw structs (re-enters Wasm).
+          // (#3097/#3335) HOST constructor (e.g. the harness TypedArray ctor
+          // in `new TA(buffer, 0, 4)` / `new TA(arr)`): marshal compiled-
+          // ArrayBuffer vec structs to their canonical host ArrayBuffer and
+          // compiled ARRAY vec structs to real host Arrays — V8 treats the
+          // raw struct as a non-buffer non-array-like and builds a LENGTH-0
+          // view (whose later `.set()` throws the uncatchable-classified
+          // "offset is out of bounds"). A compiled-closure callee keeps raw
+          // structs (re-enters Wasm).
           if (!_isWasmStruct(callee) && Array.isArray(wrappedArgs)) {
-            wrappedArgs = wrappedArgs.map((a: any) => _compiledAbToHostBuffer(a, exports) ?? a);
+            wrappedArgs = wrappedArgs.map((a: any) =>
+              _marshalHostConstructArg(a, exports, callbackState, wrappedCallee),
+            );
           }
           return Reflect.construct(wrappedCallee, wrappedArgs ?? []);
         };

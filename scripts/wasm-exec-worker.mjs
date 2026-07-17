@@ -143,7 +143,22 @@ parentPort.on("message", async (msg) => {
 
     // Run the test — this is the synchronous call that may hang
     try {
-      const ret = testFn();
+      let ret = testFn();
+
+      // (#3227 S4) Async post-drain verdict re-read — parity with
+      // scripts/test262-worker.mjs. An async-flagged test's sync 1/-262 is
+      // read before its host-microtask continuations run; drain two
+      // setImmediate rounds and re-read via the wrapper's __result() export.
+      const resultFn = instance.exports.__result;
+      if (!isRuntimeNegative && typeof resultFn === "function" && (ret === 1 || ret === -262)) {
+        await new Promise((r) => setImmediate(r));
+        await new Promise((r) => setImmediate(r));
+        try {
+          ret = resultFn();
+        } catch {
+          // re-read trapped — keep the sync verdict
+        }
+      }
 
       if (isRuntimeNegative) {
         // Expected a runtime error but test succeeded

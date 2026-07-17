@@ -744,7 +744,31 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                     return;
                   }
                   reachedFixtureTest = true;
-                  const ret = testFn();
+                  let ret = testFn();
+                  // (#3227 S4) Async post-drain verdict re-read — parity with
+                  // scripts/test262-worker.mjs and runTest262File (S1). The
+                  // sync 1/-262 of an async-flagged test is read before its
+                  // host-microtask continuations run; drain two setImmediate
+                  // rounds and re-read via the wrapper's __result() export.
+                  // No process-level deferred-throw capture here: this path
+                  // runs inside the concurrent vitest parent, where a
+                  // process-wide handler would mis-attribute across in-flight
+                  // tests (the fork worker handles that case).
+                  const fixtureResultFn = (instance.exports as any).__result;
+                  if (
+                    !isNegative &&
+                    !isRuntimeNegative &&
+                    typeof fixtureResultFn === "function" &&
+                    (ret === 1 || ret === -262)
+                  ) {
+                    await new Promise((r) => setImmediate(r));
+                    await new Promise((r) => setImmediate(r));
+                    try {
+                      ret = fixtureResultFn();
+                    } catch {
+                      // re-read trapped — keep the sync verdict
+                    }
+                  }
                   if (isNegative) {
                     // Negative parse/resolution test compiled, instantiated,
                     // AND produced a callable test — but spec says it shouldn't

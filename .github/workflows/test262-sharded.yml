@@ -1582,6 +1582,10 @@ jobs:
       - name: Push baseline artifacts to js2wasm-baselines repo
         env:
           BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
+          # (#3335) Per-category tolerance for the trap-growth gate below —
+          # normally 0 (strict); raise via repo Actions variable for ONE
+          # intentional-reclassification refresh, then reset.
+          BASELINE_TRAP_GROWTH_ALLOW: ${{ vars.BASELINE_TRAP_GROWTH_ALLOW || '0' }}
         run: |
           PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-artifacts/test262-report-merged.json','utf8')).summary.pass)")
           TOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('shard-artifacts/test262-report-merged.json','utf8')).summary.total)")
@@ -1624,6 +1628,19 @@ jobs:
             cp website/public/benchmarks/results/test262-editions.json /tmp/js2wasm-baselines/test262-editions.json || true
           [ -f benchmarks/results/test262-categories.json ] && \
             cp benchmarks/results/test262-categories.json /tmp/js2wasm-baselines/test262-categories.json || true
+
+          # (#3335) Trap-growth gate: REFUSE to bake a main-side increase of any
+          # uncatchable-trap category (null_deref / illegal_cast / oob /
+          # unreachable) into the baseline. A baked-in increase silently raises
+          # the #3189 ratchet floor and parks innocent PRs (the 2026-07-17
+          # 45→51 oob flap). Intentional reclassifications: set the repo
+          # Actions variable BASELINE_TRAP_GROWTH_ALLOW for one refresh cycle.
+          if [ -f /tmp/js2wasm-baselines/test262-current.before.jsonl ]; then
+            npx tsx scripts/check-baseline-trap-growth.ts \
+              --baseline /tmp/js2wasm-baselines/test262-current.before.jsonl \
+              --candidate /tmp/js2wasm-baselines/test262-current.jsonl \
+              --allow "${BASELINE_TRAP_GROWTH_ALLOW:-0}"
+          fi
 
           HOST_UNCHANGED=0
           if [ -f /tmp/js2wasm-baselines/test262-current.before.jsonl ] && \

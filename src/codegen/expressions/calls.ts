@@ -3557,6 +3557,20 @@ export function tryEmitInlineDynamicCall(
   if (ensureLateImport(ctx, UNBOX_NUMBER, [{ kind: "externref" }], [{ kind: "f64" }]) === undefined) {
     return null;
   }
+  // (#3335) Host-lane default arm dependencies (see the dispatch default
+  // below): ensure the imports HERE, before the box/unbox indices are
+  // captured, so the capture happens after every import insertion this
+  // function performs (the stale-capture hazard the note above describes).
+  if (!ctx.standalone && !ctx.wasi) {
+    ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+    ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+    ensureLateImport(
+      ctx,
+      "__call_function",
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+  }
 
   // (#820/#1543) `undefined` externref source for padding missing trailing
   // args (call arity < a candidate's formal count), and (#3031) for the Proxy
@@ -3698,6 +3712,48 @@ export function tryEmitInlineDynamicCall(
   // Build dispatch chain (innermost = default, outermost = first).
   // Default: ref.null.extern (matches existing fallback semantics).
   let dispatch: Instr[] = [{ op: "ref.null.extern" }];
+
+  // (#3335) HOST-lane default arm: dispatch through `__call_function` instead
+  // of silently producing `undefined`. A dynamic callee that is NOT a wasm
+  // closure struct is routinely a HOST function value — the canonical shape is
+  // the test262 TypedArray harness: `argFactory.bind(undefined, ctor)` returns
+  // a host bound function, which then flows through an any-typed closure param
+  // (`makeCtorArg`) and gets CALLED here. The bare `ref.null.extern` default
+  // dropped that call on the floor: `new TA(makeCtorArg([...]))` constructed
+  // from `null` → a LENGTH-0 host TypedArray → `.set()` threw the host
+  // RangeError "offset is out of bounds", which the #3189 ratchet and the
+  // poison classifier bin as an UNCATCHABLE oob trap (the 45→51 baseline flap,
+  // six BigInt `TypedArray.prototype.set` files). `__call_function` invokes a
+  // real host callable with the saved args (marshalled per #1712) and throws
+  // the spec TypeError for non-callables (§7.3.14 Call → IsCallable false),
+  // so the failure mode is deterministic and catchable. Standalone/WASI have
+  // no host: they keep the legacy null default (their callable shapes are the
+  // dedicated proxy/bound/ta-ctor arms above).
+  if (!ctx.standalone && !ctx.wasi) {
+    // Imports were ensured (and flushed) up top, before the box/unbox index
+    // capture — only re-look them up here.
+    const arrNew = ctx.funcMap.get("__js_array_new");
+    const arrPush = ctx.funcMap.get("__js_array_push");
+    const callFn = ctx.funcMap.get("__call_function");
+    if (arrNew !== undefined && arrPush !== undefined && callFn !== undefined) {
+      const hostArgsLocal = allocLocal(fctx, `__dyn_hostargs_${fctx.locals.length}`, { kind: "externref" });
+      const hostArm: Instr[] = [
+        { op: "call", funcIdx: arrNew },
+        { op: "local.set", index: hostArgsLocal },
+      ];
+      for (const argLocal of argLocals) {
+        hostArm.push({ op: "local.get", index: hostArgsLocal });
+        hostArm.push({ op: "local.get", index: argLocal });
+        hostArm.push({ op: "call", funcIdx: arrPush });
+      }
+      hostArm.push({ op: "local.get", index: anyLocal });
+      hostArm.push({ op: "extern.convert_any" });
+      hostArm.push({ op: "ref.null.extern" }); // thisArg — undefined for a bare call
+      hostArm.push({ op: "local.get", index: hostArgsLocal });
+      hostArm.push({ op: "call", funcIdx: callFn });
+      dispatch = hostArm;
+    }
+  }
 
   // (#2933) Variadic builtin value-closure arm — INNERMOST (just above the
   // null default), so any exact-arity candidate stays preferred. The saved arg
