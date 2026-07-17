@@ -444,6 +444,15 @@ To be added once the issue is taken into a sprint. The plan should cover:
 
 ## Parallel slice plan + bytecode contract
 
+> **SUPERSEDED (2026-07-17 audit).** This 2026-05-30 plan predates the
+> architecture doc's Part II (§12.1): Phase 1 builds ONLY the runtime
+> ESTree→bytecode producer in a new `src/interp/` dir (see #2928's
+> `## Implementation Plan` and the #3101 ISA pre-spec); the IR→bytecode
+> producer and the a0–a6 trait-migration track below are a Phase-3 option
+> re-decided at #2929 time. Do NOT execute the slice plan below. Kept for
+> the (a0) seam/#1715 landing history it records. See
+> `plan/log/analysis-2026-07/02-interpreter-backend-audit-2026-07-17.md` §3.
+
 This section decomposes Phase 1 into **disjoint, parallel-safe slices** so
 multiple senior-devs work it without file collisions, and **pins the shared
 bytecode contract** that keeps the slices from drifting apart. It is grounded

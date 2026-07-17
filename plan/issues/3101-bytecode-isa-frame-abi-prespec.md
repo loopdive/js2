@@ -2,7 +2,8 @@
 id: 3101
 title: "Bytecode interpreter ISA + `$Frame`/`$EnvRec` ABI pre-spec (E1 executable-cold): opcode set, encoding, exception table, AOT↔interp call protocol"
 status: ready
-sprint: Backlog
+sprint: current
+priority_note: "promoted 2026-07-17 by the interpreter-backend audit (plan/log/analysis-2026-07/02-interpreter-backend-audit-2026-07-17.md): P1/P2 (#2853) done sprint 71, compiled-acorn corpus 23/23 parity — E1 has zero unmet dependencies and is the start of Tier 2"
 model: fable
 created: 2026-07-09
 priority: medium

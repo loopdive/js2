@@ -14,7 +14,7 @@ language_feature: eval
 goal: runtime-eval
 sprint: Backlog
 parent: 1584
-depends_on: [2927, 2853]
+depends_on: [2927]  # 2853 done (sprint 71) — removed 2026-07-17, see plan/log/analysis-2026-07/02-interpreter-backend-audit-2026-07-17.md
 related: [1715, 1713, 2864, 2865, 2960, 3017, 2929]
 ---
 
