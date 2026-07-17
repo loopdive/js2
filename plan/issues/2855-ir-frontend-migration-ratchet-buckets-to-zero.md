@@ -103,3 +103,23 @@ This epic is `done` when, for every unintended bucket:
 - `plan/log/ir-adoption.md` — per-AST-kind adoption status (selector-bucket
   table at the bottom maps reasons → promotable rows).
 - `src/ir/select.ts` — `IrFallbackReason` union + the per-function claim checks.
+
+## Audit note 2026-07-17 (IR audit 01)
+
+Bucket-zeroing half is ahead of plan: `call-graph-closure`, `class-method`,
+`param-type-not-resolvable` all hit 0 since 07-02 (baseline now only
+`body-shape-rejected` 14 + deferred `async-function` 4 + moduleLevel 2).
+But the PROMOTION half has not started: `STRICT_IR_REASONS`
+(`src/codegen/index.ts:1511`) is still the empty set — none of the ~8
+zeroed reasons has been promoted, so the demote-to-warning channel still
+silently covers all of them. This is now the cheapest hardening step in
+the program. Caveat: baseline zero is corpus-zero (13 playground files),
+not strict-zero — per-reason promotion needs the corpus-vs-strict check
+the `class-method` row in `ir-adoption.md` flags. See
+`plan/log/analysis-2026-07/01-ir-audit-2026-07-17.md` §2. Also untracked
+post-#2953 residue for a follow-up slice here or a new issue: 5 GC-op
+literals left in `lower.ts` (`class.get`/`class.set`/instanceof-tag via
+pushRaw at ~1797/1815/1908 — should use the existing
+`emitFieldGet`/`emitFieldSet` primitives like `obj.get` does) plus
+`forof.str` pushing `struct.get` on the RAW sink (`lower.ts:2614/2674`),
+invisible to the `check:pushraw` ratchet (§3).

@@ -61,3 +61,14 @@ High blast radius (changes which front-end emits every claimed body for
 every user). Validate on the full merge_group run, never a scoped sweep
 (`project_broad_impact_validate_full_ci`). Slice 2 only after slice 1 has
 soaked through at least one budget window on main.
+
+## Audit note 2026-07-17 (IR audit 01)
+
+STALE/SUPERSEDED IN PART: the default-ON flip this issue titles was
+delivered by #3143 (done, sprint 71) — `experimentalIR` defaults true and
+IR-first runs unless `JS2WASM_IR_FIRST=0` (one-release escape hatch,
+`src/codegen/index.ts:2327-2338`). The undelivered remainder (delete the
+compile-twice machinery + phase out the demote channel) overlaps #2855
+AC4. This issue should be re-scoped to exactly that remainder or closed
+in favor of #2855/#3143 — do not dispatch it as an independent "flip"
+task. See `plan/log/analysis-2026-07/01-ir-audit-2026-07-17.md` §6.
