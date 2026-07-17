@@ -220,6 +220,15 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // dedicated runtime builtin like AggregateError.
   if (name === "__new_SuppressedError") return { type: "builtin", name };
 
+  // (#3377, regression of #1568) `Object(bigint)` → BigInt-wrapper object.
+  // BigInt is NOT a constructor, so the generic `extern_class` path lowers
+  // `__new_BigInt` to `new BigInt(v)` — which both throws AND finds no `BigInt`
+  // entry in the runtime's `builtinCtors` map, so `Object(0n)` / `Object(BigInt(x))`
+  // failed at runtime with "No dependency provided for extern class BigInt".
+  // Route through the dedicated runtime builtin (mirrors __new_Symbol / the
+  // spec's literal `Object(v)` #1568 intent).
+  if (name === "__new_BigInt") return { type: "builtin", name };
+
   // Unknown constructor imports (__new_ClassName)
   if (name.startsWith("__new_")) {
     return { type: "extern_class", className: name.slice(6), action: "new" };

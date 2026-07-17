@@ -11526,6 +11526,12 @@ assert._isSameValue = isSameValue;
           }
           return 0;
         };
+      // (#3377, regression of #1568) `Object(bigint)` → BigInt-wrapper object
+      // (§7.1.18 ToObject, Table 13; `typeof` → "object"). BigInt is NOT a
+      // constructor, so `new BigInt(v)` throws — box via the spec's literal
+      // `Object(v)`. JS-BigInt-integration delivers the i64 arg as a JS bigint
+      // at the boundary, so `Object(v)` produces the correct wrapper directly.
+      if (name === "__new_BigInt") return (v: bigint): any => Object(v);
       // new AggregateError(errors, message, options?) — spec §20.5.7.1 (#1467).
       // Implements the spec construction sequence so that:
       //   • called without `new` constructs normally (caller dispatches both),
