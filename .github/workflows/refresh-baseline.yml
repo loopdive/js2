@@ -103,7 +103,7 @@ jobs:
           fi
 
   test262-shard:
-    name: test262 shard ${{ matrix.chunk }}
+    name: test262 ${{ matrix.target.name }} shard ${{ matrix.chunk }}
     needs: validate-inputs
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -170,11 +170,31 @@ jobs:
             56,
             57,
           ]
+        # #3381 — second matrix dimension so each chunk runs BOTH host and
+        # standalone, mirroring test262-sharded.yml's 57x2 matrix. Without this
+        # the scheduled/emergency refresh produced HOST results only, so the
+        # public standalone report had no refresh path and stranded stale
+        # (2026-07-17: 57.3% for ~7h while host was fresh). 57 chunks x 2 targets
+        # = 114 jobs; acceptable because this workflow runs at most every 8h (or
+        # on manual dispatch), NOT per-PR.
+        target:
+          - name: js-host
+            test262_target: gc
+            result_prefix: test262
+          - name: standalone
+            test262_target: standalone
+            result_prefix: test262-standalone
 
     env:
       COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '4' }}
       TEST262_INCLUDE_PROPOSALS: "1"
-      RUN_TIMESTAMP: ${{ github.run_id }}-chunk${{ matrix.chunk }}
+      # #3381 — select host (gc) vs standalone lane; the runner reads these to
+      # pick the compile target and name its JSONL (tests/test262-shared.ts).
+      TEST262_TARGET: ${{ matrix.target.test262_target }}
+      TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
+      # Namespace by target so host + standalone shards for the same chunk never
+      # collide on the JSONL path / blob outfile / artifact name.
+      RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
 
     steps:
       - name: Checkout
@@ -203,7 +223,7 @@ jobs:
           path: |
             .test262-cache
             benchmarks/results/test262-cache.json
-          key: test262-cache-v2-${{ hashFiles('src/**/*.ts', 'scripts/test262-worker.mjs', 'scripts/compiler-fork-worker.mjs') }}-chunk-${{ matrix.chunk }}
+          key: test262-cache-v2-${{ hashFiles('src/**/*.ts', 'scripts/test262-worker.mjs', 'scripts/compiler-fork-worker.mjs') }}-${{ matrix.target.name }}-chunk-${{ matrix.chunk }}
           restore-keys: |
             test262-cache-v2-${{ hashFiles('src/**/*.ts', 'scripts/test262-worker.mjs', 'scripts/compiler-fork-worker.mjs') }}-
 
@@ -219,7 +239,7 @@ jobs:
           set +e
           node node_modules/vitest/dist/cli.js run tests/test262-chunk${{ matrix.chunk }}.test.ts \
             --reporter=blob \
-            --outputFile=vitest-blob/blob-${{ matrix.chunk }}.json
+            --outputFile=vitest-blob/blob-${{ matrix.target.name }}-${{ matrix.chunk }}.json
           exit_code=$?
           set -e
           if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
@@ -232,9 +252,9 @@ jobs:
         if: always()
         with:
           retention-days: 1
-          name: emergency-shard-${{ matrix.chunk }}
+          name: emergency-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
           path: |
-            benchmarks/results/test262-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn
 
   merge-and-promote:
@@ -276,14 +296,23 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           path: shard-artifacts
-          pattern: emergency-shard-*
+          pattern: emergency-*-shard-*
           merge-multiple: false
 
-      - name: Merge test262 JSONL results
+      - name: Merge JS-host test262 JSONL results
         run: |
           mkdir -p merged-reports
-          find shard-artifacts -name 'test262-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-results-merged.jsonl
+          find shard-artifacts/emergency-js-host-shard-* -name 'test262-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-results-merged.jsonl
           test -s merged-reports/test262-results-merged.jsonl
+
+      - name: Merge standalone test262 JSONL results
+        run: |
+          # #3381 — mirror test262-sharded.yml's standalone merge. The standalone
+          # artifacts carry the `test262-standalone-results-*.jsonl` prefix, so
+          # this find never picks up host rows (and vice-versa).
+          mkdir -p merged-reports
+          find shard-artifacts/emergency-standalone-shard-* -name 'test262-standalone-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-standalone-results-merged.jsonl
+          test -s merged-reports/test262-standalone-results-merged.jsonl
 
       - name: Build merged test262 report
         run: |
@@ -299,18 +328,47 @@ jobs:
             --baseline-sha "${{ github.sha }}" \
             --include-proposals
 
-      - name: Sanity check report
+      - name: Build merged standalone test262 report
+        run: |
+          # #3381 — mirror test262-sharded.yml's standalone report build.
+          # --target standalone selects the standalone classifier;
+          # --max-unclassified-root-causes 0 matches the promote path's strict
+          # bucketing. --baseline-sha records the main commit for the #1668/#2562
+          # stale/drift guards, same as the host build above.
+          node scripts/build-test262-report.mjs \
+            --input merged-reports/test262-standalone-results-merged.jsonl \
+            --output merged-reports/test262-standalone-report-merged.json \
+            --target standalone \
+            --max-unclassified-root-causes 0 \
+            --baseline-sha "${{ github.sha }}" \
+            --include-proposals
+
+      - name: Sanity check reports (host + standalone)
         run: |
           PASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('merged-reports/test262-report-merged.json','utf8')).summary.pass)")
           TOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('merged-reports/test262-report-merged.json','utf8')).summary.total)")
-          echo "PASS=$PASS TOTAL=$TOTAL"
+          echo "HOST PASS=$PASS TOTAL=$TOTAL"
           if [ "$PASS" -lt 1000 ] || [ "$TOTAL" -lt 40000 ]; then
-            echo "ABORT: report looks corrupt (pass=$PASS total=$TOTAL). Not promoting."
+            echo "ABORT: host report looks corrupt (pass=$PASS total=$TOTAL). Not promoting."
             echo "Even emergency refreshes reject obviously corrupt data."
+            exit 1
+          fi
+          # #3381 — MANDATORY standalone sanity guard, mirroring the host floor.
+          # NEVER force-promote empty/corrupt standalone data to the public page,
+          # even on an emergency refresh. A YAML/logic slip here would publish a
+          # corrupt public standalone number.
+          SPASS=$(node -e "console.log(JSON.parse(require('fs').readFileSync('merged-reports/test262-standalone-report-merged.json','utf8')).summary.pass)")
+          STOTAL=$(node -e "console.log(JSON.parse(require('fs').readFileSync('merged-reports/test262-standalone-report-merged.json','utf8')).summary.total)")
+          echo "STANDALONE PASS=$SPASS TOTAL=$STOTAL"
+          if [ "$SPASS" -lt 1000 ] || [ "$STOTAL" -lt 40000 ]; then
+            echo "ABORT: standalone report looks corrupt (pass=$SPASS total=$STOTAL). Not promoting."
+            echo "Even emergency refreshes reject obviously corrupt standalone data."
             exit 1
           fi
           echo "pass=$PASS" >> "$GITHUB_OUTPUT"
           echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "standalone_pass=$SPASS" >> "$GITHUB_OUTPUT"
+          echo "standalone_total=$STOTAL" >> "$GITHUB_OUTPUT"
         id: sanity
 
       # Records main's current test262 state. On a scheduled/normal refresh this
@@ -319,7 +377,7 @@ jobs:
       # unconditional promote. Either way it never compares against a baseline.
       - name: Promote merged report to baseline
         run: |
-          mkdir -p benchmarks/results website/public/benchmarks/results
+          mkdir -p benchmarks/results website/public/benchmarks/results public/benchmarks/results
           rm -f benchmarks/results/test262-current.jsonl \
             benchmarks/results/test262-current.json \
             benchmarks/results/test262-report.json \
@@ -330,6 +388,32 @@ jobs:
           cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-results.jsonl
           cp merged-reports/test262-report-merged.json website/public/benchmarks/results/test262-report.json
           cp merged-reports/test262-results-merged.jsonl website/public/benchmarks/results/test262-results.jsonl
+          # #3381 — promote the STANDALONE report alongside host, mirroring
+          # test262-sharded.yml's promote-baseline. public/benchmarks/results/
+          # test262-standalone-report.json is the exact file
+          # baseline-summary-sync.yml sparse-checkouts + diffs to keep the public
+          # page fresh, so it MUST land on main.
+          rm -f benchmarks/results/test262-standalone-current.jsonl \
+            benchmarks/results/test262-standalone-current.json \
+            benchmarks/results/test262-standalone-report.json \
+            benchmarks/results/test262-standalone-results.jsonl
+          cp merged-reports/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-current.jsonl
+          cp merged-reports/test262-standalone-report-merged.json benchmarks/results/test262-standalone-current.json
+          cp merged-reports/test262-standalone-report-merged.json benchmarks/results/test262-standalone-report.json
+          cp merged-reports/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-results.jsonl
+          cp merged-reports/test262-standalone-report-merged.json public/benchmarks/results/test262-standalone-report.json
+
+      - name: Raise standalone pass-count high-water mark (#2097)
+        run: |
+          # #3381 — mirror test262-sharded.yml promote-baseline: RAISE the #2097
+          # absolute standalone high-water mark when this refresh improved
+          # standalone conformance. Raise-only (never lowers) and non-blocking
+          # (|| true) — a NORMAL refresh just records main's true current state
+          # and must never fail on the floor here (the ASSERT lives in the
+          # merge-report gate, not in a promote path).
+          node scripts/check-standalone-highwater.mjs \
+            --report benchmarks/results/test262-standalone-current.json \
+            --update --sha "${{ github.sha }}" || true
 
       - name: Regenerate edition buckets
         run: node --experimental-strip-types scripts/generate-editions.ts --results benchmarks/results/test262-current.jsonl
@@ -342,6 +426,19 @@ jobs:
         run: |
           PASS=${{ steps.sanity.outputs.pass }}
           TOTAL=${{ steps.sanity.outputs.total }}
+          STANDALONE_PASS=${{ steps.sanity.outputs.standalone_pass }}
+          STANDALONE_TOTAL=${{ steps.sanity.outputs.standalone_total }}
+          # #3381 — re-assert the MANDATORY sanity floor right before the PUBLIC
+          # push: NEVER promote empty/corrupt host OR standalone data to the
+          # baselines repo (the source of truth baseline-summary-sync serves).
+          if [ "$PASS" -lt 1000 ] || [ "$TOTAL" -lt 40000 ]; then
+            echo "ABORT: host report looks corrupt (pass=$PASS total=$TOTAL). Not pushing."
+            exit 1
+          fi
+          if [ "$STANDALONE_PASS" -lt 1000 ] || [ "$STANDALONE_TOTAL" -lt 40000 ]; then
+            echo "ABORT: standalone report looks corrupt (pass=$STANDALONE_PASS total=$STANDALONE_TOTAL). Not pushing."
+            exit 1
+          fi
 
           # Set up SSH deploy key for baselines repo push
           eval "$(ssh-agent -s)"
@@ -349,8 +446,14 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
-          # Clone baselines repo (shallow — only need latest state)
-          git clone --depth=1 git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+          # (#3392) Metadata-only clone + sparse materialization of just the
+          # files this step reads/rewrites — the runs/ per-SHA cache history
+          # pushed a full-blob clone past the step timeout (see the identical
+          # fix in test262-sharded.yml promote-baseline). New runs/<sha> files
+          # are staged via `git add -A --sparse`.
+          git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines checkout main
 
           # (#3335) Trap-growth gate: refuse to bake a main-side increase of any
           # uncatchable-trap category into the baseline (it silently raises the
@@ -369,6 +472,14 @@ jobs:
           cp merged-reports/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-current.jsonl
           cp merged-reports/test262-report-merged.json   /tmp/js2wasm-baselines/test262-current.json
           cp merged-reports/test262-results-merged.jsonl /tmp/js2wasm-baselines/test262-results.jsonl
+          # #3381 — standalone artifacts under the exact filenames the pipeline
+          # already uses: test262-standalone-report.json is what
+          # baseline-summary-sync.yml sparse-checkouts; test262-standalone-current.jsonl
+          # is what the #1897 / #2097 gates diff.
+          cp merged-reports/test262-standalone-results-merged.jsonl /tmp/js2wasm-baselines/test262-standalone-current.jsonl
+          cp merged-reports/test262-standalone-report-merged.json   /tmp/js2wasm-baselines/test262-standalone-current.json
+          cp merged-reports/test262-standalone-report-merged.json   /tmp/js2wasm-baselines/test262-standalone-report.json
+          cp merged-reports/test262-standalone-results-merged.jsonl /tmp/js2wasm-baselines/test262-standalone-results.jsonl
 
           # Update runs/index.json (trend graph history lives in baselines)
           node -e "
@@ -402,7 +513,7 @@ jobs:
           cd /tmp/js2wasm-baselines
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add -A --sparse
           if git diff --cached --quiet; then
             echo "No baseline changes to push."
           else
@@ -412,13 +523,75 @@ jobs:
             # guard and the #2562 src-aware drift gate can parse the main commit
             # this baseline was generated from. NORMAL (scheduled / non-forced)
             # vs FORCED (emergency) is reflected in the wording so the audit log
-            # is unambiguous.
+            # is unambiguous. Host + standalone counts are both recorded, matching
+            # test262-sharded.yml's "N/T host, N/T standalone (<sha>)" format.
             if [ "${IS_FORCED}" = "true" ]; then
-              git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass (${{ github.sha }})"
+              git commit -m "chore(test262): FORCED baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} host, ${STANDALONE_PASS}/${STANDALONE_TOTAL} standalone (${{ github.sha }})"
             else
-              git commit -m "chore(test262): scheduled baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} pass (${{ github.sha }})"
+              git commit -m "chore(test262): scheduled baseline refresh by ${ACTOR} — ${PASS}/${TOTAL} host, ${STANDALONE_PASS}/${STANDALONE_TOTAL} standalone (${{ github.sha }})"
             fi
-            git push
+            # (#3382 / #2942) Resilient push. A concurrent test262-sharded
+            # promote-baseline can advance js2wasm-baselines between our clone and
+            # push, so a single `git push` is rejected non-fast-forward and this
+            # BACKSTOP refresh fails exactly when it is most needed. Mirror
+            # promote-baseline's Option-A re-anchor loop (generated files must
+            # never be line-merged): snapshot the files we promoted, hard-reset
+            # onto the fresh remote tip, re-apply wholesale, re-commit, push. 8
+            # attempts, capped backoff. Ordering guard: if the remote tip already
+            # promotes a main SHA that DESCENDS from ours, a newer promote landed —
+            # drop ours (never clobber fresher public data with older).
+            BR=$(git rev-parse --abbrev-ref HEAD)
+            OUR_COMMIT=$(git rev-parse HEAD)
+            MSG=$(git log -1 --format=%s)
+            SNAP=$(mktemp -d)
+            git diff-tree --no-commit-id --name-only -r "$OUR_COMMIT" | while IFS= read -r f; do
+              if [ -f "$f" ]; then
+                mkdir -p "$SNAP/$(dirname "$f")"
+                cp "$f" "$SNAP/$f"
+              fi
+            done
+            # Deepen MAIN-repo history once so the ancestry guard can resolve
+            # ancestor checks (the workspace checkout is depth-1).
+            git -C "$GITHUB_WORKSPACE" fetch --depth=200 --filter=blob:none origin main 2>/dev/null || true
+            BASELINE_PUSHED=0
+            for attempt in 1 2 3 4 5 6 7 8; do
+              if git push origin "HEAD:$BR"; then
+                echo "Pushed baselines (attempt ${attempt})."
+                BASELINE_PUSHED=1
+                break
+              fi
+              echo "baselines push race lost (attempt ${attempt}) — re-anchoring on the fresh remote tip"
+              git fetch origin "$BR" || { SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"; continue; }
+              # Ordering guard: baseline commit subjects end with the promoted main
+              # SHA. If OUR sha is an ancestor of the remote tip's promoted sha, a
+              # newer promote already landed — ours is superseded. Fail-open
+              # (proceed with the overwrite) when either sha is unresolvable.
+              REMOTE_MSHA=$(git log -1 --format=%s "origin/$BR" | grep -oE '[0-9a-f]{7,40}' | tail -1 || true)
+              if [ -n "$REMOTE_MSHA" ] \
+                && git -C "$GITHUB_WORKSPACE" cat-file -e "${REMOTE_MSHA}^{commit}" 2>/dev/null \
+                && git -C "$GITHUB_WORKSPACE" merge-base --is-ancestor "${{ github.sha }}" "$REMOTE_MSHA" 2>/dev/null; then
+                echo "Remote baseline already promotes ${REMOTE_MSHA} (descendant of ${{ github.sha }}) — this refresh is superseded; dropping."
+                BASELINE_PUSHED=1
+                break
+              fi
+              git checkout -f -B "$BR" "origin/$BR"
+              (cd "$SNAP" && find . -type f | sed 's|^\./||') | while IFS= read -r f; do
+                mkdir -p "$(dirname "$f")"
+                cp "$SNAP/$f" "$f"
+              done
+              git add -A --sparse
+              if git diff --cached --quiet; then
+                echo "Re-anchored tree identical to remote tip — nothing left to promote."
+                BASELINE_PUSHED=1
+                break
+              fi
+              git commit -m "$MSG"
+              SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"
+            done
+            if [ "$BASELINE_PUSHED" != "1" ]; then
+              echo "::error::Failed to push baselines after 8 re-anchor attempts (persistent, not a transient race)."
+              exit 1
+            fi
           fi
 
       # (#3) Push the audit commit to main over the SSH deploy-key remote — that
@@ -451,8 +624,12 @@ jobs:
           git add -f benchmarks/results/test262-current.json \
             benchmarks/results/test262-report.json \
             public/benchmarks/results/test262-report.json \
+            public/benchmarks/results/test262-standalone-report.json \
             website/public/benchmarks/results/test262-editions.json \
             website/public/benchmarks/results/test262-category-editions.json
+          # #3381 — the #2097 standalone high-water mark (raised earlier). Tolerant
+          # add: present on main, but never let a missing file abort the stage.
+          git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No baseline changes to commit."
             exit 0
@@ -487,11 +664,18 @@ jobs:
             cp "$f" "$PROMOTE_SNAPSHOT/$f"
           done <<< "$PROMOTE_FILES"
           PUSHED=0
-          for attempt in 1 2 3 4 5; do
+          # #3382 — 14 attempts (was 5) with capped backoff. Under sustained
+          # two-lane merge velocity main advances between fetch and push on every
+          # attempt; a 5-attempt loop lost every retry and marked this refresh
+          # FAILURE, freezing the committed main summary + prose conformance docs.
+          # 14 attempts eventually win; the min(attempt*5,30)s cap bounds total
+          # wait to ~6 min. The baselines-repo push (the PUBLIC source of truth)
+          # already landed in the EARLIER "Deploy to baselines repo" step.
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
             git fetch deploykey main
             git checkout -f -B _emergency_promote_tmp deploykey/main || {
               echo "checkout of deploykey/main failed (attempt ${attempt}) — retrying"
-              sleep $((attempt * 5))
+              SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"
               continue
             }
             while IFS= read -r f; do
@@ -528,10 +712,10 @@ jobs:
               break
             fi
             echo "push race lost (attempt ${attempt}) — re-anchoring on latest main and retrying"
-            sleep $((attempt * 5))
+            SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"
           done
           if [ "$PUSHED" != "1" ]; then
-            echo "::error::Failed to push refreshed baseline to main after 5 attempts (persistent, not a transient race)."
+            echo "::error::Failed to push refreshed baseline to main after 14 attempts (persistent, not a transient race)."
             exit 1
           fi
 

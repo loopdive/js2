@@ -1615,8 +1615,18 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
-          # Clone baselines repo (shallow — only need latest state)
-          git clone --depth=1 git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+          # (#3392) Clone metadata-only and materialize ONLY the files this
+          # step reads/rewrites. The runs/ per-SHA result cache (~1000 entries,
+          # tens of MB each) grew a full-blob --depth=1 clone past the 10-min
+          # step timeout, killing EVERY promote on 2026-07-17 and stranding the
+          # standalone baseline stale from 11:33Z. '!/runs/*' excludes only the
+          # directory CONTENTS (not the dir), so re-including runs/index.json is
+          # legal gitignore semantics; unmaterialized entries are skip-worktree,
+          # so `git add -A` cannot stage them as deletions, and NEW runs/<sha>
+          # cache files are staged explicitly via `git add -A --sparse`.
+          git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines checkout main
           cp /tmp/js2wasm-baselines/test262-current.jsonl /tmp/js2wasm-baselines/test262-current.before.jsonl 2>/dev/null || true
           cp /tmp/js2wasm-baselines/test262-standalone-current.jsonl /tmp/js2wasm-baselines/test262-standalone-current.before.jsonl 2>/dev/null || true
 
@@ -1718,7 +1728,7 @@ jobs:
           cd /tmp/js2wasm-baselines
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
+          git add -A --sparse
           if git diff --cached --quiet; then
             echo "No baseline changes to push."
           else
@@ -1780,7 +1790,7 @@ jobs:
                 mkdir -p "$(dirname "$f")"
                 cp "$SNAP/$f" "$f"
               done
-              git add -A
+              git add -A --sparse
               if git diff --cached --quiet; then
                 echo "Re-anchored tree is identical to the remote tip — nothing left to promote."
                 BASELINE_PUSHED=1
@@ -2086,7 +2096,15 @@ jobs:
             done <<< "$PROMOTE_FILES"
           }
           PUSHED=0
-          for attempt in 1 2 3 4 5; do
+          # #3382 — 14 attempts (was 5) with capped backoff. Under sustained
+          # two-lane merge velocity main advances between fetch and push on every
+          # attempt; a 5-attempt loop lost every retry and marked this promote job
+          # FAILURE, freezing the committed main summary + prose conformance docs.
+          # 14 attempts eventually win the race; the min(attempt*5,30)s cap bounds
+          # total wait to ~6 min. The baselines-repo push (the PUBLIC source of
+          # truth) already landed in the EARLIER step, so this only affects the
+          # committed-main audit trail.
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do
             # Fetch the current tip of main and hard-reset our branch to it. -B
             # moves to a clean tip WITHOUT a rebase; --force (-f) on the checkout
             # discards the dirty tracked working-tree state the shard run left
@@ -2095,7 +2113,7 @@ jobs:
             git fetch deploykey main
             git checkout -f -B _promote_tmp deploykey/main || {
               echo "checkout of deploykey/main failed (attempt ${attempt}) — retrying"
-              sleep $((attempt * 5))
+              SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"
               continue
             }
             # Re-apply the freshly-generated baseline files onto the clean tip and
@@ -2141,10 +2159,10 @@ jobs:
               break
             fi
             echo "push race lost (attempt ${attempt}) — re-anchoring on latest main and retrying"
-            sleep $((attempt * 5))
+            SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"
           done
           if [ "$PUSHED" != "1" ]; then
-            echo "::error::Failed to push refreshed baseline to main after 5 attempts (persistent, not a transient race)."
+            echo "::error::Failed to push refreshed baseline to main after 14 attempts (persistent, not a transient race)."
             exit 1
           fi
 

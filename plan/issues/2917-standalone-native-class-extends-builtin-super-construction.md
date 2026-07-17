@@ -2,7 +2,9 @@
 id: 2917
 title: "[SUBSTRATE][ARCH] Standalone native `class X extends <Builtin>` super-construction (~10 generic conversions)"
 status: ready
-sprint: Backlog
+assignee: fable-2917
+sprint: fable-final
+updated: 2026-07-17
 created: 2026-07-01
 priority: medium
 horizon: l
@@ -13,228 +15,362 @@ task_type: feature
 area: codegen
 language_feature: classes
 goal: standalone
-related: [1366a, 1455, 1721, 1833, 2029, 2188, 2379, 2395, 2620, 2622, 2709]
+related: [1366a, 1455, 1721, 1833, 2029, 2188, 2379, 2395, 2620, 2622, 2709, 2916, 3238, 3239, 3240]
 origin: "2026-07-01 — sr-tail2 escalation: leaky-PASS conversion cluster, per-builtin backing-instance substrate (representation-scale, à la #2379)"
 ---
 
 # #2917 — Standalone native `class X extends <Builtin>` super-construction
 
-## Problem (verified on `main` `f350ba855`, 2026-07-01)
+## Problem (verified on `main` `f350ba855`, 2026-07-01; re-verified `c47a26f9a`, 2026-07-17)
 
 `class X extends <Builtin> {}` — where `<Builtin>` is a host-constructible
-builtin (`Object`, `Array`, `Function`, `Date`, `RegExp`, …) — lowers
-`super(...)` / the implicit derived ctor to a **reflective `__new_<Builtin>`
-host import** (`class-bodies.ts:1747`, `:1760`, `:2863`, `:2874`;
-`declarations.ts:1602`). Under `--target standalone` there is no JS host, so this
-either leaks an unsatisfiable `env::__new_<Builtin>` import (module fails to
-instantiate) or, for the Number/Boolean f64-arg mismatch, emits invalid Wasm —
-today those are **refused at compile time** (#2029, #2620) rather than run.
+builtin (see `BUILTIN_PARENTS_HOST_CONSTRUCTIBLE`, `builtin-tags.ts:191`) —
+lowers `super(...)` / the implicit derived ctor to a reflective
+`__new_<Builtin>` **host import**. Under `--target standalone`/`wasi` there is
+no JS host, so the import leaks: the module either fails to instantiate
+host-free (a **leaky-PASS** — passes only via the host shim) or, for the
+Number/Boolean f64-arg mismatch, would emit invalid Wasm and is **refused at
+compile time** (#2029, #2620).
 
-This is a **leaky-PASS cluster** (~10 generic conversions): the subclass works in
-JS-host mode (the host `extern_class new` resolver builds a real
-Array/Date/etc. via `new globalThis[Name](...)`, `runtime.ts:~1604`), but
-standalone has no native backing instance. Native super-construction must produce
-a **native backing instance** (native `$Object` / `$Vec` / closure / `$Date` /
-`$RegExp`) that ALSO carries the subclass's own fields + prototype chain +
-`instanceof`, inside the heavily special-cased class-bodies construction
-machinery — a **representation-scale problem à la #2379**, high regression risk.
+Native super-construction must produce a **native backing instance** the
+parent's methods operate on, while `instanceof Sub` / `instanceof <Builtin>`
+and the subclass machinery keep working — inside the heavily special-cased
+class-bodies construction machinery. Representation-scale, high regression
+risk (à la #2379).
 
-## Scope
+## Status refresh (2026-07-17, fable-2917) — what landed since the 2026-07-01 draft
 
-**In scope (host-free native backing exists or is cheap):**
-`Object`, `Array`, `Function`, `Date`, `RegExp`.
+This plan **supersedes** the 2026-07-01 draft (merged via PR #2417). Four
+things landed that change the design:
 
-**Explicitly excluded:**
-- **Error family** (`Error`, `TypeError`, …) — already host-free via
-  `emitWasiErrorConstructor` (#1536c); `class-bodies.ts:1756`, `:2870`.
-- **Number / Boolean** — no native primitive-wrapper subclass box (#2029);
-  keep the current clean refusal until the value-rep box lands.
-- **Set / Map / WeakMap / WeakSet** — native-collection subclass is #2622
-  (`[[SetData]]`/`[[MapData]]` set-algebra substrate); keep the #2620 refusal.
-- **String** — already compiles standalone (`__new_String` is
-  externref-in/externref-out, matches the forwarder — `builtin-tags.ts:287`).
-- **TypedArray / ArrayBuffer / DataView / SharedArrayBuffer** — route via
-  **#2395's %TypedArray% intrinsic ctor chain** (`#2893` brand, currently OPEN
-  PR #2395). Do NOT build a parallel backing here; coordinate / predecessor-stack
-  on #2395.
+| Landed                                                                                                                                            | What it gives this issue                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **#3238** (`emitStandaloneObjectConstructor`, `object-runtime.ts:227`)                                                                            | `extends Object` is DONE — native `__new_Object` returning a fresh `$Object` via `__new_plain_object`. Establishes the helper pattern: idempotent on `ctx.funcMap`, `addFuncType` + `mintDefinedFunc` + `pushDefinedFunc`, externref-in/externref-out, gated at the two class-bodies call sites.                                                                                                         |
+| **#3239** (`emitStandaloneVecBuiltinConstructor`, `object-runtime.ts:299`; `STANDALONE_VEC_BUILTIN_PARENTS` = 11 TypedArrays + SharedArrayBuffer) | Identity-only empty-`$Vec` parents DONE. Also proves the identity-only shortcut is **safe ONLY where no behavior test passes** — explicitly not reusable for Array/Date/RegExp/Function (see #3240).                                                                                                                                                                                                     |
+| **#2916 Slice A** (PR #2418, `expressions/identifiers.ts`)                                                                                        | `instanceof <Builtin>` under `noJsHost` is now a native `ref.test` membership on the REAL backing types (Array → vec subtypes, Function → closure roots, …). This **decides the representation question** (below). Slices B/C (dynamic `__instanceof_check`, `isPrototypeOf`) are deferred, gated on the #2907 ctor-carrier `.prototype` infra — still owned by #2916/sendev-instanceof, NOT this issue. |
+| **#2395 MERGED** (%TypedArray% intrinsic ctor chain, #2893 brand)                                                                                 | The old plan's "if #2395 has not landed, restrict scope" contingency is obsolete.                                                                                                                                                                                                                                                                                                                        |
 
-## Background — the construction machinery this must slot into
+**#3240** (`plan/issues/3240-standalone-subclass-faithful-ctors.md`) is the
+per-builtin **tracking twin** of this issue's remaining scope, with measured
+flip counts and the list of currently-passing behavior tests per parent. This
+file is the **design authority**; #3240 tracks the slices. Per-slice PRs
+should reference both.
+
+## Scope (updated)
+
+**Remaining in scope** (faithful native ctor needed; flips measured in #3240):
+
+| Parent                      | flips | native backing that already exists                                                                           |
+| --------------------------- | ----- | ------------------------------------------------------------------------------------------------------------ |
+| `Array`                     | 3     | `$Vec` structs (`getOrRegisterVecType`); native `new Array(n)` lowering in `expressions/new-super.ts` ~L3599 |
+| `ArrayBuffer` (+`DataView`) | 2+1   | i8 byte-vec; native `new ArrayBuffer(n)` in new-super.ts ~L3480                                              |
+| `Date`                      | 3     | `$Date` struct (`ensureDateStructForCtx`, i64 timestamp); WASI `clock_time_get` (#1483)                      |
+| `RegExp`                    | 4     | `$NativeRegExp` struct + compile-time bytecode (#1539, `regexp-standalone.ts:649`)                           |
+| `Function`                  | 3     | closure structs (`closures.ts`; a closure IS `instanceof Function`, #1992)                                   |
+
+**Done / excluded:**
+
+- `Object` — DONE (#3238). TypedArrays + `SharedArrayBuffer` — DONE identity-only (#3239).
+- **Error family** — host-free since #1536c (`emitWasiErrorConstructor`). `String` — already compiles standalone (`__new_String` externref-in/out).
+- **Number / Boolean** — keep the #2029 refusal (invalid-Wasm class; needs the value-rep wrapper box).
+- **Set / Map / WeakMap / WeakSet** — keep the #2620 refusal; native collection subclass is #2622 (backlog).
+- **Promise** — excluded; `super(executor)` needs the native Promise carrier (#2867/#2637 area).
+
+## Background — the construction machinery this slots into
 
 An `extends <builtin>` subclass is marked **externref-backed**
-(`ctx.classExternrefBackedSet`, `ctx.classBuiltinParentMap` —
-`class-bodies.ts:660`). Two construction sites both call `__new_<Parent>`:
+(`ctx.classExternrefBackedSet` / `ctx.classBuiltinParentMap`,
+`class-bodies.ts:672–695`; multi-level chains propagate the builtin
+**ancestor**, `:675–695`). Two construction sites call `__new_<Parent>`, and
+both already carry a standalone dispatch ladder (Error → Object → vec-builtins
+→ host import) that this issue extends:
 
-- **Implicit derived ctor** (no user ctor): `class-bodies.ts:1744–1786` forwards
-  the synthetic externref params to `__new_<Parent>(...)`, then
-  `emitSetSubclassProto` (`:1781`) + `emitSetSubclassUserBrand` (`:1784`).
-- **Explicit `super(...)`**: `compileSuperCall` (`class-bodies.ts:2809`), builtin
-  arm at `:2838`; allocates via `__new_<Parent>` (`:2901`), then the same
-  proto + brand wiring (`:2922`, `:2925`).
+- **Implicit derived ctor** (no user ctor): `class-bodies.ts:1762–1816`.
+  Dispatch ladder at `:1774–1792`, host-import fallback at `:1790`.
+- **Explicit `super(...)`**: `compileSuperCall` (`class-bodies.ts:2914`),
+  builtin arm `:2942–3043`, dispatch ladder at `:2975–2994`, host-import
+  fallback at `:2992`. Note the `onHost` Promise path (`:2961`, #2637 B2.3) —
+  do not touch.
 
-`emitSetSubclassProto` (`class-bodies.ts:416`) itself needs a host
-`__set_subclass_proto` and **already no-ops standalone** (`:432`, `:449`) — so
-even where construction is faked, the subclass prototype is not wired, and
-`instanceof Sub` / own-field access silently break.
-
-The Error family shows the target shape: `emitWasiErrorConstructor` builds a real
-`$Error_struct` (tag + message + `.name`), `emitSetSubclassUserBrand`
-(`class-bodies.ts`, writes fieldIdx 4) distinguishes siblings (#2188), and
-`instanceof` reads those fields natively (#1536c). This issue replicates that
-per-builtin.
+After allocation both sites run `emitSetSubclassProto` (`:428` — **no-ops
+standalone**: the `__set_subclass_proto` host import is unavailable and the
+`-1` string-sentinel guard at `:461` skips) and `emitSetSubclassUserBrand`
+(`:501` — writes `$Error_struct.$userClassId` fieldIdx 4 ONLY; the
+`ref.test $Error_struct` guard makes it a silent no-op for every non-Error
+backing). Forward arity comes from `getBuiltinConstructorForwardArity`
+(`:123`, max(1, declared ctor arity)); implicit arity additionally observes
+`new Sub(...)` call sites (`getObservedClassNewArity`, `:281`).
 
 ## Implementation Plan
 
 ### Root cause
-Externref-backed subclasses of host-constructible builtins have **no native
-allocator**: `__new_<Builtin>` is a host import with no standalone body (only the
-Error family got `emitWasiErrorConstructor`). `emitSetSubclassProto` also no-ops
-standalone, so even a faked instance has no subclass prototype/brand. Net:
-leaked import → non-instantiable, or a compile refusal.
 
-### The core design — a per-builtin native backing instance that ALSO carries subclass identity
+Externref-backed subclasses of the remaining host-constructible builtins have
+**no native allocator**: `__new_<Builtin>` is a host import with no standalone
+body (only Error/Object/TypedArray-family got one). The instance the parent's
+native prototype methods, element ops, and #2916 Slice-A `instanceof` need is
+never materialized host-free.
 
-For each in-scope builtin, `super(...)` must produce a value that is
-simultaneously (a) a real builtin instance the parent's methods operate on, and
-(b) branded with the subclass's id + prototype so `instanceof Sub` and own-field
-reads work. Two representation strategies, per builtin:
+### Core design decision — REAL native backing instance, NOT a wrapper struct
 
-- **`Object`** — allocate a native `$Object` open-object struct (via
-  `ensureObjectRuntime`'s `__new_plain_object` internal). Own subclass fields
-  and `[[Prototype]]` live in the same `$Object` (`$proto` fieldIdx 0). This is
-  the cleanest case — `$Object` already has the proto slot the whole
-  `__isPrototypeOf` / native-instanceof substrate (#2916) walks.
-- **`Array`** — allocate a native `$Vec` (the `__new_vec_*` allocators,
-  `index.ts:1718`, `:5607`). `$Vec` has **no proto/brand slot**, so the
-  subclass's own fields + brand cannot live inside it. Wrap: a small
-  `$Subclass_struct` carrying `{ $brand:i32, $proto, <own fields>, $backing: ref
-  $Vec }`, with element reads/`.length` delegating to `$backing`. This is the
-  #2379-scale representation decision — pick the wrapper vs. a widened `$Vec`
-  with trailing brand fields, and document why.
-- **`Function`** — allocate a native closure (the `closures.ts` closure struct).
-  Same no-slot problem as `$Vec`; use the same `$Subclass_struct` wrapper with a
-  `$backing: closure` field and a call-forward.
-- **`Date` / `RegExp`** — allocate the native `$Date` / `$RegExp` backing struct
-  (route via the #2671 / #2395 native ctor chain for these builtins). Brand +
-  own fields via the wrapper if the backing struct has no spare slot.
+The 2026-07-01 draft recommended a uniform `$Subclass_struct { $brand, $proto,
+$backing }` wrapper. **That recommendation is REVERSED.** Each native
+`__new_<Builtin>` returns the _real_ backing value (`$Vec` for Array, `$Date`
+for Date, `$NativeRegExp` for RegExp, closure struct for Function, byte-vec
+for ArrayBuffer), boxed to externref via `extern.convert_any` — exactly what
+#3238/#3239 shipped. Rationale:
 
-**Recommendation:** a single `$Subclass_struct` supertype `{ $brand:i32 (own
-class id), $proto (ref null anyref), $backing (anyref) }` extended per subclass
-with its own fields, is the uniform representation. `instanceof Sub` (native,
-#2916) reads `$brand`; parent-method dispatch unwraps `$backing`; `.prototype`
-walks `$proto`. This mirrors how `$Error_struct` field-4 branding already works
-(#2188) and keeps the native-instanceof substrate (#2916) uniform.
+1. **#2916 Slice A composition (decisive)**: `instanceof Array` / `instanceof
+Function` under `noJsHost` is now a native `ref.test` against vec-subtype /
+   closure-root **type indices** on the real backing. A wrapper struct fails
+   every one of those tests — `new Sub() instanceof Array` would turn false.
+2. **Method dispatch**: parent prototype methods go through
+   receiver-brand-checked native glue (`emitReceiverBrandCheck`,
+   `registerNativeProtoBuiltin`) and the `__extern_get/set/length` runtime
+   whose standalone arms (`$Object`, finalize-time `$__vec_base` — #2036/#3183)
+   operate on real backing structs. A wrapper needs an unwrap shim at every
+   site — the #2379-scale churn this must avoid.
+3. **Object identity**: the standalone floor watches `ref.eq` identity
+   (`reference_standalone_floor_object_identity_and_real_vs_drift`); a wrapper
+   adds an identity layer with no owner.
+4. **Precedent uniformity**: Error/Object/TypedArray backings are already
+   real; forking the representation mid-family doubles every downstream
+   special case.
+
+**Accepted cost** (documented degradation, NOT a regression — none of this
+works today either):
+
+- No per-instance brand/proto slot on non-`$Object` backings → **dynamic**
+  `instanceof Sub` (LHS statically untyped) and sibling discrimination stay
+  with #2916 Slice B (the `$Error_struct.$userClassId` precedent does not
+  generalize without a slot). Static/typed cases resolve via
+  `tryStaticInstanceOf` (`identifiers.ts:1331` — classTagMap branch +
+  `classBuiltinParentMap` hierarchy walk) as they do for #3239's parents.
+- Own-field writes (`this.own = 1`) on non-`$Object` backings route through
+  `__extern_set`, which has no arm for `$Vec`/`$Date`/closure → silently
+  dropped, same as today's Error-family behavior. `$Object`-backed subs
+  (`extends Object`, #3238) get own fields for free.
+
+**Do NOT build proto/brand substrate in this issue** — `emitSetSubclassProto`
+stays a standalone no-op; wiring it natively is #2916 Slice B / #2907
+territory. This is the spec boundary with #2916.
+
+### The non-regression rule (replaces the old "refuse, never mis-emit" absolutism)
+
+Per parent × argument-shape there are exactly three lawful lowerings, in
+preference order:
+
+1. **Faithful native ctor** — only when the produced instance preserves every
+   currently-passing behavior test (#3240 table: e.g. `new Sub(5).length === 5`
+   for Array).
+2. **Keep the existing host-import lowering** (leaky-pass) — when faithful
+   native construction isn't possible for that shape (e.g. dynamic RegExp
+   pattern). A leak that passes beats a native ctor that regresses.
+3. **Compile refusal** — ONLY where the alternative is invalid Wasm
+   (#2029 f64 mismatch, #2620 accessor desync). Do NOT add new refusals:
+   converting a leaky-pass into a CE is a standalone-lane regression.
+
+The #3239 identity-only shortcut (drop args, empty instance) is **forbidden**
+for every parent in this issue's scope — each has passing behavior tests
+(#3240 measured them).
 
 ### Changes
 
-**File: `src/codegen/class-bodies.ts`**
-- Add `emitNative<Builtin>SubclassCtor(ctx, arity)` helpers mirroring
-  `emitWasiErrorConstructor` — one per in-scope builtin — that build the native
-  backing (+ `$Subclass_struct` wrapper) and register a defined `__new_<Builtin>`
-  function in `ctx.funcMap` (DEFINED, no import → no index shift).
-- In the implicit-derived-ctor path (`:1744`) and `compileSuperCall`'s builtin
-  arm (`:2838`), gate on `(ctx.standalone || ctx.wasi) &&
-  isHostConstructibleBuiltin(parentName)`: instead of `ensureLateImport(
-  "__new_<Parent>")` (`:1760`, `:2874`), call the native ctor helper and take
-  its funcIdx — exactly the pattern the Error branch uses at `:1756` / `:2870`.
-- **Remove the #2029 / #2620 refusals for the newly-supported builtins only**
-  (`:635`, `:605`) — keep Number/Boolean/collections refused. Guard precisely so
-  a not-yet-native builtin still refuses cleanly, never leaks / never invalid
-  Wasm (the #1888 dual-mode invariant).
+**Shared refactor (land in the FIRST slice PR)** — the dispatch ladder is now
+duplicated verbatim at `class-bodies.ts:1774–1792` and `:2975–2994` and grows
+another 4–5 arms here. Extract:
 
-**File: `src/codegen/class-bodies.ts` — `emitSetSubclassProto` (`:416`)**
-- Give it a native standalone body: when `$Subclass_struct`-backed, write the
-  subclass's `$proto` field directly (no host `__set_subclass_proto`), replacing
-  the current standalone no-op (`:432`, `:449`). This wires
-  `instanceof Sub` (#2916) and the proto chain.
+```ts
+// class-bodies.ts (or object-runtime.ts)
+function resolveStandaloneBuiltinSuperCtorIdx(
+  ctx: CodegenContext,
+  parentName: string,
+  arity: number,
+): number | undefined;
+```
 
-**File: `src/codegen/declarations.ts` (`:1602`)** and **`src/codegen/index.ts`
-(`:9774` register-extern-class loop)**
-- Ensure the register-`__new_X` path routes the in-scope builtins to the native
-  ctor helpers under standalone instead of the host import list.
+returning the DEFINED funcIdx (emitting the native helper idempotently) or
+`undefined` → caller falls through to `ensureLateImport` +
+`flushLateImportShifts` exactly as today. Both sites call it. (Memory rule:
+avoid code bloat / deduplicate — verified the two arms are currently
+copy-paste twins.)
 
-### Coordinate with #2395 (OPEN PR — %TypedArray% intrinsic ctor chain)
-- `Date`/`RegExp`/TypedArray native construction overlaps #2395's ctor-chain and
-  #2893 view-brand. **Predecessor-stack**: branch from #2395's real branch once
-  it lands (or fresh from post-#2395 main), reuse its native ctor infra rather
-  than duplicating. Do NOT branch off the speculative merge-queue tip (#2522).
-  If #2395 has not landed, restrict this issue's first slice to `Object` +
-  `Array` + `Function` (host-free without the TypedArray brand) and defer
-  Date/RegExp to the #2395-stacked follow-up.
+**File: `src/codegen/object-runtime.ts`** (next to the #3238/#3239 helpers) —
+one `emitStandalone<Builtin>Constructor(ctx, arity)` per slice, all following
+the landed pattern exactly:
+
+- idempotent guard on `ctx.funcMap.has("__new_<Builtin>")`;
+- pull substrate FIRST (`ensureObjectRuntime` / `getOrRegisterVecType` /
+  `ensureDateStructForCtx` / …) so any late-import shift settles before
+  baking (`ensureObjectRuntime` flushes at entry, #2039);
+- `addFuncType` (externref × arity → externref) + `mintDefinedFunc` +
+  `ctx.funcMap.set` + `pushDefinedFunc` — a DEFINED func, no import shift;
+- body ends `extern.convert_any`.
+
+**File: `src/codegen/class-bodies.ts`** — the two dispatch sites collapse to
+the shared resolver; no other behavior change. Keep the #2620/#2029 refusals
+(`:617`, `:647`) untouched.
+
+### Per-builtin slices (each independently shippable — do NOT big-bang)
+
+**Slice 1 — `Array`** (first; highest value; own PR)
+
+- §23.1.1.1 semantics, dispatched on **effective argc**. The forwarder has a
+  fixed arity and pads missing args with `undefined` (`:2998–3007`), so
+  compute effective argc at runtime by scanning params right-to-left with
+  `__extern_is_undefined` (the host runtime already trims trailing
+  undefined — see the #1551 comment at `:3009`). Document the known
+  `new Sub(undefined)` ≡ `new Sub()` divergence.
+- argc 0 → empty `$__vec_externref`.
+- argc 1, boxed number → length-`n` vec (`array.new_default` + `struct.new`
+  with length field `n` — reuse/extract the native `new Array(n)` emission
+  from `expressions/new-super.ts` ~L3599, including the non-uint32 →
+  **RangeError** throw via `emitWasiErrorConstructor(ctx, "RangeError", 1)`,
+  the native-regex.ts:45 precedent). Discriminate boxed-number with the same
+  mechanism `__extern_length`'s ToLength arm uses (`__unbox_number`, #2036).
+- argc 1 non-numeric, or argc ≥ 2 → `$__vec_externref` of the args as
+  elements.
+- `.length` / element ops / `instanceof Array` then work via existing
+  machinery (vec `$__vec_base` arms + Slice-A `ref.test`) — assert, don't
+  re-implement.
+- Regression guard: `regular-subclassing`,
+  `contructor-calls-super-single-argument` (sic — test262 filename) must stay
+  passing.
+
+**Slice 2 — `ArrayBuffer` + `DataView`**
+
+- `__new_ArrayBuffer`: unbox `byteLength` → i8 byte-vec (reuse new-super.ts
+  ~L3480 emission incl. length validation).
+- `__new_DataView(buffer, byteOffset?, byteLength?)`: `any.convert_extern` +
+  `ref.test` the byte-vec type on the buffer arg (TypeError arm when it
+  isn't one), unbox offsets. Coordinate with the #2893 view-brand if DataView
+  reads dispatch on it — check before building.
+
+**Slice 3 — `Date`**
+
+- Plain `new Date(...)` is already native standalone (#3240 verified) —
+  **reuse that lowering**, don't re-derive: argc 0 → current time (WASI
+  `clock_time_get`, #1483); argc 1 numeric → `$Date` from unboxed f64 (mind
+  the f64→i64 timestamp conversion the existing lowering does); multi-arg
+  (y, m, d, …) → reuse if the native lowering covers it, else rule 2 (keep
+  host import for that shape).
+- If pure-standalone (non-WASI) has no clock source for argc 0, apply rule 2
+  for that shape rather than fabricating time 0.
+- Verify parent method dispatch (`getTime` etc.) accepts the boxed `$Date`
+  via the Date receiver brand (`getBuiltinBrand(ctx, "Date")`).
+
+**Slice 4 — `RegExp`**
+
+- The #1539 engine compiles patterns to bytecode at **compile time** —
+  a generic runtime `__new_RegExp(externref, externref)` is impossible. So:
+  - **Explicit `super(pat, flags)` with statically-known args**
+    (`class-bodies.ts:2942` arm): construct the `$NativeRegExp` inline into
+    `selfLocal` via the literal machinery in `regexp-standalone.ts`
+    (`isStaticStandaloneRegExpCreation` and friends), bypassing
+    `__new_RegExp` entirely. `super()` no-arg = static empty pattern `(?:)`.
+  - **Implicit-ctor / dynamic args**: rule 2 — keep the host-import lowering
+    (leaky-pass). No new refusal (`reportStandaloneRegExpUnsupported` is for
+    direct construction sites, not this path).
+- The `lastIndex` behavior test is in the flip set — verify the
+  `$NativeRegExp` field layout (`RE_FIELD_*`, `regexp-standalone.ts:676`)
+  gives the subclass instance a working `lastIndex` before claiming the flip.
+
+**Slice 5 — `Function`** (last; heaviest; optional — rule 2 is acceptable)
+
+- Passing tests are `instance-length` / `instance-name` /
+  `super-must-be-called` — none require calling the constructed function, so
+  `new Function(body)` eval semantics are NOT needed.
+- Target: a closure-root struct instance (satisfies Slice-A
+  `instanceof Function`, #1992) whose funcref points to a synthetic body that
+  throws TypeError when invoked; `.length` 0 / `.name` per spec.
+- **Investigate first**: how `.length`/`.name` reads on a closure value
+  resolve standalone (`property-access-dispatch.ts` closure arm). If they
+  need struct fields the closure type doesn't carry, do NOT widen the closure
+  struct (every existing closure allocation site would pay) — fall back to
+  rule 2 and record findings in #3240.
 
 ### funcIdx / type-index hazards (high regression risk — read carefully)
-- **Type-index shift / DCE remap** (`project_type_index_shift_and_deadelim`,
-  `reference_subview_type_idx_stability`): the `$Subclass_struct` supertype and
-  per-subclass extensions must be **registered up-front / once**, before the
-  index-space freeze — a late `ctx.mod.types.push` after DCE remaps corrupts
-  every baked struct type idx. Reserve the supertype idx at runtime-init time.
-- **Late-import funcIdx desync** (`reference_1461_*`, `reference_2193_*`,
-  `project_standalone_hostimport_gate_index_shift`): the native ctor helper is a
-  DEFINED function (no import shift), but if it internally `ensureLateImport`s
-  anything (e.g. a native-string helper), `flushLateImportShifts` must run and
-  the synthetic `<Class>_new` forwarder's baked call funcIdx must be repointed
-  by NAME, not a captured integer. This is the exact #2043 desync that made
-  `extends Set` invalid Wasm (#2620) — the reason collections are refused today.
-- **Body-swap discipline** (`project_brand_check_swap_savedbodies`): building the
-  ctor body inside the active function must use `pushBody`/`popBody`, never a
-  shared `Instr[]` aliased into two branches (`reference_shared_instr_object_dce_double_remap`).
-- **Arg-type match**: the synthetic forwarder passes externref locals; the native
-  ctor's param types MUST be externref-in (the #2029 f64 mismatch is exactly why
-  Number/Boolean are excluded). Keep every in-scope ctor externref-in/externref-out.
+
+- **Defined funcs only**: every helper is `mintDefinedFunc` +
+  `pushDefinedFunc` — no import, no index shift. If a helper body needs a
+  late import (`__extern_is_undefined`, `__unbox_number`), pull it via the
+  substrate ensure-functions BEFORE minting, and let the existing
+  `flushLateImportShifts` discipline settle indices; repoint by NAME via
+  `ctx.funcMap`, never a captured integer (the #2043 desync that made
+  `extends Set` invalid Wasm).
+- **Type registration**: only via `getOrRegisterVecType` /
+  `ensureDateStructForCtx` / existing ensure-helpers — never a raw
+  `ctx.mod.types.push` of a new single-shape struct (iso-recursive
+  canonicalization hazard #2009/#2158; see the `$Object`-stays-final note at
+  `object-runtime.ts` objectFields).
+- **ABI**: externref-in / externref-out ONLY (the #2029 f64-mismatch lesson —
+  it is the entire reason Number/Boolean are refused).
+- **Body-swap discipline**: any inline emission inside the active ctor
+  (RegExp slice) uses `pushBody`/`popBody`, never a shared `Instr[]`
+  (`reference_shared_instr_object_dce_double_remap`).
+- **gc/host byte-identity**: every new arm gated `ctx.wasi || ctx.standalone`.
+  Verify with a multi-program binary-SHA compile-diff (the PR #2418
+  methodology).
 
 ### Edge cases
-- `class X extends Array { constructor(){ super(); this.own = 1; } }` — own field
-  `this.own` writes must land in the `$Subclass_struct`, element ops delegate to
-  `$backing` `$Vec`. Verify `new X().length`, `new X()[0]=…`, and `x.own`.
-- Multi-level chain (`class B extends A {}`, `A extends Array`) — thread the
-  SAME builtin ancestor's native ctor (mirror `class-bodies.ts:663–683`), brand
-  with B's id.
-- `super(...args)` spread — non-literal spread is still arity-truncated (#1833 /
-  #1551); keep the existing best-effort, do not regress.
-- `new X() instanceof X` AND `instanceof <Builtin>` must both be true — the
-  `$brand` (own id) + the backing type both answer, consumed by #2916's native
-  instanceof.
-- gc/host mode: every native arm gated `ctx.standalone || ctx.wasi` — the
-  externClass host path stays byte-identical.
-- Uninitialised-`this` before `super()` (#2709) — unchanged; native ctor still
-  runs at the `super()` site.
 
-### Regression-risk mitigation
-- **Byte-inert for gc/host**: all native ctor / proto-write arms gated
-  `ctx.standalone || ctx.wasi`; the host externClass path is untouched.
-- **Per-builtin, incremental**: land `Object` first (cleanest — reuses `$Object`
-  proto slot, no wrapper), then `Array`, then `Function`, then Date/RegExp
-  (#2395-stacked). Each builtin is an independently-shippable slice with its own
-  corpus check — do NOT big-bang all five.
-- **Refuse, never mis-emit**: any builtin not yet native keeps a clean CE — never
-  a leaked import, never invalid Wasm (the #1888 invariant; the #2043 lesson).
-- **Full `merge_group` validation** (representation-scale, broad impact —
-  `project_broad_impact_validate_full_ci`): watch the standalone floor + object
-  identity (`reference_standalone_floor_object_identity_and_real_vs_drift`) —
-  the backing-wrapper must preserve `ref.eq` object identity.
+- Multi-level chain (`class B extends A`, `A extends Array`): ancestor
+  propagation (`class-bodies.ts:675–695`) already keys the dispatch on the
+  builtin ANCESTOR — native ctors inherit this for free; add a test.
+- `super(...args)` non-literal spread: arity-truncated per #1833/#1551 —
+  preserve, do not regress.
+- Uninitialized-`this` before `super()` (#2709): unchanged — the native ctor
+  still runs at the `super()` site.
+- `new.target` (#2023): the class-id machinery is orthogonal (the native
+  ctor replaces only the parent-allocation call) — verify a
+  `new.target`-using subclass compiles unchanged.
+- Promise `onHost` path (#2637 B2.3, `:2961`): untouched.
+- Own fields / dynamic `instanceof Sub`: documented degradations (see design
+  decision), owned by #2916 Slice B — not silently "fixed" here.
 
-### Corpus-verify plan
-- Leak-probe (#2907 methodology) over `test/language/statements/class/subclass-builtins/`
-  and `built-ins/Array/Symbol.species` / `Object` subclass tests, `--target
-  standalone`, per builtin: count `env::__new_<Builtin>` leaks → 0, confirm
-  instantiation host-free.
-- Assert `new X() instanceof X`, `new X() instanceof <Builtin>`, own-field
-  round-trip, and (Array) element/`.length` delegation.
-- `net_per_test > 0`, ratio < 10%, no bucket > 50 on the standalone shard.
-- Regression control: `extends Error` (#1536c) and `extends String` stay green;
+### Corpus-verify plan (per slice)
+
+- Leak probe (#2907 methodology) over
+  `test/language/statements/class/subclass/builtin-objects/<Parent>/` +
+  `test/built-ins/<Parent>/` subclass tests, `--target standalone`:
+  `env::__new_<Parent>` leaks → 0 for the faithful shapes; instantiation
+  host-free.
+- **Before push**: compile+run the #3240-listed passing behavior tests for
+  that parent locally (the leaky-pass regression guard — this is the step
+  that kills the identity-only temptation).
+- Vitest file `tests/issue-<NNNN>-*.test.ts` mirroring
+  `tests/issue-3239-standalone-subclass-typedarray-native-ctor.test.ts`:
+  no-leak assert + runtime behavior + WASI flip + **gc-mode keeps the host
+  import** (byte-inert check).
+- `net_per_test > 0`, ratio < 10 %, no bucket > 50; full `merge_group`
+  validation (representation-scale — `project_broad_impact_validate_full_ci`).
+- Regression control: `extends Error` (#1536c), `extends String`,
+  `extends Object` (#3238), TypedArray subs (#3239) stay green;
   Number/Boolean/collections still refuse cleanly.
 
-### Split recommendation
-**Split per-builtin — this is NOT one focused effort.** Recommended order (each a
-separate dev slice, shared `$Subclass_struct` substrate spec'd here):
-1. `extends Object` (medium — reuses `$Object`, no wrapper).
-2. `extends Array` (large — `$Vec` wrapper + delegation, #2379-scale).
-3. `extends Function` (large — closure wrapper + call-forward).
-4. `extends Date` / `extends RegExp` (medium — #2395-stacked).
+### Split & ordering
+
+1. **Array** (L) — includes the shared-resolver refactor. 3 flips.
+2. **ArrayBuffer + DataView** (M). 3 flips.
+3. **Date** (M). 3 flips.
+4. **RegExp** (M/L — call-site inline construction, different shape from 1–3). 4 flips.
+5. **Function** (L, optional — rule 2 fallback acceptable). 3 flips.
+
+Each slice: own issue id via `claim-issue.mjs --allocate`, referencing #2917
+(design) + #3240 (tracking). Senior-dev (Opus) per slice — #3240's
+recommendation stands.
 
 ## Acceptance
-- `class X extends {Object,Array,Function,Date,RegExp}` compiles + instantiates
-  host-free under `--target standalone` (zero `env::__new_*`).
-- `new X() instanceof X` and `instanceof <Builtin>` both true; own fields +
-  (Array) element/`.length` delegation work.
-- gc/host byte-identical; Number/Boolean/collections still refuse cleanly.
-- `net_per_test > 0`; full `merge_group` net-positive; object identity preserved.
+
+- Faithful native `__new_<Parent>` for `Array`, `ArrayBuffer`(+`DataView`),
+  `Date`, static-args `RegExp` (and `Function` if Slice 5 proves out):
+  subclass modules compile + instantiate host-free under `--target
+standalone` for those shapes (zero `env::__new_<Parent>`), dynamic/unsupported
+  shapes keep the host-import lowering (no new refusals).
+- Every #3240-listed passing behavior test for the converted parents still
+  passes (`new Sub(5).length === 5` class of checks).
+- `instanceof <Parent>` true via #2916 Slice A on the real backing; typed
+  `instanceof Sub` resolves as today; no proto/brand substrate built here.
+- gc/host lanes byte-identical; Number/Boolean/collections refusals intact.
+- `net_per_test > 0`; full `merge_group` net-positive; object identity
+  preserved.

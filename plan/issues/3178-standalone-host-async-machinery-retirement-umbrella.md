@@ -2,9 +2,11 @@
 id: 3178
 title: "UMBRELLA: retire the generator/async/Promise HOST machinery in standalone — the 4,467-leaky-pass (10.3 pt) family, measured slice map + shared-substrate design"
 status: ready
+# decomposition delivered 2026-07-17 (fable-3178, children #3386-#3391);
+# umbrella stays open as tracking — #3391 owns the acceptance closeout.
 sprint: current
 created: 2026-07-12
-updated: 2026-07-12
+updated: 2026-07-17
 priority: high
 horizon: xl
 feasibility: hard
@@ -14,11 +16,48 @@ task_type: architecture
 area: codegen, standalone
 language_feature: generators, async-generators, promises, async-functions
 goal: standalone-mode
-related: [1781, 2860, 3164, 3132, 3032, 2903, 2906, 2865, 2895, 1326, 2959, 2040]
+related: [1781, 2860, 3164, 3132, 3032, 2903, 2906, 2865, 2895, 1326, 2959, 2040, 3386, 3387, 3388, 3389, 3390, 3391]
+children: [3386, 3387, 3388, 3389, 3390, 3391]
 origin: "2026-07-12 architect (arch-standalone-family-plans): plan/log/standalone-gap-map.md finding — 4,456 leaky passes ride host-import shims, ~90% the generator/async-gen/Promise host machinery. This umbrella is the substrate spec + measured slice ranking the family builds on."
 ---
 
 # #3178 — UMBRELLA: standalone host async-machinery retirement
+
+## Decomposition 2026-07-17 (fable-3178) — child issues #3386–#3391
+
+State change since this umbrella was written (2026-07-12): **S1 (#3164), S2
+(#3132), S3 (#3302), S4 (#3228), S5/S6 (#2903) have all landed/closed** — but
+#3132 closed after its own S1+S2 only, banking its S3 (general `yield*`) and
+S4 (`return` completion) unspun. Also the ACCOUNTING changed: since #2961 a
+standalone compile that emits host imports is a hard `compile_error`
+(`error_category: host_import_leak`) — there are no "leaky passes" anymore.
+Every pass is host-free (24,949 on the 2026-07-17 promoted baseline — the
+host_free_pass ≥ 24,500 acceptance bar is MET); the residual family scope is
+now the **4,410 official-scope `host_import_leak` CE rows**, i.e. potential
+NEW passes, re-measured 2026-07-17 and decomposed into six children:
+
+| Child     | Scope (one line)                                                                                                                    |   Rows |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------- | -----: |
+| **#3386** | sync-gen destructuring-pattern params: fn-expr gate, element defaults, untyped array patterns via native iterator protocol, methods | ~1,860 |
+| **#3387** | NESTED async-gens with for-await bodies — close the nested-vs-module-scope drivability seam (owns the seam root-cause)              |   ~577 |
+| **#3388** | async-gen general `yield*` runtime delegation (nested + method lanes, §27.6.3.7 GetIterator error semantics) — #3132 S3 re-grounded |   ~600 |
+| **#3389** | async-gen `return`/`throw` completion — settleReturn terminator + driven `.return()`/`.throw()` — #3132 S4 re-grounded              |   ~300 |
+| **#3390** | Promise combinators with non-Promise receivers (`.call(nonCtor)` TypeError, custom-ctor admission)                                  |   ~119 |
+| **#3391** | S7 mechanical closeout: registration assert, dead-arm audit, umbrella acceptance measurement (depends on the rest)                  |      0 |
+
+**The load-bearing new finding (probe matrix 2026-07-17)**: for-await bodies,
+general `yield*` (ident AND custom async-iterable), and `return` completion in
+async gens all compile HOST-FREE at module scope on current main, but LEAK
+when the generator is nested inside a function — and the test262 runner wraps
+every file in `export function test(){}`, so the whole async-gen residual
+rides that one seam (`nested-declarations.ts:678/:1104` →
+`isAsyncGenDriveCandidate` → `analyzeAsyncGen`'s bounded shape). #3387 owns
+root-causing which module-scope arm admits these (and validating its runtime
+correctness — it is corpus-under-tested precisely because everything is
+wrapped); #3388/#3389 build on the documented finding. `__make_callback` is
+fully retired (0 rows). Dynamic-import chains (288 rows) stay deferred
+(#1089/#1512). Remaining non-family leak cohorts (SharedArrayBuffer 344,
+BigInt64Array, `__array_from_async` 76, …) are OUTSIDE this umbrella.
 
 ## The one-paragraph thesis
 
@@ -41,16 +80,16 @@ family can be staffed without re-deriving any of this.
 Aggregated from `.test262-cache/test262-standalone-current.jsonl`
 (official-scope subset; rows with `status=pass && imports.length>0`):
 
-| Cohort (by import combo) | leaky passes | Rides on |
-| --- | ---: | --- |
-| carries ANY `__gen_*`/`__create_*` generator machinery | **4,034** | #3164 (sync fn-exprs), #3132 (async gens), residual below |
-| — sync-only bundles (`__create_generator` = 1,739 total) | ~1,741 | **#3164** (fn expressions ≈ ALL of it — the dstr harness IIFE `var iter = function*(){…}();`) |
-| — async-gen bundles (`__create_async_generator` = 2,408) | ~2,408 | **#3132** S2–S4 (methods 1,725 files, yield\*, return) |
-| Promise/callback-only, NO gen machinery | **182** | this umbrella S4–S6 |
-| — for-await-of dstr via legacy async lowering (`Promise_resolve/reject/then2` + `__make_callback` + `__get_caught_exception`) | 90 | S4 |
-| — dynamic-import chains (`__dynamic_import` + then-arms) | 47 | deferred (#1089/#1512) |
-| — `__make_callback`-only (lazy Iterator helpers, TypedArray callbacks, DisposableStack, Function.prototype) | ~30 | S6 (#2903 sub-fronts 2b/4) |
-| — `Promise_new` non-inline executor / misc | ~15 | S5 |
+| Cohort (by import combo)                                                                                                      | leaky passes | Rides on                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------- | -----------: | --------------------------------------------------------------------------------------------- |
+| carries ANY `__gen_*`/`__create_*` generator machinery                                                                        |    **4,034** | #3164 (sync fn-exprs), #3132 (async gens), residual below                                     |
+| — sync-only bundles (`__create_generator` = 1,739 total)                                                                      |       ~1,741 | **#3164** (fn expressions ≈ ALL of it — the dstr harness IIFE `var iter = function*(){…}();`) |
+| — async-gen bundles (`__create_async_generator` = 2,408)                                                                      |       ~2,408 | **#3132** S2–S4 (methods 1,725 files, yield\*, return)                                        |
+| Promise/callback-only, NO gen machinery                                                                                       |      **182** | this umbrella S4–S6                                                                           |
+| — for-await-of dstr via legacy async lowering (`Promise_resolve/reject/then2` + `__make_callback` + `__get_caught_exception`) |           90 | S4                                                                                            |
+| — dynamic-import chains (`__dynamic_import` + then-arms)                                                                      |           47 | deferred (#1089/#1512)                                                                        |
+| — `__make_callback`-only (lazy Iterator helpers, TypedArray callbacks, DisposableStack, Function.prototype)                   |          ~30 | S6 (#2903 sub-fronts 2b/4)                                                                    |
+| — `Promise_new` non-inline executor / misc                                                                                    |          ~15 | S5                                                                                            |
 
 **Key correction to the gap map's Promise row**: the `Promise_then2/resolve/
 reject` ~1,500 column is NOT an independent Promise gap — probe-verified on
@@ -76,7 +115,7 @@ parallel machinery.
 1. **Microtask/job queue** — `src/codegen/async-scheduler.ts` (#1326 1C-A):
    funcref+externref ring (`__microtask_enqueue` / `__drain_microtasks` /
    `__microtask_grow`), uniform job signature `$__mt_func_type
-   (externref, externref) -> externref`, WASI `_start` auto-drain, plus the
+(externref, externref) -> externref`, WASI `_start` auto-drain, plus the
    #2632 timer-heap/run-loop reactor. This IS the spec HostEnqueuePromiseJob.
 2. **`$Promise` carrier** — `getOrRegisterPromiseType` (async-scheduler.ts):
    `{state i32 mut, value externref mut, callbacks (ref null $PromiseCallback) mut}`;
@@ -120,15 +159,15 @@ machines 2/3.
 
 ## Slice map (ranked by leaky-passes-retired; every slice = its own issue/PR)
 
-| # | Slice | Retires (leaky) | Owner issue | Class |
-| - | --- | ---: | --- | --- |
-| S1 | sync generator FUNCTION EXPRESSIONS native | ~1,741 | **#3164 — done** | fable-executable-now |
-| S2 | async-gen methods / yield\* / return native | ~2,408 (subsumes most of the Promise column) | **#3132** S2–S4 (in-progress, live dev — coordinate, don't fork) | in-flight (XL) |
-| S3 | capturing nested generators → capture slots in the state struct | small leaky (≤ ~60) but large FAIL/CE value + unblocks #3032 semantics | **#3302 — done** (2026-07-16; declarations landed via #3032 W3's TDZ-native-threading, fn-expressions + the latent #3164 sgDeps-only fill hole via #3302's own PR) | landed |
-| S4 | for-await-of dstr legacy async lowering → native drive | 90 | **#3228 — done** (banked the 24 array-source files); residual 96 `asyncIter`-var-source files fold into **#3132**'s lane per #3228's own scope note — not a separate child | mostly done, residual rides #3132 |
-| S5 | `new Promise(NON-inline executor)` + `class X extends Promise` producer | ~15 leaky + fail-bucket | #2903 (re-grounded plan there) | fable-executable-now |
-| S6 | lazy Iterator helpers (map/filter/take/drop/flatMap) + TypedArray callback methods | ~30 | #2903 sub-fronts 2b/4 (plan there) | fable-executable-now |
-| S7 | `__get_caught_exception` zero-registration assert + eager-buffer code deletion | 0 direct (accounting rides S1/S2) | fold into the LAST of S1/S2 to land | mechanical |
+| #   | Slice                                                                              |                                                        Retires (leaky) | Owner issue                                                                                                                                                                | Class                             |
+| --- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| S1  | sync generator FUNCTION EXPRESSIONS native                                         |                                                                 ~1,741 | **#3164 — done**                                                                                                                                                           | fable-executable-now              |
+| S2  | async-gen methods / yield\* / return native                                        |                           ~2,408 (subsumes most of the Promise column) | **#3132** S2–S4 (in-progress, live dev — coordinate, don't fork)                                                                                                           | in-flight (XL)                    |
+| S3  | capturing nested generators → capture slots in the state struct                    | small leaky (≤ ~60) but large FAIL/CE value + unblocks #3032 semantics | **#3302 — done** (2026-07-16; declarations landed via #3032 W3's TDZ-native-threading, fn-expressions + the latent #3164 sgDeps-only fill hole via #3302's own PR)         | landed                            |
+| S4  | for-await-of dstr legacy async lowering → native drive                             |                                                                     90 | **#3228 — done** (banked the 24 array-source files); residual 96 `asyncIter`-var-source files fold into **#3132**'s lane per #3228's own scope note — not a separate child | mostly done, residual rides #3132 |
+| S5  | `new Promise(NON-inline executor)` + `class X extends Promise` producer            |                                                ~15 leaky + fail-bucket | #2903 (re-grounded plan there)                                                                                                                                             | fable-executable-now              |
+| S6  | lazy Iterator helpers (map/filter/take/drop/flatMap) + TypedArray callback methods |                                                                    ~30 | #2903 sub-fronts 2b/4 (plan there)                                                                                                                                         | fable-executable-now              |
+| S7  | `__get_caught_exception` zero-registration assert + eager-buffer code deletion     |                                      0 direct (accounting rides S1/S2) | fold into the LAST of S1/S2 to land                                                                                                                                        | mechanical                        |
 
 Sequencing: S1 ∥ S2 ∥ S5/S6 are independent. S3 after S1 (same
 `isNativeGeneratorCandidate` seam; S1's fn-expr registration is the pattern S3
