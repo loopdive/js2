@@ -1,8 +1,8 @@
 {
   "id": "3101",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-09T10:35:43Z",
-  "updated_at": "2026-07-09T10:35:43Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3101-bytecode-isa",
+  "claimed_at": "2026-07-17T06:44:08Z",
+  "updated_at": "2026-07-17T06:44:08Z"
 }
