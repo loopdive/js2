@@ -1,7 +1,8 @@
 ---
 id: 3332
 title: "linear direct path: arr.push returns 0 (not new length) and drops extra args"
-status: ready
+status: done
+completed: 2026-07-17
 sprint: Backlog
 goal: backend-agnostic-ir
 feasibility: medium
@@ -18,6 +19,16 @@ related: [2956, 1854]
 ---
 
 # #3332 — linear direct path push defects
+
+> **Resolution (2026-07-17):** fixed in `src/codegen-linear/index.ts`
+> `compileArrayMethodCall` — the `push` handler now (a) holds the receiver in a
+> local and loops over **every** argument (multi-arg no longer dropped), and (b)
+> reads `__arr_len` for the expression value so push returns the **new length**
+> instead of `f64.const 0`. Guarded by `tests/issue-3332.test.ts` (6 cases:
+> single/multi-arg return value, no-arg, value ordering, ref-element push) and
+> the `#2956` divergence assertions were folded into the direct↔IR parity loop
+> (`tests/issue-2956.test.ts`). The IR overlay's single-arg-only gate still
+> demotes multi-arg push to the direct path, which is now itself spec-correct.
 
 ## Problem
 

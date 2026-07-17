@@ -206,8 +206,9 @@ describe("#2956 L2: selector-claimed vec MUTATION (element store + push)", () =>
 
     const direct = await exportedFunctions(directBinary);
     const ir = await exportedFunctions(irBinary);
-    // Direct-path parity where the direct path is spec-correct.
-    for (const name of ["setInBounds", "setGrow", "pushStmt"]) {
+    // Direct-path parity where the direct path is spec-correct. #3332 fixed the
+    // direct-path push return value, so `pushExpr` now joins this parity loop.
+    for (const name of ["setInBounds", "setGrow", "pushStmt", "pushExpr"]) {
       expect(callNumber(ir, name), `${name} IR value`).toBe(callNumber(direct, name));
     }
     // Absolute expectations (spec semantics):
@@ -216,15 +217,10 @@ describe("#2956 L2: selector-claimed vec MUTATION (element store + push)", () =>
     // runtime's 0 sentinel -> 507.
     expect(callNumber(ir, "setGrow")).toBe(507);
     expect(callNumber(ir, "pushStmt")).toBe(8); // 5 + new length 3
-    // push in EXPRESSION position: the IR overlay is spec-correct (returns
-    // the new length -> 2*10 + 8 = 28); the DIRECT path returns 0 for the
-    // push result (pre-existing defect, tracked as #3332) -> 8. Assert both
-    // so a direct-path fix flips this into a parity check loudly.
+    // push in EXPRESSION position now returns the new length on BOTH the IR
+    // overlay AND the direct path (#3332 fixed) -> 2*10 + 8 = 28.
     expect(callNumber(ir, "pushExpr")).toBe(28);
-    expect(
-      callNumber(direct, "pushExpr"),
-      "direct pushExpr (#3332 — update to 28 + fold into parity loop when fixed)",
-    ).toBe(8);
+    expect(callNumber(direct, "pushExpr")).toBe(28);
     expect(callNumber(ir, "test")).toBe(12 + 507 + 8 + 28);
   });
 
@@ -246,10 +242,10 @@ describe("#2956 L2: selector-claimed vec MUTATION (element store + push)", () =>
     const report = getLastLinearIrReport();
     expect(report?.compiled ?? []).not.toContain("multiPush");
     expect(report?.rejected.some((rejection) => rejection.func === "multiPush")).toBe(true);
-    // The demoted function rides the DIRECT path, which drops the extra
-    // push arg (pre-existing defect, #3332): length is 2, not the
-    // spec-correct 3. Update to 3 when #3332 lands.
-    expect(await run(binary)).toBe(2);
+    // The demoted function rides the DIRECT path. #3332 fixed multi-arg push on
+    // the direct path (all arguments appended), so the length is the spec-correct
+    // 3 — even though the IR overlay still demotes multi-arg push to direct.
+    expect(await run(binary)).toBe(3);
   });
 });
 

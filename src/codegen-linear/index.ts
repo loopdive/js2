@@ -3552,18 +3552,32 @@ function compileArrayMethodCall(
   methodName: string,
 ): void {
   if (methodName === "push") {
-    // arr.push(val) → __arr_push(arr, slot(val)) (#1938: f64 slot)
+    // arr.push(v1, v2, …) → __arr_push(arr, slot(vi)) for every argument
+    // (#1938: f64 slot). Per spec §23.1.3.23, push appends ALL arguments and
+    // returns the NEW length. #3332: the old direct-path lowering handled only
+    // arguments[0] (dropping the rest) and yielded `f64.const 0` (not the new
+    // length) in expression position. Hold the receiver in a local so multiple
+    // pushes and the trailing length read all reference the same array without
+    // re-evaluating a possibly side-effecting receiver expression.
     const pushIdx = ctx.funcMap.get("__arr_push")!;
+    const lenIdx = ctx.funcMap.get("__arr_len")!;
+    const arrLocal = addLocal(fctx, `__push_arr_${fctx.locals.length}`, { kind: "i32" });
     compileExpression(ctx, fctx, propAccess.expression); // arr ptr (i32)
-    if (inferExprType(ctx, fctx, expr.arguments[0]).kind === "f64") {
-      compileExprToF64(ctx, fctx, expr.arguments[0]); // numeric/boolean → f64 slot
-    } else {
-      compileExprToI32(ctx, fctx, expr.arguments[0]); // ref → i32
-      pushI32ToSlot(fctx); // → f64 slot
+    fctx.body.push({ op: "local.set", index: arrLocal });
+    for (const arg of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: arrLocal });
+      if (inferExprType(ctx, fctx, arg).kind === "f64") {
+        compileExprToF64(ctx, fctx, arg); // numeric/boolean → f64 slot
+      } else {
+        compileExprToI32(ctx, fctx, arg); // ref → i32
+        pushI32ToSlot(fctx); // → f64 slot
+      }
+      fctx.body.push({ op: "call", funcIdx: pushIdx });
     }
-    fctx.body.push({ op: "call", funcIdx: pushIdx });
-    // push returns void in runtime, but expression needs a value for drop
-    fctx.body.push({ op: "f64.const", value: 0 });
+    // Expression value: the new length (spec: Array.prototype.push returns it).
+    fctx.body.push({ op: "local.get", index: arrLocal });
+    fctx.body.push({ op: "call", funcIdx: lenIdx });
+    fctx.body.push({ op: "f64.convert_i32_s" });
   } else if (
     methodName === "filter" ||
     methodName === "map" ||
