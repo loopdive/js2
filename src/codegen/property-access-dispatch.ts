@@ -2370,6 +2370,28 @@ export function tryLengthAndNameReads(
           fctx.body.push({ op: "local.get", index: lenTmp2 });
           return lenType;
         }
+        // (#2649) The compiled receiver may itself be a length-bearing struct
+        // that is NOT the TS-derived vec type — e.g. `a.subarray(1)` yields a
+        // `$__subview_<elem>` ({length, data, byteOffset}) whose `.length` lives
+        // at field 0, but `resolveWasmType(Int8Array)` gives the plain
+        // `$__vec_<elem>` type. Reading `.length` DIRECTLY off the compiled
+        // subview type is both correct and exact (the static type IS the
+        // subview) — the generic `typeIdx !== vecTypeIdx` guard below would
+        // otherwise `ref.test` the subview against the vec type, fail, and fall
+        // to the `f64.const 0` else-arm (the `a.subarray(1).length === 0` bug).
+        if (
+          exprResult &&
+          (exprResult.kind === "ref" || exprResult.kind === "ref_null") &&
+          (exprResult as any).typeIdx !== vecTypeIdx
+        ) {
+          const compiledTypeIdx = (exprResult as { typeIdx: number }).typeIdx;
+          const compiledDef = ctx.mod.types[compiledTypeIdx];
+          if (compiledDef?.kind === "struct" && compiledDef.fields[0]?.name === "length") {
+            fctx.body.push({ op: "struct.get", typeIdx: compiledTypeIdx, fieldIdx: 0 });
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          }
+        }
         // Guard: the TS type might not match the runtime struct type.
         // If the compiled expression returned a different ref type, use ref.test
         // to verify before struct.get, falling back to 0.
