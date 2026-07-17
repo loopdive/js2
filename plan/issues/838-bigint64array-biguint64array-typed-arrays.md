@@ -13,6 +13,13 @@ goal: spec-completeness
 sprint: current
 test262_skip: 19
 test262_ce: 25
+# Intended registry growth: registering a new typed-array family (BigInt64Array/
+# BigUint64Array) requires touching the central type/storage registries in the
+# codegen barrel + the count-constructor dispatch. New logic itself lives in the
+# subsystem modules; these two are the single-source-of-truth registration sites.
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/codegen/expressions/new-super.ts
 ---
 # #838 -- BigInt typed arrays (BigInt64Array, BigUint64Array)
 
