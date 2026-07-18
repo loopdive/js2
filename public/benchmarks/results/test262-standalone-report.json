@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-18T07:55:58.334Z",
-  "baseline_generated_at": "2026-07-18T07:55:58.334Z",
-  "baseline_sha": "852c40a9f5167a2a959d53faa066cb0753b623cc",
+  "timestamp": "2026-07-18T10:16:41.896Z",
+  "baseline_generated_at": "2026-07-18T10:16:41.896Z",
+  "baseline_sha": "6ae06435cc8b2253e3e3dab61ff1c36d0c819d81",
   "oracle_version": 8,
   "mode": {
     "target": "standalone",
@@ -12,8 +12,8 @@
     "total": 43106,
     "pass": 4312,
     "fail": 0,
-    "compile_error": 38771,
-    "compile_timeout": 4,
+    "compile_error": 38772,
+    "compile_timeout": 3,
     "skip": 19,
     "compilable": 4312,
     "host_free_pass": 4312,
@@ -23,8 +23,8 @@
         "total": 42020,
         "pass": 4305,
         "fail": 0,
-        "compile_error": 37692,
-        "compile_timeout": 4,
+        "compile_error": 37693,
+        "compile_timeout": 3,
         "skip": 19,
         "compilable": 4305,
         "host_free_pass": 4305,
@@ -59,8 +59,8 @@
         "total": 43106,
         "pass": 4312,
         "fail": 0,
-        "compile_error": 38771,
-        "compile_timeout": 4,
+        "compile_error": 38772,
+        "compile_timeout": 3,
         "skip": 19,
         "compilable": 4312,
         "host_free_pass": 4312,
@@ -71,8 +71,8 @@
         "total": 48088,
         "pass": 4508,
         "fail": 0,
-        "compile_error": 43468,
-        "compile_timeout": 4,
+        "compile_error": 43469,
+        "compile_timeout": 3,
         "skip": 108,
         "compilable": 4508,
         "host_free_pass": 4508,
@@ -85,8 +85,8 @@
     "total": 43106,
     "pass": 4312,
     "fail": 0,
-    "compile_error": 38771,
-    "compile_timeout": 4,
+    "compile_error": 38772,
+    "compile_timeout": 3,
     "skip": 19,
     "compilable": 4312,
     "host_free_pass": 4312,
@@ -96,8 +96,8 @@
     "total": 48088,
     "pass": 4508,
     "fail": 0,
-    "compile_error": 43468,
-    "compile_timeout": 4,
+    "compile_error": 43469,
+    "compile_timeout": 3,
     "skip": 108,
     "compilable": 4508,
     "host_free_pass": 4508,
@@ -107,8 +107,8 @@
     "total": 40597,
     "pass": 4221,
     "fail": 0,
-    "compile_error": 36353,
-    "compile_timeout": 4,
+    "compile_error": 36354,
+    "compile_timeout": 3,
     "skip": 19,
     "compilable": 4221,
     "host_free_pass": 4221,
@@ -141,8 +141,8 @@
       "total": 42020,
       "pass": 4305,
       "fail": 0,
-      "compile_error": 37692,
-      "compile_timeout": 4,
+      "compile_error": 37693,
+      "compile_timeout": 3,
       "skip": 19,
       "compilable": 4305,
       "host_free_pass": 4305,
@@ -738,8 +738,8 @@
       "path": "built-ins/String",
       "pass": 0,
       "fail": 0,
-      "compile_error": 1222,
-      "compile_timeout": 1,
+      "compile_error": 1223,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 1223,
       "host_free_pass": 0
@@ -1186,7 +1186,7 @@
     }
   ],
   "error_categories": {
-    "host_import_leak": 37368,
+    "host_import_leak": 37369,
     "other": 5720,
     "promise_error": 14,
     "range_error": 2,
@@ -1317,8 +1317,8 @@
         "sample_files": [
           "test/built-ins/Temporal/Now/zonedDateTimeISO/return-value.js",
           "test/built-ins/Temporal/Duration/prototype/round/relativeto-propertybag-timezone-string-year-zero.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/eraYear/prop-desc.js",
           "test/built-ins/Temporal/Instant/prototype/toString/timezone-wrong-type.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/eraYear/prop-desc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/month/prop-desc.js"
         ],
         "sample_signatures": [
@@ -1498,15 +1498,15 @@
         "statuses": {
           "pass": 0,
           "fail": 0,
-          "compile_error": 295,
-          "compile_timeout": 1,
+          "compile_error": 296,
+          "compile_timeout": 0,
           "skip": 0,
           "total": 296,
           "host_free_pass": 0
         },
         "error_categories": {
           "other": 19,
-          "host_import_leak": 276
+          "host_import_leak": 277
         },
         "sample_files": [
           "test/built-ins/String/prototype/matchAll/regexp-matchAll-throws.js",
@@ -1683,7 +1683,7 @@
           "test/language/expressions/object/dstr/gen-meth-dflt-ary-ptrn-rest-id.js",
           "test/language/expressions/object/dstr/gen-meth-dflt-obj-ptrn-rest-skip-non-enumerable.js",
           "test/language/expressions/async-generator/yield-promise-reject-next-yield-star-sync-iterator.js",
-          "test/language/expressions/class/elements/after-same-line-static-async-gen-rs-private-method.js"
+          "test/language/expressions/generators/dstr/dflt-ary-ptrn-rest-id-elision.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__get_caught_exception, env::console_log_externref, env::st",
@@ -1816,8 +1816,8 @@
         "sample_files": [
           "test/built-ins/TypedArray/out-of-bounds-has.js",
           "test/built-ins/TypedArray/resizable-buffer-length-tracking-1.js",
-          "test/built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js",
           "test/built-ins/TypedArrayConstructors/internals/Set/detached-buffer.js",
+          "test/built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js",
           "test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js"
         ],
         "sample_signatures": [
@@ -1884,7 +1884,7 @@
           "test/language/expressions/object/dstr/meth-dflt-ary-init-iter-close.js",
           "test/language/expressions/object/dstr/async-gen-meth-dflt-ary-ptrn-rest-ary-elision.js",
           "test/language/expressions/object/cpn-obj-lit-computed-property-name-from-multiplicative-expression-mult.js",
-          "test/language/expressions/object/dstr/meth-ary-ptrn-elem-obj-id.js"
+          "test/language/expressions/object/dstr/async-gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
@@ -2073,8 +2073,8 @@
           "test/language/expressions/arrow-function/dstr/ary-ptrn-elem-ary-empty-init.js",
           "test/language/expressions/arrow-function/statement-body-requires-braces-must-return-explicitly.js",
           "test/language/function-code/10.4.3-1-74gs.js",
-          "test/language/function-code/S10.1.6_A1_T1.js",
-          "test/language/function-code/10.4.3-1-98-s.js"
+          "test/language/function-code/10.4.3-1-98-s.js",
+          "test/language/function-code/S10.1.6_A1_T1.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
@@ -2227,8 +2227,8 @@
         "sample_files": [
           "test/language/arguments-object/mapped/mapped-arguments-nonwritable-nonconfigurable-1.js",
           "test/language/arguments-object/cls-decl-async-gen-func-args-trailing-comma-spread-operator.js",
-          "test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-arguments.js",
           "test/language/arguments-object/10.6-13-a-2.js",
+          "test/language/arguments-object/mapped/nonwritable-nonenumerable-nonconfigurable-descriptors-set-by-arguments.js",
           "test/language/arguments-object/10.6-14-c-1-s.js"
         ],
         "sample_signatures": [
@@ -2257,8 +2257,8 @@
         "sample_files": [
           "test/language/expressions/less-than/bigint-and-symbol.js",
           "test/built-ins/Atomics/wait/bigint/was-woken-before-timeout.js",
-          "test/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-xor.js",
           "test/built-ins/Atomics/waitAsync/bigint/value-not-equal-agent.js",
+          "test/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-xor.js",
           "test/built-ins/Atomics/store/bigint/good-views.js"
         ],
         "sample_signatures": [
@@ -2332,8 +2332,8 @@
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
           "host_import_leak:standalone target emitted host imports: env::Promise_any, env::Promise_then2, env::console_log_externref, env::structuredClone (##)",
-          "host_import_leak:standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)",
           "host_import_leak:standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)",
+          "host_import_leak:standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)",
           "host_import_leak:standalone target emitted host imports: env::Promise_allSettled, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)"
         ]
       },
@@ -2360,7 +2360,7 @@
           "test/language/module-code/instn-named-err-not-found-dflt.js",
           "test/language/module-code/top-level-await/syntax/if-block-await-expr-nested.js",
           "test/language/module-code/instn-local-bndng-cls.js",
-          "test/language/module-code/top-level-await/syntax/export-dflt-assign-expr-await-expr-obj-literal.js"
+          "test/language/module-code/top-level-await/await-expr-func-expression.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
@@ -2455,10 +2455,10 @@
           "other": 5
         },
         "sample_files": [
+          "test/language/identifiers/start-unicode-ltr.js",
           "test/language/identifiers/vals-rus-alpha-lower-via-escape-hex4.js",
           "test/language/identifiers/part-unicode-11.0.0-escaped.js",
-          "test/language/identifiers/start-unicode-ltr.js",
-          "test/language/identifiers/part-unicode-15.1.0-class-escaped.js",
+          "test/language/identifiers/part-digits.js",
           "test/language/identifiers/part-unicode-16.0.0-escaped.js"
         ],
         "sample_signatures": [
@@ -2559,8 +2559,8 @@
           "test/built-ins/Atomics/notify/count-from-nans.js",
           "test/built-ins/Atomics/isLockFree/length.js",
           "test/built-ins/Atomics/notify/bad-range.js",
-          "test/built-ins/Atomics/sub/name.js",
-          "test/built-ins/Atomics/and/name.js"
+          "test/built-ins/Atomics/add/name.js",
+          "test/built-ins/Atomics/sub/name.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new, env::console_log_externref, env::structuredClone (##)",

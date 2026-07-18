@@ -206,6 +206,107 @@ pass under full `merge_group` + the standalone high-water floor
 (`check-standalone-highwater.mjs`), with zero host-mode regression (all changes
 `ctx.standalone`-gated).
 
+## 2026-07-18 re-measurement (fable-dev-4) — the gap HALVED; the frontier SHIFTED
+
+Fresh honest re-measure from tonight's promoted lane baselines
+(`test262-standalone-current.jsonl` @ 2026-07-18 01:08Z vs `test262-current.jsonl`,
+official scope, matched by `file|strict`):
+
+| metric | 2026-06-30 | 2026-07-12 | **2026-07-18** |
+| ------ | ---------: | ---------: | -------------: |
+| host-free standalone official pass | 12,883 | ~13.0k | **24,726** |
+| honest gap (host pass ∧ standalone not-pass) | ~20,500 | 12,801 | **8,228** |
+
+The carrier + method-family work (#3132/#3164/#3302/#3386, #3169–#3177, #3173/#3181,
+#2861/#2863/#2868, …) landed a **~12k-row swing**. The gap is now **8,228**.
+
+### The structural shift: `assertion_fail` now DOMINATES `host_import_leak`
+
+Break the 8,228 gap by `error_category` (from the standalone JSONL rows):
+
+| error_category | rows | note |
+| -------------- | ---: | ---- |
+| **assertion_fail** | **4,079** | host-free binary, WRONG runtime value — the new frontier |
+| host_import_leak | 2,991 | of which `iterator_protocol` = 2,309 → **#3178** sub-umbrella (#3386–#3391) |
+| type_error | 677 | standalone throws / mis-throws TypeError |
+| other | 180 | |
+| illegal_cast | 112 | ref.test-before-cast misses (fold into #2863/#2868 triage) |
+| null_deref | 66 | mostly `__str_flatten`/RegExp (#2935) |
+| wasm_compile | 58 | invalid binary residual (#2878/#3024) |
+| runtime_error / oob / syntax / range / promise | 65 | long tail |
+
+**Read this:** the carriers largely WORKED — `host_import_leak` (2,991, and
+2,309 of it is the already-carved #3178 generator/iterator territory) is no
+longer the dominant blocker. The new #1 lever is **`assertion_fail` (4,079):
+tests that compile host-free in standalone but compute the WRONG VALUE at
+runtime** — standalone-lane runtime *semantic fidelity*, not carrier existence.
+
+### assertion_fail (4,079) cluster → owning-issue map (coverage is ~complete)
+
+Bucketed by test family; every material cluster already has an owner — the
+counts are LARGER than each issue's original estimate (scope grew as the metric
+de-masked runtime failures), so this is a **re-scope + re-prioritise** signal,
+not a new-issue signal:
+
+| cluster (assertion_fail rows) | owner | status | orig. est → now |
+| ----------------------------- | ----- | ------ | --------------- |
+| Object/defineProperty+defineProperties (389) | #3022 (default, done) · #2984/#2992 (standalone MOP) | in-progress | 728 → 389 std |
+| TypedArray/prototype (532) | **#2872** | in-progress | 294 → **532** |
+| Array/prototype (418) | #3180 (std HOF) · #3185 (default generics) | ready | ~300 → 418 |
+| String/prototype (282) | **#2875** | in-progress | 159 → **282** |
+| language/expressions+statements (580) | #2873 + carriers | mixed | — |
+| RegExp (223) | #2876 · #2935 (null-deref) | — | 125 → 223 |
+| Iterator/prototype (182) | #3049/#3146 **done** — see NEW-1 below | — | helper *residual* |
+| TypedArrayConstructors (111) | **#3177** | in-progress | 356 → refresh |
+| Promise (110) | #2867 · #3198 (blocked) | in-progress | — |
+| Function (94) · Proxy (63, mostly deferred) · Number (52) · Date (51) · JSON (44) · DataView (36→#3173 done) · Reflect (28) | assorted (see 07-12 groom) | — | — |
+
+**Action for tech-lead/PO:** bump the fresh counts into #2872 (→532), #2875
+(→282), #3177, #2984/#2992; #2872 + #2875 are now the two single largest
+tractable standalone levers and should sort to the TOP of the standalone queue.
+
+### host_import_leak non-iterator residual (682 after removing the 2,309 #3178 rows)
+
+Top leaked imports (occurrence count across gap rows): `SharedArrayBuffer_new`
+(125, **deferred** — SAB skip-class), `__js_array_new`/`__js_array_push` (138 —
+64 are Promise combinators #2867/#3198, 60 are `language/*/class` array-build),
+`Promise_all*/any/race` (77 → #2867/#3198), `__instanceof_check` (30 → #2916),
+`__array_from_async` (24 → #2967 done/refresh), `decode/encodeURI*` (48 —
+**NEW-2 below**), `AsyncDisposableStack_new` (14 — #2866 Symbol-carrier dep).
+
+### type_error (677) map
+
+`annexB/language/eval-code` + `eval-code/direct` (136 — **deferred**, eval
+#3005/#3017), Array/proto (94 → #3180/#3185), TypedArray/proto (63 → #2872),
+Iterator/proto (41 → NEW-1), TypedArrayConstructors (68 → #3177),
+defineProperties (27 → #2992), String/proto (20 → #2875), String.raw (12 → #3147 done).
+
+### Genuinely-NEW findings this pass (not covered by an open child)
+
+- **NEW-1 — Iterator.prototype helper OBSERVABLE-SEMANTICS residual (~223).**
+  #3049 (map/filter/take/drop/flatMap) and #3146 (zip/concat/from) both landed
+  as `done`, yet `built-ins/Iterator/prototype` still shows 182 `assertion_fail`
+  + 41 `type_error` in the gap — the helpers EXIST but diverge on spec
+  observables (abrupt-completion IteratorClose ordering, `this`/brand
+  TypeErrors, counter/limit edge values). A spec-fidelity follow-on, distinct
+  from helper existence. Recommend a `#31xx` child once #2872/#2875 land (Symbol
+  `@@iterator`/`@@toStringTag` fidelity may share root cause with #2866).
+- **NEW-2 — URI carrier ROUTING regression → filed as #3401.** #2500 (native
+  `decodeURI`/`encodeURI`/`decodeURIComponent`/`encodeURIComponent`) is `done`,
+  yet **48 official `built-ins/{decode,encode}URI*` conformance tests still leak
+  `env::decodeURI…`** — the native carrier exists but is not dispatched for
+  these call shapes. Clean, verified, self-contained slice. See
+  `3401-standalone-uri-carrier-routing-regression.md`.
+
+### Umbrella status after this pass
+
+Still `sprint: current`, `priority: high`. Decomposition remains essentially
+COMPLETE — this pass re-grounded the numbers (gap 20,500 → 8,228), flagged the
+`assertion_fail`-dominant shift, banked fresh counts onto the four grown-scope
+levers (#2872/#2875/#3177/#2984-2992), and carved exactly one genuinely-new
+slice (#3401). No duplicate children were minted (verified each cluster's
+pointer against an existing owner first — the `avoid-code-bloat-deduplicate`
+memory applied to issues).
 ## Implementation Plan (Fable, 2026-07-18) — fresh census @ main 9d216ada + the priority ladder
 
 > Measured from the 2026-07-18 baselines-repo refresh (commit `5c6d3092`,
