@@ -1,8 +1,8 @@
 {
   "id": "3431",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-18T11:44:14Z",
-  "updated_at": "2026-07-18T11:44:14Z"
+  "assignee": "ttraenkler/ci-shard-fix",
+  "status": "in-progress",
+  "branch": "issue-3431-consolidate-mergegroup-shards",
+  "claimed_at": "2026-07-18T11:44:25Z",
+  "updated_at": "2026-07-18T11:44:25Z"
 }
