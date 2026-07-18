@@ -197,4 +197,13 @@ describe("#3418 — elideDeadTopLevelBindings unit behavior", () => {
     const out = elide("export var kept = function () {};\nvar eager = sideEffect();\n");
     expect(out.elided).toEqual([]);
   });
+
+  it("never elides early-error binding names (strict `var eval` stays a SyntaxError)", async () => {
+    const out = elide('"use strict";\nvar eval = function () {};\n');
+    expect(out.elided).toEqual([]);
+    // End-to-end: the negative-test verdict must survive — the compile still
+    // reports the strict-mode early error instead of silently succeeding.
+    const r = await compile('"use strict";\nvar eval = function () {};\n', standaloneOpts);
+    expect(r.success && r.errors.filter((e) => e.severity === "error").length === 0).toBe(false);
+  });
 });

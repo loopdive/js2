@@ -120,7 +120,16 @@ export function elideDeadTopLevelBindings(
     const names: string[] = [];
     let ok = true;
     for (const decl of stmt.declarationList.declarations) {
-      if (!ts.isIdentifier(decl.name) || (decl.initializer !== undefined && !isPureInitializer(decl.initializer))) {
+      if (
+        !ts.isIdentifier(decl.name) ||
+        // Binding names that carry strict/module EARLY ERRORS must never be
+        // elided: `"use strict"; var eval = 1;` has to keep producing the
+        // expected SyntaxError (negative tests). These grammar checks live in
+        // the checker's syntactic pass, not parseDiagnostics, so the
+        // parse-error bail above does NOT cover them.
+        EARLY_ERROR_BINDING_NAMES.has(decl.name.text) ||
+        (decl.initializer !== undefined && !isPureInitializer(decl.initializer))
+      ) {
         ok = false;
         break;
       }
@@ -207,6 +216,27 @@ export function elideDeadTopLevelBindings(
     elided: dropped.flatMap((c) => c.names),
   };
 }
+
+/**
+ * Binding names whose mere DECLARATION is a strict-mode / module-goal early
+ * error (`var eval`, `var arguments`, `let let`, future reserved words, …).
+ * Eliding such a statement could turn an expected SyntaxError (negative
+ * test262 tests, real user diagnostics) into a silent success.
+ */
+const EARLY_ERROR_BINDING_NAMES = new Set([
+  "eval",
+  "arguments",
+  "yield",
+  "await",
+  "let",
+  "static",
+  "implements",
+  "interface",
+  "package",
+  "private",
+  "protected",
+  "public",
+]);
 
 /** Whitelisted global identifier reads that can never throw or observe. */
 const PURE_IDENTIFIER_READS = new Set(["undefined", "globalThis", "NaN", "Infinity"]);
