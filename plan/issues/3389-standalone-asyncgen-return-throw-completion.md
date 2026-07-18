@@ -1,7 +1,8 @@
 ---
 id: 3389
 title: "standalone: `return` completion in driven async-gen bodies (settleReturn terminator) + AsyncGeneratorPrototype.return/.throw residual (~300 rows)"
-status: ready
+status: in-progress
+assignee: ttraenkler/fable-dev-3
 sprint: current
 created: 2026-07-17
 updated: 2026-07-17
@@ -17,6 +18,11 @@ goal: standalone-mode
 umbrella: 3178
 related: [3132, 3387, 3388, 2865, 2906]
 origin: "2026-07-17 fable-3178 umbrella decomposition — #3132 S4 banked slice, re-grounded: __gen_set_return 268 / __gen_return (async combos) / __gen_throw 80 rows."
+# Slice 1: settleReturn terminator — analyzer admission + CFG plan (async-cps.ts)
+# and the emitter arm + validateAsyncCfg (async-frame.ts).
+loc-budget-allow:
+  - src/codegen/async-cps.ts
+  - src/codegen/async-frame.ts
 ---
 
 # #3389 — async-gen `return`/`throw` completion for the driven lane
@@ -123,3 +129,63 @@ the driven frame's `.return(v)`/`.throw(e)` methods must:
 - The driver-signature change (completion-kind param) touches every driven
   consumer call site — grep `__async_gen_next_` emitters before choosing the
   param vs sibling-function shape.
+
+## Implementation notes (fable-dev-3, 2026-07-18) — Slice 1 in progress
+
+STACKED on #3388's real branch (`fork/issue-3388-asyncgen-yieldstar`, PR #3332)
+per the known-dependency exception — #3389's `settleReturn` sits in the same
+`analyzeAsyncGen`/`planAsyncGenCfg`/`emitAsyncFrameStateMachine` surface #3388
+extended (rtDelegate). PR opens only AFTER #3332 merges (then re-merge
+origin/main; the stack collapses).
+
+### Slice 1 design (top-level `return E` → settleReturn)
+
+1. `AsyncGenShape` gains `returnExpr?: ts.Expression | null` (undefined = no
+   return / fall-through `settleUndefined`+`settleDone`; null = bare `return;`;
+   Expression = `return E`).
+2. `analyzeAsyncGen`: a top-level `ReturnStatement` (statement position, not
+   nested in control flow — `containsOwnScopeReturn` on a LEAD still bails)
+   records `returnExpr` and terminates the body (trailing statements are
+   unreachable). Suspend-free operand only (`!containsAwaitOrYield(E)`).
+   Promise-typed `E` BAILS on the carrier lane (`implicitYieldAwait !== null &&
+yieldOperandIsPromiseTyped`) — the §27.6.3.8 return-value Await is deferred
+   (correct-or-legacy, same policy as `yield await` / #3120); carrier-off admits
+   all suspend-free E (documented promise-return value gap, mirrors #3120).
+3. `AsyncCfgTerminator` gains `{ kind: "settleReturn"; value: AsyncCfgOperand |
+null; resumeState }`. `planAsyncGenCfg`: when `shape.returnExpr !== undefined`
+   the tail state gets `settleReturn(value, resume→doneState)` and a TRAILING
+   `settleDone` state is appended — so the first settling `next()` gives
+   `{value: E, done: true}` and every SUBSEQUENT `next()` gives
+   `{value: undefined, done: true}` (§27.6.3.8 completed-frame semantics).
+4. `emitAsyncFrameStateMachine` (async-frame.ts): the `settleReturn` arm mirrors
+   `settleYield` (compute E → externref) but builds `{value: E, done: 1}` (like
+   `settleDone`'s struct but with the real value), settles the result promise,
+   sets STATE=resumeState (the trailing settleDone), spills, returns.
+
+Lockstep is automatic (single `analyzeAsyncGen` gate →
+`isBoundedAsyncGenBody`/`isAsyncGenDriveCandidate`/import-collector), verified
+with wrapped leak probes + a mixed-module carrier probe.
+
+Slice 2 (consumer `.return()`/`.throw()` on driven frames) is a follow-up.
+Out of scope both slices: `return` inside try/finally (finally-across-suspend),
+yield\* delegate return forwarding (§27.6.3.7 7.b — needs #3388+#3389 both).
+
+## Slice 1 landed — Documented next slices (fable-dev-3, 2026-07-18)
+
+Slice 1 (settleReturn terminator, PR opened post-#3388-merge) admits the clean
+top-level `return E` shape. Two follow-ups remain for the full ~268-row bucket:
+
+- **Slice 2 — consumer `.return()` / `.throw()` on DRIVEN frames**
+  (`AsyncGeneratorPrototype/{return,throw}` rows + `__gen_throw` combos): add
+  `__async_gen_return_<stem>` / `__async_gen_throw_<stem>` siblings (or a
+  completion-kind param on the existing `__async_gen_next_<stem>` driver) that
+  settle/reject a suspended-at-yield or completed frame. See the Slice 2 block
+  in the Implementation Plan above.
+- **try-across-yield follow-up (the corpus multiplier)**: the has-return
+  async-gen CORPUS files overwhelmingly wrap the `return` in `try`/`catch`/
+  `finally` across a `yield` (e.g. `try { yield* x } catch(e) { } return thrown`),
+  or combine it with `yield*` return-forwarding (§27.6.3.7 7.b). Those stay
+  legacy after slice 1 (correct-or-legacy) and are what gates most of the 268
+  rows — the return-completion handler must run the `finally` on the return
+  path (out of scope for slices 1–2; needs the async-frame handler-region
+  generalization, cross-ref #2906 gap-3 try/finally).

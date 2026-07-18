@@ -1020,6 +1020,20 @@ export type AsyncCfgTerminator =
       /** State entered on the next `next()` kick after this yield. */
       readonly resumeState: number;
     }
+  | {
+      // (#3389) Async-generator `return E` completion: fulfil the CURRENT
+      // `next()`-promise with an IteratorResult `{value: E, done: true}`
+      // (§27.6.3.8 with a return completion — distinct from `settleDone`'s
+      // `{value: undefined, done: true}`), set STATE=resumeState (a trailing
+      // `settleDone` state), and `return`. Every SUBSEQUENT `next()` kick then
+      // re-dispatches at that `settleDone`, giving `{value: undefined, done:
+      // true}` on a completed frame.
+      readonly kind: "settleReturn";
+      /** The returned value. `null` ⇒ bare `return;` (value undefined). */
+      readonly value: AsyncCfgOperand | null;
+      /** State entered on the next `next()` kick (the trailing settleDone). */
+      readonly resumeState: number;
+    }
   | { readonly kind: "settleDone" }; // async-gen body end — fulfil `{value: undefined, done: true}`
 
 /** One basic block of the async CFG. */
@@ -2317,6 +2331,17 @@ function yieldOperandIsPromiseTyped(oracle: TypeOracle, operand: ts.Expression):
 interface AsyncGenShape {
   readonly segments: AsyncGenYield[];
   readonly tailLeads: ts.Statement[];
+  /**
+   * (#3389) A top-level `return` completion terminating the body:
+   *   - `undefined` — no top-level return (fall-through ⇒ `settleDone`,
+   *     `{value: undefined, done: true}`);
+   *   - `null` — bare `return;` (also `{value: undefined, done: true}`, but via
+   *     a return completion — observable only with `finally`, which stays
+   *     bailed, so slice 1 emits it identically to fall-through);
+   *   - `ts.Expression` — `return E` ⇒ `settleReturn(E)`, `{value: E, done: true}`.
+   * `tailLeads` are the statements before the return (they run before it settles).
+   */
+  readonly returnExpr?: ts.Expression | null;
 }
 
 /** Recognise the bounded async-gen body; return its segment list, or `null`
@@ -2444,6 +2469,25 @@ function analyzeAsyncGen(
       }
       leads = [];
       continue;
+    }
+    // (#3389) A TOP-LEVEL `return E` / bare `return;` — a return completion that
+    // terminates the body. Admitted as a `settleReturn` terminator (below). Only
+    // a DIRECT top-level statement (a return nested in control flow is still
+    // caught by `containsOwnScopeReturn` on a LEAD and bails — correct-or-legacy).
+    // The operand must be suspend-free; a Promise-typed operand on the CARRIER
+    // lane bails (the §27.6.3.8 return-value Await is deferred, same policy as
+    // `yield await` / #3120 — carrier-off admits it with the documented
+    // promise-return value gap). Statements after a top-level return are
+    // unreachable, so we stop here (`leads` become the return state's tail).
+    if (ts.isReturnStatement(st)) {
+      const operand = st.expression;
+      if (operand !== undefined) {
+        if (containsAwaitOrYield(operand)) return null; // `return await P` / nested — follow-up
+        if (implicitYieldAwait !== null && yieldOperandIsPromiseTyped(implicitYieldAwait.oracle, operand)) {
+          return null; // Promise-typed return on the carrier lane — deferred
+        }
+      }
+      return { segments, tailLeads: leads, returnExpr: operand ?? null };
     }
     // A LEAD statement: must be suspend-free (a yield/await nested in control
     // flow needs expression-level suspend numbering) and return-free.
@@ -2827,6 +2871,23 @@ export function planAsyncGenCfg(
       });
       id += 1;
     }
+  }
+  // (#3389) A top-level `return E` terminates with `settleReturn(E)` — the tail
+  // state runs the pre-return leads then fulfils `{value: E, done: true}` and
+  // suspends into a TRAILING `settleDone` state, so the first settling `next()`
+  // delivers E-with-done and every subsequent `next()` on the completed frame
+  // delivers `{value: undefined, done: true}`. A bare `return;` (returnExpr ===
+  // null) carries a `null` value ⇒ `{value: undefined, done: true}` directly.
+  if (shape.returnExpr !== undefined) {
+    const value: AsyncCfgOperand | null = shape.returnExpr === null ? null : shape.returnExpr;
+    states.push({
+      id,
+      resumeFrom: null,
+      lead: asLead(shape.tailLeads),
+      terminator: { kind: "settleReturn", value, resumeState: id + 1 },
+    });
+    states.push({ id: id + 1, resumeFrom: null, lead: [], terminator: { kind: "settleDone" } });
+    return { states, handlers: [] };
   }
   states.push({ id, resumeFrom: null, lead: asLead(shape.tailLeads), terminator: { kind: "settleDone" } });
   return { states, handlers: [] };
