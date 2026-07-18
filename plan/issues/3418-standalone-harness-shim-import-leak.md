@@ -14,6 +14,8 @@ model: fable
 sprint: current
 horizon: l
 related: [3370, 3393, 2961, 2860, 1781, 3417]
+loc-budget-allow:
+  - src/compiler.ts
 ---
 
 # #3418 — the runtime shim leaks two UNUSED host imports into every standalone test
@@ -216,12 +218,26 @@ a consequence, not a rewrite of test semantics.
 - [x] Root-cause analysis + approach decision (this section)
 - [x] Repro probes (.tmp/probe-3418.mjs, .tmp/probe-blank.mjs — verified
       manual blanking → 0 imports + module runs)
-- [ ] `src/deadcode-elide.ts` — analysis + blanking
-- [ ] Wire into `compileSourceSync` (standalone/wasi gate, after preprocessImports)
-- [ ] `tests/issue-3418.test.ts` — leak gone, live-use kept, host-lane untouched,
-      strict-mode variant, generality beyond the harness, edge cases
-- [ ] Sample-set validation: ~20-30 real shim-only test262 files 0-import PASS
-      standalone (incl. strict variants); print/$262 users keep imports
-- [ ] Scoped regression: existing #2961 + standalone suites green
+- [x] `src/deadcode-elide.ts` — analysis + blanking
+- [x] Wire into `compileSourceSync` (standalone/wasi gate, pre-parse;
+      `loc-budget-allow: src/compiler.ts` +17 driver-wiring lines)
+- [x] `tests/issue-3418.test.ts` — 18/18: leak gone (sloppy + strict rerun,
+      runs to completion), print-called / doneprintHandle / $262.detach /
+      typeof / string-mention keep imports, host lane keeps both imports,
+      generality beyond harness (standalone + wasi), unit edge cases
+      (length-preserving, fixpoint chain, multi-declarator all-or-nothing,
+      decl-only var, syntax-error bail, template-chunk mentions)
+- [x] Sample-set validation: 27 real test262 files across 7 categories,
+      exact assembleOriginalHarness order, primary + strict variants:
+      25 PASS with 0 imports, 0 import leaks; 2 fails are propertyHelper
+      verifyProperty semantics (#3420 family — now failing honestly instead
+      of masked by the leak)
+- [x] Scoped regression: issue-2961 (10/10), issue-2961-standalone-no-raw-pass
+      (3/3), issue-2097-standalone-highwater (7/7), issue-3370 (5/5 when run
+      alone; earlier timeouts were local CPU contention from batching 5 heavy
+      files). issue-2879 §2 mark-band tests fail identically on origin/main
+      (stale #3393 residue: committed mark 4508 vs hard-coded >10000 band —
+      pre-existing, untouched by this PR, and only run by CI when the file is
+      modified)
 - [ ] PR open, CI green
 - [ ] merge-queue landed *(auto-enqueue picks it up)*

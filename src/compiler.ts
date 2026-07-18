@@ -40,6 +40,7 @@ import { preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
+import { elideDeadTopLevelBindings } from "./deadcode-elide.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
@@ -1202,7 +1203,7 @@ export function compileSourceSync(
   // respective module, so it's byte-neutral elsewhere.
   const { rawWasi: wasiRawImports, memAccessors: wasiMemAccessors } = detectRawWasiImports(cjsRewritten);
   const preprocessed = preprocessImports(cjsRewritten2, { wasi: options.target === "wasi" });
-  const processedSource = preprocessed.source;
+  let processedSource = preprocessed.source;
   // Composed map: processedSource → original source. Pipeline output order is
   // define → stdin-prelude → cjs → (eval/super, identity) → imports, so compose
   // outermost-first.
@@ -1230,6 +1231,22 @@ export function compileSourceSync(
   // ScriptKind-only override; the `.js`-derived semantics (lenient checking)
   // stay intact. Byte-neutral when no prelude was injected.
   const forceTsGrammar = stdinResult.injected || iterStaticsResult.injected;
+
+  // Step 1a: #3418 — host-free targets only: elide provably-dead top-level
+  // pure bindings BEFORE the parse, so never-invoked function bodies (e.g. the
+  // test262 harness shim's `var print = function () { console.log(...) }` /
+  // `var $262 = { detachArrayBuffer: ... structuredClone ... }` when the
+  // program never mentions them) don't register host imports in the unified
+  // collector. Strictly same-length whitespace blanking → identity map, no
+  // positionMap composition needed; bails (source untouched) on any syntax
+  // error. Host `gc`/`linear` targets are excluded and stay byte-identical.
+  if (options.target === "standalone" || options.target === "wasi") {
+    processedSource = elideDeadTopLevelBindings(
+      processedSource,
+      isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS,
+    ).source;
+  }
+
   let ast: TypedAST;
   if (languageService) {
     // Incremental path: reuse cached lib files via the language service
