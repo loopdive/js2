@@ -1,8 +1,8 @@
 {
   "id": "3390",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-17T21:13:02Z",
-  "updated_at": "2026-07-17T21:13:02Z"
+  "assignee": "ttraenkler/fable-dev-3",
+  "status": "in-progress",
+  "branch": "issue-3390-promise-combinator-receivers",
+  "claimed_at": "2026-07-18T00:06:22Z",
+  "updated_at": "2026-07-18T00:06:22Z"
 }
