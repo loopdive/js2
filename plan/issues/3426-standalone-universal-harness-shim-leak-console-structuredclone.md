@@ -82,6 +82,117 @@ of the two prelude imports so the leak-scan sees a genuinely host-free module.
 Per the dual-mode principle, standalone needs a Wasm-native `print`/report path
 (or no report import at all) and must not depend on host `structuredClone`.
 
+## Implementation Plan (opus-dev-a, 2026-07-18)
+
+Root cause CONFIRMED (not just hypothesis). Both host imports originate in the
+authoritative-harness runtime shim `scripts/test262-fyi-runtime.js`, which
+`tests/test262-original-harness.ts` (#3370) prepends VERBATIM before every
+assembled test (`RUNTIME_PATH`, line 25):
+
+- **`console_log_externref`** ← the shim's `var print = function (value) { console.log(value); };`
+  (lines 4–6). Every module compiles this `print` definition, so every module
+  emits a `console.log` externref import.
+- **`structuredClone`** ← the shim's `$262.detachArrayBuffer` body:
+  `structuredClone(buffer, { transfer: [buffer] })` (lines 22–27). The `$262`
+  object literal is always compiled, so the `structuredClone(...)` call site is
+  always emitted → an ambient-global host import.
+
+(The `structuredClone(...)` hits in `src/codegen/*.ts` — expressions.ts,
+exceptions.ts, loops.ts — are the compiler's OWN Node.js `structuredClone` used
+to deep-clone `Instr[]`; RED HERRING, not emitted into wasm.)
+
+### Fix 1 — `console_log_externref` (the import-collector gate)
+
+`src/codegen/declarations/import-collector.ts`, `finalizeUnifiedCollector`,
+**line 1316**:
+
+```ts
+// In WASI mode, console.log/error use fd_write — skip JS host console imports
+if (!ctx.wasi) {                       // <-- BUG: standalone has ctx.wasi === false
+  for (const method of CONSOLE_METHODS) { ... addImport(ctx,"env",`console_${method}_externref`,...) }
+}
+```
+
+Standalone (`ctx.standalone === true`, `ctx.wasi === false`) falls into the
+`!ctx.wasi` branch and emits the console host imports. **WASI is the only lane
+that currently skips them.**
+
+Change the gate to `if (!ctx.wasi && !ctx.standalone)` so standalone ALSO skips
+the host console imports. But skipping the import is not sufficient on its own:
+the **call site** for `console.log`/`print` must lower to something valid in
+standalone (else a dangling funcMap reference). Two acceptable lowerings per
+dual-mode:
+
+- **(preferred, simplest) native no-op**: in standalone, lower a `console.*`
+  call to `drop` its args and produce nothing. test262 NEVER checks `print`
+  output (verdicts come from thrown `Test262Error`), so a silent console is
+  semantically correct for the lane, and a standalone browser embedder can wire
+  a real sink later without a host import in the module.
+- (alternative) a wasm-native console sink mirroring the WASI `fd_write` path
+  (`src/codegen/wasi.ts:825`), if a visible standalone console is desired.
+
+Find the `console.*` call-site lowering (grep `console_` / `consoleNeededByMethod`
+in `src/codegen/` — the emit is driven by `state.consoleNeededByMethod`) and add
+the standalone no-op arm alongside the existing WASI handling. Keep the JS-host
+lane byte-identical (only the `ctx.standalone` arm is new).
+
+### Fix 2 — `structuredClone` (ambient-global host import)
+
+In standalone, an unresolved ambient global like `structuredClone` must NOT
+materialize an `env::` host import — it should resolve to `undefined`, so the
+shim's own guard `if (typeof structuredClone !== "function") throw` fires and
+`$262.detachArrayBuffer` becomes a throw-stub (correct: standalone has no
+structuredClone; only the handful of detach tests hit it, and they SHOULD report
+unsupported rather than leak an import corpus-wide).
+
+Follow the **exact precedent already in this file at line ~1611** (the #3063/#3064
+`escape`/`unescape` handling):
+
+```ts
+for (const name of state.escapeNeeded) {
+  if (ctx.funcMap.has(name)) continue;
+  if (ctx.standalone || ctx.wasi) { emitNative...(ctx); continue; }  // no host import
+  addImport(ctx, "env", name, ...);                                   // JS-host only
+}
+```
+
+Apply the same shape to the ambient-global call path that currently emits the
+`structuredClone` import (trace from the generic unresolved-identifier-call →
+`addImport(ctx,"env",name,...)` site; grep the collector for where a bare called
+global with no funcMap/native handler registers an `env` import). In standalone,
+route `structuredClone` (and, defensively, any ambient global with no
+standalone-native handler that the harness references but tests don't require —
+scope tightly to `structuredClone` first) to **no import**; the identifier reads
+as `undefined` and `typeof` yields `"undefined"`.
+
+### Sequencing / collision
+
+- Land this issue's PR **after** the docs PR #3364 (which carries this file) so
+  the impl PR MODIFIES this file rather than re-adding it (avoids the
+  `check:issue-ids:against-main` dup-id wedge).
+- Collision-clear on the code path: the only in-flight #3370 PR (#3351,
+  `codex/fix-baseline-trap-scope`) touches `refresh-baseline.yml`,
+  `test262-sharded.yml`, `plan/issues/3370-*.md`, `tests/issue-3303.test.ts` —
+  NOT `import-collector.ts`, the runtime shim, or the console/structuredClone
+  codegen. Stay out of those two workflow files and there is no conflict.
+
+### Scoped verify
+
+```bash
+# should print an imports list with ZERO env:: entries after the fix
+node -e 'import("./src/index.js").then(async ({compile})=>{ \
+  const src = require("fs").readFileSync("scripts/test262-fyi-runtime.js","utf8") + "\nexport function test(){return 1;}"; \
+  const r = await compile(src,{target:"standalone"}); \
+  console.log("success",r.success,"imports",JSON.stringify(r.imports)); })'
+# and a real corpus member that never calls console/structuredClone:
+#   test/language/expressions/optional-chaining/iteration-statement-for.js --target standalone → 0 imports
+```
+
+Add a standalone regression test (`tests/issue-3426-*.test.ts`) asserting a
+trivial standalone module + the raw runtime-shim source both compile with an
+empty `imports` array (or at least zero `env::console_log_externref` /
+`env::structuredClone`).
+
 ## Acceptance criteria
 
 - A standalone compile of a trivial test that uses neither `console.log` nor
