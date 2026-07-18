@@ -1,8 +1,8 @@
 {
   "id": "3388",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-17T21:12:47Z",
-  "updated_at": "2026-07-17T21:12:47Z"
+  "assignee": "ttraenkler/fable-dev-2",
+  "status": "in-progress",
+  "branch": "issue-3388-asyncgen-yieldstar",
+  "claimed_at": "2026-07-18T00:05:05Z",
+  "updated_at": "2026-07-18T00:05:05Z"
 }
