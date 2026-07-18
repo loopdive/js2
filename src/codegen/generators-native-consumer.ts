@@ -31,6 +31,7 @@ import { coerceType, compileExpression, compileStatement } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { addUnionImports } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
+import { ensureGetUndefined, flushLateImportShifts } from "./expressions/late-imports.js";
 import {
   STATE_FIELD,
   ERROR_FIELD,
@@ -747,10 +748,22 @@ export function isNativeGeneratorResultStruct(ctx: CodegenContext, typeIdx: numb
 /**
  * (#2979) Instruction tail that converts an f64 already on the stack into an
  * externref with sentinel canonicalization: the UNDEF_F64 bit pattern becomes
- * the null externref (standalone canonical `undefined`), anything else is
- * boxed via `__box_number`. Needs a caller-provided f64 scratch local.
+ * canonical `undefined`, anything else is boxed via `__box_number`. Needs a
+ * caller-provided f64 scratch local.
+ *
+ * (#3032 W6) `undefinedInstrs` is the canonical-`undefined` producer for the
+ * sentinel arm. Default: null externref (the STANDALONE canonical undefined —
+ * `__extern_is_undefined` is `ref.is_null`). On the JS-HOST lane the null
+ * externref surfaces as JS `null`, which is `!== undefined`
+ * (`assert.sameValue(result.value, undefined)` failed on every done-result
+ * read once host-lane generators routed native) — host callers pass
+ * `[call __get_undefined]` instead.
  */
-export function sentinelAwareF64BoxInstrs(f64ScratchIdx: number, boxNumberIdx: number): Instr[] {
+export function sentinelAwareF64BoxInstrs(
+  f64ScratchIdx: number,
+  boxNumberIdx: number,
+  undefinedInstrs: Instr[] = [{ op: "ref.null.extern" }],
+): Instr[] {
   return [
     { op: "local.tee", index: f64ScratchIdx },
     { op: "i64.reinterpret_f64" },
@@ -759,7 +772,7 @@ export function sentinelAwareF64BoxInstrs(f64ScratchIdx: number, boxNumberIdx: n
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
-      then: [{ op: "ref.null.extern" }],
+      then: [...undefinedInstrs],
       else: [
         { op: "local.get", index: f64ScratchIdx },
         { op: "call", funcIdx: boxNumberIdx },
@@ -789,6 +802,16 @@ function buildOpenResultValueReadExtern(
   const externVT: ValType = { kind: "externref" };
   // Scratch for the sentinel bit-test (allocated once; arms are alternatives).
   const f64Scratch = allocLocal(fctx, `__gen_val_f64_${fctx.locals.length}`, { kind: "f64" });
+  // (#3032 W6) Canonical `undefined` for the sentinel/done arms: the REAL host
+  // `undefined` under a JS host (null externref reads back as JS `null`, which
+  // fails `assert.sameValue(result.value, undefined)`); the null externref in
+  // standalone/native-strings (ensureGetUndefined returns undefined there —
+  // byte-identical to the pre-W6 lowering). In-body `call` instrs are repaired
+  // by the late-import shifter body walks, same as `__box_number` above.
+  const getUndefIdx = ensureGetUndefined(ctx);
+  if (getUndefIdx !== undefined) flushLateImportShifts(ctx, fctx);
+  const undefInstrs: Instr[] =
+    getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : [{ op: "ref.null.extern" }];
 
   const armFor = (e: { typeIdx: number; elemValType: ValType }): Instr[] => {
     const read: Instr[] = [
@@ -800,10 +823,10 @@ function buildOpenResultValueReadExtern(
     if (e.elemValType.kind === "f64" || e.elemValType.kind === "i32") {
       if (boxNumberIdx === undefined) {
         // No boxing available (defensive): undefined is the only safe answer.
-        return [...read, { op: "drop" }, { op: "ref.null.extern" }];
+        return [...read, { op: "drop" }, ...undefInstrs];
       }
       const toF64: Instr[] = e.elemValType.kind === "i32" ? [{ op: "f64.convert_i32_s" }] : [];
-      return [...read, ...toF64, ...sentinelAwareF64BoxInstrs(f64Scratch, boxNumberIdx)];
+      return [...read, ...toF64, ...sentinelAwareF64BoxInstrs(f64Scratch, boxNumberIdx, undefInstrs)];
     }
     // ref/ref_null elem (native string / struct): wrap to externref. A null
     // ref (the done default) converts to the null externref = canonical

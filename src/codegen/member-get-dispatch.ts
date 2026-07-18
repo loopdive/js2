@@ -330,6 +330,16 @@ export function reserveMemberGetDispatch(
   if (getIdx === undefined) return undefined;
   addStringConstantGlobal(ctx, propName);
   addUnionImportsViaRegistry(ctx);
+  // (#3032 W6) A `value` dispatcher may grow a sentinel-canonicalizing arm for
+  // the native-generator IteratorResult structs at fill time; under a JS host
+  // that arm produces the REAL host `undefined` (`__get_undefined`) instead of
+  // the null externref (which reads back as JS `null` and fails
+  // `assert.sameValue(result.value, undefined)`). Register the import NOW —
+  // the fill must not add imports. No-op under standalone/native-strings
+  // (same gate as ensureGetUndefined; the fill keeps null-extern there).
+  if (propName === "value" && !ctx.nativeStrings) {
+    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+  }
   // (#2963) Ensure the method-value singleton machinery (trampoline + cache
   // global) for every class-method candidate of this prop, and record the
   // fill-time arms. BEFORE the flush below so all import additions settle
@@ -551,8 +561,14 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         cand.fieldType.kind === "i32" && cand.fieldType.boolean === true ? ctx.funcMap.get("__box_boolean") : undefined;
       // (#2963) When method arms exist, local 2 is the `__mres` externref
       // scratch; the sentinel f64 scratch then lives at local 3.
+      // (#3032 W6) Sentinel arm canonicalizes to the REAL host `undefined`
+      // under a JS host (registered at reserve for `value` dispatchers);
+      // standalone keeps the null externref (funcMap miss → default).
+      const getUndefIdx = ctx.nativeStrings ? undefined : ctx.funcMap.get("__get_undefined");
+      const sentinelUndefInstrs: Instr[] | undefined =
+        getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : undefined;
       const box: Instr[] = useSentinelBox
-        ? sentinelAwareF64BoxInstrs(f64ScratchIdx, boxNumIdx)
+        ? sentinelAwareF64BoxInstrs(f64ScratchIdx, boxNumIdx, sentinelUndefInstrs)
         : boxBoolIdx !== undefined
           ? [{ op: "call", funcIdx: boxBoolIdx }]
           : coercionInstrs(ctx, cand.fieldType, { kind: "externref" });

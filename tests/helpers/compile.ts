@@ -112,6 +112,10 @@ export async function compileAndRunInstance(source: string): Promise<{
 
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
+  // (#3032) The lazy-generator thunk contract requires consumers of
+  // buildImports to wire setExports — a lazy fn-expression generator's first
+  // resume re-enters the module via the __call_fn_0 export.
+  imports.setExports?.(instance.exports as Record<string, Function>);
   return { exports: instance.exports as any, instance };
 }
 

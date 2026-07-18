@@ -491,3 +491,91 @@ predicted wont-build), W5 (retVal marshalling), W6 (retire the buffer —
 host-lane laziness for the shapes the thunk model doesn't cover; `next(v)`
 two-way under the buffer stays broken until then). The tag-5/A1 unblock is
 fully delivered by W3+#3302+W4 on the standalone side.
+
+## W6 slice A — HOST-lane declarations go native (sendev-3032-w6, 2026-07-18, branch `issue-3032-w6-host-lane-laziness`)
+
+### W2 + W5 dispositions (measured this wave)
+
+- **W2 = wont-build, confirmed.** Corpus measurement per the plan's Step-0
+  gate: 250 raw grep hits for paramful `function*(…)` EXPRESSIONS collapse to
+  13 files once skipped categories (eval-code / Proxy / staging / annexB) and
+  `arguments`-dependent tests are excluded — and those 13 are syntax/scope
+  tests (no-yield, yield-as-parameter, length-dflt, use-strict…), not
+  laziness-sensitive. Population < 10 ⇒ wont-build.
+- **W5 = already delivered en route (W3/W4 native routing).** Probes on both
+  lanes: `return 9` observation → 1009, `it.return(42).value` → 1042 (after
+  `next()` AND before start). Pinned by tests in this branch. The
+  `__gen_result_value_f64` shim already carries the `__sget_value` fallback.
+
+### The change (this branch)
+
+1. **`src/codegen/generators-native.ts` — host arm of
+   `isNativeGeneratorCandidate`**: dropped the #3050 `bodyHasNewTryRegionAcrossYield`
+   restriction — every free `function*` DECLARATION passing the safety walks
+   routes native under the JS host (lazy §27.5 + `next(v)` two-way). New
+   host-arm bails (each root-caused, see below): export-modifier bail;
+   `bodyHasHostUnsupportedYieldShape` (nested-yield-operand + `yield*`).
+2. **`src/codegen/statements/nested-declarations.ts`** — capturing-gen gate is
+   now candidate-only in BOTH lanes (host `tdz===0 && tryRegion` restriction
+   dropped; the W3 TDZ-flag threading is lane-agnostic and now rides on host).
+3. **Class-A host fix — sentinel canonicalization produces REAL host
+   `undefined`**: `sentinelAwareF64BoxInstrs` gained an `undefinedInstrs`
+   param (default null-extern = standalone canonical, byte-identical there);
+   host callers pass `call __get_undefined`. Wired in
+   `buildOpenResultValueReadExtern` (generators-native-consumer.ts,
+   ensure+flush at build) and the member-get `value` dispatcher
+   (member-get-dispatch.ts — `__get_undefined` registered at RESERVE for
+   `value` dispatchers only; fill stays funcMap-read-only).
+4. **Use-site walk extensions** (`hostLaneGeneratorUsesAreSafe`):
+   result-binding tracking (`resultConsumptionIsSafe`/`resultBindingUsesAreSafe`
+   — a `.next()` result escaping to a call argument / reflection bails) and
+   the re-entrant bail (instance binding referenced INSIDE the generator's own
+   body bails — from-state-executing).
+5. **tests/helpers/compile.ts** — `compileAndRunInstance` now wires
+   `setExports` (the documented slice-1 thunk contract); fixes the
+   pre-existing `generator-yield-contexts` fn-expr failure.
+
+### The 6-regression root-cause map (640-file host sweep, branch-pre-fixes vs main: +8/−6)
+
+All 6 verified against the REFRESHED standalone baseline
+(`test262-standalone-current.jsonl`, 24,961 pass — NOT `runs/<sha>.jsonl`,
+which is the HOST lane, a trap): every one except yield-star-before-newline is
+a pre-existing native-machine gap already failing on standalone.
+
+- `yield-as-statement` — done-result `.value` read null-extern (JS `null` ≠
+  `undefined`) → FIXED on host (class A, item 3). Standalone unchanged
+  (same-wrong as its baseline).
+- `result-prototype` — result struct escaped to
+  `hasOwnProperty.call`/`getPrototypeOf` → walk bails it (class C, item 4).
+- `yield-as-yield-operand` — native plan collapses `yield yield 1` (first
+  `next()` → 0, must be 1); BOTH-lane pre-existing miscompile → host bails
+  (class D); standalone keeps its baseline behavior. Machine fix = follow-up.
+- `return|throw/from-state-executing` — re-entrant `iter.return(42)` inside
+  the body dispatches a raw state struct to the host shim → walk bails (class
+  E, item 4).
+- `yield-star-before-newline` — host resume fn delegates `yield*` through
+  `__iterator` and traps on a host-side delegate (standalone passes natively;
+  host-resume-specific) → host bails `yield*` bodies (class F). Machine fix =
+  follow-up.
+
+### Resume State (for a cold resume)
+
+- Branch `issue-3032-w6-host-lane-laziness` (fork = `origin` in this
+  worktree), worktree `/workspace/.claude/worktrees/agent-a1d1b2a1a3a7d641b`.
+  Base 0f7ac132a0; upstream/main has advanced (~20 commits, arch/specs) —
+  re-merge before PR.
+- DONE: all code changes above; tsc clean; probe battery 24/24 (host P1-P12
+  all green incl. next(v) 107/42); classifier probes A1/A2/B1/C1 fixed on
+  host; gitignored probes live in `tests/probe-w5*.test.ts`,
+  `tests/probe-w6*.test.ts` (not committed).
+- PENDING next steps, in order: (1) re-run generator unit batches
+  (generators/generator-yield-contexts/3050/3032-w3/w4/2203/928 + consumer
+  suites); (2) re-run the 640-file host sweep
+  (`TEST262_PATH_FILTER="language/statements/generators|language/expressions/generators|built-ins/GeneratorPrototype|built-ins/GeneratorFunction"`)
+  vs main's run (results at
+  `/workspace/benchmarks/results/test262-results-20260718-000722.jsonl`) —
+  REQUIRE 0 regressions; (3) commit real regression tests (lazy-creation,
+  next(v) two-way, the 6-regression pins); (4) `git merge origin/main`
+  catch-up; (5) PR `-R loopdive/js2 --head ttraenkler:issue-3032-w6-host-lane-laziness`.
+- Full CI (merge_group host shard diff) is the decider — broad-impact change
+  (every safe-use host generator declaration flips lowering).

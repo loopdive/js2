@@ -1515,6 +1515,56 @@ function bodyReferencesUnresolvableIdentifier(ctx: CodegenContext, decl: Generat
 }
 
 /**
+ * (#3032 W6) HOST-lane shape bails for the native routing, covering the two
+ * body shapes the state machine still miscompiles (verified pre-existing on
+ * the standalone lane, where they are baseline-accounted; the host lane must
+ * not INHERIT them as pass→fail flips — it keeps the eager path instead):
+ *
+ *   - `yield (… yield …)` — a yield nested in another yield's operand. The
+ *     plan builder collapses the two suspends (first `next()` returns the
+ *     OUTER operand instead of the inner yield's value —
+ *     `generators/yield-as-yield-operand.js` returns 0 for `yield yield 1`).
+ *   - `yield*` delegation — the host-lane resume fn routes the delegate
+ *     through the `__iterator` chain, which traps (`illegal cast`) when the
+ *     delegate is a host-side generator object (an eager-lowered inner —
+ *     `generators/yield-star-before-newline.js`). Standalone delegates
+ *     native→native and is unaffected.
+ *
+ * Both scans stop at nested function boundaries (a nested generator's yields
+ * are its own).
+ */
+function bodyHasHostUnsupportedYieldShape(decl: GeneratorDecl): boolean {
+  if (!decl.body) return false;
+  let found = false;
+  const containsYield = (node: ts.Node): boolean => {
+    if (ts.isYieldExpression(node)) return true;
+    if (isFunctionLikeScope(node)) return false;
+    let hit = false;
+    ts.forEachChild(node, (c) => {
+      if (!hit && containsYield(c)) hit = true;
+    });
+    return hit;
+  };
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (isFunctionLikeScope(node)) return;
+    if (ts.isYieldExpression(node)) {
+      if (node.asteriskToken) {
+        found = true; // yield* delegation
+        return;
+      }
+      if (node.expression && containsYield(node.expression)) {
+        found = true; // yield nested in a yield operand
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(decl.body, visit);
+  return found;
+}
+
+/**
  * (#3050) Conservative HOST-lane use-site safety walk. The native generator
  * state struct is a WasmGC ref the JS host cannot iterate, so it must never
  * escape to a host-iterating context. Walks every `<name>(…)` call in the
@@ -1553,10 +1603,84 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     );
   };
 
+  /**
+   * (#3032 W6) The `{value, done}` RESULT of a `.next()/.return()/.throw()`
+   * call on a native generator is ALSO a raw WasmGC struct. Reflection on it
+   * (`Object.getPrototypeOf(result)`, passing it as a call argument like
+   * `hasOwnProperty.call(result, …)`) sees the struct, not a plain object —
+   * `GeneratorPrototype/next/result-prototype.js` regressed exactly there. So
+   * a result value must itself stay in allowlisted consumers: property reads
+   * (`r.value`/`r.done`), `typeof`, statement-drop, or a binding whose every
+   * use is again allowlisted.
+   */
+  const resultConsumptionIsSafe = (call: ts.Node): boolean => {
+    const p = call.parent;
+    if (ts.isPropertyAccessExpression(p) && p.expression === call) return true; // .value/.done chains
+    if (ts.isExpressionStatement(p)) return true; // result dropped
+    if (ts.isTypeOfExpression(p)) return true;
+    if (ts.isParenthesizedExpression(p)) return resultConsumptionIsSafe(p);
+    if (ts.isVariableDeclaration(p) && p.initializer === call && ts.isIdentifier(p.name)) {
+      return resultBindingUsesAreSafe(p.name);
+    }
+    if (
+      ts.isBinaryExpression(p) &&
+      p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      p.right === call &&
+      ts.isIdentifier(p.left)
+    ) {
+      if (!resultBindingUsesAreSafe(p.left)) return false;
+      // The assignment expression's own value is the result too.
+      return ts.isExpressionStatement(p.parent) ? true : resultConsumptionIsSafe(p);
+    }
+    return false;
+  };
+
+  /** Every reference of a RESULT binding is an allowlisted result consumer? */
+  const resultBindingUsesAreSafe = (bindingName: ts.Identifier): boolean => {
+    const sym = checker.getSymbolAtLocation(bindingName);
+    if (!sym) return false;
+    let safe = true;
+    const visitRef = (node: ts.Node): void => {
+      if (!safe) return;
+      if (ts.isIdentifier(node) && node.text === bindingName.text && node !== bindingName) {
+        if (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) return;
+        if (ts.isPropertyAssignment(node.parent) && node.parent.name === node) return;
+        if (ts.isVariableDeclaration(node.parent) && node.parent.name === node) return;
+        const refSym = checker.getSymbolAtLocation(node);
+        if (refSym !== sym) return;
+        const p = node.parent;
+        if (ts.isPropertyAccessExpression(p) && p.expression === node) return; // r.value / r.done
+        if (ts.isTypeOfExpression(p)) return;
+        // Reassignment target — the RHS is checked at its own call site.
+        if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.left === node) {
+          return;
+        }
+        safe = false;
+      }
+      ts.forEachChild(node, visitRef);
+    };
+    ts.forEachChild(sf, visitRef);
+    return safe;
+  };
+
   /** A reference/result value consumed in an allowlisted, host-safe position? */
   const useIsSafe = (node: ts.Node): boolean => {
     const p = node.parent;
-    if (ts.isPropertyAccessExpression(p) && p.expression === node) return true; // .next()/.throw()/.value…
+    if (ts.isPropertyAccessExpression(p) && p.expression === node) {
+      // (#3032 W6) A resume-method CALL (`it.next()/…`) produces a raw result
+      // struct — its consumption must be allowlisted too (see
+      // resultConsumptionIsSafe). Non-call member reads (`.value`, `.length`)
+      // and other member names keep the original terminal-safe answer.
+      const memberName = p.name.text;
+      if (
+        (memberName === "next" || memberName === "return" || memberName === "throw") &&
+        ts.isCallExpression(p.parent) &&
+        p.parent.expression === p
+      ) {
+        return resultConsumptionIsSafe(p.parent);
+      }
+      return true;
+    }
     if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
     if (ts.isSpreadElement(p)) return true;
     if (isArrayFromArg(node)) return true;
@@ -1579,6 +1703,17 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
         if (ts.isVariableDeclaration(node.parent) && node.parent.name === node) return;
         const refSym = checker.getSymbolAtLocation(node);
         if (refSym !== sym) return;
+        // (#3032 W6) A RE-ENTRANT use — the instance binding referenced INSIDE
+        // the generator's own body (`function* g() { iter.return(42); }`,
+        // GeneratorPrototype/{return,throw}/from-state-executing) — is unsafe:
+        // inside the resume fn the binding rides an any/externref capture cell,
+        // so the member call dynamic-dispatches to the host shim with a raw
+        // state struct (`gen.return` reads `undefined`). Keep such generators
+        // on the eager host path.
+        if (node.getStart() >= decl.getStart() && node.getEnd() <= decl.getEnd()) {
+          safe = false;
+          return;
+        }
         const p = node.parent;
         if (useIsSafe(node)) return;
         // Reassignment target (`iter = g()` again) — the RHS call is checked
@@ -1649,17 +1784,35 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
 
 export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorDecl): boolean {
   if (!noJsHostTarget(ctx)) {
-    // (#3050) JS-HOST lane: the eager-buffer lowering evaluates the whole body
-    // at creation, so it PROVABLY cannot express a `.throw()`/abrupt resumption
-    // into a try-region (statements after a suspended yield already ran —
-    // GeneratorPrototype/throw/try-{catch,finally}-*). Route exactly those
-    // shapes — a free `function*` DECLARATION whose body has a catch across a
-    // yield or a yielding finally — through the native state machine even under
-    // the JS host. Every other host-lane generator keeps the eager path
-    // unchanged (zero behavior delta), and non-plannable shapes still fall back
-    // via the plan gate below.
+    // (#3050 → #3032 W6) JS-HOST lane: the eager-buffer lowering evaluates the
+    // whole body at creation, which violates §27.5 EvaluateGeneratorBody
+    // (GeneratorStart SUSPENDS at start-of-body; nothing runs until the first
+    // `next()`), cannot express a `.throw()`/abrupt resumption into a
+    // try-region (GeneratorPrototype/throw/try-{catch,finally}-*), and cannot
+    // deliver a `next(v)` sent value into the body (the buffer replays
+    // pre-computed yields). #3050 scoped host-lane native routing to exactly
+    // the try-region shapes; #3032 W6 drops that restriction — every free
+    // `function*` DECLARATION that passes the conservative safety walks below
+    // (resolvable identifiers + allowlisted use sites) now routes through the
+    // native state machine under the JS host too, making creation lazy and
+    // `next(v)` two-way for the dominant test262 shape. Non-plannable shapes
+    // still fall back to the eager buffer via the plan gate below; generator
+    // EXPRESSIONS and METHODS keep their host-lane lowerings (thunk / eager)
+    // for now — separate W6 slices.
     if (!ts.isFunctionDeclaration(decl)) return false;
-    if (!bodyHasNewTryRegionAcrossYield(decl)) return false;
+    // (#3032 W6) An EXPORTED generator declaration keeps the eager host path:
+    // its factory is called directly from JS (`instance.exports.g().next()`),
+    // and the native factory returns a raw WasmGC state struct the host
+    // cannot invoke `.next()` on. The use-site safety walk below cannot see
+    // host-side consumers — the export boundary is the one escape it cannot
+    // model — so gate on the export modifier itself. (In-module callers of an
+    // exported generator are unaffected: they ride the eager host object,
+    // exactly the pre-W6 behavior.)
+    if (ts.getModifiers(decl)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) return false;
+    // (#3032 W6) Body shapes the native machine still miscompiles (nested
+    // yield operands, `yield*` delegation) keep the eager host path — see
+    // bodyHasHostUnsupportedYieldShape.
+    if (bodyHasHostUnsupportedYieldShape(decl)) return false;
     // Conservative: a body referencing an UNRESOLVABLE identifier (e.g.
     // `try { yield test262unresolvable } catch (e) {…}`) keeps the eager path —
     // its host-lane semantics ride #928's deferred-pending-throw (the eager
