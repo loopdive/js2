@@ -11,11 +11,11 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { createHash } from "crypto";
-import { createContext, runInContext } from "node:vm";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
+import { buildTest262Sandbox } from "../scripts/test262-sandbox.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-original-harness.js";
 
@@ -36,35 +36,6 @@ import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-
 // sandbox and build a new one with another `vm.createContext`, so the
 // next test starts from clean built-ins.
 //
-// `vm.createContext({})` returns the host object but does NOT expose the
-// vm realm's built-ins as properties on it — `ctx.Array` is `undefined`.
-// We therefore use `vm.runInContext("...")` to extract the realm's
-// built-ins explicitly and copy the references onto the sandbox object.
-const SANDBOX_GLOBAL_NAMES: ReadonlyArray<string> = [
-  "Array",
-  "Object",
-  "Function",
-  "String",
-  "Number",
-  "Boolean",
-  "Symbol",
-  "Promise",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Date",
-  "RegExp",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "Math",
-  "JSON",
-  "Reflect",
-];
-
 const SENTINEL_KEYS: ReadonlyArray<readonly string[]> = [
   ["Array", "prototype", "push"],
   ["Object", "prototype", "hasOwnProperty"],
@@ -82,32 +53,7 @@ const SENTINEL_KEYS: ReadonlyArray<readonly string[]> = [
 ];
 
 function _buildFreshSandbox(consoleProxy?: Console): Record<string, any> {
-  // Create a context, then pull each global name out of it via
-  // runInContext so the sandbox object exposes them by property name.
-  const sandbox = Object.create(null) as Record<string, any>;
-  const ctx = createContext(sandbox);
-  for (const name of SANDBOX_GLOBAL_NAMES) {
-    // runInContext("Array", ctx) returns the realm's Array constructor.
-    // Assigning to sandbox[name] also makes it visible to subsequent
-    // runInContext calls (the sandbox doubles as the global object).
-    try {
-      sandbox[name] = runInContext(name, ctx);
-    } catch {
-      // Some globals may not be present in this vm realm — leave undefined.
-    }
-  }
-  // Script global value properties have immutable data descriptors. A plain
-  // object sandbox otherwise lets strict writes create `undefined`/`Infinity`
-  // and turns Test262's required TypeErrors into false negatives (#3367).
-  Object.defineProperties(sandbox, {
-    undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
-    Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
-    NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
-  });
-  if (consoleProxy) sandbox.console = consoleProxy;
-  // Provide globalThis as the sandbox itself so `ctx.globalThis === ctx`.
-  sandbox.globalThis = sandbox;
-  return sandbox;
+  return buildTest262Sandbox(consoleProxy) as Record<string, any>;
 }
 
 /** A fresh realm for literal-harness execution; never reused across variants. */

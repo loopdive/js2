@@ -548,6 +548,17 @@ function _marshalHostConstructArg(
   if (a != null && typeof a === "object" && _isWasmStruct(a)) {
     const mat = _materializeIterable(a, callbackState);
     if (mat !== a) return mat;
+    // A compiled object literal can be a valid array-like constructor input.
+    // Preserve its named/indexed fields through the live host proxy rather
+    // than exposing the opaque Wasm struct (whose `.length` reads undefined).
+    const isDataStruct = exports?.__is_data_struct;
+    try {
+      if (typeof isDataStruct === "function" && isDataStruct(a) === 1) {
+        return _wrapForHost(a, exports);
+      }
+    } catch {
+      // Not a data struct; keep the existing opaque-value handling below.
+    }
     // (#3335) Refuse loudly: the arg is a compiled struct NONE of the
     // marshal probes can decode (not an AB vec, not a readable vec — e.g.
     // the opaque box a value acquires crossing a host bound-function
@@ -1938,7 +1949,17 @@ function _materializeIterable(
     if (!exports) return iter;
     const vecLen = exports.__vec_len;
     const vecGet = exports.__vec_get;
-    if (typeof vecLen !== "function" || typeof vecGet !== "function") return iter;
+    const isVec = exports.__is_vec;
+    // `__vec_len` returns 0 for every non-vec struct. Without this positive
+    // discriminator, an array-like object such as `{ length: 4, 0: 40, … }`
+    // is silently materialized as `[]` before crossing to a host constructor.
+    if (
+      typeof vecLen !== "function" ||
+      typeof vecGet !== "function" ||
+      (typeof isVec === "function" && isVec(iter) !== 1)
+    ) {
+      return iter;
+    }
     const len = vecLen(iter) as number;
     if (typeof len !== "number" || len < 0) return iter;
     const result: any[] = new Array(len);
@@ -13198,7 +13219,11 @@ assert._isSameValue = isSameValue;
               }
               // Fall through: maybe globalThis has the same name (unlikely).
             }
-            const ctor = (globalThis as any)[ctorName];
+            // #3415 — `instanceof TypeError` in an isolated Test262 realm must
+            // resolve the RHS against that realm, not the runner process. Host
+            // import failures are rehomed before entering the module, so use
+            // the same global source for the constructor lookup.
+            const ctor = (globalSandbox ?? (globalThis as any))[ctorName];
             if (typeof ctor === "function" && v instanceof ctor) return 1;
           } catch {
             /* fall through to user-class tag check */
@@ -13251,7 +13276,7 @@ assert._isSameValue = isSameValue;
           // constructors and names that don't resolve on `globalThis` keep the
           // historical `return 0` (no new throws on unresolved/false cases).
           {
-            const ctorVal = (globalThis as any)[ctorName];
+            const ctorVal = (globalSandbox ?? (globalThis as any))[ctorName];
             if (ctorVal !== undefined && ctorVal !== null && typeof ctorVal !== "function") {
               return _instanceofResult(v, ctorVal, callbackState, /* strict */ true);
             }
@@ -14454,8 +14479,32 @@ export function buildImports(
         try {
           return original.apply(this, args);
         } catch (e) {
-          lastCaughtException = e;
-          throw e;
+          // #3415 — a raw JavaScript exception thrown by a host import is not
+          // caught by the module's Wasm EH `catch` on V8. Once setExports has
+          // wired the module, rethrow through its own externref exception tag
+          // so source-level try/catch receives the payload. In an isolated
+          // Test262 realm, rehome standard runtime errors first: the upstream
+          // harness checks `error instanceof TypeError`, which must use that
+          // realm's constructor rather than the runner process's constructor.
+          let payload = e;
+          if (options?.globalSandbox && e instanceof Error) {
+            const sandboxCtor = options.globalSandbox[e.name];
+            if (typeof sandboxCtor === "function") {
+              try {
+                if (!(e instanceof sandboxCtor)) payload = new sandboxCtor(e.message);
+              } catch {
+                // A non-constructable/spoofed global keeps the original error.
+              }
+            }
+          }
+          lastCaughtException = payload;
+          const exports = callbackState.getExports();
+          const tag = exports?.__exn_tag ?? exports?.__tag;
+          const WasmException = (WebAssembly as any).Exception;
+          if (tag && typeof WasmException === "function" && !(payload instanceof WasmException)) {
+            throw new WasmException(tag, [payload]);
+          }
+          throw payload;
         } finally {
           hostCallDepth--;
         }

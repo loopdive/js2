@@ -438,6 +438,8 @@ function inferTaViewType(ctx: CodegenContext, initializer: ts.Expression | undef
   // stay on the legacy path here too.
   if (!noJsHost(ctx)) {
     if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return { kind: "externref" };
+    const argKind = ctx.oracle.typeFactOf(args[0]!).kind;
+    if (argKind === "any" || argKind === "unknown") return { kind: "externref" };
     return null;
   }
   if (argSymName !== "ArrayBuffer" && argSymName !== "SharedArrayBuffer" && argSymName !== "DataView") return null;
@@ -1396,6 +1398,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           let matchedClosureInfo:
             | { structTypeIdx: number; info: typeof ctx.closureInfoByTypeIdx extends Map<number, infer V> ? V : never }
             | undefined;
+          let ambiguousClosureMatch = false;
           for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
             if (info.paramTypes.length !== sigParamCount) continue;
             if (sigRetWasm === null && info.returnType !== null) continue;
@@ -1409,12 +1412,21 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
               }
             }
             if (paramsMatch) {
+              // #3416 — an externref read from a heterogeneous function array
+              // can satisfy several closure layouts with the same TypeScript
+              // call signature. Picking the first layout makes the guarded
+              // cast turn every other valid callable into ref.null. Preserve
+              // externref when the runtime layout is ambiguous; the host
+              // callable bridge can classify and invoke the actual closure.
+              if (matchedClosureInfo && matchedClosureInfo.structTypeIdx !== typeIdx) {
+                ambiguousClosureMatch = true;
+                break;
+              }
               matchedClosureInfo = { structTypeIdx: typeIdx, info };
-              break;
             }
           }
 
-          if (matchedClosureInfo) {
+          if (matchedClosureInfo && !ambiguousClosureMatch) {
             // Convert externref back to closure struct ref (guarded to avoid illegal cast)
             fctx.body.push({ op: "any.convert_extern" });
             emitGuardedRefCast(fctx, matchedClosureInfo.structTypeIdx);

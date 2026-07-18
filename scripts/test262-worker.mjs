@@ -13,11 +13,11 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createContext, runInContext } from "node:vm";
 import { compile, createIncrementalCompiler } from "./compiler-bundle.mjs";
 import { buildImports } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
+import { buildTest262Sandbox } from "./test262-sandbox.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -43,49 +43,6 @@ function computeBundleHash() {
   }
 }
 const BUNDLE_HASH = computeBundleHash();
-
-const ORIGINAL_HARNESS_SANDBOX_GLOBALS = [
-  "Array",
-  "Object",
-  "Function",
-  "String",
-  "Number",
-  "Boolean",
-  "Symbol",
-  "Promise",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Date",
-  "RegExp",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "Math",
-  "JSON",
-  "Reflect",
-];
-
-function buildOriginalHarnessSandbox(consoleProxy) {
-  const sandbox = Object.create(null);
-  const context = createContext(sandbox);
-  for (const name of ORIGINAL_HARNESS_SANDBOX_GLOBALS) {
-    try {
-      sandbox[name] = runInContext(name, context);
-    } catch {}
-  }
-  Object.defineProperties(sandbox, {
-    undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
-    Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
-    NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
-  });
-  sandbox.console = consoleProxy;
-  sandbox.globalThis = sandbox;
-  return sandbox;
-}
 
 let compileCount = 0;
 const GC_INTERVAL = 25;
@@ -1417,7 +1374,7 @@ process.on("message", async (msg) => {
       result.imports,
       originalHarness ? { console: consoleProxy } : undefined,
       result.stringPool,
-      originalHarness ? { globalSandbox: buildOriginalHarnessSandbox(consoleProxy) } : undefined,
+      originalHarness ? { globalSandbox: buildTest262Sandbox(consoleProxy) } : undefined,
     );
 
     try {

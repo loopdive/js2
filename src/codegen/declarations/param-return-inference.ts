@@ -133,8 +133,25 @@ export function inferParamTypeFromBody(
   const paramName = param.name.text;
 
   let foundNumericUse = false;
+  let foundDynamicEqualityUse = false;
+  const equalityOps = new Set<ts.SyntaxKind>([
+    ts.SyntaxKind.EqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsToken,
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ]);
+  const isParamId = (e: ts.Expression): boolean => ts.isIdentifier(e) && e.text === paramName;
+  const isNumericLiteralLike = (e: ts.Expression): boolean => {
+    if (ts.isNumericLiteral(e)) return true;
+    return (
+      ts.isPrefixUnaryExpression(e) &&
+      (e.operator === ts.SyntaxKind.PlusToken || e.operator === ts.SyntaxKind.MinusToken) &&
+      ts.isNumericLiteral(e.operand)
+    );
+  };
+
   function visit(node: ts.Node) {
-    if (foundNumericUse) return;
+    if (foundDynamicEqualityUse) return;
     // Don't descend into nested functions — the param doesn't propagate there
     // unless captured, and we don't track capture flow here.
     if (
@@ -156,7 +173,7 @@ export function inferParamTypeFromBody(
         for (const arg of node.arguments) {
           if (ts.isIdentifier(arg) && arg.text === paramName) {
             foundNumericUse = true;
-            return;
+            break;
           }
         }
       }
@@ -165,6 +182,19 @@ export function inferParamTypeFromBody(
     // (2) param used in a numeric binary expression
     if (ts.isBinaryExpression(node)) {
       const op = node.operatorToken.kind;
+      // #3415 — a coercive numeric sub-expression does not make a generic
+      // identity helper numeric. Test262's SameValue probe divides by `a` for
+      // +/-0 but also relies on `a === b` / `a !== a` preserving the original
+      // string or object values. Keep such parameters dynamic unless equality
+      // is only against an explicit numeric literal.
+      if (
+        equalityOps.has(op) &&
+        ((isParamId(node.left) && !isNumericLiteralLike(node.right)) ||
+          (isParamId(node.right) && !isNumericLiteralLike(node.left)))
+      ) {
+        foundDynamicEqualityUse = true;
+        return;
+      }
       const numericOps = new Set<ts.SyntaxKind>([
         ts.SyntaxKind.PlusToken,
         ts.SyntaxKind.MinusToken,
@@ -184,7 +214,6 @@ export function inferParamTypeFromBody(
         ts.SyntaxKind.GreaterThanEqualsToken,
       ]);
       if (numericOps.has(op)) {
-        const isParamId = (e: ts.Expression): boolean => ts.isIdentifier(e) && e.text === paramName;
         // Skip when the OTHER operand is a string literal — `+` could mean
         // string concatenation. The TS checker will already have given us
         // a string-typed param in that case, so this guard is defensive.
@@ -194,12 +223,10 @@ export function inferParamTypeFromBody(
             (isParamId(node.right) && !ts.isStringLiteral(node.left))
           ) {
             foundNumericUse = true;
-            return;
           }
         } else {
           if (isParamId(node.left) || isParamId(node.right)) {
             foundNumericUse = true;
-            return;
           }
         }
       }
@@ -208,7 +235,7 @@ export function inferParamTypeFromBody(
     forEachChild(node, visit);
   }
   forEachChild(decl.body, visit);
-  return foundNumericUse ? { kind: "f64" } : null;
+  return foundNumericUse && !foundDynamicEqualityUse ? { kind: "f64" } : null;
 }
 
 /**

@@ -53,35 +53,47 @@ export function checkDuplicateParams(
   }
 }
 
-/** Check for duplicate lexical declarations (let, const, class, function) in a block. */
+/**
+ * Check for duplicate lexical declarations in a statement list.
+ *
+ * Function declarations need special treatment. They may be redeclared at
+ * Script top level and at the top level of a function body, even in strict
+ * code. Annex B also permits duplicate functions in a sloppy nested block.
+ * Module top level and strict nested blocks keep the ordinary lexical
+ * duplicate restriction. In every context, a function still conflicts with a
+ * same-name `let`, `const`, or `class` declaration.
+ */
 export function checkDuplicateLexicalDeclarations(ctx: EarlyErrorContext, block: ts.Block | ts.SourceFile): void {
   const stmts = block.statements;
-  const lexNames = new Map<string, ts.Node>();
+  const lexNames = new Map<string, { node: ts.Node; kind: "function" | "lexical" }>();
+  const allowDuplicateFunctions = ts.isSourceFile(block)
+    ? !ts.isExternalModule(block)
+    : isFunctionBodyBlock(block) || !isStrictMode(block);
 
-  function addLexName(name: string, errorNode: ts.Node) {
-    if (lexNames.has(name)) {
+  function addLexName(name: string, errorNode: ts.Node, kind: "function" | "lexical") {
+    const existing = lexNames.get(name);
+    if (existing) {
+      if (kind === "function" && existing.kind === "function" && allowDuplicateFunctions) return;
       ctx.addError(errorNode, `Duplicate identifier '${name}'`);
     } else {
-      lexNames.set(name, errorNode);
+      lexNames.set(name, { node: errorNode, kind });
     }
   }
 
   for (const stmt of stmts) {
     if (ts.isClassDeclaration(stmt) && stmt.name) {
-      addLexName(stmt.name.text, stmt.name);
+      addLexName(stmt.name.text, stmt.name, "lexical");
     }
-    // FunctionDeclaration (including async, generator, async generator) in a block
-    // are lexically scoped — duplicates are SyntaxErrors per ES spec.
     // Skip overload signatures (no body) — TypeScript allows multiple signatures.
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
-      addLexName(stmt.name.text, stmt.name);
+      addLexName(stmt.name.text, stmt.name, "function");
     }
     if (ts.isVariableStatement(stmt)) {
       const flags = stmt.declarationList.flags;
       if ((flags & ts.NodeFlags.Let) !== 0 || (flags & ts.NodeFlags.Const) !== 0) {
         for (const decl of stmt.declarationList.declarations) {
           if (ts.isIdentifier(decl.name)) {
-            addLexName(decl.name.text, decl.name);
+            addLexName(decl.name.text, decl.name, "lexical");
           }
         }
       }

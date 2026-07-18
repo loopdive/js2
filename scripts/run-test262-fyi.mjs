@@ -11,60 +11,15 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createContext, runInContext } from "node:vm";
 import { buildImports, compile } from "./compiler-bundle.mjs";
 import { negativeCompileErrorMatches } from "./negative-verdict.mjs";
+import { buildTest262Sandbox } from "./test262-sandbox.mjs";
 import { discoverTestPaths, loadOriginalHarnessTests } from "./test262-fyi-reader.mjs";
 
 export { loadOriginalHarnessTests } from "./test262-fyi-reader.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FYI_ROOT = join(ROOT, "test262-fyi", "data");
-
-const SANDBOX_GLOBAL_NAMES = [
-  "Array",
-  "Object",
-  "Function",
-  "String",
-  "Number",
-  "Boolean",
-  "Symbol",
-  "Promise",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Date",
-  "RegExp",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "Math",
-  "JSON",
-  "Reflect",
-];
-
-function buildFreshSandbox(consoleProxy) {
-  const sandbox = Object.create(null);
-  const context = createContext(sandbox);
-  for (const name of SANDBOX_GLOBAL_NAMES) {
-    try {
-      sandbox[name] = runInContext(name, context);
-    } catch {
-      // Leave host features absent when the VM realm does not provide them.
-    }
-  }
-  Object.defineProperties(sandbox, {
-    undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
-    Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
-    NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
-  });
-  sandbox.console = consoleProxy;
-  sandbox.globalThis = sandbox;
-  return sandbox;
-}
 
 const HOST_PROTOTYPES = [
   Object.prototype,
@@ -268,7 +223,7 @@ async function runSource(test, source, target) {
       // cannot poison Node or the next record (#1310 parity with the project
       // runner). This is host isolation only; the assembled test source remains
       // byte-for-byte unchanged.
-      const globalSandbox = buildFreshSandbox(consoleProxy);
+      const globalSandbox = buildTest262Sandbox(consoleProxy);
       const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, { globalSandbox });
       ({ instance } = await WebAssembly.instantiate(result.binary, imports));
       imports.setExports?.(instance.exports);

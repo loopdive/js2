@@ -78,6 +78,44 @@ export function detectI32LoopVar(stmt: ts.ForStatement): { name: string; initVal
 }
 
 /**
+ * Whether a canonical for-loop counter is one of several `var` declarations
+ * for the same function-scoped binding.
+ *
+ * `var` redeclarations do not create fresh bindings. Retyping their shared Wasm
+ * local as each loop is emitted is therefore unsound: later declarations can
+ * change the final local type after earlier instructions already targeted the
+ * previous type (#3413). A repeated binding stays on the conservative numeric
+ * representation; a single unambiguous loop can still use the i32 fast path.
+ */
+export function hasRepeatedVarDeclaration(stmt: ts.ForStatement, name: string): boolean {
+  if (!stmt.initializer || !ts.isVariableDeclarationList(stmt.initializer)) return false;
+  if (stmt.initializer.flags & ts.NodeFlags.BlockScoped) return false;
+
+  let scope: ts.Node = stmt.getSourceFile();
+  for (let node = stmt.parent; node; node = node.parent) {
+    if (ts.isFunctionLike(node)) {
+      scope = node;
+      break;
+    }
+  }
+
+  let declarations = 0;
+  const visit = (node: ts.Node): void => {
+    if (node !== scope && ts.isFunctionLike(node)) return;
+    if (ts.isVariableDeclarationList(node) && !(node.flags & ts.NodeFlags.BlockScoped)) {
+      for (const declaration of node.declarations) {
+        for (const bindingName of collectPatternBindingNames(declaration.name)) {
+          if (bindingName === name && ++declarations > 1) return;
+        }
+      }
+    }
+    if (declarations <= 1) forEachChild(node, visit);
+  };
+  visit(scope);
+  return declarations > 1;
+}
+
+/**
  * Shared compound-assignment operator classifier: is `kind` one of the
  * assignment / compound-assignment tokens (`=`, `+=`, … `||=`)? Extracted from
  * the two inline copies inside {@link loopBodyMutatesIndexOrArray} and

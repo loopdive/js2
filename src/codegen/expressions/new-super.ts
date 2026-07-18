@@ -261,7 +261,7 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
 
 /**
  * (#3087) Does `new <id>(...)` target a runtime constructor VALUE held in an
- * `any`/`unknown`-typed binding whose constructability cannot be decided
+ * dynamically typed binding whose constructability cannot be decided
  * statically — most importantly a **callback PARAMETER** that receives a
  * constructor at runtime, e.g. the TypedArray harness wrapper
  * `testWithTypedArrayConstructors(function (TA) { new TA(3); … })` where `TA`
@@ -287,9 +287,9 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
  *  - callee is a bare identifier;
  *  - its value declaration is a **Parameter / VariableDeclaration / BindingElement**
  *    in a real source file (NOT a declaration-file ambient global, NOT unresolved);
- *  - its static type is `any` or `unknown` (a genuinely-dynamic ctor value —
- *    a construct-signature-bearing or callable binding is left to the static /
- *    `resolvesToConstructableFunctionValue` closure paths);
+ *  - its static type is `any`, `unknown`, or the broad `Function` interface
+ *    (a genuinely-dynamic ctor value — construct-signature-bearing concrete
+ *    classes stay on the static paths);
  *  - it is NOT a known compiled class, registered extern class, or function
  *    constructor.
  */
@@ -309,7 +309,14 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   if (decl.getSourceFile().isDeclarationFile) return false;
   if (!ts.isParameter(decl) && !ts.isVariableDeclaration(decl) && !ts.isBindingElement(decl)) return false;
   const kind = ctx.oracle.typeFactOf(calleeExpr).kind;
-  return kind === "any" || kind === "unknown";
+  if (kind === "any" || kind === "unknown") return true;
+  // #3416 — the original Test262 TypedArray harness contextually types its
+  // callback's `TA` parameter as the broad JSDoc `{Function}` interface. That
+  // carries no concrete constructor identity, so treating `new TA(...)` as an
+  // extern class named "TA" fails before the runtime value is considered.
+  // Route it through the same IsConstructor-aware dynamic bridge as `any`.
+  const type = checker.getTypeAtLocation(calleeExpr);
+  return type.getSymbol()?.getName() === "Function" || checker.typeToString(type) === "Function";
 }
 
 /**
@@ -432,15 +439,19 @@ export function emitHostTaBufferConstruct(
 }
 
 /**
- * (#3097) Gate for `emitHostTaBufferConstruct` — MUST stay in lock-step with
- * `inferTaViewType`'s host-lane arm (variables.ts) so the binding's local type
- * (externref) agrees with the constructed value.
+ * (#3097/#3416) Gate for `emitHostTaBufferConstruct` — MUST stay in lock-step
+ * with `inferTaViewType`'s host-lane arm (variables.ts) so the binding's local
+ * type (externref) agrees with the constructed value. Besides statically-known
+ * buffers, an `any`/`unknown` first argument must use the host constructor: its
+ * runtime value may select the buffer, iterable, array-like, or length overload.
  */
 export function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Expression[]): string | undefined {
   if (noJsHost(ctx)) return undefined;
   if (args.length < 1 || args.length > 3 || ts.isNumericLiteral(args[0]!)) return undefined;
   const argSymName = ctx.oracle.builtinReceiverOf(args[0]!);
   if (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer") return argSymName;
+  const argKind = ctx.oracle.typeFactOf(args[0]!).kind;
+  if (argKind === "any" || argKind === "unknown") return "dynamic";
   return undefined;
 }
 

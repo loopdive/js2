@@ -60,6 +60,7 @@ import {
   findBodyLocalLexicalNames,
   findHeadBindingsCapturedByClosures,
   forOfDstrNeedsInboundsUndef,
+  hasRepeatedVarDeclaration,
   isIncreasingStep,
   isStaticNullishReceiver,
   loopBodyMutatesIndexOrArray,
@@ -361,7 +362,11 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
         // Integer loop inference: if this variable is detected as an integer loop
         // counter (e.g. for (let i = 0; i < n; i++)), use i32 instead of f64
         const i32LoopInfo = detectI32LoopVar(stmt);
-        const isI32LoopVar = i32LoopInfo !== null && i32LoopInfo.name === name && wasmType.kind === "f64";
+        const isI32LoopVar =
+          i32LoopInfo !== null &&
+          i32LoopInfo.name === name &&
+          wasmType.kind === "f64" &&
+          !hasRepeatedVarDeclaration(stmt, name);
         if (isI32LoopVar) {
           wasmType = { kind: "i32" };
         }
