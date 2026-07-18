@@ -6,6 +6,7 @@ created: 2026-03-28
 updated: 2026-04-28
 priority: low
 feasibility: hard
+model: fable
 reasoning_effort: max
 goal: contributor-readiness
 sprint: Backlog

@@ -1,7 +1,7 @@
 ---
 id: 1430
 renumbered_from: 1397
-sprint: 52
+sprint: Backlog
 title: "for-of/dstr: obj-ptrn-id-init undefined-key + array-elem-trlg iterator close"
 status: ready
 created: 2026-05-09

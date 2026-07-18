@@ -5,6 +5,7 @@ status: in-progress
 assignee: ttraenkler/dev-2937f
 sprint: current
 model: fable
+fable_role: spec
 created: 2026-06-10
 updated: 2026-07-02
 priority: high
@@ -336,3 +337,95 @@ D4.1, D5 Slice 3) only _names_ the matchers and flags the open question
 reconcilable under one predicate). I therefore did the mechanical slices only
 and did NOT invent the verdicts. Slice 3 is separately in-flight on branch
 `issue-1930-slice3-i32-matchers` (the reserved lane) — left to that owner.
+
+## Implementation Plan (Fable, 2026-07-18) — Slice-3 salvage (live miscompile on main) + remaining sequencing
+
+### 1. URGENT salvage: the Slice-3 verdict work is DONE but STRANDED, and it contains a live-miscompile fix
+
+The reserved lane completed: `upstream/issue-1930-slice3-i32-matchers` @
+`724c272065` (2026-07-02) carries the full three-question doctrine, the
+V1–V8 divergence-verdict table, the **V1 −0 miscompile fix**, the
+`isSyntacticallyBooleanExpr` Q-TAG spine extraction, and 130 lines of guard
+tests. It was **never merged and has no open PR** — stranded 16 days.
+
+**Verified TODAY on current main: the V1 miscompile is still live.**
+`isI32SafeExpr` (`src/codegen/function-body.ts:442`) still accepts unary
+`-x` for any i32-safe operand (`:453–456`), so
+`let x = 0; let y = -x; Object.is(y, -0)` returns `false` (spec: `true`) —
+the #2789 −0 fix was propagated to the array matcher but never to the scalar
+sibling. This is a silent wrong-value bug on main, not a refactor nicety.
+
+**Salvage protocol (Opus, M):** do NOT merge or re-push the stale branch —
+a 16-day-old branch merged into today's main can silently revert landed work
+(established lesson). Instead: fresh branch from `upstream/main`; port the
+additions from `git diff 3ef85411a7..724c272065` (files:
+`function-body.ts`, `array-element-typing.ts`, `binary-ops.ts`,
+`declarations.ts`, `shared.ts`, `src/checker/oracle.ts`,
+`tests/issue-1930-i32-safety.test.ts`, the issue-file section); re-ground
+every anchor (oracle.ts and declarations.ts have grown since 07-02 — the
+kernel-fixpoint delegation must be re-diffed against the current `#2795`
+lineage); re-run the byte-diff proof and the live probe. Land the V1 fix
+even if the spine extraction needs rework — they are separable; V1 alone is
+an S.
+
+### 2. The three-question doctrine + verdict table (recorded on main; reviewed and ADOPTED)
+
+The stranded branch's doctrine, reviewed against current source and adopted
+by this plan as the authoritative Slice-3 spec. The i32-safety matchers
+answer **three genuinely different questions that must never merge**:
+
+- **Q-CANON** — "is this VALUE a canonical int32 (no −0, no overflow
+  saturation, no uint32 reinterpretation)?" Two siblings:
+  `isI32SafeExprForArray` (`array-element-typing.ts`, #2789) and
+  `isI32SafeExpr` (`function-body.ts:442`, #1236). Codegen-state-coupled
+  (i32-local sets) ⇒ **NOT an oracle query** (Constraint A).
+- **Q-WRAP** — "may this be evaluated in i32 bit-identically to
+  ToInt32(spec value), GIVEN an enclosing ToInt32 context?"
+  `isI32PureExpr`/`isI32MulSafe` (`binary-ops.ts`, #1179).
+  Codegen-state-coupled ⇒ NOT an oracle query.
+- **Q-TAG** — "what JS tag does this statically produce?" Checker lane =
+  oracle (`isBooleanProducing`/`typeFactOf`/`isStrictBooleanReturnType`);
+  syntactic lane = `isSyntacticallyBooleanExpr` + `isNumericExpr`.
+
+Why one predicate is impossible: `a + b` of two i32 locals is Q-WRAP-safe
+(wrap ≡ ToInt32) but Q-CANON-unsafe (`i32.trunc_sat_f64_s` saturates);
+`x >>> 1` is Q-WRAP-safe but value-divergent above 2^31.
+
+| # | Divergence | Verdict | Action |
+| --- | --- | --- | --- |
+| **V1** | unary `-x`: array Q-CANON rejects (#2789 −0), scalar accepted | scalar matcher WRONG — live silent miscompile (re-verified 2026-07-18) | fix via salvage §1 (minus admits only `-<non-zero int literal>`; demotion-only ⇒ sound) |
+| **V2** | `a + b`/`a - b`: Q-WRAP accepts, Q-CANON rejects | both correct — different questions | doctrine cross-refs at both sites; never copy arms |
+| **V3** | `x >>> y`: Q-WRAP accepts, both Q-CANON exclude | both correct | doctrine cross-refs |
+| **V4** | equality ops: array Q-CANON accepts (0/1 canonical), scalar only relational | scalar conservatively incomplete, not wrong (only demotes) | documented; alignment = separate optimization slice with proof burden |
+| **V5** | `!x`/`instanceof`/`in`: Q-TAG yes, Q-CANON no arms | conservative gap, not wrong | documented; promotion = future optimization |
+| **V6** | Q-TAG checker vs syntactic lane on `: boolean`-typed identifier | both stay, separately — merging changes kernel return-type inference (#2795/#2770) | deliberate siblings, documented |
+| **V7** | `isStrictBooleanReturnType` (shared.ts) vs oracle boolean fact | semantically identical; duplicated only by raw-`ts.Type` plumbing | migrate in Slice-4 `signatureOf` bucket (six `brandExternMethodResult` sites) |
+| **V8** | `isNumericExpr` treats booleans as numeric | intentional layering (representability, not tag) | documented; spine extraction mirrors the boolean one |
+
+**One correction to the frozen design (D4.1):** "the five divergent matchers
+die into `isBooleanProducing`/`staticJsTypeOf`" is wrong as written — only
+the **Q-TAG** lane unifies into the oracle. Q-CANON and Q-WRAP are
+Constraint-A-excluded (registry/codegen-state-coupled) and permanently stay
+codegen-local; their end state is *doctrine cross-references + aligned
+semantics + (optionally) one parameterized `isCanonicalI32Expr(expr, opts)`
+for the two Q-CANON siblings* — pure code motion once V1 lands, with the V4
+conservatism table as the parity spec.
+
+### 3. Remaining slice sequencing (current ratchet: 454 `getTypeAtLocation` / 853 `ctx.checker.` across 53 files; gate is change-scoped net-per-field since #3273)
+
+1. **Slice-3 salvage** (§1, M) — the only slice with a correctness payload;
+   first.
+2. **Slice 2 continuation** (mechanical, Opus, per-predicate fold) — largest
+   files first (`expressions/calls.ts`, `index.ts`, `declarations.ts`).
+   Honor the recorded per-predicate hazards: `isStringType` (String-wrapper
+   divergence — excluded until a wrapper-aware query exists),
+   `isBooleanType` (collapsed `true|false` union), `getNullablePrimitiveInfo`
+   (needs a richer `nullablePrimitiveOf`, Slice 4). Byte-diff-neutral proof
+   per tranche (the Slice-2 standard above).
+3. **Slice 4** — signature/property/element/contextual buckets; includes the
+   V7 migration.
+4. **Slice 5** — `typeKeyOf` (`anonTypeMap` + `objectHashConsumerTypes` off
+   raw `ts.Type` keys; interning contract preserves identity).
+5. **Slice 6** — #2135 resolvability-leg adoption (their lane).
+6. **Slice 7** — nullable-primitive lowering + `compiler.ts` suppression
+   deletion; still gated on #1852 alignment; LAST.

@@ -102,6 +102,10 @@ export function createCodegenContext(
     usesNewTarget: false, // (#2023) set by the pre-scan in generateModule
     newTargetGlobalIdx: undefined, // (#2023)
     classNewTargetIds: new Map(), // (#2023) className → stable 1-based i32 id
+    usesDynamicProto: false, // (#802) set by the scanForDynamicProto pre-scan
+    dynamicProtoClasses: new Set(), // (#802) hierarchy-ROOT class names receiving proto mutation
+    dynamicProtoLiteralNodes: new WeakSet(), // (#802) object-literal proto receivers (Slice A)
+    dynProtoSentinelGlobalIdx: undefined, // (#802) "explicit null proto" sentinel global
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
     arrayProtoIndexDirty: false, // (#2001 S2) set by scanForArrayHoles: Array.prototype index write ⇒ HOF hole-skip disabled
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage

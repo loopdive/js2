@@ -6,13 +6,14 @@ created: 2026-06-26
 updated: 2026-06-26
 priority: medium
 feasibility: hard
+model: fable
 reasoning_effort: high
 needs_arch_spec: true
 task_type: fix
 area: codegen, type-resolver
 language_feature: destructuring, optional-properties
 goal: test262-conformance
-sprint: 67
+sprint: Backlog
 parent: 1556
 related: [1542, 1543, 1544, 1550, 1556]
 owner_role: architect

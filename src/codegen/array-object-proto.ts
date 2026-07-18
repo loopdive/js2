@@ -1228,7 +1228,16 @@ function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // (mirrors the search body's post-ensure fetch order).
   const anyToStrIdx = ensureAnyToStringHelper(ctx);
   const trimIdx = ctx.nativeStrHelpers.get(helperName);
-  if (trimIdx === undefined) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
+  // (#2875) `__str_trim*` operates on a FLATTENED receiver (`ref $NativeString`)
+  // — the DIRECT path (`string-ops.ts`) calls `emitFlatten()` before it. The
+  // reflective glue must do the same: `$__any_to_string` on a non-string
+  // primitive (`false`, `123`, …) returns an unflattened `$AnyString`
+  // (cons/wrapper), and feeding that straight into `__str_trim*` mis-reads it
+  // (`trim.call(false)` returned "[object Boolean]"-ish instead of "false").
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  if (trimIdx === undefined || flattenIdx === undefined) {
+    return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
+  }
 
   // (1) RequireObjectCoercible(this) [param 1]: in standalone undefined≡null≡
   // ref.null.extern, so a bare ref.is_null throw covers both → catchable TypeError.
@@ -1238,10 +1247,11 @@ function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: rocThrow });
 
-  // (2) S = ToString(this); __str_trim*(S) → native string; → externref.
+  // (2) S = ToString(this); FLATTEN; __str_trim*(S) → native string; → externref.
   fctx.body.push({ op: "local.get", index: 1 });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
+  fctx.body.push({ op: "call", funcIdx: flattenIdx });
   fctx.body.push({ op: "call", funcIdx: trimIdx });
   fctx.body.push({ op: "extern.convert_any" });
   return { kind: "externref" };

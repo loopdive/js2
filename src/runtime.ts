@@ -11176,6 +11176,48 @@ assert._isSameValue = isSameValue;
       //   • message coerced via ToString (CreateMethodProperty, non-enumerable),
       //   • errors stored as a non-enumerable own data property (CreateMethodProperty),
       //   • Object.getPrototypeOf(result) === AggregateError.prototype.
+      // (#2728) `Object(Symbol())` → Symbol-wrapper object (§7.1.18 ToObject,
+      // Table 13), whose `typeof` is "object". Symbol is NOT a constructor, so
+      // the generic `extern_class` `new Symbol(id)` path throws; box the i32
+      // symbol id to the real JS Symbol (reusing the SAME per-instance
+      // id→Symbol cache + description registry as `__box_symbol`, so the wrapped
+      // symbol preserves identity/description) then `Object()` it into a wrapper
+      // object. `Symbol.prototype.description` already unwraps such wrappers.
+      if (name === "__new_Symbol") {
+        const symbolCache =
+          instanceState?.symbolCache ??
+          (instanceState ? (instanceState.symbolCache = new Map<number, symbol>()) : new Map<number, symbol>());
+        if (symbolCache.size === 0) {
+          symbolCache.set(1, Symbol.iterator);
+          symbolCache.set(2, Symbol.hasInstance);
+          symbolCache.set(3, Symbol.toPrimitive);
+          symbolCache.set(4, Symbol.toStringTag);
+          symbolCache.set(5, Symbol.species);
+          symbolCache.set(6, Symbol.isConcatSpreadable);
+          symbolCache.set(7, Symbol.match);
+          symbolCache.set(8, Symbol.replace);
+          symbolCache.set(9, Symbol.search);
+          symbolCache.set(10, Symbol.split);
+          symbolCache.set(11, Symbol.unscopables);
+          symbolCache.set(12, Symbol.asyncIterator);
+          symbolCache.set(13, _disposeSym);
+          symbolCache.set(14, _asyncDisposeSym);
+        }
+        const symbolDescRegistry =
+          instanceState?.symbolDescRegistry ??
+          (instanceState
+            ? (instanceState.symbolDescRegistry = new Map<number, string | null>())
+            : new Map<number, string | null>());
+        return (id: number): any => {
+          let sym = symbolCache.get(id);
+          if (sym === undefined) {
+            const reg = symbolDescRegistry.get(id);
+            sym = reg === undefined ? Symbol(`wasm_${id}`) : reg === null ? Symbol() : Symbol(reg);
+            symbolCache.set(id, sym);
+          }
+          return Object(sym);
+        };
+      }
       if (name === "__new_AggregateError")
         return (errors: any, message: any, options: any): any => {
           // Spec step 4: IterableToList(errors). `undefined`/`null` are NOT

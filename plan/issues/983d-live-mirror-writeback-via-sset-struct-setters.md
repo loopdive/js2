@@ -11,7 +11,7 @@ task_type: bugfix
 area: host-interop
 language_feature: Array, host-boundary, wasmgc-struct
 goal: async-model
-sprint: 64
+sprint: Backlog
 related: [983, 1630, 1631, 1090]
 test262_fail: 11
 ---

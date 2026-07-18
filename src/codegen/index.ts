@@ -49,6 +49,7 @@ import type { NodeBuiltinImport } from "../import-resolver.js";
 import { eliminateDeadImports } from "./dead-elimination.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
+import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import { hoistedVarRetypesToConcreteRef, usageInferredLocalType } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
@@ -129,6 +130,7 @@ import {
   getRunLoopFuncIdxForWasiStart,
   shiftAsyncSideChannelFuncIdxs,
 } from "./async-scheduler.js";
+import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 import {
   brandExternMethodResult,
@@ -2226,6 +2228,12 @@ export function generateModule(
     // default — programs without `new.target` are byte-identical.
     scanForNewTarget(ctx, ast.sourceFile);
 
+    // (#802) Detect proto-mutation receivers up front so class collection can
+    // append the conditional standalone-only `$__proto__` field to marked
+    // hierarchy roots. Off by default — programs without proto mutation are
+    // byte-identical.
+    scanForDynamicProto(ctx, ast.sourceFile);
+
     // (#2001 S1) Detect any array-literal elision up front so externref-element
     // vec reads / joins emit the `$Hole → undefined` read-boundary guard.
     // Off by default — programs without holes are byte-identical.
@@ -2781,6 +2789,16 @@ export function generateModule(
     // native errors (standalone/wasi only) — byte-identical otherwise.
     fillExternGetErrorProps(ctx);
 
+    // (#802 Slices B+C) Mint the struct-proto natives and prepend the
+    // marked-root dispatch arms into `__object_setPrototypeOf` /
+    // `__getPrototypeOf` / `__extern_get`, so `Object.setPrototypeOf(
+    // classInstance, proto)` records the link in the conditional appended
+    // `$__proto__` field and inherited dynamic reads walk it. Mints DEFINED
+    // funcs only (no import shifts). No-op unless standalone AND the
+    // scanForDynamicProto prescan marked a class hierarchy — byte-identical
+    // otherwise.
+    fillDynamicProtoHelpers(ctx);
+
     // (#2358 #10) Fill the reserved `__array_to_primitive_string` body now that
     // `__extern_length`/`__extern_get_idx` (filled just above) and the native
     // string helpers exist. `__to_primitive`'s array-reduce arm baked a `call`
@@ -2922,32 +2940,31 @@ export function generateModule(
 }
 
 /**
- * (#2094) Post-link import-section scan — the emit-time backstop for the
- * `addImport` gate.
+ * (#2094) Post-link import-section scan — emit-time backstop for the `addImport`
+ * gate. A host import that survived dead-import elimination bypassed the per-call
+ * gate (stale funcMap index / direct `mod.imports.push`) and would fail
+ * instantiation in a hostless runtime (#2073/#2075); this turns that into a clean
+ * `success: false` CE.
  *
- * Gated on `ctx.strictNoHostImports` ONLY, deliberately matching the per-call
- * `addImport` gate's trigger (`src/codegen/registry/imports.ts`). Under strict
- * mode (auto-on for `--target wasi`, opt-in via `--no-host-imports`) the build
- * contract is "no JS-host imports", so a host import that survived dead-import
- * elimination bypassed the gate (stale funcMap index / direct `mod.imports.push`)
- * and would fail instantiation in a hostless runtime (#2073/#2075). This scan
- * turns that into a clean `success: false` CE instead.
- *
- * It does NOT fire on plain `--target standalone` (which is NOT strict by
- * default): standalone builds today still tolerate a set of `env` imports that
- * the test harness satisfies, and rejecting them here would regress thousands
- * of currently-passing standalone tests. The scan is a backstop for the strict
- * contract, not a new policy — when standalone is run strictly
- * (`strictNoHostImports`) it is covered. No-op for host/WasmGC builds.
+ * Severity by target: wasi / explicit `--no-host-imports` (`strictNoHostImports`)
+ * → **error** (fails the build). Plain `--target standalone` → **warning**
+ * (#2961 phase 1): every leak gets a source-located advisory but the binary is
+ * emitted UNCHANGED (the addImport gate stays strict-only, nothing dropped), so
+ * the `host_free_pass` floor cannot move. #2961 ratchets standalone to a hard
+ * error once the allowlist stabilizes; `JS2WASM_STANDALONE_LEAK_SCAN=0` disables
+ * the standalone scan for A/B. No-op for host/WasmGC builds.
  */
 function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
-  if (!ctx.strictNoHostImports) return;
-  // #2783 — pass `ctx.linkedNamespaces` so an arbitrary `--link`'d namespace's
-  // imports survive the strict gate (left as link-time imports for a preloaded
-  // provider) instead of being rejected as leaked host imports.
+  const severity: "error" | "warning" | null = ctx.strictNoHostImports
+    ? "error"
+    : ctx.standalone && process.env.JS2WASM_STANDALONE_LEAK_SCAN !== "0"
+      ? "warning"
+      : null;
+  if (severity === null) return;
+  // #2783 — `--link`'d namespaces survive as link-time imports, not leaks.
   const leaks = scanForLeakedHostImports(mod.imports, ctx.linkedNamespaces);
   for (const leak of leaks) {
-    reportErrorNoNode(ctx, buildLeakedHostImportError(leak));
+    reportErrorNoNode(ctx, buildLeakedHostImportError(leak, severity), severity);
   }
 }
 
@@ -3137,6 +3154,14 @@ function addWasiStartExport(ctx: CodegenContext): void {
     ensureWasiStartExnPrinter(ctx);
   }
 
+  // (#2958) Pre-emit the unhandled-rejection reporter (a no-op unless the native
+  // $Promise carrier registered its tracking substrate AND fd_write/proc_exit
+  // exist). Emitting it here — before any funcidx below is computed — keeps the
+  // index space stable, mirroring the exn-printer discipline above. `_start`
+  // calls it at the tail (after the drain/run-loop), so a still-unhandled
+  // rejection is reported to stderr and the program exits nonzero.
+  const unhandledReporterIdx = ctx.wasi ? ensureUnhandledRejectionReporter(ctx) : -1;
+
   // Choose the WASI program entry that `_start` wraps.
   //
   // #1411 regression: #1978 correctly stopped splicing the module-init body
@@ -3213,6 +3238,14 @@ function addWasiStartExport(ctx: CodegenContext): void {
       if (drainFuncIdx !== null) {
         body.push({ op: "call", funcIdx: drainFuncIdx });
       }
+    }
+
+    // (#2958) After the microtask/event-loop drain has fully quiesced, surface
+    // any promise that rejected without ever getting a handler (Node parity:
+    // report to stderr + exit nonzero). No-op function body when nothing was
+    // tracked; only emitted at all when the reporter exists.
+    if (unhandledReporterIdx >= 0) {
+      body.push({ op: "call", funcIdx: unhandledReporterIdx });
     }
 
     // (#2968) If the uncaught-exception printer was emitted (throwing WASI
@@ -4411,6 +4444,12 @@ export function generateMultiModule(
     // (#2023) Whole-realm new.target detection — OR across all source files.
     for (const sf of multiAst.sourceFiles) {
       scanForNewTarget(ctx, sf);
+    }
+
+    // (#802) Whole-realm proto-mutation receiver detection — OR across all
+    // source files (marked roots must be known before class collection).
+    for (const sf of multiAst.sourceFiles) {
+      scanForDynamicProto(ctx, sf);
     }
 
     // (#2001 S1) Whole-realm array-hole detection — OR across all source files.

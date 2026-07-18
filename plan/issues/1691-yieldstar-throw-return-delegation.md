@@ -2,6 +2,7 @@
 id: 1691
 title: "yield* does not delegate throw()/return() to the inner iterator (eager-generator model gap)"
 status: blocked
+sprint: Backlog
 created: 2026-05-27
 updated: 2026-05-28
 priority: medium

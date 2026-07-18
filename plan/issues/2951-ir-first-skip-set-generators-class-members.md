@@ -9,11 +9,14 @@ updated: 2026-07-04
 priority: medium
 horizon: m
 feasibility: hard
+model: fable
 reasoning_effort: high
 task_type: feature
 area: codegen, ir
 language_feature: generators, classes
 goal: ir-full-coverage
+model: fable
+fable_role: spec
 depends_on: [2138]
 related: [2950, 1370, 2864]
 origin: "2026-07-02 July Fable audit §1 (#2138 impl-note deviations 3 and 4 had no tracking issue)"
@@ -236,3 +239,102 @@ Full merge_group net-zero WITH the flag on (acceptance criterion 3) is the
 maintainer-dispatched `ir_first` measurement lane on `test262-sharded.yml`
 (`workflow_dispatch` input `ir_first`, which never promotes a baseline) —
 flagged to the tech lead to dispatch.
+
+## Implementation Plan (Fable, 2026-07-18) — class-member half, re-grounded against the #3143/#3203 allowlist redesign
+
+> **The issue's framing is stale.** `computeIrFirstSkipSet`
+> (`src/codegen/index.ts:1578–1697`) is no longer "blanket exclusions minus
+> carve-outs" — it is now an **ALLOWLIST**: a claimed top-level
+> FunctionDeclaration is skipped only when (a) its whole signature resolves to
+> the numeric/boolean value domains (`positionDomain`, `:1617`), (b) its body
+> passes `irFirstBodyIsProvenLowerable` (`src/codegen/ir-first-gate.ts:89`),
+> and (c) EVERY caller is itself skipped (signature-parity fixpoint,
+> `:1664–1697`). The generator half is done (gate 2 host-gating, `:1657`,
+> threaded at `:2277`). Class members never even reach the loop — the skip
+> iterates `plan.safeSelection.funcs` (top-level decls in `declByName`);
+> class members travel separately (`selection.classMembers`,
+> `index.ts:1853–1882`) and are keyed by `classMemberFuncKey`
+> (`src/codegen/class-member-keys.ts`). So "carry the typeIdx-parity into the
+> skip decision" now concretely means: **extend the allowlist machinery to
+> class-member entries**, with two hazards the original approach text
+> couldn't see.
+
+### Hazard 1 — the receiver param is outside the numeric domain vocabulary
+
+`positionDomain` admits only `f64` ("number") and annotated-`boolean` `i32`.
+A method's Wasm signature carries the **receiver as param 0** (the class
+struct ref) — so under the current vocabulary *no member is ever eligible*.
+Phase 1 must add a third domain, `"receiver"`, valid ONLY at position 0 of a
+member, whose `IrType` is the member's own class struct ref (from the
+overrideMap entry / `classShapes`). The body prover must correspondingly
+accept `this.<field>` reads/writes **of f64/i32-typed fields of the own
+class** (field types from `classShapes` — annotation-driven, checker-free,
+same discipline as the boolean disambiguation at `:1611–1620`). Everything
+else (string fields, extern fields, inherited fields, accessors, computed
+names, constructors — implicit `return this` synthesis) stays compile-twice.
+
+### Hazard 2 — a skipped member's parity mismatch must escalate, not keep-legacy
+
+The existing guard (`src/ir/integration.ts:915–921`) handles a typeIdx
+mismatch by "keeping the legacy body". **Under a skip there is no legacy
+body** — the slot holds the #2138 `unreachable` placeholder, so silently
+"keeping" it would ship a live trap. Change the guard: when the entry's name
+is in `irFirstSkipped` and `(entry.classMember || entry.moduleInit)` parity
+fails, push a **hard compile error** (the #2138 hard-error overlay channel),
+never the keep-legacy warning. To keep that error unreachable in practice,
+the skip predicate must be strictly *predictive* of parity: skip a member
+only when every param/return position has an **explicit annotation** whose
+`resolvePositionType` result is deterministic (no checker-inferred
+positions), so both front-ends derive the identical signature and
+`addFuncType`'s shape-dedup lands on the pre-allocated typeIdx from
+`class-bodies.ts` by construction. (Note the pipeline-order subtlety: under
+`JS2WASM_IR_FIRST` the planning block runs BEFORE `compileDeclarations`, so
+the pre-allocated typeIdx does not exist yet at skip-decision time — the
+decision must be made on signature *shape equality*, never on a typeIdx
+number.)
+
+### Phase 1 (M) — member skip eligibility
+
+1. Thread member entries into `computeIrFirstSkipSet` (they carry
+   `entry.fn` + `entry.classMember` in the overlay plan; key =
+   `classMemberFuncKey`). Extend `resolveSignatureDomains` per Hazard 1.
+2. Extend `irFirstBodyIsProvenLowerable` with the own-class `this.<field>`
+   f64/i32 arms per Hazard 1.
+3. **Caller fixpoint**: `collectLocalCallEdges` walks top-level call
+   syntax — it has no edges for `obj.m()` method calls. Add edges
+   caller → member-key for *statically-bound* method calls (receiver's
+   declared class known, method not overridden — no `extends` involvement);
+   any dynamically-dispatched call site ⇒ the member is NOT skippable
+   (conservative, same spirit as the `<module-init>` exclusion `:1670`).
+4. Guard escalation per Hazard 2 + a test that injects a parity mismatch on
+   a skipped member (reuse the #1923 injected-build-throw seam) and asserts a
+   loud `severity:"error"`, not a trap and not a silent keep-legacy.
+
+### Phase 2 (S) — `__module_init` skip parity
+
+`moduleInit` already shares the `:915` guard (#3142 Slice 2). Verify the
+Hazard-2 escalation covers it identically once module-init units become
+skip-eligible; no separate machinery.
+
+### Phase 3 (deferred) — standalone generators
+
+Keep deferred as the gate-2 notes conclude: legacy standalone generators are
+the #680 sequential-numeric-yield native lowering and the IR path
+unconditionally registers JS-host generator imports — self-sufficiency is
+genuinely unproven, and the standalone native carrier (#2170) is a disjoint
+lane. Re-open only with a measurement probe (compile a claimed generator
+standalone with the skip forced, diff module sections), and only after the
+#3032 W6 buffer-model decision — this is explicitly NOT part of closing
+this issue.
+
+### Acceptance (updated for the redesign)
+
+- A claim-dense class corpus probe shows member keys in
+  `CompileResult.irFirstSkipped`; each skipped member's shipped body is the
+  IR body (byte-diff anti-vacuity, the established pattern).
+- Flag-off byte identity preserved (default CI path untouched — all of this
+  is dead unless `JS2WASM_IR_FIRST=1`).
+- `tests/issue-2138.test.ts` index-layout-invariance extended to a
+  class+method corpus; the Hazard-2 escalation test above.
+- Full `merge_group` net-zero with the flag on via the `ir_first`
+  measurement lane (same as the generator half).

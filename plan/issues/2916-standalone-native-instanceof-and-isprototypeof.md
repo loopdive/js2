@@ -9,6 +9,7 @@ priority: medium
 horizon: l
 feasibility: hard
 model: fable
+fable_role: spec
 reasoning_effort: high
 task_type: feature
 area: codegen
@@ -334,3 +335,128 @@ harmless (never a wrong `true`). Authoritative conversion count = `merge_group`
 ## Reconciliation note (shepherd, 2026-07-01)
 
 Landed slice: **Slice A** standalone native `instanceof` builtin membership (PR #2418). Issue stays `in-progress` for the remaining instanceof/isPrototypeOf slices.
+
+## Implementation Plan (Fable, 2026-07-18) — Slice B/C unblocked: the branded intrinsic-carrier substrate now has a concrete design
+
+### Verify-first state (current main + in-flight)
+
+The Slice-A deferral said B/C wait on "ctor-carrier `.prototype`/brand infra
+(#2907 follow-up)". That substrate now has all its raw parts on main — they
+just aren't connected:
+
+- **Ctor carriers exist and are identity-stable** but are *unbranded, empty*
+  `$Object`s: the #2907 namespace/Error carriers
+  (`src/codegen/builtin-static-globals.ts`, `SUPPORTED_STATIC_PROPS`) and the
+  #3006 per-name `__builtin_ctor_<Name>` singletons
+  (`BUILTIN_CONSTRUCTOR_IDENTITY_NAMES` `:79`,
+  `emitBuiltinConstructorIdentity` `:119` — lazy `__new_plain_object` behind a
+  null-guard). At runtime nothing distinguishes the `Set` carrier from the
+  `Map` carrier or from a user object.
+- **Native proto objects exist**: the #2175 `$NativeProto` brand registry
+  (`native-proto.ts`, `tryEnsureNativeProtoBrand` + `emitLazyNativeProtoGet`)
+  materializes `<Builtin>.prototype` as a real value with member glue.
+- **User-class `[[Prototype]]` links**: #2580 M3 (in-progress, `sd-2580`) is
+  landing the `$Object.$proto` walk substrate; Slice B's user-class arm and
+  Slice C consume it — predecessor-stack on it, do not invent a parallel walk.
+- **#2917 slice 1 (PR #3324)** made subclass instances REAL native backings
+  (no wrapper) and explicitly delegates "dynamic `instanceof Sub` + sibling
+  discrimination" to this issue's Slice B.
+
+### B0 — the `$BuiltinCtor` branded carrier (the shared substrate; also serves #2651 M3)
+
+Replace the plain `$Object` allocation in the identity-carrier sites with a
+**subtype**:
+
+```
+$BuiltinCtor <: $Object { …$Object fields…, (field $ctorBrand i32) }
+```
+
+- `ctorBrand` = the SAME brand id space `native-proto.ts` already assigns
+  (`tryEnsureNativeProtoBrand`), so one number keys both "which builtin am I"
+  and "which `$NativeProto` is my `.prototype`". `%TypedArray%`
+  (`BUILTIN_BRAND_BASE+3`, glue already registered per #2651 M1) fits with no
+  new machinery — this struct IS the intrinsic-constructor VALUE #2651 M3
+  needs `Object.getPrototypeOf(Int8Array)` to return.
+- Being an `$Object` subtype, every existing object-runtime native
+  (`__extern_get/set`, freeze/seal, `Object.keys`) accepts it unchanged
+  (they take `(ref $Object)` / `ref.test $Object` — a subtype passes). The
+  carriers stay extensible expando objects exactly as today.
+- Allocation: a sibling `__new_builtin_ctor(brand: i32)` beside
+  `__new_plain_object` (object-runtime.ts); `emitBuiltinConstructorIdentity`
+  and `emitBuiltinNamespaceObject` push the brand const. **No `ref.func`
+  operand** → keeps the const-free lazy-init shape (the funcidx-shift
+  immunity the #3006 comment documents).
+- **Registration discipline**: the struct type is registered by the same
+  `ensureObjectRuntime` slot (reserve up-front; type indices are
+  rec-group/DCE-stable — the same argument Slice A already relies on).
+
+Two finalize-spliced read arms on the branded carrier (reserve/fill, the
+`fillBuiltinFnMeta` pattern in `object-runtime.ts`):
+
+1. **`.prototype`** — `__extern_get` gains a front arm: receiver
+   `ref.test $BuiltinCtor` and key == "prototype" → `emitLazyNativeProtoGet`
+   glue for `ctorBrand` (returns the `$NativeProto` externref). This is what
+   makes the DYNAMIC read (`const C: any = Set; C.prototype`) resolve — the
+   syntactic `<Builtin>.prototype` fast path is untouched.
+2. **`.name`** (cheap, same arm) — the builtin name string per brand
+   (§10.2.9); `.length` optional follow-up via the same per-brand table.
+
+Own-property semantics: the arm must be **miss-gated the other way** — an own
+sidecar prop set on the carrier (`Set.prototype = x` is non-writable per spec,
+but expandos like `Set.foo = 1` are legal) keeps working because the arm fires
+only for the exact keys it owns and only when no own entry shadows them
+(check the `$props` hash first, mirroring the #2963 method-arm's own-read-
+first discipline).
+
+### Slice B — native `__instanceof_check` / `__instanceof_dyn` (re-spec on B0)
+
+The 2026-07-01 Slice-B sketch stands structurally (native DEFINED tri-state
+helper, `ensureLateImport` native routing, `emitInstanceofThrowGuard` reuse);
+B0 fills the hole that made it intractable. RHS classification ladder inside
+the helper (first hit wins):
+
+1. `ref.test $BuiltinCtor` → read `ctorBrand` → dispatch to the Slice-A
+   membership test **by brand at runtime** (a `br_table`/if-chain over the
+   same `nativeBuiltinInstanceOfTypeIdxs` arms Slice A emits inline for
+   static names — extract the arm bodies into per-brand helpers so both
+   sites share one implementation).
+2. RHS is a **user-class constructor object** → resolve its class id (the
+   #2188/`$ClassMeta` brand or the class-object representation current at
+   build time) → `Get(C, "prototype")` → the #2580 M3 `$proto`-chain walk on
+   the LHS (`emitProtoChainWalk`, shared with Slice C).
+3. RHS is a **closure** with no resolvable brand → conservative `0`
+   (unchanged rationale: matches host `runtime.ts:2385`).
+4. RHS non-callable object → `2` (throw via `emitInstanceofThrowGuard`);
+   primitives/null/undefined → `0` at the dynamic path (the static-primitive
+   throw stays at codegen). `@@hasInstance` dispatch remains out of scope —
+   documented gap, conservative branch, never a wrong `true`.
+
+Also route the residual **`instanceof Sub`-dynamic** case #2917 delegated
+here: a subclass RHS resolves through arm 2 when the subclass has a
+`$proto`-linked prototype object; where the instance backing carries no proto
+slot (real `$Vec`/`$Date` backings — the #2917 accepted cost), the walk
+answers `0` for the SUBCLASS while arm 1 answers `1` for the BUILTIN — which
+is exactly the `combined instanceof Set === true` /
+`instanceof MySet === false` split #2622's rows assert. A wrong `true` is
+forbidden; a missed subclass `true` (e.g. `s1 instanceof MySet` on a bare
+backing) is a recorded limitation until a branded backing exists (see #2622's
+`$MapSub` — its `classId` field slots into arm 2 as a fast pre-check).
+
+### Slice C — `isPrototypeOf` residual (unchanged from the 2026-07-01 spec)
+
+Rides `emitProtoChainWalk` from Slice B step 2; route the generic
+extern-method fallback to the existing native `__isPrototypeOf`. No changes
+to the earlier sketch beyond using the #2580 M3 walk.
+
+### Ordering / risk
+
+- **B0 first** (S–M, byte-inert until an arm fires; carriers change struct
+  type but no consumer reads their exact type today — verify with
+  `prove-emit-identity` + the #3006 identity tests).
+- **Slice B** after B0 AND after #2580 M3 lands (predecessor-stack for arm
+  2); arm 1 alone (builtin RHS) is landable before #2580 M3 if split.
+- **Slice C** with/after B.
+- Every rule from the 2026-07-01 plan's regression-mitigation section stands
+  (never wrong-`true`; `noJsHost` gating; full `merge_group`; leak-probe
+  corpus). Coordinate with #2651 M3 (consumes B0 — do not let sd-2651 mint a
+  parallel carrier) and #2622 (consumes the arm-1/arm-2 split above).

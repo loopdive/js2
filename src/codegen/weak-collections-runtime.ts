@@ -38,7 +38,7 @@ import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import type { InnerResult } from "./shared.js";
 import { compileExpression, VOID_RESULT } from "./shared.js";
-import { coerceMapKeyToAnyref, ensureMapHelpers } from "./map-runtime.js";
+import { compileCollectionElementArg, ensureMapHelpers } from "./map-runtime.js";
 
 /**
  * Emit the `__weakset_add(m, v) -> ref $Map` helper (idempotent). WeakSet.add
@@ -117,28 +117,31 @@ export function tryCompileNativeWeakMethodCall(
   if (!castReceiverToMap(ctx, fctx, recvType)) return undefined;
 
   const args = callExpr.arguments;
+  // (#3395) Route key/value args through `compileCollectionElementArg`, not a
+  // raw `compileExpression` + `coerceMapKeyToAnyref`: the former recognizes a
+  // null/undefined key literal (incl. `null as any` — the §CanBeHeldWeakly
+  // "value cannot be held weakly" test rows) and emits a canonical
+  // `ref.null NONE_HEAP` instead of letting a TYPED `ref.null $Struct` flow into
+  // `any.convert_extern` ("expected externref, found ref.null of type (ref null
+  // N)", invalid Wasm). It also carries the #3394 i64/bigint boxing arm.
   switch (methodName) {
     case "get":
     case "has":
     case "delete": {
-      const kt = args.length > 0 ? compileExpression(ctx, fctx, args[0]!) : null;
-      coerceMapKeyToAnyref(ctx, fctx, kt);
+      compileCollectionElementArg(ctx, fctx, args.length > 0 ? args[0]! : undefined);
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // get → anyref value; has/delete → i32 (boolean).
       return methodName === "get" ? ({ kind: "anyref" } as ValType) : ({ kind: "i32" } as ValType);
     }
     case "set": {
-      const kt = args.length > 0 ? compileExpression(ctx, fctx, args[0]!) : null;
-      coerceMapKeyToAnyref(ctx, fctx, kt);
-      const vt = args.length > 1 ? compileExpression(ctx, fctx, args[1]!) : null;
-      coerceMapKeyToAnyref(ctx, fctx, vt);
+      compileCollectionElementArg(ctx, fctx, args.length > 0 ? args[0]! : undefined);
+      compileCollectionElementArg(ctx, fctx, args.length > 1 ? args[1]! : undefined);
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // __map_set returns ref $Map (the collection) — chainable.
       return { kind: "ref", typeIdx: ctx.mapTypeIdx } as ValType;
     }
     case "add": {
-      const vt = args.length > 0 ? compileExpression(ctx, fctx, args[0]!) : null;
-      coerceMapKeyToAnyref(ctx, fctx, vt);
+      compileCollectionElementArg(ctx, fctx, args.length > 0 ? args[0]! : undefined);
       fctx.body.push({ op: "call", funcIdx: helperIdx });
       // __weakset_add returns ref $Map — chainable.
       return { kind: "ref", typeIdx: ctx.mapTypeIdx } as ValType;

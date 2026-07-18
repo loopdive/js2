@@ -6,6 +6,7 @@ sprint: current
 priority: medium
 horizon: l
 feasibility: hard
+model: fable
 goal: standalone-mode
 umbrella: 1781
 related: [3238, 3239, 56, 3053]

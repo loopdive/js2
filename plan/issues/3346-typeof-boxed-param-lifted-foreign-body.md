@@ -2,6 +2,7 @@
 id: 3346
 title: "standalone: typeof a boxed-number param inside a lifted foreign body reports \"undefined\" (not \"number\")"
 status: ready
+sprint: Backlog
 created: 2026-07-17
 updated: 2026-07-17
 priority: medium

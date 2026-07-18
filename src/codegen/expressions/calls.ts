@@ -2479,6 +2479,113 @@ export function calleeIsCapabilityCtorParam(ctx: CodegenContext, expr: ts.Expres
 }
 
 /**
+ * (#3390 slice 1) Known non-constructor global function identifiers. Called via
+ * `Promise.<combinator>.call(<global>, …)` these are callable but have no
+ * `[[Construct]]`, so NewPromiseCapability throws TypeError. Matched by NAME
+ * (syntactic — no checker, so no oracle-ratchet cost); a user shadowing one of
+ * these with a real constructor is not in the corpus and only affects the
+ * standalone lane, so this stays correct-or-legacy.
+ */
+const NON_CONSTRUCTOR_GLOBALS = new Set([
+  "eval",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
+]);
+
+/**
+ * (#3390 slice 1) Is `recv` STATICALLY, side-effect-freely a non-constructor —
+ * so `Promise.<combinator>.call(recv, …)` must throw a synchronous TypeError
+ * per §27.2.4.1 step 2 (IsConstructor) BEFORE the iterable is touched? Returns
+ * true ONLY for provably non-constructor, side-effect-free receivers; anything
+ * else (a real constructor, `Promise`, a subclass, or a receiver we cannot
+ * classify without evaluating it) returns false → the caller falls through to
+ * the existing host path (correct-or-legacy). `undefined` (no arg) ⇒ true.
+ */
+function isStaticNonConstructorReceiver(ctx: CodegenContext, recv: ts.Expression | undefined): boolean {
+  if (recv === undefined) return true; // no receiver → undefined → non-object
+  let e: ts.Expression = recv;
+  while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e) || ts.isNonNullExpression(e)) e = e.expression;
+  // Non-object / primitive literals.
+  if (ts.isNumericLiteral(e) || ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return true;
+  if (e.kind === ts.SyntaxKind.TrueKeyword || e.kind === ts.SyntaxKind.FalseKeyword) return true;
+  if (e.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (ts.isVoidExpression(e)) {
+    // `void <literal>` only (a side-effecting operand must be evaluated first).
+    const op = e.expression;
+    return ts.isNumericLiteral(op) || ts.isStringLiteral(op) || op.kind === ts.SyntaxKind.NullKeyword;
+  }
+  // Arrow function — callable, no `[[Construct]]`.
+  if (ts.isArrowFunction(e)) return true;
+  // Empty object literal — a non-callable object; side-effect-free (no computed
+  // keys / getters). Non-empty literals may run key/value side effects → skip.
+  if (ts.isObjectLiteralExpression(e) && e.properties.length === 0) return true;
+  // `Symbol()` / `Symbol(<literal>)` — a bare `Symbol` call returns a symbol
+  // primitive (not a constructor), and is side-effect-free.
+  if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === "Symbol") {
+    return e.arguments.length === 0 || (e.arguments.length === 1 && isSideEffectFreeLiteralArg(e.arguments[0]!));
+  }
+  // Identifier: `undefined`, or a known non-constructor global (eval, …).
+  if (ts.isIdentifier(e)) {
+    if (e.text === "undefined") return true;
+    if (e.text === "Promise") return false; // the constructor — direct-form semantics (slice 2)
+    if (resolvePromiseSubclassName(ctx, e.text) !== undefined) return false; // class extends Promise
+    return NON_CONSTRUCTOR_GLOBALS.has(e.text);
+  }
+  return false; // member access / new / arbitrary call / unknown → fall through
+}
+
+/** (#3390) A `Symbol(<arg>)` argument that runs no user code. */
+function isSideEffectFreeLiteralArg(a: ts.Expression): boolean {
+  return ts.isNumericLiteral(a) || ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a);
+}
+
+/**
+ * (#3390 slice 1) `Promise.<combinator>.call(recv, …)` where `recv` is a static
+ * non-constructor: emit a synchronous native TypeError (§27.2.4.1 step 2,
+ * before any iteration) on the standalone/wasi lane, replacing the leaky
+ * `Promise_<method>` host fallback. Returns the `never`-typed result (an
+ * unreachable `ref.null.extern` after the throw) on a match, or `undefined` to
+ * fall through to the existing dispatch (host lane, real constructors, dynamic
+ * receivers — correct-or-legacy). The iterable argument is intentionally NOT
+ * compiled (it must not be iterated).
+ */
+function tryEmitStandaloneCombinatorCallTypeError(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): InnerResult | undefined {
+  if (!isStandalonePromiseActive(ctx)) return undefined;
+  // callee shape: `(Promise.<combinator>).call`
+  const inner = propAccess.expression;
+  if (!ts.isPropertyAccessExpression(inner)) return undefined;
+  if (!ts.isIdentifier(inner.expression) || inner.expression.text !== "Promise") return undefined;
+  const method = inner.name.text;
+  if (method !== "all" && method !== "allSettled" && method !== "race" && method !== "any") return undefined;
+  if (!isStaticNonConstructorReceiver(ctx, expr.arguments[0])) return undefined;
+
+  const msg = `Promise.${method} called on a non-constructor`;
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  const exnTagIdx = ensureExnTag(ctx);
+  addStringConstantGlobal(ctx, msg);
+  const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError");
+  if (typeErrorCtorIdx === undefined) return undefined; // ctor unavailable → fall through
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, msg));
+  fctx.body.push({ op: "call", funcIdx: typeErrorCtorIdx });
+  fctx.body.push({ op: "throw", tagIdx: exnTagIdx });
+  // The throw is control-terminal; push an unreachable value so the surrounding
+  // expression contract (an externref on the stack) still type-checks.
+  fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
+}
+
+/**
  * (#1337) Emit a call to a host bound-function externref via the
  * `__call_function(fn, thisArg, argsArray)` host helper. The bound function
  * already carries [[BoundThis]] and [[BoundArguments]], so `thisArg` is passed
@@ -5909,6 +6016,18 @@ function compileCallExpression(
     if (propAccess.name.text === "call" || propAccess.name.text === "apply") {
       const isCall = propAccess.name.text === "call";
       const innerExpr = propAccess.expression;
+
+      // (#3390 slice 1) `Promise.<combinator>.call(recv, …)` with a STATICALLY
+      // non-constructor receiver throws a TypeError synchronously (§27.2.4.1
+      // step 2 IsConstructor, BEFORE touching the iterable). On the standalone
+      // lane the host fallback (`Promise_all` etc.) leaks; emit the native
+      // throw instead. Constructor / Promise / dynamic receivers fall through
+      // (correct-or-legacy — slice 2/3). `.apply` is not intercepted (rare;
+      // the corpus uses `.call`).
+      if (isCall) {
+        const combErr = tryEmitStandaloneCombinatorCallTypeError(ctx, fctx, expr, propAccess);
+        if (combErr !== undefined) return combErr;
+      }
 
       // (#2604/#3171) Reflective `X.prototype.METHOD.call(recv, …)` /
       // `inst.METHOD.call(recv, …)` for the four keyed collections — brand-check

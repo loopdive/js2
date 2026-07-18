@@ -1,5 +1,7 @@
 ---
 id: 2106
+model: fable
+fable_role: spec
 title: "value-rep P3: undefined observability — UNDEF_F64 sentinel, union-collapse reversal (flagged), standalone $undefined singleton"
 status: in-progress
 assignee: ttraenkler/opus-regexp
@@ -9,6 +11,7 @@ updated: 2026-06-26
 s1_note: "S1 (standalone tag-1 $undefined singleton) NOT COMPLETE — PR #2025 was AUTO-PARKED in merge_group (2026-06-24): standalone high-water floor breached (pass 23729 vs mark 24956), NET −1245 test262 rows (1654 regressed / 409 gained). Root cause (diagnosed by sdev-s1fix 2026-06-25, see '## S1 merge_group regression — diagnosis'): S1.1 flipped the CONSUMER __extern_is_undefined to singleton-only but did NOT flip the matching PRODUCERS (notably __extern_get's missing-key return at object-runtime.ts:856, still ref.null.extern), so destructuring/param defaults stop firing. This is the architect-spec's full ~40-site producer+consumer sweep done as a partial subset — there is NO narrow floor-saving fix. RESOLUTION 2026-06-25: S1.1+S1.2 behavioral flips REVERTED on the branch (kept inert S1.0); PR #2025 re-targets to a floor-neutral revert. S1 to be re-landed as a fully-scoped complete sweep (architect re-spec). REMAINING slices unchanged: S2 (sNaN carve-out), S3 (number|undefined→externref), S4 (union-collapse reversal), typeof-null→object."
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: feature
 area: codegen
@@ -908,3 +911,82 @@ if any: the "unmatched capture group / named-group `.groups.x` = undefined"
 representation on inline match results (`captures*.js`, `*-references.js`,
 `lookbehind.js`) — a distinct producer, separate byte-inert PR. Report the new
 `#2097 host_free_pass` floor delta to the lead for the flip go/no-go.
+
+## Implementation Plan (Fable, 2026-07-18) — residual assessment: the singleton half is SHIPPED; what remains is the NUMERIC-CARRIER leg + close-out
+
+### Verified state (current main)
+
+- **The `$undefined` tag-1 singleton regime is DEFAULT ON**
+  (`undefinedSingleton: boolean` — "Default TRUE (#2106 flip)",
+  `src/codegen/context/types.ts:125/:2415`). The S1 sweep, the flip, and the
+  follow-on miss-guard fixes (#3307/#3319/#3328) are all on main.
+- **The post-flip null-guard hazard class is closed**: #3331 ("AUDIT: #2106
+  $undefined-singleton null-guard bug class — systematic sweep") is `done`.
+  New consumers of externref misses must keep using the audit's dual
+  predicate (`ref.is_null` ∨ singleton/UNDEF-box) — that discipline is now
+  the settled pattern, not an open risk.
+- So the issue's headline ("null vs undefined distinct standalone,
+  observable to `===`/`??`/typeof/ToString") is **satisfied for
+  reference-plane carriers**. The issue stays open for exactly one leg:
+
+### The remaining leg — numeric-carrier undefined (UNDEF_F64 / union-collapse reversal)
+
+`number | undefined` still collapses to bare `f64` at the type mapper
+(`resolveWasmType` unwraps 2-member nullable unions), so undefined entering
+an f64 carrier becomes NaN and is unobservable — the acceptance rows
+`codePointAt(oob) ?? -1`, `=== undefined` on a numeric local, and the #2860
+census signature family (`assert.sameValue(rest.a, undefined)`, ~109 gap
+rows where the rest/absence value flows through numeric positions).
+
+**Design verdict (choose the sentinel, NOT the `$AnyValue` carrier):** with
+#745 S2–S4 landed, mapping `number | undefined` to `$AnyValue` is now
+technically possible — REJECT it for this leg. `number | undefined` is the
+hottest union shape in numeric code (array reads, optional params, find/
+indexOf results); boxing every op is the exact cost profile #745 accepted
+only for genuinely heterogeneous unions. The June P3 design stands: keep the
+f64 carrier with the **sNaN sentinel** (`0x7FF00000DEADC0DE`, the same bit
+pattern the default-param machinery already uses) as the in-carrier
+representation of undefined, with observer support. The #2979
+`UNDEF_F64`-boxed arm in `__extern_is_undefined` already recognizes the
+boxed form — the sentinel is half-adopted; this leg completes it.
+
+**Slices (flag-gated like the singleton sweep — `undefF64Observers`,
+default OFF, byte-inert):**
+
+1. **N1 (M) — producer inventory + emit.** Sites where undefined enters an
+   f64 position: union-collapsed var/param init, absent optional param
+   (already sNaN), OOB/miss reads coerced to f64, destructuring
+   defaults/rest misses. Each emits the sentinel instead of NaN — behind
+   the flag. NB the sentinel is a signaling-NaN PAYLOAD: arithmetic on it
+   must degrade to ordinary NaN (spec: undefined→NaN under ToNumber), which
+   f64 ops do for free — only IDENTITY observers may test the payload.
+2. **N2 (M) — observers.** `=== undefined` / `??` / `?.` / `typeof` /
+   ToString on a statically `number|undefined` position: test the exact
+   bit pattern (`i64.reinterpret_f64` + `i64.eq` const) BEFORE NaN-ness;
+   plain NaN stays "number"/NaN. Boundary coercions f64→externref /
+   f64→`$AnyValue` map sentinel→singleton/tag-1 (and back), so the two
+   regimes compose at every plane crossing (the #2979 arm is the
+   precedent).
+3. **N3 (S) — measured flip.** A/B on the standalone lane against the
+   2026-07-18 baseline with the ~109-row signature family as the named
+   expected-win list; perf spot-check on numeric-loop benchmarks (the
+   sidebar suite) since N2 adds a branch to hot observer sites — the
+   acceptance criterion's "perf/size measurements" clause.
+
+**Hazard:** an sNaN payload does NOT survive every Wasm op (canonicalization
+on arithmetic) — that is CORRECT here (arithmetic = ToNumber(undefined) =
+NaN) but means the sentinel must never be relied on after passing through
+any arithmetic. N1's inventory must classify each producer as
+identity-plane (sentinel sound) vs arithmetic-plane (NaN fine); document
+per site.
+
+### Close-out recommendation
+
+After N1–N3 (or a decision to demote the numeric leg), re-run the four
+acceptance rows and CLOSE this issue — it has been `in-progress` since
+June with its main deliverable shipped; the open remainder should either
+execute as N1–N3 (M+M+S) or be split to a successor issue so #2106 can be
+marked `done` against its shipped half. The stale `assignee:
+ttraenkler/opus-regexp` should be cleared either way (that lane's PR-3/PR-4
+RegExp work is recorded above and its residual bucket is the inline
+capture-group producer, which belongs to the RegExp lane, not here).

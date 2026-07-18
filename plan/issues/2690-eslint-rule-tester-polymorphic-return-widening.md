@@ -2,6 +2,7 @@
 id: 2690
 title: "ESLint rule-tester.js: cloneDeeplyExcludesParent polymorphic return widens i32 into anyref slot"
 status: ready
+sprint: Backlog
 created: 2026-06-26
 priority: low
 area: codegen

@@ -2,9 +2,11 @@
 id: 2662
 title: "host (gc) generator backend is EAGER-buffered — breaks lazy/suspension semantics on the default path (architecture)"
 status: ready
+sprint: Backlog
 created: 2026-06-25
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: bugfix
 area: codegen, runtime, architecture

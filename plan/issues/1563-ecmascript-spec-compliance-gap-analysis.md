@@ -6,6 +6,7 @@ created: 2026-05-21
 updated: 2026-05-21
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: research+architecture
 area: spec-compliance

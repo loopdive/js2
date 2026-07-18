@@ -6,6 +6,7 @@ assignee: ttraenkler/opus-2906-3dii
 created: 2026-07-01
 priority: high
 feasibility: hard
+model: fable
 task_type: feature
 area: codegen
 goal: standalone

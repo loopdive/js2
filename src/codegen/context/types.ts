@@ -1127,6 +1127,27 @@ export interface CodegenContext {
   newTargetGlobalIdx: number | undefined;
   classNewTargetIds: Map<string, number>;
   /**
+   * (#802) Dynamic prototype support. Set by the `scanForDynamicProto` pre-scan
+   * when the program mutates an object's [[Prototype]] at runtime
+   * (`Object.setPrototypeOf` / `Reflect.setPrototypeOf` / `o.__proto__ = v`).
+   * `dynamicProtoClasses` holds the hierarchy-ROOT class names whose instances
+   * are proto-mutation receivers — ONLY those classes get the appended
+   * standalone-only `$__proto__` externref struct field (Slice B; the #799a
+   * unconditional-append regression is avoided by this gating).
+   * `dynamicProtoLiteralNodes` marks object-literal AST nodes that are proto
+   * receivers (Slice A consumes it: promote the literal to a native `$Object`).
+   * `dynProtoSentinelGlobalIdx` is the lazily-reserved mutable externref global
+   * holding the "explicitly null prototype" sentinel `$Object` (distinguishes
+   * `setPrototypeOf(o, null)` from "never dynamically set" in the appended
+   * field; undefined until first needed). Everything is gated on the marked
+   * sets being non-empty, so programs without proto mutation are
+   * byte-identical.
+   */
+  usesDynamicProto: boolean;
+  dynamicProtoClasses: Set<string>;
+  dynamicProtoLiteralNodes: WeakSet<ts.Node>;
+  dynProtoSentinelGlobalIdx: number | undefined;
+  /**
    * (#2001 S1) Sparse-array hole support. Set by the `scanForArrayHoles`
    * pre-scan when the program contains any array-literal elision
    * (`OmittedExpression`). Gates the `$Hole → undefined` read-boundary guard at

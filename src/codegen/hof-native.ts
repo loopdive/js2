@@ -8,6 +8,7 @@
  * fill arm) and `expressions/calls.ts` (inline-arrow closure-compile gate).
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
@@ -109,6 +110,19 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
   const isReduce = NATIVE_HOF_REDUCE.has(methodName);
   const backward = methodName === "findLast" || methodName === "findLastIndex" || methodName === "reduceRight";
 
+  // (#2872 slice 5) S1-producer discipline for every "returns `undefined`"
+  // result of these helpers (`find`/`findLast` miss, `forEach`'s void result,
+  // reduce-of-empty-no-init). Under the #2106 `undefinedSingleton` regime
+  // (default ON) a null externref is JS `null`, NOT `undefined` —
+  // `__extern_is_undefined` answers 0 for it — so a legacy `ref.null.extern`
+  // here made `result === undefined` / `assert.sameValue(result, undefined)`
+  // FALSE on a spec-mandated undefined (the miss-sentinel bug the findLast
+  // slice surfaced; it silently affected the shipped `find`/`findIndex`
+  // identically). Emit the `$undefined` singleton instead; regime-off builds
+  // keep the legacy null extern (byte-identical). Reserve-time global/type
+  // minting only — no funcIdx shift (#1839 discipline).
+  const undefExtern: Instr[] = undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+
   // ── Locals ──
   // each:   params 0=recv 1=cb 2=thisArg          locals 3=len 4=i 5=val 6=res 7=args 8=out
   // reduce: params 0=recv 1=cb 2=init 3=hasInit   locals 4=len 5=i 6=val 7=args 8=acc
@@ -181,7 +195,7 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
   switch (methodName) {
     case "forEach":
       perIter = [];
-      finalResult = [{ op: "ref.null.extern" }];
+      finalResult = [...undefExtern];
       break;
     case "map":
       perIter = [
@@ -216,7 +230,7 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
           then: [{ op: "local.get", index: L.val }, { op: "return" }],
         },
       ];
-      finalResult = [{ op: "ref.null.extern" }];
+      finalResult = [...undefExtern];
       break;
     case "findIndex":
     case "findLastIndex":
@@ -305,7 +319,7 @@ export function ensureNativeArrayHof(ctx: CodegenContext, methodName: string): n
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [{ op: "ref.null.extern" }, { op: "return" }],
+            then: [...undefExtern, { op: "return" }],
           },
           // acc = first-in-iteration-order element; i = the next one
           ...((backward

@@ -25,7 +25,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
-import { addImport } from "./registry/imports.js";
+import { addImport, addUnionImports } from "./registry/imports.js";
 import {
   addFuncType,
   getArrTypeIdxFromVec,
@@ -410,6 +410,27 @@ export function ensureAnyToStringHelper(ctx: CodegenContext): number {
   // and the numberArm keeps its prior fallback).
   if (ctx.nativeStrings && !ctx.funcMap.has("number_toString")) {
     emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+  }
+
+  // (#2875) Ensure the boxed-primitive struct types (`$__box_number_struct` /
+  // `$__box_boolean_struct`) are REGISTERED before `stringifyBoxedExtern`
+  // (below) captures `ctx.nativeBoxNumberTypeIdx`/`nativeBoxBooleanTypeIdx`.
+  // SAME ordering hazard #3216 fixed for `number_toString`: when
+  // `ensureAnyToStringHelper` is the FIRST any-coercion consumer in a module —
+  // e.g. a 0-arg reflective `String.prototype.trim.call(<boolean|number>)`
+  // body's `ToString(this)`, which (unlike the char/search bodies) never calls
+  // `unboxArgToI32` and so never pulls in the union native funcs — both idxs
+  // were still `-1`, and `stringifyBoxedExtern` baked the "[object Object]"
+  // fallback for EVERY boxed primitive. So `trim.call(false)` rendered
+  // "[object Object]" instead of "false" (and the whole cached helper was
+  // wrong module-wide). `addUnionImports` is idempotent (`hasUnionImports`
+  // guard) and, under standalone/wasi, appends the box struct types + native
+  // box/unbox funcs; a module that already registered them earlier is a no-op
+  // (byte-identical). Native-strings-gated so host/gc lanes stay byte-identical
+  // (there `__any_to_string`'s boxed arms keep their prior fallback and the box
+  // types are host concepts).
+  if (ctx.nativeStrings) {
+    addUnionImports(ctx);
   }
 
   // (#2962) Emit the §20.5.3.4 `__error_to_string` helper BEFORE this

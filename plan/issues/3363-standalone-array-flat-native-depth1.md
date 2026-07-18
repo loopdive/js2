@@ -1,7 +1,7 @@
 ---
 id: 3363
 title: "standalone: Array.prototype.flat() has no native arm — depth-1 homogeneous nested-array flatten (child of #2717 follow-up / #3180)"
-status: in-progress
+status: done
 assignee: ttraenkler/dev-j
 sprint: current
 created: 2026-07-17

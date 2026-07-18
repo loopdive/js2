@@ -1,10 +1,11 @@
 ---
 id: 3134
 title: "Promise<T>-typed value slots unwrap to T (f64) on the JS-host lane — a real promise externref gets __unbox_number'd to NaN at the declaration"
-status: in-progress
+status: done
 assignee: ttraenkler/fable-senior
 created: 2026-07-10
-updated: 2026-07-11
+updated: 2026-07-17
+completed: 2026-07-17
 priority: medium
 horizon: m
 feasibility: hard

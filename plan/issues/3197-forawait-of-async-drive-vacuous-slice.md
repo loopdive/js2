@@ -8,6 +8,7 @@ created: 2026-07-12
 updated: 2026-07-12
 priority: high
 feasibility: hard
+model: fable
 task_type: bug
 area: codegen
 es_edition: ES2018

@@ -5,6 +5,7 @@ status: ready
 sprint: Backlog
 priority: medium
 feasibility: hard
+model: fable
 task_type: bug
 area: codegen
 language_feature: async-generators

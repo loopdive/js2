@@ -1,13 +1,14 @@
 ---
 id: 2958
 title: "Standalone: unhandled-rejection tracking — report rejected promises with no handler at drain/event-loop exit"
-status: blocked
-depends_on: [2867]
+status: done
+assignee: dev-2958
+completed: 2026-07-17
 sprint: current
 created: 2026-07-02
-updated: 2026-07-02
+updated: 2026-07-17
 priority: low
-horizon: s
+horizon: m
 feasibility: medium
 reasoning_effort: medium
 task_type: feature
@@ -16,6 +17,22 @@ language_feature: promises
 goal: standalone-mode
 related: [2867, 2632, 1326]
 origin: "2026-07-02 July Fable audit §2 (no unhandled-rejection story on the native carrier)"
+# (#3102 LOC budget) The unhandled-rejection SUBSTRATE was extracted into its own
+# module `src/codegen/unhandled-rejection.ts` (the ensureUnhandledRejectionTracking
+# / buildNoteUnhandledRejection / ensureUnhandledRejectionReporter family, ~286
+# lines). That shrank async-scheduler.ts's growth from +359 to a residual ~+89 of
+# IRREDUCIBLE inline integration that must sit beside the machinery it patches:
+# the AsyncSchedulerState + AsyncDriveRuntime field additions, the
+# ensurePromiseSettleFunctions registration call, and the settle-body note +
+# Promise.reject-mint hooks. The other three overages are just the wiring calls
+# (wasi.ts top-level Promise/await import scan; index.ts _start reporter call;
+# async-frame.ts await mark-handled). A deeper reduction of the residual belongs
+# with the concurrent god-file bloat-reduction epic (#3182).
+loc-budget-allow:
+  - src/codegen/async-scheduler.ts
+  - src/codegen/wasi.ts
+  - src/codegen/index.ts
+  - src/codegen/async-frame.ts
 ---
 
 # #2958 — a rejected $Promise with no reactions vanishes silently
@@ -81,7 +98,6 @@ still actively churning. **Do not implement until #2867 lands.** What follows is
 the execution-ready spec so the next window moves fast once the file settles.
 
 ### Gating reality (important — corrects the title's "standalone")
-
 The native `$Promise` carrier is **`ctx.wasi`-gated**, not `ctx.standalone`:
 `isStandalonePromiseActive()` returns `ctx.wasi === true`
 (async-scheduler.ts ~L3298), and `emitStandalonePromiseThen` /
@@ -92,7 +108,6 @@ exist). **Host mode is byte-inert by construction** — host never registers
 so no host-lane sha256 risk.
 
 ### Data model
-
 - **`$Promise` struct** (`getOrRegisterPromiseType`, async-scheduler.ts ~L258):
   append two fields — `handled: i32 (mut)` and `unhandledNext: externref (mut)`.
   Appending keeps existing `fieldIdx` 0/1/2 (`state`/`value`/`callbacks`) stable,
@@ -103,12 +118,11 @@ so no host-lane sha256 risk.
   next to the microtask globals (~L400). Intrusive singly-linked list head.
 
 ### Emit sites (all in async-scheduler.ts unless noted)
-
 1. **Reject settle** — `buildPromiseSettleBody`, **REJECTED variant only**
    (`settledState === PROMISE_STATE_REJECTED`). After callbacks are read into
    `$callbacks` (L868–872), guard `ref.is_null($callbacks)`: if null (no
    handler at settle) → `promise.unhandledNext = __unhandled_head;
-__unhandled_head = promise` (O(1) push). The callback-drain loop below is a
+   __unhandled_head = promise` (O(1) push). The callback-drain loop below is a
    no-op when callbacks is null, so ordering is safe.
 2. **Late attach ("handle")** — `emitStandalonePromiseThen`, the **already-
    rejected receiver** branch (the inner `then:` enqueuing `rejectWrapperFuncIdx`,
@@ -131,7 +145,6 @@ __unhandled_head = promise` (O(1) push). The callback-drain loop below is a
    report or exit.
 
 ### HAZARD — late-import funcIdx shift (#2642 / the memory `*_funcidx_desync` cluster)
-
 `__report_unhandled_rejections` references `__wasi_write_string_stderr` **and**
 `proc_exit`, which are only registered when `console.error` / `process.exit`
 are otherwise used. When this feature is active you MUST (a) **ensure both are
@@ -142,9 +155,7 @@ late import. Emit the report body after all imports are fixed, or repoint by
 name (`ctx.funcMap.get(...)`) at finalize.
 
 ### Test (`tests/issue-2958.test.ts`)
-
 WASI-compile + run under wasmtime (or the standalone harness):
-
 - `Promise.reject(new Error("x"))` with no handler → **nonzero exit** + a stderr
   line. (AC1)
 - same but with `.catch(() => {})` → exit 0, no line. (AC2)
@@ -171,3 +182,76 @@ slice queue). Two additions from the spec, both cheap:
 remaining gaps (#2906 slices 3d + widen) live in async-cps/async-frame, not
 the scheduler — the `async-scheduler.ts` churn this was deferred on has
 settled. Claimable (Opus, `horizon: m`).
+
+## Implementation (2026-07-17, dev-2958)
+
+Landed as a self-contained substrate in `src/codegen/async-scheduler.ts`, wired
+into `_start` in `src/codegen/index.ts`, with consumer-side "mark handled" hooks
+in `async-frame.ts` (await) and `promise-combinators.ts` (combinator inputs), and
+import registration in `src/codegen/wasi.ts`.
+
+### Deviation from the banked plan — no `$Promise` struct-layout change
+The banked plan appended two fields (`handled`, `unhandledNext`) to the `$Promise`
+struct. That is **not viable as written**: `struct.new $Promise` requires ALL
+fields on the stack, so appending two fields forces edits to **17** `struct.new`
+sites across 6 files (`async-scheduler`, `promise-executor`, `async-frame`,
+`promise-combinators`, `expressions`, `ir/backend/wasmgc-emitter`) — high
+merge-conflict risk in contended files, and the plan's "every current
+struct.get/set stays valid" note overlooked the `struct.new` arity requirement.
+
+Instead the tracking uses a **separate intrusive list of a NEW node struct**
+`$__unhandled_node { promise (ref null eq), next externref, handled i32 (mut) }`,
+whose only construction site is our own code — zero changes to any `$Promise`
+`struct.new`. A global `__unhandled_head` (externref) is the list head.
+
+- **Note (O(1) prepend)**: on a handler-less rejection — both the direct
+  `Promise.reject(x)` mint (`emitStandalonePromiseReject`) and the
+  `__promise_reject` settle of a previously-pending promise with a null callback
+  list (`buildPromiseSettleBody`, REJECTED arm). The settle funnel covers
+  executor `reject`, `.then`-chain rejection propagation (derived promise),
+  combinator result rejection, and async-fn result rejection.
+- **Mark handled**: a later `.then/.catch/.finally` on an already-rejected
+  receiver, an `await` that consumes the rejection, or a combinator subscription
+  clears the matching node's `handled` flag via `__mark_rejection_handled`.
+- **Report**: `__report_unhandled_rejections()` runs at the `_start` tail (after
+  the microtask/event-loop drain); it writes `Unhandled promise rejection\n` to
+  stderr per still-unhandled node and `proc_exit(1)`s if any. Per-reason
+  stringification remains deferred to #2962.
+
+Everything is `ctx.wasi`-gated; host and non-wasi-standalone builds are byte-inert
+(`markRejectionHandledFuncIdx`/`unhandledHeadGlobalIdx` stay -1, so every emit
+hook degrades to a no-op). Import registration is scoped to **top-level**
+`Promise`/`await` usage so host-free carrier modules that only use promises inside
+exported functions (instantiated with `{}`, driven directly — e.g. the #2867/#2865
+tests) keep their exact prior import set.
+
+### Acceptance criteria — all met (`tests/issue-2958.test.ts`, 13 cases, green)
+- AC1 `Promise.reject(new Error("x"))` no handler → stderr line + exit 1. ✓
+- AC2 `.catch(() => {})` (and 2-arg `.then` onRejected) → exit 0, no line. ✓
+- AC3 reject inside a microtask + same-turn late `.catch` → no report. ✓
+- Architect note 1 (derived promise via `.then` reject adoption reports on the
+  derived promise). ✓ Plus: executor reject, `Promise.all` result caught (no false
+  positive), multiple independent rejections (one line each), non-Error reasons,
+  resolved chains never report, promise-free module byte-inert. ✓
+
+Validated by compiling under `--target wasi` and running `_start` under V8 (this
+Node) with a minimal `wasi_snapshot_preview1` shim (independent of the host
+wasmtime version — wasmtime ≥ 41 dropped the legacy EH encoding the promise
+runtime emits). No new regressions across the promise/async/combinator suites
+(2865 NaN, 2867-gap2 imports, 1326 host, 2903-r4 typedarray failures are all
+pre-existing on the clean tree).
+
+### Known limitations (follow-ups, out of AC scope)
+1. **Async-function-body-throw** with **no `await`** is not tracked: that shape
+   bypasses the settle funnel entirely (no `ensurePromiseSettleFunctions` call),
+   so its result-promise rejection is not noted. An **awaited** async body throw
+   IS routed through `__promise_reject`, but the result promise carries a driving
+   callback at reject time, so it is not currently classified as handler-less.
+   Both live in the async-frame result-promise wiring the issue already scopes to
+   the #2867 / async-cps follow-ups.
+2. A literal `await Promise.reject(x)` / combinator over a literal `Promise.reject`
+   is marked handled at the consume site, but async **reject propagation to a
+   `catch`** is itself incomplete today (#2867 territory) — where the catch does
+   not yet run, the rejection is genuinely unhandled at runtime and is (correctly)
+   reported; this self-corrects once #2867 lands the propagation and the
+   `await`/combinator mark-handled hooks fire.

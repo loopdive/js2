@@ -7,6 +7,7 @@ sprint: current
 priority: high
 horizon: l
 feasibility: hard
+model: fable
 reasoning_effort: max
 created: 2026-07-13
 task_type: bugfix

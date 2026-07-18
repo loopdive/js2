@@ -33,6 +33,10 @@ import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
+// (#2958, extracted for #3102) The unhandled-rejection substrate lives in its own
+// module; the inline hooks in this file (settle-body note, Promise.reject mint)
+// call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.
+import { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from "./unhandled-rejection.js";
 
 /**
  * #1326 — Sentinel state values for `$Promise.state`. Match the JS spec
@@ -114,6 +118,25 @@ export interface AsyncSchedulerState {
   thenWrapperCounter: number;
   /** Whether `__drain_microtasks` has been added to the module's exports. */
   drainExported: boolean;
+
+  // ── (#2958) standalone/WASI unhandled-rejection tracking ───────────────────
+  /**
+   * `$__unhandled_node { promise (ref null eq), next externref, handled i32 (mut) }`
+   * typeIdx — an intrusive singly-linked list node recording a promise that
+   * rejected with NO reaction at settle time. -1 until registered (wasi-only).
+   */
+  unhandledNodeTypeIdx: number;
+  /**
+   * Wasm global (externref) — head of the `$__unhandled_node` list. Each node is
+   * prepended on a handler-less rejection (O(1)); the exit-time reporter walks it.
+   * -1 until registered.
+   */
+  unhandledHeadGlobalIdx: number;
+  /**
+   * Func idx of `__mark_rejection_handled(p eqref)` — walk the list and flag the
+   * node whose promise is `p` as handled, so the reporter skips it. -1 until registered.
+   */
+  markRejectionHandledFuncIdx: number;
 
   // ── (#2903) native `Promise.prototype.finally` runtime (§27.2.5.3) ──────
   /** `$__finally_restore_caps { chained (ref $Promise), value externref, isReject i32 }` typeIdx. -1 until registered. */
@@ -200,7 +223,7 @@ export interface AsyncSchedulerState {
   stdinReaderCapGlobalIdx: number;
 }
 
-function getOrInitState(ctx: CodegenContextWithScheduler): AsyncSchedulerState {
+export function getOrInitState(ctx: CodegenContextWithScheduler): AsyncSchedulerState {
   if (!ctx.asyncScheduler) {
     ctx.asyncScheduler = {
       promiseTypeIdx: -1,
@@ -225,6 +248,9 @@ function getOrInitState(ctx: CodegenContextWithScheduler): AsyncSchedulerState {
       promiseResolveValueFuncIdx: -1,
       thenWrapperCounter: 0,
       drainExported: false,
+      unhandledNodeTypeIdx: -1,
+      unhandledHeadGlobalIdx: -1,
+      markRejectionHandledFuncIdx: -1,
       finallyRestoreCapsTypeIdx: -1,
       finallyRestoreSettleFuncIdx: -1,
       finallyRestoreRejectFuncIdx: -1,
@@ -266,7 +292,7 @@ function getOrInitState(ctx: CodegenContextWithScheduler): AsyncSchedulerState {
  * `ctx.asyncScheduler` (any-typed). Phase 1C+ promotes this to a
  * proper field if the integration matures.
  */
-type CodegenContextWithScheduler = CodegenContext & { asyncScheduler?: AsyncSchedulerState };
+export type CodegenContextWithScheduler = CodegenContext & { asyncScheduler?: AsyncSchedulerState };
 
 /**
  * #1326 — Get or register the `$Promise` WasmGC struct type. The struct
@@ -775,6 +801,12 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
   const state = getOrInitState(ctx as CodegenContextWithScheduler);
   if (state.promiseFulfillFuncIdx !== -1) return;
 
+  // (#2958) Register the unhandled-rejection tracking substrate (node struct,
+  // list-head global, mark-handled helper) BEFORE `buildPromiseSettleBody`
+  // reads `state.unhandledHeadGlobalIdx` — a no-op unless `ctx.wasi` (the native
+  // `$Promise` carrier is wasi-gated; host mode never reaches here).
+  ensureUnhandledRejectionTracking(ctx);
+
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const callbackTypeIdx = getOrRegisterPromiseCallbackType(ctx);
   const capsTypeIdx = getOrRegisterThenCapsType(ctx);
@@ -1229,6 +1261,23 @@ function buildPromiseSettleBody(
     { op: "local.get", index: promiseLocal },
     { op: "ref.null.extern" },
     { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 2 },
+
+    // (#2958) A REJECTED settle with NO detached callbacks means no reaction was
+    // attached before the promise rejected — record it as (so-far) unhandled so
+    // the exit-time reporter can surface it. A later `.then/.catch` marks it
+    // handled. Skipped for FULFILLED and when tracking is inactive (non-wasi).
+    // The drain loop below is a no-op when callbacks is null, so ordering is safe.
+    ...(settledState === PROMISE_STATE_REJECTED && state.unhandledHeadGlobalIdx >= 0
+      ? ([
+          { op: "local.get", index: callbacksLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildNoteUnhandledRejection(state, [{ op: "local.get", index: promiseLocal }]),
+          },
+        ] satisfies Instr[])
+      : []),
 
     {
       op: "block",
@@ -1846,6 +1895,14 @@ export interface AsyncDriveRuntime {
   enqueueFuncIdx: number;
   /** `__drain_microtasks()` funcIdx. */
   drainFuncIdx: number;
+  /**
+   * (#2958) `__mark_rejection_handled(p eqref)` funcIdx, or -1 when the
+   * unhandled-rejection substrate is inactive (non-wasi). A consumer that
+   * attaches a reaction to a promise (`await`, a combinator input) calls this so
+   * a born-rejected input (e.g. an inlined `Promise.reject(x)`) is not reported
+   * as unhandled.
+   */
+  markRejectionHandledFuncIdx: number;
 }
 
 /**
@@ -1868,6 +1925,7 @@ export function ensureAsyncDriveRuntime(ctx: CodegenContext): AsyncDriveRuntime 
     rejectFuncIdx: state.promiseRejectFuncIdx,
     enqueueFuncIdx: state.enqueueFuncIdx,
     drainFuncIdx: state.drainFuncIdx,
+    markRejectionHandledFuncIdx: state.markRejectionHandledFuncIdx,
   };
 }
 
@@ -3646,10 +3704,23 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
  */
 export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionContext, reasonInstrs: Instr[]): void {
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
+  const state = getOrInitState(ctx as CodegenContextWithScheduler);
+  // (#2958) Ensure the unhandled-rejection substrate exists (a wasi-gated no-op
+  // otherwise). `Promise.reject(x)` mints a REJECTED `$Promise` DIRECTLY, so it
+  // never passes through `__promise_reject`'s settle body — record it here.
+  ensureUnhandledRejectionTracking(ctx);
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_REJECTED });
   for (const instr of reasonInstrs) fctx.body.push(instr);
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
+  if (state.unhandledHeadGlobalIdx >= 0) {
+    const pLocal = allocLocal(fctx, `__preject_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
+    fctx.body.push({ op: "local.set", index: pLocal });
+    for (const instr of buildNoteUnhandledRejection(state, [{ op: "local.get", index: pLocal }])) {
+      fctx.body.push(instr);
+    }
+    fctx.body.push({ op: "local.get", index: pLocal });
+  }
   fctx.body.push({ op: "extern.convert_any" });
 }
 
@@ -3768,6 +3839,16 @@ export function emitStandalonePromiseThen(
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            // (#2958) A reaction attached to an ALREADY-REJECTED promise means it
+            // is now handled: clear its unhandled-list flag so the exit-time
+            // reporter skips it (satisfies "adding `.catch` silences it" and
+            // same-turn late-attach). No-op when tracking is inactive.
+            ...(state.markRejectionHandledFuncIdx >= 0
+              ? ([
+                  { op: "local.get", index: promiseLocal },
+                  { op: "call", funcIdx: state.markRejectionHandledFuncIdx },
+                ] satisfies Instr[])
+              : []),
             { op: "ref.func", funcIdx: rejectWrapperFuncIdx },
             { op: "local.get", index: rejectedCapsLocal },
             { op: "local.get", index: promiseLocal },
@@ -4148,6 +4229,14 @@ export function emitStandalonePromiseFinally(
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            // (#2958) `.finally` on an already-rejected promise attaches a
+            // reaction → the rejection is now handled; clear its unhandled flag.
+            ...(state.markRejectionHandledFuncIdx >= 0
+              ? ([
+                  { op: "local.get", index: promiseLocal },
+                  { op: "call", funcIdx: state.markRejectionHandledFuncIdx },
+                ] satisfies Instr[])
+              : []),
             { op: "ref.func", funcIdx: rejectWrapperFuncIdx },
             { op: "local.get", index: capsLocal },
             { op: "local.get", index: promiseLocal },

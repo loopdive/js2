@@ -40,6 +40,7 @@ import type { AsyncCfgPlan, AsyncCfgState, AsyncCpsPlan, AsyncResumePoint } from
 import {
   ASYNC_CPS_ENABLED,
   FORAWAIT_ITER_SPILL,
+  type AsyncGenDelegates,
   analyzeAsyncBody,
   asyncFnNeedsCps,
   awaitedExprIsPromiseCombinator,
@@ -50,6 +51,8 @@ import {
   isAwaitFreeAsyncGenBody,
   isBoundedAsyncGenBody,
   isEmitOperand,
+  listTopLevelYieldStarCalls,
+  listTopLevelRtDelegateYieldStars,
   loopAsyncSpillInfo,
   planAsyncCfg,
   planAsyncGenCfg,
@@ -722,6 +725,27 @@ function computeAsyncSpills(
       spillNames.push(name);
       spillTypes.push(resolveSpillLocalValType(ctx, node) ?? { kind: "externref" });
     }
+    // (#2570) One persisted externref slot per `yield* <call>` delegate — the
+    // inner frame carrier, created lazily in the delegate INIT state and live
+    // across every pump suspend. Numbered in source order, matching the CFG
+    // planner's `__yieldstar_iter_<i>` naming exactly (both walk the same
+    // top-level statement list).
+    const delegateCalls = listTopLevelYieldStarCalls(decl);
+    for (let i = 0; i < delegateCalls.length; i++) {
+      spillNames.push(`__yieldstar_iter_${i}`);
+      spillTypes.push({ kind: "externref" });
+    }
+    // (#3388) One persisted externref slot per RUNTIME-DELEGATION `yield* <expr>`
+    // (non-call, non-array-literal operand) — the GetAsyncIterator result, live
+    // across every settleYield suspend of the delegation loop. Numbered in
+    // source order matching the CFG planner's `__yieldstar_rtiter_<i>` naming
+    // (both walk the same top-level statement list via
+    // `listTopLevelRtDelegateYieldStars`).
+    const rtDelegates = listTopLevelRtDelegateYieldStars(decl);
+    for (let i = 0; i < rtDelegates.length; i++) {
+      spillNames.push(`__yieldstar_rtiter_${i}`);
+      spillTypes.push({ kind: "externref" });
+    }
     return { spillNames, spillTypes };
   }
   const linear = planLinearAwaits(decl, plan);
@@ -1002,7 +1026,14 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
   // planner always see the same segment split. Type queries go through
   // `ctx.oracle` (the #1930 boundary), not the raw checker.
   const cfg = info.asyncGen
-    ? planAsyncGenCfg(info.decl, isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null)
+    ? planAsyncGenCfg(
+        info.decl,
+        isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null,
+        // (#2570) Emit-time delegates mode (registry-backed helper resolution)
+        // on the same lane split as the admission gate, so gate and planner
+        // always see the same segment shape.
+        asyncGenDelegatesForPlan(ctx, info.decl, isStandalonePromiseActive(ctx) ? "carrier" : "awaitFree"),
+      )
     : planAsyncCfg(ctx, info.decl, plan, { allowLoops: !info.host });
   if (cfg === null) {
     reportError(ctx, info.decl, "internal: async-frame resume built on an unsupported body shape (#2906 slice 1/3a)");
@@ -1465,6 +1496,17 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
             },
           ];
           const rejectFromP: Instr[] = [
+            // (#2958) The frame is consuming this awaited promise's rejection
+            // (the reason is re-thrown into the resume machine, where a
+            // try/catch in the async body may handle it), so mark it handled —
+            // otherwise an inlined `await Promise.reject(x)` would be reported as
+            // unhandled. No-op when tracking is inactive.
+            ...(rt && rt.markRejectionHandledFuncIdx >= 0
+              ? ([
+                  { op: "local.get", index: pLocal },
+                  { op: "call", funcIdx: rt.markRejectionHandledFuncIdx },
+                ] satisfies Instr[])
+              : []),
             { op: "local.get", index: frameLocal },
             { op: "local.get", index: pLocal },
             {
@@ -2059,7 +2101,11 @@ export function emitAsyncFrameStateMachine(
  * doubt (rest param, unbounded body, unsafe spill) returns false ⇒ the module
  * keeps the pre-#2980 host Promise pipeline, exactly as before.
  */
-export function asyncGenDrivableUnderCarrier(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): boolean {
+export function asyncGenDrivableUnderCarrier(
+  ctx: CodegenContext,
+  decl: ts.FunctionLikeDeclaration,
+  allowDelegates = true,
+): boolean {
   if (!ASYNC_CPS_ENABLED) return false;
   for (const p of decl.parameters) {
     if (p.dotDotDotToken !== undefined) return false;
@@ -2067,7 +2113,169 @@ export function asyncGenDrivableUnderCarrier(ctx: CodegenContext, decl: ts.Funct
   for (const node of asyncGenOwnLocalDecls(decl).values()) {
     if (!isSpillSafeType(resolveSpillLocalValType(ctx, node) ?? { kind: "externref" })) return false;
   }
-  return isBoundedAsyncGenBody(decl);
+  // (#2570) `yield* inner()` delegate segments are admitted when the inner
+  // producer is a resolvable, earlier-declared, itself-drivable top-level
+  // async gen. `allowDelegates=false` is the recursion cut when this predicate
+  // judges an INNER producer from a delegate accept() — v1 has no nested
+  // delegation, so an inner with its own `yield* call` rejects.
+  const delegates = allowDelegates ? asyncGenDelegatesForGate(ctx, decl, "carrier") : null;
+  return isBoundedAsyncGenBody(decl, delegates);
+}
+
+/**
+ * (#2570) Resolve a `yield* <callee>(...)` delegate callee to its inner
+ * async-generator FunctionDeclaration — PURELY syntactic (no checker, no
+ * emit-order state), so the pre-body `widenAsyncGenFallback` carrier pre-pass
+ * and the emit-time gate reach the SAME verdict. v1 bounds (correct-or-legacy
+ * beyond them):
+ *   - OUTER is a top-level `async function*` declaration (its scope chain is
+ *     then exactly own params/locals → module, so the shadowing guard below is
+ *     complete without checker resolution);
+ *   - callee is a plain identifier naming a UNIQUE top-level `async function*`
+ *     declaration with a body — not shadowed by an outer param/local/own-scope
+ *     nested function declaration;
+ *   - the inner is declared strictly BEFORE the outer (function bodies compile
+ *     in source order, so the inner's `__async_gen_next_<stem>` driver is
+ *     registered by the time the outer's resume machine emits — the same
+ *     order-robustness argument as `resolveAsyncGenNextHelperName`), and is
+ *     not the outer itself (no self/mutual recursion).
+ */
+export function resolveAsyncGenDelegateDecl(
+  call: ts.CallExpression,
+  outer: ts.FunctionLikeDeclaration,
+): ts.FunctionDeclaration | null {
+  let callee: ts.Expression = call.expression;
+  while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+  if (!ts.isIdentifier(callee)) return null;
+  const name = callee.text;
+  if (!ts.isFunctionDeclaration(outer) || !ts.isSourceFile(outer.parent)) return null;
+  // Shadowing guards: an outer param, own local, or own-scope nested function
+  // declaration named like the callee would bind the call away from the
+  // top-level producer.
+  for (const p of outer.parameters) {
+    if (bindingNameBinds(p.name, name)) return null;
+  }
+  if (asyncGenOwnLocalDecls(outer).has(name)) return null;
+  if (outer.body !== undefined && ownScopeHasFunctionDeclNamed(outer.body, name)) return null;
+  const sf = outer.parent;
+  let found: ts.FunctionDeclaration | null = null;
+  for (const st of sf.statements) {
+    if (ts.isFunctionDeclaration(st) && st.name !== undefined && st.name.text === name) {
+      if (found !== null) return null; // ambiguous duplicate top-level name
+      found = st;
+    }
+  }
+  if (found === null || found === outer) return null;
+  if (found.asteriskToken === undefined || found.body === undefined) return null;
+  const mods = ts.getModifiers(found);
+  if (!mods?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) return null;
+  if (found.pos >= outer.pos) return null; // must be declared (⇒ emitted) before the outer
+  return found;
+}
+
+/** (#2570) Does a param binding name (identifier or pattern) bind `name`? */
+function bindingNameBinds(binding: ts.BindingName, name: string): boolean {
+  if (ts.isIdentifier(binding)) return binding.text === name;
+  for (const el of binding.elements) {
+    if (!ts.isBindingElement(el)) continue; // OmittedExpression (array holes)
+    if (bindingNameBinds(el.name, name)) return true;
+  }
+  return false;
+}
+
+/** (#2570) Own-scope (not crossing nested fn scopes) `function <name>` decl? */
+function ownScopeHasFunctionDeclNamed(body: ts.Node, name: string): boolean {
+  let found = false;
+  const walk = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isFunctionDeclaration(node)) {
+      if (node.name !== undefined && node.name.text === name) found = true;
+      return; // do not descend — its inner decls are its own scope
+    }
+    if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node)) return;
+    ts.forEachChild(node, walk);
+  };
+  ts.forEachChild(body, walk);
+  return found;
+}
+
+/**
+ * (#2570) The STATIC delegate-admission mode for one outer async gen. Reads no
+ * emit-order state (safe for the pre-body carrier pre-pass — see
+ * {@link AsyncGenDelegates}). The carrier lane admits any drivable inner (full
+ * bounded shape, awaited yields included); the await-free (carrier-off) lane
+ * requires the inner itself await-free + spill-safe + rest-free, mirroring the
+ * `isAsyncGenDriveCandidate` await-free arm it feeds.
+ */
+function asyncGenDelegatesForGate(
+  ctx: CodegenContext,
+  outer: ts.FunctionLikeDeclaration,
+  lane: "carrier" | "awaitFree",
+): AsyncGenDelegates {
+  return {
+    accept: (call: ts.CallExpression): boolean => {
+      const inner = resolveAsyncGenDelegateDecl(call, outer);
+      if (inner === null) return false;
+      if (lane === "carrier") return asyncGenDrivableUnderCarrier(ctx, inner, /*allowDelegates*/ false);
+      if (!isAwaitFreeAsyncGenBody(inner, null)) return false;
+      for (const p of inner.parameters) {
+        if (p.dotDotDotToken !== undefined) return false;
+      }
+      for (const node of asyncGenOwnLocalDecls(inner).values()) {
+        if (!isSpillSafeType(resolveSpillLocalValType(ctx, node) ?? { kind: "externref" })) return false;
+      }
+      return true;
+    },
+  };
+}
+
+/**
+ * (#2570) EMIT-time delegates mode: static admission plus registry-backed
+ * helper-name resolution for the planner's pump state. Only valid once the
+ * inner producers have emitted (guaranteed by the declared-before-outer bound
+ * plus source-order body compilation).
+ */
+function asyncGenDelegatesForPlan(
+  ctx: CodegenContext,
+  outer: ts.FunctionLikeDeclaration,
+  lane: "carrier" | "awaitFree",
+): AsyncGenDelegates {
+  const base = asyncGenDelegatesForGate(ctx, outer, lane);
+  return {
+    accept: base.accept,
+    helperNameFor: (call: ts.CallExpression): string | null => {
+      const inner = resolveAsyncGenDelegateDecl(call, outer);
+      if (inner === null) return null;
+      const stem = asyncGenStem(inner);
+      const reg = ctx.asyncGenProducers?.get(stem);
+      if (reg === undefined || reg.decl !== inner) return null;
+      const name = `__async_gen_next_${stem}`;
+      return ctx.funcMap.has(name) ? name : null;
+    },
+  };
+}
+
+/**
+ * (#2570) Emit-time verification that every syntactic `yield* <call>` delegate
+ * of `decl` resolves to an inner producer that ACTUALLY emitted driven (its
+ * `__async_gen_next_<stem>` driver registered against the SAME declaration).
+ * Vacuously true for a body with no delegate calls, so non-delegating gens are
+ * untouched. A mismatch (e.g. a stem collision made the inner fall to legacy)
+ * routes the outer to legacy too — correct-or-legacy, and mix-safe: on
+ * standalone the pre-pass has already flagged such a module non-drivable
+ * (carrier off), and on wasi a legacy fallback is the pre-existing tolerated
+ * arrangement.
+ */
+function asyncGenDelegatesRegistered(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): boolean {
+  for (const call of listTopLevelYieldStarCalls(decl)) {
+    const inner = resolveAsyncGenDelegateDecl(call, decl);
+    if (inner === null) return false;
+    const stem = asyncGenStem(inner);
+    const reg = ctx.asyncGenProducers?.get(stem);
+    if (reg === undefined || reg.decl !== inner) return false;
+    if (!ctx.funcMap.has(`__async_gen_next_${stem}`)) return false;
+  }
+  return true;
 }
 
 export function isAsyncGenDriveCandidate(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): boolean {
@@ -2111,7 +2319,12 @@ export function isAsyncGenDriveCandidate(ctx: CodegenContext, decl: ts.FunctionL
   // emit gate and the `widenAsyncGenFallback` pre-pass provably consistent, so a
   // module the pre-pass judged all-driven never falls a gen to the legacy buffer
   // here (which would re-introduce the native-`$Promise`-into-host-buffer mix).
-  if (isStandalonePromiseActive(ctx)) return asyncGenDrivableUnderCarrier(ctx, decl);
+  // (#2570) Both arms additionally require every `yield* <call>` delegate's
+  // inner producer to have ACTUALLY emitted driven (registry-verified) —
+  // vacuous for non-delegating bodies.
+  if (isStandalonePromiseActive(ctx)) {
+    return asyncGenDrivableUnderCarrier(ctx, decl) && asyncGenDelegatesRegistered(ctx, decl);
+  }
   // (#2865) `--target standalone` with the carrier gate still OFF (#2980):
   // drive the producer host-free ONLY for await-free bodies. With the carrier
   // off an awaited operand does not lower to a native `$Promise`, so
@@ -2122,7 +2335,13 @@ export function isAsyncGenDriveCandidate(ctx: CodegenContext, decl: ts.FunctionL
   // (#3120: a Promise-typed plain `yield P` deliberately stays PLAIN — and
   // driven, byte-identically — on this lane; its implicit-await value gap is
   // the carrier widen's to close. See ImplicitYieldAwaitMode in async-cps.ts.)
-  if (isAsyncDriveActive(ctx)) return isAwaitFreeAsyncGenBody(decl) && spillsSafe();
+  if (isAsyncDriveActive(ctx)) {
+    return (
+      isAwaitFreeAsyncGenBody(decl, asyncGenDelegatesForGate(ctx, decl, "awaitFree")) &&
+      spillsSafe() &&
+      asyncGenDelegatesRegistered(ctx, decl)
+    );
+  }
   return false;
 }
 

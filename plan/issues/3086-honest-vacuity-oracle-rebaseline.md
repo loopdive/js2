@@ -7,6 +7,7 @@ sprint: current
 priority: high
 horizon: l
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: measurement-integrity
 area: ci/test-infra

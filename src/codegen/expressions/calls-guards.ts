@@ -13,7 +13,8 @@ import type { InnerResult } from "../shared.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { isBigIntType, isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
+import { isBigIntType, isBooleanType, isNumberType, isStringType, isSymbolType } from "../../checker/type-mapper.js";
+import { noJsHost } from "../js-errors.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
 
@@ -286,6 +287,23 @@ export function emitObjectCoercion(
     const finalBigIntIdx = ctx.funcMap.get("__new_BigInt") ?? newBigIntIdx;
     if (finalBigIntIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: finalBigIntIdx });
+      return { kind: "externref" };
+    }
+  } else if (isSymbolType(argTsType) && !noJsHost(ctx)) {
+    // (#2728) Object(sym) → Symbol-wrapper object (§7.1.18 ToObject, Table 13),
+    // whose `typeof` is "object". Symbol is NOT a constructor, so the generic
+    // `__new_<Ctor>` (`new Symbol(id)`) path throws — mirror the `__new_BigInt`
+    // (#1568) approach with a dedicated `__new_Symbol` host helper that boxes
+    // the i32 symbol id to the real JS Symbol (reusing the same per-instance
+    // id→Symbol cache as `__box_symbol`, so identity/description round-trip) and
+    // returns `Object(sym)`. Symbols compile to a bare i32 counter id.
+    // Standalone / no-JS-host: no host wrapper — fall through to identity below.
+    compileExpression(ctx, fctx, args[0]!, { kind: "i32" });
+    const newSymIdx = ensureLateImport(ctx, "__new_Symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    const finalSymIdx = ctx.funcMap.get("__new_Symbol") ?? newSymIdx;
+    if (finalSymIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: finalSymIdx });
       return { kind: "externref" };
     }
   }
