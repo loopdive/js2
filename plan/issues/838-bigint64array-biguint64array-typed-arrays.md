@@ -21,6 +21,7 @@ loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/expressions/new-super.ts
 ---
+
 # #838 -- BigInt typed arrays (BigInt64Array, BigUint64Array)
 
 ## Problem
@@ -52,7 +53,6 @@ Register BigInt64Array and BigUint64Array as TypedArray constructors with i64 el
 
 - [§23.2 TypedArray Objects](https://tc39.es/ecma262/#sec-typedarray-objects) — Table 69: BigInt64Array (i64) and BigUint64Array (u64) element types
 - [§21.2 BigInt Objects](https://tc39.es/ecma262/#sec-bigint-objects) — BigInt values as typed array elements
-
 
 ## Acceptance criteria
 
@@ -97,3 +97,45 @@ constructors for both views, element write/read, `.length`/`.byteLength`,
 write/read with `BigInt()` coercion, max/min i64 round-trip, standalone compile.
 No regressions in `bigint.test.ts` or the numeric typed-array paths
 (Float64Array/Int32Array/Uint8Array verified unchanged host + standalone).
+
+## Takeover + js-host Atomics gate (fable-dev-5, 2026-07-18)
+
+**Author retired** (branch idle since 2026-07-17 20:03, ~11h; takeover per the
+tech-lead [CI-FIX] task). The PR was hold-parked on a merge_group "check for
+test262 regressions" (−3 net). Root-caused via a **contrabase isolation**
+(re-ran the cited tests on current main WITHOUT the 3 #838 src files vs WITH
+them, js-host lane):
+
+- **5 genuine #838 regressions** (pass on main, fail with #838): all
+  `Atomics/*/bigint/*` — `wait/{negative,out-of-range}-index-throws`,
+  `waitAsync/{negative,out-of-range}-index-throws`,
+  `notify/non-shared-bufferdata-count-evaluation-throws`. Cause: #838 routed the
+  BigInt views to a native i64-vec in **all** lanes, but the js-host
+  `Atomics.wait/notify/waitAsync` bridge does not validate indices over an i64
+  native vec (the numeric-vec bridge does), so the spec RangeError/TypeError is
+  not thrown first and the tests' poisoned args get evaluated.
+- **3 pre-existing failures MIS-ATTRIBUTED to #838** by the merge_group diff
+  (they fail on plain main too — baseline-stale, NOT this PR):
+  `TypedArrayConstructors/BigInt64Array/prototype.js` +
+  `.../BigUint64Array/prototype.js` (`verifyProperty` — undefined/null proto
+  descriptor) and
+  `ctors-bigint/typedarray-arg/other-ctor-returns-new-typedarray.js`
+  (`Duplicate identifier 'isPrimitive'` compile_error). These should NOT be
+  re-blamed on #838 in future regression diffs.
+
+**Fix — standalone/wasi gate** (mirrors the numeric packed-view lane-gating
+precedent, dual-mode principle: host lane rides host paths). The BigInt views
+now take the native i64-vec path ONLY in standalone/wasi; js-host keeps the
+host-global `BigInt64Array` (main's behavior). Sites tagged `#838 gate` in
+`new-builtin-globals.ts`, `new-super.ts`, `index.ts:resolveWasmType`.
+
+**Measured (js-host lane):** the 5 Atomics regressions → **5/5 recovered**;
+broad `Atomics/{wait,waitAsync,notify}/bigint` scan is **byte-for-byte
+identical to main (18 pass / 59 fail** — the 59 are agent/wait-suspend harness
+gaps main also has), i.e. **zero js-host regression from the gate**. Standalone
+BigInt64Array wins intact (`new BigInt64Array([1n,2n,3n])[1]` → 2, count-ctor
+length → 4). Net vs main: standalone improvements only, strictly ≥ main.
+
+**Follow-up filed: #3405** — extend the js-host Atomics bridge to i64-element
+native vecs so js-host BigInt64Array can also use the native path (post-Monday
+Opus work). The gate is removed once that lands.

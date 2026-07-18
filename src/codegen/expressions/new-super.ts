@@ -3966,7 +3966,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       "BigInt64Array",
       "BigUint64Array",
     ]);
-    if (className && TYPED_ARRAY_CTORS.has(className)) {
+    // (#838 gate — fable-dev-5) BigInt views take the native i64-vec ctor path
+    // only in standalone/wasi; js-host keeps the host-global BigInt64Array so
+    // SharedArrayBuffer/Atomics interop works (see new-builtin-globals.ts note).
+    const isBigIntCtor838 = className === "BigInt64Array" || className === "BigUint64Array";
+    if (className && TYPED_ARRAY_CTORS.has(className) && (!isBigIntCtor838 || ctx.wasi || ctx.standalone)) {
       // (#2593) packed integer storage standalone/WASI — see the matching
       // count-ctor handler above. `typedArrayVecStorage` keeps host/gc on f64
       // and packs Int8/Uint8/Uint8Clamped→i8, Int16/Uint16→i16, Int32/Uint32→i32.

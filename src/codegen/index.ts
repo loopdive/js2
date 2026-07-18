@@ -5310,7 +5310,13 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // deliberately kept OUT of `TYPED_ARRAY_NAMES` so the f64-assuming host
     // marshalling classifier treats them as "other"; `typedArrayVecStorage`
     // returns i64 for them).
-    if (sym?.name && (TYPED_ARRAY_NAMES.has(sym.name) || BIGINT_TYPED_ARRAY_NAMES.has(sym.name))) {
+    // (#838 gate — fable-dev-5) Only in standalone/wasi: in js-host the BigInt
+    // views stay host globals (externref) so SharedArrayBuffer/Atomics interop
+    // works — the native i64-vec has no js-host Atomics bridge yet (see the
+    // construction-path notes in new-builtin-globals.ts / new-super.ts). Numeric
+    // views map to a native vec in js-host too, but their Atomics bridge exists.
+    const isBigIntView838 = sym?.name !== undefined && BIGINT_TYPED_ARRAY_NAMES.has(sym.name);
+    if (sym?.name && (TYPED_ARRAY_NAMES.has(sym.name) || (isBigIntView838 && (ctx.wasi || ctx.standalone)))) {
       const storage = typedArrayVecStorage(ctx, sym.name);
       const vecIdx = getOrRegisterVecType(ctx, storage.key, storage.type);
       return { kind: "ref_null", typeIdx: vecIdx };
