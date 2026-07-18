@@ -1,9 +1,8 @@
 {
   "id": "2872",
-  "assignee": "ttraenkler/agent-a30d0acc00d3c78c5",
-  "status": "done",
-  "branch": "issue-2872-standalone-typedarray-hof",
-  "claimed_at": "2026-07-12T09:48:05Z",
-  "updated_at": "2026-07-12T14:29:48Z",
-  "released_at": "2026-07-12T14:29:48Z"
+  "assignee": "ttraenkler/fable-dev-5",
+  "status": "in-progress",
+  "branch": "issue-2872-scalar-hof-any-decline",
+  "claimed_at": "2026-07-18T01:13:55Z",
+  "updated_at": "2026-07-18T01:13:55Z"
 }
