@@ -1,10 +1,12 @@
 ---
 id: 3136
 title: "Standalone: object read back through a boxed-capture cell loses `===` identity with the outer variable"
-status: ready
-sprint: Backlog
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/dev-standalone2
+sprint: current
 created: 2026-07-10
-updated: 2026-07-10
+updated: 2026-07-17
 priority: medium
 horizon: s
 feasibility: medium
@@ -15,6 +17,25 @@ goal: standalone-mode
 related: [3128, 2583, 3130]
 origin: "#3128 rescue (fable-18th) — surfaced when the issue-3128 test suite was moved from the vacuous `{standalone:true}` compile option (silently gc-host) to the real `target: 'standalone'` lane"
 ---
+
+## Resolution (2026-07-17)
+
+**Already fixed on main** by the intervening any-typed strict-equality / boxed
+native-value work (the tag-5 host-only arm — `reference_2583_*` family — was
+generalised to a carrier-agnostic path; see #745 S3 `$AnyValue` strict-eq).
+Re-verified against current main: the minimal repro and both identity controls
+now return `1` under `target: "standalone"`.
+
+Closed by:
+- restoring the identity assertions in `tests/issue-3128.test.ts` — the two
+  `standaloneSrc` value-only relaxations (the "escaped self-capturing closure"
+  and "sibling closure outside the RHS" cases) are removed, so `closureRead()
+  === p2` OBJECT-identity now runs on BOTH lanes;
+- adding `tests/issue-3136.test.ts` — the exact minimal repro + arrow variant +
+  controls (value-flow, no-write, aliasing, mutate-through-cell), on both the
+  standalone and js-host lanes.
+
+No host-lane behavior change (guard-only + already-green fix).
 
 # #3136 — standalone cell-read object identity loss
 

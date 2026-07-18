@@ -1,10 +1,12 @@
 ---
 id: 2509
 title: "referencedNames over-collects property-access names → spurious env.<name> ambient-global imports (e.g. obj.close)"
-status: ready
-sprint: Backlog
+status: done
+assignee: dev-builtins
+completed: 2026-07-17
+sprint: current
 created: 2026-06-19
-updated: 2026-06-19
+updated: 2026-07-17
 priority: low
 feasibility: medium
 reasoning_effort: low
@@ -14,6 +16,11 @@ language_feature: host-imports
 goal: correctness
 parent: 2520
 depends_on: [2520]
+# (#2509) The property-name skip guard + its rationale belong in
+# collectReferencedGlobalNames, which is defined in extern-declarations.ts; a
+# +10 LOC correctness fix in its own module warrants the allowance.
+loc-budget-allow:
+  - src/codegen/extern-declarations.ts
 ---
 
 ## Problem

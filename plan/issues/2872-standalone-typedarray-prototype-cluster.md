@@ -2,12 +2,13 @@
 id: 2872
 title: "Standalone: TypedArray.prototype.* cluster (294 host-pass/standalone-fail, de-masked from #2862)"
 status: in-progress
-assignee: ttraenkler/agent-a30d0acc00d3c78c5
+assignee: ttraenkler/fable-dev-5
 created: 2026-06-30
-updated: 2026-07-12
+updated: 2026-07-18
 priority: high
 task_type: bug
 feasibility: hard
+model: fable
 area: codegen
 goal: standalone
 sprint: current
@@ -22,6 +23,180 @@ loc-budget-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/expressions/calls-closures.ts
 ---
+
+## Slice 5 implementation plan (fable-dev-5, 2026-07-18, branch `issue-2872-scalar-hof-any-decline`, stacked on PR #3338)
+
+Executes BOTH parts of the slice-5 root-cause map below (dev-4's takeover PR
+#3338 banked the map; the stale `agent-a30d0acc00d3c78c5` claim-lock was
+force-taken per the takeover already approved there). WHY each change is
+where it is:
+
+1. **Part 2 (load-bearing) — scalar-HOF any-receiver decline in
+   `tryExternClassMethodOnAny` (calls-closures.ts).** The #3139 unconditional
+   refusal list already declines find/findIndex/forEach/some/every/filter/map/
+   reduce/reduceRight/indexOf/lastIndexOf — but NOT `findLast`/`findLastIndex`,
+   so the first-match loop still binds `env::Uint8ClampedArray_findLast[Index]`
+   (the measured host_import_leak ×33). Fix: a SHARED decline
+   `if (noJsHost(ctx) && STANDALONE_TA_SCALAR_HOFS.has(methodName)) return null;`
+   placed before the first-match loop. Uses the existing exported set from
+   calls.ts (calls-closures.ts already imports from `./calls.js` — no new
+   cycle). `noJsHost`-gated (join precedent, line ~1514) so the HOST lane keeps
+   its extern binding byte-identical — zero host-lane risk, unlike widening the
+   unconditional #3139 list. For the siblings the new line is unreachable
+   (they return earlier) — it exists as the family-level standalone guarantee
+   the map asked for. After the decline the standalone ladder bottoms out at
+   the #2151 closed-method dispatcher whose #3098 HOF arm already serves
+   findLast/findLastIndex via the native `__hof_findLast[Index]` backward
+   loops (hof-native.ts NATIVE_HOF_EACH — verified present).
+2. **Part 1 (fold-in) — findLast/findLastIndex join the #3058/#3162 dyn-view
+   two-arm (array-methods.ts).** Add both to `DYN_VIEW_READ_METHODS` AND
+   `FIND_METHODS`. The FIND_METHODS route sends the THEN arm through
+   `ensureNativeArrayHof` (`__hof_findLast[Index]`, backward flag — already
+   implemented), NOT the legacy `compileArrayFind` re-entry whose missing
+   `__call_1_f64` registration was the (now-stale) exclusion note. Gc/host
+   byte-identical by construction: the line-1135 gate `(!FIND_METHODS.has ||
+   ctx.standalone)` keeps the two-arm standalone-only for FIND_METHODS
+   members. Also prune the stale exclusion note.
+
+Checklist (kept current — resume point if interrupted):
+
+- [x] Root-cause map read (PR #3338); code paths verified on this base
+- [x] Claim lock force-taken (stale 07-12 holder; takeover per #3338)
+- [x] Part 2 decline in calls-closures.ts
+- [x] Part 1 set additions in array-methods.ts
+- [x] Part 3 (surfaced during verification, see below): `__hof_*` S1
+      undefined-singleton producer fix in hof-native.ts
+- [x] Probe: any-receiver harness shape — no `env::*_findLast*` import, correct
+      values/order/thisArg/undefined-miss, standalone execute (suite 10/10)
+- [x] Probe: plain-array any-receiver findLast unhijacked (guard)
+- [x] Regression sweep: issue-2872×3 / #3058 / #3098 / #3162 / #1712×5 suites
+      green (only 2 PRE-EXISTING env failures, verified identical on clean
+      base: issue-2001-s2 reduce-hole, issue-1712-capture arity-0) +
+      prove-emit-identity IDENTICAL 56/56 vs base (gc/host byte-inert)
+- [x] Scoped test262 (standalone, `TypedArray/prototype/{findLast,findLastIndex}`,
+      50 files): base 4 pass / 12 fail / 34 CE → branch **24 pass / 26 fail /
+      0 CE** = **+20 pass, −34 CE, 0 regressions**
+- [x] Collateral sweep (all 9 scalar-HOF dirs, 245 files, per-file diff):
+      every flipped line is in findLast/findLastIndex; siblings
+      (find/findIndex/forEach/some/every/reduce/reduceRight) ZERO flips
+- [ ] PR open, CI started
+
+### Part 3 (found during verification): `__hof_*` S1 undefined-producer gap
+
+The slice-5 suite exposed a THIRD gap beyond the banked two: under the #2106
+`undefinedSingleton` regime (default ON since 2026-07-04, 6f7f93c85) a null
+externref is JS `null`, NOT `undefined` — but `ensureNativeArrayHof` still
+emitted legacy `ref.null.extern` for its "returns undefined" results
+(`find`/`findLast` miss, `forEach` result, reduce-of-empty). So
+`a.findLast(missPred) === undefined` was FALSE (the value classified as
+`null`: typeof "object", `=== null` true) — and this bug was LIVE on main for
+the shipped #3162 `find`/`findIndex` (its own suite's miss test fails on a
+clean checkout; invisible in CI because the `quality` gate runs only
+CHANGED test files, and #3162's PR presumably predates/raced the flip's full
+effect). Fix: `undefinedExternInstrs(ctx) ?? ref.null.extern` at the three
+result sites in hof-native.ts (regime-off builds byte-identical). The
+committed suite asserts miss `=== undefined`, falsiness, and `??` coalescing.
+
+Remaining fails in the two dirs are the KNOWN follow-on buckets (not this
+slice): the slice-6 cross-method `assert.throws` cluster (brand/detach/OOB
+spec throws, ~150+ rows), reflective `name`/`length`/`prop-desc` (#2885-glue),
+and resizable-buffer mid-iteration semantics.
+
+Slice 6 (the ~150-row cross-method `assert.throws` shared-validation-prelude
+cluster) remains the NEXT slice after this — not in this PR.
+
+## Takeover + fresh 2026-07-18 re-measurement (fable-dev-4)
+
+**Assignee cleared 2026-07-18** — was `ttraenkler/agent-a30d0acc00d3c78c5`,
+stale since 07-11/07-12 (docs-only newest activity, 6 days dead, no open PR;
+tech-lead approved the takeover after a coordination scan). The 4 prior branches
+(`issue-2872-standalone-typedarray-hof`/`-proto`, `-real-clusters`,
+`ta-proto-methods`) carry slices 1–4 that already MERGED to main per the
+progress log below (`.fill`, `copyWithin`/`reverse`, `reduce`/`reduceRight` +
+boolean-result boxing). This takeover grounds on landed main, not those branches.
+
+**Fresh gap re-measure** (2026-07-18 promoted standalone baseline vs host, official
+scope, `file|strict` match): `built-ins/TypedArray/prototype/*` = **690 gap rows**
+(host pass ∧ standalone not-pass), up from the 294 original estimate — the metric
+de-masked runtime failures as the carriers landed (this is the #2860 re-measure's
+"assertion_fail now dominates" shift, localised to TA.prototype).
+
+### Two coherent slices (per-method + failure-signature sub-bucketing)
+
+The dominant failure across NEARLY EVERY method is **`assertion_fail` with an
+`assert.throws` signature** — the method is implemented but a spec-mandated
+throw is missing:
+
+| method | gap | dominant category |
+| ------ | --: | ----------------- |
+| slice | 58 | assertion_fail 45 (assert.throws 17), type_error 11 |
+| set | 53 | assertion_fail 46 (assert.throws 22) |
+| map | 48 | assertion_fail 38 (assert.throws 17) |
+| subarray | 46 | assertion_fail 38 (assert.throws 13) |
+| filter | 43 | assertion_fail 35 (assert.throws 15) |
+| fill | 27 | assertion_fail 25 (assert.throws 10) — *slice-1 landed the value path* |
+| copyWithin | 22 | assertion_fail 20 — *slice-2 landed value path* |
+| reduce/reduceRight | 44 | assertion_fail 34 — *slice-4 landed value path* |
+| **findLast/findLastIndex** | **43** | **host_import_leak 33** (`env::Uint8ClampedArray_findLast[Index]`) + assertion_fail 10 |
+| includes/indexOf/lastIndexOf | 60 | assertion_fail (assert.sameValue) |
+
+**SLICE 5 — `findLast` / `findLastIndex` host-free (PRECISELY root-caused
+2026-07-18; deeper than a clean "add to set" — NOT yet landed).** The dominant
+failure is a genuine **host_import_leak** (`env::Uint8ClampedArray_findLast`
+×17, `env::Uint8ClampedArray_findLastIndex` ×16). Traced end-to-end — it is a
+**two-part** gap, not one:
+
+1. **Direct-receiver path (FIXED by a 1-line-ish change, verified):** the
+   `#3058` dyn-view two-arm set `DYN_VIEW_READ_METHODS` (array-methods.ts:829)
+   + `FIND_METHODS` (:867) EXCLUDED findLast/findLastIndex behind a **stale**
+   note ("legacy `compileArrayFind` re-entry misses `__call_1_f64` → CE"). The
+   `#3098` `__hof` substrate ALREADY has the backward steppers (`__hof_findLast`
+   /`__hof_findLastIndex`, `hof-native.ts:63-64,110` `backward` flag), exactly
+   like the already-shipped find/findIndex. Adding findLast/findLastIndex to
+   BOTH sets makes a **statically-typed** `new Uint8ClampedArray([…]).findLast(cb)`
+   compile host-free + correct (probe-verified: values right, `typeof` of
+   not-found = "undefined", reverse order correct, identical behaviour to the
+   shipped `find`). This part is a safe, isolated win.
+
+2. **`any`-receiver harness path (the ACTUAL test262 shape — STILL LEAKS after
+   part 1):** test262's `testWithTypedArrayConstructors(TA => new TA(…).method)`
+   wraps the receiver as `any`, producing the boxed `$__ta_dyn_view`. The
+   two-arm THEN arm then handles it correctly, BUT the two-arm always ALSO
+   compiles its **ELSE arm** (the "not a dyn-view at runtime" fallback), which
+   re-dispatches via `compileExpression` →
+   `compileReceiverMethodCall` → **`tryExternClassMethodOnAny`
+   (calls-closures.ts:~1519 first-match loop)**. That loop greedily binds the
+   first extern class declaring the method — a TypedArray view — to the per-ctor
+   `env::Uint8ClampedArray_findLast` HOST import (addImport at
+   calls-closures.ts:1550). Because the import is emitted at COMPILE time (both
+   arms compile), the binary leaks even though the THEN arm would run. **Fix
+   location: `tryExternClassMethodOnAny`** — it already has the exact precedent
+   at line 1514 (`join` routes native under `noJsHost` instead of binding
+   `env::Uint8ClampedArray_join`) and the `.slice`/`.replace` `continue`
+   refusals (line 1543). Under `noJsHost`, a TA-view extern-class binding for a
+   scalar-HOF method (the `STANDALONE_TA_SCALAR_HOFS` set in calls.ts:1514 —
+   find/findIndex/findLast/findLastIndex/forEach/some/every/reduce/reduceRight)
+   should be **declined** (`continue`) so the call falls through to the
+   host-free generic path, exactly like `join`. This is a SHARED fix: it would
+   also close the same latent any-receiver leak for the other scalar HOFs, so it
+   warrants its own measure-first slice + a full any-receiver regression sweep
+   (the dispatch is sensitive — the #1712 acorn `.replace` collision lived
+   here). Both parts together are slice 5; part 2 is the load-bearing one for
+   the test262 harness rows and is why this was reverted rather than shipped
+   half-done (part 1 alone flips ~0 harness rows).
+
+**SLICE 6+ (the BIG lever, NOT this PR — recommend a dedicated follow-on) —
+the cross-method `assert.throws` cluster (~150+ rows).** slice/set/map/subarray/
+filter/fill/copyWithin all share a missing spec-throw: calling the method with a
+detached buffer, an out-of-bounds/invalid index arg, or a wrong receiver brand
+must throw TypeError/RangeError but does not (the tests are
+`assert.throws(TypeError, () => ta.method(bad))`). A SHARED validation-prelude
+(detached-buffer guard + ToIntegerOrInfinity/range checks + brand check) emitted
+once and reused across the dyn-view method arms would flip a large coherent
+batch — but it needs its own measure-first slice (each method's exact throw
+conditions differ) and touches the shared dyn-view method emitter, so it is a
+separate PR from slice 5. Flagging it here as the highest-remaining-lever
+follow-on for tech-lead scheduling.
 
 ## Progress (2026-07-12, fable) — Slice 4: dyn-view reduce/reduceRight + boolean-result boxing (REUSE-first)
 

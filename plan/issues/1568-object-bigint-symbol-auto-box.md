@@ -3,7 +3,7 @@ id: 1568
 title: "Object(BigInt) and Object(Symbol) must auto-box to wrappers (typeof === \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"object\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\")"
 status: done
 created: 2026-05-21
-updated: 2026-05-27
+updated: 2026-07-17
 completed: 2026-05-27
 feasibility: easy
 sprint: 56
@@ -13,6 +13,11 @@ type: fix
 source: plan/issues/sprints/53/post-wave-regression-investigation.md
 blocks: []
 labels: [test262, regression, ToObject, ECMAScript-spec]
+# Restoring the regressed __new_BigInt/__new_Symbol Object(v) wrapper handler
+# (a single early-return) in the runtime's extern_class "new" dispatch — an
+# intentional +13 in the runtime barrel that carries the host import handlers.
+loc-budget-allow:
+  - src/runtime.ts
 ---
 # #1568 — Object(BigInt) and Object(Symbol) auto-box
 
@@ -78,9 +83,23 @@ this is a pre-existing wrapper-`.valueOf()` unboxing limitation shared by the
 number/string/boolean wrappers (the String equivalent behaves identically), out
 of scope here. The real test262 test only checks `typeof`.
 
+## Regression + restore (2026-07-17)
+
+The original `__new_BigInt(v)` / `__new_Symbol(v)` runtime handler (an early
+`return (v) => Object(v)` at the top of the `extern_class` `"new"` dispatch)
+was **dropped during a later runtime.ts refactor** that relocated the
+`extern_class` block (it now lives near line 7635). With the handler gone,
+`Object(BigInt(42))` / `Object(BigInt(0n))` fell through to the generic
+`builtinCtors[className]` lookup, and since neither `BigInt` nor `Symbol` is a
+constructor (not in `builtinCtors`), the resolver threw
+`No dependency provided for extern class "BigInt"` at runtime — 3 of the 6
+`tests/issue-1568.test.ts` cases (the ones invoking `BigInt(...)`) failed on
+main. Restored the identical single-early-return handler in the current
+`action === "new"` block. All 6 tests pass again.
+
 ## Test Results
 
-- `tests/issue-1568.test.ts` — 6 new tests, all pass.
+- `tests/issue-1568.test.ts` — 6 tests, all pass (was 3 failing on main).
 - `tests/issue-1129.test.ts` — 9 existing tests, all pass (no regression).
 
 ## References

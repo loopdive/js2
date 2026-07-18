@@ -3,7 +3,7 @@ id: 2706
 title: "for-in enumeration order: integer-index keys ascending, insertion-order strings, prototype-chain dedup"
 status: blocked
 assignee: ttraenkler/Esch
-sprint: 67
+sprint: Backlog
 goal: test262-conformance
 feasibility: medium
 depends_on: [2739]

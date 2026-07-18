@@ -193,6 +193,10 @@ export class CompilerPool {
       isNegative?: boolean;
       isRuntimeNegative?: boolean;
       expectedErrorType?: string;
+      /** Execute literal upstream harness source; success is module-init completion. */
+      originalHarness?: boolean;
+      /** Wait for the upstream doneprintHandle completion marker. */
+      asyncTest?: boolean;
       wasmPath?: string;
       metaPath?: string;
       label?: string;
@@ -210,6 +214,8 @@ export class CompilerPool {
         isNegative: opts.isNegative || false,
         isRuntimeNegative: opts.isRuntimeNegative || false,
         expectedErrorType: opts.expectedErrorType,
+        originalHarness: opts.originalHarness || false,
+        asyncTest: opts.asyncTest || false,
         wasmPath: opts.wasmPath,
         metaPath: opts.metaPath,
         target: opts.target,

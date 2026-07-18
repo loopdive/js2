@@ -10,6 +10,8 @@ reasoning_effort: high
 task_type: feature
 language_feature: eval
 goal: platform
+model: fable
+fable_role: spec
 sprint: Backlog
 depends_on: [1164, 1058]
 required_by: [1584]
@@ -248,3 +250,116 @@ For WASI target, the import module name becomes `"eval-host"` to match the WIT m
 - `src/codegen/typeof-delete.ts` (eval call lowering, if target-aware)
 - `src/cli.ts` (`--eval-host` flag)
 - new `tests/issue-1066-standalone-eval.test.ts`
+
+## Implementation Plan (Fable, 2026-07-18) — re-grounded against the tier ladder
+
+> **Everything above this section predates the eval tier ladder and must not
+> be implemented as written.** The authoritative strategy is
+> `docs/architecture/runtime-eval-interpreter.md` (Part II wins; §12 routing
+> table, §16 slice sequencing). Verified state 2026-07-18: #1006/#1164
+> (Tier 1 host shim) done; #1102 (Tier-0 constant-frontier widening, PR
+> #3113) done; #2960 (Tier-3 refuse-loudly) done; #2927 `ready`
+> (sprint: current), #2928/#2929 backlog. The **standalone-primary answer to
+> dynamic eval is Tier 2** — the embedded self-compiled bytecode interpreter
+> (E-slices, §16) — NOT this issue's recursive-host-compilation design.
+
+### Where this issue now fits: "Tier 1w" — host-provided eval for pure-Wasm embedders
+
+The ladder's Tier 1 assumes a *JS* host. This issue's surviving, real use
+case is an embedder running wasmtime/wasmer-class runtimes who is willing to
+ship js2wasm on the host side and wants eval without paying Tier 2's
+in-module interpreter size (§16 E6 floor). That is a **host-choice rung
+parallel to Tier 1** (same "meta-circular recompile" mechanism, different
+host language), NOT a conformance rung: the test262 CI standalone lane runs
+no such host, so **this issue buys zero conformance points** — Tier 0
+(landed) and Tier 2 (E2/E3) own the standalone cliff (~490
+currently-trapping tests, doc §5.3). Its value is embedder capability + the
+Component-Model-facing WIT artifact none of the E-slices produce.
+
+### Options considered (recommendation: Option 3)
+
+1. **Build now as originally spec'd** (WIT `eval: func(source, direct)` +
+   Rust/wasmtime host). REJECTED as written — two defects: (a) the drafted
+   import shape has **no environment handle and no strictness**, so the
+   child module compiles free identifiers against its own empty globals —
+   recreating exactly the #3017 `ReferenceError`-shape/global-sharing bug
+   class the doc's §14 unified name-resolution semantics exists to fix;
+   (b) it duplicates Tier 2's win at high host-integration cost while
+   Tier 2 is already the committed direction.
+2. **Close as superseded by Tier 2.** REJECTED — the embedder story and the
+   WIT standardization are real and not covered elsewhere; and Tier 2's E6
+   size analysis may itself motivate a host-provided option for
+   size-constrained deployments.
+3. **Keep, re-chartered as Tier 1w, sequenced AFTER #2928 E2/E3 land**
+   (RECOMMENDED). The interface is designed to be observably equivalent to
+   Tiers 1/2 on name resolution (§14), so a program migrated between modes
+   behaves identically. Stays `sprint: Backlog`; do not schedule into a
+   budget window before E2/E3 — sequencing it earlier would spend the eval
+   budget twice.
+
+### Phases (each independently landable)
+
+**P0 (S) — WIT world draft, §14-aligned.** `wit/eval-host.wit`:
+
+```wit
+interface eval-host {
+    resource js-env {            // §14 object-record protocol over the
+        get: func(name: string) -> result<value, missing>;   // parent's
+        set: func(name: string, v: value) -> result<_, err>; // globalThis
+        has: func(name: string) -> bool;
+        delete: func(name: string) -> bool;
+    }
+    enum mode { direct, indirect, function-ctor }
+    eval: func(source: string, mode: mode, strict: bool,
+               global-env: borrow<js-env>) -> result<value, thrown>
+}
+```
+
+The load-bearing delta vs the old draft is `js-env`: a WasmGC `$Object`
+cannot cross a WIT boundary, so the parent module exports the object-record
+*protocol* (get/set/has/delete over its globalThis) and the host threads it
+into every child module it compiles — child free-identifier misses walk this
+record and throw the §14 root-miss `ReferenceError`, and an eval'd
+`var x = 1` lands in the PARENT's globals (visible to AOT code, §4.3), not
+the child's. Mirror whatever concrete host-shim linkage #3017-gap-2 lands
+for Tier 1 — that work defines the guest-side calling convention this WIT
+world formalizes; do not invent a second one. Direct-eval scope capture:
+out of scope for v1 exactly as Tier 1's is (#2925's reified declarative
+record slots in later as an additional chain-head parameter — leave a
+reserved option, do not block on it).
+
+**P1 (S) — guest-side opt-in routing.** New flag (`--eval-host`, default
+OFF). Default standalone behavior is UNCHANGED — Tier-3 refuse-loudly
+(#2960) stays, satisfying ladder invariant L1 and the dual-mode rule ("no
+host import without a standalone fallback" — the fallback IS Tier 3). With
+the flag on, the Tier-3 throw sites in `src/codegen/expressions/calls.ts`
+(eval) and `src/codegen/expressions/new-super.ts` (`new Function`) emit the
+`eval-host` import instead. Routing-rule-3 compliance: this replaces a
+throw with an execution — the only allowed direction.
+
+**P2 (L) — reference host.** Pragmatic correction to the old plan: the
+natural reference host is a **Node-based WASI runner embedding the compiler
+in-process** (`compileSourceSync`, LRU keyed on source hash — the same cache
+discipline as `createEvalShim`), landed under `runtimes/eval-host-node/`.
+A Rust+wasmtime host that shells out to the CLI is the *portability proof*,
+second, and only if an embedder actually asks — do not gate the issue on
+writing Rust. Security: the host gates dynamic codegen behind an explicit
+opt-in, default off.
+
+**P3 (M) — cross-tier parity harness.** Same fixture programs through
+Tier 1 (JS host) and Tier 1w; results identical on the indirect-eval /
+`Function`-ctor subset; ≥10 test262 eval-positive cases (the original AC),
+plus the throw-propagation case (`eval("throw 1")` → catchable in the
+guest). Assert the §14 semantics specifically: free-var miss →
+`ReferenceError`; eval'd `var` visible to the parent.
+
+### Dependencies (corrected)
+
+- **Hard**: #3017 gap 2 (defines the env-handle linkage this formalizes);
+  #2928 E2/E3 (sequencing gate, see Option 3 rationale).
+- **Dropped**: #1058 self-hosting is NO LONGER a hard dependency — the P2
+  host embeds the TS compiler in a Node process or shells out; self-hosted
+  compiler-in-Wasm remains the long-term `func.new` path (the existing
+  "Long-term native path" section stands).
+- #1102 is **done** (PR #3113) — its Tier-0 leg is landed; nothing in this
+  issue reopens it.

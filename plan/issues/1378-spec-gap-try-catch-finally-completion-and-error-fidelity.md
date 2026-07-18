@@ -1,19 +1,48 @@
 ---
 id: 1378
-title: "spec gap: try/catch/finally — error type fidelity, finally completion override, dstr-binding (~85 fails)"
+title: "spec gap: try/catch/finally — RESCOPED to error-type fidelity only (Error-subclass own-field/prototype substrate)"
 status: ready
 created: 2026-05-08
-updated: 2026-06-19
+updated: 2026-07-17
 priority: medium
-feasibility: medium
-reasoning_effort: medium
+feasibility: hard
+reasoning_effort: high
 task_type: bugfix
 area: codegen
 language_feature: control-flow
 goal: spec-completeness
 sprint: Backlog
+disposition: "senior-dev/Fable — deep externref-backed Error-subclass substrate (#2101/#1366). Sub-issues A (finally completion override) + C (catch destructure) are DONE on main; only B remains and it is NOT a try/catch bug."
 ---
 # #1378 — try/catch/finally: completion values + error type fidelity
+
+## RESCOPE (2026-07-17, re-validation against current main)
+
+Re-validated all sub-issues against current `main` (dev-conform). **The only
+remaining bug is sub-issue B (error-type fidelity), and it is NOT a try/catch
+bug** — it is the deep externref-backed Error-subclass own-field/prototype
+substrate. Re-tagged `feasibility: hard` + `disposition` (senior-dev/Fable);
+kept out of the contained conformance fallback pool.
+
+- **Sub-issue A (finally completion override) — VERIFIED FIXED on main.** All
+  probes pass today: `(function(){ try{return 1}finally{return 2} })()` → 2;
+  `try{return 1}finally{}` → 1; `try{throw 0}catch{return 2}finally{return 3}`
+  → 3; finally-`break` override in a loop → correct. No work remaining.
+- **Sub-issue C (catch destructure iterator semantics) — DONE** (merged earlier;
+  `tests/issue-1378.test.ts` 4/4, see "Implementation Notes — sub-issue C").
+- **Sub-issue B (error-type fidelity) — REMAINS, and is mis-filed as try/catch.**
+  A user class `extends Error` yields, after `throw`/`catch`, a value with
+  `typeof e === "string"`, `e.message`/`e.name` `undefined`, and `String(e)`
+  TypeError-ing. Crucially it reproduces **with NO try/catch at all**:
+  `new MyErr().name` (where `class MyErr extends Error { constructor(){ super();
+  this.name = "MyErr"; } }`) already throws. Contrast: a plain class own-field
+  (`class C{ x=42 }; throw new C()` → `e.x === 42`) and a builtin
+  (`throw new RangeError("x")` → `e.name === "RangeError"`) both WORK. So the
+  fault is the **externref-backed Error-subclass representation** — own fields
+  set in the subclass constructor aren't persisted/readable, and the prototype
+  chain isn't preserved (`e instanceof MyErr` → false). This is #2101 / #1366
+  territory (subclass prototype chain + externref-backed own-field read), a
+  hard substrate change, not the try/catch lowering this issue was filed under.
 
 ## Problem
 

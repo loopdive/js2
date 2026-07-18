@@ -10,11 +10,14 @@ updated: 2026-07-10
 priority: high
 horizon: l
 feasibility: hard
+model: fable
 reasoning_effort: high
 task_type: feature
 area: ir, codegen
 language_feature: compiler-internals
 goal: ir-full-coverage
+model: fable
+fable_role: spec
 parent: 2855
 related: [1376, 1131, 2138, 2135, 2134]
 loc-budget-allow:
@@ -1106,3 +1109,174 @@ inliner's block-duplication path, not the emission structurizer. Same structural
 class (block duplication + a value live across copies) but in a different pass;
 tracked as a follow-up so this PR stays a focused, low-blast-radius correctness
 fix.
+
+## Implementation Plan (Fable, 2026-07-18) — the last 14, by capability
+
+> Grounded on this branch (= `upstream/main` merged 2026-07-18) with a fresh
+> `JS2WASM_IR_SHAPE_DIAG=1 pnpm run check:ir-fallbacks -- --shape-diag`.
+> Supersedes the stale cluster lists above where they disagree (e.g.
+> classes.ts `instanceof` has CLEARED — it is no longer in the set).
+
+### The 14, verified today
+
+| # | Arm | Functions |
+| --- | --- | --- |
+| 8 | `nontail-callstmt:CallExpression` | the `main`s of benchmarks.ts, benchmarks/{array,dom,fib,loop,string,style}.ts, js/builtins.ts |
+| 1 | `expr-unhandled:ArrowFunction` | benchmarks/helpers.ts `addBenchCard` |
+| 1 | `nontail-if-cond:BinaryExpression` | calendar `renderCal` (cond reads module-scope `selStart`/`selEnd`) |
+| 1 | `nontail-unhandled-stmt:IfStatement` | calendar `onDay` (if/else-if chain writing module globals) |
+| 1 | `nontail-assign-nonprop-lhs:BinaryExpression` | calendar `main` (`gridEl = …` module-global write) |
+| 2 | `unattributed-arm:helper-internal` | calendar `updFoot`, async `delay` |
+
+Plus the **moduleLevel** bucket (2: calendar 9 stmts, algorithms 1 stmt) —
+same roots (module-scope bindings + DOM chains at module level), tracked in
+the #2855 plan but retired by capability C below.
+
+Three capabilities + one instrumentation task clear all of it. Per the
+Step-2 lesson, a slice is landable only when **net unintended decreases** —
+watch `external-call` when claiming the mains.
+
+### Step 0 (S, do first) — Step-1b sub-attribution
+
+`updFoot` and `delay` are still `unattributed-arm:helper-internal`.
+Instrument the `return false` sites inside `isPhase1ObjectLiteral` /
+`isPhase1TryStatement` / `isPhase1ClosureLiteral` (`select.ts:2490`) /
+`isPhase1ForStatement` internals with the existing `shapeNo` recorder
+(byte-inert off, first-wins). Expected outcome: `updFoot` attributes to the
+module-global root (capability C), `delay` to the closure/type-args root
+(capability B). Confirms slice boundaries before C/B start; ~1 day.
+
+### Capability C (M–L) — module-scope mutable bindings (calendar 4 + moduleLevel 2)
+
+Root: calendar.ts declares module-scope **`let`** bindings — numeric
+(`selStart`/`selEnd`/`curYear`/`curMonth`) and nullable-extern
+(`gridEl: HTMLElement | null`, …). The selector's scope set holds
+params/locals only, so every read rejects; every write hits
+`nontail-assign-nonprop-lhs`. The C3 slice (above) already landed the READ
+path for a module-scope **const Map** (TDZ-checked `global.get $__mod_<name>`
+branded extern) — this capability generalizes it:
+
+1. **Reads of `let` module globals** — extend the C3 identifier arm from the
+   Map-const set to a general module-binding set, restricted to bindings with
+   IR-lowerable representations: f64/i32 primitives and extern-class refs
+   (incl. `T | null` → `ref_null extern` with the legacy null-check parity).
+   **Measure first** how legacy stores each shape (`__mod_<name>` global
+   ValType — f64 direct vs boxed): the IR read must use the same slot AND the
+   same representation, storage parity BY CONSTRUCTION (name-resolved global,
+   like C3).
+2. **Writes** — new from-ast arm for `Identifier = expr` where the LHS is a
+   module binding: `global.set` with the write-side coercion mirroring
+   legacy's assignment emission for the same slot. TDZ discipline: writes
+   before the module-init executes the declaration cannot occur for
+   function-body code (module init runs first), but keep C3's TDZ check on
+   reads.
+3. **Selector** — accept the binding set in `isPhase1Expr`'s identifier arm
+   and in the `EqualsToken` LHS check (`select.ts` ~1343 lineage); mirror
+   accept/lower exactly (select↔from-ast parity is mandatory under IR-first,
+   see the #2138 constraint above).
+4. **Mixed-front-end parity test is mandatory** (both directions: IR writer /
+   legacy reader and legacy writer / IR reader), extending the C3 pattern in
+   `tests/ir-algorithms-cluster.test.ts`.
+
+Expected gate delta: `renderCal`, `onDay`, `main`, and (per Step 0) likely
+`updFoot` claim → **−4 function-level**, and the moduleLevel calendar entry
+shrinks toward claimable. algorithms.ts's 1 moduleLevel stmt
+(`const fibCache = new Map<…>()`) needs the module-level `new Map` claim —
+verify whether #3142's module-init IR covers extern-class `new` at module
+scope; if not, leave moduleLevel at 1 and record it (moduleLevel is gated
+must-not-increase, not must-be-zero).
+
+DOM-file verification standard: identical-failure-mode under Node's shimless
+host (established in the extern-in-IR slice); full equivalence gate
+(`node scripts/equivalence-gate.mjs`), not scoped tests — the #2858 caller-arm
+episode showed scoped runs miss real regressions.
+
+### Capability A (M) — imported-callee calls (first half of the 8 mains)
+
+Root: the gate compiles each corpus file as its own program
+(`scripts/check-ir-fallbacks.ts:217`), but module resolution still pulls the
+sibling source (e.g. `helpers.ts`) in, and legacy compiles imported functions
+into the same module via the import-resolver. The IR selector only claims
+callees that are *local* FunctionDeclarations, so `el(…)`/`addBenchCard(…)`
+reject at `nontail-callstmt`.
+
+Design (mirror the extern-in-IR split — selection runs early, from-ast late):
+
+- **Selector**: thread `resolveImportedFunction(node: ts.Identifier) →
+  { name: string } | undefined` via `IrSelectionOptions` — checker-backed
+  (symbol → import specifier → resolved FunctionDeclaration in a compiled-in
+  sibling module). Accept a call whose callee resolves this way and whose args
+  are Phase-1.
+- **from-ast/lower**: lower as an ordinary direct call via
+  `resolver.resolveFunc(name)` — the legacy pre-pass allocates the funcIdx
+  for imported decls under the same name discipline, so this is
+  funcIdx-shift-safe by construction (no cached indices — the #2941 lineage).
+- **ABI**: the callee stays LEGACY-compiled (it lives in another module's
+  compilation unit) — that is the signature-safe direction post-#2949 3b
+  (`any` → `irDynamic()`, one ABI both front-ends) **in host mode**; keep the
+  arm host-gated like the #2858 caller-arm relaxation, standalone/wasi defers.
+- **Edge cases**: optional/default params on the imported callee (fixed Wasm
+  arity — pad with default sentinels exactly like the extern.call arm's
+  landmine fix above, incl. the f64 sNaN sentinel); void-result calls in
+  statement position (`lowerCall(…, statementPosition)`); re-exports and
+  `import { x as y }` aliasing (resolve through the checker symbol, not the
+  local name); namespace imports (`ns.el(…)`) — defer, not needed by the
+  corpus.
+
+**Do not land A alone if the gate shows the mains merely shuffling into
+`external-call`** — measure with `--shape-diag` + `--verbose`; if the mains
+still reject on the function-reference args, A+B must land together.
+
+### Capability B (L) — first-class function references + arrow values
+
+Two arms, both required by the mains' `addBenchCard("fib", bench_fib)`-style
+calls and by `addBenchCard` itself (`expr-unhandled:ArrowFunction`, the
+`addEventListener("click", () => …)` callback):
+
+1. **Top-level function reference as a value** — an Identifier referencing a
+   FunctionDeclaration in argument position with a function-typed param.
+   Lower to the closure ABI legacy uses for the same site (`$__fn_wrap` /
+   `builtin-fn-meta.ts`, `closures.ts`) — the emitter primitives already
+   exist post-#2953 (`emitFuncRef`, `emitClosureNew`); the gap is purely the
+   select/from-ast arms. **Byte-parity with legacy's wrap is the acceptance
+   bar** (a legacy callee will `call_ref` through the same wrapper type —
+   mind the #2873 wrapper-RTT creation-order hazard: cast to ROOT + funcref
+   sig-dispatch, don't depend on RTT order).
+2. **Arrow-function expressions as values in argument position** —
+   `isPhase1ClosureLiteral` (`select.ts:2490`) exists but is only consulted
+   from var-decl initializer position (`:2357`). Widen to call-argument
+   position; from-ast reuses the same closure-literal lowering. Captures:
+   whatever the existing closure-literal path already supports (ref-cell
+   captures); shapes beyond it keep rejecting — this is a widening, not a new
+   lowering.
+
+`delay` (`new Promise<number>((resolve) => { setTimeout(() => resolve(value),
+ms) })`) needs arm 2 + the `new <ExternClass>` type-args arm + nested-arrow
+capture of `resolve`/`value`. Sequence it LAST within B; if the
+executor-capture shape proves out of the closure path's reach, **recommend
+re-bucketing `delay`'s reject to `deferred` with a recorded rationale**
+(flag to PO) rather than forcing an unsound claim — the corpus must not
+dictate an unshippable capability.
+
+### Ordering and landability
+
+1. Step 0 (S) → 2. Capability C (M–L, self-contained, −4 likely) →
+3. Capability A (M) → 4. Capability B (L; A+B together if A alone is
+net-zero) → 5. `delay` decision.
+
+Each slice: prove claims via byte-diff/`irFirstSkipped` (anti-vacuity, the
+established pattern), zero post-claim demotions, bank via
+`--update-on-decrease`, full equivalence gate, `merge_group` validation
+(broad-impact rule). Contagion is largely retired post-#2858 (caller-arm
+host-gated off), but re-verify per slice that `call-graph-closure` and
+`external-call` stay 0.
+
+### At corpus-zero — the promotion question (answered)
+
+Do **NOT** add `body-shape-rejected` to `STRICT_IR_REASONS` at corpus-zero.
+The reason legitimately fires on real-world shapes outside the 13-file corpus
+for as long as from-ast is not the sole front-end; promotion is the
+IR-completeness endgame, not this issue's AC. At corpus-zero: bank the floor
+in the baseline, update `plan/log/ir-adoption.md`, and record the verdict at
+the `STRICT_IR_REASONS` comment (see the #2855 Fable plan's verdict table —
+this corrects acceptance criterion 4 above).

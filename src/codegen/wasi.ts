@@ -369,6 +369,41 @@ export function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
   forEachChild(sourceFile, visit);
 
+  // (#2958) The native $Promise carrier reports an unhandled rejection at program
+  // exit (the WASI `_start` tail) via fd_write(stderr) + proc_exit(1). That
+  // reporter only observes rejections created by TOP-LEVEL execution (what
+  // `__module_init`/`main` runs), so we register its two imports only when the
+  // source uses `Promise`/`await` at top level — NOT inside a function/class body
+  // whose rejections would surface only when a host calls that export directly
+  // (those modules must stay import-free: they instantiate with `{}` and call the
+  // export, never `_start` — e.g. the #2867/#2865 host-free carrier tests). A
+  // module with only in-function promise usage keeps its exact prior import set;
+  // dead-import elimination also drops these two if the reporter turns out unemitted.
+  const scanTopLevelPromiseUsage = (node: ts.Node): void => {
+    // Do not descend into function/class bodies — their promise usage is not
+    // top-level execution.
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isConstructorDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node)
+    ) {
+      return;
+    }
+    if (ts.isAwaitExpression(node) || (ts.isIdentifier(node) && node.text === "Promise")) {
+      needsFdWrite = true;
+      needsProcExit = true;
+      return;
+    }
+    forEachChild(node, scanTopLevelPromiseUsage);
+  };
+  forEachChild(sourceFile, scanTopLevelPromiseUsage);
+
   // #2524 — remember whether the source needs a stream/console *write* helper
   // (console.log/warn/error, process.std*.write) independent of the syscall
   // import decision below. Under the node shims those helpers still get

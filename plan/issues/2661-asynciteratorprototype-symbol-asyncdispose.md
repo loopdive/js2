@@ -2,6 +2,7 @@
 id: 2661
 title: "AsyncIteratorPrototype[Symbol.asyncDispose] — explicit-resource-management disposal protocol (7 test262 fails)"
 status: ready
+sprint: Backlog
 created: 2026-06-25
 priority: low
 feasibility: medium

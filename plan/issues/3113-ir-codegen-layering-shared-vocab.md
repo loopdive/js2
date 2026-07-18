@@ -1,10 +1,10 @@
 ---
 id: 3113
 title: "Fix IR->codegen reverse layering: move shared vocabulary (js-tag) below IR; contain the bridge to ir/integration.ts"
-status: ready
-sprint: Backlog
+status: in-progress
+sprint: current
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-07-17
 priority: medium
 horizon: m
 feasibility: medium
@@ -99,3 +99,27 @@ logic changes anywhere.
 2. CI guard in place and failing on a synthetic violation.
 3. `prove-emit-identity check` IDENTICAL; `tsc --noEmit` clean; no test262
    regression.
+
+## Progress — slice 1 (js-tag relocation) shipped 2026-07-17
+
+Problem 1 (js-tag mis-homed) is resolved. `js-tag.ts` — the dependency-free
+shared-vocabulary leaf (the `JsTag` enum + `jsTagUnboxKind`) — was moved from
+`src/codegen/js-tag.ts` to `src/ir/js-tag.ts`, below the codegen layer. Import
+paths updated in all consumers: `ir/nodes.ts`, `ir/verify.ts`, `ir/builder.ts`,
+`ir/from-ast.ts`, `ir/integration.ts`, `ir/backend/handles.ts` (now import
+in-layer), `codegen/value-tags.ts` (imports down-stack via `../ir/js-tag.js`,
+re-export preserved), and the 7 `issue-2949-*` test files.
+
+Effect on the inversion: `ir/nodes.ts`, `ir/verify.ts`, and `ir/builder.ts` had
+js-tag as their ONLY codegen import — they now have ZERO codegen imports.
+`ir/from-ast.ts` and `ir/integration.ts` each drop one codegen import.
+
+The move is pure relocation (js-tag has zero imports, no logic change): proven
+byte-identical via `scripts/prove-emit-identity.mjs check` — all 56
+(file,target) emits match baseline. tsc clean; the `issue-2949-*` suites pass.
+
+**Remaining — slice 2 (the substantive part):** Problem 2, containing the
+2,610-LOC `ir/integration.ts` IR→codegen bridge so `import "src/ir"` stops
+transitively pulling ~17 codegen modules (move the bridge to the codegen side /
+behind a narrow interface). That is a larger, design-sensitive change and is
+left open under this issue.

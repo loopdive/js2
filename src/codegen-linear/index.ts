@@ -3552,18 +3552,31 @@ function compileArrayMethodCall(
   methodName: string,
 ): void {
   if (methodName === "push") {
-    // arr.push(val) → __arr_push(arr, slot(val)) (#1938: f64 slot)
+    // arr.push(v0, v1, …) → __arr_push(arr, slot(vi)) per arg (#1938: f64 slot).
+    // Spec: push returns the array's NEW length, and every argument is appended
+    // (#3332 — the direct linear path previously returned f64.const 0 and only
+    // pushed arguments[0]). Evaluate the receiver once into a local so a
+    // side-effecting receiver expression is not re-run per argument, then read
+    // __arr_len back at the end for the expression-position result value.
     const pushIdx = ctx.funcMap.get("__arr_push")!;
+    const lenIdx = ctx.funcMap.get("__arr_len")!;
+    const arrLocal = addLocal(fctx, `__push_arr_${fctx.locals.length}`, { kind: "i32" });
     compileExpression(ctx, fctx, propAccess.expression); // arr ptr (i32)
-    if (inferExprType(ctx, fctx, expr.arguments[0]).kind === "f64") {
-      compileExprToF64(ctx, fctx, expr.arguments[0]); // numeric/boolean → f64 slot
-    } else {
-      compileExprToI32(ctx, fctx, expr.arguments[0]); // ref → i32
-      pushI32ToSlot(fctx); // → f64 slot
+    fctx.body.push({ op: "local.set", index: arrLocal });
+    for (const arg of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: arrLocal }); // arr ptr (i32)
+      if (inferExprType(ctx, fctx, arg).kind === "f64") {
+        compileExprToF64(ctx, fctx, arg); // numeric/boolean → f64 slot
+      } else {
+        compileExprToI32(ctx, fctx, arg); // ref → i32
+        pushI32ToSlot(fctx); // → f64 slot
+      }
+      fctx.body.push({ op: "call", funcIdx: pushIdx });
     }
-    fctx.body.push({ op: "call", funcIdx: pushIdx });
-    // push returns void in runtime, but expression needs a value for drop
-    fctx.body.push({ op: "f64.const", value: 0 });
+    // Expression position needs the new length (f64); __arr_push is void.
+    fctx.body.push({ op: "local.get", index: arrLocal });
+    fctx.body.push({ op: "call", funcIdx: lenIdx });
+    fctx.body.push({ op: "f64.convert_i32_s" });
   } else if (
     methodName === "filter" ||
     methodName === "map" ||

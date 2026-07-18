@@ -520,3 +520,12 @@ sprint: 0
 | 1755 | 2026-06-02 | Generic typed-array annotations such as Uint8Array<ArrayBuffer> now erase to the bare typed-array lowering across IR, export metadata, and the existing linear Uint8Array collection tagging paths | Sprint-58 |
 | 682 | 2026-06-02 | Reduced standalone RegExp backend supports static plain `.test` forms without JS-host imports; PR #1038 merged via the merge queue | Sprint-58 |
 | 1668 | 2026-05-25 | Catastrophic test262 regression guard landed in the required merge-report job via PR #619 | Sprint-55 |
+| 3362 | 2026-07-17 | test262.fyi original-harness lane: run top-level harness after host export wiring | Current |
+| 3373 | 2026-07-17 | Annex B call-expression assignment targets now reach their required runtime ReferenceError | Current |
+| 3374 | 2026-07-17 | Strict assignment failures now throw TypeError while sloppy writes remain no-ops | Current |
+| 3365 | 2026-07-17 | Script top-level this now preserves the global object and branded assignment errors | Current |
+| 3366 | 2026-07-17 | Assignment and destructuring preserve callable, dynamic, and implicit-global values | Current |
+| 3367 | 2026-07-17 | Project and original Test262 harnesses now match at 20/20 on the assignment sample | Current |
+| 3368 | 2026-07-17 | Close the 17 project-runner residuals in the deterministic 50-test array sample | Current |
+| 3369 | 2026-07-17 | Close the original-harness parity gap in the deterministic 50-test array sample | Current |
+| 3370 | 2026-07-17 | Make the original Test262 harness authoritative for project-runner verdicts | Current |

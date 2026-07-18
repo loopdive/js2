@@ -1,8 +1,10 @@
 ---
 id: 2650
 title: "Standalone: member-read on String.prototype.at result returns empty (.length/.charCodeAt)"
-status: ready
-sprint: Backlog
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/dev-standalone2
+sprint: current
 priority: low
 feasibility: medium
 reasoning_effort: medium
@@ -11,6 +13,34 @@ area: string
 language_feature: string-methods
 goal: standalone-mode
 related: [2600, 2644]
+---
+
+## Resolution (2026-07-17)
+
+**Already fixed on main** by the native-string nullable work that landed after
+the issue was filed (#2644 / #2648 / #2161 undefined-sentinel families and the
+subsequent nullable-native-string coercion cleanup). Re-verified against main
+`93e86d717`: in `--target standalone`, member reads on a `String.prototype.at()`
+result now return correct values (they previously read as if the string were
+empty).
+
+| expr (standalone) | before | now |
+|---|---|---|
+| `const c = "abcd".at(2)!; c.length` | `0` | `1` |
+| `"abcd".at(2)!.charCodeAt(0)` | `0` | `99` |
+| `"abcd".at(-1)!.charCodeAt(0)` | — | `100` |
+| `"abcd".at(2)!.toUpperCase() === "C"` | — | `true` |
+| `"abcd".at(2)!.at(0) === "c"` | — | `true` |
+| `"abcd".at(99)?.length ?? -1` | — | `-1` |
+
+Closed with a standalone regression guard:
+`tests/issue-2650-standalone-string-at-member-read.test.ts` (6 cases, all green).
+
+**Separate finding (not this issue):** in **gc / JS-host** mode,
+`"abcd".at(99)?.length` traps because the `length` host import is invoked on
+`undefined` — the optional-chain short-circuit is not honored before the native
+`length` call on a nullable native-string receiver. That is a distinct
+host-path bug outside #2650's standalone scope; left for a follow-up.
 ---
 
 # #2650 — Standalone member-read on a String.prototype.at result returns empty

@@ -2,11 +2,12 @@
 id: 2621
 title: "string-hash AOT-vs-JIT gap: GC-array bounds-check elimination in hot loops (epic)"
 status: backlog
-sprint: 67
+sprint: Backlog
 created: 2026-06-22
 updated: 2026-06-24
 priority: low
 feasibility: hard
+model: fable
 reasoning_effort: high
 task_type: performance
 area: codegen

@@ -574,9 +574,19 @@ export function collectReferencedGlobalNames(
   // so it can't pull in the same-named DOM global.
   const isAmbientGlobalDecl = (d: ts.Declaration): boolean =>
     isLibFile(d.getSourceFile()) || (ts.isFunctionDeclaration(d) && hasDeclareModifier(d) && !d.body);
+  // #2509 — an identifier in property-NAME position (`obj.close`, or `NS.close`
+  // in type position) merely SHARES a global's name; its symbol resolves to the
+  // property/method (often a lib-file method like `EventSource.prototype.close`)
+  // which `isAmbientGlobalDecl` mistakes for an ambient global, spuriously
+  // pulling in `declare function close` under wasi/standalone. Exclude those
+  // pure-name positions; only bare/computed value references gate the scan.
+  const isPropertyNamePosition = (id: ts.Identifier): boolean => {
+    const p = id.parent;
+    return (ts.isPropertyAccessExpression(p) && p.name === id) || (ts.isQualifiedName(p) && p.right === id);
+  };
   const names = new Set<string>();
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node)) {
+    if (ts.isIdentifier(node) && !isPropertyNamePosition(node)) {
       const decls = checker.getSymbolAtLocation(node)?.getDeclarations();
       if (decls && decls.some(isAmbientGlobalDecl)) {
         names.add(node.text);

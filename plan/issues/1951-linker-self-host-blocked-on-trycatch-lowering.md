@@ -6,6 +6,7 @@ created: 2026-06-11
 updated: 2026-06-11
 priority: medium
 feasibility: hard
+model: fable
 task_type: feature
 area: codegen-linear
 goal: self-hosting-dogfood

@@ -2,13 +2,16 @@
 id: 2690
 title: "ESLint rule-tester.js: cloneDeeplyExcludesParent polymorphic return widens i32 into anyref slot"
 status: ready
+sprint: Backlog
 created: 2026-06-26
 priority: low
 area: codegen
 goal: npm-library-support
-feasibility: medium
-related: [1573]
+feasibility: hard
+related: [1573, 684]
+disposition: "senior-dev/architect-lane — param-type MONOMORPHIZATION in JS/allowJs mode (not return-widening). Fix = param-widening in usage-inference (#684); central/fragile inference, high regression risk. Do NOT treat as a contained dev fallback. Re-scoped 2026-07-17 by dev-2961 with a minimal repro + root cause."
 ---
+
 # ESLint rule-tester.js — cloneDeeplyExcludesParent polymorphic return widening
 
 Carved from the de-staled #1573 ESLint survey. This is rule-tester.js's NEW
@@ -16,31 +19,30 @@ first-error after #1573 bug A (`inferLastType` branch-arm fix) unblocked the
 prior `LazyLoadingRuleMap_new` blocker.
 
 ## Reproducer
+
 ```ts
 import { compileProject } from "./src/index.js";
-const r = await compileProject(
-  "/workspace/node_modules/eslint/lib/rule-tester/rule-tester.js",
-  { allowJs: true },
-);
-expect(r.success).toBe(true);                      // passes
+const r = await compileProject("/workspace/node_modules/eslint/lib/rule-tester/rule-tester.js", { allowJs: true });
+expect(r.success).toBe(true); // passes
 expect(WebAssembly.validate(r.binary)).toBe(true); // FAILS
 ```
 
 ## Error (current main, eslint 10.0.3, post-#1573-bug-A)
+
 ```
 function #236 "cloneDeeplyExcludesParent":
   local.tee[0] expected type (ref null 2), found local.get of type i32
 ```
 
 ## Source
+
 ```js
 function cloneDeeplyExcludesParent(x) {
   if (typeof x === "object" && x !== null) {
     if (Array.isArray(x)) return x.map(cloneDeeplyExcludesParent);
     const retv = {};
     for (const key in x) {
-      if (key !== "parent" && hasOwnProperty(x, key))
-        retv[key] = cloneDeeplyExcludesParent(x[key]);
+      if (key !== "parent" && hasOwnProperty(x, key)) retv[key] = cloneDeeplyExcludesParent(x[key]);
     }
     return retv;
   }
@@ -48,19 +50,59 @@ function cloneDeeplyExcludesParent(x) {
 }
 ```
 
-## Root cause (hypothesis)
-Polymorphic / self-recursive return: the function returns `x` (any), or
-`x.map(...)` (array), or `retv` (object), or the primitive fall-through. The
-unified return slot was inferred as a struct ref `(ref null 2)` (from the
-`retv = {}` branch), but the `return x` fall-through routes an `i32`-typed
-value through the same slot. Return-type widening across `Array.isArray` /
-`typeof` narrowing + self-recursion is the gap.
+## Root cause (CORRECTED 2026-07-17, dev-2961 — NOT return-widening)
 
-## Fix direction
-Return-coercion path in `src/codegen/statements.ts` (ReturnStatement) plus the
-unified-return-type inference in `src/codegen/index.ts`. rule-tester.js is the
-least end-user-critical ESLint binary, so this is lower priority than #2688 /
-#2689.
+The original hypothesis (unified _return_-slot widening) was **wrong**. The real
+bug is **param-type MONOMORPHIZATION in JS/allowJs mode**, and it is confirmed
+with a minimal, self-contained repro (no ESLint needed):
+
+```ts
+// FAILS WebAssembly.validate ONLY under allowJs (plain JS); the TS `x: any`
+// form below validates fine — the trigger is JS-mode param inference.
+compile(
+  `function clone(x){
+     if(typeof x==="object"&&x!==null){
+       if(Array.isArray(x))return x.map(clone);
+       const retv={}; for(const key in x){retv[key]=clone(x[key]);} return retv;
+     }
+     return x;
+   }
+   export function test(){return clone(5);}`,
+  { target: "gc", allowJs: true, fileName: "t.js" },
+);
+// WebAssembly.compile(): Compiling function "clone" failed:
+//   local.tee[0] expected type (ref null 2), found local.get of type f64
+```
+
+Contrast: the **same body with a TS `x: any` annotation validates fine**. So the
+trigger is JS-mode param inference, not the control flow.
+
+**Mechanism.** In JS/allowJs mode the param `x` is inferred as a **scalar
+(`f64`)** from the `clone(5)` call site (numeric-argument monomorphization). But
+the body uses `x` **polymorphically** — `Array.isArray(x)`, `x.map(clone)`,
+`for (const key in x)`, `x[key]`, plus a scalar `return x`. In the WAT, the
+`Array.isArray(x)` map branch emits `local.get 0` (the `f64` param) straight
+into the `(ref null 2)` array-vec slot (`local.tee` of `$__arr_map_vec`), which
+is a hard type error. Wasm validation is static, so even the (dynamically dead
+for an `f64`) `x.map` branch must type-check — hence the validation failure, not
+a runtime trap. The `i32` vs `f64` in the error text just depends on which
+scalar the call-site inference picked (ESLint's real call graph → `i32`; the
+`clone(5)` minimal → `f64`).
+
+## Fix direction (CORRECTED)
+
+Not the return-coercion path. The fix belongs in **param-type widening in
+usage-inference** (`#684 UsageInference` / the JS-mode any-widening in
+`src/checker/usage-inference.ts` + how `createCodegenContext` maps param types):
+a param that is used in **ref-requiring** ways (`Array.isArray`, `.map`/array
+methods, `for-in`, member/index access) must widen to `anyref`, overriding a
+scalar call-site inference — and the scalar `return x` / arithmetic uses must
+then box/coerce off that anyref param. This is **central, fragile inference
+work** with a broad blast radius (it changes param ABIs), so it is
+**senior-dev/architect-lane**, NOT a contained dev fallback. Recommend an
+architect spec before implementation.
 
 ## Bug class
-CODEGEN — polymorphic return-type widening / coercion. Pure ES5.
+
+CODEGEN — **param-type monomorphization vs polymorphic body usage** (JS/allowJs
+mode). Pure ES5.

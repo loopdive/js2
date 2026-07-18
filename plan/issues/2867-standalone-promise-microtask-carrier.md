@@ -7,6 +7,7 @@ created: 2026-06-30
 updated: 2026-07-02
 priority: high
 feasibility: hard
+model: fable
 task_type: feature
 area: codegen
 goal: standalone

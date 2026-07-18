@@ -48,6 +48,7 @@ import { emitAnyEqFromExternTemps, emitLooseEq, emitStrictEq } from "./coercion-
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { compileInOperator } from "./binary-ops-in.js";
+import { emitIsUndefF64 } from "./value-tags.js";
 
 // ── Binary operations ─────────────────────────────────────────────────
 
@@ -583,6 +584,22 @@ export function compileBinaryExpression(
           return { kind: "i32" };
         }
         fctx.body.push({ op: "ref.is_null" });
+        if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
+        return { kind: "i32" };
+      }
+      // (#3369) Numeric arrays carry an omitted/undefined element as the exact
+      // signaling-NaN sentinel from value-tags.ts. A read therefore still has
+      // Wasm type f64 even though its JavaScript value is `undefined`. Preserve
+      // the nullish comparison semantics at this observation boundary:
+      //
+      //   sentinel === undefined  -> true
+      //   sentinel === null       -> false
+      //   sentinel == null        -> true
+      //
+      // Compare the exact bits rather than using f64.eq so an ordinary NaN is
+      // never mistaken for undefined.
+      if (valType.kind === "f64" && (nullSideIsUndefinedId || isLooseEqOp || isLooseNeqOp)) {
+        emitIsUndefF64(fctx.body);
         if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
         return { kind: "i32" };
       }

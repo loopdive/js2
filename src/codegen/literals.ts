@@ -313,7 +313,7 @@ export function compileObjectLiteralAsExternref(
             resolvePropertyNameText(ctx, p) !== undefined,
         )
           ? compileObjectLiteralAsExternref(ctx, fctx, valueExpr)
-          : compileExpression(ctx, fctx, valueExpr);
+          : compileExpression(ctx, fctx, valueExpr, { kind: "externref" });
       if (valType === null) continue;
       if (valType.kind !== "externref") {
         coerceType(ctx, fctx, valType, { kind: "externref" });
@@ -781,9 +781,13 @@ function compileObjectLiteralWithAccessors(
       // Compile value and coerce to externref.
       let valType: ValType | null;
       if (ts.isShorthandPropertyAssignment(prop)) {
-        valType = compileExpression(ctx, fctx, prop.name);
+        valType = compileExpression(ctx, fctx, prop.name, { kind: "externref" });
       } else {
-        valType = compileExpression(ctx, fctx, prop.initializer);
+        // (#3368) This value is stored in a host/open object. Supplying its
+        // actual carrier type up front preserves Symbol values as Symbols;
+        // compiling first as a bare i32 and coercing afterward loses the
+        // ESSymbol semantic brand and boxes the handle as a Number.
+        valType = compileExpression(ctx, fctx, prop.initializer, { kind: "externref" });
       }
       if (!valType) {
         // Push undefined as a fallback so the stack stays balanced.
@@ -3415,49 +3419,70 @@ export function compileArrayLiteral(
   fctx: FunctionContext,
   expr: ts.ArrayLiteralExpression,
 ): ValType | null {
+  // (#3366) A destructuring assignment gives its RHS array literal the
+  // assignment pattern's contextual tuple type. That context describes the
+  // TARGET defaults, not necessarily the values in the source literal: for
+  // `[x = numberDefault()] = [callableAny]`, TypeScript reports a numeric tuple
+  // context even though the actual element is a callable/dynamic JS value.
+  // Compiling that element into the contextual f64 tuple coerces it to NaN
+  // before destructuring can observe it. Dynamic/callable elements therefore
+  // require the universal externref vec carrier; skip contextual tuple lowering
+  // and preserve their runtime tag/identity.
+  const hasDynamicOrCallableElement = expr.elements.some((element) => {
+    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return false;
+    const fact = ctx.oracle.typeFactOf(element);
+    return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
+  });
+
   // Check if the target type is a tuple — compile as struct.new instead of array.
   // Skip if _arrayLiteralForceVec is set (e.g. destructuring default where the target
   // is a vec type, but TS contextual type resolution sees a tuple pattern).
   const ctxTupleType = ctx.checker.getContextualType(expr) ?? ctx.checker.getTypeAtLocation(expr);
-  if (ctxTupleType && isTupleType(ctxTupleType) && !(ctx as any)._arrayLiteralForceVec) {
+  if (
+    ctxTupleType &&
+    isTupleType(ctxTupleType) &&
+    !(ctx as any)._arrayLiteralForceVec &&
+    !hasDynamicOrCallableElement
+  ) {
     // When the contextual type gives degenerate tuple types (e.g. all void from
     // destructuring defaults: `[w = counter()] = [null, 0, false, '']`),
     // prefer getTypeAtLocation which reflects the actual literal element types (#801).
     let tupleType = ctxTupleType;
-    if (expr.elements.length > 1) {
-      const ctxElemTypes = getTupleElementTypes(ctx, ctxTupleType);
-      // If the contextual tuple type has fewer slots than the literal has elements,
-      // the tuple would truncate data. Fall through to vec path (#971).
-      // This happens when destructuring rest `[x, ...y] = [1, 2, 3]` gives a
-      // contextual type of [number, number] but the literal has 3 elements.
-      if (ctxElemTypes.length < expr.elements.length) {
-        // Don't use tuple — fall through to vec
-      } else {
-        const allSameKind = ctxElemTypes.length > 0 && ctxElemTypes.every((t) => t.kind === ctxElemTypes[0]!.kind);
-        if (allSameKind) {
-          const actualType = ctx.checker.getTypeAtLocation(expr);
-          if (actualType && isTupleType(actualType)) {
-            const actualElemTypes = getTupleElementTypes(ctx, actualType);
-            const actualHeterogeneous =
-              actualElemTypes.length > 1 && !actualElemTypes.every((t) => t.kind === actualElemTypes[0]!.kind);
-            if (actualHeterogeneous) {
-              // Don't switch to the actual type if the heterogeneity is only
-              // from undefined/void holes (i32) mixed with f64. The contextual
-              // type's f64 is better because it supports the sNaN sentinel for
-              // destructuring default checks. Switching to [i32, i32, f64] would
-              // lose default-value detection on the hole positions (#1024).
-              const onlyUndefinedHeterogeneity =
-                actualElemTypes.every((t) => t.kind === "f64" || t.kind === "i32") &&
-                actualElemTypes.some((t) => t.kind === "i32") &&
-                actualElemTypes.some((t) => t.kind === "f64");
-              if (!onlyUndefinedHeterogeneity) {
-                tupleType = actualType;
-              }
+    const ctxElemTypes = getTupleElementTypes(ctx, ctxTupleType);
+    // If the contextual tuple type has fewer slots than the literal has
+    // elements, the tuple would truncate data. Fall through to vec path (#971).
+    // This applies to single-element literals too: `.apply(null, [...source])`
+    // is contextually typed as the zero-slot tuple `[]` when the callback has no
+    // formal parameters. The previous `elements.length > 1` gate compiled that
+    // dynamic spread as an empty tuple and silently discarded every argument
+    // (#3368).
+    if (ctxElemTypes.length < expr.elements.length) {
+      // Don't use tuple — fall through to vec
+    } else if (expr.elements.length > 1) {
+      const allSameKind = ctxElemTypes.length > 0 && ctxElemTypes.every((t) => t.kind === ctxElemTypes[0]!.kind);
+      if (allSameKind) {
+        const actualType = ctx.checker.getTypeAtLocation(expr);
+        if (actualType && isTupleType(actualType)) {
+          const actualElemTypes = getTupleElementTypes(ctx, actualType);
+          const actualHeterogeneous =
+            actualElemTypes.length > 1 && !actualElemTypes.every((t) => t.kind === actualElemTypes[0]!.kind);
+          if (actualHeterogeneous) {
+            // Don't switch to the actual type if the heterogeneity is only
+            // from undefined/void holes (i32) mixed with f64. The contextual
+            // type's f64 is better because it supports the sNaN sentinel for
+            // destructuring default checks. Switching to [i32, i32, f64] would
+            // lose default-value detection on the hole positions (#1024).
+            const onlyUndefinedHeterogeneity =
+              actualElemTypes.every((t) => t.kind === "f64" || t.kind === "i32") &&
+              actualElemTypes.some((t) => t.kind === "i32") &&
+              actualElemTypes.some((t) => t.kind === "f64");
+            if (!onlyUndefinedHeterogeneity) {
+              tupleType = actualType;
             }
           }
         }
-        return compileTupleLiteral(ctx, fctx, expr, tupleType);
       }
+      return compileTupleLiteral(ctx, fctx, expr, tupleType);
     } else {
       return compileTupleLiteral(ctx, fctx, expr, tupleType);
     }
@@ -3594,6 +3619,9 @@ export function compileArrayLiteral(
   } else {
     const firstElemType = ctx.checker.getTypeAtLocation(firstElem);
     elemWasm = resolveWasmType(ctx, firstElemType);
+    if (hasDynamicOrCallableElement) {
+      elemWasm = { kind: "externref" };
+    }
     // (#2021) The first element's class type can be a SUBTYPE of the array's
     // declared element type — e.g. `const a: Shape[] = [new Circle(), new
     // Shape()]` derives `(ref $Circle)` from element 0, but a later `new
@@ -4039,7 +4067,10 @@ export function compileArrayLiteral(
         // (#3100 S5) Standalone: protocol-materialize FIRST (custom-iterable
         // drain / indexable passthrough) so the indexed reads below stay right.
         emitStandaloneIterableMaterialize(ctx, fctx, externLocal);
-        const matInstrs = buildVecFromExternref(ctx, fctx, externLocal, vecTypeIdx, matVecInfo);
+        // Array spread is a strict GetIterator consumer. Unlike general ABI
+        // externref→vec coercion, a missing/null/non-callable @@iterator must
+        // throw instead of falling back to array-like indexing (#3368).
+        const matInstrs = buildVecFromExternref(ctx, fctx, externLocal, vecTypeIdx, matVecInfo, true);
         for (const instr of matInstrs) fctx.body.push(instr);
         const srcLocal = allocLocal(fctx, `__spread_mat_${fctx.locals.length}`, {
           kind: "ref_null",
@@ -4088,6 +4119,36 @@ export function compileArrayLiteral(
         }
         // No fillable vec — drop the source and skip.
         fctx.body.push({ op: "drop" });
+        continue;
+      }
+      // (#3369) A remaining GC reference is not necessarily a `$Vec`. In
+      // particular, test262 builds iterables post-hoc from an empty object via
+      // `iter[Symbol.iterator] = fn` / Object.defineProperty. Its closed struct
+      // has no fields, so the former unconditional `struct.get 0` below emitted
+      // invalid Wasm. For every non-Vec reference, cross the externref boundary
+      // and use the same strict GetIterator materialization as an externref
+      // spread. This preserves getter/call/step/value abrupt completions and
+      // throws for a missing or non-callable iterator.
+      const staticSrcVecInfo = getVecInfo(ctx, srcType.typeIdx);
+      if (!staticSrcVecInfo) {
+        coerceType(ctx, fctx, srcType, { kind: "externref" });
+        const externLocal = allocLocal(fctx, `__spread_ref_extern_${fctx.locals.length}`, {
+          kind: "externref",
+        });
+        fctx.body.push({ op: "local.set", index: externLocal });
+        const matVecInfo = getVecInfo(ctx, vecTypeIdx);
+        if (!matVecInfo) continue;
+        emitStandaloneIterableMaterialize(ctx, fctx, externLocal);
+        const matInstrs = buildVecFromExternref(ctx, fctx, externLocal, vecTypeIdx, matVecInfo, true);
+        for (const instr of matInstrs) fctx.body.push(instr);
+        const srcLocal = allocLocal(fctx, `__spread_ref_mat_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: vecTypeIdx,
+        });
+        fctx.body.push({ op: "local.tee", index: srcLocal });
+        fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "i32.add" });
+        spreadLocals.push({ local: srcLocal, elemIdx: i, srcVecTypeIdx: vecTypeIdx });
         continue;
       }
       // (#1749 CPR) Array spread `[...arr]` must honor an overridden

@@ -1,7 +1,8 @@
 ---
 id: 3349
 title: "propertyHelper.js fails to compile at all (verifyEnumerable index-shift, #2043 class) — blocks up to 9.8% of test262 by inclusion count"
-status: ready
+status: done
+completed: 2026-07-17
 sprint: current
 created: 2026-07-17
 priority: high
@@ -13,8 +14,20 @@ task_type: bugfix
 area: codegen, emit
 language_feature: compiler-internals
 goal: test262-conformance
-related: [2043, 3284, 3285]
+related: [2043, 3284, 3285, 3378]
 ---
+
+> **Resolution (2026-07-17):** the primary target — `propertyHelper.js` /
+> `verifyEnumerable` compiling — is **fixed on current main** (verified: the
+> exact minimal repro below compiles to a `WebAssembly.validate`-clean binary,
+> and representative propertyHelper-including test262 files run end-to-end and
+> pass). A regression guard lives in `tests/issue-3349.test.ts`.
+> The `verifyEnumerable` index-shift was resolved by an earlier merge in the
+> #2043-class / late-import line (widening-map + funcIdx-repoint fixes).
+> The separately-flagged "second confirmation target" (the `deepEqual.js`
+> nested-closure **stale-local-index** instance — a different mechanism, a
+> captured-local slot vs. a funcIdx shift) is **not** part of this issue's
+> acceptance criteria and is tracked as **#3378**.
 
 # #3349 — `propertyHelper.js` (the real, unmodified test262 harness file) fails to compile entirely
 

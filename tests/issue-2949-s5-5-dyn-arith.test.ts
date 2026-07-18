@@ -44,7 +44,7 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { FMOD_FN, ensureFmod } from "../src/codegen/fmod.js";
-import { JsTag } from "../src/codegen/js-tag.js";
+import { JsTag } from "../src/ir/js-tag.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";

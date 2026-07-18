@@ -444,17 +444,12 @@ export function tryStaticEvalInline(
     return undefined;
   }
 
-  // (#1102) Stricter bar for WIDENED constants (const-binding / template
-  // resolution): shapes that were dynamic pre-#1102 must not flip onto a
-  // known splice defect. The foreign-node regex-literal arm produces a value
-  // whose dynamic `.flags` property read returns undefined (pre-existing on
-  // literal-eval shapes — tracked as #3301; remove this guard when it's
-  // fixed), so a newly-foldable body containing a regex literal keeps its
-  // previous (correct) dynamic-path behavior. Literal shapes keep the
-  // status quo.
-  if (widened && containsRegexLiteral(sf)) {
-    return undefined;
-  }
+  // (#3301) The foreign-node regex-literal arm defect (dynamic `.flags` read
+  // returned undefined because `compileRegExpLiteral` registered `RegExp_new`
+  // with a "builtin" intent that resolves to a no-op) is FIXED — the emitter now
+  // registers the minimal `externClasses` "RegExp" entry so the resolver routes
+  // to the real constructor. So the earlier widened-constant regex bail is gone:
+  // a newly-foldable body containing a regex literal inlines correctly.
 
   // (#3048) The outer-file collection pre-pass (collectCallbackImports) never
   // saw inside this eval SOURCE STRING, so any object-literal getter/setter or
@@ -803,9 +798,8 @@ function synthesizeStaticNewFunction(
   // existing fallback path.
   if (fnDecl.body && evalBodyHasUseStrictDirective(fnDecl.body.statements)) return undefined;
 
-  // (#1102) Stricter bar for widened (const-binding-resolved) arguments —
-  // see the matching guard in tryStaticEvalInline.
-  if (widened && containsRegexLiteral(fnDecl)) return undefined;
+  // (#3301) The widened-constant regex bail is gone — the foreign-node
+  // regex-literal arm now produces a correct value (see tryStaticEvalInline).
 
   // (#2924 park fix) A SLOPPY dynamic function's bare call must see
   // `this === globalThis` (§10.4.3 OrdinaryCallBindThis with a non-strict
@@ -855,24 +849,6 @@ function synthesizeStaticNewFunction(
   if (funcIdx === undefined) return undefined;
 
   return { fnName, funcIdx, params: fnDecl.parameters };
-}
-
-/**
- * (#1102) Does the parsed (foreign) eval/Function body contain a regex
- * literal? See the widened-constant guard in `tryStaticEvalInline`.
- */
-function containsRegexLiteral(root: ts.Node): boolean {
-  let found = false;
-  const visit = (n: ts.Node): void => {
-    if (found) return;
-    if (n.kind === ts.SyntaxKind.RegularExpressionLiteral) {
-      found = true;
-      return;
-    }
-    n.forEachChild(visit);
-  };
-  visit(root);
-  return found;
 }
 
 /** (#2924 park fix) Does the node tree contain a `this` expression? */

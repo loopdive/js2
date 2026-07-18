@@ -513,6 +513,29 @@ function boxToExternref(
     }
     return [{ op: "drop" }, { op: "ref.null.extern" }];
   }
+  if (elemKey === "i64") {
+    // (#3394) An i64-carrier vec element (a `bigint`, or a heterogeneous
+    // `number | bigint` tuple element stored as i64) must be BOXED before it
+    // reifies as an externref — the `array.get` yields a raw i64, and falling
+    // to the `ref`-type `extern.convert_any` default below emits it on an i64
+    // operand ("extern.convert_any expected anyref, found array.get of type
+    // i64"), invalid Wasm. This is the destructuring twin of the coerceType
+    // :2001 i64→externref arm and the map-runtime coerceArgToAnyref i64 arm.
+    // A BRANDED bigint boxes as a JS bigint via __box_bigint; a native
+    // (unbranded) i64 boxes as a number. `bigint`-ness rides `srcElemType`.
+    addUnionImports(ctx);
+    if (srcElemType?.kind === "i64" && srcElemType.bigint === true) {
+      const boxBigIdx = ctx.funcMap.get("__box_bigint");
+      if (boxBigIdx !== undefined) {
+        return [{ op: "call", funcIdx: boxBigIdx }];
+      }
+    }
+    const boxIdx = ctx.funcMap.get("__box_number");
+    if (boxIdx !== undefined) {
+      return [{ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxIdx }];
+    }
+    return [{ op: "drop" }, { op: "ref.null.extern" }];
+  }
   // For ref types: extern.convert_any
   return [{ op: "extern.convert_any" }];
 }

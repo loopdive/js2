@@ -6,6 +6,7 @@ created: 2026-06-26
 updated: 2026-06-26
 priority: low
 feasibility: hard
+model: fable
 task_type: bug
 area: codegen/runtime
 language_feature: standalone

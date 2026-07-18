@@ -45,15 +45,13 @@ async function run(src: string, standalone: boolean): Promise<unknown> {
   return (instance.exports as { test: () => unknown }).test();
 }
 
-// `standaloneSrc`: variant for the real standalone lane. The two cases that
-// assert `closureRead() === p2` OBJECT IDENTITY hit a PRE-EXISTING standalone
-// bug that is independent of #3128 (measured on main: `var p2: any; var f =
-// function(){ return p2; }; p2 = { a: 1 }; f() !== p2` — no IIFE, no
-// self-capture RHS — already fails; the boxed-cell read path loses identity,
-// same family as the tag-5 host-only strict-eq arm,
-// reference_2583_any_strict_eq_tag5_host_only / #3136). The standalone
-// variants assert the VALUE flows through the cell instead; identity stays
-// pinned on the host lane.
+// #3136 (FIXED): the two cases that assert `closureRead() === p2` OBJECT
+// IDENTITY previously hit a standalone-only boxed-cell-read identity-loss bug
+// (independent of #3128 — the tag-5 host-only strict-eq arm,
+// reference_2583_any_strict_eq_tag5_host_only). They used `standaloneSrc`
+// variants that only checked the VALUE through the cell. That bug is now fixed,
+// so the `standaloneSrc` relaxations were removed and the identity assertions
+// run on BOTH lanes.
 const CASES: Array<{ name: string; src: string; expected: number; standaloneSrc?: string }> = [
   {
     // The issue's table row: plain-object RHS, no Promise involved.
@@ -91,17 +89,6 @@ export function test(): number {
   if (captured() !== p2) return 8;
   return 1;
 }`,
-    standaloneSrc: `
-export function test(): number {
-  var p2: any;
-  var captured: any;
-  p2 = (function(){ captured = (function(){ return p2; }); return { a: 1 }; })();
-  if (p2 === null || p2 === undefined) return 9;
-  var got: any = captured();
-  if (got === null || got === undefined) return 8;
-  if (got.a !== 1) return 8;
-  return 1;
-}`,
     expected: 1,
   },
   {
@@ -114,17 +101,6 @@ export function test(): number {
   p2 = (function(){ return { a: 1 }; })();
   if (p2 === null || p2 === undefined) return 9;
   if (f() !== p2) return 8;
-  return 1;
-}`,
-    standaloneSrc: `
-export function test(): number {
-  var p2: any;
-  var f = function(){ return p2; };
-  p2 = (function(){ return { a: 1 }; })();
-  if (p2 === null || p2 === undefined) return 9;
-  var got: any = f();
-  if (got === null || got === undefined) return 8;
-  if (got.a !== 1) return 8;
   return 1;
 }`,
     expected: 1,

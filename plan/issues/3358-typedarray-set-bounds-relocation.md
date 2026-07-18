@@ -1,8 +1,10 @@
 ---
 id: 3358
 title: "codegen: relocate TypedArray.prototype.set bounds check out of array-methods.ts (validated design, #3202 took the allowance route instead)"
-status: ready
-sprint: Backlog
+status: done
+assignee: dev-refactor
+completed: 2026-07-17
+sprint: current
 created: 2026-07-17
 priority: low
 horizon: s
@@ -24,7 +26,7 @@ related: [3202, 3102, 3131]
 and the LOC-regrowth ratchet, #3102/#3131). PR #3202 (`TypedArray.prototype.set`
 OOB throws a catchable RangeError instead of an uncatchable Wasm trap) needed to
 add ~29 net LOC of bounds-check logic to `compileTypedArraySet` in that file,
-which trips the ratchet: *any* growth of a file already over the 1,500-LOC
+which trips the ratchet: _any_ growth of a file already over the 1,500-LOC
 threshold fails `pnpm run check:loc-budget` unless the change-set grants itself
 a `loc-budget-allow:` frontmatter escape hatch (the gate's own message text:
 "Add code to the subsystem module, not the barrel/driver" — the allowance is
@@ -92,11 +94,11 @@ behavior as the allowance version, since this is a pure code-motion refactor
 2. Confirm `git log origin/main --grep="#3202"` shows the allowance-route
    fix already merged — this issue is a **pure follow-up refactor** on top of
    that landed state, not a re-implementation of the bounds check itself.
-2. Remove the `loc-budget-allow: [src/codegen/array-methods.ts]` grant from
+3. Remove the `loc-budget-allow: [src/codegen/array-methods.ts]` grant from
    #3202's issue file frontmatter once array-methods.ts net-shrinks back to
    (or below) its pre-#3202 size — the LOC-regrowth ratchet banks shrinkage
    automatically (#3102/#3131), so this closes the loop the allowance opened.
-3. Verify `pnpm run check:loc-budget`, typecheck, lint, and
+4. Verify `pnpm run check:loc-budget`, typecheck, lint, and
    `tests/issue-3202.test.ts` all stay green.
 
 ## Why this is `Backlog`/`low`/`s`, not current-sprint
@@ -105,3 +107,20 @@ Purely a code-health nit — no user-visible behavior changes, no test can
 distinguish before/after, and #3202's own functional fix is already merged
 and green via the sanctioned allowance path. Cheap to pick up opportunistically
 whenever `array-methods.ts` is next being touched anyway.
+
+## Resolution (2026-07-17)
+
+Shipped. The bounds-check emission was extracted from `compileTypedArraySet`
+(`src/codegen/array-methods.ts`) into a new single-purpose module
+`src/codegen/typed-array-set-bounds.ts` exporting
+`emitTypedArraySetBoundsCheck(ctx, fctx, offsetTmp, srcLen, dstLen)`.
+`compileTypedArraySet` now emits the check via one call site. The three operands
+(`offsetTmp`/`srcLen`/`dstLen`) are the pre-existing locals, so the emitted
+instruction sequence is unchanged.
+
+- `array-methods.ts`: 8234 → 8216 LOC (−18); `check:loc-budget` OK.
+- The `loc-budget-allow: [src/codegen/array-methods.ts]` grant in #3202's
+  frontmatter is retired (its +LOC was exactly this bounds check).
+- Proof: `scripts/prove-emit-identity.mjs check` → IDENTICAL across all 56
+  (file,target) emits; `tsc --noEmit` clean; `tests/issue-3202.test.ts` 8/8
+  pass unmodified (pure code motion, byte-identical runtime behavior).

@@ -173,7 +173,11 @@ export function isInvalidAssignmentTarget(node: ts.Expression, allowDestructurin
 export function isCallExpressionTarget(node: ts.Node): boolean {
   let expr: ts.Node = node;
   while (ts.isParenthesizedExpression(expr)) expr = (expr as ts.ParenthesizedExpression).expression;
-  return ts.isCallExpression(expr);
+  return (
+    ts.isCallExpression(expr) &&
+    expr.expression.kind !== ts.SyntaxKind.ImportKeyword &&
+    expr.expression.kind !== ts.SyntaxKind.SuperKeyword
+  );
 }
 
 /** Check if an expression involves optional chaining (?.) */

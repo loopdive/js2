@@ -76,8 +76,14 @@ jobs:
           # 1) Drift check — semantic compare (ignores volatile timestamp/sha
           #    metadata). Unchanged on both lanes → nothing to do this hour.
           HOST_UNCHANGED=0
+          # Compare against the PUBLIC file this job overwrites (mirrors the
+          # standalone check below), NOT the in-repo baseline. Comparing the
+          # in-repo copy let public/ strand: when a forced refresh updated the
+          # baselines repo and the in-repo copy in lockstep, this check saw
+          # "unchanged" and skipped the copy, freezing the landing page on a
+          # stale/inflated number while the job reported success (#3375).
           node scripts/compare-test262-artifact.mjs --type report \
-            --baseline benchmarks/results/test262-current.json \
+            --baseline public/benchmarks/results/test262-report.json \
             --candidate /tmp/js2wasm-baselines/test262-current.json && HOST_UNCHANGED=1
           STANDALONE_UNCHANGED=0
           node scripts/compare-test262-artifact.mjs --type report \
@@ -96,7 +102,13 @@ jobs:
             -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){mergeQueue{entries(first:1){totalCount}}}}' \
             -f owner="$OWNER" -f name="$NAME" \
             --jq '.data.repository.mergeQueue.entries.totalCount' 2>/dev/null || echo "")
-          COMMITTED_TS=$(git log -1 --format=%ct -- benchmarks/results/test262-current.json 2>/dev/null || echo 0)
+          # Age of the PUBLIC file the landing page serves — NOT the in-repo
+          # copy. The in-repo test262-current.json is refreshed in lockstep by
+          # forced promotes, so it reads ~0h even when public/ is hours stale;
+          # measuring it let the >6h "proceed despite busy queue" floor never
+          # fire, so a busy queue skipped the sync indefinitely and public/
+          # stranded (#3379, follow-up to #3375's host-compare fix).
+          COMMITTED_TS=$(git log -1 --format=%ct -- public/benchmarks/results/test262-report.json 2>/dev/null || echo 0)
           AGE_H=$(( ($(date +%s) - ${COMMITTED_TS:-0}) / 3600 ))
           echo "Drift detected (host_unchanged=$HOST_UNCHANGED standalone_unchanged=$STANDALONE_UNCHANGED); queue=${QUEUE_LEN:-?} committed-summary age=${AGE_H}h force=$FORCE"
           if [ "$FORCE" != "true" ] && [ -n "$QUEUE_LEN" ] && [ "$QUEUE_LEN" -gt 0 ] 2>/dev/null && [ "$AGE_H" -lt 6 ]; then

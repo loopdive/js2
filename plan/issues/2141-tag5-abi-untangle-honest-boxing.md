@@ -11,6 +11,7 @@ priority: high
 feasibility: hard
 reasoning_effort: max
 model: fable
+fable_role: spec
 task_type: architecture
 area: compiler
 language_feature: any-type
@@ -250,3 +251,62 @@ per-slice merge_group proof is the gate.
   `typeof (true as any) === "boolean"` (needs the P2 boolean-brand hint at
   the generic boxing site — S4 acceptance includes it via `jsType` seam),
   `isSameValue` buckets unchanged.
+
+## Implementation Plan addendum (Fable, 2026-07-18) — re-ground: S3a is DONE; S3b/S3c/S4 are the remainder, and three consumers now wait on S4
+
+### Verified flag state (current main, `context/types.ts`)
+
+- `tag5ValueEqClassifier` — **default TRUE** (`:121`): the S3(a) "flip the
+  default ON" landed via **#2040 A1** (`46be13726d`), enabled by the #3032
+  lazy-generator waves (W4 method generators included). The −162 canary
+  cluster is history; the classifier is production.
+- `honestAnyBoxing` — **default false** (`:2404`): S4 (the flip) has NOT
+  happened. This is now the single remaining regime flag on this issue.
+- `undefinedSingleton` — **default TRUE** (#2106 flipped; the #3331 audit of
+  the singleton null-guard bug class is `done`): the S1 design's
+  "null/undefined merged pre-#2106" premise in `trueClass` is STALE — under
+  the shipped regime undefined is the tag-1 `$undefined` singleton and null
+  is `ref.null.extern`. The S4 honest-boxing arms must classify against the
+  singleton (∨ UNDEF_F64 box), not `x == null` alone — re-verify the
+  `__any_box_extern_s1` nullish arms compose with full honesty.
+
+### Remaining ladder (unchanged structure, re-scoped content)
+
+1. **S3b (M)** — the shared `emitTag5TrueClass` consumer sweep, exactly as
+   spec'd in §C: `__any_typeof` tag-5 arm, `typeof-delete.ts` direct
+   tag-list, `__json_stringify` AnyValue arm, `dyn-read.ts` routing,
+   `__any_unbox_extern`. Each conversion is flag-independent (true-class
+   dispatch is correct under BOTH regimes) — land before S4 so the flip
+   changes producer tags only, never consumer behavior.
+2. **S3c (M, own slice + own measurement)** — the cross-tag numeric cell:
+   admit the tag-5 `$BoxedNumber` true-class into `__any_strict_eq`'s
+   numeric-class gate so mixed-provenance equal numbers compare equal. The
+   historical "14 regressions" verdict predates the lazy-generator fix —
+   re-measure, don't trust it.
+3. **S4 (the flip)** — `honestAnyBoxing` default ON for standalone/wasi.
+   Full standalone A/B vs the 2026-07-18 baseline (24,726). Note the
+   census signal: the `assert.sameValue(rest.x, undefined)` signature family
+   (~109 gap rows, #2860 census) is a candidate direct beneficiary —
+   tag them as the flip's expected-win list so the A/B is judged against
+   named rows, not just the net.
+4. **S5 (retire)** — unchanged, plus retire `tag5ValueEqClassifier` as a
+   flag (its OFF regime becomes dead once tags are trustworthy).
+
+### Downstream dependents now blocked on S4 (coordination — reference, do not fork)
+
+- **#745 S5** (default-lane `unionAnyRep` flip) is HARD-GATED on this issue
+  (recorded in #745's Design Decision). #745 S2–S4 landed 2026-07-16 — the
+  standalone-lane union carrier is proven, so this issue is the critical
+  path for the default-lane half.
+- **#3053 U3b** (harness-comparator param-carrier migration) targets the
+  same comparator seam this issue's −788 lesson protects; if S4 lands
+  first, U3b's operands arrive honestly tagged and its scope shrinks —
+  sequence-check with the #3053 owner before either lands.
+- **#2763** (instanceof value-rep) consumes only the carrier, not the flip
+  — no gate, see its 2026-07-18 plan.
+
+The four-seam do-not-touch table in
+`plan/issues/3053-unified-dynamic-reader-carrier-substrate.md` remains the
+normative hazard map for every slice here; S4's flip is the ONE sanctioned
+change to seam 1, taken as a producer-side regime change with S3b/S3c
+already making consumers regime-agnostic.

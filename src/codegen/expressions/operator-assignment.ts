@@ -43,6 +43,7 @@ import {
   emitSuperUninitializedThisGuard,
   emitThrowReferenceError,
   emitThrowTypeError,
+  emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } from "./late-imports.js";
@@ -1529,6 +1530,11 @@ export function compileCompoundAssignment(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): ValType | null {
+  // Annex B.3.9: the call runs, then ReferenceError is thrown before GetValue
+  // or RHS evaluation. Logical assignments are still rejected as early errors.
+  if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.left)) {
+    return { kind: "f64" };
+  }
   // Handle property access compound assignment: obj.prop += value
   if (ts.isPropertyAccessExpression(expr.left)) {
     return compilePropertyCompoundAssignment(ctx, fctx, expr.left, expr.right, op);

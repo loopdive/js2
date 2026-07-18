@@ -1,11 +1,11 @@
 ---
 id: 3103
 title: "Split src/runtime.ts (15,032 LOC) host runtime by concern; decompose resolveImport (6,517-line function)"
-status: ready
+status: in-progress
 assignee: ttraenkler/opus-splitrt
 sprint: current
 created: 2026-07-09
-updated: 2026-07-13
+updated: 2026-07-17
 priority: high
 horizon: l
 feasibility: medium
@@ -178,3 +178,55 @@ decomposition (the 6.5k-line function), `sidecar.ts`, `to-primitive.ts`,
 `wrap-host.ts`, `instantiate.ts`, and the `imports/*` handler groups per the
 Target-structure table above. `runtime.ts` is still 14,618 LOC; acceptance
 criterion #2 (<600 LOC barrel) is a multi-PR target.
+
+## Progress — Slice 2 (dev-k, 2026-07-17)
+
+**Landed:** one more bounded, byte-identical slice — the Annex B legacy RegExp
+static-state machinery plus the `String.prototype` symbol-method reroute for
+primitive search values (#3095), lifted verbatim into a new sibling module.
+`runtime.ts` shrank **15,025 → 14,834 LOC** (−191).
+
+| New module | Extracted | LOC | Wiring |
+| --- | --- | --- | --- |
+| `src/runtime/legacy-regexp.ts` | `_rerouteStringSymbolMethodPrimitive` (#3095), `_makeLegacyRegExpState`, `_updateLegacyRegExpState`, `_installLegacyRegExpAccessors`, type `LegacyRegExpState` (all imported back); privates `_escapeRegExpLiteral`, `_stringMethodDispatchSymbol`, `_legacyRegExpState`, `_legacyRegExpInstalledOn` fully contained | ~205 | one-directional import (`runtime.ts` → `runtime/legacy-regexp.js`); no cycle |
+
+**Root-cause selection (why this region is safe to cut):** the two extracted
+ranges (`_escapeRegExpLiteral`/reroute cluster + the legacy-state cluster)
+reference **nothing** outside themselves — only JS globals (`RegExp`, `Object`,
+`Symbol`, `WeakSet`) and their own module-local decls. The shared default state
+cell `_legacyRegExpState` and the `_legacyRegExpInstalledOn` WeakSet move **with**
+the cluster and stay in exactly one module (per the split-state warning). The
+interspersed `_symbolToWasm`/`_symbolIdToKeys` maps (a **different** concern —
+they depend on `_disposeSym`/`_asyncDisposeSym`) were deliberately left behind.
+Confirmed **0** stray references to the four privatized symbols remain in
+`runtime.ts`; the five re-exported symbols are wired via one import block.
+
+**Safety (REFACTOR — zero behavior change):** bodies moved verbatim (only added
+lines: license header, one import block, `export` keywords). Isolated
+`tsc --noEmit --skipLibCheck` of the new module: clean. `check:loc-budget`:
+green (runtime.ts shrinks; new module ~205 LOC, well under the 1,500 threshold).
+Targeted vitest (`issue-2161-matchall`, `issue-1539-standalone-regex-replace`,
+`issue-3014`): green. runtime.ts is host-side JS, not in the Wasm emit path, so
+the split cannot change an emitted byte by construction.
+
+## Progress — Slice: sparse Array.prototype fast paths (dev-k, 2026-07-17)
+
+**Landed:** another bounded, byte-identical slice — the #1234 sparse-aware
+`Array.prototype.{unshift,reverse,forEach}` fast paths (for non-Array
+receivers) lifted verbatim into a new sibling module
+`src/runtime/array-proto-sparse.ts`. `runtime.ts` shrinks **-187 LOC**.
+
+| New module | Extracted | Wiring |
+| --- | --- | --- |
+| `src/runtime/array-proto-sparse.ts` | `_collectIntegerKeys`, `_arrayProtoUnshiftSparse`, `_arrayProtoReverseSparse`, `_arrayProtoForEachSparse` (all private to the module) + the `_arrayProtoSparseFastPaths` dispatch map | only `_arrayProtoSparseFastPaths` is used by `runtime.ts` (one call site in `__proto_method_call`) — exported and imported back; one-directional, no cycle |
+
+**Root-cause selection:** the whole `#1234` cluster references **nothing**
+outside itself — only JS globals (`Reflect`, `Number`, `Set`, `String`,
+`TypeError`). The 4 functions and their dispatch map move as one unit;
+confirmed **0** stray references to the four privatized symbols remain in
+`runtime.ts`.
+
+**Safety (REFACTOR — zero behavior change):** bodies moved verbatim (only added
+lines: license header, one `export` keyword, one import block). `tsc --noEmit`:
+clean. `check:loc-budget`: green. `runtime.ts` is host-side JS, not in the Wasm
+emit path, so the split cannot change an emitted byte by construction.

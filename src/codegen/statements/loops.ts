@@ -11,7 +11,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext, HoistedCharRead } from "../context/types.js";
-import { emitCoercedLocalSet } from "../expressions/helpers.js";
+import { emitCoercedLocalSet, emitWebCompatCallAssignmentTarget } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { nativeGeneratorInfoForForOfSubject, tryCompileNativeGeneratorForOf } from "../generators-native.js";
 import {
@@ -72,6 +72,7 @@ import {
   compileForOfIteratorAssignDestructuring,
 } from "./for-of-destructuring.js";
 import { collectPatternBindingNames } from "./tdz.js";
+import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
@@ -234,6 +235,9 @@ function detectCanonicalCharReadLoop(
 }
 
 export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ForStatement): void {
+  // (#1004) Counted-append string-loop aggregation: `for (let i=A;i<B;i++) s = s + FRAG`
+  // → `s += FRAG.repeat(N)`. Provably-identical fast path; returns true when handled.
+  if (tryCompileCountedStringAppend(ctx, fctx, stmt)) return;
   // Save localMap entries for let/const initializers that shadow outer variables.
   // `for (let x = ...; ...)` creates a block scope that ends after the loop.
   let savedForScope: Map<string, number> | null = null;
@@ -1413,6 +1417,9 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   fctx.body.push({ op: "i32.add" });
   fctx.body.push({ op: "call", funcIdx: substringIdx });
   fctx.body.push({ op: "local.set", index: elemLocal });
+  if (!ts.isVariableDeclarationList(stmt.initializer)) {
+    emitWebCompatCallAssignmentTarget(ctx, fctx, stmt.initializer);
+  }
 
   // Compile body — save/restore block-scoped shadows for let/const (#817).
   compileLoopBodyWithShadows(ctx, fctx, stmt.statement);
@@ -1743,6 +1750,9 @@ function compileForOfArray(
     coerceType(ctx, fctx, readElemType, elemLocalType);
   }
   emitCoercedLocalSet(ctx, fctx, elemLocal, readElemType);
+  if (!ts.isVariableDeclarationList(stmt.initializer)) {
+    emitWebCompatCallAssignmentTarget(ctx, fctx, stmt.initializer);
+  }
 
   // If destructuring pattern (binding form), destructure from the element
   if (destructPattern) {
@@ -2404,6 +2414,9 @@ function compileForOfDirectIterator(
     coerceType(ctx, fctx, valueFieldType, targetElemType);
   }
   fctx.body.push({ op: "local.set", index: elemLocal });
+  if (!ts.isVariableDeclarationList(stmt.initializer)) {
+    emitWebCompatCallAssignmentTarget(ctx, fctx, stmt.initializer);
+  }
 
   // If destructuring, handle it
   if (destructPatternIter) {
@@ -2822,6 +2835,9 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // Get value: elem = value (already in resultLocal)
   fctx.body.push({ op: "local.get", index: resultLocal });
   fctx.body.push({ op: "local.set", index: elemLocal });
+  if (!ts.isVariableDeclarationList(stmt.initializer)) {
+    emitWebCompatCallAssignmentTarget(ctx, fctx, stmt.initializer);
+  }
 
   // If destructuring pattern, destructure from the element
   if (destructPatternIter) {
@@ -2987,6 +3003,7 @@ function emitArrayForIn(
   keyLocal: number,
   memberTarget: ts.PropertyAccessExpression | ts.ElementAccessExpression | null,
   bindingPattern: ts.ObjectBindingPattern | ts.ArrayBindingPattern | null,
+  callTarget: ts.CallExpression | null,
 ): void {
   // (#3179) `arrayInfo.vecTypeIdx` (the STATIC-type-derived vec type) is
   // deliberately unused: the loop reads only the length, via the `$__vec_base`
@@ -3133,6 +3150,8 @@ function emitArrayForIn(
       fctx.body.push({ op: "local.get", index: keyLocal });
       compileExternrefObjectDestructuringDecl(ctx, fctx, bindingPattern, { kind: "externref" });
     }
+  } else if (callTarget) {
+    emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget);
   }
 
   compileLoopBodyWithShadows(ctx, fctx, stmt.statement);
@@ -3251,6 +3270,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   // the real target each iteration (#1613). These describe that write.
   let bindingPattern: ts.ObjectBindingPattern | ts.ArrayBindingPattern | null = null;
   let memberTarget: ts.PropertyAccessExpression | ts.ElementAccessExpression | null = null;
+  let callTarget: ts.CallExpression | null = null;
   if (ts.isVariableDeclarationList(init)) {
     if (init.declarations.length === 0) {
       // (#2705) `for (let in obj)` in non-strict mode: TS parses the head as a
@@ -3304,6 +3324,10 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
       // Variable might be a global or not yet declared — allocate as local
       keyLocal = allocLocal(fctx, varName, { kind: "externref" });
     }
+  } else if (ts.isCallExpression(head)) {
+    callTarget = head;
+    varName = `__forin_key_${fctx.locals.length}`;
+    keyLocal = allocLocal(fctx, varName, { kind: "externref" });
   } else if (
     ts.isBinaryExpression(head) &&
     head.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -3347,7 +3371,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   // each index ToString'd via the sealed decimal-key formatter, no host import.
   const recvArrayInfo = resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
   if (recvArrayInfo) {
-    emitArrayForIn(ctx, fctx, stmt, recvArrayInfo, keyLocal, memberTarget, bindingPattern);
+    emitArrayForIn(ctx, fctx, stmt, recvArrayInfo, keyLocal, memberTarget, bindingPattern, callTarget);
     return;
   }
 
@@ -3413,6 +3437,7 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
       addStringConstantGlobal(ctx, prop.name);
       for (const instr of stringConstantExternrefInstrs(ctx, prop.name)) fctx.body.push(instr);
       fctx.body.push({ op: "local.set", index: keyLocal });
+      if (callTarget) emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget);
       compileStatement(ctx, fctx, stmt.statement);
     }
     return;
@@ -3563,6 +3588,8 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
         kind: "externref",
       });
     }
+  } else if (callTarget) {
+    emitWebCompatCallAssignmentTarget(ctx, fctx, callTarget);
   }
 
   // Compile the user's loop body — save/restore block-scoped shadows for let/const (#817).

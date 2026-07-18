@@ -1,8 +1,10 @@
 ---
 id: 2649
 title: "Standalone: TypedArray.prototype.subarray returns an empty view (.length === 0)"
-status: ready
-sprint: Backlog
+status: done
+completed: 2026-07-17
+assignee: ttraenkler/dev-standalone2
+sprint: current
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -11,7 +13,32 @@ area: typedarray
 language_feature: typedarray-methods
 goal: standalone-mode
 related: [2648, 1907]
+loc-budget-allow:
+  # Intended +19 LOC: read `.length` field 0 directly off a subview receiver's
+  # own type instead of ref.test-ing the mismatched vec type (which returned 0).
+  - src/codegen/property-access-dispatch.ts
 ---
+
+## Resolution (2026-07-17)
+
+Fixed in `src/codegen/property-access-dispatch.ts` (the `.length` dispatch).
+
+Root cause: `ta.subarray(...)` returns a `$__subview_<elem>` struct (a window
+sharing the parent's backing array). Its element data is reachable, but the
+`.length` read is TS-typed as the TypedArray, so the length dispatch
+`ref.test`-ed the receiver against the concrete `$__vec_<elem>` type. A subview
+is a **sibling** subtype of `$__vec_base` (not the vec), so the `ref.test` FAILS
+and the arm fell back to `f64.const 0`.
+
+Fix: when the compiled receiver's OWN static wasm type is a length-prefixed
+`{length, data}` struct (the subview), read field 0 **directly** from that type
+instead of `ref.test`-ing the mismatched vec type. Correct and cheaper.
+
+Guarded by `tests/issue-2649.test.ts` (13 cases): begin/end/no-arg/negative/empty
+windows, packed (Int8/Uint16) and 32-bit/float (Int32/Float64) views, nested
+subarray, combined length+element read, a plain typed-array `.length` regression
+guard, and a gc-host parity case. No host-lane behavior change (host `subarray`
+uses copy/slice semantics — `.length` was never broken there).
 
 # #2649 — Standalone TypedArray.prototype.subarray returns an empty view
 

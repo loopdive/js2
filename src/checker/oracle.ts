@@ -325,15 +325,31 @@ export class TsCheckerOracle implements TypeOracle {
       return { kind: "union", parts, nullable, undefinable };
     }
     if (f & ts.TypeFlags.Object) {
+      const checkerWithCollectionPredicates = this.checker as ts.TypeChecker & {
+        isArrayType?: (type: ts.Type) => boolean;
+        isTupleType?: (type: ts.Type) => boolean;
+        getTypeArguments?: (type: ts.TypeReference) => readonly ts.Type[];
+      };
+      const typeArguments =
+        checkerWithCollectionPredicates.getTypeArguments?.(t as ts.TypeReference) ??
+        (t as ts.TypeReference).typeArguments ??
+        [];
+      if (checkerWithCollectionPredicates.isTupleType?.(t) === true) {
+        return { kind: "tuple", elements: typeArguments.map((element) => this.factOfType(element, depth + 1)) };
+      }
+      if (checkerWithCollectionPredicates.isArrayType?.(t) === true) {
+        const element = typeArguments[0];
+        return { kind: "array", element: element ? this.factOfType(element, depth + 1) : { kind: "any" } };
+      }
       const name = t.symbol?.name;
       if (name && BUILTIN_NAMES.has(name)) {
         if (name === "Array") {
-          const elem = (t as ts.TypeReference).typeArguments?.[0];
+          const elem = typeArguments[0];
           return { kind: "array", element: elem ? this.factOfType(elem, depth + 1) : { kind: "any" } };
         }
         return { kind: "builtin", name };
       }
-      if (t.getCallSignatures?.().length > 0) return { kind: "function" };
+      if (t.getCallSignatures?.().length > 0 || t.getConstructSignatures?.().length > 0) return { kind: "function" };
       if (name && name !== "__type" && name !== "__object") return { kind: "class", name };
       return { kind: "object" };
     }

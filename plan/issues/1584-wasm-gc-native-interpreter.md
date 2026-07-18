@@ -6,6 +6,7 @@ created: 2026-05-23
 updated: 2026-07-02
 priority: medium
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: feature
 area: runtime

@@ -1,5 +1,5 @@
 {
-  "codegen/array-methods.ts": 16,
+  "codegen/array-methods.ts": 18,
   "codegen/array-object-proto.ts": 1,
   "codegen/array-prototype-borrow.ts": 4,
   "codegen/array-to-primitive.ts": 5,

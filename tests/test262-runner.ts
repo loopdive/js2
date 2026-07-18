@@ -5,8 +5,8 @@
  * Each test262 test is a standalone JS file. We:
  *   1. Parse metadata (features, flags, negative, includes)
  *   2. Filter out tests that use unsupported features
- *   3. Wrap the test body in an exported function
- *   4. Compile with allowJs, instantiate, and run
+ *   3. Assemble the literal upstream harness and untouched test body
+ *   4. Compile with allowJs, instantiate, and run top-level initialization
  */
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
@@ -15,7 +15,9 @@ import { createContext, runInContext } from "node:vm";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
+import { negativeCompileErrorMatches } from "../scripts/negative-verdict.mjs";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
+import { assembleOriginalHarness, type OriginalHarnessVariant } from "./test262-original-harness.js";
 
 // #1310: per-shard global isolation for test262.
 //
@@ -79,7 +81,7 @@ const SENTINEL_KEYS: ReadonlyArray<readonly string[]> = [
   ["WeakSet", "prototype", "add"],
 ];
 
-function _buildFreshSandbox(): Record<string, any> {
+function _buildFreshSandbox(consoleProxy?: Console): Record<string, any> {
   // Create a context, then pull each global name out of it via
   // runInContext so the sandbox object exposes them by property name.
   const sandbox = Object.create(null) as Record<string, any>;
@@ -94,9 +96,23 @@ function _buildFreshSandbox(): Record<string, any> {
       // Some globals may not be present in this vm realm — leave undefined.
     }
   }
+  // Script global value properties have immutable data descriptors. A plain
+  // object sandbox otherwise lets strict writes create `undefined`/`Infinity`
+  // and turns Test262's required TypeErrors into false negatives (#3367).
+  Object.defineProperties(sandbox, {
+    undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
+    Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
+    NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
+  });
+  if (consoleProxy) sandbox.console = consoleProxy;
   // Provide globalThis as the sandbox itself so `ctx.globalThis === ctx`.
   sandbox.globalThis = sandbox;
   return sandbox;
+}
+
+/** A fresh realm for literal-harness execution; never reused across variants. */
+export function createTestSandbox(consoleProxy?: Console): Record<string, any> {
+  return _buildFreshSandbox(consoleProxy);
 }
 
 function _readSentinels(sandbox: Record<string, any>): unknown[] {
@@ -251,26 +267,25 @@ export function parseMeta(source: string): Test262Meta {
   const infoMatch = yaml.match(/^info:\s*\|?\s*\n([\s\S]*?)(?=^\w|\Z)/m);
   if (infoMatch) meta.info = infoMatch[1]!.trim();
 
-  const featMatch = yaml.match(/^features:\s*\[([^\]]*)\]/m);
-  if (featMatch)
-    meta.features = featMatch[1]!
-      .split(",")
-      .map((s) => s.trim())
+  const parseList = (name: string): string[] | undefined => {
+    const inline = yaml.match(new RegExp(`^${name}:\\s*\\[([^\\]]*)\\]`, "m"));
+    if (inline) {
+      return inline[1]!
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+    }
+    const block = yaml.match(new RegExp(`^${name}:\\s*\\n((?:[ \\t]+-\\s*.*(?:\\n|$))+)`, "m"));
+    if (!block) return undefined;
+    return block[1]!
+      .split("\n")
+      .map((line) => line.replace(/^\s*-\s*/, "").trim())
       .filter(Boolean);
+  };
 
-  const flagMatch = yaml.match(/^flags:\s*\[([^\]]*)\]/m);
-  if (flagMatch)
-    meta.flags = flagMatch[1]!
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-  const inclMatch = yaml.match(/^includes:\s*\[([^\]]*)\]/m);
-  if (inclMatch)
-    meta.includes = inclMatch[1]!
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  meta.features = parseList("features");
+  meta.flags = parseList("flags");
+  meta.includes = parseList("includes");
 
   if (yaml.includes("negative:")) {
     const phaseMatch = yaml.match(/phase:\s*(\w+)/);
@@ -1562,10 +1577,13 @@ function extractDescriptorValue(descStr: string): string | null {
 }
 
 /**
- * Wrap a test262 test into a compilable TS module.
+ * Wrap a test262 test into a compilable TS module for targeted compiler probes.
  *
  * Strategy: provide a shim for assert.sameValue that traps on mismatch.
  * The test body runs inside an exported function; returning 1 = success.
+ *
+ * @deprecated This transformed source is not a conformance verdict oracle.
+ * Use assembleOriginalHarness()/runTest262File() for pass/fail accounting.
  */
 export interface WrapResult {
   source: string;
@@ -2218,7 +2236,7 @@ function Iterator(this: any): void {}
     // rather than triggering a ReferenceError at compile time.
     p += `
 
-let $262: any = {
+let $262 = {
   global: globalThis,
   gc: function (): void {},
   evalScript: function (src: any): void {},
@@ -2247,7 +2265,11 @@ let $262: any = {
     monotonicNow: function (): number { return 0; },
     leaving: function (): void {},
   },
-  IsHTMLDDA: undefined,
+  // Identity-only host-object sentinel: enough for tests that require a
+  // non-undefined [[IsHTMLDDA]] value to survive assignment/destructuring.
+  // Full Annex B falsy/typeof/abstract-equality behavior remains compiler and
+  // runtime scope.
+  IsHTMLDDA: (globalThis as any),
   AbstractModuleSource: undefined,
 };`;
   }
@@ -2529,6 +2551,40 @@ export function parenthesizeAwaitBraceOperand(body: string): string {
   return out;
 }
 
+/**
+ * Preserve Script-goal top-level `this` when the runner moves a test body into
+ * its synthetic exported `test()` function. Ordinary functions and classes
+ * introduce their own `this` binding and are deliberately left untouched;
+ * arrows inherit the surrounding binding, so a top-level arrow is rewritten.
+ * The `as any` keeps the global object on the host-MOP/externref path instead
+ * of letting TypeScript's enormous `typeof globalThis` interface select a
+ * closed Wasm struct shape (#3367).
+ */
+export function rewriteScriptTopLevelThis(body: string): string {
+  if (!/\bthis\b/.test(body)) return body;
+
+  const sourceFile = ts.createSourceFile("__test262_script.ts", body, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const spans: Array<{ start: number; end: number }> = [];
+
+  const visit = (node: ts.Node, hasOwnThis: boolean, inClass: boolean): void => {
+    if (node.kind === ts.SyntaxKind.ThisKeyword && !hasOwnThis && !inClass) {
+      spans.push({ start: node.getStart(sourceFile), end: node.getEnd() });
+      return;
+    }
+
+    const nextHasOwnThis = hasOwnThis || (ts.isFunctionLike(node) && !ts.isArrowFunction(node));
+    const nextInClass = inClass || ts.isClassDeclaration(node) || ts.isClassExpression(node);
+    ts.forEachChild(node, (child) => visit(child, nextHasOwnThis, nextInClass));
+  };
+  visit(sourceFile, false, false);
+
+  let rewritten = body;
+  for (const span of spans.sort((a, b) => b.start - a.start)) {
+    rewritten = `${rewritten.slice(0, span.start)}(globalThis as any)${rewritten.slice(span.end)}`;
+  }
+  return rewritten;
+}
+
 export function wrapTest(
   source: string,
   meta?: Test262Meta,
@@ -2540,6 +2596,7 @@ export function wrapTest(
   target?: string,
 ): WrapResult {
   const dynViewCompare = target === "standalone" || target === "wasi";
+  const resolvedMeta = meta ?? parseMeta(source);
   // Strip metadata block
   let body = source.replace(/\/\*---[\s\S]*?---\*\//, "");
 
@@ -2553,6 +2610,17 @@ export function wrapTest(
   // assert routing, etc.) operates on raw source and can be confused by them.
   // Replace \uNNNN sequences outside of string literals with the actual character.
   body = resolveUnicodeEscapes(body);
+  if (!resolvedMeta.flags?.includes("module")) {
+    body = rewriteScriptTopLevelThis(body);
+  }
+  if (resolvedMeta.features?.includes("IsHTMLDDA")) {
+    // The project wrapper only models the identity/non-undefined part of
+    // [[IsHTMLDDA]]. Keep that sentinel directly on the host-MOP path. Going
+    // through the synthetic module-global `$262` object gives its callable
+    // field a closed Wasm ref type and can corrupt array-destructuring locals
+    // before the test begins (#3367).
+    body = body.replace(/\$262\.IsHTMLDDA\b/g, "(globalThis as any)");
+  }
 
   // Rename `yield` used as an identifier to `_yield` — in sloppy-mode JS
   // `yield` is a valid identifier, but modules are strict mode where it's reserved.
@@ -2791,7 +2859,6 @@ export function wrapTest(
   // included only when the test body references the function, to avoid
   // unused-variable compile errors.
 
-  const resolvedMeta = meta ?? parseMeta(source);
   const includes = resolvedMeta.includes ?? [];
 
   // Body-modifying passes that don't affect preamble content
@@ -4004,7 +4071,319 @@ export function enrichErrorMessage(
   return parts.join(" ");
 }
 
+interface OriginalVariantResult {
+  pass: boolean;
+  phase: "compile" | "runtime";
+  detail?: string;
+  timing: TestTiming;
+  wasm_sha?: string;
+}
+
+function originalHarnessThrownText(error: unknown, instance?: WebAssembly.Instance): string {
+  if (typeof WebAssembly !== "undefined" && error instanceof WebAssembly.Exception && instance) {
+    try {
+      const exports = instance.exports as Record<string, any>;
+      const tag = exports.__exn_tag ?? exports.__tag;
+      const payload = tag ? error.getArg(tag, 0) : undefined;
+      if (payload != null && (typeof payload === "object" || typeof payload === "function")) {
+        const name = (payload as { name?: unknown }).name;
+        const message = (payload as { message?: unknown }).message;
+        if (typeof name === "string") return `${name}${message ? `: ${String(message)}` : ""}`;
+      }
+      if (payload !== undefined && payload !== null) return safeStringifyThrown(payload);
+    } catch {
+      // Fall through to the guarded generic renderer.
+    }
+  }
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return safeStringifyThrown(error);
+}
+
+function originalNegativeMatches(meta: Test262Meta, detail: string): boolean {
+  const expected = meta.negative?.type;
+  if (!expected) return Boolean(meta.negative);
+  return detail.includes(expected);
+}
+
+function appendOriginalHarnessFailureContext(detail: string, source: string): string {
+  const lines = source.split("\n");
+  const candidates: Array<{ line: number; text: string }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i]!.trim();
+    if (/\bassert\b[.\w]*\s*\(|throw\s+new\s+Test262Error\b/.test(text)) {
+      candidates.push({ line: i + 1, text });
+    }
+  }
+  if (candidates.length === 0) return detail;
+
+  let selected = candidates[0]!;
+  const sameValue = detail.match(/Expected SameValue\(«([^»]+)», «([^»]+)»\)/);
+  if (sameValue) {
+    const actual = sameValue[1]!.trim();
+    const expected = sameValue[2]!.trim();
+    const matchingCall = candidates.find((candidate) => {
+      const call = candidate.text.match(/assert\.sameValue\s*\(\s*([^,]+)\s*,\s*([^,)]+)[,)]/);
+      return call?.[1]?.trim() === actual && call?.[2]?.trim() === expected;
+    });
+    if (matchingCall) selected = matchingCall;
+  }
+  for (const candidate of candidates) {
+    const literals = candidate.text.matchAll(/(["'`])([^"'`]{8,})\1/g);
+    if ([...literals].some((match) => detail.includes(match[2]!))) {
+      selected = candidate;
+      break;
+    }
+  }
+  const text = selected.text.length > 600 ? `${selected.text.slice(0, 597)}...` : selected.text;
+  return `${detail} | at L${selected.line}: ${text}`;
+}
+
+async function runOriginalHarnessVariant(
+  variant: OriginalHarnessVariant,
+  originalSource: string,
+  meta: Test262Meta,
+  fileName: string,
+  timeoutMs: number,
+  target?: "standalone",
+): Promise<OriginalVariantResult> {
+  restoreHostBuiltins();
+  const started = performance.now();
+  let compileMs = 0;
+  let instantiateMs = 0;
+  let executeMs = 0;
+  let result: Awaited<ReturnType<typeof compile>> | undefined;
+  let instance: WebAssembly.Instance | undefined;
+
+  const timing = (): TestTiming => ({
+    totalMs: round2(performance.now() - started),
+    compileMs: round2(compileMs),
+    instantiateMs: round2(instantiateMs),
+    executeMs: round2(executeMs),
+  });
+
+  try {
+    const compileStarted = performance.now();
+    try {
+      result = await compile(variant.source, {
+        allowJs: true,
+        fileName,
+        sourceMap: true,
+        emitWat: false,
+        skipSemanticDiagnostics: true,
+        inferModuleStrictArguments: meta.flags?.includes("module") === true,
+        ...(target ? { target } : { deferTopLevelInit: true }),
+      });
+    } catch (error) {
+      compileMs = performance.now() - compileStarted;
+      const detail = originalHarnessThrownText(error);
+      const isCompileNegative = Boolean(meta.negative) && meta.negative?.phase !== "runtime";
+      return {
+        pass: isCompileNegative && negativeCompileErrorMatches(meta.negative?.type, [], detail),
+        phase: "compile",
+        detail,
+        timing: timing(),
+      };
+    }
+    compileMs = performance.now() - compileStarted;
+
+    if (compileMs > timeoutMs) {
+      return {
+        pass: false,
+        phase: "compile",
+        detail: `compilation timeout (${round2(compileMs)}ms)`,
+        timing: timing(),
+      };
+    }
+
+    if (!result.success || result.errors.some((error) => error.severity === "error")) {
+      const detail =
+        result.errors
+          .filter((error) => error.severity === "error")
+          .map((error) => error.message)
+          .join("; ") ||
+        result.errors.map((error) => error.message).join("; ") ||
+        "compile failed";
+      const syntaxPhase =
+        meta.negative?.phase === "parse" || meta.negative?.phase === "early" || meta.negative?.phase === "resolution";
+      const pass =
+        Boolean(meta.negative) &&
+        meta.negative?.phase !== "runtime" &&
+        (originalNegativeMatches(meta, detail) || (meta.negative?.type === "SyntaxError" && syntaxPhase));
+      return { pass, phase: "compile", detail, timing: timing() };
+    }
+
+    const wasm_sha = computeWasmSha(result.binary);
+    const output: string[] = [];
+    const appendOutput = (line: string): void => {
+      Reflect.defineProperty(output, output.length, {
+        value: line,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    };
+    const consoleProxy = {
+      log: (...values: unknown[]) => appendOutput(values.map(String).join(" ")),
+      error: (...values: unknown[]) => appendOutput(values.map(String).join(" ")),
+      warn: (...values: unknown[]) => appendOutput(values.map(String).join(" ")),
+    } as unknown as Console;
+    const findAsyncMarker = (prefix: string): string | undefined => {
+      for (let i = 0; i < output.length; i++) {
+        if (output[i]?.includes(prefix)) return output[i];
+      }
+      return undefined;
+    };
+
+    try {
+      const sandbox = createTestSandbox(consoleProxy);
+      const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
+        globalSandbox: sandbox,
+      }) as any;
+      const instantiateStarted = performance.now();
+      ({ instance } = await WebAssembly.instantiate(result.binary, imports));
+      instantiateMs = performance.now() - instantiateStarted;
+      imports.setExports?.(instance.exports);
+
+      const executeStarted = performance.now();
+      const moduleInit = (instance.exports as Record<string, any>).__module_init;
+      if (typeof moduleInit === "function") moduleInit();
+
+      if (meta.flags?.includes("async")) {
+        const deadline = Date.now() + Math.min(timeoutMs, 1_000);
+        while (
+          Date.now() < deadline &&
+          !findAsyncMarker("Test262:AsyncTestComplete") &&
+          !findAsyncMarker("Test262:AsyncTestFailure")
+        ) {
+          await new Promise((resolveTurn) => setTimeout(resolveTurn, 10));
+        }
+      }
+      executeMs = performance.now() - executeStarted;
+
+      if (meta.negative) {
+        return {
+          pass: false,
+          phase: "runtime",
+          detail: `expected ${meta.negative.type}`,
+          timing: timing(),
+          wasm_sha,
+        };
+      }
+      const asyncFailure = findAsyncMarker("Test262:AsyncTestFailure");
+      if (asyncFailure) {
+        return {
+          pass: false,
+          phase: "runtime",
+          detail: asyncFailure,
+          timing: timing(),
+          wasm_sha,
+        };
+      }
+      if (meta.flags?.includes("async") && !findAsyncMarker("Test262:AsyncTestComplete")) {
+        return {
+          pass: false,
+          phase: "runtime",
+          detail: "async completion marker not observed",
+          timing: timing(),
+          wasm_sha,
+        };
+      }
+      return { pass: true, phase: "runtime", timing: timing(), wasm_sha };
+    } catch (error) {
+      executeMs = Math.max(executeMs, performance.now() - started - compileMs - instantiateMs);
+      const enriched = enrichErrorMessage(
+        originalHarnessThrownText(error, instance),
+        error,
+        result.sourceMap,
+        variant.bodyLineOffset,
+      );
+      const detail = appendOriginalHarnessFailureContext(enriched, originalSource);
+      return {
+        pass: meta.negative?.phase === "runtime" && originalNegativeMatches(meta, detail),
+        phase: "runtime",
+        detail,
+        timing: timing(),
+        wasm_sha,
+      };
+    }
+  } finally {
+    restoreHostBuiltins();
+  }
+}
+
+/**
+ * Authoritative Test262 execution path. Unlike wrapTest(), this compiles the
+ * literal upstream harness assembly and untouched test body. A normal script
+ * record must pass both its sloppy execution and Test262's strict rerun.
+ */
 export async function runTest262File(
+  filePath: string,
+  category: string,
+  timeoutMs = TEST_TIMEOUT_MS,
+  target?: "standalone",
+): Promise<TestResult> {
+  const relPath = relative(TEST262_ROOT, filePath);
+  const source = readFileSync(filePath, "utf-8");
+  const meta = parseMeta(source);
+
+  const relTest = filePath.replace(/.*test262\//, "");
+  if (HANGING_TESTS.has(relTest)) {
+    return { file: relPath, category, status: "skip", reason: "compiler hang (see HANGING_TESTS)" };
+  }
+  if (!meta.negative) {
+    const filter = shouldSkip(source, meta, filePath);
+    if (filter.skip) return { file: relPath, category, status: "skip", reason: filter.reason };
+  }
+
+  const assembly = assembleOriginalHarness(source, meta);
+  const primary = await runOriginalHarnessVariant(assembly.primary, source, meta, filePath, timeoutMs, target);
+  if (!primary.pass) {
+    return {
+      file: relPath,
+      category,
+      status: primary.phase === "compile" ? "compile_error" : "fail",
+      error: primary.detail,
+      timing: primary.timing,
+      wasm_sha: primary.wasm_sha ?? null,
+    };
+  }
+
+  if (assembly.strictRerun) {
+    const strict = await runOriginalHarnessVariant(assembly.strictRerun, source, meta, filePath, timeoutMs, target);
+    if (!strict.pass) {
+      return {
+        file: relPath,
+        category,
+        status: strict.phase === "compile" ? "compile_error" : "fail",
+        error: `strict rerun: ${strict.detail ?? "failed"}`,
+        timing: {
+          totalMs: round2(primary.timing.totalMs + strict.timing.totalMs),
+          compileMs: round2(primary.timing.compileMs + strict.timing.compileMs),
+          instantiateMs: round2(primary.timing.instantiateMs + strict.timing.instantiateMs),
+          executeMs: round2(primary.timing.executeMs + strict.timing.executeMs),
+        },
+        wasm_sha: primary.wasm_sha ?? strict.wasm_sha ?? null,
+      };
+    }
+    primary.timing = {
+      totalMs: round2(primary.timing.totalMs + strict.timing.totalMs),
+      compileMs: round2(primary.timing.compileMs + strict.timing.compileMs),
+      instantiateMs: round2(primary.timing.instantiateMs + strict.timing.instantiateMs),
+      executeMs: round2(primary.timing.executeMs + strict.timing.executeMs),
+    };
+  }
+
+  return {
+    file: relPath,
+    category,
+    status: "pass",
+    timing: primary.timing,
+    wasm_sha: primary.wasm_sha ?? null,
+  };
+}
+
+/** Legacy transformed runner retained only for wrapper-specific diagnostics. */
+export async function runSyntheticTest262File(
   filePath: string,
   category: string,
   timeoutMs = TEST_TIMEOUT_MS,

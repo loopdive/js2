@@ -8,6 +8,7 @@ created: 2026-06-26
 updated: 2026-07-04
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: max
 owner_role: senior-developer
 task_type: refactor

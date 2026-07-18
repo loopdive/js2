@@ -1,10 +1,10 @@
 ---
 id: 3104
 title: "Re-split codegen/index.ts (16,566 LOC, regrown 2.6x) into subsystem modules; driver-only index"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-07-17
 priority: high
 horizon: l
 feasibility: medium
@@ -108,3 +108,23 @@ near-copies) ≈ **−400 to −800** in follow-ups. `index.ts` 16,566 → ~2,70
    (`@deprecated` JSDoc pointing at the new home).
 4. test262 CI: no regression.
 5. #3102 baseline updated (if landed).
+
+## Progress — Slice 1 (dev-l, recovered + landed by dev-k, 2026-07-17)
+
+**Landed:** first bounded, byte-identical slice — the 5 whole-program AST
+pre-scan predicates lifted verbatim out of `src/codegen/index.ts` into a new
+sibling module `src/codegen/source-scan-predicates.ts`.
+
+| New module | Extracted | Wiring |
+| --- | --- | --- |
+| `src/codegen/source-scan-predicates.ts` | `sourceContainsClass`, `sourceContainsDelete`, `sourceHasDynamicTaConstruct`, `sourceContainsBindingPattern`, `sourceOverridesArrayIterator` | imported back into `index.ts`; `sourceOverridesArrayIterator` also re-exported (external consumer `tests/issue-1719-s1.test.ts`) |
+
+`index.ts` shrinks by 235 lines (block 426-659 removed). These predicates are
+pure, cheap `ts.SourceFile` walks with **no dependency on `CodegenContext`** —
+they only import `ts`/`forEachChild` and `TYPED_ARRAY_NAMES`. The
+`index.ts ⇄ source-scan-predicates` import edge is load-safe (predicates run only
+at codegen time, never at module init).
+
+**Safety (REFACTOR — zero behavior change):** bodies moved verbatim. `tsc
+--noEmit`: clean. `check:loc-budget`: green. Targeted vitest
+(`issue-1719-s1`, `issue-1364b-class-method-delete`): 21/21 passed.

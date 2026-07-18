@@ -2,6 +2,7 @@
 id: 2573
 title: "Reading a missing property on a plain `{}` object returns null, not undefined"
 status: ready
+sprint: Backlog
 created: 2026-06-21
 priority: medium
 feasibility: medium

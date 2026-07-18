@@ -5,6 +5,7 @@ status: in-progress
 assignee: ttraenkler/fable-identity
 sprint: current
 model: fable
+fable_role: spec
 created: 2026-07-02
 updated: 2026-07-09
 priority: high
@@ -239,3 +240,100 @@ routing; owner-chain now shared), `src/codegen/context/types.ts`
 **Still open (Phase 2, unchanged):** the builtin `__get_builtin` CE-cluster
 reduction remains blocked on the value-call-path dispatch fix documented
 above — this PR does not touch it.
+
+## Implementation Plan (Fable, 2026-07-18) — Phase 2 re-grounded: the dispatch "blocker" is OBSOLETE; wire real bodies under the all-externref convention
+
+### Verify-first state (current main)
+
+The Phase-1 note above (2026-07-02) is stale in three load-bearing ways:
+
+1. **The substrate moved and grew.** The value-read machinery now lives in
+   `src/codegen/builtin-value-read.ts` (`ensureStandaloneBuiltinStaticMethodClosure`,
+   `:820`), with reflective-descriptor support in `builtin-static-gopd.ts` and
+   identity singletons via `pushBuiltinFnSingletonValueInstrs`
+   (`builtin-fn-meta.ts:303`). The wired set is no longer "3 methods" — it is
+   `Array.isArray`, `Object.keys`, `Object.getOwnPropertyDescriptor`,
+   `Reflect.get/has/set/ownKeys`, `JSON.stringify`, and variadic
+   `Math.max`/`Math.min` (#2933).
+2. **The hard-CE cluster is already structurally retired (#2984 Phase 3).**
+   The `default` arm (`builtin-value-read.ts:921–942`) reifies EVERY method in
+   `BUILTIN_STATIC_METHOD_ARITY` as an identity-stable, spec-shaped
+   (`.name`/`.length` meta subtype) closure whose body throws a **catchable
+   TypeError**. So feature-detection reads, identity compares, and descriptor
+   reflection all pass today; only *invoking* an unwired extracted value
+   throws. The remaining conformance lever is therefore "give real bodies to
+   the throw-body methods", not "stop CE-ing".
+3. **The value-call dispatch fix is NOT a prerequisite anymore.** The Phase-1
+   blocker ("f64-param closure mis-selects among same-arity candidates") is
+   solved by *convention*, not by a dispatcher change: every reified closure
+   already takes **all-externref params** (or the single
+   `(ref null $vec_externref)` variadic param) — exactly the shape the inline
+   dynamic dispatcher's #2939 pre-registration restricts itself to, and the
+   #820/#1543 funcref-signature discrimination handles soundly. **Design rule
+   (normative for Phase 2): a reified builtin closure NEVER carries a scalar
+   (f64/i32) param type in its wrapper signature. Coercion happens INSIDE the
+   body.** `Math.max` is the worked precedent (vec-of-externref →
+   `__any_to_f64` per element → `f64.max` → `__any_box_f64`). Do not touch
+   `tryEmitInlineDynamicCall`.
+
+### Phase 2 worklist (each entry: params all-externref; body = unbox → existing native → box)
+
+Ordered by cluster size and body availability. All are `switch (key)` arms in
+`ensureStandaloneBuiltinStaticMethodClosure` replacing the generic throw body;
+each reuses the SAME native the direct-call path uses (observational identity
+with the direct call is the acceptance bar, per the `Reflect.get` precedent).
+
+| Tier | Methods | Body sketch |
+| --- | --- | --- |
+| 2a | `Number.isInteger/isFinite/isNaN/isSafeInteger` | `ref.test $BoxedNumber` on the arg (via `any.convert_extern` + the settled tag-3 peel — NOT ToNumber; a non-number arg answers `0` per §21.1.2); on hit, unbox f64 and run the existing direct-call predicate lowering |
+| 2b | `Object.is` | two externref args → the standalone SameValue helper the direct call uses (`calls.ts` Object.is arm; includes the −0/NaN discrimination). NB SameValue ≠ `===`; reuse, don't re-derive |
+| 2c | `Math.<unary/binary fixed-arity>` (`abs`, `floor`, `ceil`, `trunc`, `sign`, `sqrt`, `atan2`, `pow`, …) | arg(s) → `__any_to_f64` (spec ToNumber on the boxed value; non-number → NaN, which is §21.3 behavior) → the existing self-hosted `src/stdlib/math.ts` native → `__any_box_f64`. One table-driven arm, not N hand-written cases: key on `BUILTIN_STATIC_METHOD_ARITY.Math` + the direct-call lowering's dispatch table |
+| 2d | `Number.parseFloat/parseInt` | route to the existing native parse entries (the standalone direct-call path); parseInt keeps the NaN radix sentinel |
+| 2e | `Date.now` | 0-arg; the direct-call lowering's time source (verify which import/native serves it standalone — if it is host-only, leave the throw body and record why) |
+| 2f | `Array.of` (variadic) | the `$vec_externref` variadic convention (Math.max precedent): build a `$__vec_externref` from the args vec — elements are already externref, no per-element coercion |
+| 2g | `Array.from` (1-arg iterable subset) | ONLY the array-like/vec fast shape the direct call supports standalone; other inputs keep the catchable throw (document per-shape) |
+
+**Explicitly OUT (keep throw bodies, with the recorded reason):**
+`Promise.*` (host-backed even for direct calls — gated on native Promise,
+#3178 family); `Symbol.*` non-well-known (needs Symbol identity substrate);
+`JSON.parse` (needs the anyref-boundary return work noted in the #2933
+comment); anything whose direct-call path is itself still a host import
+standalone (reification must never mint a NEW host dependency — dual-mode
+rule).
+
+### Mechanics every arm must follow (the settled discipline)
+
+- **Pre-register before minting** (the #2704 lesson, already in the Math.max
+  arm): `addUnionImports` / `ensureAnyHelpers` / any `ensure*` the body needs
+  run BEFORE `getOrCreateFuncRefWrapperTypes`/`mintDefinedFunc`.
+- **Identity**: nothing to do — the singleton substrate
+  (`pushBuiltinFnSingletonValueInstrs`) and the meta subtype
+  (`.name`/`.length`) apply automatically once the arm exists; keep
+  `STANDALONE_STATIC_METHOD_META` in sync for newly-wired entries (the file
+  header requires it).
+- **Fallback**: if a required native is unavailable in the current mode,
+  degrade to `genericThrowBody` (the Math.max arm's pattern at `:906–913`),
+  never `return null` (null re-opens the #1907 CE).
+- **Byte-inertness**: host/gc lanes untouched (all sites are
+  `ctx.standalone`-gated); `prove-emit-identity` corpus must stay IDENTICAL.
+
+### Acceptance / measurement
+
+- Probe file per tier under `.tmp/`: extract → store in `any` local → call →
+  compare against the direct call's result, `--target standalone`, run not
+  just compile.
+- The issue's headline metric is re-based: count **catchable-TypeError
+  invocations** flipping to correct results on the standalone lane (the CE
+  count is already ~retired by Phase 3); before/after via the standalone
+  shard's `net_per_test`.
+- `[1,2].map(Number)` and `const f = Number.isInteger; [1.5, 2].filter(f)`
+  as e2e rows (the dispatcher path end-to-end with a wired body).
+- Full `merge_group` (broad-impact: touches the reflective/value substrate).
+
+### Sizing / routing
+
+Tier 2a+2b+2d: one M PR (opus). Tier 2c: one M PR (table-driven; the risk is
+per-method ToNumber edge cases — cite §21.3 per method in tests). Tier
+2f/2g: S–M. 2e: S after the standalone time-source check. Independent of
+#2916/#2651 (different substrate); no coordination needed beyond ordinary
+merge hygiene.

@@ -10,11 +10,14 @@ sprint: current
 created: 2026-06-24
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: feature
 area: codegen, runtime, value-rep
 language_feature: built-ins, constructors, prototype chain, TypedArray
 goal: standalone-mode
+model: fable
+fable_role: spec
 parent: 1888
 related: [1907, 1888, 2580, 2648, 2649, 2650, 2595, 1395, 2026]
 test262_bucket: standalone-dynamic-object-property
@@ -688,3 +691,35 @@ discipline warns against. **The M3 picker:** predecessor-stack on `sd-2580`'s M3
 branch after it lands, consume its `[[Prototype]]`-link field/walk (do NOT invent
 a parallel one), and use the file:line map above. Re-measure the residual on
 then-current `main` first (the lever count above is the 2026-06-25 measurement).
+
+## Implementation Plan addendum (Fable, 2026-07-18) — M3 stays parked; the intrinsic-VALUE half now has a named substrate (#2916 B0)
+
+Re-grounded 2026-07-18: **#2580 is still `in-progress` (sd-2580), so the
+parking decision stands — do not unpark M3 yet.** Two additions for the
+eventual picker so the three-week-old plan doesn't get re-derived or forked:
+
+1. **The intrinsic-constructor VALUE (`Object.getPrototypeOf(Int8Array)` →
+   `%TypedArray%`) is the SAME substrate as #2916's B0 `$BuiltinCtor` branded
+   carrier** (`$Object` subtype with a `ctorBrand` i32 field; see the
+   2026-07-18 plan in
+   `plan/issues/2916-standalone-native-instanceof-and-isprototypeof.md`).
+   M3's missing pieces map onto it directly: (a) the `calls.ts`
+   `Object.getPrototypeOf(<view-identifier>)` interception returns the
+   B0 carrier branded `BUILTIN_BRAND_BASE+3`; (b) the carrier's dynamic
+   `.prototype` read is B0's finalize-spliced `__extern_get` arm →
+   `emitLazyNativeProtoGet(%TypedArray%)` (glue already registered by M1's
+   `ensureTypedArrayIntrinsicNativeProtoGlue`); (c) `.prototype.<m>` member
+   reads then ride the M1 native-method-closure path. **Whichever of
+   sd-2651/M3 or #2916-B0 executes first BUILDS the carrier; the other
+   consumes it.** Do not mint two branded-carrier structs — that is the
+   #1888-class convergence hazard this file already warns about.
+2. **Unpark checklist** (in order, before any M3 code): (a) `#2580` frontmatter
+   shows M3 landed (the `$Object.$proto` walk on main); (b) re-run the
+   per-process 3-bucket scan (`.tmp/measure-one.mjs` shape) on then-current
+   main — the 25/34 keystone count is a 2026-06-25 number and the #2175
+   V2 / #2984 / #3006 waves have landed since; (c) check whether #2916 B0
+   exists on main (consume) or not (build it per that spec, cross-linked);
+   (d) `(sample).constructor === Int8Array` (the D1/D4 identity leg) should
+   route through the #3006 `__builtin_ctor_<Name>` singleton machinery
+   extended to the TypedArray view names — verify those names aren't already
+   in `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES` by then.

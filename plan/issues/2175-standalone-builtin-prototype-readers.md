@@ -8,6 +8,7 @@ created: 2026-06-16
 updated: 2026-07-04
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: analysis
 area: standalone

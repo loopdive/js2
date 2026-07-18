@@ -1,11 +1,12 @@
 ---
 id: 3196
 title: "bloat S6: de-inline the standalone dynamic-HOF lane in compileArrayLikePrototypeCall onto the #3098 __hof_* steppers"
-status: ready
+status: in-progress
 created: 2026-07-12
-updated: 2026-07-12
+updated: 2026-07-17
 priority: medium
 feasibility: hard
+model: fable
 task_type: refactor
 area: codegen
 es_edition: n/a
@@ -64,3 +65,19 @@ semantics.
 **medium** and this is the epic's largest slice (L). Claim **serially** with
 #3193 (disjoint ranges: S6 is `:763-1887`, S3 is `:2378-3075`, but both shift
 line numbers — re-anchor by symbol). Re-merge `origin/main` before enqueue.
+
+## Progress — Slice 1 (dev-m, recovered + landed by dev-k, 2026-07-17)
+
+**Landed:** the standalone dynamic-HOF method-arm switch de-inlined verbatim
+out of `src/codegen/array-prototype-borrow.ts` into a new sibling module
+`src/codegen/array-like-hof-arms.ts` (`emitArrayLikeHofArm`, ~766 LOC).
+
+`array-prototype-borrow.ts` shrinks **1840 → 1186 LOC** (-676). The arm bodies
+move verbatim behind a single `emitArrayLikeHofArm(ctx, fctx, methodName,
+callExpr, arm)` entry point; the per-call loop-local state (receiver/len/idx/
+elem temps, closure info, stepper callbacks) is threaded through an
+`ArrayLikeHofArmCtx` struct param. `borrow.ts` retains only the two call sites.
+
+**Safety (REFACTOR — zero behavior change):** bodies moved verbatim. `tsc
+--noEmit`: clean (validated post-merge with latest `main`). `check:loc-budget`:
+green. Targeted vitest (standalone array-HOF suites): pass.

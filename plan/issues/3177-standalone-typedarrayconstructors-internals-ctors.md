@@ -7,6 +7,7 @@ created: 2026-07-12
 updated: 2026-07-16
 priority: high
 feasibility: hard
+model: fable
 task_type: bug
 area: codegen
 es_edition: multi

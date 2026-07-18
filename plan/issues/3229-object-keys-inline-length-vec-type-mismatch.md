@@ -1,15 +1,23 @@
 ---
 id: 3229
 title: "Object.keys/values/entries(closedStruct).length INLINE returns 0 — static-enumeration vec type (vec-of-externref) mismatches the `.length` dispatch type (vec-of-string); mode-agnostic"
-status: ready
-sprint: Backlog
+status: done
+assignee: ttraenkler/dev-conform
+sprint: current
 created: 2026-07-13
+updated: 2026-07-17
+completed: 2026-07-17
 priority: medium
 feasibility: medium
 task_type: bugfix
 area: codegen
 language_feature: objects, property enumeration, array length
 related: [3222, 786]
+# (#3102) The canonical-vec resolution + per-arm coercion comments grow the
+# object-ops subsystem module (the correct home for Object.keys/values/entries)
+# a few LOC; the net code is a simplification (removed manual per-field boxing).
+loc-budget-allow:
+  - src/codegen/object-ops.ts
 ---
 
 # #3229 — `Object.keys(o).length` INLINE returns 0 (vec-type mismatch)
@@ -96,3 +104,43 @@ byte-identity).
 - `Object.keys(typedLocal).length` inline === field count (host + standalone).
 - Same for `Object.values(...).length` and `Object.entries(...).length`.
 - No host/gc test262 regression (full-CI validation).
+
+## Resolution
+
+The static keys/values fast-paths (`compileObjectKeysOrValues` in
+`src/codegen/object-ops.ts`) built a vec-of-**externref** and returned its type
+index, while an inline `.length` dispatches on the CANONICAL vec type
+(`resolveWasmType(returnType)` → vec-of-string / vec-of-f64). `ref.test` against
+the canonical type failed on the vec-of-externref → the `.length` else-arm read
+`0`. (A `const k: string[] = …` binding worked only because the store coerced
+the vec to the canonical layout.)
+
+Fix — build the fast-path vec with the CANONICAL arr/element types, coercing
+each element (mirrors what the `entries` arm already did):
+
+- Hoisted the `entries` arm's `getResolvedSignature` / `getReturnTypeOfSignature`
+  resolution to the top of `compileObjectKeysOrValues` and derived the canonical
+  vec (`getVecInfo`) once; `entries` now reuses it (net-zero checker growth —
+  oracle-ratchet clean).
+- `keys`: return the canonical `string[]` vec; push each field-name string via
+  `compileStringLiteral` and `coerceType` to the vec element (host element IS
+  externref → byte-identical; standalone native-string element → fixed).
+- `values`: return the canonical values vec; `coerceType` each field value to the
+  element type — homogeneous `number[]` stores f64 unboxed (removed the manual
+  `__box_number` branches), heterogeneous `(string|number)[]` boxes to externref
+  exactly as before.
+- Falls back to the legacy vec-of-externref when the return type is unresolvable.
+
+## Test Results
+
+`tests/issue-3229.test.ts` — 20/20 pass (10 host/gc + 10 standalone): inline
+`.length` for keys/values/entries === field count; keys/values/entries content
+correctness; inline index reads; `keys.length` driving a for-loop; heterogeneous
+`(string|number)[]` boxing; intermediate-variable regression guard.
+
+No regressions in `object-keys-values-entries`, `issue-786`,
+`issue-786-object-keys-dynamic`, `issue-3222-standalone-closed-struct-enum`
+(all pass). `npx tsc --noEmit` clean; prettier clean; oracle-ratchet clean
+(checker usage +0). (The one failing case in `issue-2166-objvec-element-index`
+— an `any`-receiver out-of-bounds read yielding NaN vs +0 — fails identically on
+the clean tree; it is a pre-existing failure orthogonal to this change.)

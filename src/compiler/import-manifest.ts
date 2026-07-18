@@ -220,6 +220,12 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // dedicated runtime builtin like AggregateError.
   if (name === "__new_SuppressedError") return { type: "builtin", name };
 
+  // (#2728) `Object(Symbol())` → Symbol-wrapper object. Symbol is NOT a
+  // constructor, so the generic `extern_class` `new Symbol(id)` path throws.
+  // Route through a dedicated builtin handler that boxes the i32 symbol id and
+  // returns `Object(sym)`.
+  if (name === "__new_Symbol") return { type: "builtin", name };
+
   // Unknown constructor imports (__new_ClassName)
   if (name.startsWith("__new_")) {
     return { type: "extern_class", className: name.slice(6), action: "new" };

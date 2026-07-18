@@ -1,10 +1,11 @@
 ---
 id: 3306
 title: "standalone: ToNumber of a toString-only object drops the native-string result to NaN (§7.1.1.1 OrdinaryToPrimitive → §7.1.4.1 StringToNumber)"
-status: in-progress
+status: done
 assignee: ttraenkler/sendev-date-3174
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-07-17
+completed: 2026-07-17
 priority: high
 feasibility: medium
 model: fable

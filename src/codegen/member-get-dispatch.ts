@@ -144,6 +144,83 @@ export function classMethodCandidatesForProp(
 }
 
 /**
+ * (#3041) A dynamic-read GET-ACCESSOR arm. A getter reached through an
+ * `any`-typed receiver on a class declared inside a function fell through the
+ * `__get_member_<name>` dispatcher to `__extern_get` → `undefined`/NaN: the
+ * dispatcher had struct-FIELD arms (`findAlternateStructsForField`) and method
+ * arms (#2963) but NO arm for a get-accessor, whose value is COMPUTED by a
+ * getter function, not stored in a slot. The static path
+ * (`compilePropertyAccess`) resolves it via `classAccessorSet` +
+ * `${Class}_get_<prop>`; this mirrors that resolution for the dynamic path.
+ *
+ * Unlike method arms, an accessor arm needs NO reserve-time minting — the getter
+ * function is a plain `(ref $Struct) -> <ret>` already registered at class
+ * codegen. So arms are enumerated entirely at FILL time (read-only over
+ * funcMap/structMap); the arm just `ref.cast`s the receiver to the class struct
+ * and `call`s the getter, then box-coerces the return to the dispatcher's
+ * uniform externref.
+ */
+export interface MemberGetAccessorArm {
+  /** The concrete class struct the receiver is `ref.test`ed / `ref.cast`ed to. */
+  structTypeIdx: number;
+  /** funcIdx of the `${Class}_get_<prop>` getter (`(ref $Struct) -> ret`). */
+  getterFuncIdx: number;
+  /** The getter's Wasm return type, box-coerced up to externref. */
+  returnType: ValType;
+  /** Inheritance depth of the receiver class — children sort first so an
+   * override's accessor arm shadows the superclass arm under WasmGC subtyping. */
+  depth: number;
+}
+
+/**
+ * (#3041) Enumerate every class whose INSTANCE side owns a get-accessor named
+ * `propName` — the accessor candidates a dynamic `any`-receiver member read must
+ * resolve. Read-only over `ctx.classAccessorSet` / `ctx.structMap` / `funcMap`,
+ * so it is safe to call at FILL time (no minting). Static accessors are
+ * excluded (they are read off the constructor, not an instance).
+ */
+export function classAccessorCandidatesForProp(ctx: CodegenContext, propName: string): MemberGetAccessorArm[] {
+  if (!propName || propName === "constructor" || propName === "prototype" || propName === "__proto__") return [];
+  const out: MemberGetAccessorArm[] = [];
+  const seenStructs = new Set<number>();
+  const seenCanonical = new Set<string>();
+  for (const rawClassName of ctx.classSet) {
+    const className = ctx.classExprNameMap.get(rawClassName) ?? rawClassName;
+    if (seenCanonical.has(className)) continue;
+    seenCanonical.add(className);
+    const accessorKey = `${className}_${propName}`;
+    if (!ctx.classAccessorSet.has(accessorKey)) continue;
+    if (ctx.staticAccessorSet.has(accessorKey)) continue; // static accessor — off the constructor, not an instance
+    const structTypeIdx = ctx.structMap.get(className);
+    if (structTypeIdx === undefined || seenStructs.has(structTypeIdx)) continue;
+    // Inherited getters register a per-child funcMap entry pointing at the
+    // owning class's getter func (class-bodies.ts), so a per-class lookup
+    // resolves the right getter even without re-walking the parent chain.
+    const getterFuncIdx = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_get_${propName}`));
+    if (getterFuncIdx === undefined) continue;
+    const getterFn = definedFuncAt(ctx, getterFuncIdx);
+    if (!getterFn) continue;
+    const typeDef = ctx.mod.types[getterFn.typeIdx];
+    if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) continue; // void getter — nothing to box
+    const returnType = typeDef.results[0]!;
+    // Inheritance depth (children-first arm ordering under subtyping).
+    let depth = 0;
+    let p = ctx.classParentMap.get(className);
+    const seen = new Set<string>([className]);
+    while (p && !seen.has(p)) {
+      seen.add(p);
+      depth++;
+      p = ctx.classParentMap.get(p);
+    }
+    seenStructs.add(structTypeIdx);
+    out.push({ structTypeIdx, getterFuncIdx, returnType, depth });
+  }
+  // Children-first so an override's accessor arm wins over the superclass arm.
+  out.sort((a, b) => b.depth - a.depth);
+  return out;
+}
+
+/**
  * (#2963) Ensure the canonical method-closure singleton machinery exists for
  * every class-method candidate of `propName`, and record the fill-time arms
  * on `ctx.memberGetMethodArms`. Runs at RESERVE time (normal compile time —
@@ -337,6 +414,16 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
     // absent, gate on `ref.is_null` alone (under-fires on host, never wrong).
     const isUndefIdx = methodArms.length > 0 ? ctx.funcMap.get("__extern_is_undefined") : undefined;
 
+    // (#3041) Get-accessor arms: for a getter reached via an `any` receiver the
+    // value is COMPUTED by `${Class}_get_<prop>`, not stored in a slot, so
+    // neither the struct-field candidates nor the method arms cover it. These
+    // arms `ref.cast` the receiver to the class struct, `call` the getter, and
+    // box the return up to the dispatcher's uniform externref. Enumerated at
+    // fill time (funcMap/structMap read-only — no minting). They run BEFORE the
+    // struct-field/host fallback so a getter shadows any host-read miss, exactly
+    // as the static `compilePropertyAccess` accessor branch does.
+    const accessorArms = classAccessorCandidatesForProp(ctx, propName);
+
     // Terminal else-arm: __extern_get(recv, "<name>") -> externref. Covers
     // genuine host externrefs and dynamic sidecar-only props.
     //
@@ -487,6 +574,39 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
       ];
     };
 
+    // (#3041) Get-accessor arms tried FIRST, terminating in the struct-field /
+    // host-read chain. Each arm: `ref.test $Struct` → `ref.cast $Struct` →
+    // `call getter` → box return up to externref. The getter's boolean-branded
+    // i32 return is boxed via `__box_boolean` (mirrors the field arm) so
+    // `obj.flag === true` holds through the dynamic read; all other types go
+    // through the single coercion engine (funcMap-read-only — box helpers were
+    // registered at reserve).
+    const buildAccessorArmChain = (idx: number): Instr[] => {
+      if (idx >= accessorArms.length) return buildGetDispatch(0);
+      const arm = accessorArms[idx]!;
+      const boxBoolIdx =
+        arm.returnType.kind === "i32" && arm.returnType.boolean === true ? ctx.funcMap.get("__box_boolean") : undefined;
+      const box: Instr[] =
+        boxBoolIdx !== undefined
+          ? [{ op: "call", funcIdx: boxBoolIdx }]
+          : coercionInstrs(ctx, arm.returnType, { kind: "externref" });
+      return [
+        { op: "local.get", index: 1 }, // __any
+        { op: "ref.test", typeIdx: arm.structTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: [
+            { op: "local.get", index: 1 }, // __any
+            { op: "ref.cast", typeIdx: arm.structTypeIdx },
+            { op: "call", funcIdx: arm.getterFuncIdx },
+            ...box,
+          ],
+          else: buildAccessorArmChain(idx + 1),
+        },
+      ];
+    };
+
     // Build the body FIRST so `usedSentinelBox` is known, then append the f64
     // scratch local (index 2) only when a (#2979) sentinel-aware gen-result arm
     // actually referenced it — keeps every dispatcher without such an arm
@@ -495,7 +615,7 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
       { op: "local.get", index: 0 }, // recv (externref)
       { op: "any.convert_extern" },
       { op: "local.set", index: 1 }, // __any
-      ...buildGetDispatch(0),
+      ...buildAccessorArmChain(0),
     ];
     const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
     if (methodArms.length > 0) locals.push({ name: "__mres", type: { kind: "externref" } }); // (#2963) local 2

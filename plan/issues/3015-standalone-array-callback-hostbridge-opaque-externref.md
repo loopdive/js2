@@ -2,6 +2,7 @@
 id: 3015
 title: "Standalone: array predicate methods route an opaque-externref (dynamic function-typed param) callback to the __call_1_f64 host bridge instead of native call_ref"
 status: ready
+sprint: Backlog
 created: 2026-07-03
 updated: 2026-07-03
 priority: low

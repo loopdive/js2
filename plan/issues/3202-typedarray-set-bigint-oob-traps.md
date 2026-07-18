@@ -13,8 +13,8 @@ goal: crash-free
 sprint: current
 horizon: m
 related: [3189, 3173]
-loc-budget-allow:
-  - src/codegen/array-methods.ts
+# loc-budget-allow retired by #3358: the +LOC this granted was the
+# TypedArray.set bounds check, now relocated to src/codegen/typed-array-set-bounds.ts.
 origin: "The #3189 uncatchable-trap ratchet fired oob 58->62 (+4) on EVERY merge_group, wedging the queue. Re-diagnosed 2026-07-12 (dev-find-wasm): main HEAD is verifiably 58 (baseline promoted from main commit c660e830; `git log c660e830..origin/main` = ONLY doc commits; freshly-fetched promoted baseline reads 58; the 4 named tests are `fail`/'undefined is not a constructor' on both baseline and main HEAD, not oob). So the +4 is SPECULATIVE-MERGE / CI-sharded-only, NOT a main regression — a promote-baseline 'refresh to 62' is impossible (it reflects main = 58; the attempted refresh left it at 58). Unwedged via the ratchet's own designed valve TRAP_RATCHET_TOLERANCE=4 (repo var, PR #2963)."
 ---
 
@@ -31,6 +31,7 @@ so each one poisons every test that shares the pattern — exactly the robustnes
 the crash-free goal + the #3189 ratchet exist to protect.
 
 ### The 4 newly-trapping tests
+
 - `test/built-ins/TypedArray/prototype/set/BigInt/array-arg-offset-tointeger.js`
 - `test/built-ins/TypedArray/prototype/set/BigInt/array-arg-primitive-toobject.js`
 - `test/built-ins/TypedArray/prototype/set/BigInt/typedarray-arg-offset-tointeger.js`
@@ -45,6 +46,7 @@ BigInt-element typed array.
 **Prior suspects #3162 / #3183 / #3190 / #2947 are RULED OUT.** The +4 does not
 exist on main (main HEAD is 58 — see `origin` above, three-way verified), so no
 merged PR introduced it:
+
 - #2947 — disproven by dev-number-resid's revert-and-diff A/B (0 per-test change).
 - #2954/#3190 — its `$__vec_base` write fill is bounds-GUARDED ("OOB/negative
   store → silent no-op, no trap"), so it introduces no oob (diff read directly).
@@ -59,6 +61,7 @@ tests whose constructor is `undefined` (BigInt typed arrays unsupported) on main
 — they score `fail`/"undefined is not a constructor", not `oob`.
 
 **Two hypotheses to investigate:**
+
 1. **CI-sharded nondeterminism** — a shard-dependent / load-dependent
    classification flips these 4 to `oob` intermittently in the sharded merged
    run (most likely given they're a stable `fail` on main + baseline).
@@ -90,7 +93,7 @@ guarded-bounds pattern used elsewhere in the standalone array path.
 3. If a real speculative trap: fix the offending queued PR's `set` offset/length
    bounds to emit a **catchable** RangeError, not an unguarded `array.set` oob.
 4. **Tighten the valve back:** `gh variable set TRAP_RATCHET_TOLERANCE --body 0
-   -R loopdive/js2wasm` (no PR needed — it's a repo variable, PR #2963) once the
+-R loopdive/js2wasm` (no PR needed — it's a repo variable, PR #2963) once the
    +4 is resolved, restoring the strict 0-tolerance ratchet.
 5. Zero net test262 regressions; no NEW trap category or growth beyond the
    current +4 flaky window while the valve is at 4.
@@ -135,6 +138,7 @@ This is **#3335 Part 1** (turn the six `TypedArray/prototype/set/BigInt/*` oob
 regressions back into catchable JS errors → the #3189 oob-ratchet should drop
 back toward its ≤45 floor). **Out of scope / follow-ups (left for #3335 Part 2 +
 this issue's criterion 4):**
+
 - #3335 Part 2 — make the baseline-refresh **refuse/flag an oob-trap-count
   INCREASE** so a main-side trap regression cannot self-legalize (a CI-guard
   task, separate from this codegen fix).

@@ -98,8 +98,10 @@ import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // 
 import { ensureProxyRuntime } from "./object-runtime-proxy.js";
 export { fillProxyDispatch } from "./object-runtime-proxy.js";
 
-/** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1). */
-const INITIAL_CAP = 8;
+/** Initial `$PropMap` capacity. Must be a power of two (mask = cap - 1).
+ *  Exported for the (#802) dynamic-proto null-sentinel `$Object` builder, which
+ *  must mint a structurally ordinary (hash-compatible) empty `$Object`. */
+export const INITIAL_CAP = 8;
 
 /** WasmGC `none` bottom heap type (signed-LEB 0x6e = -18). `ref.null none` is a
  *  subtype of `anyref`, used to push a null into the `$PropEntry.$get/$set`

@@ -544,17 +544,31 @@ export function scanForLeakedHostImports(
  * {@link buildStrictHostImportError} (which fires at `addImport` time): this
  * message names the emit-time scan as the source so the diagnostic points at
  * the post-link invariant, not the registration gate.
+ *
+ * (#2961 phase 1) When `severity === "warning"` — the standalone leak scan
+ * before the gate ratchets to a hard error — the message is prefixed and worded
+ * as a non-fatal advisory (NOT `Codegen error:`, which would be a misleading
+ * hard-fail marker for a warning) and cites #2961 as the issue that will flip
+ * it to an error. `severity === "error"` (wasi / explicit strict) keeps the
+ * original `Codegen error:` hard-fail wording.
  */
-export function buildLeakedHostImportError(leak: LeakedHostImport): string {
+export function buildLeakedHostImportError(leak: LeakedHostImport, severity: "error" | "warning" = "error"): string {
   // The `Codegen error:` prefix is the compiler's hard-fail marker (see
   // collectLinearCodegenErrors / the per-path bail check in compiler.ts):
   // it flips `result.success` to false so the leaking binary is never
   // handed to a consumer, rather than surfacing as an instantiation failure.
+  // For the phase-1 standalone warning scan we deliberately avoid that marker
+  // (the diagnostic is advisory, the binary is still emitted unchanged).
   const base =
-    `Codegen error: leaked host import "${leak.module}.${leak.name}" found in the finished standalone binary ` +
-    `(post-link import-section scan, #2094). This import bypassed the addImport gate ` +
-    `(e.g. via a stale funcMap index or a direct mod.imports push) and would fail instantiation ` +
-    `in a runtime with no JS host (#2073/#2075). `;
+    severity === "warning"
+      ? `Host import leak (warning, #2961): host import "${leak.module}.${leak.name}" survives into the finished ` +
+        `--target standalone binary and would fail instantiation in a runtime with no JS host (#2073/#2075). ` +
+        `This is currently a warning; #2961 ratchets --target standalone to the same hard no-leak guarantee ` +
+        `--target wasi already enforces. `
+      : `Codegen error: leaked host import "${leak.module}.${leak.name}" found in the finished standalone binary ` +
+        `(post-link import-section scan, #2094). This import bypassed the addImport gate ` +
+        `(e.g. via a stale funcMap index or a direct mod.imports push) and would fail instantiation ` +
+        `in a runtime with no JS host (#2073/#2075). `;
   if (leak.reason === "non-env-host-module") {
     return (
       base +

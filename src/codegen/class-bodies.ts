@@ -820,6 +820,27 @@ export function collectClassDeclaration(
     if (fields.length === 1) {
       fields.push({ name: "__shape_brand", type: { kind: "i32" }, mutable: false });
     }
+
+    // (#802 Slice B) Conditional dynamic-prototype slot. ONLY hierarchy roots
+    // the scanForDynamicProto prescan proved to be proto-mutation receivers
+    // (Object.setPrototypeOf / Reflect.setPrototypeOf / `o.__proto__ =` on an
+    // instance of this hierarchy) get one appended `(field $__proto__ (mut
+    // externref))`. Appended LAST — after __tag, all real fields, and any
+    // __shape_brand — so every existing positional fieldIdx is unchanged, and
+    // every class-struct `struct.new` site (the ctor alloc loops below, the
+    // lazy proto/class-object singleton inits in expressions/extern.ts, the
+    // object-literal struct path) iterates the field list and defaults it to
+    // `ref.null.extern` automatically: the operand count stays correct BY
+    // CONSTRUCTION. That conditionality + append-last is what makes this safe
+    // where #799a's unconditional prepend-to-everything regressed −2,788.
+    // `null` in this field means "never dynamically set" (readers fall back to
+    // the compile-time prototype); an EXPLICIT `setPrototypeOf(o, null)` stores
+    // the dynamic-proto sentinel instead (see src/codegen/dynamic-proto.ts).
+    // Standalone-only: gc/host models dynamic protos via the host
+    // `_wasmStructProto` WeakMap sidecar and its structs are untouched.
+    if (ctx.standalone && ctx.dynamicProtoClasses.has(className) && !fields.some((f) => f.name === "__proto__")) {
+      fields.push({ name: "__proto__", type: { kind: "externref" }, mutable: true });
+    }
   }
 
   // Update the placeholder struct type with resolved fields
@@ -1672,7 +1693,10 @@ function compileClassBodiesInner(
     // splitInit: `self` arrives as the last param — allocation happens in
     // `${className}_new`, emitted at the end of this function.
 
-    // __proto__ initialization: deferred to #802 (dynamic prototype support)
+    // (#802) `$__proto__` initialization: nothing to do here — the appended
+    // dynamic-proto field (marked hierarchy roots only, see the field build
+    // above) is covered by the iterate-and-default alloc loops, which emit
+    // `ref.null.extern` for it. Null = "never dynamically set".
 
     // Compile constructor body — `this` maps to __self local
     fctx.localMap.set("this", selfLocal);

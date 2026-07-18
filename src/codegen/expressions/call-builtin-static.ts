@@ -37,6 +37,7 @@ import { allocLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitGlobalThisGopdFold } from "../dyn-read.js";
+import { dynamicProtoRootFor, dynamicProtoFieldIdx, reserveDynprotoNorm } from "../dynamic-proto.js"; // (#802)
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
 import {
   addStringConstantGlobal,
@@ -1820,6 +1821,66 @@ export function compileBuiltinStaticCall(
 
     // For known class instances, return the class prototype singleton
     if (className && ctx.classSet.has(className)) {
+      // (#802 Slice C) Marked-hierarchy receiver (standalone): the instance's
+      // dynamic `$__proto__` field takes precedence over the compile-time
+      // singleton. Field null = never dynamically set → the singleton (the
+      // pre-#802 answer); the explicit-null sentinel reads as JS null
+      // (`__dynproto_norm`); any other stored value is returned as-is.
+      if (ctx.standalone) {
+        const dpRoot = dynamicProtoRootFor(ctx, className);
+        const dpRootTypeIdx = dpRoot !== undefined ? ctx.structMap.get(dpRoot) : undefined;
+        const dpFieldIdx = dpRoot !== undefined ? dynamicProtoFieldIdx(ctx, dpRoot) : undefined;
+        if (dpRoot !== undefined && dpRootTypeIdx !== undefined && dpFieldIdx !== undefined) {
+          const argType = compileExpression(ctx, fctx, arg0);
+          if (!argType) {
+            fctx.body.push({ op: "ref.null.extern" });
+            return { kind: "externref" };
+          }
+          const recvStructName =
+            argType.kind === "ref" ? ctx.typeIdxToStructName.get((argType as { typeIdx: number }).typeIdx) : undefined;
+          if (recvStructName !== undefined && dynamicProtoRootFor(ctx, recvStructName) === dpRoot) {
+            // Non-null struct receiver: inline field read.
+            const normIdx = reserveDynprotoNorm(ctx);
+            fctx.body.push({ op: "struct.get", typeIdx: dpRootTypeIdx, fieldIdx: dpFieldIdx });
+            const fLocal = allocLocal(fctx, `__dp_proto_${fctx.locals.length}`, { kind: "externref" });
+            fctx.body.push({ op: "local.tee", index: fLocal });
+            fctx.body.push({ op: "ref.is_null" });
+            // Build the lazy-singleton instrs off to the side so they can live
+            // in the then-arm (emitLazyProtoGet appends to fctx.body).
+            const saved = pushBody(fctx);
+            const haveSingleton = emitLazyProtoGet(ctx, fctx, className);
+            const singletonInstrs = fctx.body;
+            popBody(fctx, saved);
+            if (!haveSingleton) {
+              singletonInstrs.length = 0;
+              singletonInstrs.push({ op: "ref.null.extern" });
+            }
+            fctx.body.push({
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: singletonInstrs,
+              else: [
+                { op: "local.get", index: fLocal },
+                { op: "call", funcIdx: normIdx },
+              ],
+            });
+            return { kind: "externref" };
+          }
+          // Nullable / externref-typed receiver: route through the generic
+          // native `__getPrototypeOf`, whose prepended (#802) marked arm reads
+          // the struct field (finalize fill). No trap on a null receiver.
+          if (argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+          const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [{ kind: "externref" }], [{ kind: "externref" }]);
+          flushLateImportShifts(ctx, fctx);
+          if (gptIdx !== undefined) {
+            fctx.body.push({ op: "call", funcIdx: gptIdx });
+          } else {
+            fctx.body.push({ op: "drop" });
+            fctx.body.push({ op: "ref.null.extern" });
+          }
+          return { kind: "externref" };
+        }
+      }
       // Compile and drop the argument (for side effects)
       const argType = compileExpression(ctx, fctx, arg0);
       if (argType) {
@@ -2128,7 +2189,14 @@ export function compileBuiltinStaticCall(
           if (!descType) {
             fctx.body.push({ op: "ref.null.extern" });
           } else if (descType.kind !== "externref") {
-            fctx.body.push({ op: "extern.convert_any" });
+            // (#3394) Use coerceType, not a bare extern.convert_any: a PRIMITIVE
+            // descriptors arg (e.g. `Object.create(o, 5n)` — a bigint, which is
+            // a TypeError at runtime but must still COMPILE to valid Wasm) is
+            // i64/i32/f64 on the stack, and extern.convert_any is illegal on a
+            // non-ref value ("extern.convert_any expected anyref, found i64").
+            // coerceType routes i64-bigint → __box_bigint, i32/f64 → __box_*,
+            // ref → extern.convert_any (mirrors the 1st-arg path above).
+            coerceType(ctx, fctx, descType, { kind: "externref" });
           }
           fctx.body.push({ op: "call", funcIdx: dpIdx });
         } else {
@@ -2185,6 +2253,18 @@ export function compileBuiltinStaticCall(
   ) {
     const arg0 = expr.arguments[0]!;
     const arg1 = expr.arguments[1]!;
+    // §10.4.1.1: in Script code, top-level `this` is the realm global object.
+    // It must stay on the host-MOP path here: the checker's global interface
+    // resolves to a large static struct, whose missing-property fast path would
+    // return undefined without consulting the property just created by sloppy
+    // unresolvable PutValue. This is deliberately gOPD-local; general Script
+    // `this` lowering belongs to the source-goal implementation (#3365).
+    const isScriptGlobalThisReceiver =
+      arg0.kind === ts.SyntaxKind.ThisKeyword &&
+      fctx.name === "__module_init" &&
+      !ts.isExternalModule(arg0.getSourceFile()) &&
+      !ctx.standalone &&
+      !ctx.wasi;
 
     // (#2874) Under standalone, register the native object runtime so the
     // typed-receiver fast path's `ensureLateImport("__create_descriptor", …)`
@@ -2206,7 +2286,7 @@ export function compileBuiltinStaticCall(
     // host import and already passes) — gated on ctx.standalone so host
     // bytes stay identical.
     const arg0TsType = ctx.checker.getTypeAtLocation(arg0);
-    const structName = resolveStructName(ctx, arg0TsType);
+    const structName = isScriptGlobalThisReceiver ? undefined : resolveStructName(ctx, arg0TsType);
     const literalKeyText = (e: ts.Expression): string | undefined => {
       if (ts.isStringLiteral(e)) return e.text;
       if (!ctx.standalone) return undefined;
@@ -2613,6 +2693,16 @@ export function compileBuiltinStaticCall(
         compileStringLiteral(ctx, fctx, builtinName);
       }
       fctx.body.push({ op: "call", funcIdx: getBuiltinFuncIdx });
+      objType = { kind: "externref" };
+    } else if (isScriptGlobalThisReceiver) {
+      ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, fctx);
+      const globalThisIdx = ctx.funcMap.get("__get_globalThis");
+      if (globalThisIdx === undefined) {
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+      fctx.body.push({ op: "call", funcIdx: globalThisIdx });
       objType = { kind: "externref" };
     } else {
       objType = compileExpression(ctx, fctx, arg0, { kind: "externref" });

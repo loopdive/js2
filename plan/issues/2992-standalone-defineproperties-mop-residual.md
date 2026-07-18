@@ -6,6 +6,7 @@ sprint: Backlog
 priority: high
 horizon: l
 feasibility: hard
+model: fable
 area: codegen, runtime
 goal: standalone-mode
 related: [2965, 2985, 2667]

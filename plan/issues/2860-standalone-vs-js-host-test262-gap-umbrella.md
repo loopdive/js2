@@ -7,6 +7,7 @@ updated: 2026-07-12
 priority: high
 feasibility: hard
 model: fable
+fable_role: spec
 task_type: epic
 area: codegen
 goal: standalone
@@ -204,3 +205,90 @@ Each child issue's test plan = its cluster's standalone-CE/fail tests flip to
 pass under full `merge_group` + the standalone high-water floor
 (`check-standalone-highwater.mjs`), with zero host-mode regression (all changes
 `ctx.standalone`-gated).
+
+## Implementation Plan (Fable, 2026-07-18) — fresh census @ main 9d216ada + the priority ladder
+
+> Measured from the 2026-07-18 baselines-repo refresh (commit `5c6d3092`,
+> compiler @ `9d216ada`): host official pass **32,178**, standalone official
+> pass **24,726** (24,723 headline ± scope rows). Honest gap (host `pass` ∧
+> standalone not-pass, official scope, file+strict match): **8,231** — down
+> from 12,801 (07-12 groom) and ~20,500 (06-30). The window closed ~4,570
+> rows. The decomposition below is the current scoreboard; census script
+> shape: parse both jsonl lanes, key `file|strict`, group the gap rows by
+> `status:error_category`, leak-import name, and 2/3-level test dir.
+
+### The gap, by mechanism (2026-07-18)
+
+| Rows | Mechanism | Owner(s) |
+| ---: | --- | --- |
+| 2,991 | `compile_error: host_import_leak` | the carrier track (below) |
+| 4,079 | `fail: assertion_fail` | behavioral clusters (below) |
+| 677 | `fail: type_error` | behavioral clusters |
+| 112 / 66 | `illegal_cast` / `null_deref` | mostly inside carrier machinery + #2935 |
+| 261 | `compile_error: other/wasm/runtime` | #2878-class triage residual |
+| 45 | timeout/syntax/oob/misc | long tail |
+
+**Leak half (2,991), by leaked import:** generator family
+(`__create_generator` 1,672 + `__gen_next` 106 + `__create_async_generator`
+72 + async-gen proto 16) ≈ **1,866** → #2864/#2865 via the #3178 retirement
+umbrella. Promise family (`_reject` 367 + `_new` 158 + `_all` 81 +
+`_allSettled` 23 + `_catch` 16 + `_any` 14 + misc) ≈ **~680** → #2867/#3178.
+`__dynamic_import` **107** → NO owner (decision below). Small tails:
+`__array_from_async` 25 (#2967/#3134), `__instanceof_check` 24 (#2916
+Slice B — spec'd 2026-07-18), `Set_constructor` 17, misc ≤17 each.
+
+**Behavioral half, by cluster (assertion_fail + type_error combined):**
+
+| Rows | Cluster | Owner |
+| ---: | --- | --- |
+| ~960 | TypedArray (`TypedArray/prototype` 532+63, `TypedArrayConstructors` 68+38+30, DataView 33+, ArrayBuffer 40) | #3177 / #3173 / #2872 |
+| ~550 | property model (`Object/defineProperty` 247 + `defineProperties` 142+27 + `create` 55+14 + `Object/prototype` 62) | #3251 S2/S3 (PR #3327 in flight) + #739 + #2992/#2984 |
+| ~512 | `Array/prototype` behavioral (418+94) | #3169 / #3170 + #3251 read-side |
+| ~350 | String (`String/prototype` 282+20 + annexB/String 46) | #2875 |
+| ~223 | `Iterator/prototype` (182+41) | #3146 / #3049 |
+| ~212 | class semantics (`language/*/class` 106+106) | #2873 + the #2963/#3037 method-identity residue |
+| ~169 | `RegExp/prototype` | #2876 / #2935 |
+| ~136 | annexB eval-code type_errors (123) + direct eval (13) | eval Tier-0 sound-bail residue (#1102-adjacent; see the ladder doc §2 bail list) |
+| ~76 | `Function/prototype` (61+15) | #3138 / #3139 bind residual |
+| ~109 | `assert.sameValue(rest.a, undefined)`-signature family (44+31+33 shapes) | the value-rep trio — #2106 numeric-carrier leg + #745 (see their 2026-07-18 plans) |
+
+### Priority ladder (order of expected yield per unit work)
+
+1. **#3178 carrier retirement (generators + Promise)** — 2,546 leak rows,
+   ~31% of the whole gap, single-theme. Stays rank 1; #3178 is actively
+   carving slices (#3302 etc.) — feed it, don't fork it.
+2. **TypedArray family** (#3177 → #3173 → #2872) — ~960 rows; #3177's 356
+   estimate from 07-12 has GROWN in share as other clusters closed.
+3. **Property model** — ~550 rows riding the in-flight #3251 (S2 write-side
+   + S3 ArraySetLength are the spec'd next slices) + #739.
+4. **Array behavioral** (#3169/#3170) — ~512; partially overlaps 3 (many
+   defineProperty-on-array rows count in both — de-dup at claim time).
+5. **String** (#2875) ~350, **Iterator** (#3146/#3049) ~223, **class**
+   (#2873) ~212, **RegExp** (#2876/#2935) ~169 — parallel dev-lane tracks.
+6. **Value-rep signature family** (~109) — falls out of the #2106/#745
+   plans; do not staff separately.
+7. **annexB eval-code** (~136) — bounded; only after the ladder-doc bail
+   list is re-reviewed (routing rule 2: broadening Tier-0 needs a semantics
+   proof).
+
+### Decisions needed (PO/lead — the only actions this census adds)
+
+- **`__dynamic_import` (107 rows) has no owning child.** Options:
+  (a) route to #1046 (separate ES-module compilation — dynamic import is a
+  module-loading feature, and a standalone story needs module linking
+  #2527); (b) declare deferred-feature (join eval/Proxy/with in the skip
+  rationale) and re-tag the rows out of the honest gap. Recommendation:
+  **(a) as a documented later phase of #1046**, keep counting the rows —
+  they are honest misses, not wont-fixes.
+- The 07-12 groom's nine method-family slices (#3169–#3177) remain the
+  right cut — no new child issues are warranted by this census; counts
+  above re-weight their priority only (notably #3177 up, #3171/#3172 down —
+  Set/Map rows shrank to ~95 combined).
+
+### Census reproducibility
+
+Fetch both lanes from `loopdive/js2wasm-baselines` (fetch helper or raw at
+a pinned commit), filter `scope_official`, key `file|strict`, and group as
+above. Re-run at each window boundary; the ladder re-orders on measured
+counts, never on stale estimates (this census corrected three of the 07-12
+weights).

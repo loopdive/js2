@@ -1,21 +1,25 @@
 ---
 id: 1004
 title: "Optimize repeated string concatenation via compile-time folding and counted-loop aggregation"
-status: ready
+status: done
+assignee: ttraenkler/dev-perf
 created: 2026-04-09
-updated: 2026-06-19
+updated: 2026-07-17
+completed: 2026-07-17
 priority: medium
 feasibility: medium
 reasoning_effort: high
 task_type: feature
 language_feature: strings-concat
 goal: generator-model
-sprint: Backlog
+sprint: current
 es_edition: multi
+loc-budget-allow:
+  - src/codegen/statements/loops.ts
 ---
 # #1004 -- Optimize repeated string concatenation via compile-time folding and counted-loop aggregation
 
-## Status: open
+## Status: done
 
 The landing-page `string.ts` benchmark is currently slower in Wasm than in JS:
 
@@ -119,3 +123,59 @@ individual concat operations.
 This issue is intentionally scoped to the non-fast path too. Fixing
 `fast: true` string support is still useful, but the default optimized path
 should not remain obviously inefficient for common repeated-concat patterns.
+
+## Resolution (2026-07-17)
+
+Directions 1 & 3 (constant-fold literal concat chains, fold adjacent constant
+operands, batched N-arg concat) were already implemented in
+`src/codegen/string-ops.ts` (`resolveStrictConstant`,
+`foldAdjacentConstantOperands`, `compileBatchedConcat`) and in the
+`nativeStrings` concat arm of `compileStringBinaryOp`.
+
+This PR completes **direction 2 — counted-append loop aggregation** — the one
+piece that hits the adversarial `string.ts` benchmark loop itself.
+
+New pass `src/codegen/statements/counted-string-append.ts`
+(`tryCompileCountedStringAppend`), hooked at the top of `compileForStatement`
+(`src/codegen/statements/loops.ts`). It recognizes
+
+```ts
+let s = <string>;
+for (let i = A; i < B; i++) s = s + FRAGMENT;   // or  s += FRAGMENT
+```
+
+and lowers the WHOLE loop to a single `s += FRAGMENT.repeat(N)`
+(`N = max(0, B − A)`), turning O(N) per-iteration concats — each crossing the
+`wasm:js-string` host boundary / calling `__str_concat` — into one
+`String.prototype.repeat` + one concat.
+
+Guard (provably-identical only; anything else falls through to the normal loop):
+
+- counter `let`/`const`-declared in the for-head (block-scoped ⇒ unobservable
+  after the loop) initialized to a compile-time integer `A`;
+- condition `i < B` / `i <= B` with compile-time integer `B` ⇒ `N` is a known
+  finite non-negative integer (no `Infinity` / non-integer-bound hazards);
+- incrementor `i++` / `++i` / `i += 1` (unit positive step);
+- body is exactly one statement `s = s + FRAGMENT` / `s += FRAGMENT`, `s` a
+  plain string-typed identifier (not the counter);
+- FRAGMENT is a side-effect-free loop-invariant string (string literal or
+  string-typed identifier ≠ `s`/`i`) — calls/member-access (getter hazards) and
+  the doubling shape `s = s + s` are declined.
+
+All type queries route through `ctx.oracle` (`staticJsTypeOf`,
+`constInitializerOf`) — the oracle-ratchet gate reports +0 net checker growth.
+
+Works in both the default JS-host (`wasm:js-string`) and `target: "standalone"`
+(native `__str_repeat`) regimes.
+
+## Test Results
+
+`tests/issue-1004.test.ts` — 17 cases green: canonical benchmark loop
+(length + byte-identical string), seed prefix, `+=` form, braced body,
+inclusive `i<=B`, invariant-identifier fragment, zero-iteration / start≥bound
+(emit-nothing), N=1 normal path, nested loops; plus decline cases proving
+correctness for counter-dependent / prepend / multi-statement / doubling /
+runtime-bound / non-unit-step shapes. Extra probes: const bound, template
+fragment, `var`-counter decline, global & closure-captured accumulator, `++i`,
+`i += 1` — all correct. Host + standalone both compile and emit the `repeat`
+call (source concat loop removed).

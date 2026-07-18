@@ -23,6 +23,7 @@ import {
 } from "./index.js";
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { emitTypedArraySetBoundsCheck } from "./typed-array-set-bounds.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { compileStringLiteral, elemGetOp, unpackedElemType, valTypesMatch } from "./shared.js";
 import {
@@ -811,8 +812,11 @@ export const ARRAY_METHODS = new Set([
  * BANKED (their externref ELSE arm pulls a host import in standalone, which would poison
  * the module):
  *   - `join` → `env.<TA>_join`
- *   - the callback methods `find`/`findIndex`/`findLast`/`findLastIndex`/`every`/`some`/
- *     `forEach`/`reduce`/`reduceRight` → `env.__make_callback`
+ *   - the callback methods `every`/`some`/`forEach` → `env.__make_callback`
+ *     (`find`/`findIndex` flipped via #3162; `findLast`/`findLastIndex` via
+ *     #2872 slice 5; `reduce`/`reduceRight` via the #2872 slice-4 re-entry —
+ *     their ELSE arms are de-leaked by the `tryExternClassMethodOnAny`
+ *     refusals in calls-closures.ts)
  * These flip only once the standalone externref-receiver callback/join paths are native
  * (a separate follow-up). (#2903 R4 UPDATE) The SCALAR callback methods above
  * (find/findIndex/findLast/findLastIndex/every/some/forEach/reduce/reduceRight)
@@ -837,10 +841,7 @@ const DYN_VIEW_READ_METHODS = new Set<string>([
   // — reusing the existing native array-HOF machinery verbatim (no per-method TA
   // handler). Scoped to `reduce`/`reduceRight` in this slice: they measured
   // clean (+2 pass, 0 CE, 0 regression). Deliberately EXCLUDED pending
-  // follow-ups: `find`/`findIndex` (the materialized `find` impl emits invalid
-  // wasm on the `predicate-call-changes-value` shape — type mismatch in the
-  // arm), `findLast`/`findLastIndex` (the array impl misses a `__call_1_f64`
-  // registration on this path → CE), `every`/`some`/`forEach` (detached-buffer
+  // follow-ups: `every`/`some`/`forEach` (detached-buffer
   // tests regress — the materialization snapshots before a mid-callback detach),
   // `map`/`filter` (return a NEW same-kind TA, not an f64-vec), `sort`/`toSorted`
   // (TA default comparator is NUMERIC, not Array's lexicographic), `with`/
@@ -852,6 +853,16 @@ const DYN_VIEW_READ_METHODS = new Set<string>([
   // two-arm predicate; gc/host keeps the pre-existing path.
   "find",
   "findIndex",
+  // (#2872 slice 5) findLast/findLastIndex — same FIND_METHODS `__hof_<name>`
+  // substrate route (the #3098 helpers carry the backward flag), which
+  // BYPASSES the legacy `compileArrayFind` re-entry whose missing
+  // `__call_1_f64` registration was the original exclusion reason here.
+  // Paired with the scalar-HOF any-receiver decline in
+  // `tryExternClassMethodOnAny` (calls-closures.ts) so the ELSE arm stays
+  // host-import-free — both are needed: the two-arm alone still leaked
+  // `env::<TA>_findLast[Index]` from the compiled-but-never-run ELSE arm.
+  "findLast",
+  "findLastIndex",
 ]);
 
 /**
@@ -863,7 +874,7 @@ const DYN_VIEW_READ_METHODS = new Set<string>([
  * failing `assert.sameValue(result, undefined)`) and dropped `thisArg`.
  * `reduce`/`reduceRight` keep their existing re-entry (no miss sentinel).
  */
-const FIND_METHODS = new Set<string>(["find", "findIndex"]);
+const FIND_METHODS = new Set<string>(["find", "findIndex", "findLast", "findLastIndex"]);
 
 /**
  * (#2872) Dyn-view read-side methods whose result is a BOOLEAN (`true`/`false`),
@@ -1298,7 +1309,8 @@ export function compileArrayMethodCall(
   const methodAccess = propAccess as ts.PropertyAccessExpression;
 
   // If receiver is a module global, proxy it through a temp local so
-  // getReceiverLocalIdx succeeds and mutating methods can write back.
+  // getReceiverLocalIdx succeeds. Array methods mutate the vec/backing in
+  // place, so the global reference itself never needs to be written back.
   let moduleGlobalIdx: number | undefined;
   let savedLocal: number | undefined;
   // #1966: `unshift` mutates in place (prepends + shifts), so its mutated vec
@@ -1552,12 +1564,11 @@ export function compileArrayMethodCall(
       result = undefined;
   }
 
-  // Write back temp local to module global for mutating methods
+  // Clean up the module-global receiver proxy. Mutating emitters preserve the
+  // vec identity and update its backing array in place; writing the temporary
+  // reference back is redundant and can be ill-typed when late type
+  // registration changed the global's final reference index (#3369).
   if (moduleGlobalIdx !== undefined && savedLocal !== undefined) {
-    if (MUTATING.has(methodName) && result !== null && result !== undefined) {
-      fctx.body.push({ op: "local.get", index: savedLocal });
-      fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
-    }
     // Clean up the proxy from localMap
     if (ts.isIdentifier(propAccess.expression)) {
       fctx.localMap.delete(propAccess.expression.text);
@@ -7320,30 +7331,11 @@ function compileTypedArraySet(
   }
   fctx.body.push({ op: "local.set", index: offsetTmp });
 
-  // Spec §23.2.3.24 (%TypedArray%.prototype.set): the bounds check is an
-  // observable RangeError, NOT an unguarded copy that traps. Throw a *catchable*
-  // RangeError when `offset < 0` or `offset + srcLength > targetLength`; the raw
-  // `array.copy` / element-wise store below would otherwise `oob`-trap (an
-  // uncatchable Wasm abort that escapes try/catch and poisons the whole test
-  // file — #3202 / #3335 Part 1). srcLen+offset is computed in i32; test-realistic
-  // magnitudes never overflow, and a negative offset is caught by the `< 0` arm.
-  fctx.body.push(
-    // predicate: offset < 0  ||  offset + srcLen > dstLen
-    { op: "local.get", index: offsetTmp },
-    { op: "i32.const", value: 0 },
-    { op: "i32.lt_s" },
-    { op: "local.get", index: offsetTmp },
-    { op: "local.get", index: srcLen },
-    { op: "i32.add" },
-    { op: "local.get", index: dstLen },
-    { op: "i32.gt_s" },
-    { op: "i32.or" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: buildThrowJsErrorInstrs(ctx, "RangeError", "offset is out of bounds", { flush: fctx }),
-    },
-  );
+  // Spec §23.2.3.24 (%TypedArray%.prototype.set): OOB throws a catchable
+  // RangeError, not an uncatchable Wasm trap (#3202 / #3335 Part 1). Emitted by
+  // the relocated single-purpose module (#3358) — byte-identical to the former
+  // inline block.
+  emitTypedArraySetBoundsCheck(ctx, fctx, offsetTmp, srcLen, dstLen);
 
   if (srcArrTypeIdx === arrTypeIdx) {
     // Same backing array type — bulk array.copy dstData[offset..] = srcData[0..srcLen].

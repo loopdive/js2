@@ -1,15 +1,23 @@
 ---
 id: 3301
 title: "eval-inlined regex literal: dynamic property read of .flags returns undefined"
-status: ready
+status: done
+assignee: ttraenkler/dev-conform
 created: 2026-07-16
+updated: 2026-07-17
+completed: 2026-07-17
 priority: medium
 feasibility: medium
 task_type: bug
 language_feature: eval
 goal: runtime-eval
-sprint: Backlog
+sprint: current
 es_edition: ES5
+# (#3102) The externClasses "RegExp" guard in compileRegExpLiteral (the correct
+# home for regex-literal lowering) grows typeof-delete.ts a few LOC; net across
+# the change-set is a reduction (removed the containsRegexLiteral guard/helper).
+loc-budget-allow:
+  - src/codegen/typeof-delete.ts
 ---
 
 # #3301 — eval-inlined regex literal: dynamic `.flags` read returns undefined
@@ -80,3 +88,47 @@ regressed — but the literal-shape defect itself remains and is THIS issue.
 - #1163 (constant-string eval splice)
 - #682 (dual RegExp backend)
 - #1229 (eval/RegExp peephole)
+
+## Resolution
+
+Root cause (WAT + host-import trace confirmed): the eval-spliced regex and a
+non-eval regex literal emit byte-identical code — `RegExp_new(pattern, flags)`
+then `__extern_get(r, "flags")` — but their `RegExp_new` import DESCRIPTORS
+differ:
+
+- non-eval `/abc/i`: `intent: {type: "extern_class", className: "RegExp", action: "new"}`
+- eval `eval("/abc/i")`: `intent: {type: "builtin", name: "RegExp_new"}`
+
+`compileRegExpLiteral` (`src/codegen/typeof-delete.ts`) registers `RegExp_new`
+on-demand but relied on the pre-codegen scan (`registry/imports.ts`, which walks
+a `RegularExpressionLiteral` in the REAL source AST) to seed
+`ctx.externClasses["RegExp"]`. An eval-spliced regex is a FOREIGN node the scan
+never walks, so `externClasses` lacked "RegExp" → the manifest resolver routed
+`RegExp_new` to the **"builtin" no-op that returns `undefined`** → `RegExp_new`
+returned `undefined` at runtime, so every dynamic property read (`.flags`,
+`.source`, …) read `undefined`. (`instanceof`/`String()` happened to still work.)
+
+Fix:
+
+- `src/codegen/typeof-delete.ts` — `compileRegExpLiteral` now registers the
+  minimal `externClasses` "RegExp" entry before the import, so the resolver
+  routes to the real RegExp constructor. Mirrors the eval-concat peephole in
+  `expressions/calls.ts` (which already did this for `eval("/" + X + "/")`).
+- `src/codegen/expressions/eval-inline.ts` — removed the two
+  `containsRegexLiteral` widened-constant bails (and the now-unused helper): the
+  underlying arm is fixed, so widened-constant eval bodies containing a regex
+  literal inline correctly.
+
+## Test Results
+
+`tests/issue-3301.test.ts` — 8/8 pass: `eval("/abc/i").flags === "i"`, `.source`,
+multi-flag `.flags`, `.multiline`, real `.test()`/`.match()`, `instanceof`/
+`String()` guards, parity with the non-eval literal's `.flags`, and a
+widened-constant regex body inlining correctly (guard-removal coverage).
+
+Acceptance regression guards green: `issue-1102`, `issue-1229`,
+`issue-2923-eval-const-broaden` (46 tests), plus `regexp`, `issue-1055`,
+`issue-2671-regexp`. `npx tsc --noEmit` clean; prettier clean; oracle-ratchet
+clean (checker usage +0). (The 4 pre-existing `issue-682` standalone "refuses …"
+failures fail identically on clean `origin/main` — stale refusal assertions,
+orthogonal to this change.)

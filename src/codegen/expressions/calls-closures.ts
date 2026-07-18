@@ -23,7 +23,12 @@ import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../sh
 import { defaultValueInstrs, emitGuardedFuncRefCast, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
-import { emitClosureCallArgcExtras, emitResetArgcExtras, emitWrapperDynamicMethodCall } from "./calls.js";
+import {
+  emitClosureCallArgcExtras,
+  emitResetArgcExtras,
+  emitWrapperDynamicMethodCall,
+  STANDALONE_TA_SCALAR_HOFS,
+} from "./calls.js";
 
 /**
  * (#3033) Per-source-file set of member names the USER's own code defines as
@@ -1429,6 +1434,23 @@ export function tryExternClassMethodOnAny(
   // (which now carries the native `$__ta_dyn_view` copyWithin/reverse arms)
   // resolves by runtime shape. Mirrors the `fill` refusal above.
   if (methodName === "copyWithin" || methodName === "reverse") return null;
+
+  // (#2872 slice 5) Scalar-HOF family decline under noJsHost — the SHARED
+  // standalone guarantee for every `%TypedArray%.prototype` scalar callback
+  // HOF (`STANDALONE_TA_SCALAR_HOFS`: find/findIndex/findLast/findLastIndex/
+  // forEach/some/every/reduce/reduceRight). Most members already return null
+  // unconditionally above (#3014/#3139), but `findLast`/`findLastIndex` were
+  // missing from that list, so the first-match loop below bound an
+  // `any`-typed receiver's `ta.findLast(cb)` to `env::Uint8ClampedArray_findLast`
+  // — a host import the standalone runtime cannot satisfy (measured
+  // host_import_leak ×33 across TypedArray/prototype/findLast{,Index}; the
+  // leak is emitted at COMPILE time by the #3058 two-arm's never-executed
+  // ELSE arm, so the whole module fails to instantiate). Declining lets the
+  // standalone ladder bottom out at the #2151 closed-method dispatcher, whose
+  // #3098 HOF arm drives the native backward `__hof_findLast[Index]` loops by
+  // runtime shape. noJsHost-gated (the `join` precedent below): the HOST lane
+  // keeps its extern binding byte-identical — the import is satisfiable there.
+  if (noJsHost(ctx) && STANDALONE_TA_SCALAR_HOFS.has(methodName)) return null;
 
   // (#3309) Collection methods (`get`/`set`/`has`/`add`/`delete`/`clear`) on an
   // `any` receiver under standalone/wasi. The candidate pool below still

@@ -52,6 +52,43 @@ typed-array element representation).
 - Standalone: no `env.BigInt64Array_*` / `env.BigUint64Array_*` leaks.
 - `BigUint64Array` unsigned semantics on read.
 
+## Re-scope after #838 (2026-07-17)
+
+Most of this issue's core is **delivered by #838** (BigInt64Array / BigUint64Array
+typed arrays — the i64-element vec representation): `typedArrayVecStorage` returns
+i64 for both views (host/gc + standalone/WASI), `resolveWasmType` maps them to the
+i64 vec, and the native count/copy constructors + index access + `.length` /
+`.byteLength` / `BYTES_PER_ELEMENT` all work. So the first acceptance bullet is
+already met:
+
+- ✅ `new BigInt64Array([1n,2n,3n])[1] === 2n`; `.length === 3` — done by #838
+  (verified in `tests/issue-838.test.ts`).
+
+Residual scope, to be picked up as a **post-#838 follow-up** (do not stack on the
+in-flight #838 branch — it touches the same core files):
+
+- **(a) Native method-routing** — the two views are still NOT in
+  `BUILTIN_TYPES` (`src/checker/type-mapper.ts`), so `isExternalDeclaredClass`
+  still claims them and prototype-method dispatch routes to extern-class host
+  imports. Standalone still leaks e.g. `env.BigUint64Array_subarray` (verified:
+  `new BigUint64Array(4).subarray(1)` leaks the host import; `.length` / bare
+  value use do NOT leak after #838). Fix = add both names to `BUILTIN_TYPES` and
+  thread the i64 element ValType through the shared typed-array array-method
+  paths (subarray / slice / at / set / …). A contained Opus follow-up.
+
+- **(b) `BigUint64Array` unsigned semantics on read** — a **fundamental
+  i64-representation limit**, NOT a routing bug. The compiler's BigInt IS a
+  signed wasm i64, so a `BigUint64Array` element ≥ 2^63 reads back as its signed
+  interpretation (2^64-1 → -1n). This is the *same* limit that makes
+  `BigInt.asUintN(64, x)` return `x` unchanged (#3148, call-builtin-static.ts:
+  bits≥64 returns the value as-is). Lifting it needs an unsigned-BigInt boxing
+  path (a distinct wrapper at the i64→JS-bigint boundary) that spans the whole
+  BigInt representation — deeper, likely its own issue in the architect lane, not
+  a typed-array-local fix.
+
+Leaving this issue **`ready`** for the (a) follow-up once #838 lands; (b) should
+be split into its own representation-level issue.
+
 ## Source
 
 #2379 sweep, sd3, 2026-06-19.

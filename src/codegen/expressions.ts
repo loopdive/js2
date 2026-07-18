@@ -46,6 +46,7 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
+import { ensureImportMetaObject } from "./import-meta.js";
 import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
 
 // ── Sub-module imports ─────────────────────────────────────────────────
@@ -1035,6 +1036,15 @@ function compileExpressionInner(
         return { kind: "externref" };
       }
     }
+    // (#3365) `__module_init` represents the source file's top-level code.
+    // Script-goal top-level `this` is the global object even when the script
+    // has a "use strict" directive; only Module goal has undefined top-level
+    // `this`. The old generic no-binding fallback emitted undefined for both,
+    // so `var global = this; global.Infinity = 42` threw a null-access payload
+    // instead of the spec TypeError from writing the global's read-only prop.
+    if (fctx.name === "__module_init" && !ctx.sourceIsModule) {
+      return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
+    }
     // (#1636-S1) Host-dispatched-closure fallback: when no local `this`
     // binding exists and we're not in a static-class context, read the
     // host-supplied receiver from the `__current_this` module global —
@@ -1512,7 +1522,13 @@ function compileExpressionInner(
   }
 
   if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.ImportKeyword && expr.name.text === "meta") {
-    return compileStringLiteral(ctx, fctx, "[object Object]");
+    // (#2970) A bare `import.meta` VALUE read yields a distinct per-module
+    // object with stable reference identity — one immutable `$ImportMeta`
+    // global per source file. (`import.meta.<prop>` reads are intercepted
+    // upstream in trySuperAndImportMetaRead, so this object needs no fields.)
+    const globalIdx = ensureImportMetaObject(ctx, expr.getSourceFile().fileName);
+    fctx.body.push({ op: "global.get", index: globalIdx });
+    return { kind: "ref", typeIdx: ctx.importMetaTypeIdx! };
   }
 
   if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.ImportKeyword) {

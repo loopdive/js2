@@ -141,6 +141,29 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # (#3382) DEBOUNCE — do NOT dispatch a new refresh-baseline while one is
+          # already queued or in progress. This alert fires on workflow_run after
+          # EVERY "Test262 Sharded" completion on push:main (plus hourly), and a
+          # refresh-baseline run now spans ~114 shards. Before the #3381 fix
+          # refresh-baseline was HOST-ONLY, so it could never heal the STANDALONE
+          # floor — the breach recurred forever and a fresh emergency refresh was
+          # re-dispatched every ~15 min, perpetually occupying the runner pool and
+          # STARVING the merge queue's own checks (2026-07-17 incident). The #3381
+          # standalone-healing fix is the real loop-breaker (once the standalone
+          # floor is fresh, breach flips false and nothing is dispatched); this
+          # debounce bounds the damage during the heal transition and under
+          # sustained main-advance (floor can read > threshold even right after a
+          # refresh). One in-flight refresh already heals the floor; a second is
+          # pure runner waste. Fail-open (dispatch) if the query errors —
+          # refresh-baseline's own non-cancellable `baseline-refresh` concurrency
+          # group still prevents two refreshes RUNNING at once.
+          ACTIVE=$(gh run list --workflow refresh-baseline.yml -L 50 \
+            --json status --jq '[.[] | select(.status != "completed")] | length' \
+            2>/dev/null || echo 0)
+          if [ "${ACTIVE:-0}" -gt 0 ] 2>/dev/null; then
+            echo "A refresh-baseline run is already in flight (${ACTIVE} not-completed) — skipping re-dispatch (debounce, #3382). The in-flight refresh will heal the floor."
+            exit 0
+          fi
           echo "::warning::Baseline floor is STALE (#2178) — dispatching emergency baseline refresh to force-promote a fresh floor."
           gh workflow run refresh-baseline.yml --ref main \
             -f force_baseline_refresh=true \

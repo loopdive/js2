@@ -6,6 +6,7 @@ sprint: current
 priority: high
 horizon: xl
 feasibility: hard
+model: fable
 task_type: refactor
 area: codegen, stdlib, ir
 language_feature: compiler-internals

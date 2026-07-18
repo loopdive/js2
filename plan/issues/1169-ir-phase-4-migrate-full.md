@@ -6,6 +6,7 @@ created: 2026-04-22
 updated: 2026-06-19
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: max
 task_type: feature
 area: codegen

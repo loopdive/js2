@@ -3,7 +3,7 @@ id: 2566
 title: "Eager-buffer generator over-consumes in array destructuring (capturing generators yield wrong side-effect counts; trailing elision steps too far)"
 status: blocked
 blocked_by: 2662
-sprint: 67
+sprint: Backlog
 created: 2026-06-21
 updated: 2026-06-26
 priority: medium

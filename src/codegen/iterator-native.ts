@@ -71,6 +71,14 @@ import { ensureStrToCharVecHelper, nativeStringLiteralInstrs } from "./native-st
 // (#3119) The OBJ arm's miss/undefined value matches `__extern_get`'s miss
 // representation (the #2106 S1 `$undefined` singleton when active, else null).
 import { undefinedExternInstrs } from "./any-helpers.js";
+// (#3388) GetIterator §7.4.1: a non-iterable subject must throw a catchable
+// `TypeError`, not trap (`ref.cast $Vec` on a non-vec → `illegal cast`). The
+// error constructor + message global are registered EAGERLY (idempotent) so the
+// throw instrs at both the eager and finalize `buildIteratorBody` sites only
+// READ already-registered symbols (no #2043 late-shift).
+import { emitWasiErrorConstructor } from "./registry/error-types.js";
+import { stringConstantExternrefInstrs as throwMsgExternrefInstrs } from "./native-strings.js";
+import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 // (#3164) The GENSTATE step's f64 value read canonicalizes the UNDEF_F64
 // sentinel (a done/valueless yield) to the null externref — the standalone
 // canonical `undefined` — before boxing (same recipe as
@@ -420,6 +428,12 @@ function iterRuntimeTypes(ctx: CodegenContext): IterRuntimeTypes {
 export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
   if (ctx.funcMap.has("__iterator")) return;
 
+  // (#3388) Register the native TypeError ctor + "not iterable" message eagerly
+  // (idempotent) so the §7.4.1 non-iterable tail throws instead of trapping.
+  // Must precede the `registerNative("__iterator", …)` below so the throw instrs
+  // read a stable, already-registered funcIdx (no #2043 finalize shift).
+  ensureNonIterableThrowDeps(ctx);
+
   const types = iterRuntimeTypes(ctx);
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
 
@@ -458,7 +472,17 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
       { name: "len", type: { kind: "i32" } },
       { name: "out", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
     ],
-    buildIteratorBody(types, undefined),
+    buildIteratorBody(
+      types,
+      undefined,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      nonIterableThrowInstrs(ctx),
+    ),
   );
 
   // --- __iterator_next(recExt: externref) -> (i32 done, externref value) ---
@@ -1327,7 +1351,17 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   const iteratorFn = definedFuncAt(ctx, iteratorIdx);
   const iteratorNextFn = definedFuncAt(ctx, iteratorNextIdx);
   if (iteratorFn)
-    iteratorFn.body = buildIteratorBody(types, deps, familyArms, objDeps, hostDeps, agDeps, callIteratorIdx, sgDeps);
+    iteratorFn.body = buildIteratorBody(
+      types,
+      deps,
+      familyArms,
+      objDeps,
+      hostDeps,
+      agDeps,
+      callIteratorIdx,
+      sgDeps,
+      nonIterableThrowInstrs(ctx), // (#3388) throw §7.4.1 TypeError, not trap
+    );
   if ((deps || objDeps || hostDeps || agDeps || sgDeps) && iteratorNextFn) {
     // (#3164) The GENSTATE step's sentinel-aware f64 boxing needs an f64
     // scratch local; append it at fill time (locals are read at emit, after
@@ -1702,6 +1736,40 @@ function buildIteratorReturnBody(
  * reuses it for iterFn/iterObj), 3=i(i32)/4=len(i32)/5=out(arr) — scratch for
  * the family-arm normalize loops.
  */
+/** (#3388) The §7.4.1 GetIterator TypeError message for a non-iterable subject. */
+const NOT_ITERABLE_MSG = "value is not iterable";
+
+/**
+ * (#3388) Eagerly register the native `TypeError` constructor + the
+ * "not iterable" message string global (both idempotent) so `__iterator`'s
+ * non-iterable tail can throw a catchable `TypeError` instead of trapping.
+ * Standalone/wasi only (host mode keeps the legacy loud trap — its `__iterator`
+ * is a JS host import that already throws). Call from `ensureNativeIteratorRuntime`
+ * BEFORE `buildIteratorBody`, so `nonIterableThrowInstrs` (below) only READS
+ * already-registered symbols at both the eager and finalize build sites.
+ */
+function ensureNonIterableThrowDeps(ctx: CodegenContext): void {
+  if (!(ctx.standalone || ctx.wasi)) return;
+  emitWasiErrorConstructor(ctx, "TypeError", 1); // idempotent (funcMap.has guard)
+  addStringConstantGlobal(ctx, NOT_ITERABLE_MSG); // idempotent (keyed by value)
+}
+
+/**
+ * (#3388) FRESH throw-`TypeError` instrs for the §7.4.1 non-iterable tail, or
+ * `undefined` to keep the legacy trap (host mode, or the ctor/global was not
+ * pre-registered). Builds a new instr array each call (never share — the DCE
+ * in-place remap double-applies to an aliased object, #2169b). Reads only
+ * pre-registered symbols, so it is safe at BOTH the eager and finalize
+ * `buildIteratorBody` sites.
+ */
+function nonIterableThrowInstrs(ctx: CodegenContext): Instr[] | undefined {
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  const ctorIdx = ctx.funcMap.get("__new_TypeError");
+  if (ctorIdx === undefined) return undefined;
+  const tagIdx = ensureExnTag(ctx);
+  return [...throwMsgExternrefInstrs(ctx, NOT_ITERABLE_MSG), { op: "call", funcIdx: ctorIdx }, { op: "throw", tagIdx }];
+}
+
 function buildIteratorBody(
   types: IterRuntimeTypes,
   deps: UserCarrierDeps | undefined,
@@ -1720,6 +1788,13 @@ function buildIteratorBody(
    */
   tailCallIteratorIdx?: number,
   sgDeps?: SyncGenCarrierDeps,
+  /**
+   * (#3388) When present, the §7.4.1 non-iterable FALLBACK tail throws a
+   * catchable `TypeError` (these instrs) instead of the legacy `ref.cast $Vec`
+   * loud trap. Only supplied on the standalone/wasi native path (host `__iterator`
+   * is a JS import that already throws). Fresh instr array per call (never share).
+   */
+  nonIterableThrow?: Instr[],
 ): Instr[] {
   const { iterRecTypeIdx, vecTypeIdx } = types;
 
@@ -1979,13 +2054,21 @@ function buildIteratorBody(
             ],
             else: [],
           },
-          ...buildVecArm(),
+          // (#3388) Non-`$Object`, non-iterable subject: throw §7.4.1 TypeError
+          // (catchable) rather than the legacy `ref.cast $Vec` trap. Legacy
+          // trap only when no throw was supplied.
+          ...(nonIterableThrow ?? buildVecArm()),
         ]
-      : // USER carrier not filled — preserve the legacy hard cast so the failure
-        // mode is unchanged (loud trap) rather than silently wrong. A FRESH vec arm
-        // (not the `then` arm's array) so the two branches never share a
-        // `struct.new` object (#2169b).
-        buildVecArm();
+      : // USER carrier not filled. By this point the subject is proven NON-vec
+        // (the ladder's `ref.test $Vec` at the top returned on a match) and
+        // matched no iterable arm — i.e. it is genuinely non-iterable.
+        // (#3388) Throw a catchable §7.4.1 `TypeError` when the native error
+        // machinery is available (standalone/wasi) — a `yield*`/for-of over a
+        // non-iterable must REJECT/throw, not trap. Fall back to the legacy loud
+        // `ref.cast $Vec` trap only when no throw was supplied (host mode uses a
+        // JS `__iterator` import that already throws, so this path is
+        // native-only). A FRESH vec arm (#2169b) on the legacy branch.
+        (nonIterableThrow ?? buildVecArm());
 
   return [
     // objAny = any.convert_extern(obj)

@@ -8,6 +8,7 @@ sprint: current
 created: 2026-06-26
 priority: high
 feasibility: hard
+model: fable
 reasoning_effort: high
 task_type: bugfix
 area: codegen

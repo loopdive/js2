@@ -771,6 +771,23 @@ export function compileRegExpLiteral(ctx: CodegenContext, fctx: FunctionContext,
   const flagsResult = compileStringLiteral(ctx, fctx, flagsStr, expr);
   if (!flagsResult) return null;
 
+  // (#3301) Ensure a minimal `externClasses` "RegExp" entry BEFORE the import:
+  // the manifest resolver routes `RegExp_new` to the real RegExp constructor
+  // only when "RegExp" is in `ctx.externClasses`, else it falls to the "builtin"
+  // intent — a no-op returning `undefined`. The pre-codegen scan sets this for a
+  // real-AST regex literal, but an eval-spliced regex (`eval("/abc/i")`, #1163)
+  // is a FOREIGN node it never walks. Mirrors the calls.ts eval-concat peephole.
+  if (!ctx.externClasses.has("RegExp")) {
+    ctx.externClasses.set("RegExp", {
+      importPrefix: "RegExp",
+      namespacePath: [],
+      className: "RegExp",
+      constructorParams: [{ kind: "externref" }, { kind: "externref" }],
+      methods: new Map(),
+      properties: new Map(),
+    });
+  }
+
   // Call RegExp_new(pattern, flags) -> externref
   let funcIdx = ctx.funcMap.get("RegExp_new");
   if (funcIdx === undefined) {

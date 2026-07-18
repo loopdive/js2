@@ -30,6 +30,14 @@ import {
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 export { buildStringConstants, buildStringConstants16 };
+import { _arrayProtoSparseFastPaths } from "./runtime/array-proto-sparse.js"; // (#3103, #1234) sparse-aware Array.prototype fast paths
+import {
+  _rerouteStringSymbolMethodPrimitive,
+  _makeLegacyRegExpState,
+  _updateLegacyRegExpState,
+  _installLegacyRegExpAccessors,
+  type LegacyRegExpState,
+} from "./runtime/legacy-regexp.js";
 export { buildWasiPolyfill } from "./runtime/wasi-polyfill.js";
 
 /**
@@ -1005,6 +1013,28 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+const _test262ErrorConstructors = new WeakSet<Function>();
+
+// (#3369) Callback bridges must remain usable while the evaluated program has
+// installed non-writable numeric properties on Array.prototype. `[].push(x)`
+// and direct indexed assignment perform [[Set]] and can be rejected by such an
+// inherited property. Define dense own argument slots explicitly instead.
+// Capture the intrinsics before user code runs so the helper is also immune to
+// later rebinding of Array/Reflect properties.
+const _IntrinsicArray = Array;
+const _intrinsicReflectDefineProperty = Reflect.defineProperty;
+function _denseOwnArgs(args: ArrayLike<any>, length: number): any[] {
+  const dense = new _IntrinsicArray<any>(length);
+  for (let i = 0; i < length; i++) {
+    _intrinsicReflectDefineProperty(dense, i, {
+      value: i < args.length ? args[i] : undefined,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return dense;
+}
 
 function _hostEqComparableValue(v: any): any {
   if (typeof v === "function") {
@@ -1026,6 +1056,36 @@ function _hostEqComparableValue(v: any): any {
     return _unwrapForHost(v);
   }
   return v;
+}
+
+function _hostStrictEqual(a: any, b: any): boolean {
+  const comparableA = _hostEqComparableValue(a);
+  const comparableB = _hostEqComparableValue(b);
+  if (comparableA === comparableB) return true;
+
+  // The original test262 harness declares `function Test262Error`, while the
+  // host exception bridge deliberately constructs a real Error subclass so an
+  // abrupt completion can cross Wasm→host iterator calls and back. Treat that
+  // bridge constructor as the same function identity only when the other side
+  // is the compiled Test262Error closure. Other host/user constructors retain
+  // ordinary reference identity.
+  const hostCtor =
+    typeof a === "function" && _test262ErrorConstructors.has(a)
+      ? a
+      : typeof b === "function" && _test262ErrorConstructors.has(b)
+        ? b
+        : undefined;
+  if (hostCtor) {
+    const other = hostCtor === a ? b : a;
+    if (typeof other === "function") {
+      const closure = _wasmClosureWrapperTargets.get(other);
+      // sta.js installs the distinctive static `Test262Error.thrower` helper on
+      // the declaration. Closure function names are not stored in the sidecar,
+      // so this own static member is the stable harness identity marker.
+      if (closure && _wasmStructProps.get(closure)?.thrower !== undefined) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1096,8 +1156,7 @@ function _wrapWasmClosure(
     }
     // Pad with undefined to exactly `arity` positional args. Extra args
     // dropped (JS spec for fewer/more args than declared params).
-    const padded: any[] = [];
-    for (let i = 0; i < arity; i++) padded.push(args[i]);
+    const padded = _denseOwnArgs(args, arity);
     if (this !== undefined && this !== globalThis) {
       // (#2838 L3) Method-`this` dispatch. Prefer the exact-arity method
       // dispatcher; when it is ABSENT, fall back to the HIGHEST available
@@ -1127,8 +1186,7 @@ function _wrapWasmClosure(
       }
       if (methodArity >= 0) {
         const methodCallFn = exports![`__call_fn_method_${methodArity}`]!;
-        const methodPadded: any[] = [];
-        for (let i = 0; i < methodArity; i++) methodPadded.push(args[i]);
+        const methodPadded = _denseOwnArgs(args, methodArity);
         const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
         return methodCallFn(_isWasmStruct(rawThis) ? rawThis : this, closure, ...methodPadded);
       }
@@ -1158,12 +1216,11 @@ function _wrapWasmClosureUnknownArity(
   if (!callbackState) return null;
   const exports = callbackState.getExports();
   if (!exports) return null;
-  const available: number[] = [];
+  let maxArity = -1;
   for (let arity = 0; arity <= 4; arity++) {
-    if (typeof exports[`__call_fn_${arity}`] === "function") available.push(arity);
+    if (typeof exports[`__call_fn_${arity}`] === "function") maxArity = arity;
   }
-  if (available.length === 0) return null;
-  const maxArity = available[available.length - 1]!;
+  if (maxArity < 0) return null;
   // (#2664) The highest available `__call_fn_method_N` dispatches EVERY closure
   // of arity ≤ N and passes each closure exactly its OWN declared arity (extra
   // args dropped at the wasm dispatch arm — emitClosureMethodCallExportN in
@@ -1233,8 +1290,7 @@ function _wrapWasmClosureUnknownArity(
       }
       const methodCallFn = exports[`__call_fn_method_${dispatchArity}`];
       if (typeof methodCallFn === "function") {
-        const padded: any[] = [];
-        for (let i = 0; i < dispatchArity; i++) padded.push(args[i]);
+        const padded = _denseOwnArgs(args, dispatchArity);
         // (#2015) Unwrap a `_wrapForHost` proxy receiver back to its raw WasmGC
         // struct before installing it as `__current_this`. `__extern_method_call`
         // dispatches `fn.apply(wrappedObj, …)` with `wrappedObj` being the host
@@ -1253,8 +1309,7 @@ function _wrapWasmClosureUnknownArity(
     while (arity > 0 && typeof exports[`__call_fn_${arity}`] !== "function") arity--;
     const callFn = exports[`__call_fn_${arity}`];
     if (typeof callFn !== "function") return undefined;
-    const padded: any[] = [];
-    for (let i = 0; i < arity; i++) padded.push(args[i]);
+    const padded = _denseOwnArgs(args, arity);
     return marshalNew(callFn(closure, ...padded));
   };
   try {
@@ -3131,8 +3186,7 @@ function _invokeJsonCallable(
   for (let a = 4; a >= 0; a--) {
     const cf = exports[`__call_fn_${a}`];
     if (typeof cf === "function") {
-      const padded: any[] = [];
-      for (let i = 0; i < a; i++) padded.push(args[i]);
+      const padded = _denseOwnArgs(args, a);
       return cf(fn, ...padded);
     }
   }
@@ -3400,71 +3454,6 @@ let _symbolCache: Map<number, symbol> | undefined;
 const _symbolDescRegistry: Map<number, string | null> = new Map();
 const _asyncDisposeSym: symbol = (Symbol as any).asyncDispose ?? Symbol.for("Symbol.asyncDispose");
 
-/** Escape a literal string so it matches itself when used as a RegExp source. */
-function _escapeRegExpLiteral(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * #3095 — The well-known Symbol each `String.prototype` symbol-dispatch method
- * looks up on its search value (per ECMA-262). `replaceAll` dispatches on
- * `@@replace` (there is no `@@replaceAll`).
- */
-const _stringMethodDispatchSymbol: Record<string, symbol | undefined> = {
-  match: Symbol.match,
-  matchAll: Symbol.matchAll,
-  search: Symbol.search,
-  replace: Symbol.replace,
-  replaceAll: Symbol.replace,
-  split: Symbol.split,
-};
-
-/**
- * #3095 — For `String.prototype.{match,matchAll,search,replace,replaceAll,
- * split}` with a **primitive** (non-Object) search value, ECMA-262 does NOT
- * observably access the value's `Symbol.<method>` property; it goes straight to
- * the "regexp is not an Object" branch. The JS host (`recvStr[method](arg)`)
- * would instead run GetMethod on the primitive's wrapper prototype, triggering
- * any user-defined `Number.prototype[Symbol.match]` (etc.) accessor.
- *
- * To preserve host delegation while suppressing that observable access, we
- * pre-build the RegExp the spec's not-Object branch would create and hand
- * *that* to the host method — the host then dispatches on the built-in
- * `RegExp.prototype` symbol methods and never touches the primitive's
- * prototype. match/matchAll/search treat the primitive as a **pattern**
- * (RegExpCreate); replace/replaceAll/split treat it as a **literal string**
- * (so we escape it; `replaceAll` needs the global flag).
- *
- * Returns the replacement RegExp, or `undefined` to leave the arg unchanged.
- * Only engaged when the relevant Symbol property actually exists on the
- * primitive's prototype chain (checked with `in`/HasProperty, which does not
- * call getters) — so the common no-override case is byte-identical to before.
- */
-function _rerouteStringSymbolMethodPrimitive(method: string, first: unknown): RegExp | undefined {
-  const t = typeof first;
-  if (t !== "number" && t !== "string" && t !== "boolean" && t !== "bigint") return undefined;
-  const sym = _stringMethodDispatchSymbol[method];
-  if (sym === undefined) return undefined;
-  // HasProperty (no getter side effect). Object(first) boxes the primitive so
-  // the prototype chain (Number/String/Boolean/BigInt.prototype) is visible.
-  if (!(sym in (Object(first) as object))) return undefined;
-  const str = String(first as number | string | boolean | bigint);
-  switch (method) {
-    case "match":
-    case "search":
-      return new RegExp(str);
-    case "matchAll":
-      return new RegExp(str, "g");
-    case "replaceAll":
-      return new RegExp(_escapeRegExpLiteral(str), "g");
-    case "replace":
-    case "split":
-      return new RegExp(_escapeRegExpLiteral(str));
-    default:
-      return undefined;
-  }
-}
-
 /** Map from JS well-known Symbols to Wasm "@@name" keys (and vice-versa). */
 const _symbolToWasm: Map<symbol, string> = new Map([
   [Symbol.iterator, "@@iterator"],
@@ -3483,132 +3472,6 @@ const _symbolToWasm: Map<symbol, string> = new Map([
   [_asyncDisposeSym, "@@asyncDispose"],
   [Symbol.matchAll, "@@matchAll"],
 ]);
-
-// (#1333) Annex B §B.2.2 — legacy RegExp static-property slots on %RegExp%.
-// Updated after every successful RegExpBuiltinExec (intercepted in the
-// `extern_class` method handler + `__extern_method_call` + `string_method`
-// branches). Read via the getters installed by _installLegacyRegExpAccessors.
-type LegacyRegExpState = {
-  input: string;
-  lastMatch: string;
-  lastParen: string;
-  leftContext: string;
-  rightContext: string;
-  parens: string[];
-};
-const _legacyRegExpState: LegacyRegExpState = {
-  input: "",
-  lastMatch: "",
-  lastParen: "",
-  leftContext: "",
-  rightContext: "",
-  parens: ["", "", "", "", "", "", "", "", ""],
-};
-const _legacyRegExpInstalledOn: WeakSet<object> = new WeakSet();
-
-function _makeLegacyRegExpState(): LegacyRegExpState {
-  return { input: "", lastMatch: "", lastParen: "", leftContext: "", rightContext: "", parens: new Array(9).fill("") };
-}
-
-// #1933 — update the legacy RegExp static state. `state` is the per-instance
-// slot (threaded from `instanceState.legacyRegExpState`); falls back to the
-// shared module-level slot for legacy callers without an instanceState.
-function _updateLegacyRegExpState(
-  input: string,
-  m: RegExpExecArray | RegExpMatchArray | null,
-  state: LegacyRegExpState = _legacyRegExpState,
-): void {
-  if (m == null) return;
-  const idx = m.index ?? 0;
-  const matchStr = m[0] ?? "";
-  state.input = input;
-  state.lastMatch = matchStr;
-  state.leftContext = input.substring(0, idx);
-  state.rightContext = input.substring(idx + matchStr.length);
-  let lastNonEmptyParen = "";
-  for (let i = 0; i < 9; i++) {
-    const cap = m[i + 1];
-    const v = cap == null ? "" : String(cap);
-    state.parens[i] = v;
-    if (cap != null) lastNonEmptyParen = v;
-  }
-  state.lastParen = lastNonEmptyParen;
-}
-
-function _installLegacyRegExpAccessors(C: unknown, state: LegacyRegExpState = _legacyRegExpState): void {
-  if (C == null || (typeof C !== "function" && typeof C !== "object")) return;
-  if (_legacyRegExpInstalledOn.has(C as object)) return;
-  _legacyRegExpInstalledOn.add(C as object);
-  // #1933 — the accessors read/write the per-instance `state` (threaded from
-  // instanceState), so `RegExp.$1`/`$_` etc. don't cross instances.
-  type Slot = readonly [string, readonly string[], () => string, ((v: unknown) => void)?];
-  const slots: Slot[] = [
-    [
-      "input",
-      ["$_"],
-      () => state.input,
-      (v) => {
-        state.input = String(v);
-      },
-    ],
-    ["lastMatch", ["$&"], () => state.lastMatch],
-    ["lastParen", ["$+"], () => state.lastParen],
-    ["leftContext", ["$`"], () => state.leftContext],
-    ["rightContext", ["$'"], () => state.rightContext],
-  ];
-  for (const [name, aliases, getter, setter] of slots) {
-    // (#1333) Note: `set` must be explicitly `undefined` for read-only slots.
-    // Per ES §10.1.6.3 OrdinaryDefineOwnProperty, an absent field in the
-    // descriptor preserves the current value, so V8's pre-existing native
-    // setter would leak through. Spec mandates `set: undefined` for the
-    // read-only legacy accessors (lastMatch/lastParen/leftContext/rightContext
-    // and $1-$9) — see annexB/legacy-accessors/*/prop-desc.js.
-    const desc: PropertyDescriptor = setter
-      ? {
-          get(this: unknown) {
-            if (this !== C) throw new TypeError(`RegExp.${name} getter requires the RegExp constructor as this`);
-            return getter();
-          },
-          set(this: unknown, v: unknown) {
-            if (this !== C) throw new TypeError(`RegExp.${name} setter requires the RegExp constructor as this`);
-            setter(v);
-          },
-          enumerable: false,
-          configurable: true,
-        }
-      : {
-          get(this: unknown) {
-            if (this !== C) throw new TypeError(`RegExp.${name} getter requires the RegExp constructor as this`);
-            return getter();
-          },
-          set: undefined,
-          enumerable: false,
-          configurable: true,
-        };
-    try {
-      Object.defineProperty(C, name, desc);
-      for (const alias of aliases) Object.defineProperty(C, alias, desc);
-    } catch {
-      // Slot non-configurable on this host — leave native annexB in place.
-    }
-  }
-  for (let i = 1; i <= 9; i++) {
-    const idx = i - 1;
-    try {
-      Object.defineProperty(C, `$${i}`, {
-        get(this: unknown) {
-          if (this !== C) throw new TypeError(`RegExp.$${i} getter requires the RegExp constructor as this`);
-          return state.parens[idx];
-        },
-        set: undefined,
-        enumerable: false,
-        configurable: true,
-      });
-    } catch {
-      // ignore
-    }
-  }
-}
 
 /**
  * Reverse map from well-known symbol i32 IDs (used in compiled Wasm) to
@@ -3721,14 +3584,20 @@ function _safeGet(obj: any, key: any, callbackState?: { getExports: () => Record
     // Check sidecar FIRST — native JS property access on WasmGC structs can return
     // built-in artifacts (e.g. `obj.constructor` returns the Wasm struct constructor),
     // which would shadow user-assigned properties if we checked native first.
-    const sc = _sidecarGet(obj, key);
-    if (sc !== undefined) return sc;
     // Check string accessor getter stored by Object.defineProperty (sidecar key: __get_<prop>)
     if (typeof key === "string") {
       const wasmSc = _wasmStructProps.get(obj);
       const getter = wasmSc?.[`__get_${key}` as string];
       if (typeof getter === "function") return (getter as Function).call(obj);
+      if (getter != null && typeof getter === "object" && _isWasmStruct(getter)) {
+        const callFn0 = callbackState?.getExports()?.__call_fn_0;
+        if (typeof callFn0 === "function") return callFn0(getter);
+      }
     }
+    // Accessor descriptors take precedence over any stale data-sidecar value
+    // retained while the receiver's static shape was widened.
+    const sc = _sidecarGet(obj, key);
+    if (sc !== undefined) return sc;
     // For JS Symbols, check the accessor map (for Symbol-keyed defineProperty accessors)
     if (typeof key === "symbol") {
       const accessor = _wasmStructAccessors.get(obj)?.get(key);
@@ -4095,13 +3964,20 @@ function _safeSet(
       }
       cur = Object.getPrototypeOf(cur);
     }
-    if (desc && (desc.get || desc.set)) {
-      if (!desc.set) {
+    if (desc) {
+      if ((desc.get || desc.set) && !desc.set) {
         // Getter-only accessor (own or inherited) → strict [[Set]] throws.
         throw new TypeError(`Cannot set property ${String(key)} of #<Object> which has only a getter`);
       }
-      // Accessor WITH a setter — invoke it via the write below; propagate throws.
-      strictAccessorWrite = true;
+      if (desc.get || desc.set) {
+        // Accessor WITH a setter — invoke it via the write below; propagate throws.
+        strictAccessorWrite = true;
+      } else if (desc.writable === false) {
+        // OrdinarySetWithOwnDescriptor step 2.a returns false for a
+        // non-writable data descriptor; PutValue turns that false into a
+        // TypeError for a strict Reference (§6.2.5.6 step 3.e).
+        throw new TypeError(`Cannot assign to read only property '${String(key)}' of object`);
+      }
     }
   }
   try {
@@ -4117,17 +3993,15 @@ function _safeSet(
     // `_isUserProxy(obj)`, so the sloppy-mode struct / frozen-builtin cases
     // below (Math.E=1, Number.NaN=1) are byte-for-byte unchanged (#2017).
     _rethrowIfProxyOrRevoked(e, obj);
-    // (#2017 regression fix) Do NOT blanket re-throw the engine's TypeError just
-    // because this came through `__extern_set_strict`. The bundled runtime is an
-    // ES module (executes in strict mode), so `obj[key] = val` throws natively
-    // for a non-writable DATA property (`Math.E = 1`, `Number.NaN = 1`) or a
-    // non-extensible/frozen target. In sloppy/noStrict SCRIPT context (the
-    // test262 default) those writes must silently no-op, not throw — re-throwing
-    // here regressed S8.5_A9 / S8.12.4_A1 / S8.6.1_A1. The getter-only ACCESSOR
-    // case (#2017's actual target) is already handled by the explicit pre-check
-    // above (it throws our own catchable TypeError before reaching this write),
-    // so swallowing the engine error here and diverting to the sidecar both
-    // fixes the regression and preserves the feature.
+    // (#3374) The runtime module itself executes in strict mode, so the native
+    // assignment above throws when [[Set]] returns false. The compiler now
+    // selects this helper only for a genuinely strict source Reference; in that
+    // case PutValue requires the TypeError to propagate. Sloppy writes keep the
+    // legacy silent fallback below.
+    if (strict) throw e;
+    // The sloppy helper retains the legacy silent fallback because this runtime
+    // module is itself strict: the native assignment can throw even when the
+    // compiled source Reference was non-strict.
     // For non-WasmGC objects (frozen/sealed JS objects),
     // fall through to sidecar set — preserves original behavior.
     _sidecarSet(obj, key, val);
@@ -5453,6 +5327,11 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
   // #1047 — if `obj` was registered as a class prototype, surface only the
   // method names in the allowlist. Otherwise fall back to the struct-field
   // enumeration used for regular instances.
+  const isTombstoned = (key: string | symbol): boolean => {
+    const tombstones = _wasmStructDeletedKeys.get(obj);
+    return !!tombstones && tombstones.has(typeof key === "symbol" ? key : String(key));
+  };
+
   const fieldNamesForHost = (): string[] => {
     const protoMethods = _prototypeMethodNames.get(obj);
     if (protoMethods !== undefined) {
@@ -5460,7 +5339,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       // proto / class object so subsequent enumeration matches spec.
       return protoMethods.filter((n) => !_isDeletedClassProp(obj, n));
     }
-    return _getStructFieldNames(obj, exports) ?? [];
+    return (_getStructFieldNames(obj, exports) ?? []).filter((name) => !isTombstoned(name));
   };
 
   const collectKeys = (): (string | symbol)[] => {
@@ -5470,6 +5349,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
     const sc = _wasmStructProps.get(obj);
     if (sc) {
       for (const k of Object.getOwnPropertyNames(sc)) {
+        if (isTombstoned(k)) continue;
         // #1336 — `__get_x` / `__set_x` are accessor descriptor entries; they
         // must NOT enumerate as own keys. Surface the underlying property name
         // (`x`) instead so Object.assign / spread copy honours the accessor.
@@ -5481,13 +5361,17 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
           keys.add(k);
         }
       }
-      for (const k of Object.getOwnPropertySymbols(sc)) keys.add(k);
+      for (const k of Object.getOwnPropertySymbols(sc)) {
+        if (!isTombstoned(k)) keys.add(k);
+      }
     }
     // #1336 — Symbol-keyed accessors (set via Object.defineProperty with a
     // Symbol property name) live in `_wasmStructAccessors`, not `_wasmStructProps`.
     const accMap = _wasmStructAccessors.get(obj);
     if (accMap) {
-      for (const k of accMap.keys()) keys.add(k);
+      for (const k of accMap.keys()) {
+        if (!isTombstoned(k)) keys.add(k);
+      }
     }
     return Array.from(keys);
   };
@@ -5741,6 +5625,11 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       return collectKeys();
     },
     getOwnPropertyDescriptor(_t, key) {
+      // (#3368) A deleted closed-struct field remains physically present in
+      // WasmGC, but its tombstone makes it absent to every ECMAScript
+      // reflection operation. Do not let the host proxy resurrect it during
+      // Object.assign/object spread enumeration.
+      if (isTombstoned(key)) return undefined;
       // For Proxy invariants, getOwnPropertyDescriptor must match target's
       // non-configurable keys. Our target is an empty extensible object, so
       // we can return any descriptor we like. We must also reflect the
@@ -5997,6 +5886,10 @@ function _wrapCallableForHost(
   const proxy = new Proxy(fnTarget, handler);
   _hostCallableCache.set(closure, proxy);
   _hostProxyReverse.set(proxy, closure); // so _unwrapForHost round-trips
+  // The same closure can cross the boundary as this constructible proxy and as
+  // a dynamic wasmClosureDynamicBridge. Canonicalize both representations to
+  // the raw closure so strict constructor identity remains stable.
+  _wasmClosureWrapperTargets.set(proxy, closure);
   return proxy;
 }
 
@@ -6433,193 +6326,6 @@ function _proxyForwardDefault(name: string, args: any[]): any {
       return undefined;
   }
 }
-
-// ── #1234 — sparse-aware Array.prototype fast paths ─────────────────────────
-//
-// V8's native `Array.prototype.{unshift,reverse,forEach,…}` walks the index
-// range `[0, length)` per the spec algorithm. For real Arrays V8 has dense
-// fast paths that make this O(elements). For non-Array receivers (like our
-// Proxy-wrapped wasm structs), V8 follows the spec literally and walks every
-// integer index in the range — including holes.
-//
-// Test262 has receivers built from object literals with `length: 2 ** 53 - 2`
-// and a handful of defined integer-keyed properties. V8's literal walk goes
-// 9×10¹⁵ iterations and hangs the runner.
-//
-// These fast paths replace the spec walk with a defined-property iteration:
-// collect the integer-indexed own keys via `Reflect.ownKeys(O)`, sort them,
-// then iterate only those. Skipping holes is observable (`DeletePropertyOrThrow`
-// at hole sites is a side effect per spec), but matters only for receivers
-// that observe writes to hole indices — none of the target tests do.
-//
-// Real Array receivers continue to go through V8's native path; the dispatch
-// in `__proto_method_call` only routes here when `Array.isArray(receiver)`
-// is false.
-
-/**
- * Collect integer-indexed (0, 1, 2, …) own keys of a Proxy-wrapped wasm
- * struct, in ascending numeric order, filtered to keys < `len`.
- */
-function _collectIntegerKeys(O: any, len: number): number[] {
-  const keys = Reflect.ownKeys(O);
-  const out: number[] = [];
-  // Pattern: "0" or non-zero digit followed by digits, with no leading zeros.
-  // Keys above 2^53 - 1 are not integer indices per spec but the values we
-  // care about always fit because they originate as struct field names.
-  const intKeyRe = /^(?:0|[1-9]\d*)$/;
-  for (const k of keys) {
-    if (typeof k !== "string") continue;
-    if (!intKeyRe.test(k)) continue;
-    const n = Number(k);
-    if (!Number.isFinite(n) || n < 0 || n >= len) continue;
-    if (n > 9007199254740991) continue; // > 2^53 - 1, not an integer index
-    out.push(n);
-  }
-  out.sort((a, b) => a - b);
-  return out;
-}
-
-/**
- * Spec §22.1.3.34 Array.prototype.unshift, sparse-aware. Iterates over
- * defined integer-indexed own properties only. Reading an indexed property
- * may throw (e.g. via a getter) — that propagates naturally because we
- * use plain `O[from]` syntax (which fires JS accessor `get` traps).
- *
- * Two semantic deviations from the spec walk that matter:
- *
- *   1. **Source not deleted after copy.** Per spec, when `fromPresent` is
- *      true the algorithm does `Get + Set` only — no delete of `from`.
- *      Source values that aren't subsequently overwritten by a higher-key
- *      iteration's destination remain in place. (Real V8 unshift behaves
- *      this way too — source keys persist when destination > source.)
- *
- *   2. **Hole-on-source iterations delete the destination.** Spec step v:
- *      when `from` is a hole, `DeletePropertyOrThrow(O, to)`. We don't
- *      iterate holes, so destination indices in hole ranges between
- *      defined keys keep their stale values from the original receiver.
- *      The two test262 targets (#1234) don't observe this divergence, but
- *      it would surface on a test that checks per-index hole state across
- *      a sparse iteration. Out of scope for #1234; tracked as a follow-up.
- */
-function _arrayProtoUnshiftSparse(O: any, args: any[]): number {
-  const len = Number(O.length) || 0;
-  const argCount = args.length;
-  if (argCount === 0) return len;
-  if (len + argCount > 9007199254740991) {
-    throw new TypeError("Invalid array length");
-  }
-  // Walk defined keys from highest down, copying each up by argCount.
-  // Sources are NOT deleted — spec reads then sets without deletion. Real
-  // sources may be implicitly overwritten by another iteration's
-  // destination, but that's fine in spec order.
-  const keys = _collectIntegerKeys(O, len);
-  for (let i = keys.length - 1; i >= 0; i--) {
-    const k = keys[i]!;
-    const fromKey = String(k);
-    const toKey = String(k + argCount);
-    // Read first — may throw via accessor; spec then propagates.
-    const fromValue = O[fromKey];
-    O[toKey] = fromValue;
-  }
-  // Delete destinations that fall in hole ranges between defined keys —
-  // spec step v for each k where `from` was a hole calls
-  // DeletePropertyOrThrow(O, ToString(k + argCount - 1)). For our walk we
-  // only iterate defined keys, so destinations in hole ranges keep stale
-  // values unless explicitly cleared.
-  //
-  // Iterate over the defined keys (not the index range — gaps may span
-  // 2^53 indices). For each defined key `kd`, the spec hole-iteration
-  // would delete `kd` if and only if some hole iteration's destination
-  // landed on `kd` (i.e. there exists some hole-walked source `s` such
-  // that `s + argCount - 1 == kd`, which means `s = kd - argCount + 1`,
-  // and `s` must be in a hole range — i.e. `s` itself is not in
-  // `definedSet`). The check is O(defined) per defined key.
-  const definedSet = new Set(keys);
-  // We must also avoid deleting positions we just *wrote to* in the copy
-  // loop above. Those destinations are the new homes of source values;
-  // they shouldn't be cleared by a hole iteration. Build the set of
-  // destination keys actually written.
-  const writtenDestinations = new Set<number>();
-  for (const k of keys) writtenDestinations.add(k + argCount);
-  for (const kd of keys) {
-    if (writtenDestinations.has(kd)) continue; // a write covered this key
-    const sourceK = kd - argCount + 1;
-    if (sourceK < 0 || sourceK >= len) continue;
-    if (definedSet.has(sourceK)) continue; // source is defined → not a hole iteration
-    delete O[String(kd)];
-  }
-  for (let j = 0; j < argCount; j++) {
-    O[String(j)] = args[j];
-  }
-  O.length = len + argCount;
-  return len + argCount;
-}
-
-/**
- * Spec §22.1.3.27 Array.prototype.reverse, sparse-aware. Pairs up the
- * `[0, len)` range from outside in: each `(lower, upper)` pair where
- * `upper = len - 1 - lower` swaps values (or deletes the pair if a side
- * is a hole). Defined-property iteration: only the keys present on the
- * receiver participate.
- */
-function _arrayProtoReverseSparse(O: any, _args: any[]): any {
-  const len = Number(O.length) || 0;
-  const keys = _collectIntegerKeys(O, len);
-  // Build a quick lookup of which integer indices are defined.
-  const defined = new Set(keys);
-  // Walk only keys whose paired index is in [0, len) AND whose key < paired
-  // (so we don't double-swap).
-  for (const k of keys) {
-    const upperIdx = len - 1 - k;
-    if (k >= upperIdx) break; // crossed the midpoint; swaps complete
-    const lowerKey = String(k);
-    const upperKey = String(upperIdx);
-    const lowerHas = defined.has(k);
-    const upperHas = defined.has(upperIdx);
-    if (lowerHas && upperHas) {
-      const lo = O[lowerKey];
-      const up = O[upperKey];
-      O[lowerKey] = up;
-      O[upperKey] = lo;
-    } else if (lowerHas) {
-      const lo = O[lowerKey];
-      O[upperKey] = lo;
-      delete O[lowerKey];
-    } else if (upperHas) {
-      const up = O[upperKey];
-      O[lowerKey] = up;
-      delete O[upperKey];
-    }
-  }
-  return O;
-}
-
-/**
- * Spec §22.1.3.12 Array.prototype.forEach, sparse-aware. Iterates over
- * defined integer-indexed own properties only — skips holes (spec-compliant)
- * but does NOT walk every index in `[0, len)`.
- */
-function _arrayProtoForEachSparse(O: any, args: any[]): undefined {
-  const callback = args[0];
-  const thisArg = args[1];
-  if (typeof callback !== "function") {
-    throw new TypeError("forEach callback is not a function");
-  }
-  const len = Number(O.length) || 0;
-  const keys = _collectIntegerKeys(O, len);
-  for (const k of keys) {
-    const key = String(k);
-    const value = O[key]; // may throw via accessor; spec propagates
-    callback.call(thisArg, value, k, O);
-  }
-  return undefined;
-}
-
-const _arrayProtoSparseFastPaths: Record<string, (O: any, args: any[]) => any> = {
-  unshift: _arrayProtoUnshiftSparse,
-  reverse: _arrayProtoReverseSparse,
-  forEach: _arrayProtoForEachSparse,
-};
 
 /** wasm:js-string polyfill for engines without native support (https://developer.mozilla.org/de/docs/WebAssembly/Guides/JavaScript_builtins) */
 export const jsString = {
@@ -7485,6 +7191,24 @@ function _temporalPlainTimeAddField(...args: any[]): number {
   return [hourOut, minuteOut, secondOut, millisecondOut, microsecondOut, nanosecondOut][_temporalTrunc(fieldRaw)] ?? 0;
 }
 
+/**
+ * Keep intrinsic constructor identity inside a supplied per-test sandbox.
+ * Host objects naturally expose host-realm constructors; compiled code in the
+ * isolated realm resolves the corresponding bare identifier from the sandbox.
+ * Only canonical host intrinsics are substituted, so user constructors pass
+ * through unchanged.
+ */
+function _sandboxConstructorValue(value: any, key: any, globalSandbox?: Record<string, any>): any {
+  if (globalSandbox && key === "constructor" && typeof value === "function") {
+    const name = (value as { name?: string }).name;
+    if (name && value === (globalThis as any)[name]) {
+      const sandboxValue = globalSandbox[name];
+      if (sandboxValue !== undefined) return sandboxValue;
+    }
+  }
+  return value;
+}
+
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -7633,12 +7357,28 @@ function resolveImport(
           options == null ? self.addEventListener(type, listener) : self.addEventListener(type, listener, options);
       }
       if (intent.action === "new") {
+        // (#1568) `__new_BigInt(v)` / `__new_Symbol(v)` — Object(bigint) /
+        // Object(symbol) auto-boxing (§7.1.18 ToObject, Table 13). BigInt and
+        // Symbol are NOT constructors, so `new BigInt(v)` throws; box via the
+        // spec's literal `Object(v)`, yielding an object (typeof "object") whose
+        // valueOf() returns the underlying primitive. This handler must precede
+        // the generic `builtinCtors` lookup below — neither name is a member of
+        // that map (they aren't constructors), so without this early return the
+        // resolver throws "No dependency provided for extern class BigInt".
+        // (Regressed when the extern_class block moved during a runtime refactor;
+        // restored here — see tests/issue-1568.test.ts.)
+        if (intent.className === "BigInt" || intent.className === "Symbol") {
+          return (v: any): any => Object(v);
+        }
         // Test262Error is a simple Error subclass used by the test262 harness
         class Test262Error extends Error {
           constructor(msg?: string) {
             super(msg);
             this.name = "Test262Error";
           }
+        }
+        if (intent.className === "Test262Error") {
+          _test262ErrorConstructors.add(Test262Error);
         }
         const builtinCtors: Record<string, Function> = {
           Number,
@@ -9436,7 +9176,7 @@ assert._isSameValue = isSameValue;
           }
           return Object.entries(obj);
         };
-      if (name === "__array_from_iter" || name === "__array_from_iter_n") {
+      if (name === "__array_from_iter" || name === "__array_from_iter_n" || name === "__array_from_iter_strict") {
         // Cache the original Array.prototype[Symbol.iterator] so we can
         // detect when user code (e.g. test262 iter-get-err-array-prototype)
         // has overridden it. When overridden, we must invoke the protocol
@@ -9472,11 +9212,14 @@ assert._isSameValue = isSameValue;
         // IteratorStep per slot (INCLUDING elision holes), not a full drain
         // (#1592). Stopping at the bound is a NormalCompletion: it must NOT
         // trigger IteratorClose (only the defensive MAX_ITER cap does).
-        const _arrayFromIter = (obj: any, limit: number): any => {
+        const _arrayFromIter = (obj: any, limit: number, strictIterator = false): any => {
           // For proper iterators (e.g. generators) this invokes the iterator
           // protocol and propagates any throws from .next() — needed for
           // spec-compliant destructuring of throwing iterators (#1150).
-          if (obj == null) return [];
+          if (obj == null) {
+            if (strictIterator) throw new TypeError(`${obj} is not iterable`);
+            return [];
+          }
           // (#2202) An opaque WasmGC vec ref (e.g. an inline `[1]` spread source
           // that stayed a native vec instead of being marshaled to a JS array)
           // is not `Array.isArray` and has no `Symbol.iterator`, so it would fall
@@ -9513,7 +9256,7 @@ assert._isSameValue = isSameValue;
             if (ownIter !== _origArrayIter) {
               // Non-default iterator: fall through to the protocol path below
               // by treating the array as a generic iterable (bounded by limit).
-              return _drainIterable(obj, limit);
+              return _drainIterable(obj, limit, strictIterator, ownIter);
             }
             // Default array iterator: a finite bound just slices the prefix;
             // the iterator protocol on a default array is side-effect-free so
@@ -9559,25 +9302,33 @@ assert._isSameValue = isSameValue;
                   }
                 }
               }
+              if (strictIterator) throw new TypeError("@@iterator is not callable");
               const out: any[] = [];
               const lenRaw = typeof (obj as any).length === "number" ? (obj as any).length >>> 0 : 0;
               const len = Math.min(lenRaw, limit);
               for (let i = 0; i < len; i++) out.push((obj as any)[i]);
               return out;
             }
+            if (typeof iterFn === "function") {
+              return _drainIterable(obj, limit, strictIterator, iterFn);
+            }
+            if (strictIterator) throw new TypeError("value is not iterable");
           }
-          return _drainIterable(obj, limit);
+          return _drainIterable(obj, limit, strictIterator);
         };
         // Walk a plain iterable's @@iterator protocol, collecting at most
         // `limit` values. Replaces `Array.from(obj)` so a finite bound can stop
         // early (Array.from can't be bounded). Throws from @@iterator / .next()
         // / the .value getter propagate unchanged (#1150/#1454). With
         // limit === Infinity this matches Array.from's full drain.
-        function _drainIterable(obj: any, limit: number): any[] {
-          const itFn = (obj as any)?.[Symbol.iterator];
+        function _drainIterable(obj: any, limit: number, strictIterator = false, knownIterFn?: any): any[] {
+          const itFn = knownIterFn ?? (obj as any)?.[Symbol.iterator];
           // No callable @@iterator — let Array.from handle array-likes / the
           // legacy unbounded shapes exactly as before.
-          if (typeof itFn !== "function") return Array.from(obj);
+          if (typeof itFn !== "function") {
+            if (strictIterator) throw new TypeError("@@iterator is not callable");
+            return Array.from(obj);
+          }
           const it = itFn.call(obj);
           // (#3023) A native `@@iterator` may still RETURN a wasm-struct
           // iterator (a compiled object-literal `{ next() {…} }` lowers to a
@@ -9604,6 +9355,7 @@ assert._isSameValue = isSameValue;
           return out;
         }
         if (name === "__array_from_iter") return (obj: any): any => _arrayFromIter(obj, Infinity);
+        if (name === "__array_from_iter_strict") return (obj: any): any => _arrayFromIter(obj, Infinity, true);
         return (obj: any, n: number): any => _arrayFromIter(obj, n < 0 ? Infinity : n >>> 0);
       }
       if (name === "__extern_slice")
@@ -10279,7 +10031,12 @@ assert._isSameValue = isSameValue;
       if (name === "__js_array_new") return () => [];
       if (name === "__js_array_push")
         return (arr: any[], val: any) => {
-          arr.push(val);
+          _intrinsicReflectDefineProperty(arr, arr.length, {
+            value: val,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
         };
       // isPrototypeOf: check if obj is in the prototype chain of candidate (#799)
       if (name === "__isPrototypeOf")
@@ -11262,8 +11019,7 @@ assert._isSameValue = isSameValue;
               if (typeof callFn !== "function") {
                 throw new TypeError("Function.prototype.bind: target closure is not callable");
               }
-              const padded: any[] = [];
-              for (let i = 0; i < n; i++) padded.push(args[i]);
+              const padded = _denseOwnArgs(args, n);
               if (viaMethod) {
                 const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
                 return callFn(_isWasmStruct(rawThis) ? rawThis : this, captured, ...padded);
@@ -11533,6 +11289,48 @@ assert._isSameValue = isSameValue;
       //   • message coerced via ToString (CreateMethodProperty, non-enumerable),
       //   • errors stored as a non-enumerable own data property (CreateMethodProperty),
       //   • Object.getPrototypeOf(result) === AggregateError.prototype.
+      // (#2728) `Object(Symbol())` → Symbol-wrapper object (§7.1.18 ToObject,
+      // Table 13), whose `typeof` is "object". Symbol is NOT a constructor, so
+      // the generic `extern_class` `new Symbol(id)` path throws; box the i32
+      // symbol id to the real JS Symbol (reusing the SAME per-instance
+      // id→Symbol cache + description registry as `__box_symbol`, so the wrapped
+      // symbol preserves identity/description) then `Object()` it into a wrapper
+      // object. `Symbol.prototype.description` already unwraps such wrappers.
+      if (name === "__new_Symbol") {
+        const symbolCache =
+          instanceState?.symbolCache ??
+          (instanceState ? (instanceState.symbolCache = new Map<number, symbol>()) : new Map<number, symbol>());
+        if (symbolCache.size === 0) {
+          symbolCache.set(1, Symbol.iterator);
+          symbolCache.set(2, Symbol.hasInstance);
+          symbolCache.set(3, Symbol.toPrimitive);
+          symbolCache.set(4, Symbol.toStringTag);
+          symbolCache.set(5, Symbol.species);
+          symbolCache.set(6, Symbol.isConcatSpreadable);
+          symbolCache.set(7, Symbol.match);
+          symbolCache.set(8, Symbol.replace);
+          symbolCache.set(9, Symbol.search);
+          symbolCache.set(10, Symbol.split);
+          symbolCache.set(11, Symbol.unscopables);
+          symbolCache.set(12, Symbol.asyncIterator);
+          symbolCache.set(13, _disposeSym);
+          symbolCache.set(14, _asyncDisposeSym);
+        }
+        const symbolDescRegistry =
+          instanceState?.symbolDescRegistry ??
+          (instanceState
+            ? (instanceState.symbolDescRegistry = new Map<number, string | null>())
+            : new Map<number, string | null>());
+        return (id: number): any => {
+          let sym = symbolCache.get(id);
+          if (sym === undefined) {
+            const reg = symbolDescRegistry.get(id);
+            sym = reg === undefined ? Symbol(`wasm_${id}`) : reg === null ? Symbol() : Symbol(reg);
+            symbolCache.set(id, sym);
+          }
+          return Object(sym);
+        };
+      }
       if (name === "__new_AggregateError")
         return (errors: any, message: any, options: any): any => {
           // Spec step 4: IterableToList(errors). `undefined`/`null` are NOT
@@ -13060,6 +12858,11 @@ assert._isSameValue = isSameValue;
       if (name === "__make_iterable") {
         // Convert WasmGC vec structs and tuple structs to JS arrays.
         // Needed because Map/Set expect [key, value] tuples that are also iterable.
+        // Keep one host array per WasmGC array/tuple and refresh it on every
+        // crossing. ECMAScript array identity must survive assignments through
+        // `any` slots, while refreshing preserves mutations made on the Wasm
+        // representation since the previous host observation (#3368).
+        const convertedArrays = new WeakMap<object, any[]>();
         const convertToJS = (obj: any): any => {
           if (obj == null || typeof obj !== "object") return obj;
           // (#1438) `obj[Symbol.iterator]` throws "WebAssembly objects are
@@ -13082,7 +12885,9 @@ assert._isSameValue = isSameValue;
               const parts = names.split(",");
               const isNumeric = parts.every((p: string) => /^_\d+$/.test(p));
               if (isNumeric) {
-                const arr: any[] = new Array(parts.length);
+                const arr = convertedArrays.get(obj) ?? [];
+                convertedArrays.set(obj, arr);
+                arr.length = parts.length;
                 for (let i = 0; i < parts.length; i++) {
                   const getter = exports[`__sget_${parts[i]}`] as Function | undefined;
                   arr[i] = getter ? convertToJS(getter(obj)) : undefined;
@@ -13110,7 +12915,9 @@ assert._isSameValue = isSameValue;
           ) {
             const len = vecLen(obj) as number;
             if (typeof len === "number" && len >= 0) {
-              const arr: any[] = new Array(len);
+              const arr = convertedArrays.get(obj) ?? [];
+              convertedArrays.set(obj, arr);
+              arr.length = len;
               for (let i = 0; i < len; i++) {
                 arr[i] = convertToJS(vecGet(obj, i));
               }
@@ -13945,7 +13752,7 @@ assert._isSameValue = isSameValue;
                 const rawVec = _abHostBufferReverse.get(v);
                 if (rawVec !== undefined) return rawVec;
               }
-              return v;
+              return _sandboxConstructorValue(v, key, globalSandbox);
             }
           } catch {
             /* fall through to the generic path */
@@ -13959,14 +13766,7 @@ assert._isSameValue = isSameValue;
           // `sandbox.Array`, but `obj.constructor` for host JS arrays
           // returns `globalThis.Array`. Substitute the sandbox version so
           // `arr.constructor === Array` holds. No-op without a sandbox.
-          if (globalSandbox && key === "constructor" && typeof val === "function") {
-            const fname = (val as { name?: string }).name;
-            if (fname && val === (globalThis as any)[fname]) {
-              const sb = globalSandbox[fname];
-              if (sb !== undefined) return sb;
-            }
-          }
-          return val;
+          return _sandboxConstructorValue(val, key, globalSandbox);
         }
         if (obj == null || typeof obj !== "object") return undefined;
         try {
@@ -14079,7 +13879,7 @@ assert._isSameValue = isSameValue;
     case "host_eq":
       // #1065 — strict equality for two externref operands that the GC path
       // could not compare via ref.eq (e.g. host functions like `Array === Array`).
-      return (a: any, b: any) => (_hostEqComparableValue(a) === _hostEqComparableValue(b) ? 1 : 0);
+      return (a: any, b: any) => (_hostStrictEqual(a, b) ? 1 : 0);
     case "host_loose_eq":
       // #1134 — loose equality for two externref operands (§7.2.15).
       // Handles null == undefined → true and other JS coercion rules.

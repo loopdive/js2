@@ -256,8 +256,15 @@ export function tryEmitJsonParsePropertyAccess(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | null | undefined {
-  if (!(ctx.standalone || ctx.wasi) || !isJsonParseCall(expr.expression)) return undefined;
-  const value = parsedJsonLiteral(ctx, expr.expression.arguments[0]!);
+  // #3384 — unwrap transparent wrappers (`as`, parens, `!`) BEFORE reading
+  // `.arguments`. `isJsonParseCall` unwraps internally, so `(JSON.parse(s) as
+  // any).a` passes the guard while `expr.expression` is still the AsExpression
+  // (no `.arguments` field) — reading `expr.expression.arguments[0]` then threw
+  // "Cannot read properties of undefined (reading '0')" (its predicate lies at
+  // runtime). Read args off the unwrapped call node instead.
+  const call = unwrapTransparentExpression(expr.expression);
+  if (!(ctx.standalone || ctx.wasi) || !isJsonParseCall(call)) return undefined;
+  const value = parsedJsonLiteral(ctx, call.arguments[0]!);
   if (value === UNSUPPORTED || value === null || Array.isArray(value) || typeof value !== "object") return undefined;
   if (!Object.prototype.hasOwnProperty.call(value, expr.name.text)) {
     emitUndefined(ctx, fctx);
@@ -271,8 +278,10 @@ export function tryEmitJsonParseElementAccess(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | null | undefined {
-  if (!(ctx.standalone || ctx.wasi) || !isJsonParseCall(expr.expression)) return undefined;
-  const value = parsedJsonLiteral(ctx, expr.expression.arguments[0]!);
+  // #3384 — unwrap before reading `.arguments` (see tryEmitJsonParsePropertyAccess).
+  const call = unwrapTransparentExpression(expr.expression);
+  if (!(ctx.standalone || ctx.wasi) || !isJsonParseCall(call)) return undefined;
+  const value = parsedJsonLiteral(ctx, call.arguments[0]!);
   if (value === UNSUPPORTED) return undefined;
 
   const keyExpr = unwrapTransparentExpression(expr.argumentExpression);

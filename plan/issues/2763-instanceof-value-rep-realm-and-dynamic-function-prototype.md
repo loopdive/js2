@@ -9,6 +9,7 @@ priority: medium
 horizon: l
 feasibility: hard
 model: fable
+fable_role: spec
 reasoning_effort: high
 task_type: investigation
 area: runtime
@@ -139,3 +140,92 @@ implemented and probe-tested this session, then deliberately reverted:
 
 Issue stays open, architect-scoped, with the value-rep widening as the
 gating dependency for the cluster-1 residuals.
+
+## Implementation Plan (Fable, 2026-07-18) — spec'd as a consumer of the #745/#2773 carrier ABI
+
+### Interface assumptions (what this consumes; reference, do not fork)
+
+- **From #745 (S2–S4 landed 2026-07-16):** the universal `$AnyValue` carrier
+  + canonical `JsTag`; `isHeterogeneousPrimitiveUnion`
+  (`src/checker/type-mapper.ts`) + the `resolveWasmType` union mapping
+  behind `ctx.unionAnyRep` (opt-in); carrier-agnostic eq/truthiness/concat
+  (S3) and params/returns/any-boundary (S4). **Assumed stable:** the
+  carrier's field layout and the boxToAny jsType-hint seam. The
+  default-JS-host-lane flip (S5) is HARD-GATED on #2141 — so the host-lane
+  slices below use plain **externref** widening, NOT `$AnyValue`, and do
+  not wait for S5.
+- **From #2773:** nothing structural — the fnctor/dispatch slices (S1–S5)
+  are sibling work; the only shared file risk is `property-access.ts`
+  (cluster 2) — ordinary merge hygiene.
+- **From #2141:** no hard gate (this issue's fixes live in the host lane
+  runtime + codegen widening, not in tag classification).
+
+### W1 (M) — assignment-set widening for mutable bindings (the cluster-1 gate)
+
+The 07-02 reground pinned the blocker: `var OBJECT = 0; OBJECT = Object`
+compiles the binding to an f64 local, so the function value cannot survive
+the store. Fix at the DECLARATION-type resolution:
+
+- **Mechanism:** for a mutable (`var`/`let`) binding whose initializer is
+  primitive-typed, scan the binding's assignment set (the checker gives
+  every write via the symbol; the #2690 usage-inference widening is the
+  sibling precedent for params — mirror its walk, don't re-derive). If any
+  assignment's static type is function/object/builtin-ctor-shaped, widen
+  the local's ValType: **host lane → externref** (values are host callables
+  /objects; every consumer — calls, `instanceof` dynamic path,
+  property-access — already accepts externref); **standalone →
+  `ref_null $AnyValue`** via extending the #745 predicate with a
+  `mixedPrimitiveObjectUnion` arm (flag-gated under the SAME
+  `ctx.unionAnyRep` discipline; the object member rides tag-6/refval or
+  externval per the settled classifier).
+- **Numeric writes into the widened binding** box via `boxToAny`/
+  `__box_number` exactly as an `any` local does — this is the ordinary
+  any-flow, no new machinery.
+- **Land TOGETHER with the codegen static-throw narrowing** (the reverted
+  probe from 07-02: exempt reassignable identifier RHS from the #2702
+  static TypeError, keep it for literal/`const`-primitive/`undefined`/
+  `NaN`/`Infinity`) — sequenced in one PR so `A2.4_T1` flips throw→true
+  rather than throw→false.
+- Also covers `A2.4_T4`: the non-strict undeclared-global write/read path
+  drops the value — route undeclared-global bindings through the same
+  widened representation (they are already `any`-typed; the drop is in the
+  sloppy-global store path — trace and fix in this slice, it is the same
+  family).
+
+### W2 (S–M) — `.prototype` access on dynamic Function values (cluster 2)
+
+The trap is a property-access refusal on a Function-typed dynamic value —
+NOT an instanceof bug. `Function(...)`/`new Function` values are host
+callables (externref); reading `.prototype` hits the null-guarded member
+path. Fix: in `property-access.ts`, a member read/write whose receiver's
+static type is Function (or `any` holding a callable) routes through the
+dynamic `__extern_get`/`__extern_set` path instead of the trapping guard —
+the host object genuinely has a `.prototype` own property, so the generic
+read answers it. Write side (`FACTORY.prototype = x`) rides `__extern_set`.
+The T2/T6 rows additionally assert the §10.4.3-era TypeError semantics on
+`new` with a non-object prototype — that throw comes from the construct
+path reading the (now-readable) `.prototype`; verify the construct lowering
+consumes the dynamic read rather than a static slot.
+
+### W3 (S) — undefined-RHS tightening (`A6_T1`)
+
+Flip the documented conservative-`false` for an undefined dynamic RHS to
+the spec TypeError (§13.10.2 step 5: RHS not an Object → throw). The
+original justification ("`Function(...)` lowers to undefined") is verified
+stale. Regression protocol: grep the conservative rule's other
+beneficiaries in `_instanceofResult` + a host-lane A/B on the full
+`language/expressions/instanceof/` directory before landing — a sweep, not
+a spot check, because the rule is old enough to have accreted reliers.
+
+### Out of scope / routing notes
+
+- `A6_T4` case 1 (`new MyFunct() instanceof MyFunct` for a plain function
+  EXPRESSION) is the plain-function `.prototype`-chain identity gap — it
+  belongs to the fnctor lane (#2773 S1/S2b + #3138/#3139), not here;
+  cross-reference only.
+- The standalone-lane dynamic `instanceof` is #2916 (spec'd 2026-07-18);
+  this issue is the HOST-lane value-rep residual. The two must not merge:
+  different runtimes, different carriers.
+- Order: W1 (with the narrowing) → W2 → W3; each host-lane A/B'd on the
+  instanceof + Function/prototype directories; no standalone-floor exposure
+  except the `unionAnyRep` predicate extension, which is flag-gated OFF.

@@ -1215,7 +1215,27 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * already forces externref + tags `externrefAccessorVars` at function scope.
    */
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
-    if (!decl.initializer || !ts.isObjectLiteralExpression(decl.initializer)) return false;
+    if (!decl.initializer) return false;
+    // (#3365) Script top-level `this` is the host global object. The checker
+    // describes it as the enormous structural `typeof globalThis` type, but
+    // module init receives a genuine host externref. Keep the storage and all
+    // subsequent member operations on that runtime representation; a typed
+    // Wasm struct global would stay null and make `global.Infinity = 42` throw
+    // the null-access payload before strict [[Set]] can produce TypeError.
+    if (!ctx.sourceIsModule && decl.initializer.kind === ts.SyntaxKind.ThisKeyword) return true;
+    if (!ts.isObjectLiteralExpression(decl.initializer)) return false;
+    // (#3369) An untyped empty object literal is constructed by literals.ts as
+    // a host `$Object` (`__new_plain_object`). Keep the module global on the
+    // same externref representation unless a shape pre-pass deliberately
+    // widened it into a closed struct/array-like carrier. Otherwise the
+    // externref is guarded-cast into the zero-field inferred struct, stores
+    // null, and later post-hoc protocol installation (`iter[Symbol.iterator]
+    // = fn` / Object.defineProperty) operates on a lost value.
+    if (decl.initializer.properties.length === 0 && ts.isIdentifier(decl.name)) {
+      const name = decl.name.text;
+      const widened = ctx.widenedTypeProperties.get(name);
+      if ((!widened || widened.length === 0) && !ctx.shapeMap.has(name)) return true;
+    }
     for (const p of decl.initializer.properties) {
       if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) return true;
       if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
@@ -1488,6 +1508,20 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           opKind === ts.SyntaxKind.BarBarEqualsToken ||
           opKind === ts.SyntaxKind.AmpersandAmpersandEqualsToken;
         if (!isAssignOp) continue;
+        // (#3366) A destructuring-assignment LHS has no single root identifier,
+        // so getAssignmentRootIdentifier below returns undefined and the whole
+        // top-level statement used to be dropped. Keep it unconditionally:
+        // evaluating the RHS/iterator/property reads/default initializers and
+        // performing each PutValue are all observable, even when no target is
+        // a module binding. The assignment compiler performs the per-leaf
+        // local/module/global resolution.
+        if (
+          opKind === ts.SyntaxKind.EqualsToken &&
+          (ts.isArrayLiteralExpression(expr.left) || ts.isObjectLiteralExpression(expr.left))
+        ) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
         // (#1719 CPR) `Array.prototype[Symbol.iterator] = fn` / `.values = fn`
         // has no module-global root identifier (`Array` is a builtin), so the
         // generic check below drops it. When the S1 brand is set, keep it in

@@ -370,3 +370,43 @@ provisional.
   issue-2865/2906\*/2980/3120 (52) all pass; the 5 failures in
   2865-unwrap/2906-gap3 are WASI-environment pre-existing (identical on
   control).
+
+---
+
+## Regression note (2026-07-18, fable-dev-2)
+
+**Symptom.** `tests/issue-3132.test.ts` › "elision hole in the yield\* literal
+delivers undefined" FAILS on current `origin/main`: `yield* [1, , 3]` consumed
+by a `for await` — the middle ELISION HOLE no longer delivers `undefined` to the
+consumer. Test returns `40` (n=4 from 1+3, `holeOk=0`) instead of `41` (expected
+`holeOk=1` — the hole seen once as `undefined`). The hole element is either
+skipped or delivered as a non-`undefined` value. n=4 is correct, so only the
+hole→undefined delivery broke.
+
+**A/B methodology (conclusive — NOT caused by #3388/#3332).** Discovered while
+testing #3388 (PR #3332). Reverted ALL of #3388's changes (`async-cps.ts`,
+`async-frame.ts`, `iterator-native.ts` → clean `origin/main` state via
+`git checkout HEAD~2 -- …` + throw-fix removed) and re-ran: the elision-hole
+test **still fails identically (40 vs 41)**. So it is a PRE-EXISTING regression
+on `main`, independent of #3388. (The sibling "non-literal yield\* keeps legacy"
+change in that same file IS #3388's intended behavior — that one flips with
+#3388 and was updated in #3332.)
+
+**Suspected window.** Prime suspect: **#2570 / PR #3312** (commit `37bef32f8`
+"feat(#2570): lazy yield\* delegation on the driven async-generator machine",
+landed 2026-07-17 ~22:47Z). #3312 reworked the exact driven-async-gen `yield*`
++ for-await consumer machinery this test exercises (the `$IteratorResult`
+done/value unpack, the settleYield delivery, the ASYNCGEN carrier arm). A full
+`git bisect` was NOT run (budget) — recording the window; a resumer should
+confirm by checking the test at `37bef32f8^` vs `37bef32f8`. Other candidates in
+the 2026-07-17 async/generator merge cluster (#3309–#3316) are secondary.
+
+**Scope.** Narrow — only the ELISION-HOLE element of an array-literal `yield*`
+consumed by `for await`. Non-hole elements (n=4) and the plain/destructuring
+for-await paths are unaffected (the other #3132 consumer cases pass). Likely a
+`$undefined`-singleton-vs-null mismatch in how the hole's `plain: null`
+settleYield value flows through the (reworked) delivery path.
+
+Status left `done` (the #3132 feature landed); this note flags a follow-up
+regression fix. Owner: async-generator subsystem (whoever owns the #3132/#2570
+bucket).

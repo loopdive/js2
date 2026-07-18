@@ -423,6 +423,17 @@ function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Ins
     { op: "extern.convert_any" },
     { op: "local.set", index: CAPS },
 
+    // (#2958) Subscribing to this input attaches a reaction — the combinator is
+    // now handling its (possible) rejection, so clear its unhandled flag. Covers
+    // an inlined `Promise.reject(x)` element that would otherwise be reported as
+    // unhandled even though the combinator consumes it. No-op when inactive.
+    ...(rt.markRejectionHandledFuncIdx >= 0
+      ? ([
+          { op: "local.get", index: P },
+          { op: "call", funcIdx: rt.markRejectionHandledFuncIdx },
+        ] satisfies Instr[])
+      : []),
+
     // Dispatch on the (possibly already-settled) promise state.
     { op: "local.get", index: P },
     { op: "struct.get", typeIdx: ids.promiseTypeIdx, fieldIdx: 0 },
