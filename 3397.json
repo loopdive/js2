@@ -1,8 +1,9 @@
 {
   "id": "3397",
   "assignee": "ttraenkler/fable-dev-1",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3397-scalar-unbox",
   "claimed_at": "2026-07-18T02:11:09Z",
-  "updated_at": "2026-07-18T02:11:09Z"
+  "updated_at": "2026-07-18T02:24:08Z",
+  "released_at": "2026-07-18T02:24:08Z"
 }
