@@ -76,6 +76,8 @@ export const STANDALONE_STATIC_METHOD_META: Record<string, { name: string; lengt
   "Number.isFinite": { name: "isFinite", length: 1 },
   "Number.isNaN": { name: "isNaN", length: 1 },
   "Number.isSafeInteger": { name: "isSafeInteger", length: 1 },
+  // (#2963 Tier 2b) Object.is fixed 2-arg SameValue as a VALUE (§20.1.2.13).
+  "Object.is": { name: "is", length: 2 },
 };
 
 /**

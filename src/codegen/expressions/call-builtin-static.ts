@@ -13,6 +13,7 @@ import { isBooleanType, isNumberType, isStringType } from "../../checker/type-ma
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { numberIsPredicateOps } from "../number-is-predicate-ops.js";
+import { sameValueNumberOps } from "../same-value-number-ops.js";
 import {
   emitArrayIteratorPrototypeSingleton,
   emitFunctionPrototypeObjectSingleton,
@@ -2831,22 +2832,9 @@ export function compileBuiltinStaticCall(
         const yt = compileExpression(ctx, fctx, yArgEarly);
         if (yt && yt.kind !== "f64") coerceType(ctx, fctx, yt, { kind: "f64" });
         fctx.body.push({ op: "local.set", index: yLocal });
-        // bits(x) == bits(y)
-        fctx.body.push({ op: "local.get", index: xLocal });
-        fctx.body.push({ op: "i64.reinterpret_f64" });
-        fctx.body.push({ op: "local.get", index: yLocal });
-        fctx.body.push({ op: "i64.reinterpret_f64" });
-        fctx.body.push({ op: "i64.eq" });
-        // (x !== x) & (y !== y)  →  both NaN
-        fctx.body.push({ op: "local.get", index: xLocal });
-        fctx.body.push({ op: "local.get", index: xLocal });
-        fctx.body.push({ op: "f64.ne" });
-        fctx.body.push({ op: "local.get", index: yLocal });
-        fctx.body.push({ op: "local.get", index: yLocal });
-        fctx.body.push({ op: "f64.ne" });
-        fctx.body.push({ op: "i32.and" });
-        // bitsEqual | bothNaN
-        fctx.body.push({ op: "i32.or" });
+        // SameValue(Number, Number): (bits(x) == bits(y)) | bothNaN — shared with
+        // the reified `Object.is` value closure so the two never drift.
+        for (const instr of sameValueNumberOps(xLocal, yLocal)) fctx.body.push(instr);
         return { kind: "i32" };
       }
 

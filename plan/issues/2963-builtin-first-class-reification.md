@@ -82,19 +82,19 @@ which already retired much of the raw cluster. Re-probing current `main`
 **live** cluster splits into distinct sub-problems that must NOT be
 conflated:
 
-| Form (current main)                                   | Status on main | Owner / phase |
-| ----------------------------------------------------- | -------------- | ------------- |
-| `const f = Array.isArray` **identity** (`f === f`)    | **wrong (`false`)** — fresh `struct.new` per read | **Phase 1 (this PR)** |
-| `const r = Promise.resolve` as value                  | CE `#1907`     | Phase 2 — but Promise itself is host-backed (`Promise_resolve` import even for the DIRECT call), so reification cannot be host-free until Promise is native (#2867/#2905/#2959). |
-| `const f = Number.isInteger` (host-free predicate)    | CE `#1907`     | Phase 2 — **blocked** (see value-call-path blocker below). |
-| `const f = Array.of` as value                         | CE `#1907`     | Phase 2 — variadic; reified fixed-arity closure needs rest handling. |
-| `const k = Symbol.matchAll`                            | CE `#1907`     | Phase 2 — non-well-known Symbol value (well-known ones already fold, #2610). |
-| `X extends Object` constructor-object identity        | leaks `__new_Object` | **separate** — #2984 / sr-objsub. |
-| array-iterator `%ArrayIteratorPrototype%` identity     | leaks `__iterator`   | **separate** — opus-12b / #2965 cluster. |
-| `Object.defineProperty(globalThis, …)`                 | leaks `__get_globalThis` | **separate** — #2988. |
+| Form (current main)                                | Status on main                                    | Owner / phase                                                                                                                                                                    |
+| -------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `const f = Array.isArray` **identity** (`f === f`) | **wrong (`false`)** — fresh `struct.new` per read | **Phase 1 (this PR)**                                                                                                                                                            |
+| `const r = Promise.resolve` as value               | CE `#1907`                                        | Phase 2 — but Promise itself is host-backed (`Promise_resolve` import even for the DIRECT call), so reification cannot be host-free until Promise is native (#2867/#2905/#2959). |
+| `const f = Number.isInteger` (host-free predicate) | CE `#1907`                                        | Phase 2 — **blocked** (see value-call-path blocker below).                                                                                                                       |
+| `const f = Array.of` as value                      | CE `#1907`                                        | Phase 2 — variadic; reified fixed-arity closure needs rest handling.                                                                                                             |
+| `const k = Symbol.matchAll`                        | CE `#1907`                                        | Phase 2 — non-well-known Symbol value (well-known ones already fold, #2610).                                                                                                     |
+| `X extends Object` constructor-object identity     | leaks `__new_Object`                              | **separate** — #2984 / sr-objsub.                                                                                                                                                |
+| array-iterator `%ArrayIteratorPrototype%` identity | leaks `__iterator`                                | **separate** — opus-12b / #2965 cluster.                                                                                                                                         |
+| `Object.defineProperty(globalThis, …)`             | leaks `__get_globalThis`                          | **separate** — #2988.                                                                                                                                                            |
 
 The three "separate" rows are the sibling gaps three other devs found the
-same day — they share the *theme* (own-object identity) but each needs its
+same day — they share the _theme_ (own-object identity) but each needs its
 own receiver-class MOP (see `project_2984_2988_2992_convergent_reification_substrate`);
 they are **not** in #2963's lane.
 
@@ -113,7 +113,7 @@ behind an `if (ref.is_null) { struct.new; global.set }` guard emitted in the
 
 **Why body-lazy-init, NOT a const-init global** (the load-bearing design
 decision): the singleton's `struct.new` operand is `ref.func <closureIdx>`,
-and `closureIdx` is a *defined-function* index that shifts whenever a late
+and `closureIdx` is a _defined-function_ index that shifts whenever a late
 import lands (`addUnionImports` / `shiftLateImportIndices` / the string-import
 shifter). All three shifters walk function bodies **and nested
 `.then`/`.body`/`.else` arrays** (verified) but **do NOT walk
@@ -122,10 +122,10 @@ stale and point at the wrong function (a silent funcidx-desync regression, the
 family of `project_standalone_hostimport_gate_index_shift`). Emitting the
 `ref.func` inside an `if.then` in `fctx.body` keeps it in a shift-covered
 array. (The `$__hole` const-init singleton in `array-holes.ts` is safe only
-because it has *no* funcref operand.)
+because it has _no_ funcref operand.)
 
 The shared mutable `bfnstate` (delete-bits) field being one instance across
-all reads is *spec-correct*: `delete fn.name` through any reference mutates the
+all reads is _spec-correct_: `delete fn.name` through any reference mutates the
 same object.
 
 **Scope**: only the standalone static-method **value-read** site
@@ -155,7 +155,7 @@ value-call dispatch integration bug** found while prototyping `Number.isInteger`
   any-callable dispatch (`expressions/calls.ts` ~13230–13640,
   `__callable_param_*`) works for them.
 - A reified value stored in a `const f = …` widens to **`externref`** (its TS
-  type is a function), so the call site must *recover* the closure by
+  type is a function), so the call site must _recover_ the closure by
   `ref.test`/`ref.cast` against a candidate struct type. Candidate selection is
   keyed by **arity**, not exact param types — so a new **`f64`-param** closure
   (e.g. `Number.isInteger`) mis-selects among same-arity candidates and the
@@ -168,7 +168,7 @@ value-call dispatch integration bug** found while prototyping `Number.isInteger`
   funcs). Once that lands, the singleton substrate here wires every host-free
   method (`Number.is*`, `Math.*` unary/binary, `Object.is` scalar, …) trivially
   via the same `ensureStandaloneBuiltinStaticMethodClosure` switch.
-- **Promise.\*** (15 of the sampled refusals) is a *further* sub-case: even the
+- **Promise.\*** (15 of the sampled refusals) is a _further_ sub-case: even the
   DIRECT `Promise.resolve(5)` call leaks a `Promise_resolve` host import today,
   so reifying it host-free is gated on native Promise (#2867/#2905/#2959), not
   on this mechanism. Until then a reified `Promise.resolve` would reuse the same
@@ -270,12 +270,12 @@ The Phase-1 note above (2026-07-02) is stale in three load-bearing ways:
    `BUILTIN_STATIC_METHOD_ARITY` as an identity-stable, spec-shaped
    (`.name`/`.length` meta subtype) closure whose body throws a **catchable
    TypeError**. So feature-detection reads, identity compares, and descriptor
-   reflection all pass today; only *invoking* an unwired extracted value
+   reflection all pass today; only _invoking_ an unwired extracted value
    throws. The remaining conformance lever is therefore "give real bodies to
    the throw-body methods", not "stop CE-ing".
 3. **The value-call dispatch fix is NOT a prerequisite anymore.** The Phase-1
    blocker ("f64-param closure mis-selects among same-arity candidates") is
-   solved by *convention*, not by a dispatcher change: every reified closure
+   solved by _convention_, not by a dispatcher change: every reified closure
    already takes **all-externref params** (or the single
    `(ref null $vec_externref)` variadic param) — exactly the shape the inline
    dynamic dispatcher's #2939 pre-registration restricts itself to, and the
@@ -293,15 +293,15 @@ Ordered by cluster size and body availability. All are `switch (key)` arms in
 each reuses the SAME native the direct-call path uses (observational identity
 with the direct call is the acceptance bar, per the `Reflect.get` precedent).
 
-| Tier | Methods | Body sketch |
-| --- | --- | --- |
-| 2a | `Number.isInteger/isFinite/isNaN/isSafeInteger` | `ref.test $BoxedNumber` on the arg (via `any.convert_extern` + the settled tag-3 peel — NOT ToNumber; a non-number arg answers `0` per §21.1.2); on hit, unbox f64 and run the existing direct-call predicate lowering |
-| 2b | `Object.is` | two externref args → the standalone SameValue helper the direct call uses (`calls.ts` Object.is arm; includes the −0/NaN discrimination). NB SameValue ≠ `===`; reuse, don't re-derive |
-| 2c | `Math.<unary/binary fixed-arity>` (`abs`, `floor`, `ceil`, `trunc`, `sign`, `sqrt`, `atan2`, `pow`, …) | arg(s) → `__any_to_f64` (spec ToNumber on the boxed value; non-number → NaN, which is §21.3 behavior) → the existing self-hosted `src/stdlib/math.ts` native → `__any_box_f64`. One table-driven arm, not N hand-written cases: key on `BUILTIN_STATIC_METHOD_ARITY.Math` + the direct-call lowering's dispatch table |
-| 2d | `Number.parseFloat/parseInt` | route to the existing native parse entries (the standalone direct-call path); parseInt keeps the NaN radix sentinel |
-| 2e | `Date.now` | 0-arg; the direct-call lowering's time source (verify which import/native serves it standalone — if it is host-only, leave the throw body and record why) |
-| 2f | `Array.of` (variadic) | the `$vec_externref` variadic convention (Math.max precedent): build a `$__vec_externref` from the args vec — elements are already externref, no per-element coercion |
-| 2g | `Array.from` (1-arg iterable subset) | ONLY the array-like/vec fast shape the direct call supports standalone; other inputs keep the catchable throw (document per-shape) |
+| Tier | Methods                                                                                                | Body sketch                                                                                                                                                                                                                                                                                                           |
+| ---- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2a   | `Number.isInteger/isFinite/isNaN/isSafeInteger`                                                        | `ref.test $BoxedNumber` on the arg (via `any.convert_extern` + the settled tag-3 peel — NOT ToNumber; a non-number arg answers `0` per §21.1.2); on hit, unbox f64 and run the existing direct-call predicate lowering                                                                                                |
+| 2b   | `Object.is`                                                                                            | two externref args → the standalone SameValue helper the direct call uses (`calls.ts` Object.is arm; includes the −0/NaN discrimination). NB SameValue ≠ `===`; reuse, don't re-derive                                                                                                                                |
+| 2c   | `Math.<unary/binary fixed-arity>` (`abs`, `floor`, `ceil`, `trunc`, `sign`, `sqrt`, `atan2`, `pow`, …) | arg(s) → `__any_to_f64` (spec ToNumber on the boxed value; non-number → NaN, which is §21.3 behavior) → the existing self-hosted `src/stdlib/math.ts` native → `__any_box_f64`. One table-driven arm, not N hand-written cases: key on `BUILTIN_STATIC_METHOD_ARITY.Math` + the direct-call lowering's dispatch table |
+| 2d   | `Number.parseFloat/parseInt`                                                                           | route to the existing native parse entries (the standalone direct-call path); parseInt keeps the NaN radix sentinel                                                                                                                                                                                                   |
+| 2e   | `Date.now`                                                                                             | 0-arg; the direct-call lowering's time source (verify which import/native serves it standalone — if it is host-only, leave the throw body and record why)                                                                                                                                                             |
+| 2f   | `Array.of` (variadic)                                                                                  | the `$vec_externref` variadic convention (Math.max precedent): build a `$__vec_externref` from the args vec — elements are already externref, no per-element coercion                                                                                                                                                 |
+| 2g   | `Array.from` (1-arg iterable subset)                                                                   | ONLY the array-like/vec fast shape the direct call supports standalone; other inputs keep the catchable throw (document per-shape)                                                                                                                                                                                    |
 
 **Explicitly OUT (keep throw bodies, with the recorded reason):**
 `Promise.*` (host-backed even for direct calls — gated on native Promise,
@@ -372,6 +372,20 @@ merge hygiene.
     `.length` reads 0 for EVERY wired static (Math.max included). Invocation and
     per-single-value `.name` are correct. Worth a dedicated issue on the reified
     builtin-fn meta reflective-read dispatch.
-- Remaining Phase 2 tiers: 2b (`Object.is`/SameValue), 2c (table-driven
-  `Math.*`), 2d (`Number.parseFloat/parseInt`), 2e (`Date.now`), 2f (`Array.of`),
-  2g (`Array.from` subset). `Promise.*` stays throwing (out of scope).
+- **Tier 2b — `Object.is` (SameValue, §20.1.2.13) — DONE** (opus-dev-b,
+  2026-07-18; stacked on the Tier 2a PR). Fixed 2-arg `[externref, externref] ->
+i32` closure. The direct standalone `Object.is` only backs compile-time
+  same-typed scalar args (the general boxed `__object_is` is a host import), so
+  the reified body composes host-free: BOTH boxes Number (`__typeof_number`) ->
+  the shared `sameValueNumberOps` (new leaf `src/codegen/same-value-number-ops.ts`,
+  also adopted by the direct `Object.is` both-Number fast path — the IEEE-754
+  bit-compare + both-NaN clause, the ONLY arm where SameValue diverges from `===`:
+  `+0`/`-0` unequal, `NaN`/`NaN` equal); else -> `__extern_strict_eq` (SameValue
+  coincides with `===` for every non-Number case — object identity via `ref.eq`,
+  strings by content, null/undefined/boolean by value). Byte-inert (56-entry
+  corpus IDENTICAL). Meta row `Object.is` added. Test:
+  `tests/issue-2963-object-is-value.test.ts` (6 cases). The pre-existing
+  reflective-read gap is filed as #3424 (rides this PR).
+- Remaining Phase 2 tiers: 2c (table-driven `Math.*`), 2d
+  (`Number.parseFloat/parseInt`), 2e (`Date.now`), 2f (`Array.of`), 2g
+  (`Array.from` subset). `Promise.*` stays throwing (out of scope).
