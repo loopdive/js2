@@ -558,24 +558,52 @@ a pre-existing native-machine gap already failing on standalone.
   host-resume-specific) → host bails `yield*` bodies (class F). Machine fix =
   follow-up.
 
-### Resume State (for a cold resume)
+### Two more root-cause fixes the sweep exposed (both-lane, pre-existing)
 
-- Branch `issue-3032-w6-host-lane-laziness` (fork = `origin` in this
-  worktree), worktree `/workspace/.claude/worktrees/agent-a1d1b2a1a3a7d641b`.
-  Base 0f7ac132a0; upstream/main has advanced (~20 commits, arch/specs) —
-  re-merge before PR.
-- DONE: all code changes above; tsc clean; probe battery 24/24 (host P1-P12
-  all green incl. next(v) 107/42); classifier probes A1/A2/B1/C1 fixed on
-  host; gitignored probes live in `tests/probe-w5*.test.ts`,
-  `tests/probe-w6*.test.ts` (not committed).
-- PENDING next steps, in order: (1) re-run generator unit batches
-  (generators/generator-yield-contexts/3050/3032-w3/w4/2203/928 + consumer
-  suites); (2) re-run the 640-file host sweep
-  (`TEST262_PATH_FILTER="language/statements/generators|language/expressions/generators|built-ins/GeneratorPrototype|built-ins/GeneratorFunction"`)
-  vs main's run (results at
-  `/workspace/benchmarks/results/test262-results-20260718-000722.jsonl`) —
-  REQUIRE 0 regressions; (3) commit real regression tests (lazy-creation,
-  next(v) two-way, the 6-regression pins); (4) `git merge origin/main`
-  catch-up; (5) PR `-R loopdive/js2 --head ttraenkler:issue-3032-w6-host-lane-laziness`.
-- Full CI (merge_group host shard diff) is the decider — broad-impact change
-  (every safe-use host generator declaration flips lowering).
+1. **Nominal `__GenBrand_n` state-struct brands.** Two generators with
+   same-shape bodies mint structurally IDENTICAL `$__GenState_*` structs;
+   WasmGC iso-recursive canonicalization merges them, so every
+   `ref.test`-keyed dispatch arm (open method dispatch, iterator-carrier
+   GENSTATE step) resumed the FIRST-registered generator's resume fn on the
+   OTHER's state (`iter = g2(); iter.next().value` read g1's `undefined` —
+   generators/yield-as-statement.js, BOTH lanes). Fix: each state struct
+   declares a DISTINCT empty supertype from a per-module brand CHAIN
+   (`__GenBrand_0` open no-parent; `__GenBrand_n` sub of `__GenBrand_{n-1}` —
+   depth-distinct), defeating canonicalization type-level only (no
+   layout/operand changes; every ref.test site becomes nominally precise).
+2. **Sentinel-aware dynamic `.value` reads (3 more sites).** The UNDEF_F64
+   absent/done marker leaked as boxed NaN (or JS `null` via null-extern)
+   through the INLINE struct fast chain (property-access-dispatch), the
+   `__sget_value` export (the `_safeGet`/`__gen_result_value`-shim fallback),
+   and `buildOpenResultValueReadExtern`. All three now canonicalize sentinel →
+   REAL host `undefined` (`__get_undefined`; registered at reserve for the
+   member-get `value` dispatcher — fills stay funcMap-read-only). Standalone
+   keeps null-extern (its canonical undefined) byte-identically.
+
+### Validation (final, at merge-base 4878d711c after upstream catch-up)
+
+- 640-file generator-scope sweep, HOST lane: **512 vs 504 — +8, 0 regressions**
+  (the whole GeneratorPrototype/return/try-\* family + from-state-suspended-start).
+- Same scope, STANDALONE lane: **148 vs 145 — +3, 0 regressions**
+  (yield-as-statement ×2 + expressions/return.js flip genuine via the brand fix).
+- Unit batteries: 35 files / 283 tests green (generators, 3050, w3, w4, 2203,
+  928, 2169/2170/2171/2172/2173, 2571/2581/2938, method-destructuring, iife).
+- New suite `tests/issue-3032-w6-host-lane-laziness.test.ts` (17 tests): §27.5
+  lazy creation, next(v) two-way, return/throw-before-start, W5 pins, export
+  boundary, brand cross-dispatch, sentinel-undefined reads.
+- The real test262 yield-as-statement file through `wrapTest` returns PASS.
+- merge_group (host shard diff + standalone floor) is the final decider —
+  broad-impact (every safe-use host generator declaration flips lowering).
+
+### Follow-up candidates (host-arm-bailed here, machine fixes later)
+
+- `yield (… yield …)` nested-operand plan collapse (first `next()` yields the
+  wrong value; both lanes; standalone-baseline-accounted).
+- Host-lane resume `yield*` delegation to host-side delegates traps
+  (`illegal cast` in `__iterator`; standalone native→native works).
+- Re-entrant instance use inside the generator's own body rides an
+  any-capture cell → host shim gets a raw state struct
+  (from-state-executing; now walk-bailed).
+- Host-lane fn-EXPRESSIONS still ride the slice-1 thunk (next(v) two-way
+  broken there until they route native — next W6 slice); METHOD generators
+  still host-eager under a JS host.
