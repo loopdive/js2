@@ -1,8 +1,8 @@
 {
   "id": "3418",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-18T07:22:14Z",
-  "updated_at": "2026-07-18T07:22:14Z"
+  "assignee": "ttraenkler/fable-dev-6",
+  "status": "in-progress",
+  "branch": "issue-3418-standalone-shim-import-leak",
+  "claimed_at": "2026-07-18T07:44:28Z",
+  "updated_at": "2026-07-18T07:44:28Z"
 }
