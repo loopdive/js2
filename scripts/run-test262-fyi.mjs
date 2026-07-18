@@ -21,6 +21,7 @@ export { loadOriginalHarnessTests } from "./test262-fyi-reader.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FYI_ROOT = join(ROOT, "test262-fyi", "data");
 const INTERNAL_SOURCE_WORKER = "--internal-source-worker";
+const DEFAULT_SOURCE_TIMEOUT_MS = 30_000;
 
 const SANDBOX_GLOBAL_NAMES = [
   "Array",
@@ -340,6 +341,11 @@ function withoutInternalWorkerFlag(argv) {
   return argv.filter((arg) => arg !== INTERNAL_SOURCE_WORKER);
 }
 
+function sourceTimeoutMs() {
+  const configured = Number.parseInt(process.env.TEST262_FYI_SOURCE_TIMEOUT_MS ?? "", 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_SOURCE_TIMEOUT_MS;
+}
+
 function installInternalSourceWorker(selected, target) {
   process.on("disconnect", () => process.exit(0));
   process.on("message", async (message) => {
@@ -399,9 +405,10 @@ function spawnSourceWorker(argv) {
 
 let nextRequestId = 1;
 
-function requestSource(child, index, strict) {
+function requestSource(child, index, strict, timeoutMs) {
   return new Promise((resolveResult, rejectResult) => {
     const requestId = nextRequestId++;
+    let timer;
     const onMessage = (message) => {
       if (message?.requestId !== requestId) return;
       if (message.type === "source-result") {
@@ -419,11 +426,28 @@ function requestSource(child, index, strict) {
       );
     };
     const cleanup = () => {
+      clearTimeout(timer);
       child.off("message", onMessage);
       child.off("exit", onExit);
     };
     child.on("message", onMessage);
     child.on("exit", onExit);
+    timer = setTimeout(() => {
+      cleanup();
+      child.kill("SIGKILL");
+      resolveResult({
+        type: "source-result",
+        requestId,
+        contaminated: false,
+        recycleWorker: true,
+        result: {
+          pass: false,
+          phase: "timeout",
+          detail: `source timeout after ${timeoutMs}ms`,
+          output: [],
+        },
+      });
+    }, timeoutMs);
     child.send({ type: "run-source", requestId, index, strict });
   });
 }
@@ -441,12 +465,13 @@ async function stopSourceWorker(child) {
 
 async function runSupervisedTests(selected, target, argv) {
   const results = [];
+  const timeoutMs = sourceTimeoutMs();
   let child;
 
   const runVariant = async (index, strict) => {
     if (!child) child = await spawnSourceWorker(argv);
-    const response = await requestSource(child, index, strict);
-    if (response.contaminated) {
+    const response = await requestSource(child, index, strict, timeoutMs);
+    if (response.contaminated || response.recycleWorker) {
       await waitForExit(child);
       child = undefined;
     }
