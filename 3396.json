@@ -1,8 +1,9 @@
 {
   "id": "3396",
   "assignee": "ttraenkler/fable-dev-2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3396-closure-struct-type",
   "claimed_at": "2026-07-18T00:52:53Z",
-  "updated_at": "2026-07-18T00:52:53Z"
+  "updated_at": "2026-07-18T00:54:39Z",
+  "released_at": "2026-07-18T00:54:39Z"
 }
