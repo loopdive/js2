@@ -1,8 +1,8 @@
 {
   "id": "3394",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-18T00:16:21Z",
-  "updated_at": "2026-07-18T00:16:21Z"
+  "assignee": "ttraenkler/fable-dev-1",
+  "status": "in-progress",
+  "branch": "issue-3394-bigint-i64-box",
+  "claimed_at": "2026-07-18T00:56:32Z",
+  "updated_at": "2026-07-18T00:56:32Z"
 }
