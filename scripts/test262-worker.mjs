@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createContext, runInContext } from "node:vm";
 import { compile, createIncrementalCompiler } from "./compiler-bundle.mjs";
 import { buildImports } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
@@ -42,6 +43,49 @@ function computeBundleHash() {
   }
 }
 const BUNDLE_HASH = computeBundleHash();
+
+const ORIGINAL_HARNESS_SANDBOX_GLOBALS = [
+  "Array",
+  "Object",
+  "Function",
+  "String",
+  "Number",
+  "Boolean",
+  "Symbol",
+  "Promise",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Date",
+  "RegExp",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "Math",
+  "JSON",
+  "Reflect",
+];
+
+function buildOriginalHarnessSandbox(consoleProxy) {
+  const sandbox = Object.create(null);
+  const context = createContext(sandbox);
+  for (const name of ORIGINAL_HARNESS_SANDBOX_GLOBALS) {
+    try {
+      sandbox[name] = runInContext(name, context);
+    } catch {}
+  }
+  Object.defineProperties(sandbox, {
+    undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
+    Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
+    NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
+  });
+  sandbox.console = consoleProxy;
+  sandbox.globalThis = sandbox;
+  return sandbox;
+}
 
 let compileCount = 0;
 const GC_INTERVAL = 25;
@@ -832,7 +876,7 @@ function makeWorkerRecycleError(reason) {
   return err;
 }
 
-async function doCompile(source, sourceMapUrl, target, inferModuleStrictArguments) {
+async function doCompile(source, sourceMapUrl, target, inferModuleStrictArguments, originalHarness) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
   // interruption scenarios it may not have completed. Doing a cheap pre-
@@ -861,7 +905,20 @@ async function doCompile(source, sourceMapUrl, target, inferModuleStrictArgument
   // `__module_init` export in one binary — V8's "Duplicate export name"
   // CompileError, the 6-file `language/module-code/*` regression that parked
   // the stack PR #2835/#2839.
-  const deferOpt = target || inferModuleStrictArguments ? {} : { deferTopLevelInit: true };
+  const deferOpt = target || (!originalHarness && inferModuleStrictArguments) ? {} : { deferTopLevelInit: true };
+  if (originalHarness) {
+    return compile(source, {
+      allowJs: true,
+      fileName: "test.js",
+      sourceMap: true,
+      sourceMapUrl: sourceMapUrl || "test.wasm.map",
+      emitWat: false,
+      skipSemanticDiagnostics: true,
+      target,
+      inferModuleStrictArguments,
+      ...deferOpt,
+    });
+  }
   return incrementalCompiler
     ? compileFn(source, { sourceMapUrl: sourceMapUrl || "test.wasm.map", target, inferModuleStrictArguments, ...deferOpt })
     : (await compile(source, {
@@ -981,6 +1038,21 @@ function extractWasmExceptionMessage(err, instance) {
     return info;
   }
   return safeStringifyThrown(err);
+}
+
+function originalHarnessExceptionMatches(err, instance, expectedErrorType) {
+  if (!expectedErrorType) return true;
+  if (err instanceof WebAssembly.Exception && instance) {
+    try {
+      const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
+      const payload = tag ? err.getArg(tag, 0) : undefined;
+      const name = payload?.name ?? payload?.constructor?.name;
+      if (name === expectedErrorType) return true;
+    } catch {}
+  } else if (err?.name === expectedErrorType || err?.constructor?.name === expectedErrorType) {
+    return true;
+  }
+  return extractWasmExceptionMessage(err, instance).includes(expectedErrorType);
 }
 
 function extractWasmFuncName(err) {
@@ -1110,13 +1182,13 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 }
 
 process.on("message", async (msg) => {
-  const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType } = msg;
+  const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType, originalHarness, asyncTest } = msg;
   const target = compileTargetFromMessage(msg.target);
   const compileStart = performance.now();
 
   let result;
   try {
-    result = await doCompile(source, msg.sourceMapUrl, target, msg.inferModuleStrictArguments);
+    result = await doCompile(source, msg.sourceMapUrl, target, msg.inferModuleStrictArguments, originalHarness);
   } catch (err) {
     // Thrown exception may have poisoned the incremental compiler's internal
     // state.  Recreate immediately so subsequent compilations don't cascade-fail.
@@ -1139,6 +1211,14 @@ process.on("message", async (msg) => {
       return;
     }
     const errMsg = err?.message ?? String(err);
+    if (execute && isNegative && negativeCompileErrorMatches(expectedErrorType, [], errMsg)) {
+      sendResult({
+        id,
+        status: "pass",
+        compileMs: performance.now() - compileStart,
+      });
+      return;
+    }
     sendResult(
       {
         id,
@@ -1319,7 +1399,26 @@ process.on("message", async (msg) => {
   const execStart = performance.now();
   let instance;
   try {
-    const importObj = buildImports(result.imports, undefined, result.stringPool);
+    const harnessOutput = [];
+    const appendHarnessOutput = (line) => {
+      Reflect.defineProperty(harnessOutput, harnessOutput.length, {
+        value: line,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    };
+    const consoleProxy = {
+      log: (...values) => appendHarnessOutput(values.map(String).join(" ")),
+      error: (...values) => appendHarnessOutput(values.map(String).join(" ")),
+      warn: (...values) => appendHarnessOutput(values.map(String).join(" ")),
+    };
+    const importObj = buildImports(
+      result.imports,
+      originalHarness ? { console: consoleProxy } : undefined,
+      result.stringPool,
+      originalHarness ? { globalSandbox: buildOriginalHarnessSandbox(consoleProxy) } : undefined,
+    );
 
     try {
       const wasmResult = await WebAssembly.instantiate(result.binary, importObj);
@@ -1342,7 +1441,7 @@ process.on("message", async (msg) => {
         return;
       }
 
-      if (isRuntimeNegative) {
+      if (isRuntimeNegative && (!originalHarness || originalHarnessExceptionMatches(err, null, expectedErrorType))) {
         sendResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...compileMetadata });
         return;
       }
@@ -1384,7 +1483,10 @@ process.on("message", async (msg) => {
         moduleInit();
       } catch (initErr) {
         const execMs = performance.now() - execStart;
-        if (isRuntimeNegative) {
+        if (
+          isRuntimeNegative &&
+          (!originalHarness || originalHarnessExceptionMatches(initErr, instance, expectedErrorType))
+        ) {
           sendResult({ id, status: "pass", compileMs, execMs, runtimeNegativePass: true, ...buildResultMetadata(result, true) });
           return;
         }
@@ -1399,6 +1501,71 @@ process.on("message", async (msg) => {
         });
         return;
       }
+    }
+
+    if (originalHarness) {
+      if (isRuntimeNegative) {
+        sendResult({
+          id,
+          status: "fail",
+          error: `expected runtime ${expectedErrorType || "error"} but succeeded`,
+          runtimeNegativeNoThrow: true,
+          compileMs,
+          execMs: performance.now() - execStart,
+          ...buildResultMetadata(result, true),
+        });
+        return;
+      }
+
+      if (asyncTest) {
+        const deadline = Date.now() + 1_000;
+        const findMarker = (prefix) => {
+          for (let i = 0; i < harnessOutput.length; i++) {
+            if (harnessOutput[i]?.includes(prefix)) return harnessOutput[i];
+          }
+          return undefined;
+        };
+        while (
+          Date.now() < deadline &&
+          !findMarker("Test262:AsyncTestComplete") &&
+          !findMarker("Test262:AsyncTestFailure")
+        ) {
+          await new Promise((resolveTurn) => setTimeout(resolveTurn, 10));
+        }
+        const failure = findMarker("Test262:AsyncTestFailure");
+        if (failure) {
+          sendResult({
+            id,
+            status: "fail",
+            error: failure,
+            compileMs,
+            execMs: performance.now() - execStart,
+            ...buildResultMetadata(result, true),
+          });
+          return;
+        }
+        if (!findMarker("Test262:AsyncTestComplete")) {
+          sendResult({
+            id,
+            status: "fail",
+            error: "async completion marker not observed",
+            compileMs,
+            execMs: performance.now() - execStart,
+            ...buildResultMetadata(result, true),
+          });
+          return;
+        }
+      }
+
+      sendResult({
+        id,
+        status: "pass",
+        ret: 1,
+        compileMs,
+        execMs: performance.now() - execStart,
+        ...buildResultMetadata(result, true),
+      });
+      return;
     }
 
     const testFn = instance.exports.test;
@@ -1478,7 +1645,10 @@ process.on("message", async (msg) => {
       }
       const execMs = performance.now() - execStart;
 
-      if (isRuntimeNegative) {
+      if (
+        isRuntimeNegative &&
+        (!originalHarness || originalHarnessExceptionMatches(execErr, instance, expectedErrorType))
+      ) {
         sendResult({
           id,
           status: "fail",

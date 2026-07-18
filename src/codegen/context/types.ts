@@ -937,6 +937,10 @@ export interface FunctionContext {
 export interface CodegenContext {
   mod: WasmModule;
   checker: ts.TypeChecker;
+  /** True when the single-file input is an ECMAScript Module goal. Script-goal
+   * module init uses the host global object for top-level `this`; module goal
+   * keeps top-level `this` undefined (#3365). */
+  sourceIsModule: boolean;
   /**
    * (#1930) THE type-query boundary. Prefer `ctx.oracle` over raw
    * `ctx.checker` in ALL new code — the oracle-ratchet CI gate fails on

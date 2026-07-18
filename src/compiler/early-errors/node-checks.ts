@@ -94,11 +94,8 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
     if (hasOptionalChain(node.operand)) {
       ctx.addError(node, "Optional chaining is not valid in the left-hand side of an update expression");
     }
-    if (isInvalidAssignmentTarget(node.operand)) {
-      ctx.addError(node, "Invalid left-hand side expression in prefix operation");
-    }
-    // In strict mode, call expressions as update targets are SyntaxErrors
-    if (isCallExpressionTarget(node.operand) && isStrictMode(node)) {
+    const isCallTarget = isCallExpressionTarget(node.operand);
+    if (isInvalidAssignmentTarget(node.operand) && !(isCallTarget && !isStrictMode(node))) {
       ctx.addError(node, "Invalid left-hand side expression in prefix operation");
     }
   }
@@ -114,11 +111,8 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
     if (hasOptionalChain(node.operand)) {
       ctx.addError(node, "Optional chaining is not valid in the left-hand side of an update expression");
     }
-    if (isInvalidAssignmentTarget(node.operand)) {
-      ctx.addError(node, "Invalid left-hand side in postfix operation");
-    }
-    // In strict mode, call expressions as update targets are SyntaxErrors
-    if (isCallExpressionTarget(node.operand) && isStrictMode(node)) {
+    const isCallTarget = isCallExpressionTarget(node.operand);
+    if (isInvalidAssignmentTarget(node.operand) && !(isCallTarget && !isStrictMode(node))) {
       ctx.addError(node, "Invalid left-hand side in postfix operation");
     }
     // ES spec: no LineTerminator between LeftHandSideExpression and ++/--.
@@ -143,7 +137,8 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
     if (hasOptionalChain(node.left)) {
       ctx.addError(node, "Optional chaining is not valid in the left-hand side of an assignment expression");
     }
-    if (isInvalidAssignmentTarget(node.left, /* allowDestructuring */ true)) {
+    const isCallTarget = isCallExpressionTarget(node.left);
+    if (isInvalidAssignmentTarget(node.left, /* allowDestructuring */ true) && !(isCallTarget && !isStrictMode(node))) {
       ctx.addError(node, "Invalid left-hand side in assignment");
     }
     // When LHS is an array or object literal, validate it as an AssignmentPattern
@@ -177,6 +172,10 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
       ts.SyntaxKind.QuestionQuestionEqualsToken,
     ];
     if (compoundOps.includes(op)) {
+      const isLogicalAssignment =
+        op === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+        op === ts.SyntaxKind.BarBarEqualsToken ||
+        op === ts.SyntaxKind.QuestionQuestionEqualsToken;
       const name = isArgumentsOrEval(node.left);
       if (name && isStrictMode(node)) {
         ctx.addError(node.left, `Cannot assign to '${name}' in strict mode`);
@@ -185,7 +184,8 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
         ctx.addError(node, "Optional chaining is not valid in the left-hand side of an assignment expression");
       }
       // Compound assignment to non-simple targets (call expressions, binary, etc.)
-      if (isInvalidAssignmentTarget(node.left)) {
+      const isCallTarget = isCallExpressionTarget(node.left);
+      if (isInvalidAssignmentTarget(node.left) && !(isCallTarget && !isStrictMode(node) && !isLogicalAssignment)) {
         ctx.addError(node, "Invalid left-hand side in assignment");
       }
     }
@@ -194,7 +194,8 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
   // Check for-in/for-of with non-simple assignment target as LHS
   if ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) {
     const lhs = node.initializer as ts.Expression;
-    if (isInvalidAssignmentTarget(lhs, /* allowDestructuring */ true)) {
+    const isCallTarget = isCallExpressionTarget(lhs);
+    if (isInvalidAssignmentTarget(lhs, /* allowDestructuring */ true) && !(isCallTarget && !isStrictMode(node))) {
       ctx.addError(node.initializer, "Invalid left-hand side in for-in/for-of");
     }
     // When LHS is an array or object literal, validate it as AssignmentPattern

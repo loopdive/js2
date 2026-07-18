@@ -60,6 +60,59 @@ function _isCanonicalArrayIndexString(s: string): boolean {
   return Number.isInteger(n) && n >= 0 && n < 0xffffffff;
 }
 
+/**
+ * (#3368) Prove that a canonical index names a present element of the dense
+ * array literal that produced `receiver`.
+ *
+ * Numeric vecs do not carry a hole/presence bitmap, so a raw bounds check is
+ * unsound after elisions, `delete`, length shrink, or an aliased mutation. Keep
+ * this proof intentionally local: accept a direct dense literal, or an
+ * identifier whose dense literal declaration has no intervening reference at
+ * all before the `hasOwnProperty` call. The latter excludes mutation and alias
+ * escape without attempting whole-program data-flow analysis.
+ */
+function provesDenseLiteralOwnIndex(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  call: ts.CallExpression,
+  key: string,
+): boolean {
+  if (!_isCanonicalArrayIndexString(key)) return false;
+  const index = Number(key);
+  const unwrapped = unwrapTransparentExpression(receiver);
+
+  const literalHasElement = (literal: ts.ArrayLiteralExpression): boolean =>
+    !literal.elements.some(ts.isSpreadElement) &&
+    index < literal.elements.length &&
+    !ts.isOmittedExpression(literal.elements[index]!);
+
+  if (ts.isArrayLiteralExpression(unwrapped)) return literalHasElement(unwrapped);
+  if (!ts.isIdentifier(unwrapped)) return false;
+
+  const symbol = ctx.checker.getSymbolAtLocation(unwrapped);
+  const declaration = symbol?.valueDeclaration;
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+  const initializer = unwrapTransparentExpression(declaration.initializer);
+  if (!ts.isArrayLiteralExpression(initializer) || !literalHasElement(initializer)) return false;
+  if (declaration.getSourceFile() !== call.getSourceFile()) return false;
+
+  const declarationEnd = declaration.getEnd();
+  const callStart = call.getStart();
+  let interveningReference = false;
+  const visit = (node: ts.Node): void => {
+    if (interveningReference) return;
+    const start = node.getStart();
+    if (start >= callStart || node.getEnd() <= declarationEnd) return;
+    if (ts.isIdentifier(node) && node.text === unwrapped.text && start >= declarationEnd) {
+      interveningReference = true;
+      return;
+    }
+    node.forEachChild(visit);
+  };
+  call.getSourceFile().forEachChild(visit);
+  return !interveningReference;
+}
+
 // ── Compile-time ToBoolean coercion of descriptor flag initializers ──
 /**
  * Try to constant-fold `ToBoolean(<expr>)` at compile time. Returns:
@@ -4456,7 +4509,10 @@ export function compilePropertyIntrospection(
       }
       // Push key argument (or null if missing)
       if (expr.arguments[0]) {
-        const argType = compileExpression(ctx, fctx, expr.arguments[0]);
+        // (#3368) Preserve a symbol key as a real JS Symbol. ESSymbol values
+        // use an unbranded i32 carrier; the externref expected-type hint is
+        // what selects __box_symbol instead of the generic __box_number.
+        const argType = compileExpression(ctx, fctx, expr.arguments[0], { kind: "externref" });
         if (argType && argType.kind !== "externref") {
           coerceType(ctx, fctx, argType, { kind: "externref" });
         }
@@ -4504,6 +4560,17 @@ export function compilePropertyIntrospection(
         if (at.isStringLiteral()) staticKey = at.value;
         else if (at.isNumberLiteral()) staticKey = String(at.value);
       }
+    }
+    if (!elemIsRef && keyArg && staticKey !== null && provesDenseLiteralOwnIndex(ctx, recvExpr, expr, staticKey)) {
+      // The optimized answer must retain ordinary evaluation order even though
+      // the presence result is statically known: evaluate receiver, then key,
+      // discard both values, and produce the boolean true.
+      const recv = compileExpression(ctx, fctx, propAccess.expression);
+      if (recv !== null) fctx.body.push({ op: "drop" });
+      const keyType = compileExpression(ctx, fctx, keyArg);
+      if (keyType !== null) fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      return { kind: "i32", boolean: true };
     }
     if (elemIsRef && keyArg && staticKey !== null && _isCanonicalArrayIndexString(staticKey)) {
       const dataArrTypeIdx = vecInfo!.arrTypeIdx;
@@ -4780,7 +4847,7 @@ export function compilePropertyIntrospection(
         } else if (recvType && recvType.kind !== "externref") {
           coerceType(ctx, fctx, recvType, { kind: "externref" });
         }
-        const argType = compileExpression(ctx, fctx, arg);
+        const argType = compileExpression(ctx, fctx, arg, { kind: "externref" });
         if (argType && argType.kind !== "externref") {
           coerceType(ctx, fctx, argType, { kind: "externref" });
         }

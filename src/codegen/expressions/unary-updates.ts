@@ -36,7 +36,12 @@ import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#268
 import { coerceType, compileExpression, skipTransparentExpressions } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { defaultValueInstrs } from "../type-coercion.js";
-import { emitSuperUninitializedThisGuard, emitThrowTypeError, getFuncParamTypes } from "./helpers.js";
+import {
+  emitSuperUninitializedThisGuard,
+  emitThrowTypeError,
+  emitWebCompatCallAssignmentTarget,
+  getFuncParamTypes,
+} from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { emitToPropertyKeyOnce } from "./operator-assignment.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
@@ -976,6 +981,11 @@ function compilePrefixUpdate(
   fctx: FunctionContext,
   expr: ts.PrefixUnaryExpression,
 ): ValType | null {
+  // §13.4 + Annex B.3.9: evaluate a sloppy-mode call target, then throw before
+  // ToNumeric. Strict-mode call targets were rejected by the early-error pass.
+  if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.operand)) {
+    return { kind: "f64" };
+  }
   // §13.4 / §7.1.3 — ++/-- on a Symbol throws TypeError before the update step.
   if (emitSymbolUpdateThrow(ctx, fctx, expr.operand)) {
     return { kind: "f64" };
@@ -1418,6 +1428,9 @@ function compilePostfixUnary(
   fctx: FunctionContext,
   expr: ts.PostfixUnaryExpression,
 ): ValType | null {
+  if (emitWebCompatCallAssignmentTarget(ctx, fctx, expr.operand)) {
+    return { kind: "f64" };
+  }
   // §13.4 / §7.1.3 — x++/x-- on a Symbol throws TypeError before the update step.
   if (emitSymbolUpdateThrow(ctx, fctx, expr.operand)) {
     return { kind: "f64" };

@@ -2851,12 +2851,12 @@ export function emitSetArgc(
  * (#1511)
  */
 export function emitResetArgcExtras(ctx: CodegenContext, fctx: FunctionContext): void {
-  const { globalIdx: extrasGlobalIdx, vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
-  const argcGlobalIdx = ensureArgcGlobal(ctx);
-  fctx.body.push({ op: "ref.null", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "global.set", index: extrasGlobalIdx });
-  fctx.body.push({ op: "i32.const", value: -1 });
-  fctx.body.push({ op: "global.set", index: argcGlobalIdx });
+  // A zero-overflow indirect call sets only __argc. Do not lazily create
+  // __extras_argv during cleanup: registering that imported global after the
+  // setup arm has already been captured can shift the arm's baked __argc
+  // global.set while it is temporarily detached (#3367). If the extras global
+  // already exists, the shared no-lazy helper still clears it as required.
+  fctx.body.push(...buildArgcResetNoLazyExtras(ctx));
 }
 
 /**

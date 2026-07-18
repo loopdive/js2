@@ -19,7 +19,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parenthesizeAwaitBraceOperand, runTest262File, wrapTest } from "./test262-runner.ts";
+import { parenthesizeAwaitBraceOperand, runSyntheticTest262File, wrapTest } from "./test262-runner.ts";
 
 const TLA_SYNTAX = "test262/test/language/module-code/top-level-await/syntax";
 const OBJ_LITERAL_TESTS = [
@@ -64,7 +64,7 @@ describe("#3188 slice 1 — wrapTest await-obj-literal misparse", () => {
     async () => {
       for (const name of OBJ_LITERAL_TESTS) {
         const file = join(process.cwd(), TLA_SYNTAX, `${name}.js`);
-        const r = await runTest262File(file, "language/module-code");
+        const r = await runSyntheticTest262File(file, "language/module-code");
         expect(r.status, `${name}: ${r.error ?? r.reason ?? ""}`).toBe("pass");
       }
     },

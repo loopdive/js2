@@ -18,7 +18,7 @@ Conformance is tracked along the two compile paths — both figures auto-update 
 The line above is the **JS-host path** (default `gc` target): runs alongside the js2wasm JS runtime, which supplies host imports for some built-ins.
 
 <!-- AUTO:conformance-standalone-start -->
-**standalone (host-free) test262 conformance**: 24,815 / 43,106 (57.6 %)
+**standalone (host-free) test262 conformance**: 4,312 / 43,106 (10.0 %)
 <!-- AUTO:conformance-standalone-end -->
 
 The line above is the **standalone path** (`--target standalone`/`wasi`): pure WasmGC with no JS host, measured host-free on the same official denominator. Lower today and actively hardening — this is where the current gap is.
@@ -166,6 +166,23 @@ npm test
 pnpm run test:262
 pnpm dev
 ```
+
+To independently cross-check compiler compatibility with test262.fyi's
+literal, unmodified harness assembler, initialize its optional data submodule
+and run the separate comparison lane:
+
+```bash
+git submodule update --init --checkout test262-fyi/data
+pnpm run test:262:fyi -- --filter built-ins/Array --limit 20
+```
+
+This lane uses `test262-fyi/data/runner/read.js` to concatenate the host shim,
+upstream `assert.js`, `sta.js`, metadata `includes`, and each raw test body. The
+canonical `pnpm run test:262` runner and CI use the same literal-harness
+contract; this optional lane cross-checks their assembly against test262.fyi's
+own reader and reports its score separately. Neither verdict path uses
+`wrapTest()` or a synthetic preamble. Omit the filter and limit for a full run;
+use `--help` for output and target options.
 
 ## Running compiled output
 

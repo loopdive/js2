@@ -1906,6 +1906,8 @@ export function generateModule(
 } {
   const mod = createEmptyModule();
   const ctx = createCodegenContext(mod, ast.checker, options);
+  const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
+  ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
   // (#2138) Populated only under JS2WASM_IR_FIRST=1 — the top-level functions
   // whose legacy body emission was skipped (IR owns the slot). Declared out
   // here so the return statement below (outside the try) can surface it.
@@ -4337,6 +4339,8 @@ export function generateMultiModule(
 } {
   const mod = createEmptyModule();
   const ctx = createCodegenContext(mod, multiAst.checker, options);
+  // Multi-file compilation is linked through import/export module records.
+  ctx.sourceIsModule = true;
   try {
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {

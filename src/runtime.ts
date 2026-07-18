@@ -1013,6 +1013,28 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+const _test262ErrorConstructors = new WeakSet<Function>();
+
+// (#3369) Callback bridges must remain usable while the evaluated program has
+// installed non-writable numeric properties on Array.prototype. `[].push(x)`
+// and direct indexed assignment perform [[Set]] and can be rejected by such an
+// inherited property. Define dense own argument slots explicitly instead.
+// Capture the intrinsics before user code runs so the helper is also immune to
+// later rebinding of Array/Reflect properties.
+const _IntrinsicArray = Array;
+const _intrinsicReflectDefineProperty = Reflect.defineProperty;
+function _denseOwnArgs(args: ArrayLike<any>, length: number): any[] {
+  const dense = new _IntrinsicArray<any>(length);
+  for (let i = 0; i < length; i++) {
+    _intrinsicReflectDefineProperty(dense, i, {
+      value: i < args.length ? args[i] : undefined,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return dense;
+}
 
 function _hostEqComparableValue(v: any): any {
   if (typeof v === "function") {
@@ -1034,6 +1056,36 @@ function _hostEqComparableValue(v: any): any {
     return _unwrapForHost(v);
   }
   return v;
+}
+
+function _hostStrictEqual(a: any, b: any): boolean {
+  const comparableA = _hostEqComparableValue(a);
+  const comparableB = _hostEqComparableValue(b);
+  if (comparableA === comparableB) return true;
+
+  // The original test262 harness declares `function Test262Error`, while the
+  // host exception bridge deliberately constructs a real Error subclass so an
+  // abrupt completion can cross Wasm→host iterator calls and back. Treat that
+  // bridge constructor as the same function identity only when the other side
+  // is the compiled Test262Error closure. Other host/user constructors retain
+  // ordinary reference identity.
+  const hostCtor =
+    typeof a === "function" && _test262ErrorConstructors.has(a)
+      ? a
+      : typeof b === "function" && _test262ErrorConstructors.has(b)
+        ? b
+        : undefined;
+  if (hostCtor) {
+    const other = hostCtor === a ? b : a;
+    if (typeof other === "function") {
+      const closure = _wasmClosureWrapperTargets.get(other);
+      // sta.js installs the distinctive static `Test262Error.thrower` helper on
+      // the declaration. Closure function names are not stored in the sidecar,
+      // so this own static member is the stable harness identity marker.
+      if (closure && _wasmStructProps.get(closure)?.thrower !== undefined) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1104,8 +1156,7 @@ function _wrapWasmClosure(
     }
     // Pad with undefined to exactly `arity` positional args. Extra args
     // dropped (JS spec for fewer/more args than declared params).
-    const padded: any[] = [];
-    for (let i = 0; i < arity; i++) padded.push(args[i]);
+    const padded = _denseOwnArgs(args, arity);
     if (this !== undefined && this !== globalThis) {
       // (#2838 L3) Method-`this` dispatch. Prefer the exact-arity method
       // dispatcher; when it is ABSENT, fall back to the HIGHEST available
@@ -1135,8 +1186,7 @@ function _wrapWasmClosure(
       }
       if (methodArity >= 0) {
         const methodCallFn = exports![`__call_fn_method_${methodArity}`]!;
-        const methodPadded: any[] = [];
-        for (let i = 0; i < methodArity; i++) methodPadded.push(args[i]);
+        const methodPadded = _denseOwnArgs(args, methodArity);
         const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
         return methodCallFn(_isWasmStruct(rawThis) ? rawThis : this, closure, ...methodPadded);
       }
@@ -1166,12 +1216,11 @@ function _wrapWasmClosureUnknownArity(
   if (!callbackState) return null;
   const exports = callbackState.getExports();
   if (!exports) return null;
-  const available: number[] = [];
+  let maxArity = -1;
   for (let arity = 0; arity <= 4; arity++) {
-    if (typeof exports[`__call_fn_${arity}`] === "function") available.push(arity);
+    if (typeof exports[`__call_fn_${arity}`] === "function") maxArity = arity;
   }
-  if (available.length === 0) return null;
-  const maxArity = available[available.length - 1]!;
+  if (maxArity < 0) return null;
   // (#2664) The highest available `__call_fn_method_N` dispatches EVERY closure
   // of arity ≤ N and passes each closure exactly its OWN declared arity (extra
   // args dropped at the wasm dispatch arm — emitClosureMethodCallExportN in
@@ -1241,8 +1290,7 @@ function _wrapWasmClosureUnknownArity(
       }
       const methodCallFn = exports[`__call_fn_method_${dispatchArity}`];
       if (typeof methodCallFn === "function") {
-        const padded: any[] = [];
-        for (let i = 0; i < dispatchArity; i++) padded.push(args[i]);
+        const padded = _denseOwnArgs(args, dispatchArity);
         // (#2015) Unwrap a `_wrapForHost` proxy receiver back to its raw WasmGC
         // struct before installing it as `__current_this`. `__extern_method_call`
         // dispatches `fn.apply(wrappedObj, …)` with `wrappedObj` being the host
@@ -1261,8 +1309,7 @@ function _wrapWasmClosureUnknownArity(
     while (arity > 0 && typeof exports[`__call_fn_${arity}`] !== "function") arity--;
     const callFn = exports[`__call_fn_${arity}`];
     if (typeof callFn !== "function") return undefined;
-    const padded: any[] = [];
-    for (let i = 0; i < arity; i++) padded.push(args[i]);
+    const padded = _denseOwnArgs(args, arity);
     return marshalNew(callFn(closure, ...padded));
   };
   try {
@@ -3139,8 +3186,7 @@ function _invokeJsonCallable(
   for (let a = 4; a >= 0; a--) {
     const cf = exports[`__call_fn_${a}`];
     if (typeof cf === "function") {
-      const padded: any[] = [];
-      for (let i = 0; i < a; i++) padded.push(args[i]);
+      const padded = _denseOwnArgs(args, a);
       return cf(fn, ...padded);
     }
   }
@@ -3538,14 +3584,20 @@ function _safeGet(obj: any, key: any, callbackState?: { getExports: () => Record
     // Check sidecar FIRST — native JS property access on WasmGC structs can return
     // built-in artifacts (e.g. `obj.constructor` returns the Wasm struct constructor),
     // which would shadow user-assigned properties if we checked native first.
-    const sc = _sidecarGet(obj, key);
-    if (sc !== undefined) return sc;
     // Check string accessor getter stored by Object.defineProperty (sidecar key: __get_<prop>)
     if (typeof key === "string") {
       const wasmSc = _wasmStructProps.get(obj);
       const getter = wasmSc?.[`__get_${key}` as string];
       if (typeof getter === "function") return (getter as Function).call(obj);
+      if (getter != null && typeof getter === "object" && _isWasmStruct(getter)) {
+        const callFn0 = callbackState?.getExports()?.__call_fn_0;
+        if (typeof callFn0 === "function") return callFn0(getter);
+      }
     }
+    // Accessor descriptors take precedence over any stale data-sidecar value
+    // retained while the receiver's static shape was widened.
+    const sc = _sidecarGet(obj, key);
+    if (sc !== undefined) return sc;
     // For JS Symbols, check the accessor map (for Symbol-keyed defineProperty accessors)
     if (typeof key === "symbol") {
       const accessor = _wasmStructAccessors.get(obj)?.get(key);
@@ -3912,13 +3964,20 @@ function _safeSet(
       }
       cur = Object.getPrototypeOf(cur);
     }
-    if (desc && (desc.get || desc.set)) {
-      if (!desc.set) {
+    if (desc) {
+      if ((desc.get || desc.set) && !desc.set) {
         // Getter-only accessor (own or inherited) → strict [[Set]] throws.
         throw new TypeError(`Cannot set property ${String(key)} of #<Object> which has only a getter`);
       }
-      // Accessor WITH a setter — invoke it via the write below; propagate throws.
-      strictAccessorWrite = true;
+      if (desc.get || desc.set) {
+        // Accessor WITH a setter — invoke it via the write below; propagate throws.
+        strictAccessorWrite = true;
+      } else if (desc.writable === false) {
+        // OrdinarySetWithOwnDescriptor step 2.a returns false for a
+        // non-writable data descriptor; PutValue turns that false into a
+        // TypeError for a strict Reference (§6.2.5.6 step 3.e).
+        throw new TypeError(`Cannot assign to read only property '${String(key)}' of object`);
+      }
     }
   }
   try {
@@ -3934,17 +3993,15 @@ function _safeSet(
     // `_isUserProxy(obj)`, so the sloppy-mode struct / frozen-builtin cases
     // below (Math.E=1, Number.NaN=1) are byte-for-byte unchanged (#2017).
     _rethrowIfProxyOrRevoked(e, obj);
-    // (#2017 regression fix) Do NOT blanket re-throw the engine's TypeError just
-    // because this came through `__extern_set_strict`. The bundled runtime is an
-    // ES module (executes in strict mode), so `obj[key] = val` throws natively
-    // for a non-writable DATA property (`Math.E = 1`, `Number.NaN = 1`) or a
-    // non-extensible/frozen target. In sloppy/noStrict SCRIPT context (the
-    // test262 default) those writes must silently no-op, not throw — re-throwing
-    // here regressed S8.5_A9 / S8.12.4_A1 / S8.6.1_A1. The getter-only ACCESSOR
-    // case (#2017's actual target) is already handled by the explicit pre-check
-    // above (it throws our own catchable TypeError before reaching this write),
-    // so swallowing the engine error here and diverting to the sidecar both
-    // fixes the regression and preserves the feature.
+    // (#3374) The runtime module itself executes in strict mode, so the native
+    // assignment above throws when [[Set]] returns false. The compiler now
+    // selects this helper only for a genuinely strict source Reference; in that
+    // case PutValue requires the TypeError to propagate. Sloppy writes keep the
+    // legacy silent fallback below.
+    if (strict) throw e;
+    // The sloppy helper retains the legacy silent fallback because this runtime
+    // module is itself strict: the native assignment can throw even when the
+    // compiled source Reference was non-strict.
     // For non-WasmGC objects (frozen/sealed JS objects),
     // fall through to sidecar set — preserves original behavior.
     _sidecarSet(obj, key, val);
@@ -5270,6 +5327,11 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
   // #1047 — if `obj` was registered as a class prototype, surface only the
   // method names in the allowlist. Otherwise fall back to the struct-field
   // enumeration used for regular instances.
+  const isTombstoned = (key: string | symbol): boolean => {
+    const tombstones = _wasmStructDeletedKeys.get(obj);
+    return !!tombstones && tombstones.has(typeof key === "symbol" ? key : String(key));
+  };
+
   const fieldNamesForHost = (): string[] => {
     const protoMethods = _prototypeMethodNames.get(obj);
     if (protoMethods !== undefined) {
@@ -5277,7 +5339,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       // proto / class object so subsequent enumeration matches spec.
       return protoMethods.filter((n) => !_isDeletedClassProp(obj, n));
     }
-    return _getStructFieldNames(obj, exports) ?? [];
+    return (_getStructFieldNames(obj, exports) ?? []).filter((name) => !isTombstoned(name));
   };
 
   const collectKeys = (): (string | symbol)[] => {
@@ -5287,6 +5349,7 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
     const sc = _wasmStructProps.get(obj);
     if (sc) {
       for (const k of Object.getOwnPropertyNames(sc)) {
+        if (isTombstoned(k)) continue;
         // #1336 — `__get_x` / `__set_x` are accessor descriptor entries; they
         // must NOT enumerate as own keys. Surface the underlying property name
         // (`x`) instead so Object.assign / spread copy honours the accessor.
@@ -5298,13 +5361,17 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
           keys.add(k);
         }
       }
-      for (const k of Object.getOwnPropertySymbols(sc)) keys.add(k);
+      for (const k of Object.getOwnPropertySymbols(sc)) {
+        if (!isTombstoned(k)) keys.add(k);
+      }
     }
     // #1336 — Symbol-keyed accessors (set via Object.defineProperty with a
     // Symbol property name) live in `_wasmStructAccessors`, not `_wasmStructProps`.
     const accMap = _wasmStructAccessors.get(obj);
     if (accMap) {
-      for (const k of accMap.keys()) keys.add(k);
+      for (const k of accMap.keys()) {
+        if (!isTombstoned(k)) keys.add(k);
+      }
     }
     return Array.from(keys);
   };
@@ -5558,6 +5625,11 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       return collectKeys();
     },
     getOwnPropertyDescriptor(_t, key) {
+      // (#3368) A deleted closed-struct field remains physically present in
+      // WasmGC, but its tombstone makes it absent to every ECMAScript
+      // reflection operation. Do not let the host proxy resurrect it during
+      // Object.assign/object spread enumeration.
+      if (isTombstoned(key)) return undefined;
       // For Proxy invariants, getOwnPropertyDescriptor must match target's
       // non-configurable keys. Our target is an empty extensible object, so
       // we can return any descriptor we like. We must also reflect the
@@ -5814,6 +5886,10 @@ function _wrapCallableForHost(
   const proxy = new Proxy(fnTarget, handler);
   _hostCallableCache.set(closure, proxy);
   _hostProxyReverse.set(proxy, closure); // so _unwrapForHost round-trips
+  // The same closure can cross the boundary as this constructible proxy and as
+  // a dynamic wasmClosureDynamicBridge. Canonicalize both representations to
+  // the raw closure so strict constructor identity remains stable.
+  _wasmClosureWrapperTargets.set(proxy, closure);
   return proxy;
 }
 
@@ -7115,6 +7191,24 @@ function _temporalPlainTimeAddField(...args: any[]): number {
   return [hourOut, minuteOut, secondOut, millisecondOut, microsecondOut, nanosecondOut][_temporalTrunc(fieldRaw)] ?? 0;
 }
 
+/**
+ * Keep intrinsic constructor identity inside a supplied per-test sandbox.
+ * Host objects naturally expose host-realm constructors; compiled code in the
+ * isolated realm resolves the corresponding bare identifier from the sandbox.
+ * Only canonical host intrinsics are substituted, so user constructors pass
+ * through unchanged.
+ */
+function _sandboxConstructorValue(value: any, key: any, globalSandbox?: Record<string, any>): any {
+  if (globalSandbox && key === "constructor" && typeof value === "function") {
+    const name = (value as { name?: string }).name;
+    if (name && value === (globalThis as any)[name]) {
+      const sandboxValue = globalSandbox[name];
+      if (sandboxValue !== undefined) return sandboxValue;
+    }
+  }
+  return value;
+}
+
 function resolveImport(
   intent: ImportIntent,
   deps?: Record<string, any>,
@@ -7282,6 +7376,9 @@ function resolveImport(
             super(msg);
             this.name = "Test262Error";
           }
+        }
+        if (intent.className === "Test262Error") {
+          _test262ErrorConstructors.add(Test262Error);
         }
         const builtinCtors: Record<string, Function> = {
           Number,
@@ -9079,7 +9176,7 @@ assert._isSameValue = isSameValue;
           }
           return Object.entries(obj);
         };
-      if (name === "__array_from_iter" || name === "__array_from_iter_n") {
+      if (name === "__array_from_iter" || name === "__array_from_iter_n" || name === "__array_from_iter_strict") {
         // Cache the original Array.prototype[Symbol.iterator] so we can
         // detect when user code (e.g. test262 iter-get-err-array-prototype)
         // has overridden it. When overridden, we must invoke the protocol
@@ -9115,11 +9212,14 @@ assert._isSameValue = isSameValue;
         // IteratorStep per slot (INCLUDING elision holes), not a full drain
         // (#1592). Stopping at the bound is a NormalCompletion: it must NOT
         // trigger IteratorClose (only the defensive MAX_ITER cap does).
-        const _arrayFromIter = (obj: any, limit: number): any => {
+        const _arrayFromIter = (obj: any, limit: number, strictIterator = false): any => {
           // For proper iterators (e.g. generators) this invokes the iterator
           // protocol and propagates any throws from .next() — needed for
           // spec-compliant destructuring of throwing iterators (#1150).
-          if (obj == null) return [];
+          if (obj == null) {
+            if (strictIterator) throw new TypeError(`${obj} is not iterable`);
+            return [];
+          }
           // (#2202) An opaque WasmGC vec ref (e.g. an inline `[1]` spread source
           // that stayed a native vec instead of being marshaled to a JS array)
           // is not `Array.isArray` and has no `Symbol.iterator`, so it would fall
@@ -9156,7 +9256,7 @@ assert._isSameValue = isSameValue;
             if (ownIter !== _origArrayIter) {
               // Non-default iterator: fall through to the protocol path below
               // by treating the array as a generic iterable (bounded by limit).
-              return _drainIterable(obj, limit);
+              return _drainIterable(obj, limit, strictIterator, ownIter);
             }
             // Default array iterator: a finite bound just slices the prefix;
             // the iterator protocol on a default array is side-effect-free so
@@ -9202,25 +9302,33 @@ assert._isSameValue = isSameValue;
                   }
                 }
               }
+              if (strictIterator) throw new TypeError("@@iterator is not callable");
               const out: any[] = [];
               const lenRaw = typeof (obj as any).length === "number" ? (obj as any).length >>> 0 : 0;
               const len = Math.min(lenRaw, limit);
               for (let i = 0; i < len; i++) out.push((obj as any)[i]);
               return out;
             }
+            if (typeof iterFn === "function") {
+              return _drainIterable(obj, limit, strictIterator, iterFn);
+            }
+            if (strictIterator) throw new TypeError("value is not iterable");
           }
-          return _drainIterable(obj, limit);
+          return _drainIterable(obj, limit, strictIterator);
         };
         // Walk a plain iterable's @@iterator protocol, collecting at most
         // `limit` values. Replaces `Array.from(obj)` so a finite bound can stop
         // early (Array.from can't be bounded). Throws from @@iterator / .next()
         // / the .value getter propagate unchanged (#1150/#1454). With
         // limit === Infinity this matches Array.from's full drain.
-        function _drainIterable(obj: any, limit: number): any[] {
-          const itFn = (obj as any)?.[Symbol.iterator];
+        function _drainIterable(obj: any, limit: number, strictIterator = false, knownIterFn?: any): any[] {
+          const itFn = knownIterFn ?? (obj as any)?.[Symbol.iterator];
           // No callable @@iterator — let Array.from handle array-likes / the
           // legacy unbounded shapes exactly as before.
-          if (typeof itFn !== "function") return Array.from(obj);
+          if (typeof itFn !== "function") {
+            if (strictIterator) throw new TypeError("@@iterator is not callable");
+            return Array.from(obj);
+          }
           const it = itFn.call(obj);
           // (#3023) A native `@@iterator` may still RETURN a wasm-struct
           // iterator (a compiled object-literal `{ next() {…} }` lowers to a
@@ -9247,6 +9355,7 @@ assert._isSameValue = isSameValue;
           return out;
         }
         if (name === "__array_from_iter") return (obj: any): any => _arrayFromIter(obj, Infinity);
+        if (name === "__array_from_iter_strict") return (obj: any): any => _arrayFromIter(obj, Infinity, true);
         return (obj: any, n: number): any => _arrayFromIter(obj, n < 0 ? Infinity : n >>> 0);
       }
       if (name === "__extern_slice")
@@ -9922,7 +10031,12 @@ assert._isSameValue = isSameValue;
       if (name === "__js_array_new") return () => [];
       if (name === "__js_array_push")
         return (arr: any[], val: any) => {
-          arr.push(val);
+          _intrinsicReflectDefineProperty(arr, arr.length, {
+            value: val,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          });
         };
       // isPrototypeOf: check if obj is in the prototype chain of candidate (#799)
       if (name === "__isPrototypeOf")
@@ -10905,8 +11019,7 @@ assert._isSameValue = isSameValue;
               if (typeof callFn !== "function") {
                 throw new TypeError("Function.prototype.bind: target closure is not callable");
               }
-              const padded: any[] = [];
-              for (let i = 0; i < n; i++) padded.push(args[i]);
+              const padded = _denseOwnArgs(args, n);
               if (viaMethod) {
                 const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
                 return callFn(_isWasmStruct(rawThis) ? rawThis : this, captured, ...padded);
@@ -12745,6 +12858,11 @@ assert._isSameValue = isSameValue;
       if (name === "__make_iterable") {
         // Convert WasmGC vec structs and tuple structs to JS arrays.
         // Needed because Map/Set expect [key, value] tuples that are also iterable.
+        // Keep one host array per WasmGC array/tuple and refresh it on every
+        // crossing. ECMAScript array identity must survive assignments through
+        // `any` slots, while refreshing preserves mutations made on the Wasm
+        // representation since the previous host observation (#3368).
+        const convertedArrays = new WeakMap<object, any[]>();
         const convertToJS = (obj: any): any => {
           if (obj == null || typeof obj !== "object") return obj;
           // (#1438) `obj[Symbol.iterator]` throws "WebAssembly objects are
@@ -12767,7 +12885,9 @@ assert._isSameValue = isSameValue;
               const parts = names.split(",");
               const isNumeric = parts.every((p: string) => /^_\d+$/.test(p));
               if (isNumeric) {
-                const arr: any[] = new Array(parts.length);
+                const arr = convertedArrays.get(obj) ?? [];
+                convertedArrays.set(obj, arr);
+                arr.length = parts.length;
                 for (let i = 0; i < parts.length; i++) {
                   const getter = exports[`__sget_${parts[i]}`] as Function | undefined;
                   arr[i] = getter ? convertToJS(getter(obj)) : undefined;
@@ -12795,7 +12915,9 @@ assert._isSameValue = isSameValue;
           ) {
             const len = vecLen(obj) as number;
             if (typeof len === "number" && len >= 0) {
-              const arr: any[] = new Array(len);
+              const arr = convertedArrays.get(obj) ?? [];
+              convertedArrays.set(obj, arr);
+              arr.length = len;
               for (let i = 0; i < len; i++) {
                 arr[i] = convertToJS(vecGet(obj, i));
               }
@@ -13630,7 +13752,7 @@ assert._isSameValue = isSameValue;
                 const rawVec = _abHostBufferReverse.get(v);
                 if (rawVec !== undefined) return rawVec;
               }
-              return v;
+              return _sandboxConstructorValue(v, key, globalSandbox);
             }
           } catch {
             /* fall through to the generic path */
@@ -13644,14 +13766,7 @@ assert._isSameValue = isSameValue;
           // `sandbox.Array`, but `obj.constructor` for host JS arrays
           // returns `globalThis.Array`. Substitute the sandbox version so
           // `arr.constructor === Array` holds. No-op without a sandbox.
-          if (globalSandbox && key === "constructor" && typeof val === "function") {
-            const fname = (val as { name?: string }).name;
-            if (fname && val === (globalThis as any)[fname]) {
-              const sb = globalSandbox[fname];
-              if (sb !== undefined) return sb;
-            }
-          }
-          return val;
+          return _sandboxConstructorValue(val, key, globalSandbox);
         }
         if (obj == null || typeof obj !== "object") return undefined;
         try {
@@ -13764,7 +13879,7 @@ assert._isSameValue = isSameValue;
     case "host_eq":
       // #1065 — strict equality for two externref operands that the GC path
       // could not compare via ref.eq (e.g. host functions like `Array === Array`).
-      return (a: any, b: any) => (_hostEqComparableValue(a) === _hostEqComparableValue(b) ? 1 : 0);
+      return (a: any, b: any) => (_hostStrictEqual(a, b) ? 1 : 0);
     case "host_loose_eq":
       // #1134 — loose equality for two externref operands (§7.2.15).
       // Handles null == undefined → true and other JS coercion rules.

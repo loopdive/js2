@@ -1036,6 +1036,15 @@ function compileExpressionInner(
         return { kind: "externref" };
       }
     }
+    // (#3365) `__module_init` represents the source file's top-level code.
+    // Script-goal top-level `this` is the global object even when the script
+    // has a "use strict" directive; only Module goal has undefined top-level
+    // `this`. The old generic no-binding fallback emitted undefined for both,
+    // so `var global = this; global.Infinity = 42` threw a null-access payload
+    // instead of the spec TypeError from writing the global's read-only prop.
+    if (fctx.name === "__module_init" && !ctx.sourceIsModule) {
+      return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
+    }
     // (#1636-S1) Host-dispatched-closure fallback: when no local `this`
     // binding exists and we're not in a static-class context, read the
     // host-supplied receiver from the `__current_this` module global —

@@ -19,11 +19,11 @@
  * trap-mode worsening needs an explicit acknowledgment instead of
  * self-legalizing.
  *
- * Override for INTENTIONAL changes (mirrors `TRAP_RATCHET_TOLERANCE` /
- * the `regressions-allow:` spirit): set the repo Actions variable
- * `BASELINE_TRAP_GROWTH_ALLOW` to a per-category tolerance (e.g. `6`) for the
- * one refresh that should bank the new counts, then set it back to `0`.
- * The FORCED (emergency) refresh path bypasses the gate by design.
+ * Intentional oracle rebaselines declare a change-scoped
+ * `trap-growth-allow:` per-category ceiling in their own issue frontmatter.
+ * The landed merge's push consumes it once, while later refreshes see no
+ * granting issue in their change-set. `BASELINE_TRAP_GROWTH_ALLOW` remains the
+ * operational emergency valve. The FORCED refresh path bypasses the gate.
  *
  * Usage:
  *   npx tsx scripts/check-baseline-trap-growth.ts \
@@ -33,13 +33,19 @@
  * 2 usage/IO error.
  */
 import { readFileSync, existsSync } from "fs";
-import { evaluateTrapCategoryGrowth, TRAP_ERROR_CATEGORIES } from "./diff-test262.js";
+import {
+  evaluateTrapCategoryGrowth,
+  readChangeScopedNumericAllowance,
+  TRAP_ERROR_CATEGORIES,
+  TRAP_GROWTH_ALLOW_KEY,
+} from "./diff-test262.js";
 
 interface Row {
   file: string;
   status: string;
   error_category?: string;
   wasm_sha?: string | null;
+  oracle_version?: number;
 }
 
 export function loadJsonlMap(path: string): Map<string, Row> {
@@ -63,7 +69,23 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-function main(): void {
+function oracleVersion(rows: Map<string, Row>): number | undefined {
+  const versions = new Set([...rows.values()].map((row) => row.oracle_version).filter((v) => typeof v === "number"));
+  return versions.size === 1 ? [...versions][0] : undefined;
+}
+
+export function effectiveBaselineTrapTolerance(
+  configured: number,
+  baseOracle: number | undefined,
+  candidateOracle: number | undefined,
+  scopedCeiling: number,
+): number {
+  return typeof baseOracle === "number" && typeof candidateOracle === "number" && candidateOracle > baseOracle
+    ? Math.max(configured, scopedCeiling)
+    : configured;
+}
+
+async function main(): Promise<void> {
   const baselinePath = arg("--baseline");
   const candidatePath = arg("--candidate");
   const allow = Number.parseInt(arg("--allow") ?? process.env.BASELINE_TRAP_GROWTH_ALLOW ?? "0", 10) || 0;
@@ -85,11 +107,32 @@ function main(): void {
 
   const baseline = loadJsonlMap(baselinePath);
   const candidate = loadJsonlMap(candidatePath);
-  const growth = evaluateTrapCategoryGrowth(baseline, candidate, allow);
+  const baseOracle = oracleVersion(baseline);
+  const candidateOracle = oracleVersion(candidate);
+  const forwardOracleBump =
+    typeof baseOracle === "number" && typeof candidateOracle === "number" && candidateOracle > baseOracle;
+  let scopedAllow = 0;
+  if (forwardOracleBump) {
+    const loaded = await readChangeScopedNumericAllowance({
+      key: TRAP_GROWTH_ALLOW_KEY,
+      label: "trap-growth-allow (#3370)",
+      overrideEnv: "TRAP_GROWTH_ALLOW_FILE",
+    });
+    for (const note of loaded.notes) console.log(note);
+    if (loaded.allowance) {
+      scopedAllow = loaded.allowance.count;
+      console.log(
+        `[trap-growth] oracle v${baseOracle} → v${candidateOracle}: using change-scoped per-category ceiling ${scopedAllow} ` +
+          `(${loaded.allowance.reason}; ${loaded.allowance.sources.join(", ")}).`,
+      );
+    }
+  }
+  const effectiveAllow = effectiveBaselineTrapTolerance(allow, baseOracle, candidateOracle, scopedAllow);
+  const growth = evaluateTrapCategoryGrowth(baseline, candidate, effectiveAllow);
 
   const fmt = (counts: Record<string, number>) => TRAP_ERROR_CATEGORIES.map((c) => `${c}=${counts[c]}`).join(" ");
   console.log(`[trap-growth] previous: ${fmt(growth.baseCounts)}`);
-  console.log(`[trap-growth] candidate: ${fmt(growth.newCounts)} (tolerance ${allow})`);
+  console.log(`[trap-growth] candidate: ${fmt(growth.newCounts)} (tolerance ${effectiveAllow})`);
 
   if (growth.failures.length > 0) {
     for (const f of growth.failures) {
@@ -99,8 +142,8 @@ function main(): void {
       "[trap-growth] REFUSING baseline push — an uncatchable-trap category grew vs the previous baseline.\n" +
         "This is a main-side trap-mode regression: baking it in would silently raise the #3189 ratchet\n" +
         "floor (and park innocent PRs on the flap). Fix the regression on main, or — for an INTENTIONAL\n" +
-        "reclassification — set the repo Actions variable BASELINE_TRAP_GROWTH_ALLOW to the expected\n" +
-        "per-category growth for one refresh cycle (then reset it to 0). See plan/issues/3335-*.md.",
+        "reclassification — declare a bounded trap-growth-allow in the oracle-bump issue, or use\n" +
+        "BASELINE_TRAP_GROWTH_ALLOW only as an emergency one-cycle valve. See #3370/#3335.",
     );
     process.exit(1);
   }
@@ -108,4 +151,4 @@ function main(): void {
 }
 
 const isDirectRun = process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split("/").pop()!);
-if (isDirectRun) main();
+if (isDirectRun) await main();

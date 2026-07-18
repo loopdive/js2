@@ -845,6 +845,35 @@ function markObjectHashConsumers(node: ts.Node, varName: string, poisonSet: Set<
     else if (ts.isForInStatement(n) && isVarRef(n.expression)) {
       poisonSet.add(varName);
     }
+    // (#3366 follow-up) A destructuring member target such as
+    // `[obj.value = fallback()] = source` is an open-property write. The
+    // extracted value is not bounded by the default initializer's checker
+    // type, so widening an empty `{}` receiver to a closed struct can select a
+    // colliding anonymous shape and leave the runtime receiver null. Keep this
+    // receiver on the same `$Object`/externref representation used by the
+    // dynamic member setter and subsequent sidecar read.
+    else if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      (ts.isArrayLiteralExpression(n.left) || ts.isObjectLiteralExpression(n.left))
+    ) {
+      const visitTarget = (target: ts.Node): void => {
+        if (ts.isBinaryExpression(target) && target.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+          visitTarget(target.left);
+          return;
+        }
+        if (
+          ts.isPropertyAccessExpression(target) &&
+          ts.isIdentifier(target.expression) &&
+          target.expression.text === varName
+        ) {
+          poisonSet.add(varName);
+          return;
+        }
+        ts.forEachChild(target, visitTarget);
+      };
+      visitTarget(n.left);
+    }
     ts.forEachChild(n, visit);
   };
 

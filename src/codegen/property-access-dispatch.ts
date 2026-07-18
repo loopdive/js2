@@ -1899,6 +1899,49 @@ export function tryPrototypeMethodAndArityReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  // (#3368) A plain array's inherited method VALUE is the corresponding
+  // `%Array.prototype%` function object. Method calls (`arr.toString()`) already
+  // use the native array-method lowering, but a detached value read
+  // (`arr.toString`) previously fell through to the WasmGC struct-field path
+  // and produced `undefined`. Besides being directly observable, that broke
+  // the required identity `arr.toString === Array.prototype.toString`.
+  //
+  // Keep this host-lane slice deliberately narrow to the sampled member. The
+  // receiver is still evaluated for side effects, then discarded; the value is
+  // read from the same sandboxed builtin object that an explicit
+  // `Array.prototype.toString` expression uses, preserving reference identity.
+  const receiverFact = ctx.oracle.typeFactOf(expr.expression);
+  const receiverName = ctx.oracle.declaredNameOf(expr.expression);
+  const receiverIsArray =
+    receiverFact.kind === "array" ||
+    receiverFact.kind === "tuple" ||
+    receiverName === "Array" ||
+    receiverName === "ReadonlyArray";
+  if (!noJsHost(ctx) && propName === "toString" && receiverIsArray) {
+    const getBuiltinIdx = ensureLateImport(ctx, "__get_builtin", [{ kind: "externref" }], [{ kind: "externref" }]);
+    const getIdx = ensureLateImport(
+      ctx,
+      "__extern_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (getBuiltinIdx !== undefined && getIdx !== undefined) {
+      const receiverType = compileExpression(ctx, fctx, expr.expression);
+      if (receiverType !== null) fctx.body.push({ op: "drop" });
+
+      addStringConstantGlobal(ctx, "Array");
+      fctx.body.push(...stringConstantExternrefInstrs(ctx, "Array"));
+      fctx.body.push({ op: "call", funcIdx: getBuiltinIdx });
+      for (const member of ["prototype", "toString"] as const) {
+        addStringConstantGlobal(ctx, member);
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, member));
+        fctx.body.push({ op: "call", funcIdx: getIdx });
+      }
+      return { kind: "externref" };
+    }
+  }
+
   // (#1394) `ClassName.prototype.<method>` — emit a cached singleton
   // closure-struct externref. The previous PR #294 emitted a fresh
   // closure on every access, breaking the `c.m === C.prototype.m`
@@ -3649,6 +3692,63 @@ export function finalizeStructAndDynamicMemberGet(
   // Does NOT apply to class instances (ctx.classSet) to avoid disrupting typed field access (#856).
   {
     const structObjType = resolveWasmType(ctx, objType);
+    const structObjTypeIdx =
+      structObjType.kind === "ref" || structObjType.kind === "ref_null" ? structObjType.typeIdx : undefined;
+
+    // A widened Object.defineProperty data property can have an exact Wasm
+    // struct type even when TypeScript cannot recover its synthetic type name
+    // (notably a module-global `var obj = {}`). The field already contains the
+    // descriptor's value; sending this read to __extern_get only sees the
+    // descriptor sidecar, whose value bit is deliberately absent for struct
+    // fields, and therefore produces undefined/NaN. Prefer the exact compiled
+    // field before the last-resort host-MOP path. Runtime-sidecar properties
+    // and accessors were handled above, so this is the ordinary static field
+    // lane that a successfully resolved typeName would have taken.
+    const exactStructField =
+      structObjTypeIdx === undefined
+        ? undefined
+        : findAlternateStructsForField(ctx, propName, -1).find(
+            (candidate) => candidate.structTypeIdx === structObjTypeIdx,
+          );
+    if (!typeName && exactStructField) {
+      const structExprType = compileExpression(ctx, fctx, expr.expression);
+      if (structExprType?.kind === "ref_null") {
+        emitNullGuardedStructGet(
+          ctx,
+          fctx,
+          structExprType,
+          exactStructField.fieldType,
+          exactStructField.structTypeIdx,
+          exactStructField.fieldIdx,
+          propName,
+          true,
+        );
+        if (exactStructField.fieldType.kind === "ref") {
+          return { kind: "ref_null", typeIdx: exactStructField.fieldType.typeIdx };
+        }
+      } else if (structExprType?.kind === "externref") {
+        emitExternrefToStructGet(
+          ctx,
+          fctx,
+          exactStructField.fieldType,
+          exactStructField.structTypeIdx,
+          exactStructField.fieldIdx,
+          propName,
+          true,
+        );
+        if (exactStructField.fieldType.kind === "ref") {
+          return { kind: "ref_null", typeIdx: exactStructField.fieldType.typeIdx };
+        }
+      } else if (structExprType) {
+        fctx.body.push({
+          op: "struct.get",
+          typeIdx: exactStructField.structTypeIdx,
+          fieldIdx: exactStructField.fieldIdx,
+        });
+      }
+      return exactStructField.fieldType;
+    }
+
     // (#2838 L4) Route a field-absent read on a typed function-constructor
     // (`__fnctor_*`) or inferred anon-object (`__anon*`) struct receiver through
     // this host-MOP / sidecar path as well — so a prototype accessor installed at

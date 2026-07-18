@@ -31,7 +31,7 @@
  * version or a date. Two runs with the same ORACLE_VERSION are guaranteed to
  * apply identical verdict logic, so their rows are directly comparable.
  */
-export const ORACLE_VERSION = 7;
+export const ORACLE_VERSION = 8;
 
 /**
  * Append-only log of what each oracle version means. Newest last.
@@ -175,5 +175,20 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
       "has been in the wrapper since v5, so these ARE same-wasm oracle-skew " +
       "flips — the forward-monotonic bump auto-rebases in diff-test262.ts, " +
       "and promote-baseline re-seeds the committed baseline at v7 on merge.",
+  },
+  {
+    version: 8,
+    note:
+      "#3370 original-harness oracle. The canonical project runner previously " +
+      "compiled wrapTest()'s rewritten surrogate: undefined failure guards " +
+      "could be deleted, script globals became function locals, and synthetic " +
+      "assert/Test262Error shims replaced upstream constructor identity. " +
+      "Verdict-bearing local and sharded execution now compiles the literal " +
+      "test262.fyi assembly (runtime shim + metadata includes + assert.js + " +
+      "sta.js + untouched body) and performs the required strict rerun. Passes " +
+      "that depended on wrapper rewrites are intentionally reclassified. " +
+      "Negative failures must also occur in their declared phase and match the " +
+      "expected type; wrong-phase compiler/runtime failures no longer pass. This " +
+      "version requires an ORACLE_REBASE baseline refresh when landed.",
   },
 ];

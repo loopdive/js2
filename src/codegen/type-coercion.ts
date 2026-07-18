@@ -251,6 +251,7 @@ export function buildVecFromExternref(
   externLocal: number,
   vecTypeIdx: number,
   vecInfo: { arrTypeIdx: number; elemType: ValType },
+  strictIterator = false,
 ): Instr[] {
   // #1472 Phase B Blocker B Slice 2 — standalone enumeration consumer.
   //
@@ -299,14 +300,21 @@ export function buildVecFromExternref(
     // boxed number. (#1472 Phase B Blocker B Slice 2)
     ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
   } else {
-    ensureLateImport(ctx, "__array_from_iter", [{ kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(
+      ctx,
+      strictIterator ? "__array_from_iter_strict" : "__array_from_iter",
+      [{ kind: "externref" }],
+      [{ kind: "externref" }],
+    );
   }
   flushLateImportShifts(ctx, fctx);
   const lenIdx = ctx.funcMap.get("__extern_length");
   const getIdx = ctx.funcMap.get("__extern_get");
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   const boxIdx = ctx.funcMap.get("__box_number");
-  const iterIdx = useNativeObjVec ? undefined : ctx.funcMap.get("__array_from_iter");
+  const iterIdx = useNativeObjVec
+    ? undefined
+    : ctx.funcMap.get(strictIterator ? "__array_from_iter_strict" : "__array_from_iter");
   const getIdxIdx = useNativeObjVec ? ctx.funcMap.get("__extern_get_idx") : undefined;
 
   if (lenIdx === undefined || getIdx === undefined) {
