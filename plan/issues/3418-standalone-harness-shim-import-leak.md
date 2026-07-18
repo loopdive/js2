@@ -248,7 +248,8 @@ a consequence, not a rewrite of test semantics.
       modified)
 - [x] Early-error guard: `var eval`/`var arguments`/future-reserved binding
       names are never elided (strict-mode SyntaxError negative tests survive)
-- [ ] PR open, CI green
+- [x] PR open: loopdive/js2 **#3362** (branch `issue-3418-standalone-shim-import-leak`)
+- [ ] CI green
 - [ ] merge-queue landed *(auto-enqueue picks it up)*
 
 ### Merge-gate interplay (measured 2026-07-18, fable-dev-6)
