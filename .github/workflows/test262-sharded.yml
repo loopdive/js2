@@ -655,6 +655,20 @@ jobs:
             --baseline-generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}
 
+      # #3411 — CACHE-SUSPECT guard (runs BEFORE the floor / catastrophic
+      # guards). Stale-base merge_group runs have collapsed the standalone lane
+      # to a byte-identical ~4,508 pass / ~43,469 host-import compile_error —
+      # infrastructure poisoning, NOT a regression. Detecting the >90%
+      # host-import cluster here and failing as CACHE-SUSPECT (exit 3) gives the
+      # shepherd a re-run signal instead of the misleading −38k standalone
+      # "regression" the floor/#1668 guards would otherwise report (which
+      # auto-park then holds as a real regression, parking an innocent PR).
+      - name: Standalone cache-poison guard (#3411)
+        if: env.SHARDS_RAN == 'true'
+        run: |
+          node scripts/check-standalone-cache-poison.mjs \
+            --jsonl merged-reports/test262-standalone-results-merged.jsonl
+
       # #2097 — ABSOLUTE standalone pass-count floor (high-water-mark backstop).
       # The #1897 standalone gate is a MOVING floor (re-seeded from the new
       # baseline every push to main), so a run of small net-negative PRs each
