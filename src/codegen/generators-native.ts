@@ -2301,9 +2301,41 @@ export function registerNativeGenerator(
     stateFields.push({ name: "pending", type: { kind: "i32" }, mutable: true });
   }
 
+  // (#3032 W6) NOMINAL BRAND for the state struct. Two generators with the
+  // same shape (e.g. `function* g1() { yield; }` and `function* g2() {
+  // yield 1; }`) mint structurally IDENTICAL state structs, which WasmGC
+  // iso-recursive canonicalization merges — `ref.test $__GenState_g1` then
+  // MATCHES a g2 instance, and every state-type dispatch chain
+  // (buildNativeGeneratorDispatch, the iterator-carrier GENSTATE step) resumes
+  // the FIRST-registered generator's resume fn on the other's state
+  // (`iter = g2(); iter.next().value` returned g1's `undefined` —
+  // generators/yield-as-statement.js, BOTH lanes). Defeat canonicalization
+  // structurally: each state struct declares a DISTINCT empty supertype from a
+  // per-module brand CHAIN (`__GenBrand_0` open no-parent, `__GenBrand_n` sub
+  // of `__GenBrand_{n-1}` — each distinct by ancestry depth). Type-level only:
+  // no field/layout/operand changes, and every `ref.test`/`ref.cast` site
+  // becomes nominally precise for free.
+  const brandName = `__GenBrand_${ctx.nativeGenerators.size}`;
+  const brandTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: brandName,
+    fields: [],
+    superTypeIdx: ctx.genStateBrandTipIdx ?? -1, // -1 = open, no parent (the __vec_base convention)
+  });
+  ctx.structMap.set(brandName, brandTypeIdx);
+  ctx.typeIdxToStructName.set(brandTypeIdx, brandName);
+  ctx.genStateBrandTipIdx = brandTypeIdx;
+
   const stateName = `__GenState_${sanitizeTypeName(functionName)}`;
   const stateTypeIdx = ctx.mod.types.length;
-  ctx.mod.types.push({ kind: "struct", name: stateName, fields: stateFields });
+  ctx.mod.types.push({
+    kind: "struct",
+    name: stateName,
+    fields: stateFields,
+    superTypeIdx: brandTypeIdx,
+    final: true,
+  });
   ctx.structMap.set(stateName, stateTypeIdx);
   ctx.typeIdxToStructName.set(stateTypeIdx, stateName);
   ctx.structFields.set(stateName, stateFields);

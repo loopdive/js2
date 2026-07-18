@@ -35,7 +35,11 @@ import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { emitSymbolDescLoad } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { rollbackSpeculative, snapshotSpeculative } from "./context/speculative.js";
-import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
+import {
+  tryCompileNativeGeneratorResultProperty,
+  isNativeGeneratorResultStruct,
+  sentinelAwareF64BoxInstrs,
+} from "./generators-native.js";
 import {
   classAccessorCandidatesForProp,
   classMethodCandidatesForProp,
@@ -3501,6 +3505,35 @@ export function finalizeStructAndDynamicMemberGet(
                 ]
               : externGetFallback;
 
+          // (#3032 W6) The native-generator IteratorResult `value` arm must box
+          // SENTINEL-AWARE (the UNDEF_F64 bit pattern is the absent/done marker
+          // — #2979): a plain `__box_number` leaks it as NaN, failing
+          // `result.value === undefined` on every done-result read through this
+          // INLINE fast chain (the deferred `__get_member_*` dispatcher already
+          // carries the exception; this pre-dispatcher chain did not). Under a
+          // JS host the sentinel canonicalizes to the REAL `undefined`
+          // (`__get_undefined` — null-extern reads back as JS null); standalone
+          // keeps null-extern (ensureGetUndefined is nativeStrings-gated).
+          const hasSentinelValueArm = structCandidates.some(
+            (c) => c.fieldType.kind === "f64" && isNativeGeneratorResultStruct(ctx, c.structTypeIdx),
+          );
+          let sentinelBoxDeps: { f64Scratch: number; boxNumIdx: number; undefInstrs: Instr[] } | undefined;
+          if (hasSentinelValueArm && resultWasm.kind === "externref") {
+            const boxNumIdx = ctx.funcMap.get("__box_number");
+            if (boxNumIdx !== undefined) {
+              const getUndefIdx = ctx.nativeStrings
+                ? undefined
+                : ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+              flushLateImportShifts(ctx, fctx);
+              sentinelBoxDeps = {
+                f64Scratch: allocLocal(fctx, `__sd_sent_f64_${fctx.locals.length}`, { kind: "f64" }),
+                boxNumIdx,
+                undefInstrs:
+                  getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : [{ op: "ref.null.extern" }],
+              };
+            }
+          }
+
           // Build nested if/else chain for struct candidates
           const buildStructDispatch = (idx: number): Instr[] => {
             if (idx >= structCandidates.length) {
@@ -3512,7 +3545,16 @@ export function finalizeStructAndDynamicMemberGet(
               { op: "ref.cast", typeIdx: cand.structTypeIdx },
               { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
             ];
-            const coerce = coercionInstrs(ctx, cand.fieldType, resultWasm, fctx);
+            const coerce =
+              sentinelBoxDeps !== undefined &&
+              cand.fieldType.kind === "f64" &&
+              isNativeGeneratorResultStruct(ctx, cand.structTypeIdx)
+                ? sentinelAwareF64BoxInstrs(
+                    sentinelBoxDeps.f64Scratch,
+                    sentinelBoxDeps.boxNumIdx,
+                    sentinelBoxDeps.undefInstrs,
+                  )
+                : coercionInstrs(ctx, cand.fieldType, resultWasm, fctx);
             getFieldInstrs.push(...coerce);
             getFieldInstrs.push({ op: "local.set", index: resultLocal });
 

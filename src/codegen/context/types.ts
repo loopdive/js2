@@ -1975,6 +1975,16 @@ export interface CodegenContext {
    */
   undefinedGlobalIdx?: number;
   /**
+   * (#3032 W6) Type index of the TIP of the per-module `__GenBrand_n` chain —
+   * the empty supertype structs that make each native generator's state
+   * struct NOMINALLY distinct (same-shape state structs otherwise merge under
+   * WasmGC iso-recursive canonicalization, cross-matching every
+   * `ref.test $__GenState_*` dispatch arm). Each `registerNativeGenerator`
+   * mints the next brand as a subtype of this tip and advances it.
+   * `undefined` until the first native generator registers.
+   */
+  genStateBrandTipIdx?: number;
+  /**
    * (#3032 / #2141-S2) Global index of the `mut i32` `__gen_eager_mode` flag
    * for LAZY generator-expression creation. 0 (default) = a zero-param
    * `function*(){}` expression returns a lazy thunk generator

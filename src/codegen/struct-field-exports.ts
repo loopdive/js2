@@ -14,6 +14,7 @@ import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
+import { UNDEF_F64_BITS } from "./value-tags.js";
 
 /**
  * Emit exported getter/setter helper functions so the JS runtime can read
@@ -110,6 +111,27 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
   // as a JS boolean so `typeof o.x === "boolean"` and `o.x === true` hold on a
   // dynamic read, instead of the value boxing as the number 1.
   const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+  // (#3032 W6 / #2979) The native-generator IteratorResult `value` field uses
+  // the UNDEF_F64 signaling-NaN sentinel as its absent/done marker — the
+  // `__sget_value` getter (the host `_safeGet` / `__gen_result_value` shim
+  // fallback for raw structs) must canonicalize it to `undefined` instead of
+  // boxing it as NaN. Host lane: the REAL `undefined` via `__get_undefined`
+  // when some read site already registered it (funcMap-read-only — getters are
+  // emitted at finalize and must not add imports); otherwise/standalone: the
+  // null externref (the standalone canonical undefined).
+  const sentinelValueTypeIdxs = new Set<number>();
+  for (const [structName, fields] of ctx.structFields) {
+    if (!structName.startsWith("__NativeGeneratorResult_")) continue;
+    const typeIdx = ctx.structMap.get(structName);
+    if (typeIdx === undefined) continue;
+    const valueField = fields[0];
+    if (valueField && valueField.name === "value" && valueField.type?.kind === "f64") {
+      sentinelValueTypeIdxs.add(typeIdx);
+    }
+  }
+  const getUndefIdx = ctx.nativeStrings ? undefined : ctx.funcMap.get("__get_undefined");
+  const sentinelUndefInstrs: Instr[] =
+    getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : [{ op: "ref.null.extern" }];
 
   // Two getter types: one for externref result, one for f64 result
   const getterExternTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }], "$sget_extern_type");
@@ -147,12 +169,30 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
     const funcIdx = ctx.numImportFuncs + mod.functions.length;
     const anyLocal = 1; // first local after params (local 0 = externref param)
 
-    const funcBody = buildNestedIfElse(entries, anyLocal, boxNumIdx, returnMode, boxBoolIdx);
+    // (#3032 W6) Sentinel-aware arms only apply to the `value` getter in
+    // extern mode; they need an f64 scratch local (index 2).
+    const sentinelArms =
+      fieldName === "value" && returnMode === "extern" && boxNumIdx !== undefined
+        ? { typeIdxs: sentinelValueTypeIdxs, undefInstrs: sentinelUndefInstrs, f64ScratchIdx: 2 }
+        : undefined;
+    const useSentinel = sentinelArms !== undefined && entries.some((e) => sentinelArms.typeIdxs.has(e.typeIdx));
+
+    const funcBody = buildNestedIfElse(
+      entries,
+      anyLocal,
+      boxNumIdx,
+      returnMode,
+      boxBoolIdx,
+      useSentinel ? sentinelArms : undefined,
+    );
+
+    const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
+    if (useSentinel) locals.push({ name: "__sent_f64", type: { kind: "f64" } });
 
     mod.functions.push({
       name: funcName,
       typeIdx: getterTypeIdx,
-      locals: [{ name: "__any", type: { kind: "anyref" } }],
+      locals,
       body: funcBody,
       exported: true,
     } as WasmFunction);
@@ -842,6 +882,13 @@ function emitStructFieldNamesExport(
   });
 }
 
+/** (#3032 W6) Sentinel-canonicalizing arm config for the `value` getter. */
+interface SentinelArmConfig {
+  typeIdxs: Set<number>;
+  undefInstrs: Instr[];
+  f64ScratchIdx: number;
+}
+
 /** Build nested if/else for struct field getter dispatch. */
 function buildNestedIfElse(
   entries: { typeIdx: number; fieldIdx: number; fieldType: ValType }[],
@@ -849,6 +896,7 @@ function buildNestedIfElse(
   boxNumIdx: number | undefined,
   returnMode: "extern" | "f64" | "i32" = "extern",
   boxBoolIdx?: number,
+  sentinelArms?: SentinelArmConfig,
 ): Instr[] {
   const body: Instr[] = [];
 
@@ -876,7 +924,7 @@ function buildNestedIfElse(
 
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    const thenBranch = buildGetterExtract(entry, anyLocal, boxNumIdx, returnMode, boxBoolIdx);
+    const thenBranch = buildGetterExtract(entry, anyLocal, boxNumIdx, returnMode, boxBoolIdx, sentinelArms);
 
     const ifInstr: Instr = {
       op: "if",
@@ -899,6 +947,7 @@ function buildGetterExtract(
   boxNumIdx: number | undefined,
   returnMode: "extern" | "f64" | "i32" = "extern",
   boxBoolIdx?: number,
+  sentinelArms?: SentinelArmConfig,
 ): Instr[] {
   const then: Instr[] = [];
 
@@ -908,6 +957,33 @@ function buildGetterExtract(
   then.push({ op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx });
 
   const ft = entry.fieldType;
+
+  // (#3032 W6 / #2979) Native-generator result `value` arm: canonicalize the
+  // UNDEF_F64 sentinel to `undefined` instead of boxing it as NaN.
+  if (
+    returnMode === "extern" &&
+    ft.kind === "f64" &&
+    boxNumIdx !== undefined &&
+    sentinelArms !== undefined &&
+    sentinelArms.typeIdxs.has(entry.typeIdx)
+  ) {
+    then.push(
+      { op: "local.tee", index: sentinelArms.f64ScratchIdx },
+      { op: "i64.reinterpret_f64" },
+      { op: "i64.const", value: UNDEF_F64_BITS },
+      { op: "i64.eq" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [...sentinelArms.undefInstrs],
+        else: [
+          { op: "local.get", index: sentinelArms.f64ScratchIdx },
+          { op: "call", funcIdx: boxNumIdx },
+        ],
+      },
+    );
+    return then;
+  }
 
   if (returnMode === "f64") {
     // Return f64 directly
