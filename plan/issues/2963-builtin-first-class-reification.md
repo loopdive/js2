@@ -389,3 +389,72 @@ i32` closure. The direct standalone `Object.is` only backs compile-time
 - Remaining Phase 2 tiers: 2c (table-driven `Math.*`), 2d
   (`Number.parseFloat/parseInt`), 2e (`Date.now`), 2f (`Array.of`), 2g
   (`Array.from` subset). `Promise.*` stays throwing (out of scope).
+
+### Resumer guide — Tiers 2c–2g (start here after 2a #3359 + 2b #3361 land)
+
+**Sequencing.** 2a (#3359) and 2b (#3361) were stacked and PAUSED. Do the
+remaining tiers **off clean `main`** once BOTH have landed — do NOT stack
+further (the stack was capped at 2a+2b for queue hygiene). Each tier is an
+independent S–M PR off `origin/main`. Do them in order, one PR each (or
+regroup per the "Sizing / routing" note above), re-merging `origin/main`
+between them since they touch the same hot files.
+
+**Shared-file conflict surface (why tiers can't run in parallel off main).**
+Every tier edits the SAME three spots, so two open tier-PRs conflict:
+
+1. `src/codegen/builtin-value-read.ts` — add a `case "<Builtin>.<method>":`
+   (type setup + `addUnionImports` / `ensure*` pre-registration) **before
+   `default:`**, and an `else if (key === "<Builtin>.<method>" &&
+!genericThrowBody)` **body block before the `genericThrowBody` arm**. The
+   `&& !genericThrowBody` guard is REQUIRED (else the degrade path double-fires).
+2. `src/codegen/builtin-fn-meta.ts` — add a `STANDALONE_STATIC_METHOD_META`
+   row (byte-equal to the `BUILTIN_STATIC_METHOD_ARITY` fallback; keep in sync
+   per the file header).
+3. `src/codegen/expressions/call-builtin-static.ts` — if the tier factors a
+   shared ops leaf (like `number-is-predicate-ops.ts` / `same-value-number-ops.ts`),
+   refactor the DIRECT call arm to consume it too (byte-inert — same Instr seq).
+
+**The invariant pattern (copy Tier 2a/2b):** params ALL-externref (or the one
+`$vec_externref` variadic param for Tier 2f — see the Math.max arm), coercion
+INSIDE the body, reuse the EXACT native the direct standalone call uses, and on
+any missing native degrade to `genericThrowBody` — NEVER `return null` (null
+re-opens the #1907 CE). Pre-register imports BEFORE `mintDefinedFunc` (#2704).
+Reused coercion primitives (`__unbox_number` etc.) ride this issue's
+`coercion-sites-allow:` frontmatter (file-level for `builtin-value-read.ts`);
+keep that key so the `quality` coercion-sites gate stays green.
+
+**Per-tier native to reuse (verify host-free standalone first):**
+
+- 2c `Math.<unary/binary>`: args → `__any_to_f64` (ToNumber; non-number→NaN,
+  §21.3) → the self-hosted `src/stdlib/math.ts` native the direct-call dispatch
+  table uses → `__box_number`. One table-driven arm keyed on the Math dispatch
+  table, not N cases.
+- 2d `Number.parseFloat/parseInt`: the global `parseFloat`/`parseInt` funcMap
+  entries (parseInt keeps the NaN radix sentinel) — but CONFIRM they're defined
+  funcs standalone, not host imports (the direct arm at call-builtin-static.ts
+  `~L411` reads `ctx.funcMap.get("parseFloat"|"parseInt")`).
+- 2e `Date.now`: 0-arg; VERIFY the standalone time source — if host-only, leave
+  the throw body and record why.
+- 2f `Array.of`: variadic `$vec_externref` convention (Math.max precedent,
+  `ctx.variadicBuiltinClosure`); elements already externref, no per-elem coerce.
+- 2g `Array.from`: ONLY the array-like/vec fast shape the direct call supports
+  standalone; other inputs keep the throw (document per-shape).
+
+**Validation harness (every tier):**
+
+- Standalone probe: `WebAssembly.instantiate(binary, {})` (no imports). Return
+  type `: number` — NOT `: i32` (a bare `i32` export hands JS a BOXED ref, not a
+  number, which looks like a bug). Avoid array methods (`filter`/`map`) in probes
+  — they pull an `env` import the empty-imports harness lacks; use scalar loops.
+- Byte-inertness (host/gc lanes MUST NOT change): from CLEAN `main` run
+  `npx tsx scripts/prove-emit-identity.mjs write --baseline /tmp/golden.json`,
+  then on the branch `npx tsx scripts/prove-emit-identity.mjs check --baseline
+/tmp/golden.json` → must print `IDENTICAL — all 56 (file,target) emits match`.
+- `.name`/`.length` reflective reads: do NOT assert `.name` in a MULTI-value
+  module (two same-signature statics co-extracted mis-dispatch — that's the
+  PRE-EXISTING #3424 bug, reproduced on main). Assert `.name` per single-value
+  module only; `.length` returns 0 for every reified static today (also #3424).
+- Test file per tier: `tests/issue-2963-<method>-value.test.ts`, mirroring
+  `issue-2963-number-is-value.test.ts` / `issue-2963-object-is-value.test.ts`
+  (a `runStandalone` helper + per-case + observational-identity-vs-direct rows).
+- Full `merge_group` (broad-impact: touches the reflective/value substrate).
