@@ -1130,8 +1130,22 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // js-string builtin (no genuine user function shadows the name), fall
     // through and register the global; a real user function of the same name
     // keeps the original skip behaviour.
+    // (#3421) Generalize the #2669 discrimination: only a genuine USER function
+    // (a DEFINED func, index >= numImportFuncs) shadows the var. A funcMap
+    // entry that resolves to an IMPORT is a host/builtin binding — the ambient
+    // DOM `declare function print(): void` from the lib scan registers an
+    // `env.print` host import, and the test262 runtime shim's top-level
+    // `var print = function (v) { console.log(v); }` was then silently denied
+    // its module-global storage. With no storage, every cross-function call of
+    // `print` (the async harness protocol: `$DONE` → `__consolePrintHandle__`
+    // → `print`) compiled to a dropped no-op, so the oracle-v8 runner never
+    // observed `Test262:AsyncTestComplete` — every `flags: [async]` test
+    // failed (~4.6k). Per JS semantics the script-level `var` binding wins
+    // over the ambient global for subsequent reads, so register the global.
     const fnIdx = ctx.funcMap.get(name);
-    if (fnIdx !== undefined && fnIdx !== ctx.jsStringImports.get(name)) return; // shadowed by a user function
+    const shadowedByUserFunction =
+      fnIdx !== undefined && fnIdx >= ctx.numImportFuncs && fnIdx !== ctx.jsStringImports.get(name);
+    if (shadowedByUserFunction) return;
     if (ctx.moduleGlobals.has(name)) return; // skip if already registered
     if (ctx.classSet.has(name)) return; // skip class expression variables
 

@@ -7224,26 +7224,29 @@ function resolveImport(
     case "console_log": {
       // variant format: "bool" (legacy) or "{method}_{type}" e.g. "warn_number"
       const variant = intent.variant;
-      // Determine console method and type variant
-      let consoleFn: (...args: any[]) => void = console.log;
-      let isBool = variant === "bool";
-      if (variant.startsWith("warn_")) {
-        consoleFn = console.warn;
-        isBool = variant === "warn_bool";
-      } else if (variant.startsWith("error_")) {
-        consoleFn = console.error;
-        isBool = variant === "error_bool";
-      } else if (variant.startsWith("info_")) {
-        consoleFn = console.info;
-        isBool = variant === "info_bool";
-      } else if (variant.startsWith("debug_")) {
-        consoleFn = console.debug;
-        isBool = variant === "debug_bool";
-      } else if (variant.startsWith("log_")) {
-        isBool = variant === "log_bool";
-      } else if (variant === "bool") {
-        isBool = true;
-      }
+      // (#3421) Honor a caller-provided console (`deps.console`) — the test262
+      // runners pass a capturing consoleProxy so the async harness protocol
+      // (`$DONE` → `print` → `console.log("Test262:AsyncTestComplete")`) can be
+      // observed. This case previously bound the GLOBAL console directly, so
+      // the marker leaked to real stdout and the oracle-v8 runner never saw it:
+      // every `flags: [async]` test failed with "async completion marker not
+      // observed" (~4.6k tests). Methods missing on a partial proxy (the
+      // runner's has log/error/warn only) fall back per-method to the global.
+      const depsConsole = deps?.console as Partial<Console> | undefined;
+      const method = variant.startsWith("warn_")
+        ? "warn"
+        : variant.startsWith("error_")
+          ? "error"
+          : variant.startsWith("info_")
+            ? "info"
+            : variant.startsWith("debug_")
+              ? "debug"
+              : "log";
+      const isBool = variant === "bool" || variant === `${method}_bool`;
+      const consoleFn: (...args: any[]) => void = (...args: any[]) => {
+        const target = (depsConsole?.[method] ?? console[method]) as (...a: any[]) => void;
+        target.call(depsConsole ?? console, ...args);
+      };
       return isBool ? (v: number) => consoleFn(Boolean(v)) : (v: any) => consoleFn(v);
     }
     case "string_method": {
