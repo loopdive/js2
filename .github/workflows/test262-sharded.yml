@@ -43,9 +43,9 @@ on:
         default: true
         type: boolean
       compiler_pool_size:
-        description: "Compiler workers per shard runner (default 3 — public-repo ubuntu-latest has 4 vCPUs: 1 for the vitest main process + 3 forks)"
+        description: "Compiler workers per shard runner (default 4 — kept aligned with refresh-baseline.yml so merge groups reproduce the published baseline)"
         required: false
-        default: "3"
+        default: "4"
         type: string
       force_baseline_refresh:
         description: "Force promote merged report to baseline regardless of regressions. Requires confirm_force=YES."
@@ -439,13 +439,14 @@ jobs:
             result_prefix: test262-standalone
 
     env:
-      # 3 compiler forks + the vitest main process ≈ 4 busy procs on the
-      # 4-vCPU public-repo runner. The old default of 2 left ~1.5 cores idle
-      # during the compile-bound bulk of each shard (~96s → ~70s expected).
-      # compile_timeout contention flakes are absorbed by the #1589 serial
-      # retry (10/shard) and excluded from regression counts by diff-test262.
-      # Dispatch input allows dropping back to 2 if flake rates spike.
-      COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '3' }}
+      # BASELINE-COMPATIBILITY CONTRACT (#3425): merge_group has no dispatch
+      # input, so this fallback must match refresh-baseline.yml's default and
+      # fallback. Pool contention affects compile_timeout classification; a
+      # candidate measured with 3 workers is not comparable to the currently
+      # published pool-4 baseline. If an audited baseline intentionally moves
+      # to 3 later, change BOTH workflows together after validating the new
+      # baseline rather than changing this gate in isolation.
+      COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '4' }}
       # (#2947) The #2138 IR-first measurement lane: '1' ONLY on a
       # workflow_dispatch that opted in via the ir_first input; the empty
       # string on every other event/run is falsy for the compiler's truthyEnv

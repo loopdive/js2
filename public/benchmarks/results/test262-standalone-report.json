@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-07-18T07:55:58.334Z",
-  "baseline_generated_at": "2026-07-18T07:55:58.334Z",
-  "baseline_sha": "852c40a9f5167a2a959d53faa066cb0753b623cc",
+  "timestamp": "2026-07-18T14:04:27.133Z",
+  "baseline_generated_at": "2026-07-18T14:04:27.133Z",
+  "baseline_sha": "03ca4729ad4f35ab829d3d8cccb2bc722378e7ae",
   "oracle_version": 8,
   "mode": {
     "target": "standalone",
@@ -672,8 +672,8 @@
       "path": "built-ins/RegExp",
       "pass": 192,
       "fail": 0,
-      "compile_error": 1687,
-      "compile_timeout": 0,
+      "compile_error": 1686,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1879,
       "host_free_pass": 192
@@ -738,8 +738,8 @@
       "path": "built-ins/String",
       "pass": 0,
       "fail": 0,
-      "compile_error": 1222,
-      "compile_timeout": 1,
+      "compile_error": 1223,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 1223,
       "host_free_pass": 0
@@ -1254,8 +1254,8 @@
         },
         "sample_files": [
           "test/built-ins/Number/string-numeric-separator-literal-dot-dds-nsl-dd-ep.js",
-          "test/built-ins/parseFloat/tonumber-numeric-separator-literal-dd-dot-dd-ep-sign-minus-dd-nsl-dd.js",
           "test/built-ins/parseFloat/tonumber-numeric-separator-literal-nzd-nsl-dd-one-of.js",
+          "test/built-ins/parseFloat/tonumber-numeric-separator-literal-dd-dot-dd-ep-sign-minus-dd-nsl-dd.js",
           "test/built-ins/Number/string-numeric-separator-literal-oil-ods-nsl-ods.js",
           "test/language/literals/numeric/numeric-separators/numeric-separator-literal-dds-nsl-dd.js"
         ],
@@ -1317,8 +1317,8 @@
         "sample_files": [
           "test/built-ins/Temporal/Now/zonedDateTimeISO/return-value.js",
           "test/built-ins/Temporal/Duration/prototype/round/relativeto-propertybag-timezone-string-year-zero.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/eraYear/prop-desc.js",
           "test/built-ins/Temporal/Instant/prototype/toString/timezone-wrong-type.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/eraYear/prop-desc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/month/prop-desc.js"
         ],
         "sample_signatures": [
@@ -1498,15 +1498,15 @@
         "statuses": {
           "pass": 0,
           "fail": 0,
-          "compile_error": 295,
-          "compile_timeout": 1,
+          "compile_error": 296,
+          "compile_timeout": 0,
           "skip": 0,
           "total": 296,
           "host_free_pass": 0
         },
         "error_categories": {
           "other": 19,
-          "host_import_leak": 276
+          "host_import_leak": 277
         },
         "sample_files": [
           "test/built-ins/String/prototype/matchAll/regexp-matchAll-throws.js",
@@ -1565,14 +1565,14 @@
         "statuses": {
           "pass": 0,
           "fail": 0,
-          "compile_error": 936,
-          "compile_timeout": 0,
+          "compile_error": 935,
+          "compile_timeout": 1,
           "skip": 0,
           "total": 936,
           "host_free_pass": 0
         },
         "error_categories": {
-          "host_import_leak": 919,
+          "host_import_leak": 918,
           "other": 17
         },
         "sample_files": [
@@ -1586,8 +1586,8 @@
           "host_import_leak:standalone target emitted host imports: env::__new_RegExp, env::console_log_externref, env::structuredClone (##)",
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
           "other:L#:## Codegen error: Reflect.get with an explicit receiver argument is not yet supported in --target standalone (##); the receiver would be silently dropped and accessor getters would bind `this` to the target instead of the receiver.; L#:#",
-          "host_import_leak:standalone target emitted host imports: env::RegExp_test, env::console_log_externref, env::structuredClone (##)",
-          "other:L#:## Codegen error: Math.NaN built-in static property value read is not supported in --target standalone (## / ## S6-b). Add a native built-in method closure for this pair."
+          "compile_timeout:timeout (10s)",
+          "host_import_leak:standalone target emitted host imports: env::RegExp_test, env::console_log_externref, env::structuredClone (##)"
         ]
       },
       {
@@ -1613,8 +1613,8 @@
           "test/built-ins/Function/prototype/S15.3.3.1_A1.js",
           "test/built-ins/Proxy/getOwnPropertyDescriptor/null-handler.js",
           "test/built-ins/Proxy/ownKeys/trap-is-undefined.js",
-          "test/built-ins/Proxy/has/call-in-prototype-index.js",
-          "test/built-ins/Proxy/deleteProperty/trap-is-not-callable.js"
+          "test/built-ins/Proxy/deleteProperty/trap-is-not-callable.js",
+          "test/built-ins/Proxy/has/call-in-prototype-index.js"
         ],
         "sample_signatures": [
           "other:L#:## Codegen error: '__get_builtin' (dynamic-shape object/property operation) is not yet supported in --target standalone (## Phase B). Use a typed object literal or class instance for fast-path codegen, which compiles to struct.get/struct",
@@ -1753,8 +1753,8 @@
           "test/language/expressions/logical-assignment/left-hand-side-private-reference-data-property-short-circuit-or.js",
           "test/language/expressions/class/accessor-name-inst/literal-string-hex-escape.js",
           "test/language/expressions/class/async-gen-method/forbidden-ext/b2/cls-expr-async-gen-meth-forbidden-ext-indirect-access-prop-caller.js",
-          "test/language/expressions/class/elements/new-sc-line-gen-static-private-methods.js",
-          "test/language/expressions/class/elements/after-same-line-method-rs-privatename-identifier-initializer-alt.js"
+          "test/language/expressions/class/elements/after-same-line-method-rs-privatename-identifier-initializer-alt.js",
+          "test/language/expressions/class/elements/new-sc-line-gen-static-private-methods.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
@@ -1815,10 +1815,10 @@
         },
         "sample_files": [
           "test/built-ins/TypedArray/out-of-bounds-has.js",
-          "test/built-ins/TypedArray/resizable-buffer-length-tracking-1.js",
           "test/built-ins/TypedArrayConstructors/ctors/buffer-arg/defined-length-sab.js",
-          "test/built-ins/TypedArrayConstructors/internals/Set/detached-buffer.js",
-          "test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js"
+          "test/built-ins/TypedArray/resizable-buffer-length-tracking-1.js",
+          "test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js",
+          "test/built-ins/TypedArrayConstructors/internals/Set/detached-buffer.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::__array_concat_any, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)",
@@ -1884,7 +1884,7 @@
           "test/language/expressions/object/dstr/meth-dflt-ary-init-iter-close.js",
           "test/language/expressions/object/dstr/async-gen-meth-dflt-ary-ptrn-rest-ary-elision.js",
           "test/language/expressions/object/cpn-obj-lit-computed-property-name-from-multiplicative-expression-mult.js",
-          "test/language/expressions/object/dstr/meth-ary-ptrn-elem-obj-id.js"
+          "test/language/expressions/object/dstr/async-gen-meth-ary-ptrn-elem-id-init-fn-name-gen.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
@@ -1950,8 +1950,8 @@
           "test/annexB/language/global-code/if-decl-no-else-global-skip-early-err-try.js",
           "test/annexB/language/function-code/switch-dflt-func-existing-var-no-init.js",
           "test/annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err-for-in.js",
-          "test/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-block-scoping.js",
-          "test/annexB/language/global-code/switch-case-global-no-skip-try.js"
+          "test/annexB/language/global-code/switch-case-global-no-skip-try.js",
+          "test/annexB/language/eval-code/indirect/global-if-decl-else-decl-b-eval-global-update.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
@@ -2257,8 +2257,8 @@
         "sample_files": [
           "test/language/expressions/less-than/bigint-and-symbol.js",
           "test/built-ins/Atomics/wait/bigint/was-woken-before-timeout.js",
-          "test/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-xor.js",
           "test/built-ins/Atomics/waitAsync/bigint/value-not-equal-agent.js",
+          "test/built-ins/Atomics/wait/bigint/no-spurious-wakeup-on-xor.js",
           "test/built-ins/Atomics/store/bigint/good-views.js"
         ],
         "sample_signatures": [
@@ -2332,8 +2332,8 @@
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
           "host_import_leak:standalone target emitted host imports: env::Promise_any, env::Promise_then2, env::console_log_externref, env::structuredClone (##)",
-          "host_import_leak:standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)",
           "host_import_leak:standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)",
+          "host_import_leak:standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)",
           "host_import_leak:standalone target emitted host imports: env::Promise_allSettled, env::__js_array_new, env::__js_array_push, env::console_log_externref, env::structuredClone (##)"
         ]
       },
@@ -2360,7 +2360,7 @@
           "test/language/module-code/instn-named-err-not-found-dflt.js",
           "test/language/module-code/top-level-await/syntax/if-block-await-expr-nested.js",
           "test/language/module-code/instn-local-bndng-cls.js",
-          "test/language/module-code/top-level-await/syntax/export-dflt-assign-expr-await-expr-obj-literal.js"
+          "test/language/module-code/top-level-await/await-expr-func-expression.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::console_log_externref, env::structuredClone (##)",
@@ -2455,10 +2455,10 @@
           "other": 5
         },
         "sample_files": [
-          "test/language/identifiers/vals-rus-alpha-lower-via-escape-hex4.js",
-          "test/language/identifiers/part-unicode-11.0.0-escaped.js",
           "test/language/identifiers/start-unicode-ltr.js",
-          "test/language/identifiers/part-unicode-15.1.0-class-escaped.js",
+          "test/language/identifiers/part-unicode-11.0.0-escaped.js",
+          "test/language/identifiers/vals-rus-alpha-lower-via-escape-hex4.js",
+          "test/language/identifiers/part-unicode-12.0.0-class.js",
           "test/language/identifiers/part-unicode-16.0.0-escaped.js"
         ],
         "sample_signatures": [
@@ -2559,7 +2559,7 @@
           "test/built-ins/Atomics/notify/count-from-nans.js",
           "test/built-ins/Atomics/isLockFree/length.js",
           "test/built-ins/Atomics/notify/bad-range.js",
-          "test/built-ins/Atomics/sub/name.js",
+          "test/built-ins/Atomics/add/name.js",
           "test/built-ins/Atomics/and/name.js"
         ],
         "sample_signatures": [
