@@ -1,8 +1,9 @@
 {
   "id": "2872",
   "assignee": "ttraenkler/fable-dev-5",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2872-scalar-hof-any-decline",
   "claimed_at": "2026-07-18T01:13:55Z",
-  "updated_at": "2026-07-18T01:13:55Z"
+  "updated_at": "2026-07-18T01:49:58Z",
+  "released_at": "2026-07-18T01:49:58Z"
 }
