@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseArgs, runTest } from "../scripts/run-test262-fyi.mjs";
+import { HostRealmContaminationError, parseArgs, runTest } from "../scripts/run-test262-fyi.mjs";
 
 describe("test262.fyi original-harness runner", () => {
   it("parses opt-in lane arguments", () => {
@@ -87,5 +87,25 @@ describe("test262.fyi original-harness runner", () => {
     );
     expect(runtimeInsteadOfParse.pass).toBe(false);
     expect(runtimeInsteadOfParse.phase).toBe("runtime");
+  });
+
+  // Keep this last: it deliberately leaves the Vitest fork's realm polluted.
+  // The CLI supervisor recycles its source worker after observing this error.
+  it("detects non-configurable intrinsic prototype mutations for worker recycling", async () => {
+    const property = "__test262_fyi_nonconfigurable_probe__";
+    expect(Object.prototype.hasOwnProperty.call(Array.prototype, property)).toBe(false);
+
+    await expect(
+      runTest(
+        {
+          file: "intrinsic-prototype-isolation.js",
+          contents: `Object.defineProperty(Array.prototype, "${property}", { value: 1 });`,
+          flags: {},
+          negative: undefined,
+          strictRerun: false,
+        },
+        "gc",
+      ),
+    ).rejects.toBeInstanceOf(HostRealmContaminationError);
   });
 });

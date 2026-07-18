@@ -8,7 +8,7 @@
  * upstream assert.js + sta.js, metadata includes, and the raw test body.
  */
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, fork } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
@@ -20,6 +20,7 @@ export { loadOriginalHarnessTests } from "./test262-fyi-reader.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FYI_ROOT = join(ROOT, "test262-fyi", "data");
+const INTERNAL_SOURCE_WORKER = "--internal-source-worker";
 
 const SANDBOX_GLOBAL_NAMES = [
   "Array",
@@ -206,9 +207,8 @@ function thrownText(error, instance) {
   }
 }
 
-async function runSource(test, source, target) {
-  restoreHostPrototypes();
-  try {
+async function runSourceInCurrentRealm(test, source, target) {
+  return (async () => {
     const output = [];
     const appendOutput = (line) => {
       Reflect.defineProperty(output, output.length, {
@@ -300,11 +300,33 @@ async function runSource(test, source, target) {
       const expected = test.negative === true ? undefined : test.negative.type;
       return { pass: !expected || detail.includes(expected), phase: "runtime", detail, output };
     }
-  } finally {
-    if (!restoreHostPrototypes()) {
-      throw new Error(`test ${test.file} left a non-configurable mutation on a host intrinsic prototype`);
-    }
+  })();
+}
+
+export class HostRealmContaminationError extends Error {
+  constructor(file, result) {
+    super(`test ${file} left a non-configurable mutation on a host intrinsic prototype`);
+    this.name = "HostRealmContaminationError";
+    this.result = result;
   }
+}
+
+async function runSourceWithRealmStatus(test, source, target) {
+  restoreHostPrototypes();
+  let result;
+  let contaminated = false;
+  try {
+    result = await runSourceInCurrentRealm(test, source, target);
+  } finally {
+    contaminated = !restoreHostPrototypes();
+  }
+  return { result, contaminated };
+}
+
+async function runSource(test, source, target) {
+  const { result, contaminated } = await runSourceWithRealmStatus(test, source, target);
+  if (contaminated) throw new HostRealmContaminationError(test.file, result);
+  return result;
 }
 
 export async function runTest(test, target) {
@@ -314,8 +336,149 @@ export async function runTest(test, target) {
   return strict.pass ? sloppy : { ...strict, detail: `strict rerun: ${strict.detail ?? "failed"}` };
 }
 
+function withoutInternalWorkerFlag(argv) {
+  return argv.filter((arg) => arg !== INTERNAL_SOURCE_WORKER);
+}
+
+function installInternalSourceWorker(selected, target) {
+  process.on("disconnect", () => process.exit(0));
+  process.on("message", async (message) => {
+    if (!message || typeof message !== "object") return;
+    if (message.type === "shutdown") {
+      process.exit(0);
+    }
+    if (message.type !== "run-source") return;
+
+    const test = selected[message.index];
+    if (!test) {
+      process.send?.({ type: "fatal", requestId: message.requestId, detail: `unknown test index ${message.index}` });
+      return;
+    }
+
+    try {
+      const source = message.strict ? `"use strict";\n${test.contents}` : test.contents;
+      const { result, contaminated } = await runSourceWithRealmStatus(test, source, target);
+      process.send?.({ type: "source-result", requestId: message.requestId, result, contaminated }, () => {
+        // This process owns the contaminated realm. Exiting after the result
+        // is delivered lets the coordinator continue in a fresh realm.
+        if (contaminated) process.exit(86);
+      });
+    } catch (error) {
+      process.send?.({
+        type: "fatal",
+        requestId: message.requestId,
+        detail: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      });
+    }
+  });
+  process.send?.({ type: "ready" });
+}
+
+function spawnSourceWorker(argv) {
+  return new Promise((resolveWorker, rejectWorker) => {
+    const child = fork(fileURLToPath(import.meta.url), [...withoutInternalWorkerFlag(argv), INTERNAL_SOURCE_WORKER], {
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
+    });
+    const onMessage = (message) => {
+      if (message?.type !== "ready") return;
+      cleanup();
+      resolveWorker(child);
+    };
+    const onExit = (code, signal) => {
+      cleanup();
+      rejectWorker(new Error(`FYI source worker exited before ready (code ${code}, signal ${signal ?? "none"})`));
+    };
+    const cleanup = () => {
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+    };
+    child.on("message", onMessage);
+    child.on("exit", onExit);
+  });
+}
+
+let nextRequestId = 1;
+
+function requestSource(child, index, strict) {
+  return new Promise((resolveResult, rejectResult) => {
+    const requestId = nextRequestId++;
+    const onMessage = (message) => {
+      if (message?.requestId !== requestId) return;
+      if (message.type === "source-result") {
+        cleanup();
+        resolveResult(message);
+      } else if (message.type === "fatal") {
+        cleanup();
+        rejectResult(new Error(message.detail));
+      }
+    };
+    const onExit = (code, signal) => {
+      cleanup();
+      rejectResult(
+        new Error(`FYI source worker exited during test ${index} (code ${code}, signal ${signal ?? "none"})`),
+      );
+    };
+    const cleanup = () => {
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+    };
+    child.on("message", onMessage);
+    child.on("exit", onExit);
+    child.send({ type: "run-source", requestId, index, strict });
+  });
+}
+
+function waitForExit(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolveExit) => child.once("exit", resolveExit));
+}
+
+async function stopSourceWorker(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  child.send({ type: "shutdown" });
+  await waitForExit(child);
+}
+
+async function runSupervisedTests(selected, target, argv) {
+  const results = [];
+  let child;
+
+  const runVariant = async (index, strict) => {
+    if (!child) child = await spawnSourceWorker(argv);
+    const response = await requestSource(child, index, strict);
+    if (response.contaminated) {
+      await waitForExit(child);
+      child = undefined;
+    }
+    return response.result;
+  };
+
+  try {
+    for (let index = 0; index < selected.length; index++) {
+      const test = selected[index];
+      const sloppy = await runVariant(index, false);
+      let result = sloppy;
+      if (sloppy.pass && test.strictRerun) {
+        const strict = await runVariant(index, true);
+        if (!strict.pass) result = { ...strict, detail: `strict rerun: ${strict.detail ?? "failed"}` };
+      }
+      results.push({ file: test.file, ...result });
+      const label = result.pass ? "PASS" : "FAIL";
+      console.log(
+        `[${index + 1}/${selected.length}] ${label} ${test.file}${result.detail ? ` — ${result.detail}` : ""}`,
+      );
+    }
+  } finally {
+    await stopSourceWorker(child);
+  }
+
+  return results;
+}
+
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const rawArgs = process.argv.slice(2);
+  const internalWorker = rawArgs.includes(INTERNAL_SOURCE_WORKER);
+  const options = parseArgs(withoutInternalWorkerFlag(rawArgs));
   if (options.help) {
     usage();
     return;
@@ -335,16 +498,13 @@ async function main() {
   const selected = selectedPaths.length > 0 ? await loadOriginalHarnessTests(selectedPaths) : [];
   selected.sort((a, b) => a.file.localeCompare(b.file));
 
-  const results = [];
-  let passed = 0;
-  for (let index = 0; index < selected.length; index++) {
-    const test = selected[index];
-    const result = await runTest(test, options.target);
-    results.push({ file: test.file, ...result });
-    if (result.pass) passed++;
-    const label = result.pass ? "PASS" : "FAIL";
-    console.log(`[${index + 1}/${selected.length}] ${label} ${test.file}${result.detail ? ` — ${result.detail}` : ""}`);
+  if (internalWorker) {
+    installInternalSourceWorker(selected, options.target);
+    return;
   }
+
+  const results = await runSupervisedTests(selected, options.target, rawArgs);
+  const passed = results.filter((result) => result.pass).length;
 
   const document = {
     runner: "test262-fyi-original-harness",
