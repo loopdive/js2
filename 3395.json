@@ -1,8 +1,8 @@
 {
   "id": "3395",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-18T00:16:35Z",
-  "updated_at": "2026-07-18T00:16:35Z"
+  "assignee": "ttraenkler/fable-dev-1",
+  "status": "in-progress",
+  "branch": "issue-3395-extern-boxing",
+  "claimed_at": "2026-07-18T01:31:09Z",
+  "updated_at": "2026-07-18T01:31:09Z"
 }
