@@ -2324,6 +2324,25 @@ export interface CodegenContext {
   nativeBigIntTypeIdx: number;
   /** Cache for function reference wrappers: signature key → ClosureInfo */
   funcRefWrapperCache: Map<string, ClosureInfo>;
+  /**
+   * (#3433) Per-compile memo: source file → symbols assigned an async function
+   * expression via `x = async function …` / `x = async () => …` anywhere in the
+   * file. Replaces the O(call-sites × file-size) full-file rescan that
+   * `symbolBindsAsyncFunction` (#2612) performed for EVERY call expression whose
+   * earlier async checks fell through (i.e. every ordinary sync call). On the
+   * oracle-v8 test262 harness assemblies (6–18 KB per test) that rescan was
+   * ~40 % of total compile time. Lazily initialized on first query.
+   */
+  asyncAssignScanCache?: Map<ts.SourceFile, ReadonlySet<ts.Symbol>>;
+  /**
+   * (#3433) Per-compile memo: source file → (symbol of an identifier
+   * assignment target → RHS expressions of every `ident = <rhs>` in the file).
+   * Single walk shared by `resolveAssignedNominalType` (#2767), which
+   * previously re-walked the whole file per bare-`var`/`let` receiver query.
+   * RHS type resolution stays lazy per queried symbol (unchanged checker-call
+   * pattern for matches). Lazily initialized on first query.
+   */
+  identAssignRhsCache?: Map<ts.SourceFile, ReadonlyMap<ts.Symbol, readonly ts.Expression[]>>;
   /** Pending module-init body (not yet in mod.functions) that needs global index fixup */
   pendingInitBody: Instr[] | null;
   /** Map from function name to inlinable function info */

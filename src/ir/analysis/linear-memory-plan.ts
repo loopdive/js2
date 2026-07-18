@@ -30,6 +30,7 @@ import { findStackAllocCandidates } from "./stack-alloc.js";
 
 /** JS2's current linear address width. Kept here rather than in an emitter. */
 export const LINEAR_POINTER_BYTES = 4;
+export const LINEAR_STACK_ARENA_BYTES = 64 * 1024;
 export const LINEAR_RECORD_ALIGNMENT = 8;
 export const LINEAR_RECORD_HEADER_BYTES = 8;
 export const LINEAR_RECORD_FIELD_SLOT_BYTES = 8;
@@ -46,6 +47,7 @@ export const LINEAR_STRING_ELEMENTS_OFFSET = 12;
 export type LinearStorageKind = "i8" | "i16" | "i32" | "i64" | "f32" | "f64" | "bytes16" | "pointer";
 
 export type LinearAllocationClass = "static" | "stack" | "arena" | "managed";
+export type LinearAllocatorPolicyId = "arena-v1" | "analysis-stack-arena-v1";
 
 export type LinearSizePlan =
   | { readonly kind: "constant"; readonly bytes: number }
@@ -146,6 +148,10 @@ export type LinearRuntimeOperation =
   | {
       readonly family: "managed";
       readonly operation: "allocate" | "root" | "write-barrier";
+    }
+  | {
+      readonly family: "stack";
+      readonly operation: "mark" | "restore";
     };
 
 export type LinearRootPlan =
@@ -183,7 +189,7 @@ export interface LinearAllocationDecision {
   readonly operations: readonly LinearRuntimeOperation[];
 }
 
-/** Policy seam. #3298 supplies only the byte-preserving arena policy. */
+/** Policy seam. Policies consume facts only; target adapters bind operations. */
 export interface LinearAllocatorPolicy {
   readonly id: string;
   decide(facts: LinearAllocationFacts): LinearAllocationDecision;
@@ -191,6 +197,8 @@ export interface LinearAllocatorPolicy {
 
 export interface LinearAllocationSitePlan extends LinearAllocationDecision {
   readonly id: AllocSiteId;
+  /** Stable owning IR function identity for function-lifetime policies. */
+  readonly ownerFunction: string;
   readonly allocationKind: AllocKind;
   readonly origin?: IrSiteId;
   readonly layoutId: string;
@@ -390,6 +398,41 @@ export const DEFAULT_ARENA_POLICY: LinearAllocatorPolicy = {
   },
 };
 
+/**
+ * Analysis-guided function stack with the existing arena as the conservative
+ * fallback. Only fixed-size allocations already proven owned, local, and safe
+ * by #747/#1587 are promoted. The policy deliberately does not introduce a
+ * collector: ADR-0017 keeps raw JS2 pointers non-moving in both consumers.
+ */
+export const ANALYSIS_STACK_ARENA_POLICY: LinearAllocatorPolicy = {
+  id: "analysis-stack-arena-v1",
+  decide(facts): LinearAllocationDecision {
+    const stack =
+      facts.stackCandidate &&
+      facts.escape === "local" &&
+      facts.layout.size.kind === "constant" &&
+      facts.site.kind !== "extern" &&
+      facts.site.kind !== "iterator" &&
+      facts.site.kind !== "generator";
+    if (!stack) return DEFAULT_ARENA_POLICY.decide(facts);
+    const operations = operationsForLayout(facts.layout, "stack");
+    return {
+      allocationClass: "stack",
+      lifetime: "function",
+      root: { kind: "none" },
+      safepoints: { kind: "none" },
+      barrier: { kind: "none" },
+      operations: [...operations, { family: "stack", operation: "mark" }, { family: "stack", operation: "restore" }],
+    };
+  },
+};
+
+export function linearAllocatorPolicy(id: string): LinearAllocatorPolicy {
+  if (id === DEFAULT_ARENA_POLICY.id) return DEFAULT_ARENA_POLICY;
+  if (id === ANALYSIS_STACK_ARENA_POLICY.id) return ANALYSIS_STACK_ARENA_POLICY;
+  throw new Error(`unknown linear-memory allocation policy '${id}'`);
+}
+
 /** Run the producer analyses and build one canonical plan for an IR module. */
 export function planLinearMemory(
   module: IrModule,
@@ -410,7 +453,7 @@ export function planLinearMemory(
   const allocations: LinearAllocationSitePlan[] = [];
   const seen = new Set<number>();
 
-  for (const { instr, valueTypes } of located.allocations) {
+  for (const { instr, valueTypes, ownerFunction } of located.allocations) {
     const alloc = instr.alloc;
     if (alloc === undefined) continue;
     const numericId = alloc as number;
@@ -447,6 +490,7 @@ export function planLinearMemory(
     }
     allocations.push({
       id: alloc,
+      ownerFunction,
       allocationKind: site.kind,
       origin: site.origin,
       layoutId: canonicalLayout.id,
@@ -758,9 +802,13 @@ function collectModuleFacts(
   layouts: Map<string, LinearLayoutPlan>,
   globals: Map<string, LinearGlobalStoragePlan>,
 ): {
-  allocations: { readonly instr: IrInstr; readonly valueTypes: ReadonlyMap<IrValueId, IrType> }[];
+  allocations: {
+    readonly instr: IrInstr;
+    readonly valueTypes: ReadonlyMap<IrValueId, IrType>;
+    readonly ownerFunction: string;
+  }[];
 } {
-  const allocations: { instr: IrInstr; valueTypes: ReadonlyMap<IrValueId, IrType> }[] = [];
+  const allocations: { instr: IrInstr; valueTypes: ReadonlyMap<IrValueId, IrType>; ownerFunction: string }[] = [];
   for (const fn of module.functions) {
     const valueTypes = collectValueTypes(fn);
     for (const param of fn.params) collectLayoutsFromType(param.type, layouts);
@@ -770,7 +818,7 @@ function collectModuleFacts(
       for (const instr of block.instrs) {
         forEachInstrDeep(instr, (nested) => {
           if (nested.resultType) collectLayoutsFromType(nested.resultType, layouts);
-          if (nested.alloc !== undefined) allocations.push({ instr: nested, valueTypes });
+          if (nested.alloc !== undefined) allocations.push({ instr: nested, valueTypes, ownerFunction: fn.name });
           collectGlobalStorage(nested, valueTypes, globals);
         });
       }

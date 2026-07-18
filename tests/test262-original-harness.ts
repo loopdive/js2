@@ -43,6 +43,48 @@ function lineCount(source: string): number {
   return source.split("\n").length - 1;
 }
 
+/**
+ * (#3427) De-duplicate TOP-LEVEL `function NAME(...)` declarations across the
+ * assembled harness prefix. The authoritative upstream harness (#3370) defines
+ * the same helper in more than one include — notably `isPrimitive`, declared by
+ * BOTH `testTypedArray.js` and `assert.js` with identical bodies. A real JS
+ * engine (which is what test262.fyi runs) tolerates duplicate top-level function
+ * declarations under last-wins semantics, so the reference runner is unaffected;
+ * but our TypeScript front-end treats two `function isPrimitive` declarations as
+ * a hard `Duplicate identifier 'isPrimitive'` compile error at L1 — which failed
+ * ~2k TypedArray/Array tests in EACH lane before this fix.
+ *
+ * Rename every duplicate declaration EXCEPT the last to a dead `NAME$dupK`
+ * identifier. This matches JS last-wins exactly (the final declaration is the
+ * one all call sites bind to — function declarations hoist, so calls that appear
+ * before it still resolve to it), leaves the renamed earlier definitions as
+ * harmless unused functions, and — because only the declaration's name token is
+ * rewritten (no lines added/removed) — keeps `bodyLineOffset` (`lineCount`)
+ * exact so test-body error line mapping is unchanged. Only column-0
+ * declarations match (`^`, multiline), so nested/inner functions and named
+ * function EXPRESSIONS (`x = function foo(){}`) are never touched, and the
+ * untouched test body is deliberately excluded (dedup runs on the prefix only).
+ */
+function dedupeTopLevelFunctionDeclarations(prefix: string): string {
+  const declRe = /^((?:async[ \t]+)?function[ \t]+)([A-Za-z_$][\w$]*)([ \t]*\()/gm;
+  const total = new Map<string, number>();
+  prefix.replace(declRe, (full, _kw: string, name: string) => {
+    total.set(name, (total.get(name) ?? 0) + 1);
+    return full;
+  });
+  const dup = new Set([...total].filter(([, count]) => count > 1).map(([name]) => name));
+  if (dup.size === 0) return prefix;
+  const seen = new Map<string, number>();
+  return prefix.replace(declRe, (full, kw: string, name: string, paren: string) => {
+    if (!dup.has(name)) return full;
+    const idx = seen.get(name) ?? 0;
+    seen.set(name, idx + 1);
+    // Keep the LAST declaration (JS last-wins); rename the earlier ones.
+    if (idx === total.get(name)! - 1) return full;
+    return `${kw}${name}$dup${idx}${paren}`;
+  });
+}
+
 function assembleVariant(
   source: string,
   meta: HarnessMeta,
@@ -61,6 +103,11 @@ function assembleVariant(
   prefix += cachedSource(RUNTIME_PATH);
   prefix += harnessSource("assert.js");
   prefix += harnessSource("sta.js");
+  // (#3427) Our TS front-end rejects the upstream harness's duplicate top-level
+  // helper declarations (e.g. `isPrimitive` in both testTypedArray.js + assert.js)
+  // that a JS engine tolerates last-wins. Rename all-but-last in place (line-count
+  // preserving) so bodyLineOffset below stays exact.
+  prefix = dedupeTopLevelFunctionDeclarations(prefix);
   return {
     source: prefix + source,
     bodyLineOffset: lineCount(prefix),

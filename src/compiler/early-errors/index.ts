@@ -28,8 +28,8 @@ import {
  * The order of the passes below is preserved exactly from the original
  * monolithic implementation.
  */
-export function detectEarlyErrors(sourceFile: ts.SourceFile): CompileError[] {
-  const ctx = createEarlyErrorContext(sourceFile);
+export function detectEarlyErrors(sourceFile: ts.SourceFile, opts?: { moduleGoal?: boolean }): CompileError[] {
+  const ctx = createEarlyErrorContext(sourceFile, opts);
 
   // Per-node walk: update/assignment targets, strict-mode rules, duplicate
   // params, statement-position declarations, private names, var/lexical

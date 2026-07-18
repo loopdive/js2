@@ -314,27 +314,47 @@ function symbolBindsAsyncFunction(ctx: CodegenContext, sym: ts.Symbol): boolean 
   // Scan for a later `name = async function …` assignment to this symbol's
   // identifier in the same source file (the `var ref; ref = async function …`
   // pattern, where the declaration carries no initializer).
+  //
+  // (#3433) The scan is memoized per source file: one walk collects the
+  // symbols of ALL `<ident> = <async fn expr>` assignments, and each query is
+  // a set-membership test. This fallback runs for every call expression whose
+  // earlier async checks fell through — i.e. every ordinary sync call — so the
+  // pre-memo per-query full-file walk was O(call-sites × file-size), ~40 % of
+  // total compile time on the oracle-v8 test262 harness assemblies.
+  // Membership in the memoized set is equivalent to the original per-query
+  // scan: it contains exactly the symbols `s` for which some assignment
+  // `left = asyncFnExpr` has `getSymbolAtLocation(left) === s`.
   for (const decl of decls) {
-    const sf = decl.getSourceFile();
-    let found = false;
-    const visit = (node: ts.Node): void => {
-      if (found) return;
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(node.left) &&
-        isAsyncFunctionExpr(node.right) &&
-        ctx.checker.getSymbolAtLocation(node.left) === sym
-      ) {
-        found = true;
-        return;
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sf);
-    if (found) return true;
+    if (asyncAssignedSymbolsInFile(ctx, decl.getSourceFile()).has(sym)) return true;
   }
   return false;
+}
+
+/**
+ * (#3433) Symbols assigned an async function expression anywhere in `sf`
+ * (`x = async function …` / `x = async () => …`), computed once per compile
+ * per source file. See `symbolBindsAsyncFunction`.
+ */
+function asyncAssignedSymbolsInFile(ctx: CodegenContext, sf: ts.SourceFile): ReadonlySet<ts.Symbol> {
+  const cache = (ctx.asyncAssignScanCache ??= new Map());
+  const cached = cache.get(sf);
+  if (cached) return cached;
+  const set = new Set<ts.Symbol>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      isAsyncFunctionExpr(node.right)
+    ) {
+      const assigned = ctx.checker.getSymbolAtLocation(node.left);
+      if (assigned) set.add(assigned);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  cache.set(sf, set);
+  return set;
 }
 
 /**

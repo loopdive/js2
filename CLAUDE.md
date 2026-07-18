@@ -339,6 +339,7 @@ Sprint planning is a collaborative process, not a solo tech lead activity:
 
 ### Agent work dispatch
 
+- **Two lanes run concurrently — partition the queue + gate every dispatch ([plan/method/lane-partition.md](plan/method/lane-partition.md)).** The queue is split by goal (Lane A = lead/opus: runtime-eval, error-model, dogfood, core-semantics, **all CI/infra/pipeline**; Lane B = fable/porffor: backend-agnostic-ir, ir-full-coverage, Porffor #3288, value-rep, standalone-gap #2860; broad goals = claim-first-wins). **Before dispatching ANY agent on #N, run the pre-dispatch gate:** `git log origin/main --grep="#N"` (not merged), no open PR for it, not claimed by the other lane on `origin/issue-assignments`. Any hit ⇒ adopt/close/route, do NOT start a parallel impl. `claim-issue.mjs` exit 0 is advisory (shared slug) — the grep-gate is the real check. Push branches to the **`fork`** so GitHub rejects dup PRs. This is the fix for the 2026-07-17 duplication (#3310/#3311/#3341/#3308 re-implemented by both lanes).
 - **Tech lead populates TaskList** — devs self-serve from it. No per-task dispatch messages needed.
 - **Owner pins + scope are how the auto-dispatcher is steered.** The native agent-teams auto-dispatcher only auto-offers tasks with **no `owner`**, and it does **not** read role. So the tech lead encodes routing in two places the dispatcher/agents actually honor:
   - **Set `owner` immediately** on any task pinned to a specific agent (e.g. an in-flight `[CONFLICT]` for a named senior-dev, or a one-PR migration). An ownerless `in_progress` task is the #1 mis-route cause — the dispatcher re-offers it. Reconcile (`TaskUpdate status=completed` the moment a PR merges) so stale entries never get re-offered.
@@ -409,7 +410,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 3. Update `plan/issues/backlog/backlog.md` if the issue was listed there
 
 <!-- AUTO:conformance-start -->
-**test262 conformance**: 25,007 / 43,106 (58.0 %)
+**test262 conformance**: 25,114 / 43,106 (58.3 %)
 <!-- AUTO:conformance-end -->
 
 ### Sprint History

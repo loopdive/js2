@@ -64,6 +64,7 @@ import {
   isStaticNullishReceiver,
   loopBodyMutatesIndexOrArray,
   loopBodyMutatesStringReadInvariants,
+  varCounterRedeclarationBlocksI32,
 } from "./loop-analysis.js";
 import { emitForAwaitElementUnwrap, emitForAwaitStepCapCheck } from "./for-await-helpers.js";
 import {
@@ -359,9 +360,18 @@ export function compileForStatement(ctx: CodegenContext, fctx: FunctionContext, 
         let wasmType = resolveWasmType(ctx, varType);
 
         // Integer loop inference: if this variable is detected as an integer loop
-        // counter (e.g. for (let i = 0; i < n; i++)), use i32 instead of f64
+        // counter (e.g. for (let i = 0; i < n; i++)), use i32 instead of f64.
+        // (#3419) `var` counters share ONE function-scoped local across every
+        // redeclaration — promotion is only sound when every other `var <name>`
+        // in the scope is the same promotable counter shape; otherwise one loop
+        // emits i32 ops and another f64 ops against the same local (invalid
+        // wasm — see varCounterRedeclarationBlocksI32).
         const i32LoopInfo = detectI32LoopVar(stmt);
-        const isI32LoopVar = i32LoopInfo !== null && i32LoopInfo.name === name && wasmType.kind === "f64";
+        const isI32LoopVar =
+          i32LoopInfo !== null &&
+          i32LoopInfo.name === name &&
+          wasmType.kind === "f64" &&
+          !(isVar && varCounterRedeclarationBlocksI32(stmt, name));
         if (isI32LoopVar) {
           wasmType = { kind: "i32" };
         }
