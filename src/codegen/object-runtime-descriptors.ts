@@ -35,6 +35,8 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { ensureAnyValueType, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js";
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js";
+import { getOrRegisterVecBaseType } from "./registry/types.js";
+import { reserveVecOverlayHelpers } from "./vec-overlay.js";
 
 /**
  * Everything the descriptor/integrity block reads from the enclosing
@@ -129,6 +131,31 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     OBJ_FLAG_FROZEN,
     WRAPPER_PRIMITIVE_KEY,
   } = s;
+
+  // ── (#3251 S1) Array-descriptor overlay entry points ─────────────────────
+  // Standalone only (host mode routes defineProperty/gOPD through the JS
+  // sidecar imports and MUST stay byte-identical). The three helpers are
+  // reserved as safe-no-op placeholders whose bodies are filled at finalize
+  // (`fillVecOverlayHelpers`, after every `__vec_*` carrier type exists); the
+  // `$__vec_base` arms below bake a plain `call <reserved idx>` — the
+  // accessor-driver reserve/fill funcIdx discipline (#1888 S5b, #329/#1899).
+  const vecOverlay = ctx.standalone ? reserveVecOverlayHelpers(ctx) : null;
+  const vecOverlayBaseIdx = vecOverlay ? getOrRegisterVecBaseType(ctx) : -1;
+  /** `if (anyLocal is a $__vec_base) → return <helper>(params...)` (or []). */
+  const vecOverlayArm = (anyLocal: number, helperIdx: number, paramCount: number): Instr[] => {
+    if (!vecOverlay) return [];
+    const args: Instr[] = [];
+    for (let p = 0; p < paramCount; p++) args.push({ op: "local.get", index: p });
+    return [
+      { op: "local.get", index: anyLocal },
+      { op: "ref.test", typeIdx: vecOverlayBaseIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [...args, { op: "call", funcIdx: helperIdx }, { op: "return" }],
+      },
+    ];
+  };
 
   // ── __defineProperty_value (#1629 S6 — native data-descriptor define) ─────
   //
@@ -338,8 +365,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     ];
 
     const body: Instr[] = [
-      // any = any.convert_extern(obj) ; if !$Object → return obj (lenient no-op,
-      // matches the host import returning O unchanged)
+      // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
+      // the #3251 overlay (per-index/expando descriptor storage on a
+      // companion $Object); anything else keeps the lenient no-op (matches
+      // the host import returning O unchanged).
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 5 },
@@ -348,7 +377,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 0 }, { op: "return" }],
+        then: [...vecOverlayArm(5, vecOverlay?.dpValueIdx ?? -1, 4), { op: "local.get", index: 0 }, { op: "return" }],
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 5 },
@@ -643,7 +672,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "i32.ne" },
     ];
     const body: Instr[] = [
-      // any = any.convert_extern(obj) ; if !$Object → return obj (lenient no-op)
+      // any = any.convert_extern(obj) ; if !$Object → vec receivers route to
+      // the #3251 overlay; anything else keeps the lenient no-op.
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 6 },
@@ -652,7 +682,11 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 0 }, { op: "return" }],
+        then: [
+          ...vecOverlayArm(6, vecOverlay?.dpAccessorIdx ?? -1, 5),
+          { op: "local.get", index: 0 },
+          { op: "return" },
+        ],
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 6 },
@@ -2206,9 +2240,11 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
             },
           ] satisfies Instr[])
         : []),
-      // any = any.convert_extern(obj) ; if !$Object → primitive-receiver arm
-      // (#2984: nullish → TypeError, string → §10.4.3 exotic, else undefined —
-      // where "undefined" is the #3319 singleton-aware miss return).
+      // any = any.convert_extern(obj) ; if !$Object → vec receivers consult
+      // the #3251 overlay (companion entry / implicit element descriptor),
+      // then the primitive-receiver arm (#2984: nullish → TypeError, string →
+      // §10.4.3 exotic, else undefined — where "undefined" is the #3319
+      // singleton-aware miss return).
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 2 },
@@ -2217,7 +2253,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: primitiveReceiverArm,
+        then: [...vecOverlayArm(2, vecOverlay?.gopdIdx ?? -1, 2), ...primitiveReceiverArm],
       },
       // o = cast<$Object>(any) ; e = __obj_find(o, key)
       { op: "local.get", index: 2 },

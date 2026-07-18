@@ -1508,6 +1508,24 @@ export interface CodegenContext {
    */
   externGetIdxReserved?: boolean;
   /**
+   * (#3251 S1) True once the standalone array-descriptor overlay entry points
+   * (`__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd`) were reserved as
+   * safe-no-op placeholders by `reserveVecOverlayHelpers` (vec-overlay.ts) so
+   * the `__defineProperty_value` / `__defineProperty_accessor` /
+   * `__getOwnPropertyDescriptor` vec arms could bake their `call`. Bodies are
+   * filled by `fillVecOverlayHelpers` in finalize. Standalone only.
+   */
+  vecOverlayReserved?: boolean;
+  /**
+   * (#3251 S1) Absolute global index of the mutable `$__vec_overlay_state`
+   * module global (null until the first vec companion is created). Registered
+   * at FINALIZE by `fillVecOverlayHelpers`; tracked here so a (hypothetical)
+   * late import-global insertion can shift it in `fixupModuleGlobalIndices`.
+   */
+  vecOverlayStateGlobalIdx?: number;
+  /** (#3251 S1) Type index of `$__overlay_state` (see above). */
+  vecOverlayStateTypeIdx?: number;
+  /**
    * (#2358 #10) True once `__to_primitive` reserved the
    * `__array_to_primitive_string` placeholder. Filled by `fillArrayToPrimitive`
    * (array-to-primitive.ts) in post-processing, AFTER `__extern_length` /

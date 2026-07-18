@@ -1312,8 +1312,16 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
 /** Run all post-walk finalization (register imports based on collected state) */
 export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedCollectorState): void {
   // ── collectConsoleImports finalize ──
-  // In WASI mode, console.log/error use fd_write — skip JS host console imports
-  if (!ctx.wasi) {
+  // In WASI mode, console.log/error use fd_write — skip JS host console imports.
+  // (#3436) In standalone mode there is no JS host either, so emitting the
+  // `env.console_*` imports leaks an unsatisfiable import that makes every
+  // standalone module (notably every test262 file, whose universal prelude's
+  // `print` shim calls `console.log`) fail to instantiate. The standalone call
+  // site (builtins.ts `compileConsoleCall`) lowers `console.*` to a native
+  // no-op sink (arguments evaluated for side effects, then dropped) — test262
+  // verdicts come from thrown exceptions, not printed output — so no console
+  // host import is needed here.
+  if (!ctx.wasi && !ctx.standalone) {
     const CONSOLE_METHODS = ["log", "warn", "error", "info", "debug"] as const;
     for (const method of CONSOLE_METHODS) {
       const needed = state.consoleNeededByMethod.get(method);
