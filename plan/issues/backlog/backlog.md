@@ -2,6 +2,48 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-07-18 - /harvest-errors oracle-v8 (baselines run 20260718-101701, sha 6ae06435)
+
+First harvest after the oracle v7→v8 authoritative-harness switch (#3370): host
+25,003/43,106, standalone 4,312/43,106. The v7→v8 pass drop (~7,300 host, ~20,600
+standalone) is only partly the "newly-honest" strict-rerun own-property class
+(fable-5 already owns that) — a large slice is **new #3370 harness-integration
+fallout** that is high-ROI runner-side work, filed here. Five new issues:
+
+- [#3426](../3426-standalone-universal-harness-shim-leak-console-structuredclone.md)
+  - **CRITICAL, standalone burndown lever.** The authoritative harness prelude
+  leaks `env::console_log_externref` + `env::structuredClone` into **every**
+  standalone module (37,369 records; **32,245 have no other leak**; zero records
+  leak a feature import without these two). Fixing this alone could reclassify
+  ~32k standalone tests and unmask the real per-feature census. `goal:
+  standalone-mode`, umbrella #1781, related #2961/#3178/#3370/#3393.
+- [#3427](../3427-harness-assembly-duplicate-identifier-isprimitive.md) - **HIGH,
+  cross-lane, high-ROI.** `Duplicate identifier 'isPrimitive'` compile error at
+  L1:10 on TypedArray/Array tests (host 2,054 + standalone 2,051). Harness-include
+  assembly (#3370) collides `testTypedArray.js`'s `isPrimitive` with the prelude.
+- [#3428](../3428-async-completion-marker-not-observed.md) - **HIGH.** `async
+  completion marker not observed` (4,617) + `asyncTest called without async flag`
+  (225): #3370 async-verdict wiring gap (or newly-honest async failures — needs
+  triage). Largest single host `other` class after strict-rerun own-property.
+- [#3429](../3429-assert-throws-constructor-identity-wasmclosuredynamicbridge.md)
+  - MEDIUM. `assert.throws` renders the expected error constructor as the internal
+  `wasmClosureDynamicBridge` (544): constructor-identity leak exposed by #3370's
+  real assert.throws. Related #1104.
+- [#3430](../3430-integrity-level-typeerror-not-thrown.md) - MEDIUM, triage
+  umbrella. Integrity-level operations (non-extensible/non-configurable/frozen
+  array define, non-object species ctor) don't throw the expected `TypeError`
+  (1,316) — newly honest under #3370. Related #1629.
+
+**In progress / not re-filed:** strict-rerun own-property class (~the honest
+own-property `length`/`name`/... failures) is owned by fable-5 — not duplicated.
+Standalone per-feature leaks behind the #3426 shim mask map to existing trackers:
+generator/async/Promise host machinery (`__gen_*`, `__create_*`, `Promise_*`,
+~5k) → #3178 umbrella (ready); `RegExp_test` (596) → #1474/#682; dynamic
+`new K(...x)` spread / class-as-value (#2026, 1,464) → #2026; Proxy (#1472, 859)
+→ #1472/#1355; Reflect (#2046, in-progress). Temporal (`__temporal_*`, ~1.2k host
++ standalone) is proposal-excluded, not filed.
+
+
 ## 2026-07-17 - /harvest-errors (baselines run 20260717-151504, 32,139 pass)
 
 Harvested both lanes (default JS-host + standalone) from
