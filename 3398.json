@@ -1,8 +1,9 @@
 {
   "id": "3398",
   "assignee": "ttraenkler/fable-dev-5",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3398-getter-structnew",
   "claimed_at": "2026-07-18T02:27:21Z",
-  "updated_at": "2026-07-18T02:27:21Z"
+  "updated_at": "2026-07-18T05:04:51Z",
+  "released_at": "2026-07-18T05:04:51Z"
 }
