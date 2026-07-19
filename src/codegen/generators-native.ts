@@ -85,7 +85,6 @@ import {
   methodBodyUsesSuper,
   fnExprBodyReferencesThis,
   bodyReferencesOwnName,
-  bodyHasNewTryRegionAcrossYield,
   isFunctionLikeScope,
 } from "./generators-native-ast-scan.js";
 
@@ -3823,8 +3822,3 @@ export {
   tryCompileNativeGeneratorForOf,
   emitNativeGeneratorToVec,
 } from "./generators-native-consumer.js";
-
-// (#3271) `bodyHasNewTryRegionAcrossYield` moved to the AST-scan module; it is
-// imported back above for local use and re-exported here so external importers
-// (statements/nested-declarations.ts) are unaffected by the move.
-export { bodyHasNewTryRegionAcrossYield };
