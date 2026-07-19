@@ -2,9 +2,9 @@
 //
 // #3227 S4 — async post-drain verdict re-read must exist in EVERY execution
 // lane, not only `runTest262File` (S1, PR #3161). The sharded-CI baseline rows
-// all go through `scripts/test262-worker.mjs` (fork worker) with two smaller
-// in-process/thread lanes (`tests/test262-shared.ts` fixture path,
-// `scripts/wasm-exec-worker.mjs`); S1 patched none of them, so the corpus
+// all go through `scripts/test262-worker.mjs` (fork worker), with a smaller
+// worker-thread diagnostic lane in `scripts/wasm-exec-worker.mjs`; S1 patched
+// neither of them, so the corpus
 // verdicts never changed (1,679 rows stayed vacuous, and the intended honest
 // pass/fail flips "nearly cancelled" — they simply never ran). These are
 // source-shape assertions in the established #1862/#2961 style: the re-read
@@ -56,22 +56,17 @@ describe("#3227 S4 — post-drain re-read in the CI worker lane", () => {
     expect(worker).toMatch(RE_READ_GATE);
   });
 
-  it("in-process fixture lane (tests/test262-shared.ts) has the same re-read", () => {
+  it("in-process fixture lane uses original-harness async markers", () => {
     const shared = readRepo("tests/test262-shared.ts");
 
-    expect(shared).toContain("const fixtureResultFn = (instance.exports as any).__result;");
-    expect(shared).toMatch(/\(ret === 1 \|\| ret === -262\)/);
-
-    // Positioned before this lane's -262 vacuity scoring.
-    const reRead = shared.indexOf("const fixtureResultFn = (instance.exports as any).__result;");
-    const vacuityScore = shared.indexOf("} else if (ret === -262) {");
-    expect(reRead).toBeGreaterThan(-1);
-    expect(vacuityScore).toBeGreaterThan(-1);
-    expect(reRead).toBeLessThan(vacuityScore);
+    expect(shared).toContain("assembleOriginalHarness(source, meta)");
+    expect(shared).toContain('marker("Test262:AsyncTestComplete")');
+    expect(shared).toContain('marker("Test262:AsyncTestFailure")');
+    expect(shared).not.toContain("const fixtureResultFn = (instance.exports as any).__result;");
   });
 
-  it("verdict-logic change carries its own oracle version (v7)", () => {
-    expect(ORACLE_VERSION).toBe(7);
+  it("retains the v7 async-worker oracle history", () => {
+    expect(ORACLE_VERSION).toBeGreaterThanOrEqual(7);
     const v7 = ORACLE_VERSION_HISTORY.find((h) => h.version === 7);
     expect(v7).toBeDefined();
     expect(v7!.note).toContain("#3227 S4");

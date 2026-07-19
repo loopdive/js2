@@ -66,6 +66,7 @@ import {
   emitSuperUninitializedThisGuard,
   emitThrowReferenceError,
   emitThrowTypeError,
+  emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
   updateLocalType,
   widenLocalToNullable,
@@ -97,6 +98,7 @@ import {
   emitDynamicWithSet,
   resolveWithBinding,
 } from "../with-scope.js";
+import { isStrictFunction } from "../helpers/is-strict-function.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -159,6 +161,11 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
     // Recursively handle the unwrapped LHS by synthesizing a new expression-like object
     const synth = { ...expr, left: lhs } as ts.BinaryExpression;
     return compileAssignment(ctx, fctx, synth);
+  }
+  // Annex B.3.9: evaluate the sloppy-mode call target, then throw before the
+  // RHS is evaluated. Strict-mode call targets were rejected as early errors.
+  if (emitWebCompatCallAssignmentTarget(ctx, fctx, lhs)) {
+    return { kind: "f64" };
   }
   // (#1719 CPR write-arm) `Array.prototype[Symbol.iterator] = fn` /
   // `Array.prototype.values = fn` has no compiled landing spot and is otherwise
@@ -514,10 +521,64 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       fctx.body.push({ op: "global.get", index: moduleIdxPost });
       return globalType ?? resultType;
     }
-    // Graceful fallback for unresolved identifiers: auto-allocate a local
-    // so that compilation can continue. This handles class/object method bodies
-    // that reference outer-scope variables not yet captured, and sloppy-mode
-    // implicit globals from test262 tests.
+    // §6.2.5.6 PutValue steps 2.b–2.d: assigning to an unresolvable
+    // reference in non-strict code creates/updates a property on the current
+    // realm's global object. The old fallback allocated a function local, so
+    // the assignment itself appeared to work but reflective reads through
+    // globalThis/Object.getOwnPropertyDescriptor could not observe it
+    // (test262 11.13.1-4-1). Keep this host-only: standalone/WASI need a
+    // separate native-global-object write path and must not leak host imports.
+    if (
+      !ctx.standalone &&
+      !ctx.wasi &&
+      !isStrictContext(expr.left, ctx.inferModuleStrictArguments) &&
+      isUnresolvableIdent(ctx, fctx, expr.left)
+    ) {
+      const gtIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+      const setIdx = ensureLateImport(
+        ctx,
+        "__extern_set",
+        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+        [],
+      );
+      flushLateImportShifts(ctx, fctx);
+
+      if (gtIdx !== undefined && setIdx !== undefined) {
+        // §13.15.2 evaluates the RHS once, PutValue consumes that value, and
+        // the assignment expression then returns the same RHS value. Preserve
+        // its native representation in a temp while boxing only the copy sent
+        // through the host object's [[Set]] bridge.
+        const resultType = compileExpression(ctx, fctx, expr.right);
+        if (!resultType) return null;
+        const resultTmp = allocLocal(fctx, `__implicit_global_rhs_${fctx.locals.length}`, resultType);
+        fctx.body.push({ op: "local.set", index: resultTmp });
+
+        // RHS compilation may have registered additional late imports, so use
+        // the current function indices rather than the pre-RHS snapshots.
+        const finalGtIdx = ctx.funcMap.get("__get_globalThis");
+        if (finalGtIdx === undefined) return null;
+        fctx.body.push({ op: "call", funcIdx: finalGtIdx });
+        addStringConstantGlobal(ctx, name);
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+        fctx.body.push({ op: "local.get", index: resultTmp });
+        if (resultType.kind !== "externref") {
+          coerceType(ctx, fctx, resultType, { kind: "externref" });
+        }
+        // Boxing may itself register a late import and shift every later
+        // function index; resolve the setter only after that coercion.
+        const finalSetIdx = ctx.funcMap.get("__extern_set");
+        if (finalSetIdx === undefined) return null;
+        fctx.body.push({ op: "call", funcIdx: finalSetIdx });
+        fctx.body.push({ op: "local.get", index: resultTmp });
+        return resultType;
+      }
+    }
+
+    // Graceful fallback for other unresolved identifiers: auto-allocate a
+    // local so compilation can continue. This handles class/object method
+    // bodies that reference outer-scope variables not yet captured. Strict
+    // unresolvable-reference throws and standalone implicit-global semantics
+    // are tracked separately.
     {
       const resultType = compileExpression(ctx, fctx, expr.right);
       if (!resultType) return null;
@@ -746,9 +807,20 @@ function emitIdentifierWriteFromLocal(
  *   - Inside a class body (classes are always strict).
  *   - Inside a function whose body begins with `"use strict";`.
  */
-export function isStrictContext(node: ts.Node): boolean {
+export function isStrictContext(node: ts.Node, inferModuleStrict = true): boolean {
   let current: ts.Node | undefined = node;
   while (current) {
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isArrowFunction(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isGetAccessorDeclaration(current) ||
+      ts.isSetAccessorDeclaration(current) ||
+      ts.isConstructorDeclaration(current)
+    ) {
+      return isStrictFunction(current, inferModuleStrict);
+    }
     if (ts.isSourceFile(current)) {
       for (const stmt of current.statements) {
         if (ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression)) {
@@ -757,7 +829,11 @@ export function isStrictContext(node: ts.Node): boolean {
           break;
         }
       }
-      return false;
+      const internal = current as ts.SourceFile & { externalModuleIndicator?: ts.Node };
+      return (
+        inferModuleStrict &&
+        (internal.externalModuleIndicator !== undefined || current.impliedNodeFormat === ts.ModuleKind.ESNext)
+      );
     }
     if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) return true;
     if (
@@ -779,6 +855,71 @@ export function isStrictContext(node: ts.Node): boolean {
     current = current.parent;
   }
   return false;
+}
+
+/** True when this binding is the receiver of a static Object.defineProperty call. */
+function sourceDefinesProperty(ctx: CodegenContext, receiver: ts.Identifier, propName: string): boolean {
+  const receiverSymbol = ctx.checker.getSymbolAtLocation(receiver);
+  const sourceFile = receiver.getSourceFile();
+  let found = false;
+
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Object" &&
+      node.expression.name.text === "defineProperty" &&
+      node.arguments.length >= 2
+    ) {
+      const objectArg = skipTransparentExpressions(node.arguments[0]!);
+      const keyArg = skipTransparentExpressions(node.arguments[1]!);
+      const sameReceiver =
+        ts.isIdentifier(objectArg) &&
+        (receiverSymbol
+          ? ctx.checker.getSymbolAtLocation(objectArg) === receiverSymbol
+          : objectArg.text === receiver.text);
+      const key =
+        ts.isStringLiteral(keyArg) || ts.isNumericLiteral(keyArg)
+          ? keyArg.text
+          : resolveComputedKeyExpression(ctx, keyArg);
+      if (sameReceiver && key === propName) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return found;
+}
+
+/**
+ * Whether an identifier's object-literal initializer already declares a named
+ * own property. This deliberately looks at the initializer, rather than the
+ * widened Wasm struct shape: shape widening includes later assignments, while
+ * `Object.preventExtensions(o); o.newProp = v` must still treat `newProp` as
+ * absent at the time of the write.
+ */
+function objectLiteralInitializerHasProperty(ctx: CodegenContext, receiver: ts.Identifier, propName: string): boolean {
+  const symbol = ctx.checker.getSymbolAtLocation(receiver);
+  const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.find(ts.isVariableDeclaration);
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+
+  const initializer = skipTransparentExpressions(declaration.initializer);
+  if (!ts.isObjectLiteralExpression(initializer)) return false;
+
+  return initializer.properties.some((prop) => {
+    if (ts.isSpreadAssignment(prop)) return false;
+    const name = prop.name;
+    if (!name) return false;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+      return name.text === propName;
+    }
+    return ts.isComputedPropertyName(name) && resolveComputedKeyExpression(ctx, name.expression) === propName;
+  });
 }
 
 /**
@@ -894,7 +1035,7 @@ function compileDestructuringAssignment(
   if (!resultType) return null;
 
   // §6.2.4 PutValue: strict-mode assignment to unresolvable reference throws.
-  if (isStrictContext(target) && findUnresolvableInObjectPattern(ctx, fctx, target)) {
+  if (isStrictContext(target, ctx.inferModuleStrictArguments) && findUnresolvableInObjectPattern(ctx, fctx, target)) {
     emitStrictPutValueThrow(ctx, fctx);
     // After throw the stack is polymorphic; push a sentinel matching resultType
     // so downstream code that expects a value sees the declared return type.
@@ -1181,6 +1322,7 @@ function compileDestructuringAssignment(
       // { width } = ... → prop.name is "width"
       const propName = prop.name.text;
       let localIdx = fctx.localMap.get(propName);
+      let moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(propName) : undefined;
 
       const fieldIdx = fields.findIndex((f) => f.name === propName);
 
@@ -1203,26 +1345,37 @@ function compileDestructuringAssignment(
         }
         // Auto-allocate local if not declared. Use externref so a
         // boxed-anything default (number, string, object) flows through.
-        if (localIdx === undefined) {
+        if (localIdx === undefined && moduleGlobalIdx === undefined) {
           localIdx = allocLocal(fctx, propName, { kind: "externref" });
         }
-        const targetType = getLocalType(fctx, localIdx) ?? { kind: "externref" as const };
+        const targetType =
+          localIdx !== undefined
+            ? (getLocalType(fctx, localIdx) ?? { kind: "externref" as const })
+            : (ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type ?? { kind: "externref" as const });
         const initType = compileExpression(ctx, fctx, prop.objectAssignmentInitializer, targetType);
         if (initType && !valTypesMatch(initType, targetType)) {
           coerceType(ctx, fctx, initType, targetType);
         }
-        fctx.body.push({ op: "local.set", index: localIdx });
+        if (localIdx !== undefined) {
+          fctx.body.push({ op: "local.set", index: localIdx });
+        } else {
+          moduleGlobalIdx = ctx.moduleGlobals.get(propName)!;
+          fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+        }
         continue;
       }
 
       // Auto-allocate local if not declared (e.g. destructuring creates new binding)
-      if (localIdx === undefined) {
+      if (localIdx === undefined && moduleGlobalIdx === undefined) {
         const fieldType = fields[fieldIdx]!.type;
         localIdx = allocLocal(fctx, propName, fieldType);
       }
 
       const fieldType = fields[fieldIdx]!.type;
-      const localType = getLocalType(fctx, localIdx);
+      const targetType =
+        localIdx !== undefined
+          ? getLocalType(fctx, localIdx)
+          : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
 
       fctx.body.push({ op: "local.get", index: tmpLocal });
       fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
@@ -1257,8 +1410,13 @@ function compileDestructuringAssignment(
               ...(() => {
                 const saved = fctx.body;
                 fctx.body = [];
-                compileExpression(ctx, fctx, prop.objectAssignmentInitializer!, localType ?? fieldType);
-                fctx.body.push({ op: "local.set", index: localIdx! });
+                compileExpression(ctx, fctx, prop.objectAssignmentInitializer!, targetType ?? fieldType);
+                if (localIdx !== undefined) {
+                  fctx.body.push({ op: "local.set", index: localIdx });
+                } else {
+                  moduleGlobalIdx = ctx.moduleGlobals.get(propName)!;
+                  fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+                }
                 const instrs = fctx.body;
                 fctx.body = saved;
                 return instrs;
@@ -1267,32 +1425,42 @@ function compileDestructuringAssignment(
             else: [
               { op: "local.get", index: tmpField },
               ...(() => {
-                if (localType && !valTypesMatch(fieldType, localType)) {
+                if (targetType && !valTypesMatch(fieldType, targetType)) {
                   const saved = fctx.body;
                   fctx.body = [];
-                  coerceType(ctx, fctx, fieldType, localType);
+                  coerceType(ctx, fctx, fieldType, targetType);
                   const instrs = fctx.body;
                   fctx.body = saved;
                   return instrs;
                 }
                 return [];
               })(),
-              { op: "local.set", index: localIdx! },
+              localIdx !== undefined
+                ? { op: "local.set", index: localIdx }
+                : { op: "global.set", index: ctx.moduleGlobals.get(propName)! },
             ],
           });
         } else {
           // Coerce field type to local type if needed
-          if (localType && !valTypesMatch(fieldType, localType)) {
-            coerceType(ctx, fctx, fieldType, localType);
+          if (targetType && !valTypesMatch(fieldType, targetType)) {
+            coerceType(ctx, fctx, fieldType, targetType);
           }
-          fctx.body.push({ op: "local.set", index: localIdx });
+          fctx.body.push(
+            localIdx !== undefined
+              ? { op: "local.set", index: localIdx }
+              : { op: "global.set", index: ctx.moduleGlobals.get(propName)! },
+          );
         }
       } else {
         // Coerce field type to local type if needed
-        if (localType && !valTypesMatch(fieldType, localType)) {
-          coerceType(ctx, fctx, fieldType, localType);
+        if (targetType && !valTypesMatch(fieldType, targetType)) {
+          coerceType(ctx, fctx, fieldType, targetType);
         }
-        fctx.body.push({ op: "local.set", index: localIdx });
+        fctx.body.push(
+          localIdx !== undefined
+            ? { op: "local.set", index: localIdx }
+            : { op: "global.set", index: ctx.moduleGlobals.get(propName)! },
+        );
       }
     } else if (ts.isPropertyAssignment(prop)) {
       let propName = ts.isIdentifier(prop.name)
@@ -1685,7 +1853,7 @@ function compileArrayDestructuringAssignment(
   }
 
   // §6.2.4 PutValue: strict-mode assignment to unresolvable reference throws.
-  if (isStrictContext(target) && findUnresolvableInArrayPattern(ctx, fctx, target)) {
+  if (isStrictContext(target, ctx.inferModuleStrictArguments) && findUnresolvableInArrayPattern(ctx, fctx, target)) {
     emitStrictPutValueThrow(ctx, fctx);
     fctx.body.push({ op: "ref.null.extern" });
     return { kind: "externref" };
@@ -1975,10 +2143,14 @@ function compileArrayDestructuringAssignment(
       if (ts.isIdentifier(assignTarget)) {
         const localName = assignTarget.text;
         let localIdx = fctx.localMap.get(localName);
-        if (localIdx === undefined) {
+        let moduleGlobalIdx = localIdx === undefined ? ctx.moduleGlobals.get(localName) : undefined;
+        if (localIdx === undefined && moduleGlobalIdx === undefined) {
           localIdx = allocLocal(fctx, localName, elemType);
         }
-        const localType = getLocalType(fctx, localIdx);
+        const targetType =
+          localIdx !== undefined
+            ? getLocalType(fctx, localIdx)
+            : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
 
         // Per ECMA-262 §13.15.5.5 (AssignmentElement /
         // IteratorDestructuringAssignmentEvaluation) the default Initializer
@@ -2057,8 +2229,13 @@ function compileArrayDestructuringAssignment(
         const thenInit: Instr[] = (() => {
           const saved = fctx.body;
           fctx.body = [];
-          compileExpression(ctx, fctx, defaultExpr, localType ?? elemType);
-          fctx.body.push({ op: "local.set", index: localIdx! });
+          compileExpression(ctx, fctx, defaultExpr, targetType ?? elemType);
+          if (localIdx !== undefined) {
+            fctx.body.push({ op: "local.set", index: localIdx });
+          } else {
+            moduleGlobalIdx = ctx.moduleGlobals.get(localName)!;
+            fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+          }
           const instrs = fctx.body;
           fctx.body = saved;
           return instrs;
@@ -2067,8 +2244,12 @@ function compileArrayDestructuringAssignment(
           const saved = fctx.body;
           fctx.body = [];
           fctx.body.push({ op: "local.get", index: tmpElem });
-          if (localType && !valTypesMatch(elemValType, localType)) coerceType(ctx, fctx, elemValType, localType);
-          fctx.body.push({ op: "local.set", index: localIdx! });
+          if (targetType && !valTypesMatch(elemValType, targetType)) coerceType(ctx, fctx, elemValType, targetType);
+          if (localIdx !== undefined) {
+            fctx.body.push({ op: "local.set", index: localIdx });
+          } else {
+            fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(localName)! });
+          }
           const instrs = fctx.body;
           fctx.body = saved;
           return instrs;
@@ -2449,6 +2630,15 @@ function emitDynamicMemberSet(
 ): void {
   if (ts.isPrivateIdentifier(target.name)) return; // `#x` private — out of scope, drop
   const propName = target.name.text;
+
+  // (#3366 follow-up) A destructuring member target that is absent from the
+  // receiver's closed struct shape is written through the dynamic member-set
+  // dispatcher (ultimately the object's sidecar). Remember that representation
+  // choice so a later statically-typed `obj.prop` read does not auto-add a new,
+  // still-default struct field and thereby hide the value just written.
+  if (ts.isIdentifier(target.expression)) {
+    ctx.sidecarDefinedPropertyKeys.add(`${target.expression.text}:${propName}`);
+  }
 
   // Receiver (reference before value, matching plain `obj.x = v` ordering) → externref local.
   const recvRes = compileExpression(ctx, fctx, target.expression);
@@ -3325,6 +3515,44 @@ function compilePropertyAssignment(
     if (detachedWrite !== undefined) return detachedWrite;
   }
 
+  // (#3374) A module-global property whose descriptor was changed by
+  // Object.defineProperty must run through the runtime [[Set]] path. Function-
+  // local class instances use the compiled classAccessorSet path below.
+  // A direct struct.set would bypass [[Writable]], an absent [[Set]], and the
+  // receiver's extensibility state.
+  // The strictness bit comes from the actual source context: test262's
+  // `noStrict` scripts are compiled through a synthetic module wrapper and must
+  // still keep sloppy failed writes as silent no-ops.
+  if (!ts.isPrivateIdentifier(target.name) && ts.isIdentifier(target.expression)) {
+    const receiverName = target.expression.text;
+    const propName = target.name.text;
+    const propertyKey = `${receiverName}:${propName}`;
+    if (
+      ctx.moduleGlobals.has(receiverName) &&
+      (ctx.definePropertyReceiverKeys.has(propertyKey) || sourceDefinesProperty(ctx, target.expression, propName))
+    ) {
+      return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, true);
+    }
+
+    // A later assignment can widen the physical struct with a field that did
+    // not exist when preventExtensions ran. Do not mistake that storage slot
+    // for an ECMAScript own property. For a provably-new property, compile the
+    // failed [[Set]] directly: strict PutValue throws; sloppy PutValue returns
+    // the RHS while leaving the object unchanged.
+    if (
+      ctx.nonExtensibleVars.has(receiverName) &&
+      !objectLiteralInitializerHasProperty(ctx, target.expression, propName)
+    ) {
+      const rhsType = compileExpression(ctx, fctx, value);
+      if (!rhsType) return null;
+      if (isStrictContext(target, ctx.inferModuleStrictArguments)) {
+        fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, `Cannot add property ${propName}, object is not extensible`);
+      }
+      return rhsType;
+    }
+  }
+
   // Compile-away: if the target object is frozen, emit TypeError throw
   if (ts.isIdentifier(target.expression) && ctx.frozenVars.has(target.expression.text)) {
     // Evaluate RHS for side effects, then throw
@@ -3707,6 +3935,7 @@ function compilePropertyAssignmentExternSet(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
   propName: string,
+  forceRuntimeSet = false,
 ): InnerResult {
   // Compile object expression and convert to externref
   const objResult = compileExpression(ctx, fctx, target.expression);
@@ -3734,36 +3963,40 @@ function compilePropertyAssignmentExternSet(
   const valLocal = allocLocal(fctx, `__paset_val_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: valLocal });
 
-  // (#2017) The host write is a spec [[Set]]: a write to a getter-only accessor
-  // must throw a catchable TypeError (§10.1.9) under ESM strict mode rather than
-  // silently no-op, so route through the strict host setter.
+  // (#3374) PutValue throws only when [[Set]] returns false AND the Reference is
+  // strict (§6.2.5.6 steps 3.d-e). Preserve that source-level bit instead of
+  // treating the compiler's synthetic ESM wrapper as strict JavaScript.
+  const strict = isStrictContext(target, ctx.inferModuleStrictArguments);
+  const setName = strict ? "__extern_set_strict" : "__extern_set";
   const setIdx = ensureLateImport(
     ctx,
-    "__extern_set_strict",
+    setName,
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [],
   );
   flushLateImportShifts(ctx, fctx);
 
-  // (#2655) Build the __extern_set_strict(obj, key, val) sequence as the terminal
+  // (#2655) Build the selected __extern_set(obj, key, val) sequence as the terminal
   // else-arm of a symmetric struct.set dispatch. The member-READ fast path
   // resolves an `any`/`externref` receiver that is actually a typed WasmGC struct
   // via `struct.get <slot>`; a bare `__extern_set` write routes through `_safeSet`
   // to a JS-side SIDECAR and never touches the slot, so read (slot) and write
   // (sidecar) diverge (acorn `this.pos`/`this.type` loops). Writing the SLOT when
   // the receiver owns `propName` as a real field keeps the two in sync. The
-  // __extern_set_strict fallback still covers genuine host externrefs, accessors
-  // (no struct candidate matches an accessor, so the strict-throw path is
-  // preserved), and dynamic sidecar-only props.
-  // (#2664) Route through the deferred-fill member-set dispatcher (strict — this
-  // is a plain `obj.x = v` [[Set]], so a getter-only accessor must throw). The
-  // dispatcher's terminal else-arm IS the `__extern_set_strict` sidecar, so no
+  // selected __extern_set fallback still covers genuine host externrefs and
+  // dynamic sidecar-only props.
+  // (#2664) Route ordinary writes through the deferred-fill member-set dispatcher.
+  // Its terminal else-arm IS the selected runtime setter, so no
   // inline fallback is needed; its struct-candidate arms are enumerated at
   // finalize (the full type table), fixing the compile-order candidate freeze.
-  const dispatched = emitAlternateStructSetDispatch(ctx, fctx, objLocal, valLocal, propName, /*strict*/ true);
+  // (#3374) Object.defineProperty descriptors live in runtime state, not in a
+  // Wasm struct slot. Bypass the struct.set arms for such properties so every
+  // write observes [[Writable]] / [[Set]] and returns the correct [[Set]] result.
+  const dispatched =
+    !forceRuntimeSet && emitAlternateStructSetDispatch(ctx, fctx, objLocal, valLocal, propName, strict);
   if (!dispatched) {
-    // Dispatcher could not be reserved (no __extern_set_strict) — emit the bare
-    // strict host write as before.
+    // Dispatcher could not be reserved — emit the bare host write with the
+    // same strictness as the source Reference.
     addStringConstantGlobal(ctx, propName);
     fctx.body.push({ op: "local.get", index: objLocal });
     fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
@@ -4612,10 +4845,12 @@ function compileExternSetFallback(
   });
   fctx.body.push({ op: "local.get", index: valLocal });
 
-  // Lazily register __extern_set if not already registered
+  // (#3374) Bracket writes carry the same PutValue strictness bit as dot writes.
+  // Keep sloppy failed [[Set]] results silent; strict failures throw TypeError.
+  const setName = isStrictContext(target, ctx.inferModuleStrictArguments) ? "__extern_set_strict" : "__extern_set";
   const funcIdx = ensureLateImport(
     ctx,
-    "__extern_set",
+    setName,
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [],
   );

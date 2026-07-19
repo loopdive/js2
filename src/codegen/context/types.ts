@@ -937,6 +937,10 @@ export interface FunctionContext {
 export interface CodegenContext {
   mod: WasmModule;
   checker: ts.TypeChecker;
+  /** True when the single-file input is an ECMAScript Module goal. Script-goal
+   * module init uses the host global object for top-level `this`; module goal
+   * keeps top-level `this` undefined (#3365). */
+  sourceIsModule: boolean;
   /**
    * (#1930) THE type-query boundary. Prefer `ctx.oracle` over raw
    * `ctx.checker` in ALL new code — the oracle-ratchet CI gate fails on
@@ -1503,6 +1507,24 @@ export interface CodegenContext {
    * would read back null/0 (sibling of the #2189 `.length` gap).
    */
   externGetIdxReserved?: boolean;
+  /**
+   * (#3251 S1) True once the standalone array-descriptor overlay entry points
+   * (`__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd`) were reserved as
+   * safe-no-op placeholders by `reserveVecOverlayHelpers` (vec-overlay.ts) so
+   * the `__defineProperty_value` / `__defineProperty_accessor` /
+   * `__getOwnPropertyDescriptor` vec arms could bake their `call`. Bodies are
+   * filled by `fillVecOverlayHelpers` in finalize. Standalone only.
+   */
+  vecOverlayReserved?: boolean;
+  /**
+   * (#3251 S1) Absolute global index of the mutable `$__vec_overlay_state`
+   * module global (null until the first vec companion is created). Registered
+   * at FINALIZE by `fillVecOverlayHelpers`; tracked here so a (hypothetical)
+   * late import-global insertion can shift it in `fixupModuleGlobalIndices`.
+   */
+  vecOverlayStateGlobalIdx?: number;
+  /** (#3251 S1) Type index of `$__overlay_state` (see above). */
+  vecOverlayStateTypeIdx?: number;
   /**
    * (#2358 #10) True once `__to_primitive` reserved the
    * `__array_to_primitive_string` placeholder. Filled by `fillArrayToPrimitive`
@@ -2320,6 +2342,25 @@ export interface CodegenContext {
   nativeBigIntTypeIdx: number;
   /** Cache for function reference wrappers: signature key → ClosureInfo */
   funcRefWrapperCache: Map<string, ClosureInfo>;
+  /**
+   * (#3433) Per-compile memo: source file → symbols assigned an async function
+   * expression via `x = async function …` / `x = async () => …` anywhere in the
+   * file. Replaces the O(call-sites × file-size) full-file rescan that
+   * `symbolBindsAsyncFunction` (#2612) performed for EVERY call expression whose
+   * earlier async checks fell through (i.e. every ordinary sync call). On the
+   * oracle-v8 test262 harness assemblies (6–18 KB per test) that rescan was
+   * ~40 % of total compile time. Lazily initialized on first query.
+   */
+  asyncAssignScanCache?: Map<ts.SourceFile, ReadonlySet<ts.Symbol>>;
+  /**
+   * (#3433) Per-compile memo: source file → (symbol of an identifier
+   * assignment target → RHS expressions of every `ident = <rhs>` in the file).
+   * Single walk shared by `resolveAssignedNominalType` (#2767), which
+   * previously re-walked the whole file per bare-`var`/`let` receiver query.
+   * RHS type resolution stays lazy per queried symbol (unchanged checker-call
+   * pattern for matches). Lazily initialized on first query.
+   */
+  identAssignRhsCache?: Map<ts.SourceFile, ReadonlyMap<ts.Symbol, readonly ts.Expression[]>>;
   /** Pending module-init body (not yet in mod.functions) that needs global index fixup */
   pendingInitBody: Instr[] | null;
   /** Map from function name to inlinable function info */

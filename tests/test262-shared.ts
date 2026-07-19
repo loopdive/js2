@@ -16,13 +16,14 @@ import { afterAll, beforeAll, describe, it } from "vitest";
 import { availableParallelism } from "os";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
 import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
-import { negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
+import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { findNthAssert } from "./test262-assert-locator.js";
 import { ORACLE_VERSION } from "./test262-oracle-version.js";
 import {
-  buildNegativeCompileSource,
   classifyError,
   classifyTestScope,
+  createTestSandbox,
+  extractWasmExceptionMessage,
   findTestFiles,
   isModuleGoal,
   matchesPathFilter,
@@ -31,8 +32,8 @@ import {
   standaloneHostImportError,
   TEST_CATEGORIES,
   type Test262Scope,
-  wrapTest,
 } from "./test262-runner.js";
+import { assembleOriginalHarness } from "./test262-original-harness.js";
 
 // Prevent unhandled Promise rejections from crashing the vitest fork.
 process.on("unhandledRejection", () => {});
@@ -583,25 +584,20 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // Don't record proposal tests at all — they inflate JSONL without adding value
             if (!includeProposals && scopeInfo.scope === "proposal") return;
 
-            const filter = shouldSkip(source, meta, filePath);
-            if (filter.skip) {
-              recordResult(relPath, category, "skip", filter.reason, undefined, scopeInfo);
-              return;
+            if (!meta.negative) {
+              const filter = shouldSkip(source, meta, filePath);
+              if (filter.skip) {
+                recordResult(relPath, category, "skip", filter.reason, undefined, scopeInfo);
+                return;
+              }
             }
 
-            // (#3151) Pass the lane target: host-free lanes (standalone/wasi)
-            // get `any`-typed compareArray shims (dyn-view TypedArray support);
-            // the JS-host lane keeps `any[]` (an `any` param context corrupts
-            // callers' array-literal args — see buildPreamble in test262-runner.ts).
-            const { source: wrapped, bodyLineOffset: wrapOffset } = wrapTest(source, meta, TEST262_TARGET);
-            // (#2119) `wrapTest` injects a synthetic top-level `export function
-            // test()` entry point, which makes TypeScript flag EVERY wrapped
-            // source as a module (`externalModuleIndicator`). The compiler would
-            // then infer module-strictness and unmap `arguments` even for sloppy
-            // `noStrict` script tests, breaking the `arguments-object/mapped/*`
-            // suite. Only genuine module-goal tests should infer module
-            // strictness; pass the script-test signal so the compiler honours
-            // the source's true (sloppy) strictness for non-module tests.
+            // (#3370) The verdict-bearing runner compiles the literal upstream
+            // harness assembly. wrapTest() remains available for targeted
+            // compiler diagnostics, but its source rewrites are not a
+            // conformance oracle: they can delete checks or turn top-level
+            // globals into function locals.
+            const harnessAssembly = assembleOriginalHarness(source, meta);
             const inferModuleStrictArguments = isModuleGoal(category, meta, source);
             const isNegative =
               meta.negative &&
@@ -609,8 +605,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 meta.negative.phase === "early" ||
                 meta.negative.phase === "resolution");
             const isRuntimeNegative = meta.negative?.phase === "runtime";
-            const compileSource = isNegative ? buildNegativeCompileSource(source, meta, category) : wrapped;
-            const lineAdjustOffset = isNegative ? 0 : wrapOffset;
+            let compileSource = harnessAssembly.primary.source;
+            let lineAdjustOffset = harnessAssembly.primary.bodyLineOffset;
 
             // Multi-file compilation for FIXTURE imports (handled in-process)
             const fixtures = resolveFixtures(source, filePath);
@@ -653,16 +649,32 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 const reachedRecordMetadata = metadataFromImports(result.imports, true);
                 if (!result.success || result.binary.length === 0) {
                   if (isNegative) {
-                    recordResult(
-                      relPath,
-                      category,
-                      "pass",
-                      undefined,
-                      undefined,
-                      scopeInfo,
-                      undefined,
-                      compileRecordMetadata,
-                    );
+                    const errors = result.errors.filter((error: any) => error.severity === "error");
+                    const detail = errors.map((error: any) => error.message).join("; ");
+                    const codes = errors.map((error: any) => error.code).filter(Boolean);
+                    if (negativeCompileErrorMatches(meta.negative!.type, codes, detail)) {
+                      recordResult(
+                        relPath,
+                        category,
+                        "pass",
+                        undefined,
+                        undefined,
+                        scopeInfo,
+                        undefined,
+                        compileRecordMetadata,
+                      );
+                    } else {
+                      recordResult(
+                        relPath,
+                        category,
+                        "compile_error",
+                        `expected ${meta.negative!.type} but compiler rejected for an unrelated reason: ${detail || "unknown"}`,
+                        undefined,
+                        scopeInfo,
+                        undefined,
+                        compileRecordMetadata,
+                      );
+                    }
                   } else {
                     const errMsg = result.errors.map((e: any) => `L${e.line}:${e.column} ${e.message}`).join("; ");
                     recordResult(
@@ -696,9 +708,28 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 }
                 const buildImports = await getBuildImports();
                 let reachedFixtureTest = false;
+                let fixtureInstance: WebAssembly.Instance | undefined;
+                const originalHarnessNoThrow = Symbol("originalHarnessNoThrow");
                 try {
-                  const importObj = buildImports(result.imports, undefined, result.stringPool);
+                  const fixtureOutput: string[] = [];
+                  const appendFixtureOutput = (line: string): void => {
+                    Reflect.defineProperty(fixtureOutput, fixtureOutput.length, {
+                      value: line,
+                      writable: true,
+                      enumerable: true,
+                      configurable: true,
+                    });
+                  };
+                  const consoleProxy = {
+                    log: (...values: unknown[]) => appendFixtureOutput(values.map(String).join(" ")),
+                    error: (...values: unknown[]) => appendFixtureOutput(values.map(String).join(" ")),
+                    warn: (...values: unknown[]) => appendFixtureOutput(values.map(String).join(" ")),
+                  };
+                  const importObj = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
+                    globalSandbox: createTestSandbox(consoleProxy as unknown as Console),
+                  });
                   const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);
+                  fixtureInstance = instance;
                   if (typeof (importObj as any).setExports === "function") {
                     (importObj as any).setExports(instance.exports);
                   }
@@ -710,84 +741,44 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   if (typeof moduleInit === "function") {
                     moduleInit();
                   }
-                  const testFn = (instance.exports as any).test;
-                  if (typeof testFn !== "function") {
-                    if (isNegative) {
-                      // #1527: negative parse/resolution tests intentionally
-                      // contain invalid module syntax (re-exports of missing
-                      // bindings, malformed import attributes, etc.). Our
-                      // compiler is permissive and produces a module without
-                      // a `test` export, which we count as the expected
-                      // failure outcome — the test module never formed.
-                      recordResult(
-                        relPath,
-                        category,
-                        "pass",
-                        undefined,
-                        undefined,
-                        scopeInfo,
-                        undefined,
-                        compileRecordMetadata,
-                      );
-                    } else {
-                      recordResult(
-                        relPath,
-                        category,
-                        "compile_error",
-                        "no test export",
-                        undefined,
-                        scopeInfo,
-                        undefined,
-                        compileRecordMetadata,
-                      );
-                    }
-                    return;
-                  }
                   reachedFixtureTest = true;
-                  let ret = testFn();
-                  // (#3227 S4) Async post-drain verdict re-read — parity with
-                  // scripts/test262-worker.mjs and runTest262File (S1). The
-                  // sync 1/-262 of an async-flagged test is read before its
-                  // host-microtask continuations run; drain two setImmediate
-                  // rounds and re-read via the wrapper's __result() export.
-                  // No process-level deferred-throw capture here: this path
-                  // runs inside the concurrent vitest parent, where a
-                  // process-wide handler would mis-attribute across in-flight
-                  // tests (the fork worker handles that case).
-                  const fixtureResultFn = (instance.exports as any).__result;
-                  if (
-                    !isNegative &&
-                    !isRuntimeNegative &&
-                    typeof fixtureResultFn === "function" &&
-                    (ret === 1 || ret === -262)
-                  ) {
-                    await new Promise((r) => setImmediate(r));
-                    await new Promise((r) => setImmediate(r));
-                    try {
-                      ret = fixtureResultFn();
-                    } catch {
-                      // re-read trapped — keep the sync verdict
-                    }
-                  }
+
+                  // Literal-harness completion is itself the positive verdict;
+                  // there is intentionally no synthetic `test` export.
                   if (isNegative) {
-                    // Negative parse/resolution test compiled, instantiated,
-                    // AND produced a callable test — but spec says it shouldn't
-                    // have linked. We did not detect the spec violation, so
-                    // record a fail with a clear message.
-                    recordResult(
-                      relPath,
-                      category,
-                      "fail",
-                      `expected ${meta.negative!.phase} ${meta.negative!.type} but compiled, instantiated, and ran (returned ${ret})`,
-                      undefined,
-                      scopeInfo,
-                      undefined,
-                      reachedRecordMetadata,
+                    throw new Error(
+                      `expected ${meta.negative!.phase} ${meta.negative!.type} but compilation succeeded`,
                     );
-                    return;
                   }
-                  if (isRuntimeNegative) {
-                    // Execution completed without error — expected runtime throw didn't happen
+                  if (isRuntimeNegative) throw originalHarnessNoThrow;
+                  if (harnessAssembly.async) {
+                    const marker = (prefix: string) => fixtureOutput.find((line) => line.includes(prefix));
+                    const deadline = Date.now() + 1_000;
+                    while (
+                      Date.now() < deadline &&
+                      !marker("Test262:AsyncTestComplete") &&
+                      !marker("Test262:AsyncTestFailure")
+                    ) {
+                      await new Promise((resolveTurn) => setTimeout(resolveTurn, 10));
+                    }
+                    const failure = marker("Test262:AsyncTestFailure");
+                    if (failure) throw new Error(failure);
+                    if (!marker("Test262:AsyncTestComplete")) throw new Error("async completion marker not observed");
+                  }
+                  recordResult(
+                    relPath,
+                    category,
+                    "pass",
+                    undefined,
+                    undefined,
+                    scopeInfo,
+                    undefined,
+                    reachedRecordMetadata,
+                  );
+                  return;
+                } catch (execErr: any) {
+                  const execRecordMetadata = metadataFromImports(result.imports, reachedFixtureTest);
+                  if (execErr === originalHarnessNoThrow) {
                     recordResult(
                       relPath,
                       category,
@@ -796,46 +787,12 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       undefined,
                       scopeInfo,
                       undefined,
-                      reachedRecordMetadata,
+                      execRecordMetadata,
                     );
-                  } else if (ret === 1 || ret === 1.0) {
-                    recordResult(
-                      relPath,
-                      category,
-                      "pass",
-                      undefined,
-                      undefined,
-                      scopeInfo,
-                      undefined,
-                      reachedRecordMetadata,
-                    );
-                  } else if (ret === -262) {
-                    // (#2939/#2940) Vacuity correction — harness callback never ran.
-                    recordResult(
-                      relPath,
-                      category,
-                      "fail",
-                      "vacuous: harness-wrapper callback never executed (#2940) — no assertion ran",
-                      undefined,
-                      scopeInfo,
-                      undefined,
-                      { ...reachedRecordMetadata, vacuous: true },
-                    );
-                  } else {
-                    recordResult(
-                      relPath,
-                      category,
-                      "fail",
-                      `returned ${ret}`,
-                      undefined,
-                      scopeInfo,
-                      undefined,
-                      reachedRecordMetadata,
-                    );
-                  }
-                } catch (execErr: any) {
-                  const execRecordMetadata = metadataFromImports(result.imports, reachedFixtureTest);
-                  if (isRuntimeNegative) {
+                  } else if (
+                    isRuntimeNegative &&
+                    extractWasmExceptionMessage(execErr, fixtureInstance).includes(meta.negative!.type)
+                  ) {
                     // A throw from the start function IS the expected runtime
                     // error for a runtime-negative test.
                     recordResult(
@@ -901,20 +858,40 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // Every test is compiled and executed fresh each run.
             const wasmPath = "";
             const metaPath = "";
-            const r = await pool!.runTest(
-              compileSource,
-              {
-                isNegative: isNegative || false,
-                isRuntimeNegative: isRuntimeNegative || false,
-                expectedErrorType: meta.negative?.type,
-                wasmPath,
-                metaPath,
-                label: relPath,
-                target: TEST262_TARGET,
-                inferModuleStrictArguments,
-              },
-              30_000,
-            );
+            const runHarnessSource = (variantSource: string, label: string) =>
+              pool!.runTest(
+                variantSource,
+                {
+                  isNegative: isNegative || false,
+                  isRuntimeNegative: isRuntimeNegative || false,
+                  expectedErrorType: meta.negative?.type,
+                  originalHarness: true,
+                  asyncTest: harnessAssembly.async,
+                  wasmPath,
+                  metaPath,
+                  label,
+                  target: TEST262_TARGET,
+                  inferModuleStrictArguments,
+                },
+                30_000,
+              );
+
+            let r = await runHarnessSource(compileSource, relPath);
+            if (r.status === "pass" && harnessAssembly.strictRerun) {
+              const primaryCompileMs = r.compileMs ?? 0;
+              const primaryExecMs = r.execMs ?? 0;
+              compileSource = harnessAssembly.strictRerun.source;
+              lineAdjustOffset = harnessAssembly.strictRerun.bodyLineOffset;
+              const strictResult = await runHarnessSource(compileSource, `${relPath} [strict rerun]`);
+              r = {
+                ...strictResult,
+                ...(strictResult.status === "pass"
+                  ? {}
+                  : { error: `strict rerun: ${strictResult.error ?? strictResult.status}` }),
+                compileMs: primaryCompileMs + (strictResult.compileMs ?? 0),
+                execMs: primaryExecMs + (strictResult.execMs ?? 0),
+              };
+            }
 
             const timing = { compileMs: r.compileMs, execMs: r.execMs };
 
@@ -956,6 +933,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       isNegative: isNegative || false,
                       isRuntimeNegative: isRuntimeNegative || false,
                       expectedErrorType: meta.negative?.type,
+                      originalHarness: true,
+                      asyncTest: harnessAssembly.async,
                       wasmPath,
                       metaPath,
                       label: relPath + " [poison retry]",
@@ -1025,6 +1004,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       isNegative: isNegative || false,
                       isRuntimeNegative: isRuntimeNegative || false,
                       expectedErrorType: meta.negative?.type,
+                      originalHarness: true,
+                      asyncTest: harnessAssembly.async,
                       wasmPath,
                       metaPath,
                       label: relPath + " [retry]",

@@ -43,6 +43,7 @@ export function createCodegenContext(
   const ctx: CodegenContext = {
     mod,
     checker,
+    sourceIsModule: false,
     // (#1930) THE type-query boundary. New codegen code MUST prefer
     // `ctx.oracle` over raw `ctx.checker` access — the oracle-ratchet CI gate
     // (`pnpm run check:oracle-ratchet`) fails on any growth of direct checker

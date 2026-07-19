@@ -8,12 +8,13 @@
 // sat inside a callback/body that never ran (the dropped-nested-callback class).
 // It must NOT flag a test whose callback genuinely runs (its assert bumps the
 // counter), nor a throw-based test with no assert_* calls.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { runTest262File } from "./test262-runner.ts";
+import { runSyntheticTest262File } from "./test262-runner.ts";
 
-const SCRATCH = "/workspace/test262/test/zz-issue-3086";
-mkdirSync(SCRATCH, { recursive: true });
+const SCRATCH = mkdtempSync(join(tmpdir(), "js2-issue-3086-"));
 afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
 
 const META = `/*---\ndescription: #3086 general vacuity fixture\n---*/\n`;
@@ -24,7 +25,7 @@ async function score(name: string, body: string): Promise<{ status: string; vacu
   // Standalone lane: a numeric-typed callback param is NOT a #2939 dispatch
   // candidate, so `fn(x)` drops it — an isolated, deterministic stand-in for the
   // dropped-nested-callback class.
-  const r = await runTest262File(path, "built-ins", 20000, "standalone");
+  const r = await runSyntheticTest262File(path, "built-ins", 20000, "standalone");
   return { status: r.status, vacuous: (r as { vacuous?: boolean }).vacuous ?? false };
 }
 

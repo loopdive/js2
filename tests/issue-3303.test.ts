@@ -19,8 +19,8 @@
 //      fails at declared+1 (a ceiling the PR commits to, not a blank check);
 //   2. REBASE-MODE ONLY — without a forward oracle bump the allowance is
 //      inert (an ordinary PR cannot use it to sneak regressions through);
-//   3. TRAP-RATCHET IMMUNITY — the #3189 uncatchable-trap growth ratchet is
-//      never suppressed by an allowance;
+//   3. TRAP-RATCHET CONTAINMENT — regressions-allow never suppresses the #3189
+//      ratchet; a separate bounded trap-growth-allow is rebase-only;
 //   4. PR-SCOPING — the declaration is read from issue files in the change-set
 //      diff only (change-scope.mjs), with a required reason;
 //   5. GUARD AGREEMENT — the #1668 catastrophic and #1897 standalone guard
@@ -43,6 +43,7 @@ import {
   REGRESSIONS_ALLOW_KEY,
   evaluateRebaseGate,
 } from "../scripts/diff-test262.js";
+import { effectiveBaselineTrapTolerance } from "../scripts/check-baseline-trap-growth.js";
 // Untyped .mjs helper (scripts/ is outside the tsc include set — runtime only).
 import { parseFrontmatterCountReason } from "../scripts/lib/change-scope.mjs";
 
@@ -96,6 +97,15 @@ describe("#3303 — parseFrontmatterCountReason", () => {
   it("does not read the key from the document BODY (frontmatter only)", () => {
     const text = `---\nid: 9999\n---\n\nregressions-allow:\n  count: 100\n  reason: "in body, not frontmatter"\n`;
     expect(parseFrontmatterCountReason(text, REGRESSIONS_ALLOW_KEY)).toBeUndefined();
+  });
+});
+
+describe("#3370 — baseline-writer trap ceiling containment", () => {
+  it("uses the change-scoped ceiling only for a forward oracle bump", () => {
+    expect(effectiveBaselineTrapTolerance(4, 7, 8, 47)).toBe(47);
+    expect(effectiveBaselineTrapTolerance(4, 8, 8, 47)).toBe(4);
+    expect(effectiveBaselineTrapTolerance(4, 8, 7, 47)).toBe(4);
+    expect(effectiveBaselineTrapTolerance(4, undefined, 8, 47)).toBe(4);
   });
 });
 
@@ -199,6 +209,13 @@ function allowanceFileText(count: number): string {
   return fm(`regressions-allow:\n  count: ${count}\n  reason: "#3285 fixture reclassification, see #3286"`);
 }
 
+function combinedAllowanceFileText(regressions: number, trapGrowth: number): string {
+  return fm(
+    `regressions-allow:\n  count: ${regressions}\n  reason: "fixture reclassification"\n` +
+      `trap-growth-allow:\n  count: ${trapGrowth}\n  reason: "fixture harness trap transition"`,
+  );
+}
+
 function runDiffCli(rows: { base: Row[]; cand: Row[] }, env: Record<string, string>) {
   const dir = mkdtempSync(join(tmpdir(), "issue-3303-cli-"));
   try {
@@ -209,7 +226,11 @@ function runDiffCli(rows: { base: Row[]; cand: Row[] }, env: Record<string, stri
     const r = spawnSync(
       process.execPath,
       ["--experimental-strip-types", "scripts/diff-test262.ts", basePath, candPath, "--quiet"],
-      { cwd: ROOT, encoding: "utf-8", env: { ...process.env, ...env } },
+      {
+        cwd: ROOT,
+        encoding: "utf-8",
+        env: { ...process.env, TRAP_GROWTH_ALLOW_FILE: "/dev/null", ...env },
+      },
     );
     return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
   } finally {
@@ -280,6 +301,85 @@ describe("#3303 — CLI gate behaviour (rebase-mode, REGRESSIONS_ALLOW_FILE hook
     });
     expect(r.out).toMatch(/GATE FAIL: trap category "null_deref" grew/);
     expect(r.status).toBe(1);
+  });
+
+  it("allows measured trap growth only through a separate rebase-scoped ceiling (#3370)", () => {
+    const allowFile = join(tmp, "9999-combined-allowance.md");
+    writeFileSync(allowFile, combinedAllowanceFileText(100, 1));
+    const r = runDiffCli(rebaseRows(5, { traps: 1 }), {
+      REGRESSIONS_ALLOW_FILE: allowFile,
+      TRAP_GROWTH_ALLOW_FILE: allowFile,
+      TRAP_RATCHET_TOLERANCE: "0",
+    });
+    expect(r.out).toContain("trap-growth-allow (#3370): maximum category growth 1 within declared");
+    expect(r.status).toBe(0);
+  });
+
+  it("fails when trap growth exceeds the separate declared ceiling (#3370)", () => {
+    const allowFile = join(tmp, "9999-combined-overflow.md");
+    writeFileSync(allowFile, combinedAllowanceFileText(100, 1));
+    const r = runDiffCli(rebaseRows(5, { traps: 2 }), {
+      REGRESSIONS_ALLOW_FILE: allowFile,
+      TRAP_GROWTH_ALLOW_FILE: allowFile,
+      TRAP_RATCHET_TOLERANCE: "0",
+    });
+    expect(r.out).toMatch(/GATE FAIL: trap category "null_deref" grew/);
+    expect(r.status).toBe(1);
+  });
+
+  it("keeps trap-growth-allow inert without an oracle bump (#3370)", () => {
+    const allowFile = join(tmp, "9999-combined-same-oracle.md");
+    writeFileSync(allowFile, combinedAllowanceFileText(100, 100));
+    const r = runDiffCli(rebaseRows(1, { sameOracle: true, traps: 1 }), {
+      REGRESSIONS_ALLOW_FILE: allowFile,
+      TRAP_GROWTH_ALLOW_FILE: allowFile,
+      TRAP_RATCHET_TOLERANCE: "0",
+    });
+    expect(r.out).not.toContain("trap-growth-allow (#3370): maximum category growth");
+    expect(r.out).toMatch(/GATE FAIL: trap category "null_deref" grew/);
+    expect(r.status).toBe(1);
+  });
+
+  it("resets compile-time gate signals when an oracle bump changes the harness workload (#3370)", () => {
+    const allowFile = writeAllowanceFile(tmp, 100);
+    const rows = {
+      base: [{ oracle_version: 1, file: "test/x/a.js", status: "pass", compile_ms: 100, wasm_sha: "base" }],
+      cand: [
+        {
+          oracle_version: 2,
+          file: "test/x/a.js",
+          status: "compile_timeout",
+          compile_ms: 1000,
+          wasm_sha: "candidate",
+        },
+      ],
+    };
+    const r = runDiffCli(rows, { REGRESSIONS_ALLOW_FILE: allowFile });
+    expect(r.out).toContain("Compile timeouts (pass → compile_timeout): 0");
+    expect(r.out).toContain("1 raw pass→compile_timeout transition(s) are not comparable");
+    expect(r.out).toContain("Aggregate compile time (shared 1 tests): baseline 100ms → current 1000ms (Δ +0.0%)");
+    expect(r.out).toContain("raw aggregate delta +900.0%");
+    expect(r.status).toBe(0);
+  });
+
+  it("keeps compile-time gate signals unchanged for the same oracle", () => {
+    const rows = {
+      base: [{ oracle_version: 1, file: "test/x/a.js", status: "pass", compile_ms: 100, wasm_sha: "base" }],
+      cand: [
+        {
+          oracle_version: 1,
+          file: "test/x/a.js",
+          status: "compile_timeout",
+          compile_ms: 1000,
+          wasm_sha: "candidate",
+        },
+      ],
+    };
+    const r = runDiffCli(rows, { REGRESSIONS_ALLOW_FILE: "/dev/null" });
+    expect(r.out).toContain("Compile timeouts (pass → compile_timeout): 1");
+    expect(r.out).toContain("Aggregate compile time (shared 1 tests): baseline 100ms → current 1000ms (Δ +900.0%)");
+    expect(r.out).not.toContain("Oracle re-baseline compile-time note (#3370)");
+    expect(r.status).toBe(0);
   });
 
   it("MALFORMED declaration (count without reason) is ignored with a loud warning", () => {

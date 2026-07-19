@@ -14,7 +14,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { funcSignatureOf } from "../func-space.js";
-import { coerceType, valTypesMatch } from "../shared.js";
+import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 
 // (#3191 — bloat S1) The JS-error-throw lowering was hoisted into the
 // layering-safe leaf module `../js-errors.ts` so runtime modules (dataview-
@@ -251,6 +251,31 @@ export function emitSuperUninitializedThisGuard(
     fctx,
     "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
   );
+  return true;
+}
+
+/**
+ * ECMA-262 Annex B.3.9 / AssignmentTargetType `web-compat` lowering.
+ *
+ * In non-strict code, a CallExpression may be parsed as an assignment/update/
+ * for-in/of target. Its call is evaluated for side effects, then evaluation
+ * throws ReferenceError before GetValue/ToNumeric, the RHS, or PutValue. The
+ * early-error pass keeps strict-mode and logical-assignment forms out of
+ * codegen, so reaching this helper for a call target identifies the normative
+ * optional runtime path.
+ */
+export function emitWebCompatCallAssignmentTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  target: ts.Expression,
+): boolean {
+  let unwrapped = target;
+  while (ts.isParenthesizedExpression(unwrapped)) unwrapped = unwrapped.expression;
+  if (!ts.isCallExpression(unwrapped)) return false;
+
+  const resultType = compileExpression(ctx, fctx, unwrapped);
+  if (resultType !== null) fctx.body.push({ op: "drop" });
+  emitThrowReferenceError(ctx, fctx, "Invalid left-hand side in assignment");
   return true;
 }
 

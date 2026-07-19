@@ -1,6 +1,6 @@
 {
   "name": "js2wasm",
-  "version": "0.60.1",
+  "version": "0.62.0",
   "description": "Direct AOT compilation from JavaScript and TypeScript to WebAssembly GC (unscoped proxy for @loopdive/js2)",
   "keywords": [
     "webassembly",

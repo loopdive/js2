@@ -674,11 +674,30 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
   collectClassesFromStatements(sourceFile.statements);
 
+  // (#3419) Last-wins for duplicate top-level function declarations. At Script /
+  // function-body top level, duplicate `function f(){}` declarations are legal
+  // JS (§16.1.1 — HoistableDeclarations are var-scoped there) and
+  // GlobalDeclarationInstantiation (§16.1.7) instantiates only the LAST
+  // definition per name. Registering every duplicate created one dead stub
+  // WasmFunction per shadowed declaration and compiled the shadowed body
+  // against the survivor's signature (transient garbage). Skip shadowed
+  // duplicates outright — only declarations WITH a body participate, so
+  // TS overload signatures (bodyless) keep their existing behavior.
+  const lastTopLevelFnWithBody = new Map<string, ts.FunctionDeclaration>();
+  for (const stmt of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
+      lastTopLevelFnWithBody.set(stmt.name.text, stmt);
+    }
+  }
+
   // Third: collect function declarations (uses resolveWasmType for real type indices)
   for (const stmt of sourceFile.statements) {
     if (ts.isFunctionDeclaration(stmt) && (stmt.name || hasExportModifier(stmt))) {
       // Skip declare function stubs (no body, inside or matching declare)
       if (hasDeclareModifier(stmt)) continue;
+      // (#3419) Shadowed duplicate — a later same-name top-level declaration
+      // wins; this one is never observable.
+      if (stmt.name && stmt.body && lastTopLevelFnWithBody.get(stmt.name.text) !== stmt) continue;
 
       // Anonymous `export default function() {}` gets the synthetic name "default"
       const name = stmt.name ? stmt.name.text : "default";
@@ -1130,8 +1149,30 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // js-string builtin (no genuine user function shadows the name), fall
     // through and register the global; a real user function of the same name
     // keeps the original skip behaviour.
+    // Only a GENUINE user-defined function (a *defined* function, whose
+    // funcIdx >= numImportFuncs) shadows a module-level `var` of the same name.
+    // A funcMap entry that is a host IMPORT or a reserved stdlib slot
+    // (funcIdx < numImportFuncs) does NOT: per ECMAScript a module-level
+    // `var <name>` binding shadows the ambient host global, so the user's value
+    // must still get its `$__mod_<name>` global. Otherwise the binding stays a
+    // `__module_init` local, invisible to every other function, and reads from a
+    // nested/helper function silently return null.
+    //
+    // (#3428) The test262 host harness triggers exactly this: the runtime shim
+    // declares `var print = function (v) { console.log(v); }` while
+    // `doneprintHandle.js` defines `function __consolePrintHandle__(m){ print(m); }`.
+    // Whenever the compiled module ALSO references another host builtin (e.g.
+    // `String(error)` inside `$DONE`), the whitelisted `print` host global lands
+    // in `funcMap` first, so `registerModuleGlobal("print", …)` was skipped —
+    // `print` never got a `$__mod_print` global, `compileClosureCall` bailed
+    // (neither local nor module-global), and the `$DONE → __consolePrintHandle__
+    // → print → console.log(marker)` chain emitted nothing. The async completion
+    // marker was therefore never observed (4,617 tests). The wasm:js-string
+    // builtin carve-out (#2669: concat/length/equals/substring/charCodeAt, which
+    // are ALSO imports with funcIdx < numImportFuncs) is the special case this
+    // generalises — every import-slot collision now correctly yields the global.
     const fnIdx = ctx.funcMap.get(name);
-    if (fnIdx !== undefined && fnIdx !== ctx.jsStringImports.get(name)) return; // shadowed by a user function
+    if (fnIdx !== undefined && fnIdx >= ctx.numImportFuncs) return; // shadowed by a real user-defined function
     if (ctx.moduleGlobals.has(name)) return; // skip if already registered
     if (ctx.classSet.has(name)) return; // skip class expression variables
 
@@ -1215,7 +1256,27 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * already forces externref + tags `externrefAccessorVars` at function scope.
    */
   function moduleInitForcesExternref(decl: ts.VariableDeclaration): boolean {
-    if (!decl.initializer || !ts.isObjectLiteralExpression(decl.initializer)) return false;
+    if (!decl.initializer) return false;
+    // (#3365) Script top-level `this` is the host global object. The checker
+    // describes it as the enormous structural `typeof globalThis` type, but
+    // module init receives a genuine host externref. Keep the storage and all
+    // subsequent member operations on that runtime representation; a typed
+    // Wasm struct global would stay null and make `global.Infinity = 42` throw
+    // the null-access payload before strict [[Set]] can produce TypeError.
+    if (!ctx.sourceIsModule && decl.initializer.kind === ts.SyntaxKind.ThisKeyword) return true;
+    if (!ts.isObjectLiteralExpression(decl.initializer)) return false;
+    // (#3369) An untyped empty object literal is constructed by literals.ts as
+    // a host `$Object` (`__new_plain_object`). Keep the module global on the
+    // same externref representation unless a shape pre-pass deliberately
+    // widened it into a closed struct/array-like carrier. Otherwise the
+    // externref is guarded-cast into the zero-field inferred struct, stores
+    // null, and later post-hoc protocol installation (`iter[Symbol.iterator]
+    // = fn` / Object.defineProperty) operates on a lost value.
+    if (decl.initializer.properties.length === 0 && ts.isIdentifier(decl.name)) {
+      const name = decl.name.text;
+      const widened = ctx.widenedTypeProperties.get(name);
+      if ((!widened || widened.length === 0) && !ctx.shapeMap.has(name)) return true;
+    }
     for (const p of decl.initializer.properties) {
       if (ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) return true;
       if (ts.isMethodDeclaration(p) && ts.isComputedPropertyName(p.name)) {
@@ -1488,6 +1549,20 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           opKind === ts.SyntaxKind.BarBarEqualsToken ||
           opKind === ts.SyntaxKind.AmpersandAmpersandEqualsToken;
         if (!isAssignOp) continue;
+        // (#3366) A destructuring-assignment LHS has no single root identifier,
+        // so getAssignmentRootIdentifier below returns undefined and the whole
+        // top-level statement used to be dropped. Keep it unconditionally:
+        // evaluating the RHS/iterator/property reads/default initializers and
+        // performing each PutValue are all observable, even when no target is
+        // a module binding. The assignment compiler performs the per-leaf
+        // local/module/global resolution.
+        if (
+          opKind === ts.SyntaxKind.EqualsToken &&
+          (ts.isArrayLiteralExpression(expr.left) || ts.isObjectLiteralExpression(expr.left))
+        ) {
+          ctx.moduleInitStatements.push(stmt);
+          continue;
+        }
         // (#1719 CPR) `Array.prototype[Symbol.iterator] = fn` / `.values = fn`
         // has no module-global root identifier (`Array` is a builtin), so the
         // generic check below drops it. When the S1 brand is set, keep it in
@@ -2151,9 +2226,22 @@ export function compileDeclarations(
     ctx.pendingInitBody = compiledInitFctx.body;
   }
 
+  // (#3419) Last-wins for duplicate top-level function declarations — mirror
+  // the collectDeclarations registration skip: only the LAST declaration per
+  // name has a registered WasmFunction; compiling a shadowed body would write
+  // into the survivor's slot (funcByName resolves by name) with the wrong
+  // signature and then be overwritten anyway.
+  const lastFnWithBody = new Map<string, ts.FunctionDeclaration>();
+  for (const stmt of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
+      lastFnWithBody.set(stmt.name.text, stmt);
+    }
+  }
+
   // Compile top-level function declarations
   for (const stmt of sourceFile.statements) {
     if (ts.isFunctionDeclaration(stmt) && (stmt.name || hasExportModifier(stmt)) && !hasDeclareModifier(stmt)) {
+      if (stmt.name && stmt.body && lastFnWithBody.get(stmt.name.text) !== stmt) continue;
       const fnName = stmt.name ? stmt.name.text : "default";
       if (stmt.body) {
         const idx = funcByName.get(fnName);

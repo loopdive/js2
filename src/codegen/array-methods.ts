@@ -1309,7 +1309,8 @@ export function compileArrayMethodCall(
   const methodAccess = propAccess as ts.PropertyAccessExpression;
 
   // If receiver is a module global, proxy it through a temp local so
-  // getReceiverLocalIdx succeeds and mutating methods can write back.
+  // getReceiverLocalIdx succeeds. Array methods mutate the vec/backing in
+  // place, so the global reference itself never needs to be written back.
   let moduleGlobalIdx: number | undefined;
   let savedLocal: number | undefined;
   // #1966: `unshift` mutates in place (prepends + shifts), so its mutated vec
@@ -1563,12 +1564,11 @@ export function compileArrayMethodCall(
       result = undefined;
   }
 
-  // Write back temp local to module global for mutating methods
+  // Clean up the module-global receiver proxy. Mutating emitters preserve the
+  // vec identity and update its backing array in place; writing the temporary
+  // reference back is redundant and can be ill-typed when late type
+  // registration changed the global's final reference index (#3369).
   if (moduleGlobalIdx !== undefined && savedLocal !== undefined) {
-    if (MUTATING.has(methodName) && result !== null && result !== undefined) {
-      fctx.body.push({ op: "local.get", index: savedLocal });
-      fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
-    }
     // Clean up the proxy from localMap
     if (ts.isIdentifier(propAccess.expression)) {
       fctx.localMap.delete(propAccess.expression.text);

@@ -66,6 +66,7 @@ import { fillMemberGetDispatch } from "./member-get-dispatch.js";
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
+import { fillVecOverlayHelpers } from "./vec-overlay.js"; // (#3251 S1)
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
 import {
   sourceContainsClass,
@@ -1906,6 +1907,8 @@ export function generateModule(
 } {
   const mod = createEmptyModule();
   const ctx = createCodegenContext(mod, ast.checker, options);
+  const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
+  ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
   // (#2138) Populated only under JS2WASM_IR_FIRST=1 — the top-level functions
   // whose legacy body emission was skipped (IR owns the slot). Declared out
   // here so the return statement below (outside the try) can surface it.
@@ -2766,6 +2769,17 @@ export function generateModule(
     // reads (`arr[k]`, `arr["length"]`) instead of empty / undefined. Standalone
     // only (no-op otherwise).
     fillDynamicForinVecArms(ctx);
+
+    // (#3251 S1) Array-descriptor overlay: fill the reserved
+    // `__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd` bodies (companion
+    // `$Object` per vec receiver, delegating ValidateAndApply/merge/gOPD to
+    // the `$Object` natives + vec value write-back) and splice the overlay
+    // read prologues into `__extern_get_idx` / `__extern_get`. Runs AFTER the
+    // vec fills above (needs every carrier + `__obj_index_of_key`) and BEFORE
+    // `fillTaDynViewMopArms` below so the TypedArray dyn-view arm keeps the
+    // front slot (TA receivers must exit before the overlay consult).
+    // Standalone only (no-op otherwise).
+    fillVecOverlayHelpers(ctx);
 
     // (#3177) `$__ta_dyn_view` §10.4.5 MOP arms — AFTER every vec fill above
     // (each fill prepends at body[0]; last fill wins the front slot, and the
@@ -4337,6 +4351,8 @@ export function generateMultiModule(
 } {
   const mod = createEmptyModule();
   const ctx = createCodegenContext(mod, multiAst.checker, options);
+  // Multi-file compilation is linked through import/export module records.
+  ctx.sourceIsModule = true;
   try {
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {

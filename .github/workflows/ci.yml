@@ -328,6 +328,19 @@ jobs:
         # equivalence shards.
         run: pnpm exec vitest run tests/issue-1580.test.ts
 
+      - name: Prepare Test262 harness inputs for changed root tests
+        if: github.event_name == 'pull_request'
+        run: |
+          # The root-test gate below executes Test262 integration tests when a
+          # PR changes them. Keep the regular checkout lightweight, but prepare
+          # both pinned harness inputs and the worker bundles before that gate.
+          # --checkout intentionally overrides test262-fyi/data's optional
+          # update=none setting for this explicit CI consumer.
+          git submodule update --init --checkout test262
+          git submodule update --init --checkout test262-fyi/data
+          pnpm run build:compiler-bundle
+          pnpm exec esbuild src/runtime.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
       - name: Changed root test files must pass (#3008)
         # Per-PR half of the #3008 wiring (the post-merge half is
         # .github/workflows/issue-tests.yml): any tests/*.test.ts file this PR
@@ -342,9 +355,16 @@ jobs:
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           BASE=$(git merge-base origin/main HEAD 2>/dev/null || echo "")
           if [ -z "$BASE" ]; then echo "No merge base resolvable — skipping."; exit 0; fi
+          # test262-chunk* entry points are shard-matrix constructs (they need
+          # TEST262_CHUNK_* / a chunk index+total to slice the corpus and run
+          # in the test262-sharded.yml workflow, not this per-PR root-test
+          # gate) — same "runs elsewhere" rationale as the linear-/c-abi/simd
+          # exclusions. The dynamic entry point (#3431) already self-skips
+          # without its env vars, but excluding it here keeps the gate from
+          # spending a fork on an inert skip.
           CHANGED=$(git diff --name-only --diff-filter=AM "$BASE" HEAD -- tests/ \
             | grep -E '^tests/[^/]+\.test\.ts$' \
-            | grep -vE '^tests/(linear-|c-abi\.|simd)' || true)
+            | grep -vE '^tests/(linear-|c-abi\.|simd|test262-chunk)' || true)
           if [ -z "$CHANGED" ]; then echo "No root test files changed."; exit 0; fi
           N=$(echo "$CHANGED" | wc -l)
           if [ "$N" -gt 20 ]; then
@@ -353,9 +373,13 @@ jobs:
           fi
           echo "Running $N changed root test file(s):"
           echo "$CHANGED"
-          # Invoke vitest directly (not `pnpm test --`) so the file list is
-          # scoped to vitest and not consumed by pnpm (see PR #432).
-          pnpm exec vitest run $CHANGED --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+          # Invoke each file in a fresh Vitest process. Test262 integration
+          # files intentionally retain large compiler/worker graphs, so one
+          # shared 512 MB fork accumulates their heaps and defeats the
+          # file-level isolation used by the harness parity regressions.
+          for test_file in $CHANGED; do
+            pnpm exec vitest run "$test_file" --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+          done
 
       - name: Conformance numbers in sync (#1522)
         run: pnpm run sync:conformance:check

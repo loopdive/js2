@@ -125,6 +125,10 @@ const FLAG_ACCESSOR = 0x08;
 // probe) per §7.1.1.1 — standalone ships no Number.prototype.valueOf, so the slot
 // IS the recoverable internal value. 0x20/0x40 remain free.
 export const FLAG_INTERNAL = 0x10;
+// 0x20 = FLAG_COMPANION_VALUE (#3251, vec-overlay.ts) — on an array-overlay
+// COMPANION data entry whose [[Value]] could not be written back into the vec
+// element (kind-incompatible carrier); dynamic readers answer from the
+// companion. 0x40 remains free.
 const FLAG_TOMBSTONE = 0x80;
 /**
  * Reserved own-key under which a boxed primitive wrapper stores its internal

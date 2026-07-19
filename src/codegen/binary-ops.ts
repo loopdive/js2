@@ -48,6 +48,7 @@ import { emitAnyEqFromExternTemps, emitLooseEq, emitStrictEq } from "./coercion-
 import { compileInstanceOf, compileTypeofComparison } from "./typeof-delete.js";
 import { compileTypedBinaryDispatch } from "./binary-ops-typed-dispatch.js";
 import { compileInOperator } from "./binary-ops-in.js";
+import { emitIsUndefF64 } from "./value-tags.js";
 
 // ── Binary operations ─────────────────────────────────────────────────
 
@@ -586,6 +587,22 @@ export function compileBinaryExpression(
         if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
         return { kind: "i32" };
       }
+      // (#3369) Numeric arrays carry an omitted/undefined element as the exact
+      // signaling-NaN sentinel from value-tags.ts. A read therefore still has
+      // Wasm type f64 even though its JavaScript value is `undefined`. Preserve
+      // the nullish comparison semantics at this observation boundary:
+      //
+      //   sentinel === undefined  -> true
+      //   sentinel === null       -> false
+      //   sentinel == null        -> true
+      //
+      // Compare the exact bits rather than using f64.eq so an ordinary NaN is
+      // never mistaken for undefined.
+      if (valType.kind === "f64" && (nullSideIsUndefinedId || isLooseEqOp || isLooseNeqOp)) {
+        emitIsUndefF64(fctx.body);
+        if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
+        return { kind: "i32" };
+      }
       // For other non-externref types (number, boolean), always not-equal to null/undefined
       fctx.body.push({ op: "drop" });
       fctx.body.push({ op: "i32.const", value: isNeqOp ? 1 : 0 });
@@ -690,9 +707,19 @@ export function compileBinaryExpression(
           // Emit ToNumber(operand) as f64 for a string / number / boolean side.
           const emitToNumber = (operand: ts.Expression, isStr: boolean, isBool: boolean): void => {
             if (isStr) {
-              // native string ref → externref → __str_to_number → f64
-              compileExpression(ctx, fctx, operand);
-              fctx.body.push({ op: "extern.convert_any" });
+              // native string ref → externref → __str_to_number → f64.
+              // (#3395 shape 3) A native `$AnyString` REF operand must be boxed
+              // to externref first (`extern.convert_any`), but a string-typed
+              // operand that ALREADY compiles to externref — a `new String(x)`
+              // wrapper object, or any prior boxing — must NOT be re-converted:
+              // `extern.convert_any` on an externref is invalid Wasm
+              // ("expected anyref, found ... of type externref", the
+              // `true == new String("+1")` residual). Gate the box on the
+              // compiled operand's real ValType.
+              const ot = compileExpression(ctx, fctx, operand);
+              if (ot && ot.kind !== "externref") {
+                fctx.body.push({ op: "extern.convert_any" });
+              }
               fctx.body.push({ op: "call", funcIdx: strToNumIdx });
             } else if (isBool) {
               compileExpression(ctx, fctx, operand);

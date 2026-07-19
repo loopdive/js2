@@ -53,16 +53,70 @@ export function checkDuplicateParams(
   }
 }
 
-/** Check for duplicate lexical declarations (let, const, class, function) in a block. */
-export function checkDuplicateLexicalDeclarations(ctx: EarlyErrorContext, block: ts.Block | ts.SourceFile): void {
+/**
+ * Check for duplicate lexical declarations (let, const, class, function) in a
+ * block or at the top level of a SourceFile.
+ *
+ * Scoping of FunctionDeclarations (#3419 — this distinction is load-bearing):
+ *
+ * - **Script top level**: VAR-scoped. §16.1.1 gates duplicates on the
+ *   LexicallyDeclaredNames of ScriptBody, which is TopLevelLexicallyDeclaredNames
+ *   (§8.2.8) and EXCLUDES HoistableDeclarations. `function f(){} function f(){}`
+ *   at script top level is legal — strict OR sloppy — with last-wins binding
+ *   (GlobalDeclarationInstantiation §16.1.7 instantiates the LAST definition per
+ *   name). The test262 harness concatenation (assert.js + testTypedArray.js both
+ *   define `isPrimitive`) depends on this.
+ * - **Function-body / class-static-block top level**: VAR-scoped, same reason
+ *   (§10.2.11 / §15.7.1 use the TopLevel* operations).
+ * - **Module top level**: LEXICAL (§16.2.1.1 — LexicallyDeclaredNames of
+ *   ModuleItemList includes HoistableDeclarations). Duplicates are SyntaxErrors
+ *   (test262 `language/module-code/early-dup-top-function*.js`).
+ * - **Genuine nested Block**: LEXICAL (§14.2.1) — but Annex B §B.3.2.1 lifts the
+ *   duplicate-entries rule in sloppy mode when EVERY binding for the name is a
+ *   plain (non-async, non-generator) FunctionDeclaration.
+ *
+ * Var-scoped function names still conflict with genuinely lexical names in the
+ * same statement list (§16.1.1: LexicallyDeclaredNames ∩ VarDeclaredNames must
+ * be empty), so `function f(){} let f;` remains a SyntaxError in both orders.
+ */
+export function checkDuplicateLexicalDeclarations(
+  ctx: EarlyErrorContext,
+  block: ts.Block | ts.SourceFile,
+  moduleGoal = false,
+): void {
   const stmts = block.statements;
+  const functionsAreLexical = ts.isSourceFile(block)
+    ? moduleGoal || ts.isExternalModule(block)
+    : !isFunctionBodyBlock(block);
+  // Annex B §B.3.2.1 applies only to Blocks (never module/script top level).
+  const annexBEligible = ts.isBlock(block);
   const lexNames = new Map<string, ts.Node>();
+  /** Lexical names bound (so far) ONLY by plain FunctionDeclarations (Annex B). */
+  const fnOnlyLexNames = new Set<string>();
+  /** Var-scoped top-level FunctionDeclaration names (script / function-body). */
+  const varFnNames = new Map<string, ts.Node>();
 
-  function addLexName(name: string, errorNode: ts.Node) {
+  function addLexName(name: string, errorNode: ts.Node, viaPlainFunction = false) {
     if (lexNames.has(name)) {
+      // Annex B §B.3.2.1: sloppy-mode Blocks tolerate duplicate entries when
+      // every binding for the name is a plain FunctionDeclaration.
+      if (viaPlainFunction && fnOnlyLexNames.has(name) && annexBEligible && !isStrictMode(errorNode)) {
+        return;
+      }
       ctx.addError(errorNode, `Duplicate identifier '${name}'`);
+      return;
+    }
+    if (varFnNames.has(name)) {
+      // A lexical declaration colliding with a var-scoped function name
+      // (§16.1.1 LexicallyDeclaredNames ∩ VarDeclaredNames).
+      ctx.addError(errorNode, `Duplicate identifier '${name}'`);
+      return;
+    }
+    lexNames.set(name, errorNode);
+    if (viaPlainFunction) {
+      fnOnlyLexNames.add(name);
     } else {
-      lexNames.set(name, errorNode);
+      fnOnlyLexNames.delete(name);
     }
   }
 
@@ -70,11 +124,21 @@ export function checkDuplicateLexicalDeclarations(ctx: EarlyErrorContext, block:
     if (ts.isClassDeclaration(stmt) && stmt.name) {
       addLexName(stmt.name.text, stmt.name);
     }
-    // FunctionDeclaration (including async, generator, async generator) in a block
-    // are lexically scoped — duplicates are SyntaxErrors per ES spec.
     // Skip overload signatures (no body) — TypeScript allows multiple signatures.
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
-      addLexName(stmt.name.text, stmt.name);
+      if (functionsAreLexical) {
+        const isPlain =
+          stmt.asteriskToken === undefined && !stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+        addLexName(stmt.name.text, stmt.name, isPlain);
+      } else {
+        // Var-scoped: duplicates among functions are legal (last-wins), but a
+        // collision with a lexical (let/const/class) name is a SyntaxError.
+        if (lexNames.has(stmt.name.text)) {
+          ctx.addError(stmt.name, `Duplicate identifier '${stmt.name.text}'`);
+        } else {
+          varFnNames.set(stmt.name.text, stmt.name);
+        }
+      }
     }
     if (ts.isVariableStatement(stmt)) {
       const flags = stmt.declarationList.flags;
@@ -289,7 +353,10 @@ function isFunctionBodyBlock(block: ts.Block | ts.SourceFile): boolean {
       ts.isMethodDeclaration(parent) ||
       ts.isConstructorDeclaration(parent) ||
       ts.isGetAccessorDeclaration(parent) ||
-      ts.isSetAccessorDeclaration(parent))
+      ts.isSetAccessorDeclaration(parent) ||
+      // ClassStaticBlockBody uses the TopLevel* static semantics too (§15.7.1):
+      // its top-level FunctionDeclarations are var-scoped, same as a function body.
+      ts.isClassStaticBlockDeclaration(parent))
   );
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@loopdive/js2",
-  "version": "0.60.1",
+  "version": "0.62.0",
   "description": "Direct AOT compilation from JavaScript and TypeScript to WebAssembly GC",
   "keywords": [
     "webassembly",
@@ -87,6 +87,7 @@
     "test:ir:alloc": "IR_VERIFY_ALLOC=1 node node_modules/vitest/dist/cli.js run tests/ir/alloc-registry.test.ts tests/ir/alloc-provenance.test.ts",
     "test:equivalence:gate": "node scripts/equivalence-gate.mjs",
     "test:262": "bash scripts/run-test262-vitest.sh",
+    "test:262:fyi": "pnpm run build:compiler-bundle && node scripts/run-test262-fyi.mjs",
     "test:262:validate-baseline": "npx tsx scripts/validate-test262-baseline.ts",
     "baseline:fetch": "node scripts/fetch-baseline-jsonl.mjs",
     "check:ir-fallbacks": "npx tsx scripts/check-ir-fallbacks.ts",

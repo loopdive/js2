@@ -50,11 +50,13 @@ import { lowerIrFunctionBody, type IrLowerResolver } from "../lower.js";
 import { AllocSiteRegistry } from "../alloc-registry.js";
 import {
   defaultOperationsForLayout,
+  DEFAULT_ARENA_POLICY,
   linearRuntimeOperationKey,
   planLinearMemory,
   planLinearStringLayout,
   planLinearVectorLayout,
   type LinearAllocationSitePlan,
+  type LinearAllocatorPolicy,
   type LinearMemoryPlan,
   type LinearRecordLayoutPlan,
   type LinearRuntimeOperation,
@@ -137,12 +139,16 @@ export function getLastLinearIrReport(): LinearIrResult | undefined {
  * the direct backend's string-literal data registry; the caller inserts the
  * returned functions at their pre-assigned `ctx.funcMap` slots.
  */
-export function compileLinearIrFunctions(ctx: LinearContext, sourceFile: ts.SourceFile): LinearIrResult {
+export function compileLinearIrFunctions(
+  ctx: LinearContext,
+  sourceFile: ts.SourceFile,
+  allocationPolicy: LinearAllocatorPolicy = DEFAULT_ARENA_POLICY,
+): LinearIrResult {
   const funcs = new Map<string, WasmFunction>();
   const compiled: string[] = [];
   const rejected: LinearIrRejection[] = [];
   const allocRegistry = new AllocSiteRegistry();
-  let memoryPlan = planLinearMemory({ functions: [] }, allocRegistry);
+  let memoryPlan = planLinearMemory({ functions: [] }, allocRegistry, allocationPolicy);
   let helperStartFuncIdx = 0;
   for (const funcIdx of ctx.funcMap.values()) helperStartFuncIdx = Math.max(helperStartFuncIdx, funcIdx + 1);
   const { resolver, helpers, bindMemoryPlan } = makeLinearIrResolver(ctx, helperStartFuncIdx);
@@ -287,7 +293,7 @@ export function compileLinearIrFunctions(ctx: LinearContext, sourceFile: ts.Sour
     const fn = built.get(name);
     return fn ? [fn] : [];
   });
-  memoryPlan = planLinearMemory({ functions: plannedFunctions }, allocRegistry);
+  memoryPlan = planLinearMemory({ functions: plannedFunctions }, allocRegistry, allocationPolicy);
   bindMemoryPlan(memoryPlan);
 
   // Lower only after the module-wide plan is complete. Every allocation-site
@@ -316,6 +322,17 @@ export function compileLinearIrFunctions(ctx: LinearContext, sourceFile: ts.Sour
         if (!vecScratchLocals.has(absoluteIndex)) return local;
         return { name: `$linear_vec_ptr_${index}`, type: { kind: "i32" as const } };
       });
+      const stackOperations = stackFrameOperations(memoryPlan, name);
+      if (stackOperations) {
+        const markLocal = body.params.flatMap((param) => param.slots).length + locals.length;
+        locals.push({ name: "$linear_stack_mark", type: { kind: "i32" } });
+        instrumentLinearStackFrame(
+          body.body,
+          markLocal,
+          resolveLinearRuntimeOperation(ctx, stackOperations.mark),
+          resolveLinearRuntimeOperation(ctx, stackOperations.restore),
+        );
+      }
       funcs.set(name, {
         name: body.name,
         typeIdx: resolver.internFuncType({
@@ -695,6 +712,12 @@ function resolveLinearRuntimeOperation(ctx: LinearContext, operation: LinearRunt
   if (operation.family === "memory" && operation.operation === "allocate" && operation.allocationClass === "arena") {
     name = "__malloc";
   } else if (
+    operation.family === "memory" &&
+    operation.operation === "allocate" &&
+    operation.allocationClass === "stack"
+  ) {
+    name = "__linear_stack_alloc";
+  } else if (
     operation.family === "vector" &&
     operation.operation === "allocate" &&
     operation.allocationClass === "arena" &&
@@ -722,11 +745,64 @@ function resolveLinearRuntimeOperation(ctx: LinearContext, operation: LinearRunt
     operation.elementStorage === "i8"
   ) {
     name = "__str_concat";
+  } else if (operation.family === "stack" && operation.operation === "mark") {
+    name = "__linear_stack_mark";
+  } else if (operation.family === "stack" && operation.operation === "restore") {
+    name = "__linear_stack_restore";
   }
   if (!name) throw new Error(`linear-ir: no runtime binding for '${linearRuntimeOperationKey(operation)}'`);
   const localIdx = ctx.mod.functions.findIndex((func) => func.name === name);
   if (localIdx < 0) throw new Error(`linear-ir: runtime helper '${name}' missing`);
   return ctx.numImportFuncs + localIdx;
+}
+
+function stackFrameOperations(
+  plan: LinearMemoryPlan,
+  ownerFunction: string,
+): { readonly mark: LinearRuntimeOperation; readonly restore: LinearRuntimeOperation } | null {
+  const allocation = plan.allocations.find(
+    (candidate) => candidate.ownerFunction === ownerFunction && candidate.allocationClass === "stack",
+  );
+  if (!allocation) return null;
+  const mark = allocation.operations.find(
+    (operation) => operation.family === "stack" && operation.operation === "mark",
+  );
+  const restore = allocation.operations.find(
+    (operation) => operation.family === "stack" && operation.operation === "restore",
+  );
+  if (!mark || !restore) throw new Error(`linear-ir: stack allocation in '${ownerFunction}' lacks frame operations`);
+  return { mark, restore };
+}
+
+function instrumentLinearStackFrame(
+  body: Instr[],
+  markLocal: number,
+  markFuncIdx: number,
+  restoreFuncIdx: number,
+): void {
+  const restore: Instr[] = [
+    { op: "local.get", index: markLocal },
+    { op: "call", funcIdx: restoreFuncIdx },
+  ];
+  const visit = (instrs: Instr[]): void => {
+    for (let index = instrs.length - 1; index >= 0; index--) {
+      const instr = instrs[index]!;
+      if (instr.op === "return") {
+        instrs.splice(index, 0, ...restore.map((item) => ({ ...item })));
+      } else if (instr.op === "block" || instr.op === "loop") {
+        visit(instr.body);
+      } else if (instr.op === "if") {
+        visit(instr.then);
+        if (instr.else) visit(instr.else);
+      } else if (instr.op === "try") {
+        visit(instr.body);
+        for (const clause of instr.catches) visit(clause.body);
+        if (instr.catchAll) visit(instr.catchAll);
+      }
+    }
+  };
+  visit(body);
+  body.unshift({ op: "call", funcIdx: markFuncIdx }, { op: "local.set", index: markLocal });
 }
 
 /** Materialize a deferred constructor after every user function slot exists. */
