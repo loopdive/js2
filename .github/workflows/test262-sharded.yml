@@ -1442,6 +1442,47 @@ jobs:
           # runs/<base>.json when the cache hit (#49). The .json is sparse-
           # checked-out below alongside the .jsonl.
           echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
+          # #3467 (poll) — RACE FIX for the distance-1 settle under sustained
+          # queue velocity. On merge_group, base_sha is the tip the PREVIOUS
+          # queue merge just produced, and write-run-cache-bot is still writing
+          # runs/<base_sha> to the baselines repo when this job first cloned it
+          # → the exact base MISSES → the resolver walks to the distance-1
+          # ancestor → the ratio gate nips the 1-commit residual and PARKS a
+          # clean, net-positive PR. But base_sha is FIXED at build start, its
+          # cache lands within a few min, and this PR's own build takes ~30 min —
+          # so the base cache RELIABLY exists well before the gate compares; it
+          # was merely queried too early. Poll the EXACT base for up to ~3 min
+          # (6×30s) so back-to-back merges resolve at DISTANCE 0.
+          #
+          # Non-perturbing: we refresh origin/main and materialize the blob to
+          # the path the resolver reads WITHOUT moving HEAD (a `reset`/`checkout`
+          # here would advance the shared baselines clone and confuse the #1235/
+          # #1668 staleness steps that parse its commit subject). A genuinely
+          # uncached base (e.g. a doc-only merge that wrote no cache) simply
+          # falls through to the ancestor-walk below, where the nearest cached
+          # ancestor carries identical test262 data (drift-free at distance N).
+          if [ "${{ github.event_name }}" = "merge_group" ] && [ -n "$MERGE_BASE" ]; then
+            mkdir -p "/tmp/js2wasm-baselines/runs"
+            WAITED=0
+            for attempt in 1 2 3 4 5 6; do
+              # Refresh origin/main (depth 1 — runs/<base> persists in every later
+              # tree, so the current tip's tree contains it once written).
+              git -C /tmp/js2wasm-baselines fetch --depth=1 --filter=blob:none origin main 2>/dev/null || true
+              if git -C /tmp/js2wasm-baselines cat-file -e "origin/main:runs/${MERGE_BASE}.jsonl" 2>/dev/null; then
+                git -C /tmp/js2wasm-baselines show "origin/main:runs/${MERGE_BASE}.jsonl" > "/tmp/js2wasm-baselines/runs/${MERGE_BASE}.jsonl" 2>/dev/null || true
+                git -C /tmp/js2wasm-baselines show "origin/main:runs/${MERGE_BASE}.json"  > "/tmp/js2wasm-baselines/runs/${MERGE_BASE}.json"  2>/dev/null || true
+                echo "#3467 base cache runs/${MERGE_BASE}.jsonl present after ${WAITED}s → distance-0 diff."
+                break
+              fi
+              if [ "$attempt" -eq 6 ]; then
+                echo "::warning::#3467 base cache runs/${MERGE_BASE}.jsonl still absent after ${WAITED}s; falling through to the ancestor-walk (nearest cached ancestor — drift-free but distance>0)."
+                break
+              fi
+              echo "#3467 base cache runs/${MERGE_BASE}.jsonl not yet present (waited ${WAITED}s) — write-run-cache-bot likely still pushing; re-checking in 30s."
+              sleep 30
+              WAITED=$((WAITED + 30))
+            done
+          fi
           # #3467 — build an ORDERED candidate list: the exact base first, then
           # its nearest-first ancestors. If the exact base's shards were skipped
           # (doc-only queue merge) or it predates the cache rollout, the resolver
