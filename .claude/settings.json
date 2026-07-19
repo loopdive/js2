@@ -152,6 +152,17 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "if": "Bash(*git push*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-/workspace}\"/.claude/hooks/pre-git-push-loc.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "Agent",
         "hooks": [
           {

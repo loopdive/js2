@@ -24,7 +24,7 @@
 //      publish-npm.yml on un-reviewed code. See docs/releasing.md.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -125,6 +125,15 @@ function main() {
   setVersion(repoRoot, target);
   setVersion(proxyDir, target);
 
+  // Bump the JSR manifest (jsr.json) in lockstep too. It carries its OWN
+  // "version" field that pnpm/setVersion never touches — so without this,
+  // `deno publish` reads the stale version and silently skips with
+  // "already published" (exit 0), freezing JSR at an old release. (loopdive/js2#389)
+  const jsrPath = join(repoRoot, "jsr.json");
+  const jsr = JSON.parse(readFileSync(jsrPath, "utf8"));
+  jsr.version = target;
+  writeFileSync(jsrPath, `${JSON.stringify(jsr, null, 2)}\n`);
+
   // Assert both ended up identical — guards against pnpm version surprises.
   const newRoot = readVersion(repoRoot);
   const newProxy = readVersion(proxyDir);
@@ -141,7 +150,7 @@ function main() {
   // Stage exactly the files the bump touches: both package.jsons plus the
   // lockfile if pnpm version regenerated it. Using explicit paths (never
   // `git add -A`) keeps the release commit minimal.
-  const toStage = ["package.json", "packages/js2wasm/package.json"];
+  const toStage = ["package.json", "packages/js2wasm/package.json", "jsr.json"];
   if (git(["status", "--porcelain", "pnpm-lock.yaml"]).trim()) {
     toStage.push("pnpm-lock.yaml");
   }

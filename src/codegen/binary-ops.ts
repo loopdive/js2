@@ -707,9 +707,19 @@ export function compileBinaryExpression(
           // Emit ToNumber(operand) as f64 for a string / number / boolean side.
           const emitToNumber = (operand: ts.Expression, isStr: boolean, isBool: boolean): void => {
             if (isStr) {
-              // native string ref → externref → __str_to_number → f64
-              compileExpression(ctx, fctx, operand);
-              fctx.body.push({ op: "extern.convert_any" });
+              // native string ref → externref → __str_to_number → f64.
+              // (#3395 shape 3) A native `$AnyString` REF operand must be boxed
+              // to externref first (`extern.convert_any`), but a string-typed
+              // operand that ALREADY compiles to externref — a `new String(x)`
+              // wrapper object, or any prior boxing — must NOT be re-converted:
+              // `extern.convert_any` on an externref is invalid Wasm
+              // ("expected anyref, found ... of type externref", the
+              // `true == new String("+1")` residual). Gate the box on the
+              // compiled operand's real ValType.
+              const ot = compileExpression(ctx, fctx, operand);
+              if (ot && ot.kind !== "externref") {
+                fctx.body.push({ op: "extern.convert_any" });
+              }
               fctx.body.push({ op: "call", funcIdx: strToNumIdx });
             } else if (isBool) {
               compileExpression(ctx, fctx, operand);

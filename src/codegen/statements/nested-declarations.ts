@@ -1673,9 +1673,26 @@ export function hoistFunctionDeclarations(
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) siblingFuncNames.add(stmt.name.text);
   }
+  // (#3419) Last-wins for duplicate sibling function declarations. Duplicate
+  // `function f(){} function f(){}` at the top level of a function body (or in
+  // a sloppy-mode block, Annex B §B.3.2.1) is legal JS: FunctionDeclarationInstantiation
+  // (§10.2.11 step 14) walks declarations in REVERSE order keeping only the
+  // last per name, so earlier duplicates are never observable — no binding ever
+  // references them and they cannot be called before the (hoisted) rebinding.
+  // Skip them entirely in BOTH the Phase-0 reservation (so the reserved slot is
+  // typed from the surviving declaration's signature) and the compile loop
+  // below (so the surviving body fills the slot). Without this, the first
+  // declaration filled the slot and the later ones were dropped (first-wins).
+  const lastSiblingDeclForName = new Map<string, ts.FunctionDeclaration>();
+  for (const stmt of stmts) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) lastSiblingDeclForName.set(stmt.name.text, stmt);
+  }
+  const isShadowedDuplicate = (stmt: ts.FunctionDeclaration): boolean =>
+    lastSiblingDeclForName.get(stmt.name!.text) !== stmt;
   if (siblingFuncNames.size > 1) {
     for (const stmt of stmts) {
       if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
+      if (isShadowedDuplicate(stmt)) continue;
       const funcName = stmt.name.text;
       if (ctx.funcMap.has(funcName)) continue;
       if (ctx.hoistFailedFuncs?.has(funcName)) continue;
@@ -1755,6 +1772,10 @@ export function hoistFunctionDeclarations(
 
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
+      // (#3419) Earlier duplicate of a later same-name sibling — never
+      // instantiated (last-wins, §10.2.11 step 14). Skip: the surviving
+      // declaration owns the funcMap slot and the Annex B bookkeeping.
+      if (isShadowedDuplicate(stmt)) continue;
       const funcName = stmt.name.text;
       // (#2200 Phase 1) Annex B B.3.3 cancellation: if this block-nested function
       // is ineligible for a web-compat outer var-binding (intervening lexical

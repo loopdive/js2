@@ -956,6 +956,35 @@ const SAFE_BARE_VAR_RECOVERY_NOMINALS: ReadonlySet<string> = new Set(["Date"]);
  *      misdispatches non-Date receivers).
  * Mirrors the symbol-scan in `symbolBindsAsyncFunction` (expressions.ts:262).
  */
+/**
+ * (#3433) All `<ident> = <rhs>` assignments in `sf`, grouped by the left
+ * identifier's symbol; computed once per compile per source file. See
+ * `resolveAssignedNominalType`.
+ */
+function identAssignRhsInFile(
+  ctx: CodegenContext,
+  sf: ts.SourceFile,
+): ReadonlyMap<ts.Symbol, readonly ts.Expression[]> {
+  const cache = (ctx.identAssignRhsCache ??= new Map());
+  const cached = cache.get(sf);
+  if (cached) return cached;
+  const map = new Map<ts.Symbol, ts.Expression[]>();
+  const visit = (n: ts.Node): void => {
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(n.left)) {
+      const assigned = ctx.checker.getSymbolAtLocation(n.left);
+      if (assigned) {
+        const list = map.get(assigned);
+        if (list) list.push(n.right);
+        else map.set(assigned, [n.right]);
+      }
+    }
+    forEachChild(n, visit);
+  };
+  visit(sf);
+  cache.set(sf, map);
+  return map;
+}
+
 export function resolveAssignedNominalType(ctx: CodegenContext, ident: ts.Identifier): ts.Type | undefined {
   const sym = ctx.checker.getSymbolAtLocation(ident);
   if (!sym) return undefined;
@@ -969,19 +998,17 @@ export function resolveAssignedNominalType(ctx: CodegenContext, ident: ts.Identi
       rhsTypes.push(ctx.checker.getTypeAtLocation(d.initializer));
     }
   }
+  // (#3433) Memoized per source file: one walk collects `<ident> = <rhs>`
+  // assignments grouped by the left identifier's symbol; per-query work is a
+  // map lookup plus RHS type resolution for THIS symbol's assignments only
+  // (the same `getTypeAtLocation` calls the pre-memo per-query scan made).
+  // The pre-memo full-file rescan ran for every bare-`var`/`let` receiver —
+  // common in the oracle-v8 test262 harness assemblies — making compiles
+  // superlinear in file size.
   const sf = ident.getSourceFile();
-  const visit = (n: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(n) &&
-      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(n.left) &&
-      ctx.checker.getSymbolAtLocation(n.left) === sym
-    ) {
-      rhsTypes.push(ctx.checker.getTypeAtLocation(n.right));
-    }
-    forEachChild(n, visit);
-  };
-  visit(sf);
+  for (const rhs of identAssignRhsInFile(ctx, sf).get(sym) ?? []) {
+    rhsTypes.push(ctx.checker.getTypeAtLocation(rhs));
+  }
   if (rhsTypes.length === 0) return undefined;
   let name: string | undefined;
   for (const t of rhsTypes) {

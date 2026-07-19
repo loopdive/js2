@@ -11,6 +11,15 @@ import type { CompileError } from "../../index.js";
 export interface EarlyErrorContext {
   /** The source file being validated. */
   readonly sourceFile: ts.SourceFile;
+  /**
+   * #3419 — the compilation unit is explicitly MODULE-goal (ES Module top-level
+   * semantics) even without a syntactic import/export indicator. Set by the
+   * test262 runner for `flags: [module]` tests; product compiles rely on the
+   * real `ts.isExternalModule` indicator instead. Affects rules where Script
+   * and Module top level genuinely differ (e.g. duplicate top-level function
+   * declarations: legal in Scripts §16.1.1, SyntaxError in Modules §16.2.1.1).
+   */
+  readonly moduleGoal: boolean;
   /** Accumulated errors (rules may push warnings/errors directly). */
   readonly errors: CompileError[];
   /** 1-based line/column for a node. */
@@ -20,7 +29,7 @@ export interface EarlyErrorContext {
 }
 
 /** Build an EarlyErrorContext for a source file, with a fresh error array. */
-export function createEarlyErrorContext(sourceFile: ts.SourceFile): EarlyErrorContext {
+export function createEarlyErrorContext(sourceFile: ts.SourceFile, opts?: { moduleGoal?: boolean }): EarlyErrorContext {
   const errors: CompileError[] = [];
   const pos = (node: ts.Node): { line: number; column: number } => {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
@@ -30,5 +39,5 @@ export function createEarlyErrorContext(sourceFile: ts.SourceFile): EarlyErrorCo
     const p = pos(node);
     errors.push({ message, line: p.line, column: p.column, severity: "error" });
   };
-  return { sourceFile, errors, pos, addError };
+  return { sourceFile, moduleGoal: opts?.moduleGoal === true, errors, pos, addError };
 }

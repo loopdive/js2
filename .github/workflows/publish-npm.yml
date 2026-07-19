@@ -82,7 +82,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
 
@@ -128,7 +128,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
 
       # OIDC trusted publishing requires npm >= 11.5.1; Node 20 ships npm 10.x.
@@ -167,7 +167,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: "pnpm"
 
       # `jsr publish` runs `deno publish --unstable-byonm` (bring-your-own-node-

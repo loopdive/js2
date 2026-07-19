@@ -63,6 +63,33 @@ const SANDBOX_GLOBAL_NAMES: ReadonlyArray<string> = [
   "Math",
   "JSON",
   "Reflect",
+  // (#3419) The TypedArray cluster + binary-data builtins. The oracle-v8
+  // literal harness (testTypedArray.js) reads these as VALUES off globalThis
+  // (`Object.getPrototypeOf(Int8Array)`, `[Int8Array, Uint8Array, …]`); before
+  // this list included them, `__extern_get(globalThis, "Int8Array")` returned
+  // undefined in the sandbox and the whole TypedArray harness died at
+  // `Object.getPrototypeOf(undefined)` — ~2k tests. Same vm realm as the rest
+  // of the sandbox, so intra-sandbox identities hold.
+  "ArrayBuffer",
+  "SharedArrayBuffer",
+  "DataView",
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+  "BigInt",
+  "EvalError",
+  "URIError",
+  "AggregateError",
+  "Proxy",
 ];
 
 const SENTINEL_KEYS: ReadonlyArray<readonly string[]> = [
@@ -107,6 +134,17 @@ function _buildFreshSandbox(consoleProxy?: Console): Record<string, any> {
   if (consoleProxy) sandbox.console = consoleProxy;
   // Provide globalThis as the sandbox itself so `ctx.globalThis === ctx`.
   sandbox.globalThis = sandbox;
+  // (#3428) asyncHelpers.js guards `asyncTest` with
+  // `Object.prototype.hasOwnProperty.call(globalThis, "$DONE")` and throws
+  // "asyncTest called without async flag" when it's absent. A JS engine running
+  // the harness as a SCRIPT exposes the top-level `function $DONE`
+  // (doneprintHandle.js) as a globalThis own-property, but our compiled MODULE
+  // keeps `$DONE` a module-local binding, so the guard failed on all 225
+  // asyncTest-based tests. Expose a stub own-property so the guard passes; the
+  // real, module-local `$DONE` (lexically in scope inside `asyncTest`) still
+  // drives the completion callback that emits the `Test262:AsyncTestComplete`
+  // marker.
+  sandbox.$DONE = () => {};
   return sandbox;
 }
 

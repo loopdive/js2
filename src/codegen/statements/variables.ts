@@ -1272,7 +1272,24 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // already-emitted initialization code:
     // - ref/ref_null → primitive: earlier struct.new would become invalid
     // - externref → ref/ref_null: hoisted __get_undefined() can't be cast (#962)
-    if ((isVar || isHoistedLetConst) && existingIdx !== undefined && existingIdx >= fctx.params.length) {
+    //
+    // (#3396) SKIP the whole re-type when the variable is a boxed mutable
+    // capture: a closure constructed BEFORE this declaration (forward/TDZ
+    // reference — `var pf = function () { return x; }; let x = "o";`) re-aimed
+    // `localMap[name]` at the `__boxed_<name>` REF-CELL local, so `existingIdx`
+    // here is the CELL slot, not the value slot. Re-typing it to the declared
+    // VALUE type made every already-emitted and later cell-typed use disagree
+    // with the slot (`struct.set[0] expected (ref null <cell>), found local.get
+    // of (ref null <value>)` — invalid Wasm, the #3396 closure-env family).
+    // The box write below (`boxedForInitStore`) is already cell-aware; the
+    // slot must keep its ref-cell type. Mirrors the explicit `boxedCaptures`
+    // skips in the #3037 carrier and #3097 TA-view arms.
+    if (
+      (isVar || isHoistedLetConst) &&
+      existingIdx !== undefined &&
+      existingIdx >= fctx.params.length &&
+      !(fctx.boxedCaptures?.has(name) ?? false)
+    ) {
       const localSlot = fctx.locals[existingIdx - fctx.params.length];
       if (
         localSlot &&

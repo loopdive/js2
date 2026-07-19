@@ -855,8 +855,16 @@ function runPipeline(input: PipelineInput): CompileResult {
   // (always `allowJs: true`) depends on it to reject e.g. `export` in eval code.
   if (!options.allowJs || input.runEarlyErrorsOnAllowJs) {
     const earlyErrors: CompileError[] = [];
+    // #3419 — module-goal signal for rules where Script vs Module top level
+    // genuinely differ (duplicate top-level function declarations). The test262
+    // runner passes `inferModuleStrictArguments` as an EXPLICIT boolean — `true`
+    // exactly for `flags: [module]` tests (whose sources often carry no
+    // syntactic import/export the checker could infer module-ness from), `false`
+    // for script tests. Product compiles leave it undefined and are covered by
+    // the real `ts.isExternalModule` indicator inside the rule.
+    const moduleGoal = options.inferModuleStrictArguments === true;
     for (const sf of userSourceFiles) {
-      earlyErrors.push(...detectEarlyErrors(sf));
+      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal }));
     }
     errors.push(...earlyErrors);
     if (hasNewError(earlyErrors)) {
@@ -905,7 +913,10 @@ function runPipeline(input: PipelineInput): CompileResult {
     if (useLinear) {
       mod = multiAst
         ? generateLinearMultiModule(multiAst, { exposeArenaReset: options.allocator === "arena-reset" })
-        : generateLinearModule(entryAst, { exposeArenaReset: options.allocator === "arena-reset" });
+        : generateLinearModule(entryAst, {
+            exposeArenaReset: options.allocator === "arena-reset",
+            allocationPolicy: options.allocator === "analysis-stack" ? "analysis-stack-arena-v1" : "arena-v1",
+          });
       // Fail the compile on unsupported linear-backend constructs instead of
       // emitting a structurally invalid binary (#1868).
       if (collectLinearCodegenErrors(mod, errors)) {

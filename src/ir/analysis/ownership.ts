@@ -98,6 +98,7 @@ export function analyzeOwnership(fn: IrFunction, registry?: AllocSiteRegistry): 
   // stack-allocatable query. Only allocation results appear here.
   const allocOf = new Map<IrValueId, number>();
   collectAllocs(fn, allocOf);
+  const aliases = collectAliases(fn);
 
   const blockIndex = new Map<IrBlockId, number>();
   blocks.forEach((b, i) => blockIndex.set(b.id, i));
@@ -136,7 +137,7 @@ export function analyzeOwnership(fn: IrFunction, registry?: AllocSiteRegistry): 
     const block = blocks[bi]!;
 
     const state = cloneState(blockEntry[bi]!);
-    runBlock(block, state, allocOf);
+    runBlock(block, state, allocOf, aliases.derived);
     blockExit[bi] = state;
 
     // Propagate to successors: join exit state into their entry, and join the
@@ -172,6 +173,7 @@ export function analyzeOwnership(fn: IrFunction, registry?: AllocSiteRegistry): 
   for (const [v, a] of entryState) {
     if (!finalAnnots.has(v)) finalAnnots.set(v, a);
   }
+  propagateAliasAnnotations(finalAnnots, aliases, allocOf);
 
   // Write-back to the registry ownership namespace for allocated values.
   if (registry) {
@@ -192,13 +194,18 @@ export function analyzeOwnership(fn: IrFunction, registry?: AllocSiteRegistry): 
 // ---------------------------------------------------------------------------
 
 /** Run one block's instrs over `state`, mutating it in place (widening only). */
-function runBlock(block: IrBlock, state: State, allocOf: Map<IrValueId, number>): void {
+function runBlock(
+  block: IrBlock,
+  state: State,
+  allocOf: Map<IrValueId, number>,
+  aliasDerived: ReadonlySet<IrValueId>,
+): void {
   for (const instr of block.instrs) {
     // An allocation result is seeded at BOTTOM (owned / {}) when first seen.
     if (instr.result !== null && instr.alloc !== undefined && !state.has(instr.result)) {
       state.set(instr.result, { ownership: "owned", access: AccessSet.empty() });
     }
-    applyInstrEffect(instr, state, allocOf);
+    applyInstrEffect(instr, state, allocOf, aliasDerived);
   }
   applyTerminatorEffect(block.terminator, state, allocOf);
 }
@@ -225,7 +232,15 @@ function markEscaped(state: State, value: IrValueId, allocOf: Map<IrValueId, num
   touch(state, value, allocOf, "escaped", "escape");
 }
 
-function applyInstrEffect(instr: IrInstr, state: State, allocOf: Map<IrValueId, number>): void {
+function applyInstrEffect(
+  instr: IrInstr,
+  state: State,
+  allocOf: Map<IrValueId, number>,
+  aliasDerived: ReadonlySet<IrValueId>,
+): void {
+  if (instr.result !== null && aliasDerived.has(instr.result) && !state.has(instr.result)) {
+    state.set(instr.result, { ownership: "owned", access: AccessSet.empty() });
+  }
   switch (instr.kind) {
     // --- field reads -> `read` on the receiver -------------------------------
     case "object.get":
@@ -263,6 +278,9 @@ function applyInstrEffect(instr: IrInstr, state: State, allocOf: Map<IrValueId, 
     case "vec.set":
       touch(state, instr.vec, allocOf, null, "write");
       markEscaped(state, instr.newValue, allocOf);
+      break;
+    case "global.set":
+      markEscaped(state, instr.value, allocOf);
       break;
 
     // --- read-modify-write -> `mutate` ---------------------------------------
@@ -346,23 +364,24 @@ function applyInstrEffect(instr: IrInstr, state: State, allocOf: Map<IrValueId, 
     // reference the same function-level SSA values, so a shared `state` is
     // correct for an intra-procedural may-escape result.
     case "if":
-      for (const sub of instr.then) applyInstrEffect(sub, state, allocOf);
-      for (const sub of instr.else) applyInstrEffect(sub, state, allocOf);
+      for (const sub of instr.then) applyInstrEffect(sub, state, allocOf, aliasDerived);
+      for (const sub of instr.else) applyInstrEffect(sub, state, allocOf, aliasDerived);
       break;
     case "forof.vec":
     case "forof.iter":
     case "forof.string":
-      for (const sub of (instr as { body: readonly IrInstr[] }).body) applyInstrEffect(sub, state, allocOf);
+      for (const sub of (instr as { body: readonly IrInstr[] }).body)
+        applyInstrEffect(sub, state, allocOf, aliasDerived);
       break;
     case "while.loop":
     case "for.loop":
     case "try":
-      for (const sub of nestedInstrArrays(instr)) applyInstrEffect(sub, state, allocOf);
+      for (const sub of nestedInstrArrays(instr)) applyInstrEffect(sub, state, allocOf, aliasDerived);
       break;
 
     default:
       // Pure / structural instrs (const, select, box, unbox, tag.test,
-      // string.const, string.concat, slot.read/write, global.get/set, unary,
+      // string.const, string.concat, slot.read/write, global.get, unary,
       // closure.cap, gen.*, raw.wasm, …) impose no ownership effect on their
       // operands in Phase 1.
       break;
@@ -438,6 +457,106 @@ function collectAllocs(fn: IrFunction, allocOf: Map<IrValueId, number>): void {
   for (const block of fn.blocks) {
     for (const instr of block.instrs) walk(instr);
   }
+}
+
+interface AliasInfo {
+  readonly edges: readonly (readonly [IrValueId, IrValueId])[];
+  readonly derived: ReadonlySet<IrValueId>;
+}
+
+/** Collect SSA carriers that preserve the identity of one of their inputs. */
+function collectAliases(fn: IrFunction): AliasInfo {
+  const edges: [IrValueId, IrValueId][] = [];
+  const derived = new Set<IrValueId>();
+  const slotValues = new Map<number, IrValueId[]>();
+  const connect = (result: IrValueId, input: IrValueId): void => {
+    edges.push([result, input]);
+  };
+  const recordSlot = (slotIndex: number, value: IrValueId): void => {
+    const values = slotValues.get(slotIndex) ?? [];
+    values.push(value);
+    slotValues.set(slotIndex, values);
+  };
+  const walk = (instr: IrInstr): void => {
+    switch (instr.kind) {
+      case "select":
+        if (instr.result !== null) {
+          derived.add(instr.result);
+          connect(instr.result, instr.whenTrue);
+          connect(instr.result, instr.whenFalse);
+        }
+        break;
+      case "if":
+        if (instr.result !== null) {
+          derived.add(instr.result);
+          connect(instr.result, instr.thenValue);
+          connect(instr.result, instr.elseValue);
+        }
+        break;
+      case "slot.read":
+        if (instr.result !== null) {
+          derived.add(instr.result);
+          recordSlot(instr.slotIndex, instr.result);
+        }
+        break;
+      case "slot.write":
+        recordSlot(instr.slotIndex, instr.value);
+        break;
+    }
+    for (const sub of nestedInstrArrays(instr)) walk(sub);
+  };
+
+  for (const block of fn.blocks) {
+    for (const instr of block.instrs) walk(instr);
+    for (const successor of successors(block.terminator)) {
+      const target = fn.blocks.find((candidate) => candidate.id === successor.target);
+      if (!target) continue;
+      for (let index = 0; index < successor.args.length && index < target.blockArgs.length; index++) {
+        const blockArg = target.blockArgs[index]!;
+        derived.add(blockArg);
+        connect(blockArg, successor.args[index]!);
+      }
+    }
+  }
+  for (const values of slotValues.values()) {
+    const first = values[0];
+    if (first === undefined) continue;
+    for (const value of values.slice(1)) connect(first, value);
+  }
+  return { edges, derived };
+}
+
+/** Join use effects across alias carriers until every component reaches a fixpoint. */
+function propagateAliasAnnotations(
+  annots: Map<IrValueId, OwnershipAnnotation>,
+  aliases: AliasInfo,
+  allocOf: Map<IrValueId, number>,
+): void {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [left, right] of aliases.edges) {
+      const leftAnnot = annots.get(left) ?? aliasBottom(left, aliases.derived, allocOf);
+      const rightAnnot = annots.get(right) ?? aliasBottom(right, aliases.derived, allocOf);
+      const joined = joinAnnotations(leftAnnot, rightAnnot);
+      if (!annotationsEqual(leftAnnot, joined)) {
+        annots.set(left, joined);
+        changed = true;
+      }
+      if (!annotationsEqual(rightAnnot, joined)) {
+        annots.set(right, joined);
+        changed = true;
+      }
+    }
+  }
+}
+
+function aliasBottom(
+  value: IrValueId,
+  derived: ReadonlySet<IrValueId>,
+  allocOf: Map<IrValueId, number>,
+): OwnershipAnnotation {
+  return derived.has(value) ? { ownership: "owned", access: AccessSet.empty() } : bottomFor(value, allocOf);
 }
 
 /** Yield every nested instr carried by control-flow-bearing instrs. */

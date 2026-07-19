@@ -7224,26 +7224,44 @@ function resolveImport(
     case "console_log": {
       // variant format: "bool" (legacy) or "{method}_{type}" e.g. "warn_number"
       const variant = intent.variant;
-      // Determine console method and type variant
-      let consoleFn: (...args: any[]) => void = console.log;
+      // #3428 — resolve the console off the caller-supplied `deps.console`
+      // override when present, falling back to the global console otherwise.
+      // The compiler lowers `console.log(x)` to this host import; the test262
+      // worker injects a capture proxy via `buildImports(imports, { console },
+      // …)` so it can observe the harness's async completion marker
+      // (`$DONE → __consolePrintHandle__ → print → console.log(marker)`).
+      // Before this, the marker went to the REAL stdout and `harnessOutput`
+      // stayed empty, so the async poll timed out ("async completion marker
+      // not observed"). Playground / normal runs pass no override → global
+      // console, so their behaviour is byte-identical.
+      const con: Record<string, any> = deps?.console ?? console;
+      // Determine the console method for this variant. The override proxy only
+      // wires log/warn/error; fall back to the global console's method when the
+      // override omits the requested one (e.g. info/debug).
+      let method = "log";
       let isBool = variant === "bool";
       if (variant.startsWith("warn_")) {
-        consoleFn = console.warn;
+        method = "warn";
         isBool = variant === "warn_bool";
       } else if (variant.startsWith("error_")) {
-        consoleFn = console.error;
+        method = "error";
         isBool = variant === "error_bool";
       } else if (variant.startsWith("info_")) {
-        consoleFn = console.info;
+        method = "info";
         isBool = variant === "info_bool";
       } else if (variant.startsWith("debug_")) {
-        consoleFn = console.debug;
+        method = "debug";
         isBool = variant === "debug_bool";
       } else if (variant.startsWith("log_")) {
         isBool = variant === "log_bool";
       } else if (variant === "bool") {
         isBool = true;
       }
+      const consoleFn = (v: any): void => {
+        const globalConsole = console as unknown as Record<string, any>;
+        const target: Record<string, any> = typeof con[method] === "function" ? con : globalConsole;
+        (target[method] as (...a: any[]) => void).call(target, v);
+      };
       return isBool ? (v: number) => consoleFn(Boolean(v)) : (v: any) => consoleFn(v);
     }
     case "string_method": {

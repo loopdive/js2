@@ -22,6 +22,7 @@ es_edition: multi
 loc-budget-allow:
   - src/codegen/map-runtime.ts
   - src/codegen/weak-collections-runtime.ts
+  - src/codegen/binary-ops.ts
 ---
 
 > **SLICE 1 (fable-dev-1, 2026-07-18) — SHAPE 2 fixed (Weak-collection typed
@@ -203,7 +204,30 @@ investigation anchors (class-init / private-method emit in `index.ts`; the
 call-arg coercion must route through `coerceType(refType, externref)` for the
 externref private-method slot).
 
-### SHAPE 3 — reproduced, deep root (== double-convert; ~11 rows)
+### SHAPE 3 — FIXED (invalid-Wasm eliminated; == mixed string ToNumber convert)
+
+Root FOUND + fixed: the mixed string⇄number/boolean `==` path
+(`binary-ops.ts` `emitToNumber`, the noJsHost `__str_to_number` arm) emitted an
+UNCONDITIONAL `extern.convert_any` before `__str_to_number`, assuming a native
+`$AnyString` REF operand. A string-classified operand that ALREADY compiles to
+externref (a `new String(x)` wrapper object) was thus double-converted —
+`extern.convert_any` on an externref is invalid Wasm (`expected anyref, found
+call of type externref`, the `true == new String("+1")` residual). Fix: gate the
+`extern.convert_any` on the compiled operand's real ValType — emit it only for a
+ref operand, skip it when already externref. Native-string ToNumber cases
+(`"1"==1`, `""==0`, `"abc"==1`, `true=="1"`) verified still correct.
+
+RESIDUAL (runtime, NOT invalid-Wasm — separate bucket): `true == new
+String("+1")` now COMPILES valid but TRAPS at runtime (`illegal cast`) because
+`__str_to_number` `ref.cast`s its operand to `$AnyString`, and a `new String`
+WRAPPER object externref is not a bare `$AnyString`. Monotonic for the #2039
+invalid-Wasm bucket (the row was a compile-fail before, is no longer invalid
+Wasm, and eliminating the module-level invalid Wasm lets the file's OTHER
+assertions run). The wrapper-String ToNumber value semantics (ToPrimitive the
+wrapper before `__str_to_number`, or make `__str_to_number` wrapper-tolerant) is
+a follow-up. The former-investigation notes below are retained for context.
+
+### SHAPE 3 (original investigation notes) — == double-convert; ~11 rows
 
 Minimal repro: `true == new String("x")` (also `1 == new String`,
 `new String == 1`) → `extern.convert_any[0] expected anyref, found call of type

@@ -62,11 +62,13 @@ export function lowerIrModuleToPorffor(
     throw new Error("porffor backend heap lowering requires a shared LinearMemoryPlan");
   }
   if (options.memoryPlan) {
-    if (options.memoryPlan.policy !== "arena-v1") {
-      throw new Error(`porffor backend P4 supports the arena-v1 memory policy, got '${options.memoryPlan.policy}'`);
+    if (options.memoryPlan.policy !== "arena-v1" && options.memoryPlan.policy !== "analysis-stack-arena-v1") {
+      throw new Error(`porffor backend does not support memory policy '${options.memoryPlan.policy}'`);
     }
     if (options.prefs?.gc !== undefined && options.prefs.gc !== false) {
-      throw new Error("porffor backend arena-v1 requires prefs.gc=false because planned pointers are not GC roots");
+      throw new Error(
+        `porffor backend ${options.memoryPlan.policy} requires prefs.gc=false because planned pointers are not GC roots`,
+      );
     }
     assembler.bindMemoryPlan(options.memoryPlan);
   }

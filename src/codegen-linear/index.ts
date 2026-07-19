@@ -3,12 +3,14 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
+import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
 import { compileLinearIrFunctions, linearIrEnabled } from "../ir/backend/linear-integration.js";
 import { materializeLinearIrHelper } from "../ir/backend/linear-integration.js";
 import type { CollectionKind, FinallyEntry, LinearContext, LinearFuncContext } from "./context.js";
 import { addLocal } from "./context.js";
 import type { ClassLayout } from "./layout.js";
 import { computeClassLayout } from "./layout.js";
+import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
 import {
   addArrayRuntime,
   addFmodRuntime,
@@ -84,6 +86,8 @@ export interface LinearOptions {
    * See {@link import("./runtime.js").ArenaOptions}.
    */
   exposeArenaReset?: boolean;
+  /** Shared IR allocation policy. Direct-backend fallbacks remain arena-backed. */
+  allocationPolicy?: LinearAllocatorPolicyId;
 }
 
 /**
@@ -92,9 +96,11 @@ export interface LinearOptions {
  */
 export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): WasmModule {
   const mod = createEmptyModule();
+  const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
 
   // Add memory and runtime functions first
   addRuntime(mod, { exposeArenaReset: opts.exposeArenaReset });
+  if (allocationPolicy.id === "analysis-stack-arena-v1") addLinearStackArenaRuntime(mod);
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
@@ -214,7 +220,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   // and BEFORE the funcDecls loop so an IR-lowered body lands at exactly
   // its pre-assigned slot position. Anything the gate demotes compiles via
   // the direct path below, unchanged.
-  const linearIr = linearIrEnabled() ? compileLinearIrFunctions(ctx, ast.sourceFile) : undefined;
+  const linearIr = linearIrEnabled() ? compileLinearIrFunctions(ctx, ast.sourceFile, allocationPolicy) : undefined;
 
   // ── Compile top-level function declarations ──
   for (const decl of funcDecls) {

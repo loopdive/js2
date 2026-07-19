@@ -90,3 +90,18 @@ note linkage, no duplication.
 ## Highest-leverage lever
 **#3418** (shim import-leak) — recovers ~18–30k standalone passes with a contained
 import-DCE fix. This is the priority for the remaining Fable window.
+
+## Flap evidence (content-current cluster)
+
+During the 2026-07-18 v8 baseline stabilization, PR #3365 (a **CI-only** merge_group
+shard-consolidation, zero compiler changes, running the OLD 114-shard workflow)
+parked on a **~197-row pass→other cluster** — run `29644582810`, bucket
+`778cbb8a8e80767e`, **72 non-CT files**, ratio 37.3%, stamped content-current
+"LIKELY-REAL", **trap categories unchanged**. A CI-only PR cannot cause real
+compiler regressions, so the 197 was a genuine **run-to-run flap**: the
+contended-pool baseline (`dae79d5a` @ 12:48Z, measured during pre-reset churn)
+disagreed with quiet-pool runs on ~197 timing-sensitive tests (async/`$DONE`
+class). It **reconciled quiet-vs-quiet** after a quiet-pool forced refresh
+promoted `03ca4729` — the cluster vanished. Tracked here as a real nondeterminism
+signal for the harvest; the 72-file list is in run `29644582810`'s
+"check for test262 regressions" job log.
