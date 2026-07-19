@@ -61,6 +61,8 @@ export function resolveGenericCallSiteTypes(
  * When a parameter has no type annotation (TS gives it `any`), we look at every
  * call to that function and collect the argument types at the given index.
  * If all call sites agree on a single concrete wasm type, we return it.
+ * With `requireAllCallSitesConcrete`, an `any`/`unknown` argument vetoes
+ * specialization instead of being ignored (used for unannotated JavaScript).
  * Returns null if no call site found or types disagree.
  */
 export function inferParamTypeFromCallSites(
@@ -68,6 +70,7 @@ export function inferParamTypeFromCallSites(
   funcName: string,
   paramIndex: number,
   sourceFile: ts.SourceFile,
+  requireAllCallSitesConcrete = false,
 ): ValType | null {
   let agreed: ValType | null = null;
   let conflict = false;
@@ -80,7 +83,11 @@ export function inferParamTypeFromCallSites(
         const argType = ctx.checker.getTypeAtLocation(arg);
         // Skip if the argument itself is also `any` — no useful info
         if (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
-          // Don't count this call site — it doesn't help
+          // For unannotated JavaScript a dynamic call site is positive evidence
+          // that the parameter must retain its externref carrier. Inferring from
+          // only the remaining concrete calls is unsound: IteratorResult.value,
+          // for example, is numeric before completion and undefined afterward.
+          if (requireAllCallSitesConcrete) conflict = true;
         } else {
           const wasmType = resolveWasmType(ctx, argType);
           if (agreed === null) {

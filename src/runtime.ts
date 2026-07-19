@@ -40,6 +40,93 @@ import {
 } from "./runtime/legacy-regexp.js";
 export { buildWasiPolyfill } from "./runtime/wasi-polyfill.js";
 
+// ES2026 RegExp.prototype[@@replace] derives `global` and full-Unicode mode
+// from Get(rx, "flags") for a non-callable replacement. Older host engines
+// instead read rx.global and (only for global regexps) rx.unicode directly.
+// Test once so current engines stay completely on their native path.
+const _nativeRegExpReplace = RegExp.prototype[Symbol.replace];
+const _nativeRegExpReplaceReadsFlags = (() => {
+  try {
+    const probe = /./;
+    let read = false;
+    Object.defineProperty(probe, "flags", {
+      configurable: true,
+      get() {
+        read = true;
+        return "";
+      },
+    });
+    (_nativeRegExpReplace as any).call(probe, "", "");
+    return read;
+  } catch {
+    return false;
+  }
+})();
+
+/**
+ * Run current @@replace flag collection on hosts that still implement the
+ * older global/unicode property protocol. Temporary data properties feed the
+ * already-coerced flag values to the legacy native algorithm without invoking
+ * user accessors a second time. Ordinary and configurable RegExp instances
+ * take this path; exotic non-configurable receivers fall back to native after
+ * the required flags read rather than changing their descriptors.
+ */
+function _callRegExpReplaceWithCurrentFlags(
+  fn: (this: any, input: string, replacement: string) => any,
+  regex: any,
+  input: any,
+  replacement: any,
+): any {
+  const string = String(input);
+  const replacementString = String(replacement);
+  const flags = String(regex.flags);
+  const flagValues: Record<"global" | "unicode", boolean> = {
+    global: flags.includes("g"),
+    unicode: flags.includes("u") || flags.includes("v"),
+  };
+  const saved = new Map<"global" | "unicode", PropertyDescriptor | undefined>();
+  const changed: Array<"global" | "unicode"> = [];
+
+  for (const key of ["global", "unicode"] as const) {
+    const descriptor = Object.getOwnPropertyDescriptor(regex, key);
+    saved.set(key, descriptor);
+    const canShadow =
+      descriptor === undefined ||
+      descriptor.configurable === true ||
+      (Object.prototype.hasOwnProperty.call(descriptor, "value") && descriptor.writable === true);
+    if (
+      !canShadow ||
+      !Reflect.defineProperty(regex, key, {
+        ...(descriptor?.configurable === false
+          ? descriptor
+          : { configurable: true, enumerable: descriptor?.enumerable }),
+        value: flagValues[key],
+        writable: descriptor?.configurable === false ? descriptor.writable : true,
+      })
+    ) {
+      for (let i = changed.length - 1; i >= 0; i--) {
+        const changedKey = changed[i]!;
+        const prior = saved.get(changedKey);
+        if (prior) Reflect.defineProperty(regex, changedKey, prior);
+        else Reflect.deleteProperty(regex, changedKey);
+      }
+      return fn.call(regex, string, replacementString);
+    }
+    changed.push(key);
+  }
+
+  try {
+    return fn.call(regex, string, replacementString);
+  } finally {
+    for (let i = changed.length - 1; i >= 0; i--) {
+      const key = changed[i]!;
+      const descriptor = saved.get(key);
+      if (descriptor) Reflect.defineProperty(regex, key, descriptor);
+      else Reflect.deleteProperty(regex, key);
+    }
+  }
+}
+
 /**
  * Portable require() for loading Node.js builtin modules (#1044).
  * Works in both CJS (require is global) and ESM (createRequire from node:module).
@@ -10711,8 +10798,11 @@ assert._isSameValue = isSameValue;
             // Treat missing arg1 (null from ref.null.extern padding) as
             // undefined → ToString gives "undefined" per spec, matching
             // `regex[Symbol.replace](str)` with no replaceValue.
-            if (arg1 == null) return fn.call(regex, wrappedArg0, undefined);
-            return fn.call(regex, wrappedArg0, wrapCallable(arg1));
+            const replacement = arg1 == null ? undefined : wrapCallable(arg1);
+            if (!_nativeRegExpReplaceReadsFlags && fn === _nativeRegExpReplace && typeof replacement !== "function") {
+              return _callRegExpReplaceWithCurrentFlags(fn, regex, wrappedArg0, replacement);
+            }
+            return fn.call(regex, wrappedArg0, replacement);
           }
           if (symbolId === 10) {
             // split: missing limit (null padding) → call without second arg

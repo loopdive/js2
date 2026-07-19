@@ -23,9 +23,10 @@ import { buildImports, instantiateWasm } from "../src/runtime.js";
 //  - W5 pins: `return 9` observation and `it.return(42).value` round-trips
 //    (delivered en route by W3/W4 native routing).
 
-async function run(source: string, opts: { standalone?: boolean } = {}): Promise<unknown> {
+async function run(source: string, opts: { standalone?: boolean; fileName?: string } = {}): Promise<unknown> {
   const result = await compile(source, {
-    fileName: "test.ts",
+    fileName: opts.fileName ?? "test.ts",
+    ...(opts.fileName?.endsWith(".js") ? { allowJs: true, skipSemanticDiagnostics: true } : {}),
     ...(opts.standalone ? { target: "standalone" as const } : {}),
   });
   if (!result.success) {
@@ -235,6 +236,29 @@ describe("#3032 W6 — sentinel-aware dynamic value reads (undefined, not NaN/nu
            const a2 = isSameValue(result.value, undefined) ? 1 : 0;
            return a1 * 10 + a2;
          }`,
+      ),
+    ).toBe(11);
+  });
+
+  it("host: completed no-yield generator preserves undefined through an unannotated JS result", async () => {
+    expect(
+      await run(
+        `function isSameValue(a, b) {
+           if (a === 0 && b === 0) return 1 / a === 1 / b;
+           if (a !== a && b !== b) return true;
+           return a === b;
+         }
+         function* G() {}
+         export function test() {
+           var iter = G();
+           iter.next();
+           var result = iter.return(33);
+           var score = isSameValue(result.value, 33) && result.done === true ? 10 : 0;
+           result = iter.next();
+           score += result.value === undefined && result.done === true ? 1 : 0;
+           return score;
+         }`,
+        { fileName: "issue-3032.js" },
       ),
     ).toBe(11);
   });

@@ -181,7 +181,10 @@ function restBindingOverridesToExternref(p: ts.ParameterDeclaration): boolean {
  * (registerBodyless + collectDeclarations, generator and normal arms):
  *   1. binding-pattern / rest-binding widen to externref,
  *   2. default-valued non-null ref → ref_null (caller passes ref.null = "use default"),
- *   3. implicit-`any` param → infer a concrete type from call sites, else body usage (#1121).
+ *   3. implicit-`any` param → infer a concrete type from call sites, else body
+ *      usage (#1121). Unannotated JavaScript only specializes when every call
+ *      site is concrete and agrees, and skips body-only inference: neither a
+ *      dynamic call nor one arithmetic branch proves a generic helper's type.
  */
 function lowerParamType(
   ctx: CodegenContext,
@@ -210,8 +213,9 @@ function lowerParamType(
     (wasmType.kind === "externref" ||
       (wasmType.kind === "ref_null" && ctx.anyValueTypeIdx >= 0 && wasmType.typeIdx === ctx.anyValueTypeIdx))
   ) {
-    let inferred = inferParamTypeFromCallSites(ctx, funcName, index, sourceFile);
-    if (!inferred) inferred = inferParamTypeFromBody(ctx, stmt, index);
+    const isJavaScript = /\.(?:c|m)?jsx?$/i.test(sourceFile.fileName);
+    let inferred = inferParamTypeFromCallSites(ctx, funcName, index, sourceFile, isJavaScript);
+    if (!inferred && !isJavaScript) inferred = inferParamTypeFromBody(ctx, stmt, index);
     if (inferred) wasmType = inferred;
   }
   return wasmType;

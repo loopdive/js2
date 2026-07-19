@@ -41,8 +41,12 @@ async function run(source: string, fn = "test"): Promise<unknown> {
 // production test262 runner compiles every test with `skipSemanticDiagnostics:
 // true` (see tests/test262-runner.ts), so mirror that here to exercise the same
 // codegen path (the typed `RegExp_set_global` setter) the conformance run does.
-async function runLoose(source: string, fn = "test"): Promise<unknown> {
-  const result = await compile(source, { fileName: "test.ts", skipSemanticDiagnostics: true });
+async function runLoose(source: string, fn = "test", fileName = "test.ts"): Promise<unknown> {
+  const result = await compile(source, {
+    fileName,
+    skipSemanticDiagnostics: true,
+    ...(fileName.endsWith(".js") ? { allowJs: true } : {}),
+  });
   if (!result.success) {
     throw new Error(`Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}`);
   }
@@ -229,6 +233,67 @@ describe("#3051 Slice 2 — arg / flag coercion", { timeout: 30000 }, () => {
       }
     `);
     expect(out).toBe("b");
+  });
+
+  it("propagates an own unicode getter throw through @@replace", async () => {
+    const out = await runLoose(`
+      export function test(): number {
+        const marker: any = { tag: "unicode" };
+        let score = 0;
+        for (const r of [/./, /./g] as any[]) {
+          Object.defineProperty(r, "unicode", {
+            get: function(): any { throw marker; }
+          });
+          try { void r.unicode; } catch (e: any) { if (e === marker) score += 10; }
+          try { r[Symbol.replace]("", ""); } catch (e: any) { if (e === marker) score += 1; }
+        }
+        return score;
+      }
+    `);
+    expect(out).toBe(22);
+  });
+
+  it("derives @@replace mode from flags without rereading global or unicode", async () => {
+    const out = await runLoose(`
+      export function test(): number {
+        const r: any = /./;
+        let flagsReads = 0;
+        Object.defineProperty(r, "flags", {
+          get: function(): string { flagsReads += 1; return ""; }
+        });
+        Object.defineProperty(r, "global", {
+          configurable: true,
+          get: function(): never { throw new Error("global was reread"); }
+        });
+        Object.defineProperty(r, "unicode", {
+          configurable: true,
+          get: function(): never { throw new Error("unicode was reread"); }
+        });
+        const result = r[Symbol.replace]("a", "b");
+        return result === "b" && flagsReads === 1 ? 1 : 0;
+      }
+    `);
+    expect(out).toBe(1);
+  });
+
+  it("propagates the unicode getter throw through an unannotated JS callback", async () => {
+    const out = await runLoose(
+      `function capturesThrow(func, marker) {
+         try { func(); } catch (error) { return error === marker ? 1 : 2; }
+         return 0;
+       }
+       export function test() {
+         var r = /./g;
+         var marker = { tag: "unicode" };
+         Object.defineProperty(r, "unicode", {
+           get: function() { throw marker; }
+         });
+         return capturesThrow(function() { r[Symbol.replace]("", ""); }, marker);
+       }`,
+      "test",
+      "issue-3051.js",
+    );
+    expect(out).toBe(1);
   });
 });
 

@@ -86,6 +86,19 @@ function isNativeResultType(ctx: CodegenContext, type: ValType | null): boolean 
   return false;
 }
 
+function resultValueIsStaticallyNumeric(ctx: CodegenContext, resultExpr: ts.Expression): boolean {
+  // IteratorResult<T>.value is observably `undefined` after completion even
+  // when T was inferred as numeric. Unannotated JavaScript has no type-level
+  // promise that the read occurs only before completion, so retain the dynamic
+  // carrier and let a later numeric consumer apply ToNumber(undefined).
+  if (/\.(?:c|m)?jsx?$/i.test(resultExpr.getSourceFile().fileName)) return false;
+  const itType = ctx.checker.getTypeAtLocation(resultExpr);
+  const valSym = itType.getProperty?.("value");
+  if (!valSym) return false;
+  const mapped = mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(valSym, resultExpr), ctx.checker);
+  return mapped.kind === "f64" || mapped.kind === "i32";
+}
+
 function compileIgnoredArgs(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): void {
   for (const arg of args) {
     const argType = compileExpression(ctx, fctx, arg);
@@ -645,6 +658,25 @@ export function tryCompileNativeGeneratorResultProperty(
       typeIdx: rtIdx,
       fieldIdx: propName === "value" ? RESULT_VALUE_FIELD : RESULT_DONE_FIELD,
     });
+    // A direct native-result read can still be dynamically consumed. In
+    // particular, unannotated JavaScript stores `iter.next()` in a `var` and
+    // passes `.value` to a generic SameValue helper. Preserve the completed
+    // result's undefined sentinel in that shape instead of returning its raw
+    // f64 NaN representation. Explicitly numeric IteratorResult consumers keep
+    // the f64 fast path.
+    if (propName === "value" && valVT.kind === "f64" && !resultValueIsStaticallyNumeric(ctx, resultExpr)) {
+      addUnionImports(ctx);
+      const getUndefIdx = ensureGetUndefined(ctx);
+      flushLateImportShifts(ctx, fctx);
+      const boxNumberIdx = ctx.funcMap.get("__box_number");
+      if (boxNumberIdx !== undefined) {
+        const scratch = allocLocal(fctx, `__gen_direct_val_f64_${fctx.locals.length}`, { kind: "f64" });
+        const undefInstrs: Instr[] =
+          getUndefIdx !== undefined ? [{ op: "call", funcIdx: getUndefIdx }] : [{ op: "ref.null.extern" }];
+        fctx.body.push(...sentinelAwareF64BoxInstrs(scratch, boxNumberIdx, undefInstrs));
+        return { kind: "externref" };
+      }
+    }
     // (#2938) `.done` carries the #2030 boolean BRAND, exactly like the host
     // path's `__gen_result_done` read (property-access.ts). Without it, the
     // i32→externref arg coercion boxes the value kind-keyed as a NUMBER
@@ -703,13 +735,7 @@ export function tryCompileNativeGeneratorResultProperty(
   // exhausted read yields NaN, which is the spec ToNumber(undefined)).
   // Everything else (ref-typed OR no static info — the `g: any` harness shape)
   // now takes the externref path below.
-  let valueStaticNumeric = false;
-  const itType = ctx.checker.getTypeAtLocation(resultExpr);
-  const valSym = itType.getProperty?.("value");
-  if (valSym) {
-    const mapped = mapTsTypeToWasm(ctx.checker.getTypeOfSymbolAtLocation(valSym, resultExpr), ctx.checker);
-    valueStaticNumeric = mapped.kind === "f64" || mapped.kind === "i32";
-  }
+  const valueStaticNumeric = resultValueIsStaticallyNumeric(ctx, resultExpr);
 
   if (valueStaticNumeric) {
     // Statically-numeric `.value`: the historical f64-singleton fast path.
