@@ -337,6 +337,59 @@ jobs:
   # itself fails so no required-context stub can hide the red shard.
   # =====================================================================
 
+  # #3448 — on push:main, probe for the merge_group's own merged JSONLs
+  # (artifact `test262-group-<sha>`, published for #1956 at ~line 1158). The
+  # merge queue fast-forwards main to the group head SHA, so on push
+  # github.sha EQUALS the artifact key. A HIT lets promote-baseline reuse those
+  # JSONLs and SKIP the 114-job `test262-shard` rerun of the exact tree the
+  # merge_group just validated (the biggest remaining CI-contention win — CI
+  # acceleration review §5-A / lever L1). A MISS (direct push, expired
+  # artifact, doc-only group that uploaded no shard artifact) runs the full
+  # matrix, same fail-safe bias as the `changes` job. Runs on push AND
+  # workflow_dispatch (forcing hit=false on non-push) so `success()`
+  # propagation to `test262-shard`/`promote-baseline` — which now `needs` this
+  # job — holds; skipped on pull_request/merge_group (those don't run
+  # test262-shard's push arm), where the downstream jobs run under `always()`.
+  mg-artifact-probe:
+    name: probe merge_group baseline artifact
+    if: |
+      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # actions:read — query the artifacts REST API of THIS repo (a cross-run
+    # read), same permission the #1956 predecessor-group step already uses.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      hit: ${{ steps.probe.outputs.hit }}
+    steps:
+      - name: Probe for test262-group-<sha> artifact
+        id: probe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # workflow_dispatch (manual rerun) must ALWAYS run a fresh full matrix
+          # — that is the entire point of a manual rerun — so never short-circuit
+          # it via an artifact, even if a same-SHA group artifact still exists.
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+            echo "Non-push event (${{ github.event_name }}) — forcing MISS, full matrix runs."
+            exit 0
+          fi
+          ART_NAME="test262-group-${{ github.sha }}"
+          # Pick the newest non-expired artifact with this exact name.
+          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty' 2>/dev/null || echo "")
+          if [ -n "$ART_ID" ]; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            echo "HIT: ${ART_NAME} (id=${ART_ID}) present — promote-baseline will reuse it; skipping the 114-job test262-shard matrix."
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+            echo "MISS: ${ART_NAME} not found (direct push, expired artifact, or doc-only group) — running the full matrix (fail-safe)."
+          fi
+
   test262-shard:
     # Heavy 57-shard test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR:
@@ -361,9 +414,16 @@ jobs:
     # concurrently — see scripts/gen-test262-mg-matrix.mjs). This job keeps
     # its ORIGINAL 57-shard x 2-target matrix, UNCHANGED, for push (baseline
     # update) and workflow_dispatch (manual reruns).
-    needs: [changes]
+    needs: [changes, mg-artifact-probe]
+    # #3448 — the push arm is now AND-ed with a MISS on the merge_group
+    # baseline-artifact probe: on a HIT the merge_group already produced the
+    # merged JSONLs for this exact SHA, so this 114-job matrix is SKIPPED and
+    # promote-baseline reuses that artifact. workflow_dispatch always runs the
+    # full matrix (the probe forces hit=false there). Both `changes` and
+    # `mg-artifact-probe` run+succeed on push and workflow_dispatch, so the
+    # implicit `success()` over `needs` holds for both arms.
     if: |
-      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
+      ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
       github.event_name == 'workflow_dispatch'
     # Runs in PARALLEL with `gate` — both are independently required by the
     # ruleset (`cheap gate (main-ancestor + lint)` and `merge shard reports`),
@@ -700,7 +760,13 @@ jobs:
       always() &&
       (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: merge shard reports
-    needs: [changes, test262-shard, test262-shard-mg]
+    # #3448 — mg-artifact-probe added so SHARD_SKIP_OK can green-skip the
+    # push:main HIT path (the matrix is skipped; promote-baseline sources the
+    # baseline from the merge_group artifact instead). This job already runs
+    # under `always()`, so the probe being skipped on pull_request/merge_group
+    # cannot force-skip it, and its empty output leaves SHARD_SKIP_OK unchanged
+    # in those contexts.
+    needs: [changes, test262-shard, test262-shard-mg, mg-artifact-probe]
     runs-on: ubuntu-latest
     env:
       # 'true' when EITHER the static (test262-shard) or consolidated
@@ -712,8 +778,11 @@ jobs:
       SHARDS_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && 'true' || 'false' }}
       # Green-skip when shards legitimately did not run: a merge_group with no
       # test262-relevant change, OR any pull_request (heavy shards are
-      # merge_group-only under the #2519 slim-down).
-      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || github.event_name == 'pull_request') && 'true' || 'false' }}
+      # merge_group-only under the #2519 slim-down), OR a push:main HIT where
+      # the merge_group's own baseline artifact is reused (#3448 — the matrix is
+      # skipped and promote-baseline sources the JSONLs from that artifact, so
+      # there are no shards to merge here and this required check green-skips).
+      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || github.event_name == 'pull_request' || (github.event_name == 'push' && needs.mg-artifact-probe.outputs.hit == 'true')) && 'true' || 'false' }}
 
     steps:
       - name: Fail if required test262 shards did not succeed
@@ -731,6 +800,11 @@ jobs:
             echo "   (changes.run_shards=='false'); the consolidated 59-job matrix (#3431,"
             echo "   test262-shard-mg) was intentionally skipped. Reporting 'merge shard"
             echo "   reports' green."
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "-> push:main HIT (#3448): the merge_group that just landed already"
+            echo "   published its merged JSONLs as test262-group-${{ github.sha }}. The"
+            echo "   114-job test262-shard rerun was skipped; promote-baseline reuses that"
+            echo "   artifact. Reporting 'merge shard reports' green."
           else
             echo "-> pull_request: heavy test262 shards are merge_group-only under the"
             echo "   #2519 slim-down, so they do not run at PR-time. The cheap gate"
@@ -1027,28 +1101,51 @@ jobs:
       # pass) converts passes to timeouts and trips no gate. Two cheap signals
       # — both already EMITTED by diff-test262.ts (#1942) into the catastrophic
       # guard's /tmp/cat-diff.txt — gate that surface:
-      #   1. count: pass→compile_timeout above COMPILE_TIMEOUT_THRESHOLD
-      #      (N=25, calibrated above the observed contention-flake floor; the
-      #      #1589 serial retry already absorbs most CT flake, and the
-      #      test262-canary separates non-determinism).
-      #   2. aggregate: sum(compile_ms) over the shared both-compiled set, fail
-      #      when it rises > AGG_COMPILE_TIME_PCT_THRESHOLD (20%). Immune to
-      #      single-test flake and set churn — it measures the same population
-      #      on both sides, so a 20% jump is a real systemic slowdown.
+      #   1. count: pass→compile_timeout tests (the CT count).
+      #   2. aggregate: sum(compile_ms) over the shared both-compiled set (a
+      #      signed Δ%). Immune to single-test flake and set churn — it measures
+      #      the same population on both sides, so a jump is a real systemic
+      #      slowdown.
       # Reuses /tmp/cat-diff.txt from the catastrophic guard (same job, same
       # merged report) so this adds no extra diff run.
-      - name: Compile-time regression guard (#1942)
+      #
+      # Contention-tolerant trigger (#3447 / CI-acceleration review §5-B, lever
+      # L2). The old flat `CT > 50 ⇒ fail` priced runner CPU contention as if it
+      # were a compile-perf regression: it FALSE-EJECTED PR #3365 from the merge
+      # queue TWICE, both times with CT>50 while the aggregate compile-time Δ was
+      # only +3.2% — and a genuine regression that pushes >50 tests past the 30s
+      # per-test timeout cannot leave the aggregate that flat. Real slowdowns
+      # move BOTH signals; contention moves only the count. So:
+      #   • FAIL on (CT > CT_SOFT AND aggregate Δ > +10%)  — both signals agree.
+      #   • FAIL unconditionally on CT > CT_HARD           — survivor-bias hole:
+      #       a pathological slowdown times out its victims, removing them from
+      #       the both-compiled shared set, so the aggregate can stay flat while
+      #       the count spikes into the hundreds. CT_HARD (~boundary-population
+      #       scale) still catches that even when the aggregate arm is fooled.
+      #   • CT_SOFT < CT ≤ CT_HARD with a flat aggregate ⇒ ::warning + run
+      #       summary, NO fail (this is the #3365 contention regime).
+      # The aggregate +20% arm (AGG_COMPILE_TIME_PCT_THRESHOLD) is UNCHANGED and
+      # remains the standalone systemic-slowdown backstop.
+      - name: Compile-time regression guard (#1942, #3447)
         if: env.SHARDS_RAN == 'true'
         env:
-          # Scales with per-shard test density (#3431). The 114→59 merge_group
-          # shard consolidation ~doubles tests-per-shard, so boundary compiles
-          # that flirt with the 30s per-test timeout cross it proportionally more
-          # often under runner CPU contention (25 × 114/59 ≈ 48, rounded to 50
-          # for headroom). This count threshold is the flake-noise filter only;
-          # the aggregate +20% compile-time guard below is UNCHANGED and remains
-          # the systemic-slowdown backstop, so raising this does not weaken real
-          # compile-perf regression detection.
-          COMPILE_TIMEOUT_THRESHOLD: "50"
+          # CT_SOFT: contention-flake floor. A CT above this is only actionable
+          #   when the aggregate arm agrees (see the combined trigger). Scaled
+          #   with per-shard test density (#3431): the 114→59 merge_group shard
+          #   consolidation ~doubles tests-per-shard, so boundary compiles that
+          #   flirt with the 30s per-test timeout cross it proportionally more
+          #   often under CPU contention (25 × 114/59 ≈ 48, rounded to 50).
+          CT_SOFT: "50"
+          # CT_HARD: unconditional-fail ceiling (~boundary-population scale). A CT
+          #   this high is a real pathological slowdown regardless of the
+          #   aggregate — it closes the survivor-bias hole (timed-out victims
+          #   leave the shared set, flattening the aggregate).
+          CT_HARD: "200"
+          # AGG_SOFT_PCT: the aggregate-agreement threshold for the combined
+          #   trigger (both signals must move). +3.2% (the #3365 case) stays well
+          #   under this; a real slowdown that times out 50+ tests does not.
+          AGG_SOFT_PCT: "10"
+          # AGG_COMPILE_TIME_PCT_THRESHOLD: UNCHANGED standalone systemic backstop.
           AGG_COMPILE_TIME_PCT_THRESHOLD: "20"
         run: |
           if [ ! -f /tmp/cat-diff.txt ]; then
@@ -1063,18 +1160,41 @@ jobs:
           AGG_LINE=$(grep -F 'Aggregate compile time (shared' /tmp/cat-diff.txt | head -1)
           AGG_PCT=$(echo "$AGG_LINE" | grep -oE 'Δ [+-]?[0-9]+\.[0-9]+%' | grep -oE '[-]?[0-9]+\.[0-9]+' | head -1)
           AGG_PCT="${AGG_PCT:-0.0}"
-          echo "Compile-time guard: pass→compile_timeout=${CT} (threshold ${COMPILE_TIMEOUT_THRESHOLD}); aggregate compile-time Δ=${AGG_PCT}% (threshold +${AGG_COMPILE_TIME_PCT_THRESHOLD}%)."
-          echo "  ${AGG_LINE}"
-          fail=0
-          if [ "$CT" -gt "$COMPILE_TIMEOUT_THRESHOLD" ]; then
-            echo "::error::COMPILE-TIME regression: ${CT} tests went pass→compile_timeout, exceeding the ${COMPILE_TIMEOUT_THRESHOLD} flake threshold. A spike this large is a real compile-perf regression (compilation got slow enough to cross the 30s per-test timeout), not runner-load noise. See #1942."
-            fail=1
-          fi
-          # Integer-compare the percentage (floor): strip the fractional part
-          # for the shell -gt comparison, so +20.x stays under a 20% threshold
-          # and only +21%+ trips.
+          # Integer floor of the signed percent (for the ×1 -gt comparisons):
+          # strip the fractional part so +20.x stays under a 20 threshold.
           AGG_INT=$(echo "$AGG_PCT" | grep -oE '^-?[0-9]+')
           AGG_INT="${AGG_INT:-0}"
+          echo "Compile-time guard: pass→compile_timeout=${CT} (soft ${CT_SOFT}, hard ${CT_HARD}); aggregate compile-time Δ=${AGG_PCT}% (combined-arm +${AGG_SOFT_PCT}%, standalone +${AGG_COMPILE_TIME_PCT_THRESHOLD}%)."
+          echo "  ${AGG_LINE}"
+          fail=0
+          # 1. Unconditional CT ceiling — closes the survivor-bias hole where a
+          #    pathological slowdown flattens the aggregate by evicting victims.
+          if [ "$CT" -gt "$CT_HARD" ]; then
+            echo "::error::COMPILE-TIME regression: ${CT} tests went pass→compile_timeout, exceeding the hard ceiling ${CT_HARD}. A spike this large is a pathological compile-perf regression regardless of the aggregate Δ (timed-out tests drop out of the shared set, so the aggregate can look flat). See #1942/#3447."
+            fail=1
+          # 2. Combined trigger — both signals must agree for a soft-range CT to
+          #    fail. Contention moves only the count; a real slowdown moves both.
+          elif [ "$CT" -gt "$CT_SOFT" ] && [ "$AGG_INT" -gt "$AGG_SOFT_PCT" ]; then
+            echo "::error::COMPILE-TIME regression: ${CT} tests went pass→compile_timeout (> soft ${CT_SOFT}) AND aggregate compile time rose ${AGG_PCT}% (> +${AGG_SOFT_PCT}%) over the shared both-compiled set. Both signals agree — this is a real compile-perf regression, not runner-load noise. See #1942/#3447."
+            fail=1
+          elif [ "$CT" -gt "$CT_SOFT" ]; then
+            # 3. Soft-range CT with a flat aggregate: the #3365 contention regime.
+            #    Warn + record, do NOT fail (CT>50 at Δ=+3.2% false-ejected #3365
+            #    from the merge queue twice — do not repeat that).
+            echo "::warning::Elevated pass→compile_timeout count ${CT} (> soft ${CT_SOFT}, ≤ hard ${CT_HARD}) but aggregate compile-time Δ is only ${AGG_PCT}% (≤ +${AGG_SOFT_PCT}%). Treating as runner CPU contention, not a compile-perf regression (see #3365). Not failing."
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              {
+                echo "### Compile-time guard: elevated timeout count (contention, not failed)"
+                echo ""
+                echo "- pass→compile_timeout count: **${CT}** (soft ${CT_SOFT}, hard ${CT_HARD})"
+                echo "- aggregate compile-time Δ: **${AGG_PCT}%** (combined-arm threshold +${AGG_SOFT_PCT}%)"
+                echo ""
+                echo "Both signals must agree to fail; only the count moved, so this is priced as runner CPU contention (#3447)."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          # 4. Standalone aggregate backstop (UNCHANGED): a systemic slowdown that
+          #    lifts the whole shared set > +20% fails on its own, independent of CT.
           if [ "$AGG_INT" -gt "$AGG_COMPILE_TIME_PCT_THRESHOLD" ]; then
             echo "::error::COMPILE-TIME regression: aggregate compile time rose ${AGG_PCT}% over the shared both-compiled test set, exceeding the +${AGG_COMPILE_TIME_PCT_THRESHOLD}% threshold. This is a systemic compilation slowdown (the same tests take materially longer to compile). See #1942."
             fail=1
@@ -1281,40 +1401,79 @@ jobs:
             echo "baseline_sha=unknown" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Load cached baseline for merge-base (#1081)
+      - name: Load cached baseline for merge-base (#1081, base_sha #3467)
         id: merge_base_cache
         if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+        env:
+          # #3467 — on merge_group the REAL parent commit the queue built this
+          # group on. The sequential merge queue writes runs/<sha> for every
+          # landed commit (write-run-cache-bot job), so runs/<base_sha> is the
+          # exact pre-PR state → the diff is purely this PR's effect, with none
+          # of the promoted-snapshot lag that false-parked 6 PRs on 2026-07-19.
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          # #1081 — prefer the hash-indexed run cache for the PR's merge-base
-          # over the moving "latest main" pointer fetched above. On a cache HIT
-          # this overwrites benchmarks/results/test262-current.jsonl with the
-          # merge-base's exact results, so the regression diff attributes only
-          # the PR's own commits. On a MISS it leaves the latest-main baseline
-          # in place and warns. Never fails the build.
+          # #1081/#3467 — prefer the hash-indexed run cache for the PR's REAL
+          # base commit over the moving "latest main" pointer fetched above. On
+          # a cache HIT this overwrites benchmarks/results/test262-current.jsonl
+          # with the base's exact results, so the regression diff attributes
+          # only the PR's own commits. On a MISS it leaves the latest-main
+          # baseline in place and warns. Never fails the build.
           if [ ! -d /tmp/js2wasm-baselines/.git ]; then
             echo "::warning::#1081 baselines clone missing — using latest-main baseline."
             echo "cache=miss" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          MERGE_BASE=$(git merge-base origin/main HEAD 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || echo "")
+          # #3467 — resolve the primary base per event:
+          #   merge_group → github.event.merge_group.base_sha (the queue's exact
+          #                 parent; the cache key the write-run-cache-bot job
+          #                 populates for every landed commit).
+          #   pull_request → git merge-base origin/main HEAD (today's behavior;
+          #                 base_sha is unavailable outside merge_group).
+          if [ "${{ github.event_name }}" = "merge_group" ] && [ -n "${MG_BASE_SHA:-}" ]; then
+            MERGE_BASE="$MG_BASE_SHA"
+            echo "merge_group base_sha: ${MERGE_BASE}"
+          else
+            MERGE_BASE=$(git merge-base origin/main HEAD 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || echo "")
+            echo "pull_request merge-base: ${MERGE_BASE:-<unknown>}"
+          fi
           TEST262_VERSION=$(git submodule status test262 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo "")
-          echo "Merge-base: ${MERGE_BASE:-<unknown>}; test262 version: ${TEST262_VERSION:-<unknown>}"
-          # Expose merge-base so the regression-diff step can read fresh metadata
-          # from runs/<merge-base>.json when the cache hit (#49). The .json is
-          # sparse-checked-out below alongside the .jsonl.
+          echo "Base: ${MERGE_BASE:-<unknown>}; test262 version: ${TEST262_VERSION:-<unknown>}"
+          # Expose base so the regression-diff step can read fresh metadata from
+          # runs/<base>.json when the cache hit (#49). The .json is sparse-
+          # checked-out below alongside the .jsonl.
           echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
-          # The clone above is sparse + blob-filtered; materialize only this
-          # merge-base's run-cache entry. A pattern that matches nothing in
-          # the tree is a silent no-op, and the resolver then reports a miss.
+          # #3467 — build an ORDERED candidate list: the exact base first, then
+          # its nearest-first ancestors. If the exact base's shards were skipped
+          # (doc-only queue merge) or it predates the cache rollout, the resolver
+          # walks back to the nearest cached ancestor rather than silently
+          # falling to the drifting snapshot. Bounded to 25 commits — far deeper
+          # than any realistic gap between two shard-running main commits.
+          CANDIDATES="$MERGE_BASE"
           if [ -n "$MERGE_BASE" ]; then
-            git -C /tmp/js2wasm-baselines sparse-checkout add "/runs/${MERGE_BASE}.jsonl" "/runs/${MERGE_BASE}.json" 2>/dev/null || true
+            # Deepen main history so rev-list can walk ancestors of the base on
+            # the depth-limited checkout (blob:none — we only need commit/tree).
+            git fetch --depth=200 --filter=blob:none origin main 2>/dev/null || true
+            ANCESTORS=$(git rev-list --first-parent --max-count=25 "${MERGE_BASE}" 2>/dev/null | tail -n +2 || true)
+            for a in $ANCESTORS; do CANDIDATES="${CANDIDATES},${a}"; done
+          fi
+          # The clone above is sparse + blob-filtered; materialize every
+          # candidate's run-cache entry. Patterns that match nothing in the tree
+          # are a silent no-op, and the resolver then walks past them.
+          if [ -n "$MERGE_BASE" ]; then
+            ADD_PATTERNS=""
+            IFS=',' read -ra SHAS <<< "$CANDIDATES"
+            for s in "${SHAS[@]}"; do
+              [ -n "$s" ] && ADD_PATTERNS="${ADD_PATTERNS} /runs/${s}.jsonl /runs/${s}.json"
+            done
+            # shellcheck disable=SC2086
+            git -C /tmp/js2wasm-baselines sparse-checkout add $ADD_PATTERNS 2>/dev/null || true
           fi
           node scripts/resolve-merge-base-baseline.mjs \
             --baselines-dir /tmp/js2wasm-baselines \
-            --merge-base "$MERGE_BASE" \
+            --candidates "$CANDIDATES" \
             --test262-version "$TEST262_VERSION" \
             --dest benchmarks/results/test262-current.jsonl || \
-            echo "::warning::#1081 merge-base resolution errored (non-fatal); keeping latest-main baseline."
+            echo "::warning::#1081/#3467 base resolution errored (non-fatal); keeping latest-main baseline."
 
       # #1956 — exact predecessor-group baseline for merge_group runs. The
       # queue builds groups incrementally: this group's head is a merge
@@ -1358,6 +1517,23 @@ jobs:
           fi
           unzip -o /tmp/pred-group/art.zip -d /tmp/pred-group >/dev/null 2>&1 || true
           if [ -s /tmp/pred-group/test262-results-merged.jsonl ]; then
+            # #3370 — do not let a merge-group artifact from a newly landed
+            # oracle hide the fact that the published baseline is still on the
+            # previous oracle. The oracle-bump recovery must compare against the
+            # published baseline so its bounded rebaseline declarations run;
+            # once promotion succeeds, equal versions restore predecessor
+            # isolation automatically. Missing/unstamped reports keep the
+            # backward-compatible predecessor behavior.
+            LATEST_ORACLE=$(node -e "try { const r=require('/tmp/baseline-meta-fresh.json'); process.stdout.write(String(r.oracle_version ?? '')); } catch {}")
+            # The predecessor artifact intentionally contains only JSONLs, not
+            # test262-report-merged.json. Read the stamp from its first row so
+            # recovery also works with artifacts produced before this guard.
+            PRED_ORACLE=$(node -e "try { const line=require('fs').readFileSync(process.argv[1], 'utf8').split(/\\r?\\n/, 1)[0]; const r=JSON.parse(line); process.stdout.write(String(r.oracle_version ?? '')); } catch {}" /tmp/pred-group/test262-results-merged.jsonl)
+            if [ -n "$LATEST_ORACLE" ] && [ -n "$PRED_ORACLE" ] && [ "$LATEST_ORACLE" != "$PRED_ORACLE" ]; then
+              echo "pred_path=oracle-mismatch" >> "$GITHUB_OUTPUT"
+              echo "Predecessor artifact ${ART_NAME} uses oracle v${PRED_ORACLE}, published baseline uses v${LATEST_ORACLE} — keeping baseline from (b)/(c) until promotion catches up."
+              exit 0
+            fi
             mkdir -p benchmarks/results
             cp /tmp/pred-group/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
             echo "pred_path=hit" >> "$GITHUB_OUTPUT"
@@ -1506,12 +1682,16 @@ jobs:
           # frozen by promote-baseline (it skips the main commit when only
           # baseline_sha/timestamp changed), so using it reports a stale
           # "Nh old (commit <old-sha>)" even when the diffed baseline is current.
-          # Order: fresh baselines JSON → merge-base cache JSON (#1081, if the
-          # diff used it) → committed JSON → committed report.json.
+          # Order: fresh baselines JSON → merge-base cache JSON (#1081/#3467, if
+          # the diff used it) → committed JSON → committed report.json.
           BASELINE_META=""
           MERGE_BASE_JSON=""
           if [ "${{ steps.merge_base_cache.outputs.cache }}" = "hit" ]; then
-            MB="${{ steps.merge_base_cache.outputs.merge_base }}"
+            # #3467 — prefer the SHA the resolver actually used (resolved_sha),
+            # which on a cold-base ancestor-walk differs from the exact base
+            # (merge_base). Fall back to merge_base for older/back-compat paths.
+            MB="${{ steps.merge_base_cache.outputs.resolved_sha }}"
+            [ -z "$MB" ] && MB="${{ steps.merge_base_cache.outputs.merge_base }}"
             [ -n "$MB" ] && [ -f "/tmp/js2wasm-baselines/runs/${MB}.json" ] && MERGE_BASE_JSON="/tmp/js2wasm-baselines/runs/${MB}.json"
           fi
           if [ -n "$MERGE_BASE_JSON" ]; then
@@ -1637,7 +1817,14 @@ jobs:
     # deliverable; the baseline stays owned by unflagged runs.
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.actor != 'github-actions[bot]' && !(github.event_name == 'workflow_dispatch' && inputs.ir_first)
     name: promote merged report to main baseline
-    needs: merge-report
+    # #3448 — mg-artifact-probe decides where the merged JSONLs come from:
+    # MISS → the `test262-merged-report` artifact built by merge-report from a
+    # fresh matrix (unchanged); HIT → the merge_group's own
+    # `test262-group-<sha>` artifact, skipping the 114-job rerun. Both jobs
+    # run+succeed on push and workflow_dispatch, so the implicit `success()`
+    # over `needs` holds (merge-report green-skips on the HIT path — still
+    # success).
+    needs: [merge-report, mg-artifact-probe]
     runs-on: ubuntu-latest
     # Gate the MAIN_DEPLOY_KEY secret behind a GitHub Environment so only this
     # job — running on a `push`/`workflow_dispatch` against main — can read it.
@@ -1652,13 +1839,20 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # #3448 — the HIT path downloads test262-group-<sha> via the artifacts
+      # REST API (a cross-run read), same permission the #1956 predecessor
+      # step uses. The top-level `contents: write` would otherwise leave
+      # actions at `none` for this job.
+      actions: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
           submodules: recursive
-          fetch-depth: 1
+          # #3370 — the change-scoped oracle allowance is read from the
+          # landed merge's HEAD^1 diff. Keep both merge parents available.
+          fetch-depth: 2
           persist-credentials: true
 
       - name: Setup Node
@@ -1666,12 +1860,58 @@ jobs:
         with:
           node-version: 25
 
-      - name: Download merged reports
+      # #3448 — MISS path: the full matrix ran and merge-report built +
+      # uploaded `test262-merged-report`. Download it exactly as before.
+      - name: Download merged reports (full-matrix path)
+        if: needs.mg-artifact-probe.outputs.hit != 'true'
         uses: actions/download-artifact@v7
         with:
           path: shard-artifacts
           pattern: test262-merged-report
           merge-multiple: true
+
+      # #3448 — HIT path: the 114-job matrix was skipped. Source the merged
+      # JSONLs from the merge_group's own `test262-group-<sha>` artifact (keyed
+      # by exactly this push's github.sha — the merge queue fast-forwarded main
+      # to the group head SHA). Downloaded via the artifacts REST API, the same
+      # pattern the #1956 predecessor-group step uses (~line 1333). The artifact
+      # holds the two merged JSONLs; the heal-poison step below rebuilds the
+      # report JSONs from them, so the rest of this job is byte-identical to the
+      # full-matrix path.
+      - name: Download merged reports (merge_group artifact, #3448)
+        if: needs.mg-artifact-probe.outputs.hit == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ART_NAME="test262-group-${{ github.sha }}"
+          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty')
+          if [ -z "$ART_ID" ]; then
+            echo "::error::#3448 probe reported HIT but artifact ${ART_NAME} is now gone (raced expiry?). Re-run the push, or dispatch workflow_dispatch to force a full-matrix promote."
+            exit 1
+          fi
+          mkdir -p shard-artifacts
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > /tmp/mg-group.zip
+          unzip -o /tmp/mg-group.zip -d shard-artifacts >/dev/null
+          # The heal-poison step below reads exactly these two files.
+          test -s shard-artifacts/test262-results-merged.jsonl
+          test -s shard-artifacts/test262-standalone-results-merged.jsonl
+          # #3448 fail-SAFE guard at ingestion: reject a truncated/corrupt group
+          # artifact BEFORE it can reach the promote/commit steps. One JSONL row
+          # per test, so a full run is ~43k rows; a floor of 40000 mirrors the
+          # existing TOTAL>=40000 sanity check in the baselines-push step. A
+          # short artifact fails HERE (job red, old baseline retained) rather
+          # than promoting a partial baseline — the whole point of this change is
+          # to stay strictly no-worse than the full-matrix path.
+          HOST_ROWS=$(wc -l < shard-artifacts/test262-results-merged.jsonl)
+          SA_ROWS=$(wc -l < shard-artifacts/test262-standalone-results-merged.jsonl)
+          echo "Group artifact rows: host=${HOST_ROWS}, standalone=${SA_ROWS}."
+          if [ "$HOST_ROWS" -lt 40000 ] || [ "$SA_ROWS" -lt 40000 ]; then
+            echo "::error::#3448 group artifact ${ART_NAME} looks truncated (host=${HOST_ROWS}, standalone=${SA_ROWS}, floor=40000). Refusing to promote from it; re-run the push or dispatch a full-matrix workflow_dispatch."
+            exit 1
+          fi
+          echo "Promoting from merge_group artifact ${ART_NAME} (id=${ART_ID}); skipped the 114-job rerun (#3448)."
 
       # #2099 — heal poison-classified rows BEFORE promotion. A phantom
       # "Binary emit error" (etc.) row from a contaminated sharded worker would
@@ -2351,3 +2591,223 @@ jobs:
           # an explicit dispatch, the landing page stays on pre-refresh numbers.
           # Idempotent and safe to run unconditionally.
           gh workflow run deploy-pages.yml --ref main || true
+
+  # =====================================================================
+  # #3467 — UNCONDITIONAL per-SHA result cache for QUEUE (bot) merges.
+  #
+  # ROOT CAUSE (#3466): promote-baseline is gated `github.actor !=
+  # github-actions[bot]`, and every merge-queue merge lands as a bot push. On a
+  # bot push the ENTIRE rest of this workflow is gated off (changes / shards /
+  # merge-report / promote-baseline all require actor != bot), so the landed
+  # commit — which IS the base_sha of the NEXT queued PR's merge_group — gets
+  # NO runs/<sha> cache entry, and the promoted snapshot goes stale. That drift
+  # false-parked 6 unrelated PRs on 2026-07-19.
+  #
+  # This job runs ONLY on bot pushes (the case promote-baseline skips) and does
+  # exactly ONE thing: persist runs/<github.sha>.{json,jsonl} to the baselines
+  # repo so the sequential queue self-populates its own comparison base. It does
+  # NOT touch test262-current, does NOT commit to the main repo (no queue
+  # rebuild), and does NOT re-run shards — it reuses the `test262-group-<sha>`
+  # artifact the just-landed merge_group already produced (github.sha == that
+  # group's head_sha after the queue fast-forwarded main). A doc-only/no-shards
+  # group produced no artifact → this job cleanly no-ops (the read-side
+  # ancestor-walk fallback covers the gap).
+  #
+  # WHY A SEPARATE JOB (not relaxing promote-baseline's gate): promote-baseline
+  # ALSO promotes the snapshot + commits summary JSON to main (which rebuilds
+  # every queued merge group, #1951). We deliberately keep those bot-skipped and
+  # add only the cheap, side-effect-free cache write. On non-bot pushes /
+  # workflow_dispatch this job is skipped and promote-baseline's own
+  # write-run-cache call still populates runs/<sha> (no double-write, no race).
+  # =====================================================================
+  write-run-cache-bot:
+    name: cache per-SHA baseline for queue merge (#3467)
+    if: github.event_name == 'push' && github.actor == 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    # The baselines-repo push needs BASELINE_DEPLOY_KEY, gated behind the
+    # `baseline-promote` Environment (restricted to the main branch) — a bot
+    # push to main satisfies the branch restriction, same as promote-baseline.
+    environment: baseline-promote
+    permissions:
+      contents: read
+      # Read the just-landed merge_group's `test262-group-<sha>` artifact via
+      # the artifacts REST API (a cross-run read), same as the #1956 step.
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # Recursive submodules + depth 2: heal-poison reruns poison rows in a
+          # clean in-process compiler (needs the test262 corpus), mirroring
+          # promote-baseline so the cached base is byte-for-byte what promote
+          # would have written.
+          submodules: recursive
+          fetch-depth: 2
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download just-landed group artifact (#3467)
+        id: group
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # The merge queue fast-forwarded main to the group head SHA, so
+          # github.sha EQUALS the artifact key the merge_group uploaded (#1956).
+          ART_NAME="test262-group-${{ github.sha }}"
+          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty' 2>/dev/null || echo "")
+          if [ -z "$ART_ID" ]; then
+            # No artifact → a doc-only/no-shards queue merge (or an expired
+            # artifact). Nothing to cache; the read-side ancestor-walk fallback
+            # resolves the next PR's base to the nearest cached ancestor.
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No ${ART_NAME} artifact (doc-only/no-shards group or expired) — skipping per-SHA cache write."
+            exit 0
+          fi
+          mkdir -p shard-artifacts
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > /tmp/mg-group.zip
+          unzip -o /tmp/mg-group.zip -d shard-artifacts >/dev/null
+          if [ ! -s shard-artifacts/test262-results-merged.jsonl ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::#3467 group artifact ${ART_NAME} missing host JSONL — skipping per-SHA cache write."
+            exit 0
+          fi
+          # Fail-safe corruption floor (mirror promote-baseline #3448): a full
+          # run is ~43k rows. Refuse to cache a truncated base.
+          HOST_ROWS=$(wc -l < shard-artifacts/test262-results-merged.jsonl)
+          echo "Group artifact host rows: ${HOST_ROWS}."
+          if [ "$HOST_ROWS" -lt 40000 ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::#3467 group artifact ${ART_NAME} looks truncated (host=${HOST_ROWS}, floor=40000) — skipping per-SHA cache write."
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "Caching runs/${{ github.sha }} from ${ART_NAME} (id=${ART_ID})."
+
+      - name: Heal poison-classified rows (#2099 parity)
+        if: steps.group.outputs.found == 'true'
+        run: |
+          # Match promote-baseline: heal contamination-poison rows before the
+          # base is persisted, so no phantom "Binary emit error" row is carried
+          # into the comparison base every later PR diffs against. Heal to a
+          # SEPARATE file and swap on success — NON-FATAL: an unhealed base is
+          # still vastly better than the stale promoted snapshot this issue
+          # removes, so a heal hiccup must never block the per-SHA cache write.
+          if npx tsx scripts/heal-poison-rows.ts \
+              --in  shard-artifacts/test262-results-merged.jsonl \
+              --out shard-artifacts/test262-results-healed.jsonl \
+            && [ -s shard-artifacts/test262-results-healed.jsonl ]; then
+            mv shard-artifacts/test262-results-healed.jsonl shard-artifacts/test262-results-merged.jsonl
+            echo "Healed poison rows in the host base JSONL."
+          else
+            echo "::warning::#3467 heal-poison step failed/empty — caching the raw (unhealed) base JSONL (still preferable to the stale snapshot)."
+            rm -f shard-artifacts/test262-results-healed.jsonl
+          fi
+
+      - name: Build merged report for cache summary (#3467)
+        if: steps.group.outputs.found == 'true'
+        run: |
+          node scripts/build-test262-report.mjs \
+            --input  shard-artifacts/test262-results-merged.jsonl \
+            --output shard-artifacts/test262-report-merged.json \
+            --baseline-sha "${{ github.sha }}"
+
+      - name: Write + push runs/<sha> to baselines repo (#3467)
+        if: steps.group.outputs.found == 'true'
+        timeout-minutes: 10
+        env:
+          BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
+        run: |
+          set -uo pipefail
+          # SSH deploy key for the baselines-repo push.
+          eval "$(ssh-agent -s)"
+          echo "$BASELINE_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Metadata-only clone, materialize only runs/index.json (skip the huge
+          # runs/ blob history — #3392). NEW runs/<sha> files are staged
+          # explicitly with `git add --sparse` below.
+          git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines checkout main
+
+          # Idempotent: if runs/<sha> already exists (a prior run of this job, or
+          # a non-bot promote of the same commit), there is nothing to add.
+          if git -C /tmp/js2wasm-baselines cat-file -e "HEAD:runs/${{ github.sha }}.jsonl" 2>/dev/null; then
+            echo "runs/${{ github.sha }}.jsonl already present in baselines repo — nothing to do."
+            exit 0
+          fi
+
+          TEST262_VERSION=$(git -C "${{ github.workspace }}" submodule status test262 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo "")
+          node scripts/write-run-cache.mjs \
+            --report shard-artifacts/test262-report-merged.json \
+            --jsonl  shard-artifacts/test262-results-merged.jsonl \
+            --sha    "${{ github.sha }}" \
+            --runs-dir /tmp/js2wasm-baselines/runs \
+            --ref    "${{ github.ref }}" \
+            --run-id "${{ github.run_id }}" \
+            --test262-version "$TEST262_VERSION"
+
+          cd /tmp/js2wasm-baselines
+          if [ ! -f "runs/${{ github.sha }}.jsonl" ]; then
+            # write-run-cache declined (corrupt/below floor) — nothing to push.
+            echo "No runs/${{ github.sha }} written (declined as corrupt); skipping push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Stage ONLY the two new per-SHA files. This job never rewrites the
+          # generated snapshot files, so a concurrent promote/back-to-back queue
+          # merge can only ever advance the tip — never content-conflict on our
+          # brand-new filenames. A plain rebase applies cleanly, so a simple
+          # fetch+rebase+push retry loop suffices (no re-anchor needed).
+          git add --sparse "runs/${{ github.sha }}.jsonl" "runs/${{ github.sha }}.json"
+          if git diff --cached --quiet; then
+            echo "Nothing staged for runs/${{ github.sha }} — already up to date."
+            exit 0
+          fi
+          git commit -m "chore(test262): cache per-SHA baseline runs/${{ github.sha }} (#3467) [skip ci]"
+          PUSHED=0
+          for attempt in 1 2 3 4 5 6; do
+            if git push origin HEAD:main; then
+              echo "Pushed runs/${{ github.sha }} (attempt ${attempt})."
+              PUSHED=1
+              break
+            fi
+            echo "baselines push race lost (attempt ${attempt}) — re-anchoring on fresh tip and retrying."
+            git fetch origin main || { sleep 5; continue; }
+            # This job only ADDS a brand-new per-SHA file, so re-anchoring is
+            # trivial and conflict-free (proven pattern; avoids sparse-tree
+            # rebase edge cases — see promote-baseline #2942). `reset --hard`
+            # leaves the untracked runs/<sha>.* files we wrote in place.
+            git reset --hard origin/main
+            if git cat-file -e "HEAD:runs/${{ github.sha }}.jsonl" 2>/dev/null; then
+              echo "runs/${{ github.sha }} already landed via another actor — done."
+              PUSHED=1
+              break
+            fi
+            git add --sparse "runs/${{ github.sha }}.jsonl" "runs/${{ github.sha }}.json" 2>/dev/null || true
+            if git diff --cached --quiet; then
+              echo "Nothing left to stage after re-anchor — done."
+              PUSHED=1
+              break
+            fi
+            git commit -m "chore(test262): cache per-SHA baseline runs/${{ github.sha }} (#3467) [skip ci]"
+            SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"
+          done
+          if [ "$PUSHED" != "1" ]; then
+            echo "::warning::#3467 failed to push runs/${{ github.sha }} after 6 attempts. The next PR's gate falls back to the nearest cached ancestor / promoted snapshot (non-fatal drift, self-heals on the following merge)."
+          fi

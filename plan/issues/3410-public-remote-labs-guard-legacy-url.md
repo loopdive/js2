@@ -1,9 +1,9 @@
 ---
 id: 3410
 title: "Private labs pre-push guard misses the legacy public js2wasm origin URL"
-status: ready
+status: in-review
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-19
 priority: critical
 horizon: s
 feasibility: easy

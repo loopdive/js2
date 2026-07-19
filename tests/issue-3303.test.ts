@@ -107,6 +107,37 @@ describe("#3370 — baseline-writer trap ceiling containment", () => {
     expect(effectiveBaselineTrapTolerance(4, 8, 7, 47)).toBe(4);
     expect(effectiveBaselineTrapTolerance(4, undefined, 8, 47)).toBe(4);
   });
+
+  it("keeps the landed merge parent available in both baseline writers", () => {
+    const sharded = readFileSync(join(ROOT, ".github/workflows/test262-sharded.yml"), "utf8");
+    const refresh = readFileSync(join(ROOT, ".github/workflows/refresh-baseline.yml"), "utf8");
+
+    function checkoutForJob(workflow: string, job: string): string {
+      const start = workflow.indexOf(`\n  ${job}:\n`);
+      expect(start).toBeGreaterThanOrEqual(0);
+      const setupNode = workflow.indexOf("\n      - name: Setup Node", start);
+      expect(setupNode).toBeGreaterThan(start);
+      return workflow.slice(start, setupNode);
+    }
+
+    expect(checkoutForJob(sharded, "promote-baseline")).toContain("fetch-depth: 2");
+    expect(checkoutForJob(refresh, "merge-and-promote")).toContain("fetch-depth: 2");
+
+    const predecessorStep = sharded.slice(
+      sharded.indexOf("- name: Resolve predecessor-group baseline (#1956)"),
+      sharded.indexOf(
+        "- name: Check baseline staleness (#1235",
+        sharded.indexOf("- name: Resolve predecessor-group baseline (#1956)"),
+      ),
+    );
+    expect(predecessorStep).toContain("pred_path=oracle-mismatch");
+    expect(predecessorStep).toContain('[ "$LATEST_ORACLE" != "$PRED_ORACLE" ]');
+    expect(predecessorStep).toContain(
+      "PRED_ORACLE=$(node -e \"try { const line=require('fs').readFileSync(process.argv[1]",
+    );
+    expect(predecessorStep).toContain("/tmp/pred-group/test262-results-merged.jsonl)");
+    expect(predecessorStep).not.toContain("/tmp/pred-group/test262-report-merged.json");
+  });
 });
 
 // ---------------------------------------------------------------------------

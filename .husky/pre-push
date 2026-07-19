@@ -15,72 +15,38 @@
 remote="$1"
 remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
 
+# Capture the ref-update lines once (git streams them on stdin). Both the labs
+# guard and the version-tag refresh below consume them, so read them into a
+# variable rather than draining stdin twice.
+push_refs=$(cat)
+
 # ---------- (1) labs/ safety check ---------------------------------------
 #
-# Classify the remote by URL rather than by name. Anyone can rename their
-# remotes locally; the URL is the authoritative signal.
+# Classify the destination by URL (not remote name — anyone can rename a
+# remote locally) via the shared, unit-tested helper. Only the allowlisted
+# private mirror (loopdive/js2wasm-labs) may receive labs/ paths; the canonical
+# upstream, the legacy loopdive/js2wasm alias, public forks, and any
+# unrecognized destination are all scanned and blocked. Classification and the
+# scan live in scripts/hooks/push-remote-classify.sh so they can be unit-tested
+# (tests/hooks/pre-push-labs-remote.test.ts) — see #3410.
 
-case "$remote_url" in
-  *loopdive/js2.git|*loopdive/js2)
-    is_public=1
-    ;;
-  *)
-    is_public=0
-    ;;
-esac
-
-if [ "$is_public" = "1" ]; then
-  while read local_ref local_oid remote_ref remote_oid; do
-    # Skip deletes (no labs/ paths in a delete diff).
-    if [ "$local_oid" = "0000000000000000000000000000000000000000" ]; then
-      continue
-    fi
-
-    # Determine the diff range and list the changed paths.
-    if [ "$remote_oid" = "0000000000000000000000000000000000000000" ]; then
-      # New branch on the remote — compare against the remote's main if we
-      # can find a merge-base; otherwise scan all commits the new branch
-      # introduces.
-      base=$(git merge-base "$local_oid" "${remote}/main" 2>/dev/null || echo "")
-      if [ -z "$base" ]; then
-        diff_paths=$(git log --name-only --pretty=format: "$local_oid" 2>/dev/null | sort -u)
-      else
-        diff_paths=$(git diff --name-only "$base..$local_oid" 2>/dev/null)
-      fi
-    else
-      diff_paths=$(git diff --name-only "$remote_oid..$local_oid" 2>/dev/null)
-    fi
-
-    forbidden=$(printf '%s\n' "$diff_paths" | grep -E '^labs/' || true)
-    if [ -n "$forbidden" ]; then
-      echo ""
-      echo "==========================================================================="
-      echo "ERROR: Refusing to push labs/ paths to a public remote."
-      echo "       remote: $remote ($remote_url)"
-      echo "---------------------------------------------------------------------------"
-      echo "The following paths are private and may not appear in the public repo:"
-      echo ""
-      printf '%s\n' "$forbidden" | sed 's/^/  /' | head -30
-      remaining=$(printf '%s\n' "$forbidden" | wc -l)
-      if [ "$remaining" -gt 30 ]; then
-        echo "  ... and $((remaining - 30)) more."
-      fi
-      echo ""
-      echo "Push to the private 'labs' remote instead:"
-      echo "  git push labs $local_ref"
-      echo ""
-      echo "If this push is intentionally public AND your diff includes labs/ paths,"
-      echo "split the change so the labs/ paths land separately on the labs remote."
-      echo "==========================================================================="
-      exit 1
-    fi
-  done
+hook_lib="$(git rev-parse --show-toplevel 2>/dev/null || echo .)/scripts/hooks/push-remote-classify.sh"
+if [ -r "$hook_lib" ]; then
+  . "$hook_lib"
+  if ! printf '%s\n' "$push_refs" | run_labs_guard "$remote" "$remote_url"; then
+    exit 1
+  fi
+else
+  echo "Pre-push: ERROR — cannot read $hook_lib; refusing to push without the labs/ guard." >&2
+  echo "          Restore the file, or use 'git push --no-verify' only if you are certain" >&2
+  echo "          the diff contains no labs/ content." >&2
+  exit 1
 fi
 
 # ---------- (2) version-tag benchmark refresh ----------------------------
 
 if [ "$remote" = "origin" ]; then
-  while read local_ref local_oid remote_ref remote_oid; do
+  printf '%s\n' "$push_refs" | while read local_ref local_oid remote_ref remote_oid; do
     case "$remote_ref" in
       refs/tags/v[0-9]*)
         echo "Pre-push: version tag detected ($remote_ref) — refreshing benchmarks..."

@@ -276,7 +276,9 @@ jobs:
         with:
           ref: main
           submodules: recursive
-          fetch-depth: 1
+          # #3370 — resolve the landed merge's issue-scoped oracle allowance
+          # from HEAD^1 during normal scheduled/manual promotion.
+          fetch-depth: 2
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node
