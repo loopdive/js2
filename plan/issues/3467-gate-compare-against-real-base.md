@@ -1,7 +1,8 @@
 ---
 id: 3467
 title: "test262 regression gate: compare each PR against its REAL merge-base commit (per-SHA cache), not a drifting promoted snapshot"
-status: ready
+status: in-review
+assignee: senior-dev-3467
 sprint: current
 priority: high
 horizon: l
@@ -96,3 +97,66 @@ Supersedes the snapshot dependency in #3457/#3466 for gate purposes (they can
 close or narrow to the landing-page summary). Real latent null_deref in the 2
 timeout-unmasked tests (Function/prototype/Symbol.hasInstance/…, S13.2.2_A8_T2)
 is a separate pre-existing bug — file independently.
+
+## Implementation notes (what & why)
+
+**Root cause found (#3466 mechanism).** On a queue merge, main fast-forwards
+via a `github-actions[bot]` push. On that bot push the ENTIRE `test262-sharded`
+workflow is gated off — `changes`, `test262-shard`, `merge-report`,
+`mg-artifact-probe` and `promote-baseline` all carry
+`github.actor != 'github-actions[bot]'`. So the landed commit (which IS the
+`base_sha` of the next queued PR's `merge_group`) got **no** `runs/<sha>` cache
+entry, and the promoted `test262-current.jsonl` snapshot never refreshed on bot
+merges → the gate diffed a lagging snapshot → main's own drift was attributed to
+innocent PRs (the 6 false-parks).
+
+**Write side — new `write-run-cache-bot` job** (`test262-sharded.yml`). Runs
+ONLY on `push` + `github.actor == 'github-actions[bot]'` (the exact case
+`promote-baseline` skips). It reuses the `test262-group-<github.sha>` artifact
+the just-landed `merge_group` already produced (`github.sha` == that group's
+`head_sha` after the FF), heals poison rows for parity with `promote-baseline`,
+builds the summary, and writes ONLY `runs/<github.sha>.{json,jsonl}` to the
+baselines repo. It deliberately does **not** promote `test262-current` and does
+**not** commit to the main repo — so it adds zero queue-rebuild cost (the reason
+`promote-baseline` is bot-gated, #1951). A doc-only/no-shards merge (no group
+artifact) cleanly no-ops. On non-bot push / `workflow_dispatch` this job is
+skipped and `promote-baseline`'s own `write-run-cache` call still populates
+`runs/<sha>` → no double-write, no baselines-push race.
+
+*Why a separate job, not relaxing `promote-baseline`'s gate:* the deploy-key push
+lives behind the `baseline-promote` Environment (branch-restricted to `main`),
+which a bot push to main satisfies; a `merge_group` ref would NOT satisfy it, so
+the write cannot live in `merge-report`. And `promote-baseline` bundles the
+snapshot promotion + main-repo summary commit we intentionally keep bot-skipped.
+
+**Read side — `runs/<base_sha>` with ancestor-walk** (the #1081 "Load cached
+baseline for merge-base" step + `scripts/resolve-merge-base-baseline.mjs`). For
+`merge_group` the base is now `github.event.merge_group.base_sha` (the queue's
+exact parent) instead of `git merge-base origin/main HEAD`; `pull_request` keeps
+today's `git merge-base`. The step builds an ORDERED candidate list — exact base
+first, then up to 25 nearest-first ancestors — and the resolver
+(`resolveFromCandidates`) walks to the nearest cached, version-compatible entry,
+emitting `resolved_sha` + `distance` so a cold base is logged as a warning, never
+silent. Total miss → the promoted snapshot (today's behavior). The existing
+#1956 predecessor-group artifact path still runs last and can override (it's a
+fresher form of the same base isolation for multi-entry queues).
+
+**Preserved as separate gates:** the #3189 trap-growth ratchet, the #1897
+standalone floor, and the #1668 stale-baseline broken-pipeline detector are
+untouched — this change only alters WHAT baseline the host regression diff uses.
+The promoted `test262-current.json` summary write stays for the landing page,
+now non-load-bearing for the gate.
+
+**Transition / this PR needs an admin-merge.** The fix PR's own `merge_group`
+runs against a base with no `runs/<base_sha>` yet → its gate exercises the
+ancestor-walk → promoted-snapshot fallback (logged, non-fatal). Because that
+snapshot is exactly the stale one this issue removes, escaping it needs the ONE
+sanctioned admin-merge from the lead. After it lands, the lead seeds
+`runs/<current-main-tip>.jsonl` once from the freshest full-shard merged report;
+from then the cache self-populates per queue merge.
+
+**Tests:** `tests/issue-3467.test.ts` covers `resolveFromCandidates` — exact-base
+HIT (distance 0), cold-base ancestor-walk (nearest wins, distance reported),
+version-mismatch skip-and-continue, total MISS fallback, and blank-slot
+filtering. `tests/issue-1081.test.ts` (existing `evaluateCacheEntry` /
+`buildRunSummary` unit tests) still passes.

@@ -1401,40 +1401,79 @@ jobs:
             echo "baseline_sha=unknown" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Load cached baseline for merge-base (#1081)
+      - name: Load cached baseline for merge-base (#1081, base_sha #3467)
         id: merge_base_cache
         if: env.SHARDS_RAN == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+        env:
+          # #3467 — on merge_group the REAL parent commit the queue built this
+          # group on. The sequential merge queue writes runs/<sha> for every
+          # landed commit (write-run-cache-bot job), so runs/<base_sha> is the
+          # exact pre-PR state → the diff is purely this PR's effect, with none
+          # of the promoted-snapshot lag that false-parked 6 PRs on 2026-07-19.
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
-          # #1081 — prefer the hash-indexed run cache for the PR's merge-base
-          # over the moving "latest main" pointer fetched above. On a cache HIT
-          # this overwrites benchmarks/results/test262-current.jsonl with the
-          # merge-base's exact results, so the regression diff attributes only
-          # the PR's own commits. On a MISS it leaves the latest-main baseline
-          # in place and warns. Never fails the build.
+          # #1081/#3467 — prefer the hash-indexed run cache for the PR's REAL
+          # base commit over the moving "latest main" pointer fetched above. On
+          # a cache HIT this overwrites benchmarks/results/test262-current.jsonl
+          # with the base's exact results, so the regression diff attributes
+          # only the PR's own commits. On a MISS it leaves the latest-main
+          # baseline in place and warns. Never fails the build.
           if [ ! -d /tmp/js2wasm-baselines/.git ]; then
             echo "::warning::#1081 baselines clone missing — using latest-main baseline."
             echo "cache=miss" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          MERGE_BASE=$(git merge-base origin/main HEAD 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || echo "")
+          # #3467 — resolve the primary base per event:
+          #   merge_group → github.event.merge_group.base_sha (the queue's exact
+          #                 parent; the cache key the write-run-cache-bot job
+          #                 populates for every landed commit).
+          #   pull_request → git merge-base origin/main HEAD (today's behavior;
+          #                 base_sha is unavailable outside merge_group).
+          if [ "${{ github.event_name }}" = "merge_group" ] && [ -n "${MG_BASE_SHA:-}" ]; then
+            MERGE_BASE="$MG_BASE_SHA"
+            echo "merge_group base_sha: ${MERGE_BASE}"
+          else
+            MERGE_BASE=$(git merge-base origin/main HEAD 2>/dev/null || git merge-base HEAD origin/main 2>/dev/null || echo "")
+            echo "pull_request merge-base: ${MERGE_BASE:-<unknown>}"
+          fi
           TEST262_VERSION=$(git submodule status test262 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo "")
-          echo "Merge-base: ${MERGE_BASE:-<unknown>}; test262 version: ${TEST262_VERSION:-<unknown>}"
-          # Expose merge-base so the regression-diff step can read fresh metadata
-          # from runs/<merge-base>.json when the cache hit (#49). The .json is
-          # sparse-checked-out below alongside the .jsonl.
+          echo "Base: ${MERGE_BASE:-<unknown>}; test262 version: ${TEST262_VERSION:-<unknown>}"
+          # Expose base so the regression-diff step can read fresh metadata from
+          # runs/<base>.json when the cache hit (#49). The .json is sparse-
+          # checked-out below alongside the .jsonl.
           echo "merge_base=${MERGE_BASE}" >> "$GITHUB_OUTPUT"
-          # The clone above is sparse + blob-filtered; materialize only this
-          # merge-base's run-cache entry. A pattern that matches nothing in
-          # the tree is a silent no-op, and the resolver then reports a miss.
+          # #3467 — build an ORDERED candidate list: the exact base first, then
+          # its nearest-first ancestors. If the exact base's shards were skipped
+          # (doc-only queue merge) or it predates the cache rollout, the resolver
+          # walks back to the nearest cached ancestor rather than silently
+          # falling to the drifting snapshot. Bounded to 25 commits — far deeper
+          # than any realistic gap between two shard-running main commits.
+          CANDIDATES="$MERGE_BASE"
           if [ -n "$MERGE_BASE" ]; then
-            git -C /tmp/js2wasm-baselines sparse-checkout add "/runs/${MERGE_BASE}.jsonl" "/runs/${MERGE_BASE}.json" 2>/dev/null || true
+            # Deepen main history so rev-list can walk ancestors of the base on
+            # the depth-limited checkout (blob:none — we only need commit/tree).
+            git fetch --depth=200 --filter=blob:none origin main 2>/dev/null || true
+            ANCESTORS=$(git rev-list --first-parent --max-count=25 "${MERGE_BASE}" 2>/dev/null | tail -n +2 || true)
+            for a in $ANCESTORS; do CANDIDATES="${CANDIDATES},${a}"; done
+          fi
+          # The clone above is sparse + blob-filtered; materialize every
+          # candidate's run-cache entry. Patterns that match nothing in the tree
+          # are a silent no-op, and the resolver then walks past them.
+          if [ -n "$MERGE_BASE" ]; then
+            ADD_PATTERNS=""
+            IFS=',' read -ra SHAS <<< "$CANDIDATES"
+            for s in "${SHAS[@]}"; do
+              [ -n "$s" ] && ADD_PATTERNS="${ADD_PATTERNS} /runs/${s}.jsonl /runs/${s}.json"
+            done
+            # shellcheck disable=SC2086
+            git -C /tmp/js2wasm-baselines sparse-checkout add $ADD_PATTERNS 2>/dev/null || true
           fi
           node scripts/resolve-merge-base-baseline.mjs \
             --baselines-dir /tmp/js2wasm-baselines \
-            --merge-base "$MERGE_BASE" \
+            --candidates "$CANDIDATES" \
             --test262-version "$TEST262_VERSION" \
             --dest benchmarks/results/test262-current.jsonl || \
-            echo "::warning::#1081 merge-base resolution errored (non-fatal); keeping latest-main baseline."
+            echo "::warning::#1081/#3467 base resolution errored (non-fatal); keeping latest-main baseline."
 
       # #1956 — exact predecessor-group baseline for merge_group runs. The
       # queue builds groups incrementally: this group's head is a merge
@@ -1643,12 +1682,16 @@ jobs:
           # frozen by promote-baseline (it skips the main commit when only
           # baseline_sha/timestamp changed), so using it reports a stale
           # "Nh old (commit <old-sha>)" even when the diffed baseline is current.
-          # Order: fresh baselines JSON → merge-base cache JSON (#1081, if the
-          # diff used it) → committed JSON → committed report.json.
+          # Order: fresh baselines JSON → merge-base cache JSON (#1081/#3467, if
+          # the diff used it) → committed JSON → committed report.json.
           BASELINE_META=""
           MERGE_BASE_JSON=""
           if [ "${{ steps.merge_base_cache.outputs.cache }}" = "hit" ]; then
-            MB="${{ steps.merge_base_cache.outputs.merge_base }}"
+            # #3467 — prefer the SHA the resolver actually used (resolved_sha),
+            # which on a cold-base ancestor-walk differs from the exact base
+            # (merge_base). Fall back to merge_base for older/back-compat paths.
+            MB="${{ steps.merge_base_cache.outputs.resolved_sha }}"
+            [ -z "$MB" ] && MB="${{ steps.merge_base_cache.outputs.merge_base }}"
             [ -n "$MB" ] && [ -f "/tmp/js2wasm-baselines/runs/${MB}.json" ] && MERGE_BASE_JSON="/tmp/js2wasm-baselines/runs/${MB}.json"
           fi
           if [ -n "$MERGE_BASE_JSON" ]; then
@@ -2548,3 +2591,223 @@ jobs:
           # an explicit dispatch, the landing page stays on pre-refresh numbers.
           # Idempotent and safe to run unconditionally.
           gh workflow run deploy-pages.yml --ref main || true
+
+  # =====================================================================
+  # #3467 — UNCONDITIONAL per-SHA result cache for QUEUE (bot) merges.
+  #
+  # ROOT CAUSE (#3466): promote-baseline is gated `github.actor !=
+  # github-actions[bot]`, and every merge-queue merge lands as a bot push. On a
+  # bot push the ENTIRE rest of this workflow is gated off (changes / shards /
+  # merge-report / promote-baseline all require actor != bot), so the landed
+  # commit — which IS the base_sha of the NEXT queued PR's merge_group — gets
+  # NO runs/<sha> cache entry, and the promoted snapshot goes stale. That drift
+  # false-parked 6 unrelated PRs on 2026-07-19.
+  #
+  # This job runs ONLY on bot pushes (the case promote-baseline skips) and does
+  # exactly ONE thing: persist runs/<github.sha>.{json,jsonl} to the baselines
+  # repo so the sequential queue self-populates its own comparison base. It does
+  # NOT touch test262-current, does NOT commit to the main repo (no queue
+  # rebuild), and does NOT re-run shards — it reuses the `test262-group-<sha>`
+  # artifact the just-landed merge_group already produced (github.sha == that
+  # group's head_sha after the queue fast-forwarded main). A doc-only/no-shards
+  # group produced no artifact → this job cleanly no-ops (the read-side
+  # ancestor-walk fallback covers the gap).
+  #
+  # WHY A SEPARATE JOB (not relaxing promote-baseline's gate): promote-baseline
+  # ALSO promotes the snapshot + commits summary JSON to main (which rebuilds
+  # every queued merge group, #1951). We deliberately keep those bot-skipped and
+  # add only the cheap, side-effect-free cache write. On non-bot pushes /
+  # workflow_dispatch this job is skipped and promote-baseline's own
+  # write-run-cache call still populates runs/<sha> (no double-write, no race).
+  # =====================================================================
+  write-run-cache-bot:
+    name: cache per-SHA baseline for queue merge (#3467)
+    if: github.event_name == 'push' && github.actor == 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    # The baselines-repo push needs BASELINE_DEPLOY_KEY, gated behind the
+    # `baseline-promote` Environment (restricted to the main branch) — a bot
+    # push to main satisfies the branch restriction, same as promote-baseline.
+    environment: baseline-promote
+    permissions:
+      contents: read
+      # Read the just-landed merge_group's `test262-group-<sha>` artifact via
+      # the artifacts REST API (a cross-run read), same as the #1956 step.
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # Recursive submodules + depth 2: heal-poison reruns poison rows in a
+          # clean in-process compiler (needs the test262 corpus), mirroring
+          # promote-baseline so the cached base is byte-for-byte what promote
+          # would have written.
+          submodules: recursive
+          fetch-depth: 2
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download just-landed group artifact (#3467)
+        id: group
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # The merge queue fast-forwarded main to the group head SHA, so
+          # github.sha EQUALS the artifact key the merge_group uploaded (#1956).
+          ART_NAME="test262-group-${{ github.sha }}"
+          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty' 2>/dev/null || echo "")
+          if [ -z "$ART_ID" ]; then
+            # No artifact → a doc-only/no-shards queue merge (or an expired
+            # artifact). Nothing to cache; the read-side ancestor-walk fallback
+            # resolves the next PR's base to the nearest cached ancestor.
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No ${ART_NAME} artifact (doc-only/no-shards group or expired) — skipping per-SHA cache write."
+            exit 0
+          fi
+          mkdir -p shard-artifacts
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > /tmp/mg-group.zip
+          unzip -o /tmp/mg-group.zip -d shard-artifacts >/dev/null
+          if [ ! -s shard-artifacts/test262-results-merged.jsonl ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::#3467 group artifact ${ART_NAME} missing host JSONL — skipping per-SHA cache write."
+            exit 0
+          fi
+          # Fail-safe corruption floor (mirror promote-baseline #3448): a full
+          # run is ~43k rows. Refuse to cache a truncated base.
+          HOST_ROWS=$(wc -l < shard-artifacts/test262-results-merged.jsonl)
+          echo "Group artifact host rows: ${HOST_ROWS}."
+          if [ "$HOST_ROWS" -lt 40000 ]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::#3467 group artifact ${ART_NAME} looks truncated (host=${HOST_ROWS}, floor=40000) — skipping per-SHA cache write."
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "Caching runs/${{ github.sha }} from ${ART_NAME} (id=${ART_ID})."
+
+      - name: Heal poison-classified rows (#2099 parity)
+        if: steps.group.outputs.found == 'true'
+        run: |
+          # Match promote-baseline: heal contamination-poison rows before the
+          # base is persisted, so no phantom "Binary emit error" row is carried
+          # into the comparison base every later PR diffs against. Heal to a
+          # SEPARATE file and swap on success — NON-FATAL: an unhealed base is
+          # still vastly better than the stale promoted snapshot this issue
+          # removes, so a heal hiccup must never block the per-SHA cache write.
+          if npx tsx scripts/heal-poison-rows.ts \
+              --in  shard-artifacts/test262-results-merged.jsonl \
+              --out shard-artifacts/test262-results-healed.jsonl \
+            && [ -s shard-artifacts/test262-results-healed.jsonl ]; then
+            mv shard-artifacts/test262-results-healed.jsonl shard-artifacts/test262-results-merged.jsonl
+            echo "Healed poison rows in the host base JSONL."
+          else
+            echo "::warning::#3467 heal-poison step failed/empty — caching the raw (unhealed) base JSONL (still preferable to the stale snapshot)."
+            rm -f shard-artifacts/test262-results-healed.jsonl
+          fi
+
+      - name: Build merged report for cache summary (#3467)
+        if: steps.group.outputs.found == 'true'
+        run: |
+          node scripts/build-test262-report.mjs \
+            --input  shard-artifacts/test262-results-merged.jsonl \
+            --output shard-artifacts/test262-report-merged.json \
+            --baseline-sha "${{ github.sha }}"
+
+      - name: Write + push runs/<sha> to baselines repo (#3467)
+        if: steps.group.outputs.found == 'true'
+        timeout-minutes: 10
+        env:
+          BASELINE_DEPLOY_KEY: ${{ secrets.BASELINE_DEPLOY_KEY }}
+        run: |
+          set -uo pipefail
+          # SSH deploy key for the baselines-repo push.
+          eval "$(ssh-agent -s)"
+          echo "$BASELINE_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Metadata-only clone, materialize only runs/index.json (skip the huge
+          # runs/ blob history — #3392). NEW runs/<sha> files are staged
+          # explicitly with `git add --sparse` below.
+          git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines checkout main
+
+          # Idempotent: if runs/<sha> already exists (a prior run of this job, or
+          # a non-bot promote of the same commit), there is nothing to add.
+          if git -C /tmp/js2wasm-baselines cat-file -e "HEAD:runs/${{ github.sha }}.jsonl" 2>/dev/null; then
+            echo "runs/${{ github.sha }}.jsonl already present in baselines repo — nothing to do."
+            exit 0
+          fi
+
+          TEST262_VERSION=$(git -C "${{ github.workspace }}" submodule status test262 2>/dev/null | awk '{print $1}' | tr -d '+-' || echo "")
+          node scripts/write-run-cache.mjs \
+            --report shard-artifacts/test262-report-merged.json \
+            --jsonl  shard-artifacts/test262-results-merged.jsonl \
+            --sha    "${{ github.sha }}" \
+            --runs-dir /tmp/js2wasm-baselines/runs \
+            --ref    "${{ github.ref }}" \
+            --run-id "${{ github.run_id }}" \
+            --test262-version "$TEST262_VERSION"
+
+          cd /tmp/js2wasm-baselines
+          if [ ! -f "runs/${{ github.sha }}.jsonl" ]; then
+            # write-run-cache declined (corrupt/below floor) — nothing to push.
+            echo "No runs/${{ github.sha }} written (declined as corrupt); skipping push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Stage ONLY the two new per-SHA files. This job never rewrites the
+          # generated snapshot files, so a concurrent promote/back-to-back queue
+          # merge can only ever advance the tip — never content-conflict on our
+          # brand-new filenames. A plain rebase applies cleanly, so a simple
+          # fetch+rebase+push retry loop suffices (no re-anchor needed).
+          git add --sparse "runs/${{ github.sha }}.jsonl" "runs/${{ github.sha }}.json"
+          if git diff --cached --quiet; then
+            echo "Nothing staged for runs/${{ github.sha }} — already up to date."
+            exit 0
+          fi
+          git commit -m "chore(test262): cache per-SHA baseline runs/${{ github.sha }} (#3467) [skip ci]"
+          PUSHED=0
+          for attempt in 1 2 3 4 5 6; do
+            if git push origin HEAD:main; then
+              echo "Pushed runs/${{ github.sha }} (attempt ${attempt})."
+              PUSHED=1
+              break
+            fi
+            echo "baselines push race lost (attempt ${attempt}) — re-anchoring on fresh tip and retrying."
+            git fetch origin main || { sleep 5; continue; }
+            # This job only ADDS a brand-new per-SHA file, so re-anchoring is
+            # trivial and conflict-free (proven pattern; avoids sparse-tree
+            # rebase edge cases — see promote-baseline #2942). `reset --hard`
+            # leaves the untracked runs/<sha>.* files we wrote in place.
+            git reset --hard origin/main
+            if git cat-file -e "HEAD:runs/${{ github.sha }}.jsonl" 2>/dev/null; then
+              echo "runs/${{ github.sha }} already landed via another actor — done."
+              PUSHED=1
+              break
+            fi
+            git add --sparse "runs/${{ github.sha }}.jsonl" "runs/${{ github.sha }}.json" 2>/dev/null || true
+            if git diff --cached --quiet; then
+              echo "Nothing left to stage after re-anchor — done."
+              PUSHED=1
+              break
+            fi
+            git commit -m "chore(test262): cache per-SHA baseline runs/${{ github.sha }} (#3467) [skip ci]"
+            SLEEP=$((attempt * 5)); [ "$SLEEP" -gt 30 ] && SLEEP=30; sleep "$SLEEP"
+          done
+          if [ "$PUSHED" != "1" ]; then
+            echo "::warning::#3467 failed to push runs/${{ github.sha }} after 6 attempts. The next PR's gate falls back to the nearest cached ancestor / promoted snapshot (non-fatal drift, self-heals on the following merge)."
+          fi
