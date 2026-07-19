@@ -583,6 +583,23 @@ interface TestResult {
    */
   oracle_version?: number;
   /**
+   * #3462: oracle LANE discriminator (the #3450 hybrid two-oracle pipeline).
+   * "honest" = the in-wasm v8 lane (host + standalone; the published number);
+   * "fast-nativeharness" = the host-only fast merge-gate oracle (harness runs
+   * natively, body-only wasm compile). Absent ⇒ "honest" (backward-compatible
+   * with pre-#3462 baselines). An INDEPENDENT axis from `oracle_version`: a fast
+   * row and an honest row are both v8 but produced by different oracles and are
+   * NOT comparable. Stamped by `recordResult` (tests/test262-shared.ts).
+   */
+  oracle_lane?: "honest" | "fast-nativeharness";
+  /**
+   * #3462: revision of the FAST native-harness oracle, present ONLY on
+   * `oracle_lane: "fast-nativeharness"` rows. Bumped independently of
+   * `oracle_version` whenever the native-harness verdict boundary changes
+   * (binding-shim/realm policy). Defined in tests/test262-oracle-version.ts.
+   */
+  oracle_fast_rev?: number;
+  /**
    * #2879 §1 — leak class of the host imports this row's module declared, or
    * null/absent when the module ran host-free (no `env::` import). Computed by
    * `classifyHostImportLeak` (scripts/test262-worker.mjs) and recorded by
@@ -699,6 +716,8 @@ export function isVacuousReclassification(base: TestResult | undefined, cur: Tes
 
 type StatusMap = Map<string, TestResult>;
 
+type OracleLane = "honest" | "fast-nativeharness";
+
 interface LoadedJsonl {
   map: StatusMap;
   /**
@@ -707,11 +726,27 @@ interface LoadedJsonl {
    * from shards run under different oracles, which must never be compared.
    */
   oracleVersion: number | "mixed" | undefined;
+  /**
+   * #3462: the oracle LANE observed in the file, normalized so an absent
+   * `oracle_lane` (pre-#3462 rows) counts as "honest". `undefined` only for an
+   * empty file (no rows at all). `"mixed"` if rows disagreed — a file assembled
+   * from BOTH lanes (e.g. host-fast + standalone-honest rows in one JSONL),
+   * which must never be diffed against a single-lane baseline.
+   */
+  oracleLane: OracleLane | "mixed" | undefined;
+  /**
+   * #3462: the fast-oracle revision observed among `fast-nativeharness` rows.
+   * `undefined` when the file carries no fast rows. `"mixed"` if fast rows
+   * disagreed on the rev. Only consulted when both sides are the fast lane.
+   */
+  oracleFastRev: number | "mixed" | undefined;
 }
 
 async function loadJsonl(path: string): Promise<LoadedJsonl> {
   const map: StatusMap = new Map();
   let oracleVersion: number | "mixed" | undefined;
+  let oracleLane: OracleLane | "mixed" | undefined;
+  let oracleFastRev: number | "mixed" | undefined;
   const rl = createInterface({ input: createReadStream(path) });
   for await (const line of rl) {
     if (!line.trim()) continue;
@@ -721,6 +756,18 @@ async function loadJsonl(path: string): Promise<LoadedJsonl> {
         if (oracleVersion === undefined) oracleVersion = entry.oracle_version;
         else if (oracleVersion !== entry.oracle_version) oracleVersion = "mixed";
       }
+      // #3462: normalize absent oracle_lane ⇒ "honest" (backward-compatible),
+      // then track a single file-level lane. A file mixing lanes is "mixed" and
+      // is refused, exactly like a mixed oracle_version.
+      const lane: OracleLane = entry.oracle_lane === "fast-nativeharness" ? "fast-nativeharness" : "honest";
+      if (oracleLane !== "mixed") {
+        if (oracleLane === undefined) oracleLane = lane;
+        else if (oracleLane !== lane) oracleLane = "mixed";
+      }
+      if (lane === "fast-nativeharness" && typeof entry.oracle_fast_rev === "number" && oracleFastRev !== "mixed") {
+        if (oracleFastRev === undefined) oracleFastRev = entry.oracle_fast_rev;
+        else if (oracleFastRev !== entry.oracle_fast_rev) oracleFastRev = "mixed";
+      }
       if (entry.file) {
         map.set(entry.file, entry);
       }
@@ -728,7 +775,7 @@ async function loadJsonl(path: string): Promise<LoadedJsonl> {
       // skip malformed lines
     }
   }
-  return { map, oracleVersion };
+  return { map, oracleVersion, oracleLane, oracleFastRev };
 }
 
 // Reads baseline metadata (baseline_generated_at, baseline_sha) from a report.json.
@@ -938,6 +985,92 @@ async function run(
       `Oracle-version note (#2096): ${fmtOracle(baseOracle)} (baseline) vs ${fmtOracle(newOracle)} (new) — ` +
         `at least one side is unstamped, comparing as legacy same-oracle.`,
     );
+  }
+
+  // #3462 — oracle-LANE guard (the #3450 hybrid two-oracle pipeline). The FAST
+  // native-harness lane (host only) and the HONEST in-wasm v8 lane share the
+  // same `oracle_version` (v8) but produce DIFFERENT verdicts at the
+  // native-harness boundary (~9,244 corpus-projected flips). They must never be
+  // diffed against each other, or the gate reads those baked-in boundary flips
+  // as regressions. `oracle_version` alone cannot catch this — both lanes are
+  // v8 — so the lane is a SEPARATE guard here.
+  //
+  // Unlike the version axis, the lane axis is NOT monotonic: there is no
+  // "forward bump" that auto-rebases (#3086), because neither lane supersedes
+  // the other — they measure different things. So a lane mismatch is excused
+  // ONLY by an explicit `ORACLE_REBASE=1`, which is how the fast baseline is
+  // seeded (#3465). Absent `oracle_lane` is normalized to "honest" in the loader
+  // (backward-compatible with every pre-#3462 baseline), so an old honest
+  // baseline vs a new honest candidate compares cleanly.
+  const baseLane = baselineLoaded.oracleLane;
+  const newLane = newerLoaded.oracleLane;
+  const fmtLane = (v: OracleLane | "mixed" | undefined) =>
+    v === undefined ? "honest (no rows)" : v === "mixed" ? "mixed (both lanes)" : v;
+
+  // A file assembled from BOTH lanes (e.g. host-fast + standalone-honest rows in
+  // one JSONL) is never comparable to a single-lane baseline — hard error,
+  // regardless of ORACLE_REBASE (mirrors the mixed-oracle_version refusal).
+  if (baseLane === "mixed" || newLane === "mixed") {
+    console.error(
+      `\n✖ Oracle-lane guard (#3462): one side carries MIXED oracle lanes ` +
+        `(baseline=${fmtLane(baseLane)}, new=${fmtLane(newLane)}).\n` +
+        `  A result file that mixes the honest and fast-native-harness lanes cannot be diffed.\n` +
+        `  Split the run by lane (host-fast vs standalone/honest) and diff each against its own baseline.\n`,
+    );
+    process.exit(2);
+  }
+
+  if (baseLane !== undefined && newLane !== undefined && baseLane !== newLane) {
+    // Cross-LANE diff (honest-vs-fast or fast-vs-honest). Excused only by the
+    // explicit env flag — there is no forward-bump auto-rebase for the lane.
+    if (!oracleRebase) {
+      console.error(
+        `\n✖ Oracle-lane guard (#3462): cross-lane diff refused.\n` +
+          `  baseline lane = ${fmtLane(baseLane)}, new lane = ${fmtLane(newLane)}.\n` +
+          `  The fast native-harness lane and the honest in-wasm v8 lane are both oracle ${fmtOracle(newOracle)}\n` +
+          `  but produce different verdicts at the native-harness boundary (~9,244 baked-in flips),\n` +
+          `  so diffing one against the other reads that boundary as regressions. This is the mechanism\n` +
+          `  that keeps a fast candidate from ever being gated against the honest baseline (and vice-versa).\n` +
+          `  If this is a deliberate fast-lane re-seed (#3465), re-run with ORACLE_REBASE=1.\n`,
+      );
+      process.exit(2);
+    }
+    console.log(
+      `ORACLE_REBASE=1 — comparing across oracle LANES ` +
+        `(baseline ${fmtLane(baseLane)} → new ${fmtLane(newLane)}). Deliberate fast-lane re-seed (#3462/#3465): ` +
+        `the ~9,244 native-harness boundary flips are being baked into the fast baseline.`,
+    );
+  } else if (baseLane === "fast-nativeharness" && newLane === "fast-nativeharness") {
+    // Same lane (both FAST) — the fast-rev must ALSO match. A rev bump means the
+    // native-harness verdict boundary itself moved (binding-shim/realm policy),
+    // so its baseline must be re-seeded, exactly like an honest oracle bump.
+    const baseRev = baselineLoaded.oracleFastRev;
+    const newRev = newerLoaded.oracleFastRev;
+    const fmtRev = (v: number | "mixed" | undefined) =>
+      v === undefined ? "unstamped" : v === "mixed" ? "mixed (multiple revs)" : `rev${v}`;
+    if (baseRev === "mixed" || newRev === "mixed") {
+      console.error(
+        `\n✖ Oracle-lane guard (#3462): one fast side carries MIXED fast revs ` +
+          `(baseline=${fmtRev(baseRev)}, new=${fmtRev(newRev)}).\n` +
+          `  A fast result file assembled from shards run under different fast revisions cannot be diffed.\n`,
+      );
+      process.exit(2);
+    }
+    if (typeof baseRev === "number" && typeof newRev === "number" && baseRev !== newRev) {
+      if (!oracleRebase) {
+        console.error(
+          `\n✖ Oracle-lane guard (#3462): fast-lane rev mismatch — diff refused.\n` +
+            `  baseline ${fmtRev(baseRev)}, new ${fmtRev(newRev)}.\n` +
+            `  The native-harness verdict boundary changed between these revisions, so their rows are not\n` +
+            `  comparable. Re-seed the fast baseline at the new rev with ORACLE_REBASE=1 (#3465).\n`,
+        );
+        process.exit(2);
+      }
+      console.log(
+        `ORACLE_REBASE=1 — comparing across fast oracle revisions ` +
+          `(baseline ${fmtRev(baseRev)} → new ${fmtRev(newRev)}). Deliberate fast-lane re-seed (#3462/#3465).`,
+      );
+    }
   }
 
   if (pathFilter.length > 0) {

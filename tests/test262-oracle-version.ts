@@ -192,3 +192,64 @@ export const ORACLE_VERSION_HISTORY: ReadonlyArray<{ version: number; note: stri
       "version requires an ORACLE_REBASE baseline refresh when landed.",
   },
 ];
+
+/**
+ * #3462 — FAST-oracle revision (the native-harness lane), an INDEPENDENT axis
+ * from `ORACLE_VERSION` above. Do NOT fold the fast lane into the honest integer.
+ *
+ * The #3450 hybrid runs two oracles:
+ *   - the HONEST in-wasm v8 oracle (`ORACLE_VERSION`, above) — the sole source
+ *     of the published conformance number and the honest regression signal; and
+ *   - the FAST native-harness oracle (host lane only) — used ONLY to gate merges
+ *     against its own self-consistent baseline. The native harness runs
+ *     assert.js/sta.js as native JS in the per-test sandbox and compiles the
+ *     test BODY only, so its pass/fail verdict diverges from the honest lane at
+ *     the native-harness boundary (error-identity, MOP/marshaling, and the
+ *     builtins the harness reads from V8 rather than js2wasm — ~9,244 corpus-
+ *     projected flips per the spike, plan/design/3450-native-harness-ab-findings.md).
+ *
+ * These two boundaries move for UNRELATED reasons, so they need independent
+ * identities. If the fast lane reused `ORACLE_VERSION = 9`, a future HONEST v9
+ * bump would collide: `diff-test262` would then treat a fast rev-1 baseline and
+ * an honest v9 candidate as comparable and read the ~9,244 baked-in boundary
+ * flips as regressions. Instead the fast lane carries `oracle_lane:
+ * "fast-nativeharness"` PLUS this `ORACLE_FAST_REV`, and `diff-test262` refuses
+ * to compare rows whose (oracle_version, oracle_lane, oracle_fast_rev) tuple
+ * differs unless `ORACLE_REBASE=1`.
+ *
+ * ── HOW TO BUMP ──────────────────────────────────────────────────────────
+ * Increment `ORACLE_FAST_REV` (and add an `ORACLE_FAST_HISTORY` entry) whenever
+ * the native-harness VERDICT BOUNDARY changes — e.g. the binding-shim policy,
+ * realm/error-construction handling, or which harness symbols resolve natively.
+ * Then re-seed the fast baseline (`test262-fast-current.jsonl`) with
+ * `ORACLE_REBASE=1` (the fast-lane analog of the honest ORACLE_VERSION bump;
+ * see #3465). The honest integer is untouched by a fast-rev bump and vice-versa.
+ *
+ * Like `ORACLE_VERSION`, this is an opaque monotonic integer scoped to the fast
+ * lane — NOT a compiler version or a date.
+ */
+export const ORACLE_FAST_REV = 1;
+
+/**
+ * Append-only log of what each fast-oracle revision means. Newest last.
+ */
+export const ORACLE_FAST_HISTORY: ReadonlyArray<{ rev: number; note: string }> = [
+  {
+    rev: 1,
+    note:
+      "#3461/#3450 native-harness fast oracle (host lane only). The harness " +
+      "prelude (runtime shim + metadata includes + assert.js + sta.js) runs as " +
+      "NATIVE JS in the per-test sandbox via runInContext; only the test BODY " +
+      "(prefixed by a binding shim that binds the referenced harness symbols " +
+      "into body scope) is compiled to wasm and instantiated with the sandbox " +
+      "as globalSandbox. This moves the verdict boundary relative to the honest " +
+      "in-wasm v8 lane: harness-side error identity (assert.js's Test262Error / " +
+      "assert.throws matching) is decided by native V8, and MOP/marshaling reads " +
+      "that the honest lane performs in-wasm (e.g. Array.prototype.*.length, " +
+      "property-descriptor checks in verifyProperty) are delegated to the host. " +
+      "Net effect per the spike A/B (plan/design/3450-native-harness-ab-findings.md): " +
+      "~18 flips on the 252-test stratified sample, ~9,244 corpus-projected, both " +
+      "directions. These are baked into the fast baseline ONCE (seed #3465) and " +
+      "never published — the honest v8 lane remains the sole source of the badge.",
+  },
+];

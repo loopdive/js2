@@ -18,7 +18,7 @@ import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
 import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { findNthAssert } from "./test262-assert-locator.js";
-import { ORACLE_VERSION } from "./test262-oracle-version.js";
+import { ORACLE_VERSION, ORACLE_FAST_REV } from "./test262-oracle-version.js";
 import {
   classifyError,
   classifyTestScope,
@@ -151,6 +151,25 @@ function parseTest262Target(): Test262CompileTarget | undefined {
 }
 
 const TEST262_TARGET = parseTest262Target();
+
+// #3462 — oracle LANE selection (the #3450 hybrid two-oracle pipeline). Two
+// oracles run under the same `ORACLE_VERSION`:
+//   - HONEST in-wasm v8 (the default) — host + standalone, the published number;
+//   - FAST native-harness (host lane ONLY) — the merge-gate oracle sr-3461 wires
+//     behind `TEST262_ORACLE_MODE=fast` in the worker (harness runs natively,
+//     body-only wasm compile). We read the SAME pinned env var + the target here
+//     to stamp each result row's lane, so `diff-test262` can refuse to compare a
+//     fast candidate against the honest baseline (and vice-versa).
+//
+// The "host" lane is the JS-host default (no TEST262_TARGET → gc/js-string). The
+// native harness needs a JS host to run assert.js/sta.js natively, so it applies
+// ONLY there: standalone (and linear/wasi) can never host-exec the harness, so
+// they stay HONEST v8 even inside a fast-mode merge_group run. This mirrors the
+// worker's own rule (sr-3461): standalone target NEVER sets `nativeHarness`.
+const TEST262_ORACLE_MODE = process.env.TEST262_ORACLE_MODE;
+const IS_HOST_LANE = TEST262_TARGET === undefined;
+const ORACLE_LANE: "honest" | "fast-nativeharness" =
+  TEST262_ORACLE_MODE === "fast" && IS_HOST_LANE ? "fast-nativeharness" : "honest";
 
 function getCachePaths(wrappedSource: string): { wasmPath: string; metaPath: string } {
   const hash = createHash("md5")
@@ -345,6 +364,15 @@ function recordResult(
     // comparisons (which would read oracle skew as regressions). Bump in
     // tests/test262-oracle-version.ts when the oracle tightens (e.g. #1945).
     oracle_version: ORACLE_VERSION,
+    // #3462: oracle LANE discriminator (the #3450 hybrid). "honest" is the
+    // in-wasm v8 lane (host + standalone, the published number); a fast-mode
+    // HOST run stamps "fast-nativeharness" and its own `oracle_fast_rev`. This
+    // is an INDEPENDENT axis from oracle_version — a fast row and an honest row
+    // are both v8 but produced by different oracles, so diff-test262 keys on the
+    // (version, lane, fast_rev) tuple. Absent on pre-#3462 rows ⇒ treated as
+    // "honest" (backward-compatible; existing honest baselines are unaffected).
+    oracle_lane: ORACLE_LANE,
+    oracle_fast_rev: ORACLE_LANE === "fast-nativeharness" ? ORACLE_FAST_REV : undefined,
     file,
     category,
     status,

@@ -56,9 +56,20 @@ export const BASELINE_REMOTE_URL =
 export const STANDALONE_BASELINE_REMOTE_URL =
   "https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-standalone-current.jsonl";
 
+// (#3462) The FAST native-harness lane (host only) gates the merge queue against
+// its OWN self-consistent baseline so the ~9,244 native-harness boundary flips
+// are baked in once and never false-fail a PR (the #3450 hybrid two-oracle
+// pipeline). It lives in the same baselines repo, seeded/refreshed on push:main
+// from the merge_group's fast host JSONL (#3448 rework, wired in #3463) and
+// initially seeded by #3465. Stamped `oracle_lane: fast-nativeharness`. This is
+// NEVER read by any landing-page/badge path — the published number is honest v8.
+export const FAST_BASELINE_REMOTE_URL =
+  "https://raw.githubusercontent.com/loopdive/js2wasm-baselines/main/test262-fast-current.jsonl";
+
 export const BASELINE_CACHE_DIR = resolve(REPO_ROOT, ".test262-cache");
 export const BASELINE_CACHE_PATH = resolve(BASELINE_CACHE_DIR, "test262-current.jsonl");
 export const STANDALONE_BASELINE_CACHE_PATH = resolve(BASELINE_CACHE_DIR, "test262-standalone-current.jsonl");
+export const FAST_BASELINE_CACHE_PATH = resolve(BASELINE_CACHE_DIR, "test262-fast-current.jsonl");
 
 // Sanity-check thresholds — a healthy baseline has ~43k entries and is ~15 MB.
 // Smaller than this almost certainly means a partial download or a corrupted
@@ -131,6 +142,26 @@ export async function ensureStandaloneBaselineJsonl(opts = {}) {
 }
 
 /**
+ * (#3462) FAST-lane analog of {@link ensureBaselineJsonl}. Fetches
+ * `test262-fast-current.jsonl` (host-only native-harness baseline) from the
+ * baselines repo to `FAST_BASELINE_CACHE_PATH`. Same idempotent +
+ * graceful-fallback semantics as the host/standalone fetch: an existing cache is
+ * a no-op; a download failure falls back to a present cache and only throws when
+ * upstream is unreachable AND no cache exists. The regression gate selects this
+ * baseline for the host diff when the run is fast-mode (`TEST262_ORACLE_MODE=fast`,
+ * wired in #3463). Until the fast baseline is seeded (#3465) upstream 404s, so
+ * callers must not invoke this before the seed exists (documented ordering).
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.force]
+ * @param {boolean} [opts.noCache]
+ * @returns {Promise<string>} absolute path to the fast-lane JSONL ready to read
+ */
+export async function ensureFastBaselineJsonl(opts = {}) {
+  return ensureLaneBaselineJsonl(FAST_BASELINE_REMOTE_URL, FAST_BASELINE_CACHE_PATH, "test262-fast-current", opts);
+}
+
+/**
  * Shared fetch+cache core for a single lane's baseline JSONL.
  *
  * @param {string} remoteUrl   raw.githubusercontent URL of the lane's JSONL
@@ -185,10 +216,11 @@ if (process.argv[1] && resolve(process.argv[1]) === __filename) {
   const noCache = args.includes("--no-cache");
   const printPath = args.includes("--print-path");
   const standalone = args.includes("--standalone"); // (#2095) fetch the standalone lane JSONL
+  const fast = args.includes("--fast"); // (#3462) fetch the fast native-harness (host) lane JSONL
 
-  const cachePath = standalone ? STANDALONE_BASELINE_CACHE_PATH : BASELINE_CACHE_PATH;
-  const ensure = standalone ? ensureStandaloneBaselineJsonl : ensureBaselineJsonl;
-  const remoteUrl = standalone ? STANDALONE_BASELINE_REMOTE_URL : BASELINE_REMOTE_URL;
+  const cachePath = fast ? FAST_BASELINE_CACHE_PATH : standalone ? STANDALONE_BASELINE_CACHE_PATH : BASELINE_CACHE_PATH;
+  const ensure = fast ? ensureFastBaselineJsonl : standalone ? ensureStandaloneBaselineJsonl : ensureBaselineJsonl;
+  const remoteUrl = fast ? FAST_BASELINE_REMOTE_URL : standalone ? STANDALONE_BASELINE_REMOTE_URL : BASELINE_REMOTE_URL;
 
   if (printPath) {
     process.stdout.write(`${cachePath}\n`);
