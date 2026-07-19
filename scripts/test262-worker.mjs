@@ -102,6 +102,7 @@ let compileCount = 0;
 const GC_INTERVAL = 25;
 const RECREATE_INTERVAL = 100;
 const WORKER_RECYCLE_INTERVAL = Math.max(0, parseInt(process.env.TEST262_WORKER_RECYCLE_INTERVAL || "0", 10) || 0);
+let runtimeIntrinsicCanarySnapshot = null;
 
 let incrementalCompiler = null;
 function createFreshCompiler() {
@@ -1193,6 +1194,7 @@ async function buildInvalidBinaryError(source, sourceMapUrl, result, target) {
 }
 
 process.on("message", async (msg) => {
+  runtimeIntrinsicCanarySnapshot = null;
   const { id, source, execute, isNegative, isRuntimeNegative, expectedErrorType, originalHarness, asyncTest } = msg;
   // (#3461) Fast native-harness oracle (host lane). When set, `source` is the
   // body-only `bindingShim + body` unit (the harness was NOT concatenated into
@@ -1454,6 +1456,9 @@ process.on("message", async (msg) => {
       result.stringPool,
       originalHarness ? { globalSandbox: harnessSandbox } : undefined,
     );
+    if (REALM_CANARY_MODE) {
+      runtimeIntrinsicCanarySnapshot = snapshotRuntimeIntrinsicSurface(importObj);
+    }
 
     try {
       const wasmResult = await WebAssembly.instantiate(result.binary, importObj);
@@ -1929,6 +1934,11 @@ function collectIntrinsicSurface() {
   add("Atomics", globalThis.Atomics);
   add("Intl", globalThis.Intl);
   add("Temporal", globalThis.Temporal);
+  // propertyHelper tests mutate the properties of this nested namespace
+  // object without replacing Array.prototype's @@unscopables descriptor.
+  // Treat it as its own intrinsic surface so a strict rerun never inherits
+  // deletions such as copyWithin/findLast/toReversed from the sloppy variant.
+  add("Array.prototype[Symbol.unscopables]", Array.prototype[Symbol.unscopables]);
   add("globalThis", globalThis);
   try {
     const arrIter = Object.getPrototypeOf([][Symbol.iterator]());
@@ -1937,14 +1947,20 @@ function collectIntrinsicSurface() {
     add("%StringIteratorPrototype%", Object.getPrototypeOf(""[Symbol.iterator]()));
     add("%MapIteratorPrototype%", Object.getPrototypeOf(new Map()[Symbol.iterator]()));
     add("%SetIteratorPrototype%", Object.getPrototypeOf(new Set()[Symbol.iterator]()));
+    add("%RegExpStringIteratorPrototype%", Object.getPrototypeOf("x".matchAll(/x/g)));
     const genFn = function* () {};
     add("%GeneratorFunctionPrototype%", Object.getPrototypeOf(genFn));
-    add("%GeneratorPrototype%", genFn.prototype ? Object.getPrototypeOf(genFn()) : undefined);
+    const generatorInstancePrototype = genFn.prototype ? Object.getPrototypeOf(genFn()) : undefined;
+    const generatorPrototype = Object.getPrototypeOf(generatorInstancePrototype);
+    add("%GeneratorInstancePrototype%", generatorInstancePrototype);
+    add("%GeneratorPrototype%", generatorPrototype);
     const asyncGenFn = async function* () {};
     add("%AsyncGeneratorFunctionPrototype%", Object.getPrototypeOf(asyncGenFn));
-    const asyncGenProto = Object.getPrototypeOf(asyncGenFn());
-    add("%AsyncGeneratorPrototype%", asyncGenProto);
-    add("%AsyncIteratorPrototype%", Object.getPrototypeOf(asyncGenProto));
+    const asyncGeneratorInstancePrototype = Object.getPrototypeOf(asyncGenFn());
+    const asyncGeneratorPrototype = Object.getPrototypeOf(asyncGeneratorInstancePrototype);
+    add("%AsyncGeneratorInstancePrototype%", asyncGeneratorInstancePrototype);
+    add("%AsyncGeneratorPrototype%", asyncGeneratorPrototype);
+    add("%AsyncIteratorPrototype%", Object.getPrototypeOf(asyncGeneratorPrototype));
     add("%TypedArrayPrototype%", Object.getPrototypeOf(Uint8Array.prototype));
   } catch {
     // best-effort — a missing exotic prototype shrinks coverage, never breaks
@@ -2018,9 +2034,9 @@ function appendFunctionMetadataDrift(drift, label, expected, current) {
   }
 }
 
-function snapshotRealmSurface() {
+function snapshotSurface(roots) {
   const snap = new Map();
-  for (const [label, obj] of collectIntrinsicSurface()) {
+  for (const [label, obj] of roots) {
     try {
       snap.set(label, {
         obj,
@@ -2033,6 +2049,47 @@ function snapshotRealmSurface() {
     }
   }
   return snap;
+}
+
+function snapshotRealmSurface() {
+  return snapshotSurface(collectIntrinsicSurface());
+}
+
+function snapshotRuntimeIntrinsicSurface(importObj) {
+  const roots = new Map();
+  const add = (label, obj) => {
+    if (obj && (typeof obj === "object" || typeof obj === "function")) roots.set(label, obj);
+  };
+  const env = importObj?.env ?? {};
+  const callGetter = (name) => {
+    try {
+      return typeof env[name] === "function" ? env[name]() : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const generatorFunctionPrototype = callGetter("__get_generator_function_prototype");
+  const generatorInstancePrototype = callGetter("__get_generator_prototype");
+  const generatorPrototype =
+    generatorFunctionPrototype?.prototype ??
+    (generatorInstancePrototype ? Object.getPrototypeOf(generatorInstancePrototype) : undefined);
+  add("%RuntimeGeneratorFunctionPrototype%", generatorFunctionPrototype);
+  add("%RuntimeGeneratorInstancePrototype%", generatorInstancePrototype);
+  add("%RuntimeGeneratorPrototype%", generatorPrototype);
+
+  const asyncGeneratorFunctionPrototype = callGetter("__get_async_generator_function_prototype");
+  const asyncGeneratorInstancePrototype = callGetter("__get_async_generator_prototype");
+  const asyncGeneratorPrototype =
+    asyncGeneratorFunctionPrototype?.prototype ??
+    (asyncGeneratorInstancePrototype ? Object.getPrototypeOf(asyncGeneratorInstancePrototype) : undefined);
+  const asyncIteratorPrototype = asyncGeneratorPrototype ? Object.getPrototypeOf(asyncGeneratorPrototype) : undefined;
+  add("%RuntimeAsyncGeneratorFunctionPrototype%", asyncGeneratorFunctionPrototype);
+  add("%RuntimeAsyncGeneratorInstancePrototype%", asyncGeneratorInstancePrototype);
+  add("%RuntimeAsyncGeneratorPrototype%", asyncGeneratorPrototype);
+  add("%RuntimeAsyncIteratorPrototype%", asyncIteratorPrototype);
+
+  return snapshotSurface(roots);
 }
 
 const REALM_CANARY_MAX_DRIFT = 24;
@@ -2086,9 +2143,13 @@ let realmCanaryChecks = 0;
 let realmCanaryCheckMsTotal = 0;
 
 function realmDriftRecycleReason(payload) {
-  if (!realmCanarySnapshot) return undefined;
+  if (!realmCanarySnapshot && !runtimeIntrinsicCanarySnapshot) return undefined;
   const t0 = performance.now();
-  const drift = diffRealmSurface(realmCanarySnapshot).filter((d) => !realmCanaryIgnored(d));
+  const drift = [
+    ...(realmCanarySnapshot ? diffRealmSurface(realmCanarySnapshot) : []),
+    ...(runtimeIntrinsicCanarySnapshot ? diffRealmSurface(runtimeIntrinsicCanarySnapshot) : []),
+  ].filter((d) => !realmCanaryIgnored(d));
+  runtimeIntrinsicCanarySnapshot = null;
   realmCanaryCheckMsTotal += performance.now() - t0;
   realmCanaryChecks++;
   if (REALM_CANARY_MODE === "log" && realmCanaryChecks % 200 === 0) {

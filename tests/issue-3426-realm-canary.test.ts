@@ -78,6 +78,22 @@ describe("#3426 original-harness intrinsic metadata isolation", () => {
       path: "built-ins/String/prototype/concat/S15.5.4.6_A9.js",
       drift: "String.prototype.concat.length:deleted",
     },
+    {
+      path: "built-ins/GeneratorPrototype/return/property-descriptor.js",
+      drift: "%RuntimeGeneratorPrototype%.return:deleted",
+    },
+    {
+      path: "built-ins/AsyncGeneratorPrototype/next/prop-desc.js",
+      drift: "%RuntimeAsyncGeneratorPrototype%.next:deleted",
+    },
+    {
+      path: "built-ins/AsyncIteratorPrototype/Symbol.asyncIterator/length.js",
+      drift: "%RuntimeAsyncIteratorPrototype%.Symbol(Symbol.asyncIterator).length:deleted",
+    },
+    {
+      path: "built-ins/RegExpStringIteratorPrototype/next/length.js",
+      drift: "%RegExpStringIteratorPrototype%.next.length:deleted",
+    },
   ] as const;
 
   for (const { path, drift } of destructiveCases) {

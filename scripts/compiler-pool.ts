@@ -102,6 +102,11 @@ export class CompilerPool {
     return fork(this.workerPath, [], {
       stdio: ["pipe", "pipe", "pipe", "ipc"],
       execArgv: ["--expose-gc", "--max-old-space-size=512"],
+      // Test262 baselines are produced on UTC CI hosts. Pin worker time-zone
+      // semantics locally as well so Date parsing/formatting verdicts do not
+      // depend on the developer machine. TEST262_TZ remains an explicit
+      // diagnostic override.
+      env: { ...process.env, TZ: process.env.TEST262_TZ ?? "UTC" },
     });
   }
 

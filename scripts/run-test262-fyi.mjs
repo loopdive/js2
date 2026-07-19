@@ -8,118 +8,24 @@
  * upstream assert.js + sta.js, metadata includes, and the raw test body.
  */
 import fs from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, fork } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createContext, runInContext } from "node:vm";
-import { buildImports, compile } from "./compiler-bundle.mjs";
-import { negativeCompileErrorMatches } from "./negative-verdict.mjs";
 import { discoverTestPaths, loadOriginalHarnessTests } from "./test262-fyi-reader.mjs";
 
 export { loadOriginalHarnessTests } from "./test262-fyi-reader.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FYI_ROOT = join(ROOT, "test262-fyi", "data");
+const TEST262_ROOT = join(ROOT, "test262");
+const WORKER_PATH = join(ROOT, "scripts", "test262-worker.mjs");
+const DEFAULT_SOURCE_TIMEOUT_MS = 30_000;
+const DEFAULT_WORKERS = 2;
+const MAX_WORKERS = 4;
 
-const SANDBOX_GLOBAL_NAMES = [
-  "Array",
-  "Object",
-  "Function",
-  "String",
-  "Number",
-  "Boolean",
-  "Symbol",
-  "Promise",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Date",
-  "RegExp",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "Math",
-  "JSON",
-  "Reflect",
-];
-
-function buildFreshSandbox(consoleProxy) {
-  const sandbox = Object.create(null);
-  const context = createContext(sandbox);
-  for (const name of SANDBOX_GLOBAL_NAMES) {
-    try {
-      sandbox[name] = runInContext(name, context);
-    } catch {
-      // Leave host features absent when the VM realm does not provide them.
-    }
-  }
-  Object.defineProperties(sandbox, {
-    undefined: { value: undefined, writable: false, enumerable: false, configurable: false },
-    Infinity: { value: Number.POSITIVE_INFINITY, writable: false, enumerable: false, configurable: false },
-    NaN: { value: Number.NaN, writable: false, enumerable: false, configurable: false },
-  });
-  sandbox.console = consoleProxy;
-  sandbox.globalThis = sandbox;
-  return sandbox;
-}
-
-const HOST_PROTOTYPES = [
-  Object.prototype,
-  Array.prototype,
-  String.prototype,
-  Number.prototype,
-  Boolean.prototype,
-  Function.prototype,
-  RegExp.prototype,
-  Map.prototype,
-  Set.prototype,
-  WeakMap.prototype,
-  WeakSet.prototype,
-  Promise.prototype,
-];
-
-const HOST_PROTOTYPE_SNAPSHOTS = HOST_PROTOTYPES.map((prototype) => {
-  const descriptors = new Map();
-  for (const key of Reflect.ownKeys(prototype)) {
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
-    if (descriptor) descriptors.set(key, descriptor);
-  }
-  return { prototype, descriptors };
-});
-
-function restoreHostPrototypes() {
-  let clean = true;
-  for (const { prototype, descriptors } of HOST_PROTOTYPE_SNAPSHOTS) {
-    for (const key of Reflect.ownKeys(prototype)) {
-      if (descriptors.has(key)) continue;
-      try {
-        delete prototype[key];
-      } catch {
-        // The caller reports an unrecoverable, non-configurable mutation.
-      }
-      if (Object.getOwnPropertyDescriptor(prototype, key)) clean = false;
-    }
-    for (const [key, descriptor] of descriptors) {
-      const current = Object.getOwnPropertyDescriptor(prototype, key);
-      const unchanged =
-        current &&
-        current.configurable === descriptor.configurable &&
-        current.enumerable === descriptor.enumerable &&
-        ("value" in descriptor
-          ? "value" in current && current.value === descriptor.value && current.writable === descriptor.writable
-          : current.get === descriptor.get && current.set === descriptor.set);
-      if (unchanged) continue;
-      try {
-        Object.defineProperty(prototype, key, descriptor);
-      } catch {
-        clean = false;
-      }
-    }
-  }
-  return clean;
+function configuredWorkerCount() {
+  const configured = Number.parseInt(process.env.TEST262_FYI_WORKERS ?? "", 10);
+  return Number.isInteger(configured) && configured >= 1 && configured <= MAX_WORKERS ? configured : DEFAULT_WORKERS;
 }
 
 function usage() {
@@ -130,7 +36,9 @@ test262-fyi/data submodule must be initialized first.
 
 Options:
   --filter <text>       Run paths containing text (repeatable)
+  --paths-file <path>  Run the newline-delimited Test262 paths in this file
   --limit <n>           Stop after n selected test records
+  --workers <n>         Parallel source workers, 1-${MAX_WORKERS} (default: ${DEFAULT_WORKERS})
   --target <target>     gc (default), standalone, or wasi
   --json <path>         Write the complete result document to path
   --list                List selected files without compiling
@@ -143,7 +51,15 @@ Examples:
 }
 
 export function parseArgs(argv) {
-  const options = { filters: [], limit: Infinity, target: "gc", json: undefined, list: false };
+  const options = {
+    filters: [],
+    pathsFile: undefined,
+    limit: Infinity,
+    workers: configuredWorkerCount(),
+    target: "gc",
+    json: undefined,
+    list: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--") continue;
@@ -158,10 +74,24 @@ export function parseArgs(argv) {
       options.filters.push(value);
       continue;
     }
+    if (arg === "--paths-file") {
+      const value = argv[++i];
+      if (!value) throw new Error("--paths-file requires a value");
+      options.pathsFile = resolve(value);
+      continue;
+    }
     if (arg === "--limit") {
       const value = Number.parseInt(argv[++i] ?? "", 10);
       if (!Number.isInteger(value) || value < 1) throw new Error("--limit must be a positive integer");
       options.limit = value;
+      continue;
+    }
+    if (arg === "--workers") {
+      const value = Number.parseInt(argv[++i] ?? "", 10);
+      if (!Number.isInteger(value) || value < 1 || value > MAX_WORKERS) {
+        throw new Error(`--workers must be an integer between 1 and ${MAX_WORKERS}`);
+      }
+      options.workers = value;
       continue;
     }
     if (arg === "--target") {
@@ -183,135 +113,186 @@ export function parseArgs(argv) {
   return options;
 }
 
-function compileErrorText(result) {
-  return result.errors?.map((error) => error.message ?? String(error)).join("; ") || "compile failed";
+function sourceTimeoutMs() {
+  const configured = Number.parseInt(process.env.TEST262_FYI_SOURCE_TIMEOUT_MS ?? "", 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_SOURCE_TIMEOUT_MS;
 }
 
-function thrownText(error, instance) {
-  if (typeof WebAssembly !== "undefined" && error instanceof WebAssembly.Exception && instance) {
-    try {
-      const tag = instance.exports.__exn_tag ?? instance.exports.__tag;
-      const payload = tag ? error.getArg(tag, 0) : undefined;
-      if (payload instanceof Error) return `${payload.name}: ${payload.message}`;
-      if (payload !== undefined && payload !== null) return String(payload);
-    } catch {
-      // Fall through to the generic representation.
-    }
-  }
-  if (error instanceof Error) return `${error.name}: ${error.message}`;
-  try {
-    return String(error);
-  } catch {
-    return "unprintable exception";
-  }
+function testWorkerOptions(test) {
+  const negative = test.negative;
+  const isRuntimeNegative = negative !== true && negative?.phase === "runtime";
+  const isNegative = negative === true || (Boolean(negative) && !isRuntimeNegative);
+  const moduleGoal =
+    Boolean(test.flags?.module) ||
+    test.file.startsWith("language/module-code/") ||
+    test.file.startsWith("language/import/") ||
+    test.file.startsWith("language/export/") ||
+    /\b(?:import|export)\b/.test(test.contents);
+  return {
+    execute: true,
+    isNegative,
+    isRuntimeNegative,
+    expectedErrorType: negative === true ? undefined : negative?.type,
+    originalHarness: true,
+    asyncTest: Boolean(test.flags?.async),
+    inferModuleStrictArguments: moduleGoal,
+  };
 }
 
-async function runSource(test, source, target) {
-  restoreHostPrototypes();
-  try {
-    const output = [];
-    const appendOutput = (line) => {
-      Reflect.defineProperty(output, output.length, {
-        value: line,
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      });
-    };
-    const consoleProxy = {
-      log: (...values) => appendOutput(values.map(String).join(" ")),
-      error: (...values) => appendOutput(values.map(String).join(" ")),
-      warn: (...values) => appendOutput(values.map(String).join(" ")),
-    };
+function resultPhase(result) {
+  if (result.status === "compile_timeout") return "timeout";
+  if (result.status === "compile_error" || result.reachedTest === false) return "compile";
+  return "runtime";
+}
 
-    let result;
-    let instance;
-    try {
-      result = await compile(source, {
-        allowJs: true,
-        fileName: test.file,
-        skipSemanticDiagnostics: true,
-        // The original harness remains literal and unwrapped, but the JS-host
-        // lane must not execute its top-level assert.* property installation in
-        // Wasm start before setExports can wire closure dispatch (#3362/#3284).
-        ...(target === "gc" ? { deferTopLevelInit: true } : { target }),
+function normalizeWorkerResult(result) {
+  return {
+    pass: result.status === "pass",
+    phase: resultPhase(result),
+    ...(result.status === "pass" ? {} : { detail: result.error ?? result.status }),
+    output: [],
+  };
+}
+
+/**
+ * Serial client for the canonical Test262 worker used by the project runner.
+ * The source still comes byte-for-byte from test262.fyi; only execution,
+ * isolation, async completion, timeout handling, and verdict classification
+ * are shared so the two lanes cannot silently disagree about the same source.
+ */
+export class FyiSourceExecutor {
+  constructor(timeoutMs = sourceTimeoutMs()) {
+    this.timeoutMs = timeoutMs;
+    this.child = undefined;
+    this.starting = undefined;
+    this.nextId = 1;
+  }
+
+  async startWorker() {
+    if (this.child?.connected) return this.child;
+    if (this.starting) return this.starting;
+
+    this.starting = new Promise((resolveWorker, rejectWorker) => {
+      const child = fork(WORKER_PATH, [], {
+        stdio: ["ignore", "inherit", "inherit", "ipc"],
+        execArgv: ["--expose-gc", "--max-old-space-size=512"],
+        env: {
+          ...process.env,
+          TEST262_REALM_CANARY: process.env.TEST262_REALM_CANARY ?? "recycle",
+          TZ: process.env.TEST262_TZ ?? "UTC",
+        },
       });
-    } catch (error) {
-      const detail = thrownText(error);
-      const compileNegative = test.negative === true || (Boolean(test.negative) && test.negative?.phase !== "runtime");
-      return {
-        pass:
-          compileNegative &&
-          negativeCompileErrorMatches(test.negative === true ? undefined : test.negative?.type, [], detail),
-        phase: "compile",
-        detail,
-        output,
+      this.child = child;
+
+      const cleanup = () => {
+        child.off("message", onMessage);
+        child.off("error", onError);
+        child.off("exit", onExit);
       };
-    }
+      const onMessage = (message) => {
+        if (message?.type !== "ready") return;
+        cleanup();
+        resolveWorker(child);
+      };
+      const onError = (error) => {
+        cleanup();
+        this.child = undefined;
+        rejectWorker(error);
+      };
+      const onExit = (code, signal) => {
+        cleanup();
+        this.child = undefined;
+        rejectWorker(new Error(`Test262 worker exited before ready (code ${code}, signal ${signal ?? "none"})`));
+      };
+      child.on("message", onMessage);
+      child.on("error", onError);
+      child.on("exit", onExit);
+    }).finally(() => {
+      this.starting = undefined;
+    });
 
-    if (!result.success) {
-      const detail = compileErrorText(result);
-      const expected = test.negative === true ? undefined : test.negative?.type;
-      const syntaxPhase =
-        test.negative !== true &&
-        (test.negative?.phase === "parse" || test.negative?.phase === "early" || test.negative?.phase === "resolution");
-      const pass =
-        Boolean(test.negative) &&
-        test.negative.phase !== "runtime" &&
-        (!expected || detail.includes(expected) || (expected === "SyntaxError" && syntaxPhase));
-      return { pass, phase: "compile", detail, output };
-    }
+    return this.starting;
+  }
 
-    try {
-      // The literal harness can mutate intrinsic prototypes. Resolve declared
-      // globals against a fresh VM realm per source run so one Test262 record
-      // cannot poison Node or the next record (#1310 parity with the project
-      // runner). This is host isolation only; the assembled test source remains
-      // byte-for-byte unchanged.
-      const globalSandbox = buildFreshSandbox(consoleProxy);
-      const imports = buildImports(result.imports, { console: consoleProxy }, result.stringPool, { globalSandbox });
-      ({ instance } = await WebAssembly.instantiate(result.binary, imports));
-      imports.setExports?.(instance.exports);
-      const moduleInit = instance.exports.__module_init;
-      if (typeof moduleInit === "function") moduleInit();
+  recycle(child, signal = "SIGTERM") {
+    if (this.child === child) this.child = undefined;
+    child.removeAllListeners();
+    if (!child.killed) child.kill(signal);
+  }
 
-      // Promise reactions used by doneprintHandle.js may settle immediately
-      // after instantiate. Two turns cover the microtask plus its completion log.
-      if (test.flags.async) {
-        const deadline = Date.now() + 1_000;
-        while (Date.now() < deadline && !output.some((line) => line.includes("Test262:AsyncTestComplete"))) {
-          await new Promise((resolveTurn) => setTimeout(resolveTurn, 10));
-        }
-      }
+  async runSource(test, source, target) {
+    const child = await this.startWorker();
+    const id = this.nextId++;
+    const options = testWorkerOptions(test);
 
-      if (test.negative) {
-        return { pass: false, phase: "runtime", detail: "expected an exception", output };
-      }
-      if (test.flags.async && !output.some((line) => line.includes("Test262:AsyncTestComplete"))) {
-        return { pass: false, phase: "runtime", detail: "async completion marker not observed", output };
-      }
-      return { pass: true, phase: "runtime", output };
-    } catch (error) {
-      const detail = thrownText(error, instance);
-      if (!test.negative) return { pass: false, phase: "runtime", detail, output };
-      if (test.negative !== true && test.negative.phase !== "runtime") {
-        return { pass: false, phase: "runtime", detail, output };
-      }
-      const expected = test.negative === true ? undefined : test.negative.type;
-      return { pass: !expected || detail.includes(expected), phase: "runtime", detail, output };
-    }
-  } finally {
-    if (!restoreHostPrototypes()) {
-      throw new Error(`test ${test.file} left a non-configurable mutation on a host intrinsic prototype`);
-    }
+    const workerResult = await new Promise((resolveResult) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.off("message", onMessage);
+        child.off("error", onError);
+        child.off("exit", onExit);
+        resolveResult(result);
+      };
+      const onMessage = (message) => {
+        if (message?.id !== id) return;
+        if (message.recycle) this.recycle(child);
+        finish(message);
+      };
+      const onError = (error) => {
+        this.recycle(child);
+        finish({ status: "compile_error", error: error.message });
+      };
+      const onExit = (code, signal) => {
+        if (this.child === child) this.child = undefined;
+        finish({
+          status: "compile_error",
+          error: `Test262 worker exited during ${test.file} (code ${code}, signal ${signal ?? "none"})`,
+        });
+      };
+      const timer = setTimeout(() => {
+        this.recycle(child, "SIGKILL");
+        finish({
+          status: "compile_timeout",
+          error: `source timeout after ${this.timeoutMs}ms`,
+        });
+      }, this.timeoutMs);
+
+      child.on("message", onMessage);
+      child.on("error", onError);
+      child.on("exit", onExit);
+      child.send({ id, source, target, ...options });
+    });
+
+    return normalizeWorkerResult(workerResult);
+  }
+
+  shutdown() {
+    if (this.child) this.recycle(this.child);
   }
 }
 
-export async function runTest(test, target) {
-  const sloppy = await runSource(test, test.contents, target);
-  if (!sloppy.pass || !test.strictRerun) return sloppy;
-  const strict = await runSource(test, `"use strict";\n${test.contents}`, target);
-  return strict.pass ? sloppy : { ...strict, detail: `strict rerun: ${strict.detail ?? "failed"}` };
+export async function runTest(test, target, executor) {
+  const sourceExecutor = executor ?? new FyiSourceExecutor();
+  try {
+    const sloppy = await sourceExecutor.runSource(test, test.contents, target);
+    if (!sloppy.pass || !test.strictRerun) return sloppy;
+    const strict = await sourceExecutor.runSource(test, `"use strict";\n${test.contents}`, target);
+    return strict.pass ? sloppy : { ...strict, detail: `strict rerun: ${strict.detail ?? "failed"}` };
+  } finally {
+    if (!executor) sourceExecutor.shutdown();
+  }
+}
+
+function gitlinkRevision(path) {
+  if (fs.existsSync(join(path, ".git"))) {
+    return execFileSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  }
+  return execFileSync("git", ["-C", ROOT, "rev-parse", `HEAD:${path.slice(ROOT.length + 1)}`], {
+    encoding: "utf8",
+  }).trim();
 }
 
 async function main() {
@@ -322,7 +303,19 @@ async function main() {
   }
 
   const allPaths = discoverTestPaths();
-  const selectedPaths = allPaths
+  const requestedPaths = options.pathsFile
+    ? fs
+        .readFileSync(options.pathsFile, "utf8")
+        .split(/\r?\n/)
+        .map((path) => path.trim().replace(/^test\//, ""))
+        .filter(Boolean)
+    : allPaths;
+  const knownPaths = new Set(allPaths);
+  const unknownPaths = requestedPaths.filter((path) => !knownPaths.has(path));
+  if (unknownPaths.length > 0) {
+    throw new Error(`paths file contains unknown Test262 path: ${unknownPaths[0]}`);
+  }
+  const selectedPaths = requestedPaths
     .filter((path) => options.filters.every((filter) => path.includes(filter)))
     .slice(0, options.limit);
 
@@ -335,23 +328,51 @@ async function main() {
   const selected = selectedPaths.length > 0 ? await loadOriginalHarnessTests(selectedPaths) : [];
   selected.sort((a, b) => a.file.localeCompare(b.file));
 
-  const results = [];
-  let passed = 0;
-  for (let index = 0; index < selected.length; index++) {
-    const test = selected[index];
-    const result = await runTest(test, options.target);
-    results.push({ file: test.file, ...result });
-    if (result.pass) passed++;
-    const label = result.pass ? "PASS" : "FAIL";
-    console.log(`[${index + 1}/${selected.length}] ${label} ${test.file}${result.detail ? ` — ${result.detail}` : ""}`);
+  const results = new Array(selected.length);
+  let nextIndex = 0;
+  let completed = 0;
+  const executors = Array.from(
+    { length: Math.min(options.workers, Math.max(selected.length, 1)) },
+    () => new FyiSourceExecutor(),
+  );
+  try {
+    await Promise.all(
+      executors.map(async (executor) => {
+        while (true) {
+          const index = nextIndex++;
+          if (index >= selected.length) return;
+          const test = selected[index];
+          const result = await runTest(test, options.target, executor);
+          results[index] = { file: test.file, ...result };
+          completed++;
+          const label = result.pass ? "PASS" : "FAIL";
+          console.log(
+            `[${completed}/${selected.length}] ${label} ${test.file}${result.detail ? ` — ${result.detail}` : ""}`,
+          );
+        }
+      }),
+    );
+  } finally {
+    for (const executor of executors) executor.shutdown();
   }
+  const passed = results.filter((result) => result.pass).length;
 
   const document = {
     runner: "test262-fyi-original-harness",
+    executor: "project-test262-worker",
+    workers: executors.length,
     target: options.target,
-    test262FyiRevision: execFileSync("git", ["-C", FYI_ROOT, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-    }).trim(),
+    host: {
+      runtime: "node",
+      version: process.version,
+      v8: process.versions.v8,
+      icu: process.versions.icu,
+      unicode: process.versions.unicode,
+      workerTimeZone: process.env.TEST262_TZ ?? "UTC",
+    },
+    projectRevision: execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+    test262FyiRevision: gitlinkRevision(FYI_ROOT),
+    test262Revision: gitlinkRevision(TEST262_ROOT),
     total: selected.length,
     passed,
     failed: selected.length - passed,
