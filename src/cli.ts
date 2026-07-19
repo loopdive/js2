@@ -144,7 +144,7 @@ let verbose = false;
 // users) — only the CLI flips.
 let optimize: boolean | 1 | 2 | 3 | 4 = 3;
 let target: "gc" | "linear" | "wasi" | "standalone" | undefined;
-let allocator: "bump" | "arena-reset" | undefined;
+let allocator: "bump" | "arena-reset" | "analysis-stack" | undefined;
 let emitWit = false;
 let witPackageName: string | undefined;
 let allowFs = false;
@@ -200,10 +200,10 @@ for (let i = 0; i < args.length; i++) {
     target = "standalone";
   } else if (arg === "--allocator") {
     const a = args[++i];
-    if (a === "bump" || a === "arena-reset") {
+    if (a === "bump" || a === "arena-reset" || a === "analysis-stack") {
       allocator = a;
     } else {
-      console.error(`Unknown allocator: ${a} (expected bump or arena-reset)`);
+      console.error(`Unknown allocator: ${a} (expected bump, arena-reset, or analysis-stack)`);
       process.exit(1);
     }
   } else if (arg === "--wat") {

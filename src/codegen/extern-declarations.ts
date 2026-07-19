@@ -684,6 +684,17 @@ export function collectExternDeclarations(
       // skip the stub so the unified-collector finalize can emit the WasmGC
       // native scanners (registered under the same funcMap names) instead.
       if ((ctx.wasi || ctx.standalone) && (name === "parseInt" || name === "parseFloat")) continue;
+      // #3436: `structuredClone` has no host under WASI / standalone. The
+      // universal test262 prelude's `$262.detachArrayBuffer` references the
+      // ambient global (a `typeof structuredClone !== "function"` guard, then a
+      // call), which would otherwise materialize an unsatisfiable
+      // `env.structuredClone` host import — making EVERY standalone test262
+      // module fail to instantiate (`unknown import`). Skip the stub: the global
+      // stays undefined, so `typeof structuredClone` is "undefined" and the
+      // shim's own guard throws the honest "unsupported by this host" error
+      // (correct semantics — standalone has no structuredClone). Host mode still
+      // registers the import so a real host can satisfy it.
+      if ((ctx.wasi || ctx.standalone) && name === "structuredClone") continue;
       if (!ctx.funcMap.has(name)) {
         const sig = ctx.checker.getSignatureFromDeclaration(stmt);
         if (sig) {

@@ -4,7 +4,7 @@ title: "Object.defineProperty correctness — host-lane store-unification (repre
 status: ready
 assignee: fable-739
 created: 2026-03-22
-updated: 2026-07-17
+updated: 2026-07-18
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -130,7 +130,15 @@ just have to keep the receiver on it.
 
 ## Implementation Plan (2026-07-17, fable-739 — supersedes the 2026-05-21 plan)
 
-### Slice S1 — host-mode representation pinning (the store-unification)
+### Slice S1 — host-mode representation pinning (the store-unification) — ✅ COMPLETE (PR #3317, merged 2026-07-18)
+
+**S1 landed** via PR #3317 (`fix(#739): host-lane representation pinning for
+runtime-store defines`) — the host-lane representation pinning in
+`src/codegen/declarations/object-shape-widening.ts` that resolves the #3230
+read/write-lane repros. The S1/S2 slice spec itself landed in PR #3310
+(`plan(#739): defineProperty store-unification spec`). This issue stays
+`status: ready` — **S2 (two-phase `defineProperties`) is still outstanding**
+(see below).
 
 **File: `src/codegen/declarations/object-shape-widening.ts`**
 

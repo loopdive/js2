@@ -274,20 +274,24 @@ function allocateExpr(bytes: number, siteId: number): PorfforExpr {
   };
 }
 
+// Historical name retained so semantic emitters keep the same allocation
+// interface. The plan-aware assembler selects arena versus stack storage.
 function requireArenaAllocation(
   allocation: LinearAllocationSitePlan | undefined,
   family: string,
 ): LinearAllocationSitePlan & { readonly size: { readonly kind: "constant"; readonly bytes: number } } {
   if (!allocation) throw new Error(`porffor backend requires a planned allocation site for ${family}`);
-  if (allocation.allocationClass !== "arena") {
-    throw new Error(`porffor backend P4 supports arena allocation only; site ${allocation.id as number} is managed`);
+  if (allocation.allocationClass !== "arena" && allocation.allocationClass !== "stack") {
+    throw new Error(
+      `porffor backend supports arena/stack allocation only; site ${allocation.id as number} is ${allocation.allocationClass}`,
+    );
   }
   if (allocation.size.kind !== "constant") {
     throw new Error(`porffor backend requires a constant planned allocation size for ${family}`);
   }
   if (allocation.root.kind !== "none" || allocation.safepoints.kind !== "none" || allocation.barrier.kind !== "none") {
     throw new Error(
-      `porffor arena allocation site ${allocation.id as number} unexpectedly requires roots, safepoints, or barriers`,
+      `porffor allocation site ${allocation.id as number} unexpectedly requires roots, safepoints, or barriers`,
     );
   }
   return allocation as LinearAllocationSitePlan & {

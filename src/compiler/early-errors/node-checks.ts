@@ -1231,7 +1231,7 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
   // ── Duplicate lexical declarations in same block ─────────────────
   // Covers class+class, let+let, const+const, class+let, etc.
   if (ts.isBlock(node) || ts.isSourceFile(node)) {
-    checkDuplicateLexicalDeclarations(ctx, node);
+    checkDuplicateLexicalDeclarations(ctx, node, ctx.moduleGoal);
   }
 
   // ── Duplicate labels in class static blocks ────────────────────

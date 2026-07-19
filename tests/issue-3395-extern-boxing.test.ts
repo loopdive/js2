@@ -92,3 +92,30 @@ describe("#3395 shape 2 — Weak-collection null key → valid Wasm", () => {
     expect(got).toBe(42);
   });
 });
+
+describe("#3395 shape 3 — mixed `==` string ToNumber convert → valid Wasm", () => {
+  it("primitive == wrapper String object compiles to valid Wasm", async () => {
+    // §11.9.1_A7.3: the mixed string==number/boolean path double-converted a
+    // `new String(x)` wrapper operand (already externref) via a redundant
+    // extern.convert_any → invalid Wasm.
+    expect(await validStandalone(`export function test(): boolean { return true == new String("+1"); }`)).toBe(true);
+    expect(await validStandalone(`export function test(): boolean { return 1 == new String("x"); }`)).toBe(true);
+    expect(await validStandalone(`export function test(): boolean { return new String("x") == 1; }`)).toBe(true);
+    expect(
+      await validStandalone(`
+        if ((true == new Boolean(true)) !== true) { throw new Error("1"); }
+        if ((true == new String("+1")) !== true) { throw new Error("3"); }
+        export function test(): number { return 0; }
+      `),
+    ).toBe(true);
+  });
+
+  it("native-string ToNumber loose-equality still correct (the convert IS still emitted for a string ref)", async () => {
+    // These operands are native `$AnyString` refs (not externref) — the
+    // extern.convert_any box must still fire, so the runtime value is unchanged.
+    expect(await runStandalone(`export function test(): number { return ("1" == 1) ? 1 : 0; }`)).toBe(1); // "1"→1
+    expect(await runStandalone(`export function test(): number { return ("" == 0) ? 1 : 0; }`)).toBe(1); // ""→0
+    expect(await runStandalone(`export function test(): number { return ("abc" == 1) ? 1 : 0; }`)).toBe(0); // "abc"→NaN
+    expect(await runStandalone(`export function test(): number { return (true == "1") ? 1 : 0; }`)).toBe(1); // 1==1
+  });
+});

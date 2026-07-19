@@ -77,6 +77,67 @@ export function detectI32LoopVar(stmt: ts.ForStatement): { name: string; initVal
   return { name, initValue };
 }
 
+/** Innermost var-scope root for `node`: enclosing function-like body, class
+ * static block body, or the SourceFile. `var` declarations hoist to this scope,
+ * so redeclaration analysis must cover exactly this subtree. */
+function enclosingVarScope(node: ts.Node): ts.Node {
+  let cur: ts.Node | undefined = node.parent;
+  while (cur) {
+    if (ts.isSourceFile(cur)) return cur;
+    if (ts.isClassStaticBlockDeclaration(cur)) return cur.body;
+    if (ts.isFunctionLike(cur)) {
+      const body = (cur as ts.FunctionLikeDeclaration).body;
+      if (body) return body;
+    }
+    cur = cur.parent;
+  }
+  return node;
+}
+
+/**
+ * (#3419) True when promoting the `var`-declared counter of `stmt` to i32 would
+ * be unsound because ANOTHER `var <name>` declaration in the same var scope is
+ * not an identically-promotable counter head. `var` redeclarations share ONE
+ * function-scoped binding (one Wasm local): if a first loop promotes it to i32
+ * and a later `for (var i = arr.length - 1; …)` head re-initializes it with an
+ * f64 expression, one of the two loops ends up emitting ops against the wrong
+ * local type — the exact invalid-wasm class hit by test262's
+ * `testWithAllTypedArrayConstructors` (duplicate `var i` across three loops).
+ * When this returns true the counter stays f64 everywhere — slower, but every
+ * redeclaration then agrees on the local's type.
+ *
+ * `let`/`const` counters are block-scoped per loop head and never share the
+ * local, so callers only need this for `var` heads.
+ */
+export function varCounterRedeclarationBlocksI32(stmt: ts.ForStatement, name: string): boolean {
+  const scope = enclosingVarScope(stmt);
+  let blocked = false;
+  const visit = (node: ts.Node): void => {
+    if (blocked) return;
+    // Do not cross into nested var scopes — their `var <name>` is a different binding.
+    if (node !== scope && (ts.isFunctionLike(node) || ts.isClassStaticBlockDeclaration(node))) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+      const list = node.parent;
+      if (
+        ts.isVariableDeclarationList(list) &&
+        (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) === 0
+      ) {
+        // Another `var <name>`. Our own head is fine; a sibling for-head that
+        // is itself the same i32-promotable counter shape is fine (both loops
+        // agree on i32); anything else forces the shared local to stay f64.
+        const parentFor = ts.isForStatement(list.parent) && list.parent.initializer === list ? list.parent : null;
+        if (parentFor !== stmt) {
+          const info = parentFor ? detectI32LoopVar(parentFor) : null;
+          if (!info || info.name !== name) blocked = true;
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  return blocked;
+}
+
 /**
  * Shared compound-assignment operator classifier: is `kind` one of the
  * assignment / compound-assignment tokens (`=`, `+=`, … `||=`)? Extracted from

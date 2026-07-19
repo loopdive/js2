@@ -1,7 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { ModuleLayout } from "../../../emit/resolve-layout.js";
-import type { LinearMemoryPlan, LinearRuntimeOperation, LinearStorageKind } from "../../analysis/linear-memory-plan.js";
+import {
+  LINEAR_STACK_ARENA_BYTES,
+  type LinearAllocationClass,
+  type LinearAllocationSitePlan,
+  type LinearMemoryPlan,
+  type LinearRuntimeOperation,
+  type LinearStorageKind,
+} from "../../analysis/linear-memory-plan.js";
 import {
   irVal,
   type AllocSiteId,
@@ -55,6 +62,7 @@ interface FunctionEntry {
   readonly name: string;
   signature?: PorfforFunctionSymbol;
   definition?: PorfforFunctionDefinition;
+  stackRuntime?: "mark" | "allocate" | "restore";
 }
 
 interface GlobalEntry {
@@ -110,11 +118,50 @@ export class PorfforModuleAssembler
   private preferences: Readonly<Record<string, unknown>> = { gc: false };
   private memoryPlan: LinearMemoryPlan | undefined;
   private readonly objects = new Map<string, PlannedObjectLowering>();
+  private stackGlobals: { readonly base: GlobalHandle; readonly pointer: GlobalHandle } | undefined;
 
   bindMemoryPlan(plan: LinearMemoryPlan): void {
     this.assertMutable("bind memory plan");
     if (this.memoryPlan) throw new Error("porffor assembler: memory plan already bound");
     this.memoryPlan = plan;
+    for (const allocation of plan.allocations) this.plannedAllocationClass(allocation);
+    if (plan.allocations.some((allocation) => this.hasStackFrameOperations(allocation))) {
+      this.ensureStackRuntime();
+    }
+  }
+
+  private plannedAllocationClass(allocation: LinearAllocationSitePlan): LinearAllocationClass {
+    const allocationOperations = allocation.operations.filter(isAllocationBindingOperation);
+    const encodedClasses = allocationOperations.flatMap((operation) =>
+      "allocationClass" in operation ? [operation.allocationClass] : [],
+    );
+    if (allocation.allocationClass !== "managed" && encodedClasses.length === 0) {
+      throw new Error(
+        `porffor assembler: allocation site ${allocation.id as number} has no symbolic allocation operation`,
+      );
+    }
+    if (encodedClasses.some((allocationClass) => allocationClass !== allocation.allocationClass)) {
+      throw new Error(
+        `porffor assembler: allocation site ${allocation.id as number} disagrees with its symbolic allocation operation`,
+      );
+    }
+
+    const marks = allocation.operations.filter(
+      (operation) => operation.family === "stack" && operation.operation === "mark",
+    ).length;
+    const restores = allocation.operations.filter(
+      (operation) => operation.family === "stack" && operation.operation === "restore",
+    ).length;
+    if (allocation.allocationClass === "stack" ? marks !== 1 || restores !== 1 : marks !== 0 || restores !== 0) {
+      throw new Error(
+        `porffor assembler: allocation site ${allocation.id as number} has inconsistent symbolic stack operations`,
+      );
+    }
+    return encodedClasses[0] ?? allocation.allocationClass;
+  }
+
+  private hasStackFrameOperations(allocation: LinearAllocationSitePlan): boolean {
+    return allocation.operations.some((operation) => operation.family === "stack" && operation.operation === "mark");
   }
 
   setPreferences(preferences: Readonly<Record<string, unknown>>): void {
@@ -235,6 +282,28 @@ export class PorfforModuleAssembler
     this.start = handle;
   }
 
+  private ensureStackRuntime(): void {
+    if (this.stackGlobals) return;
+    const base = this.declarePorfforGlobal("#js2_stack_base", "ptr");
+    const pointer = this.declarePorfforGlobal("#js2_stack_pointer", "ptr");
+    this.stackGlobals = { base, pointer };
+
+    const declare = (
+      name: string,
+      params: readonly PorfforValueSlot[],
+      results: readonly PorfforValueSlot[],
+      stackRuntime: NonNullable<FunctionEntry["stackRuntime"]>,
+    ): void => {
+      const handle = this.declareFunc(name);
+      const entry = this.requireFunc(handle);
+      entry.signature = { name, params, results };
+      entry.stackRuntime = stackRuntime;
+    };
+    declare("#js2_stack_mark", [], ["ptr"], "mark");
+    declare("#js2_stack_allocate", ["u32"], ["ptr"], "allocate");
+    declare("#js2_stack_restore", ["ptr"], [], "restore");
+  }
+
   finalize(): ModuleLayout {
     this.assertMutable("finalize");
     this.frozen = true;
@@ -244,7 +313,7 @@ export class PorfforModuleAssembler
     const types = [...this.typesByHandle.values()].sort((left, right) => compareText(left.key, right.key));
     for (const entry of functions) {
       if (!entry.signature) throw new Error(`porffor assembler: function '${entry.name}' has no registered signature`);
-      if (!entry.definition)
+      if (!entry.definition && !entry.stackRuntime)
         throw new Error(`porffor assembler: function '${entry.name}' was declared but never defined`);
     }
     for (const entry of globals) {
@@ -372,6 +441,7 @@ export class PorfforModuleAssembler
   }
 
   private assembleFunction(entry: FunctionEntry, index: number): PorfforFunctionRecord {
+    if (entry.stackRuntime) return this.assembleStackRuntimeFunction(entry, index, entry.stackRuntime);
     const lowered = entry.definition!.lowered;
     const params: LocalBinding[] = lowered.params.map((value, paramIndex) => ({
       name: `#js2_param_${paramIndex}_${value.name}`,
@@ -392,8 +462,23 @@ export class PorfforModuleAssembler
       locals[local.name] = { type: typeOrdinal(local.type) };
     }
 
+    const usesStack = this.memoryPlan?.allocations.some(
+      (allocation) => allocation.ownerFunction === entry.name && this.hasStackFrameOperations(allocation),
+    );
+    const stackMarkName = "#js2_stack_frame_mark";
+    const stackResultName = "#js2_stack_frame_result";
+    const resultType =
+      lowered.results.length === 0 ? null : oneLoweredSlot(lowered.results[0]!, `stack-frame result of ${entry.name}`);
+    if (usesStack) {
+      locals[stackMarkName] = { type: typeOrdinal("ptr") };
+      if (resultType) locals[stackResultName] = { type: typeOrdinal(resultType) };
+    }
+
     lowered.body.assertEmpty(`function ${entry.name}`);
-    const body = this.assembleStatements(lowered.body.statements, indexedLocals, entry.name, []);
+    let body = this.assembleStatements(lowered.body.statements, indexedLocals, entry.name, []);
+    if (usesStack) {
+      body = this.instrumentPorfforStackFrame(body, stackMarkName, resultType ? stackResultName : null, resultType);
+    }
     return {
       name: entry.name,
       index,
@@ -405,6 +490,149 @@ export class PorfforModuleAssembler
       locals,
       body,
     };
+  }
+
+  private assembleStackRuntimeFunction(
+    entry: FunctionEntry,
+    index: number,
+    operation: NonNullable<FunctionEntry["stackRuntime"]>,
+  ): PorfforFunctionRecord {
+    const globals = this.stackGlobals;
+    if (!globals) throw new Error("porffor assembler: stack runtime has no globals");
+    const global = (handle: GlobalHandle): PorfforNode => {
+      const symbol = this.globalSymbol(handle);
+      return node("Global", symbol.type, PORFFOR_FX.readGlobal, symbol.name, 0, 0);
+    };
+    const local = (name: string, type: PorfforValueSlot): PorfforNode =>
+      node("Local", type, PORFFOR_FX.none, name, 0, 0);
+    const constant = (value: number, type: PorfforValueSlot = "u32"): PorfforNode =>
+      node("Const", type, PORFFOR_FX.none, value, 0, 0);
+    const assign = (target: PorfforNode, value: PorfforNode): PorfforNode =>
+      node("Assign", "none", PORFFOR_FX.writeLocal | target[2] | value[2], target, value, 0);
+    const binary = (
+      op: string,
+      type: PorfforValueSlot,
+      left: PorfforNode,
+      right: PorfforNode,
+      comparison = false,
+    ): PorfforNode => node("Bin", comparison ? "i32" : type, left[2] | right[2], op, left, right);
+
+    let params: PorfforFunctionRecord["params"] = [];
+    let retType: PorfforValueSlot | "none" = "none";
+    const locals: Record<string, { type: number }> = {};
+    let body: PorfforNode[];
+    if (operation === "mark") {
+      retType = "ptr";
+      const initialize = [
+        assign(
+          global(globals.base),
+          node("Alloc", "ptr", PORFFOR_FX.call, constant(LINEAR_STACK_ARENA_BYTES), 0, [-1, false]),
+        ),
+        assign(global(globals.pointer), global(globals.base)),
+      ];
+      const condition = binary("==", "i32", global(globals.pointer), constant(0, "ptr"), true);
+      body = [
+        node("If", "none", condition[2], condition, initialize, null),
+        node("Return", "none", PORFFOR_FX.readGlobal, global(globals.pointer), 0, 0),
+      ];
+    } else if (operation === "allocate") {
+      const bytesName = "#js2_stack_bytes";
+      const retName = "#js2_stack_ret";
+      const nextName = "#js2_stack_next";
+      params = [{ name: bytesName, type: typeOrdinal("u32") }];
+      retType = "ptr";
+      locals[retName] = { type: typeOrdinal("ptr") };
+      locals[nextName] = { type: typeOrdinal("ptr") };
+      const aligned = binary(
+        "&",
+        "ptr",
+        binary("+", "ptr", binary("+", "ptr", local(retName, "ptr"), local(bytesName, "u32")), constant(7)),
+        constant(-8),
+      );
+      const limit = binary("+", "ptr", global(globals.base), constant(LINEAR_STACK_ARENA_BYTES));
+      const overflow = binary(">", "i32", local(nextName, "ptr"), limit, true);
+      const fallback = node("Alloc", "ptr", PORFFOR_FX.call, local(bytesName, "u32"), 0, [-2, false]);
+      body = [
+        assign(local(retName, "ptr"), global(globals.pointer)),
+        assign(local(nextName, "ptr"), aligned),
+        node("If", "none", overflow[2], overflow, [node("Return", "none", PORFFOR_FX.call, fallback, 0, 0)], null),
+        assign(global(globals.pointer), local(nextName, "ptr")),
+        node("Return", "none", PORFFOR_FX.none, local(retName, "ptr"), 0, 0),
+      ];
+    } else {
+      const markName = "#js2_stack_mark";
+      params = [{ name: markName, type: typeOrdinal("ptr") }];
+      body = [
+        assign(global(globals.pointer), local(markName, "ptr")),
+        node("Return", "none", PORFFOR_FX.none, null, 0, 0),
+      ];
+    }
+    return {
+      name: entry.name,
+      index,
+      params,
+      retType: typeOrdinal(retType),
+      locals,
+      body,
+    };
+  }
+
+  private instrumentPorfforStackFrame(
+    body: readonly PorfforNode[],
+    markName: string,
+    resultName: string | null,
+    resultType: PorfforValueSlot | null,
+  ): PorfforNode[] {
+    const markLocal = node("Local", "ptr", PORFFOR_FX.none, markName, 0, 0);
+    const markCall = node("Call", "ptr", PORFFOR_FX.call, "#js2_stack_mark", [], 0);
+    const enter = node("Assign", "none", PORFFOR_FX.writeLocal | PORFFOR_FX.call, markLocal, markCall, 0);
+    const restore = (): PorfforNode => node("Call", "none", PORFFOR_FX.call, "#js2_stack_restore", [markLocal], 0);
+
+    const rewrite = (statements: readonly PorfforNode[]): PorfforNode[] =>
+      statements.flatMap((statement) => {
+        const kind = PORFFOR_KIND_NAMES[statement[0]];
+        if (kind === "Return") {
+          const value = statement[3] as PorfforNode | null;
+          if (!value || !resultName || !resultType) return [restore(), statement];
+          const resultLocal = node("Local", resultType, PORFFOR_FX.none, resultName, 0, 0);
+          return [
+            node("Assign", "none", PORFFOR_FX.writeLocal | value[2], resultLocal, value, 0),
+            restore(),
+            node("Return", "none", PORFFOR_FX.none, resultLocal, 0, 0),
+          ];
+        }
+        if (kind === "Block") {
+          return [
+            [
+              statement[0],
+              statement[1],
+              statement[2],
+              rewrite(statement[3] as readonly PorfforNode[]),
+              statement[4],
+              statement[5],
+            ],
+          ];
+        }
+        if (kind === "If") {
+          const otherwise = statement[5] as readonly PorfforNode[] | null;
+          return [
+            [
+              statement[0],
+              statement[1],
+              statement[2],
+              statement[3],
+              rewrite(statement[4] as readonly PorfforNode[]),
+              otherwise ? rewrite(otherwise) : null,
+            ],
+          ];
+        }
+        if (kind === "Loop") {
+          const [loopBody, label] = statement[5] as readonly [readonly PorfforNode[], string];
+          return [[statement[0], statement[1], statement[2], statement[3], statement[4], [rewrite(loopBody), label]]];
+        }
+        return [statement];
+      });
+    return [enter, ...rewrite(body)];
   }
 
   private assembleStatements(
@@ -541,6 +769,14 @@ export class PorfforModuleAssembler
       }
       case "alloc": {
         const bytes = this.assembleExpr(expression.bytes, locals);
+        const allocation = this.memoryPlan?.allocations.find(
+          (candidate) => (candidate.id as number) === expression.siteId,
+        );
+        if (!allocation) throw new Error(`porffor assembler: allocation site ${expression.siteId} is not planned`);
+        if (this.plannedAllocationClass(allocation) === "stack") {
+          if (!this.stackGlobals) throw new Error("porffor assembler: stack allocation has no runtime");
+          return node("Call", "ptr", bytes[2] | PORFFOR_FX.call, "#js2_stack_allocate", [bytes], 0);
+        }
         return node("Alloc", "ptr", bytes[2] | PORFFOR_FX.call, bytes, expression.typeId, [expression.siteId, false]);
       }
       case "load": {
@@ -644,6 +880,15 @@ export class PorfforModuleAssembler
   private assertMutable(action: string): void {
     if (this.frozen) throw new Error(`porffor assembler: cannot ${action} after finalize`);
   }
+}
+
+function isAllocationBindingOperation(operation: LinearRuntimeOperation): boolean {
+  return (
+    (operation.family === "memory" && operation.operation === "allocate") ||
+    (operation.family === "vector" && operation.operation === "allocate") ||
+    (operation.family === "string" && operation.operation === "materialize-data") ||
+    (operation.family === "managed" && operation.operation === "allocate")
+  );
 }
 
 function oneLoweredSlot(slots: readonly PorfforValueSlot[], where: string): PorfforValueSlot {

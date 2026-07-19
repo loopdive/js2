@@ -33,6 +33,199 @@ export const REGRESSION_RATIO_LIMIT = 0.1;
 export const REGRESSION_BUCKET_LIMIT = 50;
 export const REGRESSION_BUCKET_PATH_DEPTH = 5;
 
+export interface HostNoiseCanaryProvenance {
+  canary_run_id: number;
+  compiler_sha: string;
+  artifact_id: number;
+  artifact_name: string;
+  compiler_pool_size: number;
+  run_a_entries: number;
+  run_b_entries: number;
+  pass_flips: number;
+  non_pass_status_noise: number;
+  unstable_paths: number;
+}
+
+export interface HostNoiseObservation {
+  canary_run_id: number;
+  run_a_status: string;
+  run_b_status: string;
+  kind: "pass_flip" | "non_pass_status_noise";
+}
+
+export interface HostNoiseQuarantineManifest {
+  schema_version: number;
+  lane: string;
+  policy: {
+    eligible_paths: string;
+    intersection_paths: string;
+  };
+  provenance: {
+    generated_by: string;
+    canaries: HostNoiseCanaryProvenance[];
+  };
+  counts: {
+    canary_runs: number;
+    pass_flip_observations: number;
+    non_pass_status_noise_observations: number;
+    union_paths: number;
+    intersection_paths: number;
+  };
+  entries: {
+    path: string;
+    observations: HostNoiseObservation[];
+  }[];
+}
+
+export interface HostNoiseQuarantine {
+  manifest: HostNoiseQuarantineManifest;
+  paths: ReadonlySet<string>;
+  intersectionPaths: ReadonlySet<string>;
+}
+
+export const HOST_NOISE_ELIGIBILITY_POLICY = "union-of-complete-same-sha-pool4-canaries";
+export const HOST_NOISE_INTERSECTION_POLICY = "observed-in-every-recorded-canary";
+
+/**
+ * #3426 — Load and validate the exact-path JS-host noise quarantine generated
+ * from complete same-compiler canaries. Eligibility is the exact union of
+ * observed A/B status changes; the exact intersection remains available as the
+ * repeat-confirmed subset. Fail closed: this file influences required gate
+ * arithmetic, so malformed provenance, duplicate/unsorted observations, or a
+ * count / transition mismatch must abort instead of silently changing scope.
+ * The standalone lane never calls this loader.
+ */
+export function validateHostNoiseQuarantineManifest(manifest: HostNoiseQuarantineManifest): HostNoiseQuarantine {
+  if (
+    manifest.schema_version !== 2 ||
+    manifest.lane !== "js-host" ||
+    manifest.policy?.eligible_paths !== HOST_NOISE_ELIGIBILITY_POLICY ||
+    manifest.policy?.intersection_paths !== HOST_NOISE_INTERSECTION_POLICY ||
+    manifest.provenance?.generated_by !== "scripts/test262-canary-diff.ts" ||
+    !Array.isArray(manifest.provenance?.canaries) ||
+    manifest.provenance.canaries.length < 1 ||
+    !Array.isArray(manifest.entries)
+  ) {
+    throw new Error("invalid Test262 host-noise quarantine provenance/schema (#3426)");
+  }
+
+  const canaryRunIds = new Set<number>();
+  const artifactIds = new Set<number>();
+  const canaryByRunId = new Map<number, HostNoiseCanaryProvenance>();
+  let previousRunId = 0;
+  for (const canary of manifest.provenance.canaries) {
+    if (
+      !Number.isInteger(canary.canary_run_id) ||
+      canary.canary_run_id <= 0 ||
+      (previousRunId !== 0 && canary.canary_run_id <= previousRunId) ||
+      canaryRunIds.has(canary.canary_run_id) ||
+      !/^[0-9a-f]{40}$/.test(canary.compiler_sha ?? "") ||
+      !Number.isInteger(canary.artifact_id) ||
+      canary.artifact_id <= 0 ||
+      artifactIds.has(canary.artifact_id) ||
+      canary.artifact_name !== "test262-canary-report" ||
+      canary.compiler_pool_size !== 4 ||
+      !Number.isInteger(canary.run_a_entries) ||
+      !Number.isInteger(canary.run_b_entries) ||
+      canary.run_a_entries <= 0 ||
+      canary.run_a_entries !== canary.run_b_entries ||
+      !Number.isInteger(canary.pass_flips) ||
+      canary.pass_flips < 0 ||
+      !Number.isInteger(canary.non_pass_status_noise) ||
+      canary.non_pass_status_noise < 0 ||
+      !Number.isInteger(canary.unstable_paths) ||
+      canary.unstable_paths !== canary.pass_flips + canary.non_pass_status_noise
+    ) {
+      throw new Error(`invalid Test262 host-noise canary provenance for run ${canary.canary_run_id || "<unknown>"}`);
+    }
+    canaryRunIds.add(canary.canary_run_id);
+    artifactIds.add(canary.artifact_id);
+    canaryByRunId.set(canary.canary_run_id, canary);
+    previousRunId = canary.canary_run_id;
+  }
+
+  const paths = new Set<string>();
+  const intersectionPaths = new Set<string>();
+  const observationCounts = new Map<number, { passFlips: number; nonPassNoise: number; total: number }>();
+  for (const runId of canaryRunIds) observationCounts.set(runId, { passFlips: 0, nonPassNoise: 0, total: 0 });
+  let passFlipObservations = 0;
+  let nonPassNoiseObservations = 0;
+  let previousPath = "";
+  for (const entry of manifest.entries) {
+    if (
+      typeof entry.path !== "string" ||
+      entry.path.length === 0 ||
+      !Array.isArray(entry.observations) ||
+      entry.observations.length < 1 ||
+      paths.has(entry.path) ||
+      (previousPath !== "" && entry.path.localeCompare(previousPath) <= 0)
+    ) {
+      throw new Error(`invalid/duplicate/unsorted Test262 host-noise quarantine entry: ${entry.path || "<empty>"}`);
+    }
+
+    const observedRunIds = new Set<number>();
+    let previousObservationRunId = 0;
+    for (const observation of entry.observations) {
+      if (
+        !Number.isInteger(observation.canary_run_id) ||
+        !canaryRunIds.has(observation.canary_run_id) ||
+        observedRunIds.has(observation.canary_run_id) ||
+        (previousObservationRunId !== 0 && observation.canary_run_id <= previousObservationRunId) ||
+        typeof observation.run_a_status !== "string" ||
+        typeof observation.run_b_status !== "string" ||
+        observation.run_a_status === observation.run_b_status
+      ) {
+        throw new Error(`invalid/duplicate/unsorted Test262 host-noise observation for ${entry.path}`);
+      }
+      const aPass = observation.run_a_status === "pass";
+      const bPass = observation.run_b_status === "pass";
+      const runCounts = observationCounts.get(observation.canary_run_id)!;
+      if (observation.kind === "pass_flip" && aPass !== bPass) {
+        passFlipObservations++;
+        runCounts.passFlips++;
+      } else if (observation.kind === "non_pass_status_noise" && !aPass && !bPass) {
+        nonPassNoiseObservations++;
+        runCounts.nonPassNoise++;
+      } else {
+        throw new Error(`inconsistent Test262 host-noise transition kind for ${entry.path}`);
+      }
+      runCounts.total++;
+      observedRunIds.add(observation.canary_run_id);
+      previousObservationRunId = observation.canary_run_id;
+    }
+    if (observedRunIds.size === canaryRunIds.size) intersectionPaths.add(entry.path);
+    paths.add(entry.path);
+    previousPath = entry.path;
+  }
+
+  for (const [runId, observed] of observationCounts) {
+    const expected = canaryByRunId.get(runId)!;
+    if (
+      observed.passFlips !== expected.pass_flips ||
+      observed.nonPassNoise !== expected.non_pass_status_noise ||
+      observed.total !== expected.unstable_paths
+    ) {
+      throw new Error(`Test262 host-noise observation count mismatch for canary run ${runId}`);
+    }
+  }
+  if (
+    manifest.counts?.canary_runs !== canaryRunIds.size ||
+    manifest.counts?.pass_flip_observations !== passFlipObservations ||
+    manifest.counts?.non_pass_status_noise_observations !== nonPassNoiseObservations ||
+    manifest.counts?.union_paths !== paths.size ||
+    manifest.counts?.intersection_paths !== intersectionPaths.size
+  ) {
+    throw new Error("Test262 host-noise quarantine count mismatch (#3426)");
+  }
+  return { manifest, paths, intersectionPaths };
+}
+
+export function loadHostNoiseQuarantine(): HostNoiseQuarantine {
+  const source = new URL("./test262-host-noise-quarantine.json", import.meta.url);
+  const manifest = JSON.parse(readFileSync(source, "utf-8")) as HostNoiseQuarantineManifest;
+  return validateHostNoiseQuarantineManifest(manifest);
+}
+
 // #3189 — the four UNCATCHABLE Wasm-trap error categories. A trap aborts the
 // whole test file and escapes `try`/`catch` (documented in #3179 — a trap
 // inside `assert.throws` poisons every test whose body shares the pattern), so
@@ -601,6 +794,13 @@ Environment:
                                 host-free — a carrier migration removing a host dep, not a regression.
   --help, -h                    Show this help
 
+Host-lane note: #3426 excludes only the exact union of paths observed changing
+status in complete same-SHA pool-4 A/B canaries recorded by
+scripts/test262-host-noise-quarantine.json. The repeat-confirmed intersection is
+reported separately. Every matching transition remains listed as QUARANTINED.
+The standalone invocation (--exclude-leaky-baseline-regressions) never loads or
+applies this JS-host-only manifest.
+
 Note: #2940 vacuity reclassifications (pass → a NEW row scored 'vacuous' — the
 harness callback never ran, so nothing asserted) are excluded from the gated
 regression count UNCONDITIONALLY (default-on, like the #2167 stale-async flake),
@@ -749,6 +949,13 @@ async function run(
     );
   }
 
+  // #3426 — the base-main workflow already distinguishes the standalone lane
+  // with this flag. That makes the exact same merged-tree script self-landing:
+  // base-main YAML need not learn a new option before the host quarantine can
+  // take effect, while standalone never loads or consults the host manifest.
+  const hostNoiseQuarantine = excludeLeakyBaseline ? null : loadHostNoiseQuarantine();
+  const isHostQuarantined = (file: string) => hostNoiseQuarantine?.paths.has(file) === true;
+
   // Collect transitions
   const regressions: {
     file: string;
@@ -787,9 +994,11 @@ async function run(
      * **TEMPORARY** — removal follow-up #3001). See `isVacuousReclassification`.
      */
     vacuousReclassification: boolean;
+    /** #3426: exact path changed status between same-compiler host canary runs. */
+    hostQuarantined: boolean;
   }[] = [];
-  const improvements: { file: string; from: string; to: string }[] = [];
-  const otherChanges: { file: string; from: string; to: string }[] = [];
+  const improvements: { file: string; from: string; to: string; hostQuarantined: boolean }[] = [];
+  const otherChanges: { file: string; from: string; to: string; hostQuarantined: boolean }[] = [];
 
   // Count statuses
   const baselineCounts: Record<string, number> = {};
@@ -839,11 +1048,12 @@ async function run(
         // TEMPORARY #3001). `base` is a pass by construction; `cur` carries the
         // vacuity marker.
         vacuousReclassification: isVacuousReclassification(base, cur),
+        hostQuarantined: isHostQuarantined(file),
       });
     } else if (baseStatus !== "pass" && curStatus === "pass") {
-      improvements.push({ file, from: baseStatus, to: curStatus });
+      improvements.push({ file, from: baseStatus, to: curStatus, hostQuarantined: isHostQuarantined(file) });
     } else {
-      otherChanges.push({ file, from: baseStatus, to: curStatus });
+      otherChanges.push({ file, from: baseStatus, to: curStatus, hostQuarantined: isHostQuarantined(file) });
     }
   }
 
@@ -851,6 +1061,10 @@ async function run(
   regressions.sort((a, b) => a.file.localeCompare(b.file));
   improvements.sort((a, b) => a.file.localeCompare(b.file));
   otherChanges.sort((a, b) => a.file.localeCompare(b.file));
+  const quarantinedTransitions = [...regressions, ...improvements, ...otherChanges]
+    .filter((entry) => entry.hostQuarantined)
+    .sort((a, b) => a.file.localeCompare(b.file));
+  const stableImprovements = improvements.filter((entry) => !entry.hostQuarantined);
 
   // Print report
   console.log(`\n${"=".repeat(60)}`);
@@ -893,27 +1107,126 @@ async function run(
   }
   console.log();
 
+  if (hostNoiseQuarantine) {
+    const quarantinedRegressions = regressions.filter((entry) => entry.hostQuarantined).length;
+    const quarantinedImprovements = improvements.filter((entry) => entry.hostQuarantined).length;
+    const quarantinedOther = otherChanges.filter((entry) => entry.hostQuarantined).length;
+    const { provenance, counts } = hostNoiseQuarantine.manifest;
+    const intersectionTransitions = quarantinedTransitions.filter((entry) =>
+      hostNoiseQuarantine.intersectionPaths.has(entry.file),
+    ).length;
+    console.log(
+      `=== Host canary quarantine (#3426): ${quarantinedTransitions.length} observed transition(s) excluded from host fine/compile-time gate arithmetic ===`,
+    );
+    for (const canary of provenance.canaries) {
+      console.log(
+        `  Evidence: same-SHA run ${canary.canary_run_id}, compiler ${canary.compiler_sha}, artifact ${canary.artifact_id}, pool ${canary.compiler_pool_size}; ` +
+          `${canary.unstable_paths} exact paths (${canary.pass_flips} pass flips + ${canary.non_pass_status_noise} non-pass noise).`,
+      );
+    }
+    console.log(
+      `  Manifest policy: ${counts.union_paths} union-eligible exact paths; ${counts.intersection_paths} intersection paths observed in all ${counts.canary_runs} canaries.`,
+    );
+    console.log(
+      `  Current raw quarantined transitions: ${quarantinedRegressions} regression(s), ${quarantinedImprovements} improvement(s), ${quarantinedOther} other status change(s); ` +
+        `${intersectionTransitions} intersection, ${quarantinedTransitions.length - intersectionTransitions} union-only.`,
+    );
+    // Always list every observed quarantined transition, including under
+    // --quiet: the required workflow uploads this output as the audit artifact.
+    for (const entry of quarantinedTransitions) {
+      const evidenceClass = hostNoiseQuarantine.intersectionPaths.has(entry.file) ? "intersection" : "union-only";
+      console.log(`  QUARANTINED ${entry.file}: ${entry.from} → ${entry.to} [${evidenceClass}]`);
+    }
+    console.log();
+  }
+
   // #1192: split regressions by destination status. compile_timeout
   // transitions are runner-load timing noise (tests near the 30s
   // compile-timeout boundary flap based on CI system load), not real
   // compiler regressions. Emit separate counts so the merge gate can
   // exclude CT noise from the ratio. The "Regressions (pass → other)"
   // line above stays unchanged for backwards compat with the dashboard.
-  const regressionsCT = regressions.filter((r) => r.to === "compile_timeout").length;
-  const regressionsReal = regressions.length - regressionsCT;
+  const rawRegressionsCT = regressions.filter((r) => r.to === "compile_timeout").length;
+  const quarantinedRegressionsCT = regressions.filter((r) => r.to === "compile_timeout" && r.hostQuarantined).length;
+  const regressionsCT = rawRegressionsCT - quarantinedRegressionsCT;
+  const rawImprovementsCT = improvements.filter((entry) => entry.from === "compile_timeout").length;
+  const quarantinedImprovementsCT = improvements.filter(
+    (entry) => entry.from === "compile_timeout" && entry.hostQuarantined,
+  ).length;
+  const improvementsCT = rawImprovementsCT - quarantinedImprovementsCT;
+  const rawRegressionsReal = regressions.length - rawRegressionsCT;
+  const quarantinedRegressionsReal = regressions.filter((r) => r.to !== "compile_timeout" && r.hostQuarantined).length;
+  const regressionsReal = rawRegressionsReal - quarantinedRegressionsReal;
+  // #3426 follow-up — host pool contention moves tests across the compile
+  // timeout boundary in both directions. A forward-only count treats one side
+  // of that symmetric churn as a compiler slowdown while discarding the exact
+  // inverse evidence from the same comparison. For the HOST lane only, gate
+  // directional growth in the pass↔compile_timeout population after removing
+  // canary-proven paths from BOTH directions:
+  //
+  //   max(0, stable pass→compile_timeout − stable compile_timeout→pass)
+  //
+  // This still reports/fails one-way timeout growth at full strength. It does
+  // not identify or excuse any additional path, and standalone keeps the
+  // original forward-only count because it never loads the host manifest.
+  // Keep the legacy first-line shape because the base-main #1942 shell parses
+  // its first match; the following distinct labels make every component and
+  // the interpretation observable.
+  const directionalRegressionsCT = hostNoiseQuarantine ? Math.max(0, regressionsCT - improvementsCT) : regressionsCT;
   // #3370 — compile-time signals compare the cost of compiling the same
   // workload. A deliberate oracle rebaseline changes the assembled harness,
   // so old-oracle pass→timeout transitions are not compile regressions. Keep
   // the measured count visible, but reset the canonical gated signal consumed
   // by the #1942 workflow guard. Same-oracle comparisons are unchanged.
-  const gatedRegressionsCT = rebaseMode ? 0 : regressionsCT;
+  const gatedRegressionsCT = rebaseMode ? 0 : directionalRegressionsCT;
   console.log(`=== Compile timeouts (pass → compile_timeout): ${gatedRegressionsCT} ===`);
-  if (rebaseMode && regressionsCT > 0) {
+  if (hostNoiseQuarantine) {
+    console.log(`=== Stable host pass→compile_timeout transitions before symmetric offset: ${regressionsCT} ===`);
+    console.log(`=== Stable host compile_timeout→pass reverse transitions: ${improvementsCT} ===`);
     console.log(
-      `=== Oracle re-baseline compile-time note (#3370): ${regressionsCT} raw pass→compile_timeout transition(s) are not comparable across oracle versions. ===`,
+      `=== Stable host directional compile_timeout growth (max(0, pass→compile_timeout − compile_timeout→pass)): ${directionalRegressionsCT} ===`,
+    );
+    console.log(`=== Raw host pass→compile_timeout transitions before canary quarantine: ${rawRegressionsCT} ===`);
+    console.log(`=== Host canary-quarantined pass→compile_timeout noise: ${quarantinedRegressionsCT} ===`);
+    console.log(`=== Raw host compile_timeout→pass transitions before canary quarantine: ${rawImprovementsCT} ===`);
+    console.log(`=== Host canary-quarantined compile_timeout→pass noise: ${quarantinedImprovementsCT} ===`);
+
+    const rawBaselineCT = baselineCounts.compile_timeout ?? 0;
+    const rawCurrentCT = newCounts.compile_timeout ?? 0;
+    const quarantinedBaselineCT = [...baseline].filter(
+      ([file, entry]) => entry.status === "compile_timeout" && isHostQuarantined(file),
+    ).length;
+    const quarantinedCurrentCT = [...newer].filter(
+      ([file, entry]) => entry.status === "compile_timeout" && isHostQuarantined(file),
+    ).length;
+    const stableBaselineCT = rawBaselineCT - quarantinedBaselineCT;
+    const stableCurrentCT = rawCurrentCT - quarantinedCurrentCT;
+    const formatCountDelta = (value: number) => (value > 0 ? `+${value}` : `${value}`);
+    console.log(
+      `=== Stable host compile_timeout population: baseline ${stableBaselineCT} → current ${stableCurrentCT} ` +
+        `(Δ ${formatCountDelta(stableCurrentCT - stableBaselineCT)}) ===`,
+    );
+    console.log(
+      `=== Raw host compile_timeout population before canary quarantine: baseline ${rawBaselineCT} → current ${rawCurrentCT} ` +
+        `(Δ ${formatCountDelta(rawCurrentCT - rawBaselineCT)}) ===`,
+    );
+    console.log(
+      `=== Host canary-quarantined compile_timeout population: baseline ${quarantinedBaselineCT} → current ${quarantinedCurrentCT} ` +
+        `(Δ ${formatCountDelta(quarantinedCurrentCT - quarantinedBaselineCT)}) ===`,
+    );
+  }
+  if (rebaseMode && rawRegressionsCT > 0) {
+    console.log(
+      `=== Oracle re-baseline compile-time note (#3370): ${rawRegressionsCT} raw pass→compile_timeout transition(s) are not comparable across oracle versions. ===`,
     );
   }
   console.log(`=== Regressions excluding compile_timeout: ${regressionsReal} ===`);
+  if (hostNoiseQuarantine) {
+    console.log(
+      `=== Raw host regressions excluding compile_timeout before canary quarantine: ${rawRegressionsReal} ===`,
+    );
+    console.log(`=== Host canary-quarantined non-timeout regression noise: ${quarantinedRegressionsReal} ===`);
+  }
 
   // #2098: split compile_timeout regressions by baseline compile cost, encoding
   // the triage rule that lived only in memory files
@@ -926,7 +1239,7 @@ async function run(
   // prove it was fast). Output-only — no gate behaviour change; the workflow
   // already excludes ALL compile_timeout from the ratio (#1192/#1942).
   const CT_FLAKE_THRESHOLD_MS = 5000;
-  const ctRegressions = regressions.filter((r) => r.to === "compile_timeout");
+  const ctRegressions = regressions.filter((r) => r.to === "compile_timeout" && !r.hostQuarantined);
   let ctFlake = 0;
   let ctSuspect = 0;
   for (const r of ctRegressions) {
@@ -970,24 +1283,50 @@ async function run(
   let aggBaseMs = 0;
   let aggCurMs = 0;
   let aggShared = 0;
+  let rawAggBaseMs = 0;
+  let rawAggCurMs = 0;
+  let rawAggShared = 0;
+  let quarantinedAggBaseMs = 0;
+  let quarantinedAggCurMs = 0;
+  let quarantinedAggShared = 0;
   for (const [file, base] of baseline) {
     const cur = newer.get(file);
     if (!cur) continue;
     if (typeof base.compile_ms !== "number" || typeof cur.compile_ms !== "number") continue;
+    rawAggBaseMs += base.compile_ms;
+    rawAggCurMs += cur.compile_ms;
+    rawAggShared += 1;
+    if (isHostQuarantined(file)) {
+      quarantinedAggBaseMs += base.compile_ms;
+      quarantinedAggCurMs += cur.compile_ms;
+      quarantinedAggShared += 1;
+      continue;
+    }
     aggBaseMs += base.compile_ms;
     aggCurMs += cur.compile_ms;
     aggShared += 1;
   }
   const aggPct = aggBaseMs > 0 ? ((aggCurMs - aggBaseMs) / aggBaseMs) * 100 : 0;
+  const rawAggPct = rawAggBaseMs > 0 ? ((rawAggCurMs - rawAggBaseMs) / rawAggBaseMs) * 100 : 0;
+  const quarantinedAggPct =
+    quarantinedAggBaseMs > 0 ? ((quarantinedAggCurMs - quarantinedAggBaseMs) / quarantinedAggBaseMs) * 100 : 0;
   const gatedAggPct = rebaseMode ? 0 : aggPct;
   // Round to whole ms for the sums and one decimal for the percentage so the
   // workflow's `grep -oE '[0-9.-]+'` parses deterministically.
   console.log(
     `=== Aggregate compile time (shared ${aggShared} tests): baseline ${Math.round(aggBaseMs)}ms → current ${Math.round(aggCurMs)}ms (Δ ${gatedAggPct >= 0 ? "+" : ""}${gatedAggPct.toFixed(1)}%) ===`,
   );
-  if (rebaseMode && aggPct !== 0) {
+  if (hostNoiseQuarantine) {
     console.log(
-      `=== Oracle re-baseline compile-time note (#3370): raw aggregate delta ${aggPct >= 0 ? "+" : ""}${aggPct.toFixed(1)}%; the #1942 comparison resets because oracle ${fmtOracle(baseOracle)} → ${fmtOracle(newOracle)} changes the compiled harness workload. ===`,
+      `=== Raw host aggregate before canary quarantine (shared ${rawAggShared} tests): baseline ${Math.round(rawAggBaseMs)}ms → current ${Math.round(rawAggCurMs)}ms (Δ ${rawAggPct >= 0 ? "+" : ""}${rawAggPct.toFixed(1)}%) ===`,
+    );
+    console.log(
+      `=== Host canary-quarantined aggregate contribution (shared ${quarantinedAggShared} tests): baseline ${Math.round(quarantinedAggBaseMs)}ms → current ${Math.round(quarantinedAggCurMs)}ms (Δ ${quarantinedAggPct >= 0 ? "+" : ""}${quarantinedAggPct.toFixed(1)}%) ===`,
+    );
+  }
+  if (rebaseMode && rawAggPct !== 0) {
+    console.log(
+      `=== Oracle re-baseline compile-time note (#3370): raw aggregate delta ${rawAggPct >= 0 ? "+" : ""}${rawAggPct.toFixed(1)}%; the #1942 comparison resets because oracle ${fmtOracle(baseOracle)} → ${fmtOracle(newOracle)} changes the compiled harness workload. ===`,
     );
   }
 
@@ -1023,7 +1362,12 @@ async function run(
   const isExcusedLeakyToHostFree = (r: { leakyBaselineToHostFree: boolean }) =>
     excludeLeakyBaseline && r.leakyBaselineToHostFree;
   const excusedLeakyToHostFree = regressions.filter(
-    (r) => r.to !== "compile_timeout" && !r.wasmUnchanged && !isStaleAsyncArgsFlake(r) && isExcusedLeakyToHostFree(r),
+    (r) =>
+      !r.hostQuarantined &&
+      r.to !== "compile_timeout" &&
+      !r.wasmUnchanged &&
+      !isStaleAsyncArgsFlake(r) &&
+      isExcusedLeakyToHostFree(r),
   ).length;
   // #2940 gate-excusal — **TEMPORARY, DEFAULT-ON** (removal follow-up #3001).
   // A pass→fail flip whose NEW row is a #2940 vacuity reclassification is NOT a
@@ -1051,6 +1395,7 @@ async function run(
   // two "excused" tallies partition the excused set (no double count).
   const excusedVacuous = regressions.filter(
     (r) =>
+      !r.hostQuarantined &&
       r.to !== "compile_timeout" &&
       !r.wasmUnchanged &&
       !isStaleAsyncArgsFlake(r) &&
@@ -1059,6 +1404,7 @@ async function run(
   ).length;
   const noiseFiltered = regressions.filter(
     (r) =>
+      !r.hostQuarantined &&
       !r.wasmUnchanged &&
       r.to !== "compile_timeout" &&
       !isStaleAsyncArgsFlake(r) &&
@@ -1068,6 +1414,11 @@ async function run(
   const regressionsWasmChange = noiseFiltered.length;
   const wasmIdenticalNoise = regressions.filter((r) => r.wasmUnchanged && r.to !== "compile_timeout").length;
   console.log(`=== Wasm-identical noise (pass → other, same wasm_sha): ${wasmIdenticalNoise} ===`);
+  if (hostNoiseQuarantine) {
+    console.log(
+      `=== Host canary-quarantined pass regressions excluded from fine gate: ${regressions.filter((r) => r.hostQuarantined).length} ===`,
+    );
+  }
   if (excludeLeakyBaseline) {
     console.log(`=== Excused leaky→host-free regressions (#2879 §4, standalone): ${excusedLeakyToHostFree} ===`);
   }
@@ -1082,14 +1433,20 @@ async function run(
   console.log();
 
   // Improvements
-  console.log(`=== Improvements (other → pass): ${improvements.length} ===`);
-  if (!quiet && improvements.length > 0) {
-    const shown = improvements.slice(0, maxShow);
+  console.log(`=== Improvements (other → pass): ${stableImprovements.length} ===`);
+  if (hostNoiseQuarantine) {
+    console.log(`=== Raw host improvements before canary quarantine: ${improvements.length} ===`);
+    console.log(
+      `=== Host canary-quarantined improvements excluded from fine gate: ${improvements.length - stableImprovements.length} ===`,
+    );
+  }
+  if (!quiet && stableImprovements.length > 0) {
+    const shown = stableImprovements.slice(0, maxShow);
     for (const imp of shown) {
       console.log(`  ${imp.file}: ${imp.from} → pass`);
     }
-    if (improvements.length > maxShow) {
-      console.log(`  ... and ${improvements.length - maxShow} more`);
+    if (stableImprovements.length > maxShow) {
+      console.log(`  ... and ${stableImprovements.length - maxShow} more`);
     }
   }
   console.log();
@@ -1164,6 +1521,13 @@ async function run(
   const delta = newPass - basePass;
   const sign = delta >= 0 ? "+" : "";
   console.log(`=== Net: ${sign}${delta} pass (${basePass} → ${newPass}) ===`);
+  if (hostNoiseQuarantine) {
+    const stableNet = stableImprovements.length - regressionsWasmChange;
+    console.log(
+      `=== Host stable-path fine-gate net: ${stableNet >= 0 ? "+" : ""}${stableNet} ` +
+        `(${stableImprovements.length} improvements − ${regressionsWasmChange} regressions) ===`,
+    );
+  }
   console.log();
 
   // Stale baseline warning — emit a PR-comment-friendly line if the
@@ -1191,7 +1555,7 @@ async function run(
   // Exit code: non-zero when the change is a net negative using wasm-hash-filtered regressions.
   // Compile_timeout flaps (timing noise) and wasm-identical flips are excluded via
   // regressionsWasmChange. Gate: improvements.length - regressionsWasmChange < 0.
-  const netPerTest = improvements.length - regressionsWasmChange;
+  const netPerTest = stableImprovements.length - regressionsWasmChange;
   let gateFailed = false;
 
   // #3189 — uncatchable-trap GROWTH ratchet. A regressions-allow declaration
@@ -1266,7 +1630,7 @@ async function run(
   } else {
     if (netPerTest < 0) {
       console.log(
-        `=== GATE FAIL: net_per_test ${netPerTest} < 0 (${improvements.length} improvements − ${regressionsWasmChange} regressions) ===`,
+        `=== GATE FAIL: net_per_test ${netPerTest} < 0 (${stableImprovements.length} improvements − ${regressionsWasmChange} regressions) ===`,
       );
       gateFailed = true;
     }
@@ -1276,7 +1640,7 @@ async function run(
     // wasm-hash-filtered count the net gate uses (`noiseFiltered`), so
     // compile_timeout flaps and byte-identical flips never trip these either.
     const thresholdFailures = evaluateRegressionThresholds({
-      improvements: improvements.length,
+      improvements: stableImprovements.length,
       regressionsWasmChange,
       regressedFiles: noiseFiltered.map((r) => r.file),
     });

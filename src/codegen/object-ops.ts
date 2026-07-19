@@ -1348,7 +1348,15 @@ export function compileObjectDefineProperty(
   // (#1130 PR-0) Array exotic objects grow `length` when a numeric-index
   // property at or beyond the current length is defined. Emit the guarded
   // bump before the descriptor is applied; no-op for non-array receivers.
-  maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg);
+  //
+  // (#3251 S1) STANDALONE-GATED OFF: the native `__defineProperty_value` vec
+  // arm owns growth there (per-carrier `__vec_elem_set_<t>` on write-back).
+  // The call-site pre-growth destroyed the real-element/fresh-hole
+  // distinction the overlay's seeding depends on (the #3116 regression-class-1
+  // hazard: a pre-grown hole at idx<length is indistinguishable from a real
+  // element, so a FRESH index define would seed w/e/c=true instead of the
+  // CompletePropertyDescriptor false defaults). Host mode is unchanged.
+  if (!ctx.standalone) maybeEmitVecLengthGrowth(ctx, fctx, objArg, propArg);
 
   // (#2668 Slice A) Host-mode DYNAMIC-DESCRIPTOR route. The inline fast paths
   // below only fire when the descriptor is a *syntactic* object literal at the

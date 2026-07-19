@@ -1,8 +1,10 @@
 ---
 id: 3251
 title: "standalone: array-descriptor OVERLAY substrate — $Vec receivers have no per-index/expando property-descriptor storage (blocks array-exotic defineProperty + Array generic-method-over-accessor-index)"
-status: needs_architect_spec
-sprint: Backlog
+status: in-progress
+assignee: ttraenkler/fable-1
+sprint: current
+s1_completed: 2026-07-18
 created: 2026-07-13
 priority: high
 feasibility: hard
@@ -16,6 +18,23 @@ umbrella: 1781
 related: [3246, 2042, 2992, 3116, 2668]
 horizon: xl
 epic: true
+# (#3102 LOC ratchet) S1 grows only the unavoidable arm/wiring lines in these
+# god-files (+36/+18/+12/+8/+5/+4); the substrate itself is the new subsystem
+# module src/codegen/vec-overlay.ts (~1.4k lines), per the consolidation plan.
+loc-budget-allow:
+  - src/codegen/object-runtime-descriptors.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+  - src/codegen/object-ops.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/object-runtime.ts
+# (#2108 coercion-sites ratchet) vec-overlay's number_toString uses are NOT a
+# hand-rolled coercion matrix — they canonicalise an array index to its
+# property key (§7.1.19, the same number_toString pattern __extern_get_idx's
+# own $Object arm and fillDynamicForinVecArms already use) for __obj_find
+# companion lookups and the ArraySetLength shrink walk.
+coercion-sites-allow:
+  - src/codegen/vec-overlay.ts
 ---
 
 # #3251 — array-descriptor OVERLAY substrate (standalone)
@@ -131,6 +150,212 @@ Key design questions for the spec:
   getter (the ~204 `testResult`/`accessed` cluster).
 - Dense-array fast path unchanged (no perf/behaviour regression); host/gc
   output byte-identical; standalone floor NET ≥ 0.
+
+## Implementation Plan (fable-1, 2026-07-17 — replaces the needs_architect_spec gate)
+
+### Verified routing (WAT-probed on 0f7ac132a0, all 7 repro probes fail as filed)
+
+Both the dynamic (`any`) lane AND the typed local lane funnel through the SAME
+runtime natives — the substrate has exactly four chokepoints:
+
+- **Define**: `Object.defineProperty(arr, k, d)` → `__defineProperty_value` /
+  `__defineProperty_accessor` (object-runtime-descriptors.ts) with the vec
+  boxed to externref. Both open with `ref.test $Object`-else-return-obj — the
+  lenient no-op. `__defineProperty_desc` + the plural loops dispatch INTO these
+  two, so a vec arm here covers every define entry point.
+- **Dynamic element read**: `arr[i]` (any lane) AND every `__hof_*` loop
+  (map/filter/every/… — the ~204-test cluster iterates through `__hof_every`
+  etc., confirmed by WAT) read through **`__extern_get_idx`** — one chokepoint.
+- **Typed element read**: raw `array.get` inline — NOT hookable cheaply; kept
+  fast by writing data-define VALUES INTO the vec (the #3116 host-mode trick).
+- **gOPD**: `__getOwnPropertyDescriptor` — same `$Object`-gate miss.
+
+Typed-lane call sites also PRE-GROW the vec (`maybeEmitVecLengthGrowth`,
+object-ops.ts:468) before calling the native — which destroys the real-element
+vs fresh-hole distinction (#3116 regression class 1). Standalone-gate it off so
+the native sees the true length.
+
+### Storage decision: side table of companions, NOT a hidden `$Vec` field
+
+A hidden field is rejected: `$Vec` layout ({length, data} subtyping
+`$__vec_base`) is load-bearing across every struct.new site, the `$__subview`
+prefix, and the per-carrier dispatch arms — unbounded blast radius. Instead:
+
+- New module `src/codegen/vec-overlay.ts`:
+  - `$__overlay_pair` struct `{ vec: anyref, companion: (ref null $Object) }`,
+    growable `$__overlay_tab` array + `$__vec_overlay_tab` /
+    `$__vec_overlay_count(i32)` globals.
+  - `__vec_overlay_lookup(anyref) -> (ref null $Object)` — count==0 fast path,
+    then linear `ref.eq` scan (defineProperty-on-array is rare; table is ~0/1).
+  - `__vec_overlay_ensure(anyref) -> (ref $Object)` — lookup-or-append (companion
+    minted via `__new_plain_object`).
+- **The companion is a plain `$Object`** — so the vec arms DELEGATE to the
+  existing, already-correct `$Object` machinery (`__defineProperty_value` S4
+  ValidateAndApply preflight, §10.1.6.3 merge, CompletePropertyDescriptor
+  defaults, `__obj_find`, gOPD builder) instead of duplicating any of it.
+
+### Coherence rules
+
+- **Data defines**: full delegate to `__defineProperty_value(companionExt, key,
+  value, flags)` (validation + attribute storage), THEN write the value back
+  into the vec element per-carrier (`ensureVecElemSet` handles in-bounds +
+  grow + length update). Kind-incompatible values (string value into `__vec_f64`)
+  skip write-back and set a new `$PropEntry` flag bit `FLAG_COMPANION_VALUE
+  (16)` so dynamic readers prefer the companion value.
+- **Seeding**: an in-bounds index with NO companion entry is a REAL element →
+  seed `{value: vec[i], w/e/c: true}` into the companion BEFORE delegating, so
+  redefine-legality validates against the spec's implicit element descriptor
+  (fresh OOB indices stay first-definitions → defaults false — correct, and
+  the reason the call-site pre-growth must go).
+- **Accessor defines**: delegate to `__defineProperty_accessor` on the
+  companion (after the same seeding); NO vec length extension for OOB accessor
+  defines (#3116 15.2.3.6-4-312 lesson — deferred with ArraySetLength).
+- **Reads**: `__extern_get_idx` gets a finalize-spliced prologue (gated on
+  `$__vec_overlay_count != 0` → zero cost for overlay-free modules): companion
+  entry with FLAG_ACCESSOR → `__call_accessor_get(origReceiver, getter)`
+  (correct `this`); FLAG_COMPANION_VALUE → companion value; else fall through
+  to the existing per-carrier vec arms (vec value is authoritative — it was
+  written back at define time and later plain writes keep it fresh).
+- **gOPD**: vec arm — companion entry present → delegate to the `$Object`
+  gOPD on the companion; no entry + in-bounds index → synthesize
+  `{value: vec[i], writable/enumerable/configurable: true}` fresh (do NOT seed
+  on reads); else undefined.
+- **`length` key**: explicitly excluded (legacy no-op) — ArraySetLength with
+  non-configurable shrink-blocking is slice 3.
+
+### Emission-order discipline (the hazard part)
+
+The define/gOPD natives are built EARLY (ensureObjectRuntime) but the
+per-carrier vec types + `__str_to_number`/`number_toString` are only complete
+at FINALIZE. Use the two proven patterns, nothing new:
+
+- The vec arms baked early are a single `ref.test $__vec_base` → `call
+  <reserved __vec_dp_value / __vec_dp_accessor / __vec_gopd>` → return.
+  Reserved via the `reserveAccessorSetDriver` pattern (mintDefinedFunc +
+  placeholder body + funcMap; `ctx.vecOverlayReserved` flag). Placeholders are
+  SAFE NO-OPS (`return obj` / `return null-extern`), not `unreachable`, so a
+  skipped fill degrades to today's behavior instead of trapping.
+- `fillVecOverlayHelpers(ctx)` runs in index.ts finalize right after
+  `fillExternSetVecArms` (#3190): fills the three bodies (carrier whitelist:
+  elemKind f64 / externref / `$AnyString`-ref only — TypedArray carriers +
+  subviews keep the legacy no-op), and splices the overlay prologue into
+  `__extern_get_idx` (append-locals, splice-front, fresh Instr factories per
+  the shared-instr double-remap hazard).
+- Key→index: `__str_to_number` + NaN check + canonical round-trip
+  (`number_toString(n)` `__str_equals` key) — the CanonicalNumericIndexString
+  discipline; `"length"` via the `__str_flatten`+`__str_equals` pattern from
+  `fillDynamicForinVecArms` (#3183).
+- Strict number test for f64 write-back: `ref.test ctx.nativeBoxNumberTypeIdx`
+  (+ `$AnyValue` tag 2/3 arm when `ctx.anyValueTypeIdx >= 0`) — NEVER the
+  coercing `__unbox_number` alone (defineProperty must not ToNumber the value).
+
+### Host-lane byte identity
+
+Every emission is inside standalone-only builders (`ensureObjectRuntime`
+natives) or `ctx.standalone`-gated (pre-growth removal, finalize fills). Host
+mode routes defineProperty through the JS-import sidecar (#3116) untouched.
+Verify: compile a defineProperty-using module in host mode on main vs branch —
+byte-identical (the #1917 discipline).
+
+### Slices
+
+- **S1 (this PR)**: overlay core + define arms (value/accessor) + seeding +
+  vec write-back + `__extern_get_idx` overlay prologue + gOPD vec arm +
+  pre-growth standalone-gate. Covers probes A–F (define/readback coherence,
+  redefine-throws, accessor+HOF ~204 cluster, gOPD).
+- **S2**: write-side enforcement — `writable:false` drop + setter invoke in
+  `fillExternSetVecArms`' arm and the typed/inline assignment lanes;
+  `__extern_get`/`__extern_has` named-expando companion consult; for-in merge
+  (enumerable:false filtering).
+- **S3**: ArraySetLength (§10.4.2.1) — length define validation, RangeError,
+  shrink stopping at non-configurable elements (the 28 throw-only tests),
+  gOPD("length").
+
+## S1 implementation notes (fable-1, branch `issue-3251-array-overlay-s1`)
+
+- New module `src/codegen/vec-overlay.ts` (reserve + finalize fill); arms in
+  `object-runtime-descriptors.ts` (3 gates), fill wired in `index.ts` between
+  `fillDynamicForinVecArms` and `fillTaDynViewMopArms` (the TA dyn-view arm
+  must keep the front slot of the read helpers); call-site pre-growth
+  standalone-gated in `object-ops.ts`; `FLAG_COMPANION_VALUE = 0x20` claimed
+  in the `$PropEntry` flag table.
+- **Documented S1 boundaries** (deliberate, for S2/S3):
+  - Plain writes do not yet honor `writable:false` / invoke setters (S2 — hook
+    `fillExternSetVecArms`' arm + the typed/inline assignment lanes).
+  - After a later plain write to an overlaid index, the companion's stored
+    value goes stale; gOPD then reports the define-time value while element
+    reads see the fresh vec value (S2 closes this by making gOPD read the vec
+    for non-marker data entries).
+  - OOB defines (value, kind-incompatible value, AND accessor) grow the vec
+    to i+1 (`__vec_elem_set_<t>`, carrier default for value-less slots), per
+    §10.4.2 — required by the dominant `var arr = []; defineProperty(arr,
+    "2", {get}); arr.every(cb)` cluster shape (probes H/I/J/K). Intermediate
+    holes read as the carrier default (null/0) rather than undefined; real
+    hole semantics ride with ArraySetLength (S3). This deliberately diverges
+    from #3116's host-mode deferral: there, hole reads had no overlay to
+    consult; here the read prologue answers for overlaid indices and `[]`
+    lowers to an externref carrier whose null default observes ≈undefined.
+  - `"length"` defines/gOPD keep the legacy no-op/miss (S3).
+  - Symbol keys on vec receivers keep the legacy no-op.
+  - The typed inline `array.get` lane reads through the vec only — an
+    accessor defined on an index read via a STATICALLY-typed local (not
+    through the dynamic lane) is not consulted (the ~204-test cluster reads
+    through `__hof_*`/`__extern_get_idx`, which are covered).
+
+## Resume State (keep current — session-kill insurance)
+
+- **Branch/worktree**: `issue-3251-array-overlay-s1`, checked out in the
+  harness worktree `/workspace/.claude/worktrees/agent-a1966ecc04f08e87f`
+  (fable-1 holds the claim-issue lock). Base `0f7ac132a0` (origin/main).
+- **Implemented (S1 complete, validated)**: `src/codegen/vec-overlay.ts`
+  (reserve + finalize fill: overlay side table, `__vec_dp_value`/`_accessor`/
+  `__vec_gopd`, read prologues in `__extern_get_idx`/`__extern_get`, OOB
+  grow-with-default); 3 vec arms in `object-runtime-descriptors.ts`;
+  fill wired in `index.ts` (between `fillDynamicForinVecArms` and
+  `fillTaDynViewMopArms` — TA arm MUST stay in front); pre-growth
+  standalone-gated in `object-ops.ts`; ctx fields in `context/types.ts` +
+  global-shift entry in `registry/imports.ts`; `tests/issue-3251.test.ts`
+  (18 tests, all green pre-growth-change).
+- **Validation state**: tsc clean; probes A–K all correct (`.tmp/probe-3251.mts`,
+  `.tmp/probe-3251b.mts` in the worktree); host lane byte-identical vs main
+  (`.tmp/probe-host-bytes.mts`, sha 2c52919a… both sides); scoped descriptor
+  suite 119/120 with the single failure (`issue-2668` for-in proto-attrs)
+  failing identically on main.
+- **S1 validation COMPLETE (2026-07-18)**: issue-3251 suite 18/18 post-growth;
+  descriptor suite 119/120 (single failure = pre-existing main failure);
+  read-lane collateral (3183/2190/2190b/2186/3098) — exactly the same 3
+  failures as main (pre-existing); host sha unchanged. S1 PR is up; epic stays
+  in-progress for S2 (write-side enforcement + gOPD staleness) and S3
+  (ArraySetLength). Next dev: pick S2 from the boundaries list above.
+- **Known hazards**: `ref.null`/`ref.cast` abstract heap types — object-runtime's
+  `NONE_HEAP=-18` is `any`, real `none` is `-15` (vec-overlay documents this);
+  never busy-wait on a pegged box; one compile at a time.
+
+## 2026-07-18 merge-queue park — diagnosed INFRA COLLATERAL (not this PR)
+
+PR #3327 was auto-parked on its first merge_group run (29631783983). Diagnosis
+(fable-1): the standalone lane collapsed to 4,508 pass / 43,469 compile_error,
+every CE = `standalone target emitted host imports: env::console_log_externref,
+env::structuredClone (#2961)` — HOST-wrapper import signatures recorded under
+the standalone lane. UNRELATED PR #3322 failed its merge_group with
+byte-identical counts; fresh-based #3325 passed the same hour on the same main
+tip. Verdict: a stale-base merge-group precompile-cache/lane bug on main (post
+#3380/#2961 overnight changes), NOT an overlay regression — S1+current-main
+compiles standalone locally with zero imports (probes + 18/18 suite; those
+import names have no standalone emission sites in the compiler). Actions:
+main catch-up merged+pushed on the S1 branch, determination documented on the
+PR, hold removed ONCE, escalated to the tech lead (#3322 owner needs the same
+catch-up; a [CI-FIX] should own the lane bug). Diagnostic artifacts: the
+merged-report jsonls under the worktree `.tmp/mg-merged/` + `.tmp/mg-3322-merged/`.
+
+## Stale sibling branch (do not delete — hygiene-pass salvage)
+
+`origin/issue-3251-array-descriptor-overlay` (pre-dates this work, from
+opus-defineprop2) holds 2 unlanded docs commits (`plan/log/
+standalone-assertion-fail-dispatch-map.md`, the #1781 dispatch map, ecd5bd2883)
+on a base 1170 commits behind main. Per tech-lead 2026-07-17: leave in place,
+harvest in a later hygiene pass — do NOT merge it into work branches (silent-
+revert hazard, `feedback_longlived_branch_silent_revert`).
 
 ## Provenance
 

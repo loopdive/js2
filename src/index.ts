@@ -558,11 +558,15 @@ export interface CompileOptions {
    *   (O(1) rewind of the whole arena) and `__arena_used()` (bytes
    *   allocated). Use this when an embedder reuses one instance across many
    *   short-lived tasks and wants to reclaim between them.
+   * - `"analysis-stack"`: for single-source functions accepted by the optional
+   *   IR path, promote fixed-size owned/non-escaping allocations into a
+   *   function-scoped stack region. Direct-backend, multi-module, unsupported,
+   *   and escaping allocations keep the ordinary arena fallback.
    *
    * Ignored for non-`linear` targets — the WasmGC backends delegate object
    * lifetime to the host GC and have no linear allocator.
    */
-  allocator?: "bump" | "arena-reset";
+  allocator?: "bump" | "arena-reset" | "analysis-stack";
 }
 
 import * as path from "path";

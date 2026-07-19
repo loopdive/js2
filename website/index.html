@@ -13,7 +13,7 @@
         document.head.appendChild(base);
       })();
     </script>
-    <title>JS² - Javascript compiler</title>
+    <title>JS² — Ahead-of-time JavaScript to WebAssembly compiler</title>
     <meta
       name="description"
       content="js2wasm is an ahead-of-time compiler that compiles JavaScript and TypeScript to WebAssembly GC."
@@ -1537,7 +1537,7 @@
           <h1
             id="hero-title"
             data-texts='["An ahead-of-time JavaScript compiler.", "Compile JavaScript without embedding a JS engine.",
-            "Tiny modules that start and run fast.", "Reduce supply chain attack surface with module sandboxing.", "Target existing Javascript code, not a new language."]'
+            "Tiny modules that start and run fast.", "Reduce supply chain attack surface with module sandboxing.", "Target existing JavaScript code, not a new language."]'
           >
             <span class="hero-title-shell">
               <span class="hero-title-measure" aria-hidden="true"></span>
@@ -1547,12 +1547,12 @@
           <p class="hero-sub">
             JS
             <sup>2</sup>
-            is a research preview of an open source compiler focused on compiling JavaScript to WebAssembly ahead of
-            time, developed at Loopdive.
+            is an open-source research preview that compiles JavaScript to WebAssembly ahead of time, developed at
+            Loopdive.
           </p>
           <div class="hero-actions">
             <a class="btn-solid" href="./playground/">Playground</a>
-            <a class="btn-outline" href="#goals">Compatibility</a>
+            <a class="btn-outline" href="#goals">See what works today</a>
           </div>
         </section>
       </div>
@@ -1563,28 +1563,27 @@
         <div class="intro">
           <h2>Mission: JavaScript, compiled.</h2>
           <p>
-            <strong>
-              This is an early-stage research prototype and technical demo, not a production-ready compiler.
-            </strong>
-            Expect rough edges, incomplete language and standard-library coverage, and breaking changes between
-            versions.
-          </p>
-          <p>
-            On compatibility: today, compiled modules still require a JavaScript host and rely on the host's WebAssembly
-            GC support to run. That is not a fixed design constraint &mdash; reducing the dependency on the JS host and
-            on host-provided GC, so more code runs as standalone WebAssembly, is an explicit goal that is actively being
-            worked on, and the requirement is expected to shrink over time.
-          </p>
-          <p>
             The mission of the JS² compiler project is to make WebAssembly a drop-in deployment target for existing
-            JavaScript and npm packages, running modules without embedding a JS runtime and enabling more secure,
-            flexible dependency management — the direction the project is working toward, not a level of support it
-            offers today.
+            JavaScript and npm packages &mdash; running modules without embedding a JS runtime and enabling more secure,
+            flexible dependency management.
           </p>
           <p>
             The project is motivated by the idea that JavaScript, despite being a dynamic language, can be compiled
             efficiently ahead of time without limiting it to an incompatible subset or shipping a full JS engine inside
             every module. Whether that idea holds up at scale is an open question the project is testing.
+          </p>
+          <p>
+            <strong>
+              This is an early-stage research prototype and technical demo, not a production-ready compiler.
+            </strong>
+            Expect rough edges, incomplete language and standard-library coverage, and breaking changes between
+            versions. The goals below describe where the project is headed, not what it delivers today.
+          </p>
+          <p>
+            On compatibility: standalone mode already runs a growing subset of programs as pure WebAssembly with no JS
+            runtime, while full coverage still relies on a JavaScript host and its WebAssembly GC support. Reducing that
+            dependency so more code runs standalone is an explicit goal under active work &mdash; progress is tracked in
+            the compatibility report below.
           </p>
           <p>The project is guided by the following goals:</p>
         </div>
@@ -1593,15 +1592,14 @@
             <div class="feature-icon"><img src="./javascript-logo-white.svg" alt="JavaScript logo" /></div>
             <h3>JS Ecosystem Compatibility</h3>
             <p>
-              The goal is to compile existing code without rewriting it into a restricted subset, staying compatible
-              with the full JS ecosystem, the web, and npm, and accessing Web APIs without glue code &mdash; the target
-              the project is working toward, not a level of compatibility it claims today.
+              The goal is to compile existing code without rewriting it into a restricted subset &mdash; staying
+              compatible with the full JS ecosystem, the web, and npm, and accessing Web APIs without glue code.
             </p>
             <p>
-              The goal is for the compiler to consume and AOT-compile JavaScript from npm packages, while lowering
-              host API and native addon references to imports that are left to be satisfied by the host runtime. The
-              resulting modules will still depend on a compatible host environment &mdash; which could be the Web,
-              Node, or Deno &mdash; or an API-compatible WASI port if provided by the consumer.
+              The compiler is built to consume and AOT-compile JavaScript from npm packages, lowering host API and
+              native-addon references to imports satisfied by the host runtime. The resulting modules depend on a
+              compatible host environment &mdash; the Web, Node, or Deno &mdash; or an API-compatible WASI port if
+              provided by the consumer.
             </p>
           </article>
           <article class="feature-card">
@@ -1614,7 +1612,7 @@
               <code>eval</code>
               /
               <code>new Function</code>
-              ) falls back to a small embedded bytecode interpreter.
+              ) is planned to fall back to a small embedded interpreter; today it delegates to the JS host.
             </p>
           </article>
           <article class="feature-card">
@@ -1630,8 +1628,8 @@
             <div class="feature-icon">🧩</div>
             <h3>Plug &amp; Play</h3>
             <p>
-              Dynamic module linking allows to make code more modular so consumers can choose implementations, control
-              upgrades, and swap dependencies for each environment.
+              Dynamic module linking makes code more modular, so consumers can choose implementations, control upgrades,
+              and swap dependencies for each environment.
             </p>
           </article>
         </div>
@@ -3385,8 +3383,9 @@ match (value) {
         <div class="intro">
           <h2>Tiny modules that load and run fast.</h2>
           <p>
-            When running outside of a JS engine like found in browsers or Node.js, compatibility today typically means
-            embedding a JS interpreter inside the WebAssembly module. This increases module size and slows execution.
+            When running outside of a JS engine like those found in browsers or Node.js, compatibility today typically
+            means embedding a JS interpreter inside the WebAssembly module. This increases module size and slows
+            execution.
           </p>
           <p class="bench-disclaimer">
             These are microbenchmarks — small single-kernel programs (tight numeric loops, string hashing, array and
@@ -3399,14 +3398,12 @@ match (value) {
         <div class="host-bench-group">
           <h3 class="host-bench-title">JavaScript host</h3>
           <p class="host-bench-subcopy">
-            Speedup of JS² compiled WebAssembly relative to the same source code running as JavaScript in V8 (Node.js).
-            Bars extending past the JS baseline mean Wasm is faster; bars falling short mean slower. The left chart pins
-            both runtimes to their baseline tier — the no-optimizing-JIT execution path that matters for cold-start,
-            multi-tenant edge runtimes, and engines without a top tier. The right chart is the production setup — both
-            runtimes use their full optimizing pipeline. Press the button to run the benchmark in your browser including
-            additional DOM benchmarks. These public website benchmarks run in a JS host: the compiled Wasm is
-            instantiated by the js2wasm JavaScript runtime and compared with the same source running in V8.
-            Wasmtime/WASI benchmark figures are shown separately in the WASI host section below.
+            Speedup of JS²-compiled WebAssembly relative to the same source running as JavaScript in V8 (Node.js) — bars
+            extending past the JS baseline mean Wasm is faster. The left chart pins both runtimes to their baseline
+            tier, the no-optimizing-JIT path that matters for cold starts and multi-tenant edge runtimes; the right
+            chart is the production setup with both full optimizing pipelines. These benchmarks run in a JS host
+            (Wasmtime/WASI figures are in the section below). Use &ldquo;Run Browser Benchmark&rdquo; to measure live in
+            your browser, including additional DOM benchmarks.
           </p>
           <div class="conformance-diagrams">
             <div class="diagram-panel">
@@ -3435,21 +3432,19 @@ match (value) {
         <div class="host-bench-group" id="wasmtime-bench-group">
           <h3 class="host-bench-title">WASI host</h3>
           <p class="host-bench-subcopy">
-            Per-request cost of running the same JavaScript programs (source for each is shown inline below) across four
-            execution models on edge:
+            Per-request cost of running the same JavaScript programs (source shown inline below) across four execution
+            models on edge:
             <strong>AOT</strong>
-            (Cranelift-compiled
+            — Cranelift-compiled
             <code>.cwasm</code>
-            , no runtime codegen),
+            , no runtime codegen;
             <strong>JS in V8</strong>
-            (Ignition → Liftoff → TurboFan, all at request time, the implicit 1.0× baseline),
+            — the implicit 1.0× baseline;
             <strong>Interpreter</strong>
-            (a per-function tiny module delegating to a preloaded embedded-interpreter plugin), and
+            — a tiny per-function module delegating to a preloaded embedded-interpreter plugin; and
             <strong>Engine</strong>
-            (a full JS engine bundled inside Wasm with AOT pre-init — multiple megabytes per function). Two scenarios
-            per program: fresh context or instance per request (cold) and reused context or instance (warm). Interpreter
-            and Engine both run a JS interpreter inside Wasm — the size and per-call cost tradeoff isn't free. One chart
-            per benchmark; each chart shows the available execution-model lanes for both scenarios.
+            — a full JS engine bundled inside Wasm with AOT pre-init. Each chart shows every execution-model lane for
+            two scenarios: a fresh context or instance per request (cold) and a reused one (warm).
           </p>
           <div class="conformance-diagrams">
             <h4 class="host-bench-section-title">
@@ -3768,9 +3763,8 @@ export function run(n) {
             supply-chain attack surface.
           </p>
           <p>
-            The goal — a target the project is working toward, not a claim about today — is full compatibility with the
-            JavaScript and npm ecosystem while adding a module security and module composition layer around compiled
-            units.
+            The goal is full compatibility with the JavaScript and npm ecosystem, plus a module security and module
+            composition layer around compiled units.
           </p>
           <p>
             The compiler is being built around a typed intermediate representation (IR) &mdash; a single checked layer
@@ -3970,31 +3964,31 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               </summary>
               <div class="approach-faq-answer">
                 <p>
-                  Production engines are highly optimized, multi-tier JIT compilers that after warmup approach native
-                  performance. JS engines have mature process sandboxes and ship with browsers. JS interpreters are more
-                  lightweight but typically 90% slower.
+                  Production engines are highly optimized, multi-tier JIT compilers that approach native performance
+                  after warmup. JS engines have mature process sandboxes and ship with browsers. JS interpreters are
+                  more lightweight but typically an order of magnitude or more slower.
                 </p>
                 <p>
                   <strong>Inside a JS host</strong>
-                  WebAssembly is no silver bullet and not always faster or even on par with a warmed up JS JIT engine,
-                  but it can be in compute heavy scenarios. Also, it adds a module sandbox for untrusted code, isolating
-                  it from the host process and other modules to run third party or AI generated code more securely.
+                  , WebAssembly is no silver bullet — it is not always faster than a warmed-up JS JIT engine, though it
+                  can be in compute-heavy scenarios. It also adds a module sandbox for untrusted code, isolating it from
+                  the host process and other modules so third-party or AI-generated code can run more securely.
                 </p>
                 <p>
                   <strong>Outside of a JS host</strong>
-                  , embedding a JS engine disables their JIT tier, costing about 90% of performance of a warmed up
-                  engine, effectively falling back to their interpreter mode. Shipping an engine alongside typically
-                  weights ~14 megabytes. Pure interpreters like QuickJS with ~700kb are more lightweight but 90% slower
-                  than a JIT engine. An AOT JS to Wasm approach doesn't have this ceiling and potentially can achieve
-                  near-native performance without depending on a JIT or shipping a full engine or interpreter, while
-                  start at 100 bytes.
+                  , embedding a JS engine disables its JIT tier, giving up an order of magnitude or more of warmed-up
+                  performance — effectively falling back to interpreter mode. A bundled engine typically weighs ~14
+                  megabytes. Pure interpreters like QuickJS (~700 kB) are more lightweight but again an order of
+                  magnitude or more slower than a JIT engine. An AOT JS-to-Wasm approach doesn't have this ceiling: it
+                  can potentially achieve near-native performance without depending on a JIT or shipping a full engine
+                  or interpreter, while starting at ~100 bytes.
                 </p>
                 <h3>Runtime overhead</h3>
                 <p>
                   In constrained environments — serverless, embedded, or multi-tenant — a JS host can be prohibitively
-                  heavy. JIT-disabled engines typically run 10× slower; bundled interpreters add megabytes of dead
-                  weight per module. On desktop, shipping a full runtime like Electron adds 100 MB+. WebAssembly modules
-                  pay none of these costs.
+                  heavy. JIT-disabled engines typically run an order of magnitude or more slower; bundled interpreters
+                  add megabytes of dead weight per module. On desktop, shipping a full runtime like Electron adds 100
+                  MB+. WebAssembly modules pay none of these costs.
                 </p>
                 <h3>Dependency management</h3>
                 <p>
@@ -4003,7 +3997,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                   entirely. WebAssembly modules declare explicit imports satisfied per-module, so versions don't need to
                   stay in lockstep across the project.
                 </p>
-                <h3>Supply Chain Attacks</h3>
+                <h3>Supply chain attacks</h3>
                 <p>
                   95% of JS code is third-party. A single malicious or buggy dependency can compromise the entire
                   process — exfiltrating data or, in Node.js, accessing the filesystem. Isolation techniques exist but
@@ -4036,8 +4030,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                   <li>
                     <strong>Following the ECMAScript standard</strong>
                     as the north star is how the project aims for compatibility with the JS and npm ecosystem as it
-                    matures. TypeScript annotations are only treated as optimization hints where types can be proven, not
-                    as ground truth and do not affect JavaScript runtime behavior.
+                    matures. TypeScript annotations are only treated as optimization hints where types can be proven,
+                    not as ground truth and do not affect JavaScript runtime behavior.
                   </li>
                   <li>
                     <strong>Subsets, supersets, and new languages</strong>
@@ -4052,10 +4046,10 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                   devices.
                 </p>
                 <p>
-                  While it is not a perfect language due to its legacy and its dynamic nature makes it hard to optimize,
-                  it simply is what everyone uses and changing the language - even slightly - would break compatibility
-                  with existing codebases and fragment the ecosystem. We think chosing the right tool for the job should
-                  not require switching languages or porting code.
+                  While it is not a perfect language &mdash; its legacy and dynamic nature make it hard to optimize
+                  &mdash; it simply is what everyone uses, and changing the language &mdash; even slightly &mdash; would
+                  break compatibility with existing codebases and fragment the ecosystem. We think choosing the right
+                  tool for the job should not require switching languages or porting code.
                 </p>
               </div>
             </details>
@@ -4156,12 +4150,12 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               </summary>
               <div class="approach-faq-answer">
                 <p>
-                  We see these as platform APIs that are imported using safe adapters from the host if in a browser or
-                  Node.js environment or polyfilled (e.g. using WASI). In browsers we auto generate adapters for Web
-                  APIs and JS builtins from their TypeScript definitions. Providing alternative implementations e.g. in
-                  standalone mode is possible by swapping out the import (e.g.
+                  We see these as platform APIs, imported through safe adapters from the host in a browser or Node.js
+                  environment, or polyfilled (e.g. via WASI). In browsers we auto-generate adapters for Web APIs and JS
+                  builtins from their TypeScript definitions. Alternative implementations — e.g. in standalone mode —
+                  can be provided by swapping the import:
                   <a href="https://edgejs.org/">Edge.js</a>
-                  emulates Node.js APIs WASIX).
+                  , for example, emulates Node.js APIs on WASIX.
                 </p>
               </div>
             </details>
@@ -4228,7 +4222,8 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           performance, and strengthen security.
         </p>
         <div class="cta-actions">
-          <a class="btn-solid" href="./dashboard/">Roadmap</a>
+          <a class="btn-solid" href="https://github.com/loopdive/js2/blob/main/ROADMAP.md">Roadmap</a>
+          <a class="btn-outline" href="./dashboard/">Live Dashboard</a>
           <a class="btn-outline" href="https://github.com/loopdive/js2">View Source</a>
         </div>
       </section>
@@ -4245,7 +4240,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             <h4>Explore</h4>
             <ul>
               <li><a href="./playground/">Playground</a></li>
-              <li><a href="#roadmap">Roadmap</a></li>
+              <li><a href="https://github.com/loopdive/js2/blob/main/ROADMAP.md">Roadmap</a></li>
               <li><a href="./benchmarks/report.html">Conformance Report</a></li>
               <li><a href="./docs/whitepaper.html">Whitepaper</a></li>
               <li><a href="#goals">Compatibility</a></li>

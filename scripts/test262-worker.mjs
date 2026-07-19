@@ -84,6 +84,17 @@ function buildOriginalHarnessSandbox(consoleProxy) {
   });
   sandbox.console = consoleProxy;
   sandbox.globalThis = sandbox;
+  // (#3428) asyncHelpers.js guards `asyncTest` with
+  // `Object.prototype.hasOwnProperty.call(globalThis, "$DONE")` and throws
+  // "asyncTest called without async flag" when it's absent. A JS engine running
+  // the harness as a SCRIPT exposes the top-level `function $DONE`
+  // (doneprintHandle.js) as a globalThis own-property, but our compiled MODULE
+  // keeps `$DONE` a module-local binding, so the guard failed on all 225
+  // asyncTest-based tests. Expose a stub own-property so the guard passes; the
+  // real, module-local `$DONE` (lexically in scope inside `asyncTest`) still
+  // drives the completion callback that emits the `Test262:AsyncTestComplete`
+  // marker.
+  sandbox.$DONE = () => {};
   return sandbox;
 }
 
@@ -1865,9 +1876,35 @@ function collectIntrinsicSurface() {
     add(c.name, c);
     add(`${c.name}.prototype`, c.prototype);
   }
+  // Keep newer/optional intrinsics behind globalThis lookups so the worker
+  // remains compatible with every supported Node version. In particular,
+  // Node 25 exposes SharedArrayBuffer and the explicit-resource-management
+  // constructors to compiled code through runtime.__get_builtin; omitting
+  // their prototypes left destructive propertyHelper checks invisible to the
+  // canary (#3426).
+  const optionalCtorNames = [
+    "AggregateError",
+    "FinalizationRegistry",
+    "WeakRef",
+    "SharedArrayBuffer",
+    "Float16Array",
+    "Proxy",
+    "DisposableStack",
+    "AsyncDisposableStack",
+    "SuppressedError",
+    "ShadowRealm",
+  ];
+  for (const name of optionalCtorNames) {
+    const c = globalThis[name];
+    add(name, c);
+    add(`${name}.prototype`, c?.prototype);
+  }
   add("Math", Math);
   add("JSON", JSON);
   add("Reflect", Reflect);
+  add("Atomics", globalThis.Atomics);
+  add("Intl", globalThis.Intl);
+  add("Temporal", globalThis.Temporal);
   add("globalThis", globalThis);
   try {
     const arrIter = Object.getPrototypeOf([][Symbol.iterator]());
@@ -1881,11 +1918,32 @@ function collectIntrinsicSurface() {
     add("%GeneratorPrototype%", genFn.prototype ? Object.getPrototypeOf(genFn()) : undefined);
     const asyncGenFn = async function* () {};
     add("%AsyncGeneratorFunctionPrototype%", Object.getPrototypeOf(asyncGenFn));
+    const asyncGenProto = Object.getPrototypeOf(asyncGenFn());
+    add("%AsyncGeneratorPrototype%", asyncGenProto);
+    add("%AsyncIteratorPrototype%", Object.getPrototypeOf(asyncGenProto));
     add("%TypedArrayPrototype%", Object.getPrototypeOf(Uint8Array.prototype));
   } catch {
     // best-effort — a missing exotic prototype shrinks coverage, never breaks
   }
   return roots;
+}
+
+function describeDescriptor(d) {
+  return { v: d.value, g: d.get, s: d.set, w: d.writable, e: d.enumerable, c: d.configurable };
+}
+
+function describeFunctionMetadata(value) {
+  if (typeof value !== "function") return undefined;
+  const out = new Map();
+  for (const key of ["name", "length"]) {
+    try {
+      const d = Object.getOwnPropertyDescriptor(value, key);
+      if (d) out.set(key, describeDescriptor(d));
+    } catch {
+      // unreadable function metadata is simply absent from this snapshot
+    }
+  }
+  return out;
 }
 
 function describeOwnSurface(obj) {
@@ -1898,9 +1956,42 @@ function describeOwnSurface(obj) {
       continue;
     }
     if (!d) continue;
-    out.set(key, { v: d.value, g: d.get, s: d.set, w: d.writable, e: d.enumerable, c: d.configurable });
+    out.set(key, {
+      ...describeDescriptor(d),
+      // propertyHelper descriptor tests can delete configurable metadata from
+      // a built-in method without replacing the method itself. The parent
+      // descriptor then compares equal, so snapshot the function-valued child
+      // descriptors explicitly. Getter/setter functions are included for the
+      // same reason and cost only two descriptor reads each.
+      vf: describeFunctionMetadata(d.value),
+      gf: describeFunctionMetadata(d.get),
+      sf: describeFunctionMetadata(d.set),
+    });
   }
   return out;
+}
+
+function sameDescriptor(a, b) {
+  return (
+    Object.is(a.v, b.v) &&
+    Object.is(a.g, b.g) &&
+    Object.is(a.s, b.s) &&
+    a.w === b.w &&
+    a.e === b.e &&
+    a.c === b.c
+  );
+}
+
+function appendFunctionMetadataDrift(drift, label, expected, current) {
+  if (!expected || !current) return;
+  for (const [key, sig] of expected) {
+    const cur = current.get(key);
+    if (!cur) drift.push(`${label}.${key}:deleted`);
+    else if (!sameDescriptor(sig, cur)) drift.push(`${label}.${key}:changed`);
+  }
+  for (const key of current.keys()) {
+    if (!expected.has(key)) drift.push(`${label}.${key}:added`);
+  }
 }
 
 function snapshotRealmSurface() {
@@ -1942,15 +2033,21 @@ function diffRealmSurface(snap) {
         drift.push(`${label}.${String(key)}:deleted`);
         continue;
       }
-      if (
-        !Object.is(cur.v, sig.v) ||
-        !Object.is(cur.g, sig.g) ||
-        !Object.is(cur.s, sig.s) ||
-        cur.w !== sig.w ||
-        cur.e !== sig.e ||
-        cur.c !== sig.c
-      ) {
+      if (!sameDescriptor(sig, cur)) {
         drift.push(`${label}.${String(key)}:changed`);
+      }
+      // Only inspect nested metadata while the same function remains in the
+      // same descriptor slot. A replaced method/getter/setter is already a
+      // parent-descriptor drift; this branch detects the otherwise invisible
+      // name/length deletion or mutation on an unchanged function object.
+      if (Object.is(sig.v, cur.v)) {
+        appendFunctionMetadataDrift(drift, `${label}.${String(key)}`, sig.vf, cur.vf);
+      }
+      if (Object.is(sig.g, cur.g)) {
+        appendFunctionMetadataDrift(drift, `${label}.${String(key)}<get>`, sig.gf, cur.gf);
+      }
+      if (Object.is(sig.s, cur.s)) {
+        appendFunctionMetadataDrift(drift, `${label}.${String(key)}<set>`, sig.sf, cur.sf);
       }
     }
     for (const key of curProps.keys()) {

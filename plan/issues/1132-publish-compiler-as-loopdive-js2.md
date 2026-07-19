@@ -1,18 +1,46 @@
 ---
 id: 1132
 title: "Publish compiler as @loopdive/js2 on npm + JSR"
-status: ready
+status: done
 created: 2026-04-19
-updated: 2026-06-19
+updated: 2026-07-18
+completed: 2026-07-06
 priority: high
 feasibility: medium
 reasoning_effort: medium
 goal: platform
 sprint: Backlog
 ---
-## Problem
+
+## Resolution / audit reconciliation (2026-07-18)
+
+Publication is complete. This issue remained `ready` after the release system
+and public packages landed, so the 2026-07-18 engineering audit reconciled it
+against repository and public-registry evidence:
+
+- npm `@loopdive/js2` was first published on 2026-06-27 and is live at 0.60.1.
+- npm `js2wasm`, the unscoped proxy, is live at 0.60.1.
+- JSR `@loopdive/js2` is live at 0.60.1 (0.60.0 and 0.60.1 published).
+- `.github/workflows/publish-npm.yml` verifies tag/package version parity,
+  builds and packs the canonical npm package, publishes both npm packages with
+  provenance, and publishes JSR independently.
+- `docs/releasing.md` and `scripts/release.mjs` document/enforce the lockstep
+  release flow.
+
+Two original acceptance details were superseded by later product decisions:
+
+- The shipped package is ESM-only (`exports.import`), not dual ESM/CJS.
+- npm reports 8,904,177 bytes unpacked, above the old `<5 MB` target. The package
+  now intentionally includes `examples/` (#2828), and size was not retained as a
+  release blocker.
+
+The historical problem and implementation sketch below are retained as the
+planning record; they are not current instructions.
+
+## Historical problem
 
 The compiler has no npm presence. Users must clone the repo and build from source. Publishing as `@loopdive/js2` gives:
+
 - Install via `npm install -g @loopdive/js2` or `npx @loopdive/js2 input.ts -o output.wasm`
 - Programmatic API via `import { compile } from "@loopdive/js2"`
 - Canonical ownership under `@loopdive` org — branded, no squatting risk
@@ -28,7 +56,7 @@ The compiler has no npm presence. Users must clone the repo and build from sourc
 - `@loopdive/js2@0.1.0` published to npmjs.com under the `loopdive` org
 - README on npm page links to GitHub repo and playground
 
-## Implementation Plan
+## Historical implementation plan (superseded)
 
 ### 1. package.json changes
 
@@ -51,11 +79,7 @@ The compiler has no npm presence. Users must clone the repo and build from sourc
       "types": "./dist/index.d.ts"
     }
   },
-  "files": [
-    "dist/",
-    "README.md",
-    "LICENSE"
-  ],
+  "files": ["dist/", "README.md", "LICENSE"],
   "publishConfig": {
     "access": "public"
   }
@@ -65,6 +89,7 @@ The compiler has no npm presence. Users must clone the repo and build from sourc
 ### 2. .npmignore / files field
 
 Exclude:
+
 - `test262/`, `tests/`, `benchmarks/`, `.claude/`, `plan/`, `scripts/`, `src/`, `components/`, `dashboard/`, `playground/`
 - All `*.test.ts`, `*.jsonl`, `*.wat`, `*.wasm` files
 - Dev configs: `vitest.config.ts`, `tsconfig*.json` (except bundled types)
@@ -74,6 +99,7 @@ Only ship: `dist/`, `README.md`, `LICENSE`
 ### 3. Build pipeline
 
 Ensure `pnpm build` produces:
+
 - `dist/index.js` — CJS entry (compiler API)
 - `dist/index.mjs` — ESM entry
 - `dist/index.d.ts` — type declarations
@@ -85,6 +111,7 @@ Check existing `scripts/compiler-bundle.mjs` and `scripts/runtime-bundle.mjs` �
 ### 4. CLI entry
 
 Ensure `dist/cli.js` handles:
+
 ```
 js2 input.ts -o output.wasm
 js2 input.ts --target wasi -o output.wasm
@@ -99,7 +126,7 @@ js2 --help
 // dist/index.d.ts should export:
 export function compile(source: string, options?: CompileOptions): CompileResult;
 export interface CompileOptions {
-  target?: 'js' | 'wasi';
+  target?: "js" | "wasi";
   optimize?: boolean;
   nativeStrings?: boolean;
   allowJs?: boolean;
@@ -126,10 +153,11 @@ Publish from CI (GitHub Actions) on git tag `v0.1.0` push, using `NPM_TOKEN` sec
 ### 7. GitHub Actions workflow
 
 Create `.github/workflows/publish-npm.yml`:
+
 ```yaml
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -147,6 +175,7 @@ jobs:
 JSR (`jsr.io`) is TypeScript-native and supports Deno, Bun, and Node.js. Same `@loopdive/js2` scope.
 
 Add `jsr.json` at repo root:
+
 ```json
 {
   "name": "@loopdive/js2",
@@ -167,6 +196,7 @@ JSR imports directly from TypeScript source — no build step needed for JSR con
 ```
 
 Deno users get:
+
 ```ts
 import { compile } from "jsr:@loopdive/js2";
 ```
