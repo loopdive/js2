@@ -1,8 +1,8 @@
 {
   "id": "3462",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-19T06:15:59Z",
-  "updated_at": "2026-07-19T06:15:59Z"
+  "assignee": "ttraenkler/sr-3462",
+  "status": "in-progress",
+  "branch": "issue-3462-oracle-lane-plumbing",
+  "claimed_at": "2026-07-19T06:35:54Z",
+  "updated_at": "2026-07-19T06:35:54Z"
 }
