@@ -1,8 +1,8 @@
 {
   "id": "3475",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-19T22:37:25Z",
-  "updated_at": "2026-07-19T22:37:25Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3475-logical-and-assign-truthy-branch",
+  "claimed_at": "2026-07-19T22:48:50Z",
+  "updated_at": "2026-07-19T22:48:50Z"
 }
