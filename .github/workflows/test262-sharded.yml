@@ -213,6 +213,13 @@ jobs:
       # TEST262_PATH_FILTER) and by every diff-based gate (as --path-filter)
       # so a scoped candidate JSONL is never diffed against the full baseline.
       test262_scope: ${{ steps.scope.outputs.scope }}
+      # #3431 — the merge_group-CONSOLIDATED shard matrix (fewer, bigger
+      # shards than the 57x2=114-job pull_request/push/workflow_dispatch
+      # matrix). Only computed for merge_group; empty for every other event
+      # (those keep using the static chunk/target arrays on `test262-shard`,
+      # unchanged). See scripts/gen-test262-mg-matrix.mjs for the shard-count
+      # rationale and evidence.
+      mg_shard_matrix: ${{ steps.mg_matrix.outputs.matrix }}
     steps:
       # #1954 — resolve the opt-in `test262-scope:` directive from the PR
       # body. pull_request only: merge_group/push/dispatch ALWAYS validate the
@@ -247,6 +254,16 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      # #3431 — compute the merge_group-consolidated shard matrix. Pure
+      # node/JS, no dependencies to install; reuses the merge_group-only
+      # checkout above. Runs unconditionally on merge_group (even when
+      # run_shards will end up 'false') since it's cheap and keeps the
+      # output always well-formed; the `test262-shard-mg` job's own `if:`
+      # is what actually gates on run_shards.
+      - name: Compute merge_group shard matrix (#3431)
+        id: mg_matrix
+        if: github.event_name == 'merge_group'
+        run: node scripts/gen-test262-mg-matrix.mjs --github-output >> "$GITHUB_OUTPUT"
       - name: Detect test262-relevant changes
         id: detect
         env:
@@ -306,13 +323,13 @@ jobs:
   # merge_group gating truth table (the other event_names are governed by
   # the workflow-level `paths:` filter + the per-job `if:` arms below):
   #
-  #   queued change          changes.run_shards   test262-shard   merge-report
-  #   ---------------------  ------------------   -------------   -------------------
-  #   src/** (or any         true                 RUNS (matrix)   runs, real result
-  #     &test262-paths)
-  #   website/plan/doc-only  false                SKIPPED         runs, trivial PASS
-  #   base_sha empty /       true (fail-safe)     RUNS (matrix)   runs, real result
-  #     diff fails / empty
+  #   queued change          changes.run_shards   test262-shard-mg   merge-report
+  #   ---------------------  ------------------   ----------------   -------------------
+  #   src/** (or any         true                 RUNS (#3431         runs, real result
+  #     &test262-paths)                              59-job matrix)
+  #   website/plan/doc-only  false                SKIPPED             runs, trivial PASS
+  #   base_sha empty /       true (fail-safe)     RUNS (#3431         runs, real result
+  #     diff fails / empty                           59-job matrix)
   #
   # In ALL three rows the required check "merge shard reports" is produced.
   # It is green only when shards succeeded or the merge_group no-shards skip is
@@ -321,13 +338,14 @@ jobs:
   # =====================================================================
 
   test262-shard:
-    # Heavy 57-shard test262 (#2519) fires ONLY when a PR is at the front of
-    # the merge queue, plus baseline/manual contexts — NOT on every PR:
-    #   merge_group → the authoritative pre-merge gate (the PR has reached the
-    #     front of the queue; catches main-drift regressions on the merged
-    #     state). This is the single per-PR heavy run.
+    # Heavy 57-shard test262 (#2519) fires ONLY for baseline/manual contexts
+    # — NOT on every PR:
     #   push to main → baseline update.
     #   workflow_dispatch → manual reruns.
+    # merge_group (the authoritative pre-merge gate, where the PR has reached
+    # the front of the queue and main-drift regressions on the merged state
+    # get caught) now runs the SEPARATE, consolidated `test262-shard-mg` job
+    # below instead of this one — see #3431.
     # Deliberately NOT on pull_request: the heavy matrix used to run twice per
     # PR (once at PR-time, once in merge_group), doubling the most expensive CI
     # cost and adding to the event volume that can soft-throttle merge_group
@@ -336,15 +354,16 @@ jobs:
     # a real regression is caught when the PR reaches the front of the queue
     # (it fails there and is ejected) rather than at PR-open time.
     #
-    # merge_group arm requires `needs.changes.outputs.run_shards` to be 'true'
-    # — the `changes` job skips the heavy matrix for queued
-    # website/plan/doc-only changes (and fails safe to 'true' on any doubt,
-    # see that job). push is gated by the workflow-level `paths:` filter, and
-    # workflow_dispatch always runs.
+    # #3431 — merge_group NO LONGER runs this job. It has its own
+    # consolidated matrix in `test262-shard-mg` below (fewer, bigger shards
+    # sized to fit the same per-shard timeout, sized to reduce the job-count
+    # contention footprint when the merge queue builds multiple entries
+    # concurrently — see scripts/gen-test262-mg-matrix.mjs). This job keeps
+    # its ORIGINAL 57-shard x 2-target matrix, UNCHANGED, for push (baseline
+    # update) and workflow_dispatch (manual reruns).
     needs: [changes]
     if: |
       (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
-      (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
       github.event_name == 'workflow_dispatch'
     # Runs in PARALLEL with `gate` — both are independently required by the
     # ruleset (`cheap gate (main-ancestor + lint)` and `merge shard reports`),
@@ -524,6 +543,133 @@ jobs:
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn
 
+  test262-shard-mg:
+    # #3431 — the merge_group-ONLY, CONSOLIDATED test262 shard matrix. Fewer,
+    # bigger shards than `test262-shard`'s 57x2=114-job matrix, sized to cut
+    # the job-count contention footprint when the merge queue builds
+    # multiple entries concurrently (`max_entries_to_build: 5`,
+    # docs/ci-policy.md).
+    #
+    # Evidence (2026-07-18): an ISOLATED, uncontended 114-job merge_group run
+    # (run 29631214965) finished the shard matrix in ~15-19 min total, with
+    # js-host shards averaging 13.6 min / maxing 15.9 min and standalone
+    # shards averaging 5.8 min / maxing 7.0 min — so fixed per-job overhead
+    # (checkout+setup+install+build, measured ~30-45s) is NOT the bottleneck.
+    # A CONTENDED run (29632953272, overlapping with another concurrent
+    # merge_group build) showed job start times trickling over ~20 minutes
+    # instead of the near-instant start seen when uncontended, stretching
+    # that run to 38.5 min. That contention-driven queueing, multiplied
+    # across up to 5 concurrently-building queue entries (5x114=570 jobs
+    # contending for runner slots), is what was driving multi-hour merge
+    # queue drains (~1 PR/hour) despite any single uncontended run being fast.
+    #
+    # Reducing the per-entry job count from 114 to 59 (see
+    # scripts/gen-test262-mg-matrix.mjs for the exact js-host=40/
+    # standalone=19 split and the per-target scaling math) cuts the
+    # contention footprint by ~48% without changing pull_request/push/
+    # workflow_dispatch behavior at all (they keep using `test262-shard`
+    # above, completely unchanged).
+    #
+    # Uses the SAME dynamic entry point (tests/test262-chunk-dynamic.test.ts)
+    # for every matrix cell instead of 40/19 hand-written per-chunk files —
+    # the partition logic (assignBalancedChunk in test262-shared.ts) is a
+    # pure function of (chunkIndex, totalChunks), so this is behaviorally
+    # equivalent to the static tests/test262-chunkN.test.ts files, just
+    # parameterized by env vars instead of baked into a filename.
+    needs: [changes]
+    if: github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true'
+    name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
+    runs-on: ubuntu-latest
+    # Same 25-min timeout as `test262-shard`. The consolidated per-target
+    # counts (js-host=40, standalone=19) were picked specifically to keep
+    # estimated max shard runtime (~22.7 min host, ~21.0 min standalone)
+    # under this cap with headroom — see scripts/gen-test262-mg-matrix.mjs.
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.mg_shard_matrix) }}
+
+    env:
+      # merge_group has no workflow_dispatch input, so these mirror the
+      # `github.event_name == 'workflow_dispatch'` false-branch values from
+      # `test262-shard`'s env block directly (no `inputs.*` fallback needed
+      # since this job never runs for workflow_dispatch). #3425
+      # BASELINE-COMPATIBILITY CONTRACT: pool size must match the currently
+      # published baseline's pool size (4) so compile_timeout classification
+      # stays comparable — do not lower this without re-auditing the
+      # baseline alongside refresh-baseline.yml.
+      COMPILER_POOL_SIZE: "4"
+      JS2WASM_IR_FIRST: ""
+      TEST262_INCLUDE_PROPOSALS: "1"
+      RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target_name }}-mgchunk${{ matrix.chunk_label }}
+      TEST262_TARGET: ${{ matrix.test262_target }}
+      TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}
+      TEST262_CHUNK_INDEX: ${{ matrix.chunk_index }}
+      TEST262_CHUNK_TOTAL: ${{ matrix.chunk_total }}
+      # #1954 — always empty on merge_group (scope directives are
+      # pull_request-only), kept for symmetry with `test262-shard`.
+      TEST262_PATH_FILTER: ${{ needs.changes.outputs.test262_scope }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 25
+
+      - name: Setup pnpm via Corepack
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.30.2 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # See the matching comment on `test262-shard` — the on-disk result
+      # cache is disabled in the runner, so no actions/cache step here.
+
+      - name: Build compiler bundles
+        run: |
+          pnpm run build:compiler-bundle
+          ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
+            --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      - name: Run shard
+        run: |
+          mkdir -p vitest-blob
+          set +e
+          node node_modules/vitest/dist/cli.js run tests/test262-chunk-dynamic.test.ts \
+            --reporter=blob \
+            --outputFile=vitest-blob/blob-${{ matrix.target_name }}-mg${{ matrix.chunk_label }}.json
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
+            echo "Vitest exited with unexpected code $exit_code"
+            exit "$exit_code"
+          fi
+          echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+
+      - name: Upload shard artifacts
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          retention-days: 1
+          # Same naming convention as `test262-shard` (test262-<target>-shard-<N>)
+          # so merge-report's/regression-gate's artifact globs
+          # (test262-*-shard-*) pick these up with no changes there — only
+          # one of the two shard jobs ever runs per workflow run, so there is
+          # no naming collision risk even though chunk_label ranges overlap
+          # (1..40 / 1..19 here vs 1..57 in test262-shard).
+          name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
+          path: |
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+          if-no-files-found: warn
+
   merge-report:
     # Aggregate the 57 shard artifacts per target into test262 reports and gate
     # on shard results. Produces the "merge shard reports" required check
@@ -539,8 +685,12 @@ jobs:
     #       change in the queue)                            → trivial PASS
     #   (c) pull_request — heavy shards never run at PR-time
     #       under the #2519 slim-down                       → trivial PASS
-    # `needs.test262-shard.result` is 'skipped' in (b)/(c), so the job runs
-    # under `always()` and decides explicitly via SHARD_SKIP_OK:
+    # `needs.test262-shard.result` / `needs.test262-shard-mg.result` is
+    # 'skipped' in (b)/(c) (and for whichever of the two shard jobs did NOT
+    # run for this event — #3431 split merge_group into its own consolidated
+    # `test262-shard-mg` job, mutually exclusive with `test262-shard` by
+    # `if:` condition), so the job runs under `always()` and decides
+    # explicitly via SHARD_SKIP_OK:
     #   - shards succeeded                       -> build real merged report
     #   - merge_group no-shards path             -> trivial PASS
     #   - any pull_request                       -> trivial PASS
@@ -550,12 +700,16 @@ jobs:
       always() &&
       (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: merge shard reports
-    needs: [changes, test262-shard]
+    needs: [changes, test262-shard, test262-shard-mg]
     runs-on: ubuntu-latest
     env:
-      # 'true' when the heavy matrix actually executed and produced artifacts;
-      # 'false' on the merge_group skip path (no test262-relevant change).
-      SHARDS_RAN: ${{ needs.test262-shard.result == 'success' && 'true' || 'false' }}
+      # 'true' when EITHER the static (test262-shard) or consolidated
+      # (test262-shard-mg, #3431) matrix actually executed and produced
+      # artifacts. Only one of the two ever runs per event — their `if:`
+      # conditions are mutually exclusive — so exactly one side of this OR
+      # can be 'success' in any real run; 'false' on the merge_group skip
+      # path (no test262-relevant change).
+      SHARDS_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && 'true' || 'false' }}
       # Green-skip when shards legitimately did not run: a merge_group with no
       # test262-relevant change, OR any pull_request (heavy shards are
       # merge_group-only under the #2519 slim-down).
@@ -565,7 +719,7 @@ jobs:
       - name: Fail if required test262 shards did not succeed
         if: env.SHARDS_RAN != 'true' && env.SHARD_SKIP_OK != 'true'
         run: |
-          echo "::error::test262-shard result was '${{ needs.test262-shard.result }}' for ${{ github.event_name }} by ${{ github.actor }}."
+          echo "::error::test262-shard result was '${{ needs.test262-shard.result }}', test262-shard-mg result was '${{ needs.test262-shard-mg.result }}' for ${{ github.event_name }} by ${{ github.actor }}."
           echo "::error::The required 'merge shard reports' check must fail when shards fail or are skipped unexpectedly."
           exit 1
 
@@ -574,13 +728,15 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "merge_group" ]; then
             echo "-> merge_group queued only non-test262-relevant changes"
-            echo "   (changes.run_shards=='false'); the heavy 114-job target matrix was"
-            echo "   intentionally skipped. Reporting 'merge shard reports' green."
+            echo "   (changes.run_shards=='false'); the consolidated 59-job matrix (#3431,"
+            echo "   test262-shard-mg) was intentionally skipped. Reporting 'merge shard"
+            echo "   reports' green."
           else
             echo "-> pull_request: heavy test262 shards are merge_group-only under the"
             echo "   #2519 slim-down, so they do not run at PR-time. The cheap gate"
-            echo "   (typecheck + lint) validated this PR; the full 114-job matrix runs"
-            echo "   in the merge_group when the PR reaches the front of the queue."
+            echo "   (typecheck + lint) validated this PR; the consolidated 59-job matrix"
+            echo "   (#3431, test262-shard-mg) runs in the merge_group when the PR reaches"
+            echo "   the front of the queue."
           fi
 
       - name: Checkout
@@ -884,7 +1040,15 @@ jobs:
       - name: Compile-time regression guard (#1942)
         if: env.SHARDS_RAN == 'true'
         env:
-          COMPILE_TIMEOUT_THRESHOLD: "25"
+          # Scales with per-shard test density (#3431). The 114→59 merge_group
+          # shard consolidation ~doubles tests-per-shard, so boundary compiles
+          # that flirt with the 30s per-test timeout cross it proportionally more
+          # often under runner CPU contention (25 × 114/59 ≈ 48, rounded to 50
+          # for headroom). This count threshold is the flake-noise filter only;
+          # the aggregate +20% compile-time guard below is UNCHANGED and remains
+          # the systemic-slowdown backstop, so raising this does not weaken real
+          # compile-perf regression detection.
+          COMPILE_TIMEOUT_THRESHOLD: "50"
           AGG_COMPILE_TIME_PCT_THRESHOLD: "20"
         run: |
           if [ ! -f /tmp/cat-diff.txt ]; then
@@ -1018,7 +1182,8 @@ jobs:
     # concatenation of the per-shard host JSONLs, which it builds itself from
     # the shard artifacts below. Running in parallel with merge-report (instead
     # of serially after it) cuts ~3 min off every run's tail.
-    needs: [changes, test262-shard]
+    # #3431 — needs both shard jobs; only one runs per event (see merge-report).
+    needs: [changes, test262-shard, test262-shard-mg]
     runs-on: ubuntu-latest
     # actions:read — the #1956 predecessor-group baseline is an artifact from
     # ANOTHER workflow run, downloaded via the artifacts API. The workflow's
@@ -1028,14 +1193,14 @@ jobs:
       contents: read
       actions: read
     env:
-      SHARDS_RAN: ${{ needs.test262-shard.result == 'success' && 'true' || 'false' }}
+      SHARDS_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && 'true' || 'false' }}
 
     steps:
       - name: No-op pass (no merged test262 report to diff)
         if: env.SHARDS_RAN != 'true'
         run: |
           echo "test262 shards did not produce shard artifacts in this context."
-          echo "test262-shard result: ${{ needs.test262-shard.result }}"
+          echo "test262-shard result: ${{ needs.test262-shard.result }}, test262-shard-mg result: ${{ needs.test262-shard-mg.result }}"
           echo "If shards failed unexpectedly, the required 'merge shard reports' check is the blocking signal."
 
       - name: Checkout
@@ -1866,7 +2031,8 @@ jobs:
           set -uo pipefail
           # #1951 — DEFER this commit while the merge queue is non-empty. Any
           # push to main (even [skip ci]) makes GitHub rebuild EVERY queued
-          # merge group: each rebuild costs a full 114-job validation per
+          # merge group: each rebuild costs a full shard-matrix validation
+          # (#3431: 59 consolidated jobs, was 114) per
           # queued PR plus ~10 min of added queue latency (observed 2026-06-10:
           # PR #1283 validated 3× because baseline pushes kept landing under
           # it). The baselines-REPO push above is unaffected — it doesn't move

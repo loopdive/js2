@@ -355,9 +355,16 @@ jobs:
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           BASE=$(git merge-base origin/main HEAD 2>/dev/null || echo "")
           if [ -z "$BASE" ]; then echo "No merge base resolvable — skipping."; exit 0; fi
+          # test262-chunk* entry points are shard-matrix constructs (they need
+          # TEST262_CHUNK_* / a chunk index+total to slice the corpus and run
+          # in the test262-sharded.yml workflow, not this per-PR root-test
+          # gate) — same "runs elsewhere" rationale as the linear-/c-abi/simd
+          # exclusions. The dynamic entry point (#3431) already self-skips
+          # without its env vars, but excluding it here keeps the gate from
+          # spending a fork on an inert skip.
           CHANGED=$(git diff --name-only --diff-filter=AM "$BASE" HEAD -- tests/ \
             | grep -E '^tests/[^/]+\.test\.ts$' \
-            | grep -vE '^tests/(linear-|c-abi\.|simd)' || true)
+            | grep -vE '^tests/(linear-|c-abi\.|simd|test262-chunk)' || true)
           if [ -z "$CHANGED" ]; then echo "No root test files changed."; exit 0; fi
           N=$(echo "$CHANGED" | wc -l)
           if [ "$N" -gt 20 ]; then
