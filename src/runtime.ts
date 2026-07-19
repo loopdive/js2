@@ -5574,7 +5574,31 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       }
       return val;
     },
-    set(_t, key, val) {
+    set(_t, key, val, receiver) {
+      // When this mirror is installed as another object's [[Prototype]] (for
+      // example by Object.create), OrdinarySet reaches the prototype Proxy's
+      // set trap with the CHILD as `receiver`. Writing the raw prototype here
+      // would turn the child's own assignment into an inherited sidecar write,
+      // leaving Reflect.ownKeys(child) empty. Apply OrdinarySetWithOwnDescriptor
+      // to the receiver instead: inherited accessors/non-writable data retain
+      // their semantics, while an absent or writable data property becomes an
+      // ordinary own data property on the child.
+      if (receiver !== proxy) {
+        const ownDesc = _readOwnDescriptor(obj, _normalizeDescKey(key), exports);
+        if (ownDesc?.get !== undefined || ownDesc?.set !== undefined) {
+          const setter = _maybeWrapCallableUnknownArity(ownDesc.set, { getExports: () => exports });
+          if (typeof setter !== "function") return false;
+          Reflect.apply(setter, receiver, [val]);
+          return true;
+        }
+        if (ownDesc?.writable === false) return false;
+        return Reflect.defineProperty(receiver, key, {
+          value: val,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      }
       _safeSet(obj, key, val, exports);
       return true;
     },
@@ -8936,7 +8960,12 @@ assert._isSameValue = isSameValue;
           }
         };
       }
-      if (name === "__object_create") return (proto: any) => Object.create(proto);
+      if (name === "__object_create")
+        return (proto: any) => {
+          const exports = callbackState?.getExports();
+          const hostProto = _isWasmStruct(proto) ? _wrapForHost(proto, exports) : proto;
+          return Object.create(hostProto);
+        };
       if (name === "__new_plain_object") return (): any => ({});
       if (name === "__register_prototype")
         return (proto: any, csv: any): void => {
