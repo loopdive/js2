@@ -133,3 +133,25 @@ pass 5.
   closure struct where the dynamic read path expects a host-bridged value?).
 - Compare the top-level read path (works) vs nested-function aliased read
   (fails) to find where the bridging diverges.
+
+## Follow-up (merge_group park fix, CI-FIX #16 — 2026-07-19)
+
+The skip-recast guard over-applied at DIRECT-CALL sites: skipping also dropped
+the "matched-closure-struct or null" normalization that the #1941 gate
+(`calleeMayBeHostCallable`) relies on to omit the #1712 `__call_function`
+fallback arm. A foreign callable left raw in the externref slot (host builtin,
+bound function, bridge-wrapped closure read off a property — harness
+`var format = compareArray.format; … format(actual)`) reached the
+closure-struct dispatch, where the guarded root cast nulls and `struct.get`
+traps "dereferencing a null pointer" → the +107 `null_deref` merge_group
+bucket on PR #3370 (those files were already `fail` on main with a catchable
+TypeError; the skip converted them to uncatchable traps).
+
+Fix: record each decl taking the skip path in
+`ctx.skippedClosureRecastDecls` (context/types.ts) and return true from
+`calleeMayBeHostCallable` for exactly those decls, so their direct-call
+sites emit the host-dispatch arm. Verified: regressed cluster files
+(concat/copyWithin/flat) no longer trap (back to catchable Test262Error);
+TypedArray bind behavior byte-identical to PR head; #1941 dual-mode guard
+test still green; new unit test in `tests/issue-3432.test.ts` (host builtin
+in a skipped-recast var direct-called → PASS, was null-deref trap).
