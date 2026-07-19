@@ -308,8 +308,18 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   // never intercept those; their explicit branches own them.
   if (decl.getSourceFile().isDeclarationFile) return false;
   if (!ts.isParameter(decl) && !ts.isVariableDeclaration(decl) && !ts.isBindingElement(decl)) return false;
-  const kind = ctx.oracle.typeFactOf(calleeExpr).kind;
-  return kind === "any" || kind === "unknown";
+  const fact = ctx.oracle.typeFactOf(calleeExpr);
+  if (fact.kind === "any" || fact.kind === "unknown") return true;
+  // (#3435) A binding typed as the bare lib `Function` interface is equally a
+  // DYNAMIC ctor value: under checkJs the harness JSDoc
+  // (`@callback … @param {Function} TypedArrayConstructor`) contextually types
+  // the callback param as `Function`, so the oracle reports `builtin:Function`
+  // instead of `any` — and `new TA(3)` fell through to the non-existent
+  // `__new_TA` extern-class import ("No dependency provided for extern class").
+  // `Function` has no static construct signature to dispatch on; the
+  // `__construct_closure` runtime IsConstructor probe is spec-correct for any
+  // runtime value, so route it the same way.
+  return fact.kind === "builtin" && fact.name === "Function";
 }
 
 /**

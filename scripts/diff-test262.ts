@@ -33,6 +33,17 @@ export const REGRESSION_RATIO_LIMIT = 0.1;
 export const REGRESSION_BUCKET_LIMIT = 50;
 export const REGRESSION_BUCKET_PATH_DEPTH = 5;
 
+// #3457 — small-sample floor for the regression-RATIO gate. Below this absolute
+// count of wasm-change regressions the ratio is statistically meaningless: a
+// single flaky pass↔fail flip shifts the ratio by ≥10 points (1 flake on a
+// 9-improvement diff already reads 11 %), so a raw 10 % ratio breach on a tiny
+// sample is noise, not signal. The floor is well under the 50-per-bucket
+// concentration limit, so a genuinely concentrated break still trips the
+// (unchanged) bucket gate; and the independent net gate (net < 0) still
+// hard-fails any true net-negative change regardless of the floor. See the
+// #3351/#3318/#3359 and #3406/#3409 false-parks in plan/issues/3457-*.md.
+export const REGRESSION_RATIO_SMALL_SAMPLE_FLOOR = 10;
+
 export interface HostNoiseCanaryProvenance {
   canary_run_id: number;
   compiler_sha: string;
@@ -428,28 +439,82 @@ export function bucketRegressions(files: string[]): { bucket: string; count: num
   return [...counts.entries()].map(([bucket, count]) => ({ bucket, count })).sort((a, b) => b.count - a.count);
 }
 
+export interface RegressionThresholdResult {
+  /** Human-readable HARD-FAIL reasons (empty ⇒ the ratio/bucket gate passes). */
+  failures: string[];
+  /**
+   * Human-readable ADVISORY signals that did NOT hard-fail (#3457): a ratio
+   * breach that was waived because the change is net-positive/net-neutral, or
+   * because the absolute regression count is below the small-sample floor. The
+   * CLI prints these as `GATE WARN` so the signal stays visible without parking.
+   */
+  warnings: string[];
+}
+
 /**
  * Evaluate the documented merge thresholds against the wasm-hash-filtered
- * counts. Returns the list of human-readable failure reasons (empty ⇒ pass).
- * Pure (no I/O) so the unit test can drive it directly with fixture data
- * (#1943 acceptance criteria). The ratio gate only fires when there is at
- * least one regression — a clean PR (R == 0) always passes regardless of how
- * few improvements it carries.
+ * counts. Pure (no I/O) so the unit test can drive it directly with fixture
+ * data (#1943 acceptance criteria).
+ *
+ * #3457 — NET-AWARE / FLAP-TOLERANT ratio gate. The raw 10 % regression-ratio
+ * gate (#1943) false-parked net-positive and net-neutral PRs: symmetric
+ * content-current flap (improvements ≈ regressions, so NET ≥ 0) and genuine
+ * net-conformance GAINS with a handful of offsetting edge-case regressions
+ * (#3406 net +29 ratio 17 %; #3409 net +30 ratio 11.8 %; #3351/#3318/#3359
+ * net-neutral) all tripped the ratio even though conformance held or rose. The
+ * ratio is now classified against the NET (improvements − regressions):
+ *
+ *   • net ≥ 0                              → ratio breach is a WARNING, not a
+ *                                            fail. Conformance did not drop, so
+ *                                            the regressions are outnumbered —
+ *                                            not merge-blocking.
+ *   • net < 0 AND regressions ≥ floor(10)  → ratio breach HARD-FAILS: a
+ *                                            statistically-meaningful,
+ *                                            one-directional net regression.
+ *   • net < 0 AND regressions <  floor(10) → ratio breach is a WARNING: below
+ *                                            the small-sample floor the ratio is
+ *                                            noise (a single flake dominates it),
+ *                                            and the independent net gate already
+ *                                            hard-fails this net-negative diff.
+ *
+ * The per-bucket (>50) concentration check is UNCHANGED and stays a hard fail
+ * independent of net — a net-positive PR that nukes one test family (≥50 in one
+ * bucket) is still suspicious and still parks. The #3189 uncatchable-trap growth
+ * ratchet and the net gate (net < 0) live outside this function and are likewise
+ * unchanged. The ratio gate only fires when there is at least one wasm-change
+ * regression — a clean diff (R == 0) always passes.
  */
 export function evaluateRegressionThresholds(opts: {
   improvements: number;
   regressionsWasmChange: number;
   regressedFiles: string[];
-}): string[] {
+}): RegressionThresholdResult {
   const failures: string[] = [];
+  const warnings: string[] = [];
   const { improvements, regressionsWasmChange, regressedFiles } = opts;
+  const net = improvements - regressionsWasmChange;
   if (regressionsWasmChange > 0) {
     const ratio = improvements > 0 ? regressionsWasmChange / improvements : Infinity;
     if (ratio >= REGRESSION_RATIO_LIMIT) {
       const pct = improvements > 0 ? (ratio * 100).toFixed(1) + "%" : "∞ (0 improvements)";
-      failures.push(
-        `regression ratio ${pct} (${regressionsWasmChange}/${improvements}) meets/exceeds the ${(REGRESSION_RATIO_LIMIT * 100).toFixed(0)}% limit`,
-      );
+      const base = `regression ratio ${pct} (${regressionsWasmChange}/${improvements}) meets/exceeds the ${(REGRESSION_RATIO_LIMIT * 100).toFixed(0)}% limit`;
+      if (net >= 0) {
+        // Net conformance held or rose — the ratio is advisory, not blocking.
+        warnings.push(
+          `${base} — WAIVED (#3457): net conformance change is +${net} (improvements ${improvements} ≥ regressions ${regressionsWasmChange}); ratio is advisory on a net-positive/neutral diff`,
+        );
+      } else if (regressionsWasmChange < REGRESSION_RATIO_SMALL_SAMPLE_FLOOR) {
+        // Net-negative but below the small-sample floor — ratio too noisy to
+        // gate on; the net gate (net < 0) already fails this diff.
+        warnings.push(
+          `${base} — WAIVED (#3457): only ${regressionsWasmChange} wasm-change regression(s) < small-sample floor ${REGRESSION_RATIO_SMALL_SAMPLE_FLOOR}; ratio is statistically noisy on a small sample (the net gate already hard-fails this net-negative diff)`,
+        );
+      } else {
+        // Net-negative AND ≥ floor regressions — a real one-directional break.
+        failures.push(
+          `${base} (net ${net} < 0, ${regressionsWasmChange} ≥ small-sample floor ${REGRESSION_RATIO_SMALL_SAMPLE_FLOOR})`,
+        );
+      }
     }
   }
   for (const { bucket, count } of bucketRegressions(regressedFiles)) {
@@ -457,7 +522,7 @@ export function evaluateRegressionThresholds(opts: {
       failures.push(`bucket "${bucket}" has ${count} regressions, exceeds the ${REGRESSION_BUCKET_LIMIT}-test limit`);
     }
   }
-  return failures;
+  return { failures, warnings };
 }
 
 /** Minimal row shape the trap ratchet needs (a subset of `TestResult`). */
@@ -1772,14 +1837,21 @@ async function run(
     // that previously lived only in the dev-self-merge skill text. Same
     // wasm-hash-filtered count the net gate uses (`noiseFiltered`), so
     // compile_timeout flaps and byte-identical flips never trip these either.
-    const thresholdFailures = evaluateRegressionThresholds({
+    // #3457 — the ratio arm is now NET-AWARE: a ratio breach on a net-positive
+    // / net-neutral diff (or below the small-sample floor) is reported as a
+    // WARNING, not a hard fail. The per-bucket concentration check stays a hard
+    // fail. See evaluateRegressionThresholds.
+    const thresholdResult = evaluateRegressionThresholds({
       improvements: stableImprovements.length,
       regressionsWasmChange,
       regressedFiles: noiseFiltered.map((r) => r.file),
     });
-    for (const reason of thresholdFailures) {
+    for (const reason of thresholdResult.failures) {
       console.log(`=== GATE FAIL: ${reason} ===`);
       gateFailed = true;
+    }
+    for (const warning of thresholdResult.warnings) {
+      console.log(`=== GATE WARN (#3457): ${warning} ===`);
     }
   }
 

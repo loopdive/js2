@@ -1695,6 +1695,28 @@ jobs:
 
       - name: Compare against current main baseline
         id: regression_diff
+        # NET-AWARE / FLAP-TOLERANT fine gate (#3457). `diff-test262.ts`'s
+        # regression-RATIO arm (the #1943 10 % gate) no longer hard-fails when
+        # the stable-path NET (improvements − wasm-change regressions) is ≥ 0.
+        # A raw ratio counts the regression side without netting it against an
+        # equal-or-larger improvement side, so SYMMETRIC content-current flap
+        # (improvements ≈ regressions; #3351/#3318/#3359, net ≈ 0) and genuine
+        # net-conformance GAINS with a few offsetting edge-case regressions
+        # (#3406 net +29 / ratio 17 %; #3409 net +30 / ratio 11.8 %) were
+        # false-parked, each costing a `hold` + a full re-validation run.
+        # New classification (see scripts/diff-test262.ts
+        # evaluateRegressionThresholds):
+        #   • net ≥ 0                         → ratio breach is an advisory
+        #                                       `GATE WARN`, NOT a fail.
+        #   • net < 0 AND regressions ≥ 10    → ratio breach HARD-FAILS (a real
+        #                                       one-directional net regression).
+        #   • net < 0 AND regressions < 10    → advisory WARN (small-sample floor:
+        #                                       the ratio is noise; the net gate
+        #                                       (net < 0) already hard-fails it).
+        # UNCHANGED hard gates (orthogonal, still park regardless of net): the
+        # net gate (net < 0), the per-bucket >50 concentration check, and the
+        # #3189 uncatchable-trap growth ratchet. `compile_timeout` / ct_flake is
+        # already excluded from the wasm-change regression numerator.
         if: env.SHARDS_RAN == 'true'
         env:
           # #1954 — scoped PR runs: restrict the baseline to the scope or
