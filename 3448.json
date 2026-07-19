@@ -1,8 +1,8 @@
 {
   "id": "3448",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-19T00:45:02Z",
-  "updated_at": "2026-07-19T00:45:02Z"
+  "assignee": "ttraenkler/dev-3448",
+  "status": "in-progress",
+  "branch": "issue-3448-ci-promote-baseline-from-mergegroup-artifacts",
+  "claimed_at": "2026-07-19T00:46:48Z",
+  "updated_at": "2026-07-19T00:46:48Z"
 }
