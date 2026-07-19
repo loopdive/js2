@@ -1,8 +1,8 @@
 {
   "id": "3469",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-19T15:04:32Z",
-  "updated_at": "2026-07-19T15:04:32Z"
+  "assignee": "ttraenkler/senior-dev-async-sink",
+  "status": "in-progress",
+  "branch": "issue-3469-standalone-async-completion-marker-host-free-channel",
+  "claimed_at": "2026-07-19T15:05:17Z",
+  "updated_at": "2026-07-19T15:05:17Z"
 }
