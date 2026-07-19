@@ -1,8 +1,8 @@
 {
   "id": "3472",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-19T18:25:15Z",
-  "updated_at": "2026-07-19T18:25:15Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3472-standalone-fnexpr-strconcat-param-invalid-wasm",
+  "claimed_at": "2026-07-19T18:25:34Z",
+  "updated_at": "2026-07-19T18:25:34Z"
 }
