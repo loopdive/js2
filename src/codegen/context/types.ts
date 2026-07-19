@@ -301,6 +301,24 @@ export interface NativeGeneratorInfo {
   spillTypes: ValType[];
   /** Field index where spilled locals start in the state struct. */
   spillFieldOffset: number;
+  /**
+   * (#3386) Names bound by a destructuring PARAM pattern (a subset of
+   * `spillNames`). Parameter destructuring is EAGER per §10.2.11
+   * FunctionDeclarationInstantiation: every emit site destructures the pattern
+   * into factory locals BEFORE the factory emit, and
+   * `compileNativeGeneratorFunction` packs those locals into the matching
+   * spill fields at `struct.new` (instead of the inert default). The resume
+   * function then reads the bindings back through the ordinary spill-load
+   * loop — no state-0 re-destructure (which would double-drive one-shot
+   * iterators and mistime default/GetIterator side effects to first-`.next()`).
+   */
+  patternParamBindings?: Set<string>;
+  /**
+   * (#3315/#3386) Subset of `patternParamBindings` whose spill type was
+   * undefined-preservation-widened to externref; the resume fctx marks them in
+   * `undefWidenedLocals` so identifier reads keep `undefined` observable.
+   */
+  undefWidenedPatternBindings?: Set<string>;
   /** Number of top-level yield suspension points. */
   yieldCount: number;
   /** Terminal state value. */

@@ -118,7 +118,11 @@ import {
   emitGeneratorPrototypeSingleton,
 } from "./array-object-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
-import { getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
+import {
+  externrefBackedOwnFieldBacking,
+  getOrRegisterErrorStructType,
+  isWasiErrorName,
+} from "./registry/error-types.js";
 import {
   addStringConstantGlobal,
   ensureExnTag,
@@ -1415,23 +1419,37 @@ export function emitCapturedBoxGlobalWrite(
  * Stack: [externref] -> [fieldType]
  */
 /**
- * (#2101a R5) Emit an own-field READ (`inst.code`) on an externref-backed Error
- * subclass, routing through the `$Error_struct.$props` (fieldIdx 5) open-`$Object`
- * backing instead of the vestigial `$A` struct (which the receiver is NOT).
+ * (#2101a R5) Emit an own-field READ (`inst.code`) on an externref-backed
+ * subclass instance. The storage location depends on the native backing
+ * representation (#2917 — `externrefBackedOwnFieldBacking`):
  *
- * Lowers to: `props = self.$props; props == null ? undefined :
- * __extern_get(props, "code")`, returning the value as externref. message/name/
- * stack never reach here — they are served by the Error fast-path upstream.
+ *   - Error family (`$Error_struct` backing): read through the
+ *     `$Error_struct.$props` (fieldIdx 5) open-`$Object` side-slot instead of
+ *     the vestigial `$A` struct (which the receiver is NOT). Lowers to:
+ *     `props = self.$props; props == null ? undefined : __extern_get(props,
+ *     "code")`. message/name/stack never reach here — they are served by the
+ *     Error fast-path upstream.
+ *   - `extends Object` (#3238, native `$Object` backing): the instance ITSELF
+ *     is the open property store — `__extern_get(self, "code")` directly.
+ *     Casting it to `$Error_struct` (the pre-#2917 behavior) traps.
  *
- * Returns the result ValType on success, or `undefined` when helpers are
- * unavailable (caller falls through to the legacy struct read).
+ * `className` selects the backing; when omitted (the SuppressedError builtin
+ * fast-path caller, whose native instances are `$Error_struct`s — #3234) the
+ * Error-struct arm is used.
+ *
+ * Returns the result ValType on success, or `undefined` when the backing is
+ * unknown / helpers are unavailable (caller falls through to the legacy
+ * struct read).
  */
 export function emitExternrefBackedOwnFieldRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
   propName: string,
+  className?: string,
 ): ValType | null | undefined {
+  const backing = className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className);
+  if (backing === undefined) return undefined;
   ensureObjectRuntime(ctx);
   const externGetIdx = ensureLateImport(
     ctx,
@@ -1441,6 +1459,30 @@ export function emitExternrefBackedOwnFieldRead(
   );
   flushLateImportShifts(ctx, fctx);
   if (externGetIdx === undefined) return undefined;
+
+  if (backing === "plain-object") {
+    // self IS the open `$Object` — `self == null ? undefined :
+    // __extern_get(self, propName)`.
+    const selfResult = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+    if (!selfResult) return null;
+    if (selfResult.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+    const selfLocal = allocLocal(fctx, `__ownf_rself_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: selfLocal });
+    addStringConstantGlobal(ctx, propName);
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "ref.null.extern" }],
+      else: [
+        { op: "local.get", index: selfLocal },
+        ...stringConstantExternrefInstrs(ctx, propName),
+        { op: "call", funcIdx: externGetIdx },
+      ],
+    });
+    return { kind: "externref" };
+  }
+
   const errStructIdx = getOrRegisterErrorStructType(ctx);
 
   const selfResult = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });

@@ -82,7 +82,7 @@ import { emitMappedArgParamSync, emitMappedArgReverseSync } from "./logical-ops.
 import { resolveStructName, resolveStructNameForExpr } from "./misc.js";
 import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.js";
 import { tryCompileStandaloneDetachedWrite } from "../dataview-native.js"; // (#3173) $DETACHBUFFER marker write
-import { getOrRegisterErrorStructType } from "../registry/error-types.js";
+import { externrefBackedOwnFieldBacking, getOrRegisterErrorStructType } from "../registry/error-types.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { resolveEffectiveStructName } from "../property-access.js";
@@ -3207,16 +3207,22 @@ function emitVecArrayLikeObjectDestructure(
 
 /**
  * (#2101a R5) Emit an own-field WRITE (`this.code = v` / `inst.code = v`) on an
- * externref-backed Error subclass, routing through the `$Error_struct.$props`
- * (fieldIdx 5) open-`$Object` backing instead of the vestigial `$A` struct
- * (which the receiver is NOT — casting to it traps).
+ * externref-backed subclass instance. The storage location depends on the
+ * native backing representation (#2917 — `externrefBackedOwnFieldBacking`):
  *
- * Lowers to: `props = self.$props; if (props == null) { props =
- * __new_plain_object(); self.$props = props } __extern_set(props, "code",
- * box(value))`, returning the RHS as the assignment-expression result.
+ *   - Error family (`$Error_struct` backing): route through the
+ *     `$Error_struct.$props` (fieldIdx 5) open-`$Object` side-slot instead of
+ *     the vestigial `$A` struct (which the receiver is NOT — casting to it
+ *     traps). Lowers to: `props = self.$props; if (props == null) { props =
+ *     __new_plain_object(); self.$props = props } __extern_set(props, "code",
+ *     box(value))`.
+ *   - `extends Object` (#3238, native `$Object` backing): the instance ITSELF
+ *     is the open property store — `__extern_set(self, "code", box(value))`
+ *     directly. Casting it to `$Error_struct` (the pre-#2917 behavior) traps.
  *
- * Returns the value's ValType on success, or `undefined` when the required
- * helpers are unavailable (caller falls through to the legacy struct path).
+ * Returns the RHS as the assignment-expression result on success, or
+ * `undefined` when the backing is unknown / helpers are unavailable (caller
+ * falls through to the legacy struct path).
  */
 function emitExternrefBackedOwnFieldWrite(
   ctx: CodegenContext,
@@ -3224,7 +3230,10 @@ function emitExternrefBackedOwnFieldWrite(
   target: ts.PropertyAccessExpression,
   value: ts.Expression,
   fieldName: string,
+  className: string,
 ): ValType | null | undefined {
+  const backing = externrefBackedOwnFieldBacking(ctx, className);
+  if (backing === undefined) return undefined;
   ensureObjectRuntime(ctx);
   const newObjIdx = ctx.funcMap.get("__new_plain_object");
   const externSetIdx = ensureLateImport(
@@ -3235,6 +3244,32 @@ function emitExternrefBackedOwnFieldWrite(
   );
   flushLateImportShifts(ctx, fctx);
   if (newObjIdx === undefined || externSetIdx === undefined) return undefined;
+
+  if (backing === "plain-object") {
+    // self IS the open `$Object` — write the field straight onto it:
+    // `__extern_set(self, "code", box(value))`.
+    const selfResult = compileExpression(ctx, fctx, target.expression, { kind: "externref" });
+    if (!selfResult) {
+      reportError(ctx, target, "Failed to compile externref-backed own-field receiver");
+      return null;
+    }
+    if (selfResult.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+    addStringConstantGlobal(ctx, fieldName);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, fieldName));
+    const objValType = compileExpression(ctx, fctx, value);
+    if (!objValType) return null;
+    if (objValType.kind !== "externref") {
+      coerceType(ctx, fctx, objValType, { kind: "externref" });
+    }
+    // stack: [self, key, value(externref)] — stash the boxed value as the
+    // assignment-expression result before consuming it in the call.
+    const objTmpBoxed = allocLocal(fctx, `__ownf_boxed_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.tee", index: objTmpBoxed });
+    fctx.body.push({ op: "call", funcIdx: externSetIdx });
+    fctx.body.push({ op: "local.get", index: objTmpBoxed });
+    return { kind: "externref" };
+  }
+
   const errStructIdx = getOrRegisterErrorStructType(ctx);
 
   // self → a TYPED `(ref $Error_struct)` local, cast ONCE. Reused for both the
@@ -3867,7 +3902,7 @@ function compilePropertyAssignment(
   // open `$Object` on first write, then `__extern_set(props, key, box(value))`.
   // Standalone only — host mode keeps the host-object machinery.
   if (ctx.standalone && ctx.classExternrefBackedSet.has(typeName)) {
-    const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName);
+    const ownWrite = emitExternrefBackedOwnFieldWrite(ctx, fctx, target, value, fieldName, typeName);
     if (ownWrite !== undefined) return ownWrite;
     // undefined → not applicable (e.g. helper unavailable); fall through.
   }

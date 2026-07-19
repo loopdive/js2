@@ -17,6 +17,11 @@ language_feature: classes
 goal: standalone
 related: [1366a, 1455, 1721, 1833, 2029, 2188, 2379, 2395, 2620, 2622, 2709, 2916, 3238, 3239, 3240]
 origin: "2026-07-01 — sr-tail2 escalation: leaky-PASS conversion cluster, per-builtin backing-instance substrate (representation-scale, à la #2379)"
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/class-bodies.ts
 ---
 
 # #2917 — Standalone native `class X extends <Builtin>` super-construction
@@ -374,3 +379,91 @@ standalone` for those shapes (zero `env::__new_<Parent>`), dynamic/unsupported
 - gc/host lanes byte-identical; Number/Boolean/collections refusals intact.
 - `net_per_test > 0`; full `merge_group` net-positive; object identity
   preserved.
+
+## Progress — Slice 1 landed (2026-07-18, fable-2917, branch `issue-2917-extends-builtin-native`)
+
+Implements **Slice 1 (Array)** of the plan above, plus two root-cause fixes
+found while building it. Real-backing design followed exactly (no wrapper).
+
+1. **`extends Object` own fields were NOT "done" (#3238 leftover)** — the
+   #2101a own-field read/write path unconditionally cast the instance to
+   `$Error_struct` and used its `$props` side-slot; #3238's `$Object` backing
+   made that an **illegal-cast trap** on any ctor own-field write
+   (`class X extends Object { own; constructor(){super(); this.own=42} }`).
+   Fix: `externrefBackedOwnFieldBacking()` (registry/error-types.ts) selects
+   by transitive builtin ancestor — Error family (+`SuppressedError`) keeps
+   the `$props` path; `Object` ancestry reads/writes DIRECTLY on the instance
+   via `__extern_get`/`__extern_set` (the `$Object` IS the open property
+   store); other ancestors return `undefined` → legacy multi-dispatch
+   fallthrough (no more unconditional trap; per-slice flips to a
+   direct-`__extern_set` silent-drop arm can be measured later).
+2. **Per-arity `__new_<Builtin>` registration (latent #3238/#3239 mis-call)**
+   — the helpers registered ONE plain funcMap name keyed off the FIRST call
+   site's arity; implicit-forwarder arity varies per class
+   (`max(builtin, observed-new)`), so `class B extends A`, `A extends Array`
+   called the arity-1 registration with 2 args — the extra arg stayed on the
+   operand stack and **validly became the forwarder's return value**
+   (`new B(4,5)` returned boxed `4`, no validation error). All three helpers
+   now register per-arity (`__new_X@N`) and RETURN the funcIdx; the
+   class-bodies sites consume the return value. Safe: standalone never
+   registers `env::__new_*` imports elsewhere (import-collector skips), and
+   host mode never calls the helpers.
+3. **`emitStandaloneArrayConstructor`** (object-runtime.ts) — §23.1.1.1 on
+   effective argc (right-to-left `__extern_is_undefined` padding strip;
+   documented divergence: `new Sub(undefined)` ≡ `new Sub()`); argc-1
+   boxed-number → length-`n` vec with the non-integer/negative/≥2^32
+   **RangeError** throw (real `$Error_struct` via `__new_RangeError`);
+   boxed-number discriminated by `ref.test $__box_number_struct` (NOT
+   ToNumber — `new Sub("3")` stays `["3"]`); otherwise args become elements.
+   `.length`/element ops/`push`/`Array.isArray`/static `instanceof` verified
+   via existing machinery. Shared-resolver refactor
+   (`resolveStandaloneBuiltinSuperCtorIdx`, class-bodies.ts) collapses the
+   duplicated dispatch ladders per the plan.
+
+Tests: `tests/issue-2917-standalone-extends-builtin.test.ts` (Object own
+fields, Array behavior incl. multi-level chain, Error-family + gc-lane
+byte-inertness controls).
+
+**Verified pre-existing (NOT regressions, family-wide, out of slice scope):**
+field initializers on externref-backed subclasses are never emitted
+(`class X extends Error { code = 5 }` → 0 on main too); intermediate user
+ctor bodies in a builtin-ancestor chain are skipped; out-of-bounds dynamic
+element writes don't grow arrays (plain `any[]` too); Error-family
+`emitWasiErrorConstructor` still has the plain-name/first-arity hazard of
+(2) — many sites look up plain `__new_Error`, needs its own slice.
+
+**Remaining slices** (per Split & ordering above): ArrayBuffer+DataView,
+Date, RegExp, Function — each its own issue id referencing #2917 + #3240.
+
+## Resume State (2026-07-18, fable-2917)
+
+- **Branch**: `issue-2917-extends-builtin-native` (pushed to fork
+  `ttraenkler/js2` = `origin` in this checkout). Worktree:
+  `/workspace/.claude/worktrees/agent-a39423e9c6da689e8`.
+- **Done & committed** (all green locally):
+  - `cbee6f3325` — extends-Object own-field illegal-cast fix
+    (`externrefBackedOwnFieldBacking` in registry/error-types.ts; arms in
+    expressions/assignment.ts `emitExternrefBackedOwnFieldWrite` +
+    property-access.ts `emitExternrefBackedOwnFieldRead`; dispatch call site
+    passes `typeName`, SuppressedError caller omits it → error-struct arm).
+  - `7249f08870` — `emitStandaloneArrayConstructor` (object-runtime.ts) +
+    per-arity `__new_X@N` registration for all three standalone ctor helpers
+    (returns funcIdx; class-bodies call sites consume it).
+  - `3fc1659c30` — merge of upstream/main (issue-file conflict resolved:
+    took main's re-grounded plan, appended Progress).
+  - `c6d73d054c` — shared `resolveStandaloneBuiltinSuperCtorIdx` ladder
+    (class-bodies.ts, near `externrefParams`) + §23.1.1.1 RangeError arm.
+- **Validation state**: `tests/issue-2917-standalone-extends-builtin.test.ts`
+  16/16; regression files 2101a / 3239 / 1536c / 2188 / 2188-ml / 3234 /
+  3231 all pass on the branch; `tests/issue-1455.test.ts` has 2 failures
+  (WeakRef, TypeError-subclass) **confirmed pre-existing on clean main
+  0f7ac132a0** via /workspace control run — NOT from this branch.
+- **Next concrete steps**: (1) push branch; (2) open PR against
+  `loopdive/js2` main (`gh pr create -R loopdive/js2 --head
+  ttraenkler:issue-2917-extends-builtin-native`); (3) CI-wait per
+  developer.md; broad-impact — watch the standalone floor + `merge_group`;
+  (4) after merge: release the claim (`claim-issue.mjs 2917 --release` —
+  multi-slice issue, remaining slices are re-claimable), keep issue
+  `in-progress`→`ready` for the next slice owner.
+- **If resuming mid-CI**: check `gh pr checks` for the PR from this branch;
+  fix-forward on the branch; never enqueue manually.

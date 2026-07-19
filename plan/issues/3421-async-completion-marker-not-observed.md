@@ -65,3 +65,37 @@ Candidate causes — the dev should bisect on a minimal `async`-flagged test:
 
 ## Notes
 Default-lane focus (js-host). The standalone async story is #3178.
+
+## Architect re-ground (2026-07-19) — plan above is PRE-#3428; scope is now re-baseline + residual
+
+The sibling #3428 has LANDED (status: done) and its three fixes cover the
+candidate causes enumerated above — read #3428's `## Implementation` section
+before doing anything here:
+- **A1** `resolveImport` `console_log` arm resolves off `deps?.console ?? console`
+  (`src/runtime.ts:~7224`) — the worker's capture proxy is now honored.
+- **A2** (the dominant CODEGEN fix) `registerModuleGlobal` in
+  `src/codegen/declarations.ts`: a host-import/reserved slot no longer shadows a
+  module-level `var` of the same name, so the shim's `var print = …` closure
+  compiles and `$DONE → print → console.log(marker)` actually emits.
+- **B** `$DONE` stub own-property on the sandbox globalThis — present in BOTH
+  lanes (`tests/test262-runner.ts` `_buildFreshSandbox` and
+  `scripts/test262-worker.mjs:~97`), so the #3227-style one-lane-only hazard is
+  already handled for this fix.
+
+All three are lane-shared (runtime.ts / codegen / both sandboxes), so the 2,653
+bucket should largely collapse at the next promoted baseline WITHOUT new work.
+Therefore this issue's protocol is:
+
+1. **Re-baseline first** — wait for (or trigger) a post-#3428 sharded run;
+   diff the `async completion marker not observed` + `asyncTest called without
+   async flag` buckets against the 2,653/68 counts.
+2. **Close-or-retarget** — if the bucket drops to a small residual, the
+   remaining fails are honest async-codegen failures (#680/#3178 territory —
+   #3428's validation explicitly predicted this). Re-bucket them by error, file
+   or route to the async umbrella, and close this as absorbed by #3428.
+3. Only if a >100-record marker-specific residual SURVIVES does the original
+   plan above apply — and then start from #3428's `tests/issue-3428.test.ts`
+   harness (real `runTest262File` host lane), not from scratch.
+
+Do not begin implementation from the pre-#3428 candidate list — it describes
+already-landed fixes.

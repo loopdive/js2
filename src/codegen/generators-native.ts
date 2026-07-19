@@ -27,7 +27,13 @@
  */
 import { ts } from "../ts-api.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
-import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
+import {
+  isBooleanType,
+  isNumberType,
+  isStringType,
+  isUndefWidenedBindingElement,
+  resolveBindingElementType,
+} from "../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
@@ -48,7 +54,6 @@ import { UNDEF_F64_BITS } from "./value-tags.js";
 import { addUnionImports } from "./index.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
-import { destructureParamArray, destructureParamObject } from "./destructuring-params.js";
 import { resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
 // (#2895 PR1) The frame ABI (state-struct field offsets + resume modes) and the
@@ -77,7 +82,6 @@ import {
   statementContainsYield,
   statementNeedsStructuralLowering,
   nodeContainsYield,
-  collectPatternBindingIdentifiers,
   spillSafeValType,
   bodyDeclaresBinding,
   loopBodyHasUnsupportedJump,
@@ -296,6 +300,19 @@ interface NativeGeneratorPlan {
    * emitter so no late import fires mid-trampoline.
    */
   hasThrowRoutes: boolean;
+  /**
+   * (#3386) Names bound by a destructuring PARAM pattern. Their values are
+   * produced by the emit site's eager (call-time) param destructure into
+   * factory locals; `compileNativeGeneratorFunction` packs those locals into
+   * the matching spill fields at `struct.new` (instead of the inert default).
+   */
+  patternParamBindings: Set<string>;
+  /**
+   * (#3315/#3386) Subset of `patternParamBindings` whose spill type was
+   * undefined-preservation-widened to externref; marked `undefWidenedLocals`
+   * in the resume fctx so identifier reads keep undefined observable.
+   */
+  undefWidenedPatternBindings: Set<string>;
 }
 
 function noJsHostTarget(ctx: CodegenContext): boolean {
@@ -418,12 +435,17 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // (#2864 F1b) The variable declaration that introduced each spilled name, so
   // the spill's wasm type can be resolved at its actual ValType.
   const spillDecls = new Map<string, ts.VariableDeclaration>();
-  // (#2920) Types for names bound by a destructuring PARAM pattern. These names
-  // are not introduced by a body `VariableDeclaration` (so `resolveSpillLocalValType`
-  // cannot type them) — they are destructured from the raw arg in the resume
-  // function's state-0 prelude. Registering them as spills persists them across
-  // yields; this map supplies their ValType in the spill-typing loop.
+  // (#2920/#3386) Types for names bound by a destructuring PARAM pattern. These
+  // names are not introduced by a body `VariableDeclaration` (so
+  // `resolveSpillLocalValType` cannot type them) — their VALUES are produced by
+  // the emit site's eager (call-time) param destructure and packed into the
+  // spill fields at `struct.new` (`compileNativeGeneratorFunction`).
+  // Registering them as spills persists them across yields; this map supplies
+  // their ValType in the spill-typing loop.
   const patternParamSpillTypes = new Map<string, ValType>();
+  // (#3315/#3386) Pattern-bound names whose spill was undefined-preservation-
+  // widened to externref; the resume fctx marks them `undefWidenedLocals`.
+  const undefWidenedPatternBindings = new Set<string>();
   const addSpill = (name: string, decl?: ts.VariableDeclaration): void => {
     if (decl !== undefined && !spillDecls.has(name)) spillDecls.set(name, decl);
     if (spillSet.has(name)) return;
@@ -1238,75 +1260,99 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
   // spill regardless of which state declared it).
   collectSpillsIn(decl.body);
 
-  // (#2920) Register each destructuring-PARAM binding name as a spill, typed at
-  // its declared ValType. The raw arg is stored in the state struct (a
-  // `param_*` field) and destructured into these spill locals once, on first
-  // entry (state 0), by the resume function; spilling persists them across
-  // yields. If ANY bound name has no struct-storable type, bail to host so the
-  // candidate gate and registration agree (no undefined-funcidx module).
+  // (#2920/#3386) Register each destructuring-PARAM binding name as a spill.
+  //
+  // TIMING (#3386): parameter destructuring is EAGER — per §10.2.11
+  // FunctionDeclarationInstantiation (step 23-25, IteratorBindingInitialization)
+  // it runs at CALL time for generators too; the test262 dstr templates assert
+  // `assert.throws(..., function() { f(g); })` with NO `.next()`. Every native-
+  // generator emit site already destructures pattern params into factory locals
+  // BEFORE `compileNativeGeneratorFunction` (function-body.ts:988,
+  // class-bodies.ts:2301, literals.ts:2931, closures.ts
+  // emitClosureParamDestructuring, nested-declarations.ts:650/:1074) using the
+  // SAME corpus-proven emitters ordinary functions use — iterator protocol via
+  // the standalone-native `__array_from_iter_n` (#2904), null guards, elision,
+  // element defaults. The factory packs those bound locals into the spill
+  // fields at `struct.new` (see `compileNativeGeneratorFunction`), and the
+  // resume function reads them back via the ordinary spill-load loop. The old
+  // state-0 resume-prelude RE-destructure is retired: it both violated the
+  // call-time spec timing and would double-drive one-shot iterators for the
+  // shapes admitted here (it was only safe for the previously-admitted
+  // idempotent reads — typed vec indexing / object property gets).
+  //
+  // Each bound name spills at the type `ensureBindingLocals` gives the emit
+  // site's factory local (`resolveBindingElementType`, incl. the #3315
+  // undefined-preserving externref widening) so the packed value round-trips
+  // the state struct unchanged. If ANY bound name has no struct-storable type,
+  // bail to host so the candidate gate and registration agree (no
+  // undefined-funcidx module).
+  //
+  // Still bailed (follow-up slices, #3386 residual):
+  //  • rest ELEMENTS (`[a, ...r]` / `{a, ...r}`) — the emit-site destructure
+  //    binds them, but the rest local's type (a fresh `__vec_externref` /
+  //    rest `$Object`) is minted inside the destructure helpers, not via
+  //    `resolveBindingElementType`, so the spill typing is not yet reconciled.
+  // Whole-param defaults (`[x] = []`) ARE admitted now: the emit site's
+  // param-default machinery evaluates the initializer into the param local at
+  // call time (before the destructure + factory pack), exactly as for ordinary
+  // functions. The #2938 `struct.new[k] expected i32, found externref`
+  // mis-typing was the class-bodies COLLECTION-phase param typing diverging
+  // from the emit phase (no binding-pattern widening in collection) — fixed in
+  // lockstep with this admission (class-bodies.ts collection now applies the
+  // identical widen predicate). Object-literal methods keep their #2581
+  // default/optional bail in the candidate gate (trampoline argc gap).
   for (const param of decl.parameters) {
     if (ts.isIdentifier(param.name)) continue;
     const pat = param.name;
     if (!ts.isArrayBindingPattern(pat) && !ts.isObjectBindingPattern(pat)) return null;
-    // (#2938) A WHOLE-PARAM default on a binding pattern (`{} = undefined`,
-    // `{x} = {}`) evaluates the initializer when the argument is `undefined`.
-    // The resume-prelude destructure has no defaulted-raw-arg arm yet — on the
-    // no-yield corpus this shape mis-typed the state struct
-    // (`struct.new[k] expected i32, found externref`,
-    // gen-meth-dflt-obj-init-undefined.js + static variant) — so bail to the
-    // host path, same policy as the element-default bail below.
-    if (param.initializer) return null;
-    // Slice-1 conservative gate (correct-or-legacy — no regressions):
-    //  • FLAT patterns only — every element binds an identifier (a nested
-    //    array/object sub-pattern is a follow-up; bail so it stays on host).
-    //  • NO rest element — object rest needs `__extern_rest_object`, array rest
-    //    needs the host iterator drain; both are host imports, so bail.
-    //  • ARRAY patterns require a CONCRETE typed param (a `ref`/`ref_null` vec or
-    //    tuple). An untyped array pattern widens the param to `externref`, whose
-    //    host-free element extraction is a pre-existing fragile path (a numeric
-    //    vec reads back null — normal functions have the same gap), so bail to
-    //    the host path rather than risk turning a passing test null. Object
-    //    patterns extract host-free & correctly regardless of typing.
-    for (const el of pat.elements) {
-      if (ts.isOmittedExpression(el)) continue;
-      if (el.dotDotDotToken) return null;
-      if (!ts.isIdentifier(el.name)) return null;
-      // (#2920) A default initializer on a pattern element (`{a = expr}`,
-      // `{a: b = expr}`) evaluates `expr` when the property is `undefined`. The
-      // resume-prelude destructure lowering of that default is not yet correct
-      // for all shapes — a throwing / function-valued default produced invalid
-      // modules on the corpus — so bail to the host path (a follow-up slice can
-      // widen this once the defaulted-destructure lowering is hardened).
-      if (el.initializer) return null;
-    }
-    // (#2920) ARRAY patterns are native-eligible ONLY when TYPED (`param.type`
-    // present) and the resolved type is a concrete vec/tuple ref. This is the
-    // gate-consistency + correctness guard:
-    //  • `param.type` present ⇒ BOTH callers — the free-function path
-    //    (`bindingPatternParamNeedsWiden` returns false when `p.type` is set) and
-    //    the class-method path (class-bodies.ts) — type the param via
-    //    `resolveWasmType(getTypeAtLocation(param))`, IDENTICAL to this gate. So
-    //    `isNativeGeneratorCandidate` and `registerNativeGenerator` (both routed
-    //    through this one plan builder) AND the resume-prelude destructure all
-    //    observe the SAME `paramTypes[i]` — no divergence, no invalid module, no
-    //    externref/concrete miscompile.
-    //  • An UNTYPED array pattern is widened to `externref` (and may be
-    //    call-site-inferred) by the free-function caller — that diverges from a
-    //    plain `getTypeAtLocation` resolution AND hits the pre-existing
-    //    externref-array null-readback rep gap (a numeric vec reads back null;
-    //    normal functions share it). So BAIL to the host path (a later slice with
-    //    its own honest yield can widen this once that rep gap is closed).
-    // Object patterns extract correctly for externref OR concrete, so they carry
-    // no such guard — accepted regardless of typing.
-    if (ts.isArrayBindingPattern(pat)) {
-      if (!param.type) return null;
-      const pt = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
-      if (pt.kind !== "ref" && pt.kind !== "ref_null") return null;
-    }
-    for (const id of collectPatternBindingIdentifiers(pat)) {
-      const safe = spillSafeValType(resolveWasmType(ctx, ctx.checker.getTypeAtLocation(id)));
+    const elements: ts.BindingElement[] = [];
+    let hasRest = false;
+    const walk = (p: ts.BindingPattern): void => {
+      for (const el of p.elements) {
+        if (ts.isOmittedExpression(el)) continue;
+        if (el.dotDotDotToken) {
+          hasRest = true;
+          continue;
+        }
+        if (ts.isIdentifier(el.name)) elements.push(el);
+        else walk(el.name);
+      }
+    };
+    walk(pat);
+    if (hasRest) return null;
+    for (const el of elements) {
+      const id = el.name as ts.Identifier;
+      // (#3386) FUNCTION-VALUED element defaults (`[g = function(){}]`,
+      // `[g = () => 1]`, `[g = function*(){}]`) still bail. The emit-site
+      // destructure compiles the default into a closure/native-gen-state ref
+      // whose wasm rep does not cleanly round-trip the spill field in every
+      // lane — the class-method lane in particular emits an "illegal cast" at
+      // runtime (the `#3164` host-mix fixture, `*method([gen = function*(){}]
+      // = [])`). This is the documented W3 "throwing / function-valued
+      // default" exclusion; the dominant `dflt-*` cohort uses numeric / object
+      // / call-expression defaults, which are admitted (throwing defaults are
+      // CallExpressions and lower correctly). A later slice can widen this
+      // once the closure-valued spill round-trip is proven in all lanes.
+      if (
+        el.initializer &&
+        (ts.isFunctionExpression(el.initializer) ||
+          ts.isArrowFunction(el.initializer) ||
+          ts.isClassExpression(el.initializer))
+      ) {
+        return null;
+      }
+      const elemTsType = ctx.checker.getTypeAtLocation(el);
+      const bindType = resolveBindingElementType(el, elemTsType, (t) => resolveWasmType(ctx, t));
+      const safe = spillSafeValType(bindType);
       if (!safe) return null;
       patternParamSpillTypes.set(id.text, safe);
+      // (#3315) Mirror ensureBindingLocals' undef-widened marking so identifier
+      // reads in the RESUME function skip the checker-type unbox narrowing
+      // (which would degrade a runtime `undefined` to NaN before it can be
+      // observed). Threaded into the resume fctx via the info.
+      if (isUndefWidenedBindingElement(el, resolveWasmType(ctx, elemTsType))) {
+        undefWidenedPatternBindings.add(id.text);
+      }
       addSpill(id.text);
     }
   }
@@ -1418,6 +1464,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     iterableDelegationSites,
     needsPending,
     hasThrowRoutes,
+    patternParamBindings: new Set(patternParamSpillTypes.keys()),
+    undefWidenedPatternBindings,
   };
 }
 
@@ -1437,11 +1485,13 @@ export type GeneratorDecl = ts.FunctionDeclaration | ts.MethodDeclaration | ts.F
  * with the closure `__self` param threaded as a leading synthetic capture, and
  * the lifted body emits the native state-struct factory instead of the
  * eager-buffer host path. This is the fn-expr-specific shape gate consumed by
- * `isNativeGeneratorCandidate` — slice 1 (#3164):
- *   - identifier-only params, no default/optional/rest (the closure trampoline's
- *     argc/default machinery is NOT threaded through the state struct; a param
- *     default's evaluation is a CALL-time observable per §27.5/EvaluateGeneratorBody,
- *     which the resume-time model cannot honor);
+ * `isNativeGeneratorCandidate` — slice 1 (#3164), pattern params added (#3386):
+ *   - identifier or binding-pattern params, no default/optional/rest (the
+ *     closure trampoline's argc/default machinery is NOT threaded; a param
+ *     default's evaluation is a CALL-time observable per
+ *     §27.5/EvaluateGeneratorBody). Pattern params destructure eagerly in the
+ *     lifted factory (emitClosureParamDestructuring) and pack into spill
+ *     fields (#3386);
  *   - no `arguments` (the eager path builds the arguments vec; the state struct
  *     has no slot for it);
  *   - no `this` (a bare function expression's `this` is call-site dependent; the
@@ -1454,7 +1504,20 @@ export type GeneratorDecl = ts.FunctionDeclaration | ts.MethodDeclaration | ts.F
 function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.FunctionExpression): boolean {
   if (!decl.body) return false;
   for (const param of decl.parameters) {
-    if (!ts.isIdentifier(param.name)) return false;
+    // (#3386) Binding-pattern params are admitted: the closure's lifted body
+    // eagerly destructures them (emitClosureParamDestructuring, running before
+    // the factory emit — call-time per §10.2.11) and the factory packs the
+    // bound values into the spill fields; pattern legality itself is decided
+    // by `buildNativeGeneratorPlan` (which `isNativeGeneratorCandidate` calls
+    // last). Whole-param defaults/optionals and rest still bail — the closure
+    // trampoline's argc/default machinery is not threaded here (#2581-adjacent).
+    if (
+      !ts.isIdentifier(param.name) &&
+      !ts.isArrayBindingPattern(param.name) &&
+      !ts.isObjectBindingPattern(param.name)
+    ) {
+      return false;
+    }
     if (param.initializer || param.questionToken || param.dotDotDotToken) return false;
   }
   if (bodyUsesArguments(decl.body)) return false;
@@ -1711,11 +1774,13 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
     return false;
   }
   for (const param of decl.parameters) {
-    // (#2920) Rest params (`...args`) still bail — a separate follow-up. Array /
-    // object binding-pattern params are now natively lowered: the raw
-    // (externref/vec-widened) arg is stored in the state struct and destructured
-    // in the resume function's state-0 prelude (see `emitPatternParamDestructure`
-    // + `collectPatternBindingIdentifiers`). Identifier params stay byte-identical.
+    // (#2920/#3386) Rest params (`...args`) still bail — a separate follow-up.
+    // Array / object binding-pattern params are natively lowered: the emit
+    // site destructures the raw arg EAGERLY (call time, §10.2.11) into factory
+    // locals and `compileNativeGeneratorFunction` packs the bound values into
+    // spill fields; the plan builder decides pattern legality (rest elements /
+    // unstorable binding types bail there). Identifier params stay
+    // byte-identical.
     if (param.dotDotDotToken) return false;
     if (
       !ts.isIdentifier(param.name) &&
@@ -2171,6 +2236,12 @@ export function registerNativeGenerator(
     spillNames: bodySpills,
     spillTypes,
     spillFieldOffset,
+    // (#3386) Pattern-param binding names (values packed from the emit site's
+    // eagerly-destructured factory locals at struct.new) + the undef-widened
+    // subset (marked `undefWidenedLocals` in the resume fctx).
+    patternParamBindings: plan.patternParamBindings.size > 0 ? plan.patternParamBindings : undefined,
+    undefWidenedPatternBindings:
+      plan.undefWidenedPatternBindings.size > 0 ? plan.undefWidenedPatternBindings : undefined,
     yieldCount,
     doneState: plan.states.length - 1, // the final `done` state id
     elemValType,
@@ -3448,52 +3519,24 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     resumeFctx.body.push({ op: "local.set", index: localIdx });
   }
 
-  // (#2920) Destructure binding-pattern params ONCE, on first entry (state 0).
-  // The raw arg was rehydrated into its `param_*` local above; each bound name
-  // is a spill local (loaded above, persisted across yields) that this
-  // overwrites on first entry. Guarding on `state == 0` keeps it
-  // side-effect-safe — a default initializer / getter in the pattern must not
-  // re-run on resume (the spilled value is authoritative then). The bound-name
-  // spill locals are already in `localMap`, so the destructure helper's
-  // `ensureBindingLocals` reuses them (no double-alloc, no re-type).
-  // (#3050) Leading synthetic params (`this` OR capture params) offset the
-  // user-param indices in paramNames/paramTypes.
-  const thisOffset = info.synthesizedThis ? 1 : (info.leadingCaptureCount ?? 0);
-  const patternParams = info.decl.parameters.filter((p) => !ts.isIdentifier(p.name));
-  if (patternParams.length > 0) {
-    // (#2920 funcIdx-shift fix) `destructureParamObject`/`destructureParamArray`
-    // may add a late/union import (string helpers, `__get_undefined`, …), which
-    // shifts every function index. The shifter rewrites `ctx.currentFunc.body`,
-    // so `ctx.currentFunc` MUST point at the resume fctx during this emit — else
-    // the shift is applied to the OUTER caller's body and the resume prelude's
-    // own `call` indices (and already-emitted helpers like `__str_flat`) desync,
-    // producing an invalid module (only visible at harness scale, where a late
-    // import actually fires). Mirror the `emitTrampoline` wrapping below.
-    const savedFunc = ctx.currentFunc;
-    ctx.currentFunc = resumeFctx;
-    try {
-      const saved = pushBody(resumeFctx);
-      for (let k = 0; k < info.decl.parameters.length; k++) {
-        const p = info.decl.parameters[k]!;
-        if (ts.isIdentifier(p.name)) continue;
-        const nameIdx = k + thisOffset;
-        const rawLocal = resumeFctx.localMap.get(info.paramNames[nameIdx]!);
-        if (rawLocal === undefined) continue;
-        const rawType = info.paramTypes[nameIdx]!;
-        if (ts.isArrayBindingPattern(p.name)) {
-          destructureParamArray(ctx, resumeFctx, rawLocal, p.name, rawType);
-        } else if (ts.isObjectBindingPattern(p.name)) {
-          destructureParamObject(ctx, resumeFctx, rawLocal, p.name, rawType);
-        }
-      }
-      const destrInstrs = resumeFctx.body;
-      popBody(resumeFctx, saved);
-      resumeFctx.body.push({ op: "local.get", index: 0 });
-      resumeFctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
-      resumeFctx.body.push({ op: "i32.eqz" });
-      resumeFctx.body.push({ op: "if", blockType: { kind: "empty" }, then: destrInstrs, else: [] });
-    } finally {
-      ctx.currentFunc = savedFunc;
+  // (#2920/#3386) Pattern-param bindings need NO state-0 re-destructure here:
+  // parameter destructuring is EAGER (call time, §10.2.11
+  // FunctionDeclarationInstantiation) and already ran in the FACTORY — the emit
+  // site destructured the raw arg into factory locals, and
+  // `compileNativeGeneratorFunction` packed those bound values into the spill
+  // fields at `struct.new`. The spill-load loop above rehydrated them into
+  // same-named locals, so body reads resolve exactly as before. (The historic
+  // state-0 prelude re-destructure both mistimed GetIterator/default side
+  // effects to first-`.next()` — the corpus asserts they throw at `f(g)` — and
+  // would double-drive one-shot iterators now that iterator-protocol shapes
+  // are admitted.)
+  //
+  // (#3315/#3386) Mark undef-widened pattern bindings in the resume fctx so
+  // identifier reads skip the checker-type unbox narrowing (mirrors
+  // ensureBindingLocals' marking in the factory).
+  if (info.undefWidenedPatternBindings) {
+    for (const name of info.undefWidenedPatternBindings) {
+      (resumeFctx.undefWidenedLocals ??= new Set()).add(name);
     }
   }
 
@@ -3589,8 +3632,33 @@ export function compileNativeGeneratorFunction(
   // (numeric, unchanged), `i32`/`i64` 0, a null ref for object/string spills, or
   // a null externref for boxed-any spills — so the `struct.new` typechecks before
   // the body's declaration overwrites the slot on first entry.
+  //
+  // (#3386) EXCEPT pattern-param bindings: their values were just produced by
+  // the emit site's eager (call-time per §10.2.11) param destructure into
+  // factory locals of the same name — pack the bound VALUE into the spill
+  // field so the resume function's ordinary spill-load loop rehydrates the
+  // binding on every entry. Coerce when the destructure lane's local type
+  // differs from the spill type (e.g. an f64 struct-field bind into an
+  // undef-widened externref spill). A name missing from the factory localMap
+  // (defensive) keeps the inert default.
   for (let i = 0; i < info.spillNames.length; i++) {
-    fctx.body.push(defaultSpillInstr(info.spillTypes[i]!));
+    const spillName = info.spillNames[i]!;
+    const spillType = info.spillTypes[i]!;
+    const bindLocal = info.patternParamBindings?.has(spillName) ? fctx.localMap.get(spillName) : undefined;
+    if (bindLocal !== undefined) {
+      const localType = getLocalType(fctx, bindLocal);
+      fctx.body.push({ op: "local.get", index: bindLocal });
+      if (localType && !valTypesMatch(localType, spillType)) {
+        // ref → ref_null of the same struct is a pure subtype widening — no
+        // instruction needed; anything else routes through the coercion engine
+        // (which handles its own late-import bookkeeping against fctx.body).
+        const pureWiden =
+          localType.kind === "ref" && spillType.kind === "ref_null" && localType.typeIdx === spillType.typeIdx;
+        if (!pureWiden) coerceType(ctx, fctx, localType, spillType);
+      }
+    } else {
+      fctx.body.push(defaultSpillInstr(spillType));
+    }
   }
   // (#2170) `yield*` delegation slots start null — the inner generator is
   // materialized lazily on first entry into the yield-star state.
