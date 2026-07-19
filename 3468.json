@@ -1,8 +1,8 @@
 {
   "id": "3468",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-19T14:57:55Z",
-  "updated_at": "2026-07-19T14:57:55Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3468-standalone-method-dispatch-exception-swallow",
+  "claimed_at": "2026-07-19T14:58:33Z",
+  "updated_at": "2026-07-19T14:58:33Z"
 }
