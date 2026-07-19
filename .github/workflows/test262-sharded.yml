@@ -2593,41 +2593,50 @@ jobs:
           gh workflow run deploy-pages.yml --ref main || true
 
   # =====================================================================
-  # #3467 — UNCONDITIONAL per-SHA result cache for QUEUE (bot) merges.
+  # #3467 — UNCONDITIONAL per-SHA result cache for QUEUE merges.
   #
-  # ROOT CAUSE (#3466): promote-baseline is gated `github.actor !=
-  # github-actions[bot]`, and every merge-queue merge lands as a bot push. On a
-  # bot push the ENTIRE rest of this workflow is gated off (changes / shards /
-  # merge-report / promote-baseline all require actor != bot), so the landed
-  # commit — which IS the base_sha of the NEXT queued PR's merge_group — gets
-  # NO runs/<sha> cache entry, and the promoted snapshot goes stale. That drift
-  # false-parked 6 unrelated PRs on 2026-07-19.
+  # ROOT CAUSE (diagnosed on run 29682548248, the push for main tip 60e81a65b —
+  # the first cut of this job SILENTLY SKIPPED and the cache never converged):
+  # every merge-queue merge lands as a `push` to main whose `github.actor` is
+  # **github-merge-queue[bot]**, NOT github-actions[bot]. (#3466's premise that
+  # queue merges are github-actions[bot] was wrong — that identity never appears
+  # on a queue-merge push; regression-gate, gated `actor != github-actions[bot]`,
+  # RAN on that push, proving the actor is not github-actions[bot].) The only
+  # other job that writes runs/<sha> — `promote-baseline` — is itself `skipped`
+  # on these pushes by its `environment: baseline-promote` deployment gate (its
+  # `if:` and `needs` both pass, yet the job shows empty steps; every
+  # NON-environment job on the same run ran fine). So the landed commit — which
+  # IS the base_sha of the NEXT queued PR's merge_group — got NO runs/<sha>
+  # entry, the cache never reached distance-0, and near-threshold net-positive
+  # PRs kept parking on residual drift.
   #
-  # This job runs ONLY on bot pushes (the case promote-baseline skips) and does
-  # exactly ONE thing: persist runs/<github.sha>.{json,jsonl} to the baselines
-  # repo so the sequential queue self-populates its own comparison base. It does
-  # NOT touch test262-current, does NOT commit to the main repo (no queue
-  # rebuild), and does NOT re-run shards — it reuses the `test262-group-<sha>`
-  # artifact the just-landed merge_group already produced (github.sha == that
-  # group's head_sha after the queue fast-forwarded main). A doc-only/no-shards
+  # This job runs on merge-queue pushes (the case promote-baseline is
+  # env-skipped for) and does exactly ONE thing: persist
+  # runs/<github.sha>.{json,jsonl} to the baselines repo so the sequential queue
+  # self-populates its own comparison base. It does NOT touch test262-current,
+  # does NOT commit to the main repo (no queue rebuild), and does NOT re-run
+  # shards — it reuses the `test262-group-<sha>` artifact the just-landed
+  # merge_group already produced. Verified on run 29682548248: the queue
+  # fast-forwards main to the group head, so `github.sha` EQUALS the artifact key
+  # and `test262-group-${github.sha}` resolves (probe HIT). A doc-only/no-shards
   # group produced no artifact → this job cleanly no-ops (the read-side
   # ancestor-walk fallback covers the gap).
   #
-  # WHY A SEPARATE JOB (not relaxing promote-baseline's gate): promote-baseline
-  # ALSO promotes the snapshot + commits summary JSON to main (which rebuilds
-  # every queued merge group, #1951). We deliberately keep those bot-skipped and
-  # add only the cheap, side-effect-free cache write. On non-bot pushes /
-  # workflow_dispatch this job is skipped and promote-baseline's own
-  # write-run-cache call still populates runs/<sha> (no double-write, no race).
+  # NO `environment:` — the baselines-repo push uses BASELINE_DEPLOY_KEY, a
+  # **repo-level** secret (only MAIN_DEPLOY_KEY is scoped to the baseline-promote
+  # environment). Declaring the environment here would re-introduce the exact
+  # deployment-gate skip that stops promote-baseline on merge-queue pushes. This
+  # job never pushes to the main repo, so it does not need MAIN_DEPLOY_KEY.
+  #
+  # NO double-write with promote-baseline: promote runs only on non-merge-queue
+  # pushes / workflow_dispatch (where it writes runs/<sha> itself); this job runs
+  # only on merge-queue-bot pushes. The idempotency guard below (skip when
+  # runs/<sha> already exists) covers any overlap.
   # =====================================================================
   write-run-cache-bot:
     name: cache per-SHA baseline for queue merge (#3467)
-    if: github.event_name == 'push' && github.actor == 'github-actions[bot]'
+    if: github.event_name == 'push' && github.actor == 'github-merge-queue[bot]'
     runs-on: ubuntu-latest
-    # The baselines-repo push needs BASELINE_DEPLOY_KEY, gated behind the
-    # `baseline-promote` Environment (restricted to the main branch) — a bot
-    # push to main satisfies the branch restriction, same as promote-baseline.
-    environment: baseline-promote
     permissions:
       contents: read
       # Read the just-landed merge_group's `test262-group-<sha>` artifact via

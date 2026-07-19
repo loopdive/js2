@@ -160,3 +160,35 @@ HIT (distance 0), cold-base ancestor-walk (nearest wins, distance reported),
 version-mismatch skip-and-continue, total MISS fallback, and blank-slot
 filtering. `tests/issue-1081.test.ts` (existing `evaluateCacheEntry` /
 `buildRunSummary` unit tests) still passes.
+
+## Follow-up fix — write side silently skipped (write-run-cache-bot)
+
+After the first PR landed (618f89d35), the READ side worked (gate HIT the
+seeded base at distance 2, null_deref flat), but the WRITE side never populated
+new `runs/<sha>` entries, so the cache never converged to distance-0 and
+near-threshold net-positive PRs kept parking on residual drift.
+
+**Diagnosis (run 29682548248, the push for main tip 60e81a65b):**
+1. **Wrong actor.** A merge-queue merge lands as a `push` whose
+   `github.actor` is **`github-merge-queue[bot]`**, NOT `github-actions[bot]`.
+   The job's `if: … actor == 'github-actions[bot]'` never matched → the job
+   showed `skipped`. (Proof the actor isn't github-actions[bot]: the
+   regression-gate job, gated `actor != github-actions[bot]`, RAN on that push.)
+   #3466's premise that queue merges are github-actions[bot] was wrong.
+2. **The environment would have skipped it anyway.** `promote-baseline` is ALSO
+   `skipped` on these pushes — not by its `if:`/`needs` (both pass) but by its
+   `environment: baseline-promote` deployment gate (empty steps; every
+   non-environment job on the same run ran). Since the write job carried the
+   same `environment:`, fixing only the actor would still have skipped it.
+3. **The artifact resolves fine.** `github.sha` on the merge-queue push EQUALS
+   the merge_group head (the queue fast-forwards main), so
+   `test262-group-${github.sha}` is present (probe HIT) — hypothesis that the
+   merge-commit SHA ≠ the tested group's SHA was false.
+
+**Fix:** gate the job on `github.actor == 'github-merge-queue[bot]'` and REMOVE
+`environment: baseline-promote`. The baselines-repo push uses
+`BASELINE_DEPLOY_KEY`, which is a **repo-level** secret (only `MAIN_DEPLOY_KEY`
+is environment-scoped), so no environment is needed — and dropping it avoids the
+deployment-gate skip. The job never pushes to the main repo, so it never needed
+`MAIN_DEPLOY_KEY`. No double-write with promote-baseline (disjoint push
+populations; idempotency guard covers overlap).
