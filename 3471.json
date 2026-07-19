@@ -1,8 +1,9 @@
 {
   "id": "3471",
   "assignee": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3471-host-strict-assign-readonly-property-uncaught-typeerror",
   "claimed_at": "2026-07-19T16:02:13Z",
-  "updated_at": "2026-07-19T16:02:13Z"
+  "updated_at": "2026-07-19T16:07:49Z",
+  "released_at": "2026-07-19T16:07:49Z"
 }
