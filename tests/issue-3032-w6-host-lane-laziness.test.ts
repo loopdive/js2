@@ -238,4 +238,119 @@ describe("#3032 W6 — sentinel-aware dynamic value reads (undefined, not NaN/nu
       ),
     ).toBe(11);
   });
+
+  // #3468 — for-of over a `var it = g()` BINDING with abrupt completion
+  // (labeled break/continue/return crossing a try/finally). W6 broadened
+  // host-lane native routing so `function* g()` returns a WasmGC state struct;
+  // a `var it = g()` binding COERCES that struct to externref (its inferred TS
+  // type is `Generator<T>`), so `for (x of it)` fell to the JS-host iterator
+  // protocol, which cannot drive a raw struct — `next()` reported `done` on the
+  // first call, the loop body (with the `break outer`) was silently skipped,
+  // and execution fell through to the "unreachable following for..of" throw.
+  // These test262 tests regressed: language/statements/for-of/{break,continue}-
+  // label*, return-from-*. The fix keeps such binding-iteration generators on
+  // the eager host path (only `.next()/.throw()/.return()` member calls on a
+  // binding stay native), while DIRECT-call consumers (`for (x of g())`) keep
+  // W6's native driver. Assert the labeled break crosses the outer loop.
+  it("host: labeled `break` out of for-of over a generator BINDING (test262 break-label)", async () => {
+    expect(
+      await run(
+        `export function test(): number {
+           function* values() { yield 1; }
+           var iterator = values();
+           var i = 0;
+           outer:
+           while (true) {
+             for (var x of iterator) {
+               i += 1;
+               break outer;
+             }
+             return 999; // must NOT be reached (for-of fell through)
+           }
+           return i; // 1
+         }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("host: labeled `continue` out of for-of over a generator BINDING (test262 continue-label)", async () => {
+    expect(
+      await run(
+        `export function test(): number {
+           function* values() { yield 1; }
+           var iterator = values();
+           var i = 0;
+           var loop = true;
+           outer:
+           while (loop) {
+             loop = false;
+             for (var x of iterator) {
+               i += 1;
+               continue outer;
+             }
+             return 999; // must NOT be reached
+           }
+           return i; // 1
+         }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("host: `break outer` from a finally inside for-of over a binding closes the iterator (test262 break-label-from-finally)", async () => {
+    // The generator throws on the SECOND resume; iterator-close on abrupt exit
+    // must NOT resume it. If for-of ran to completion (host-protocol done-early
+    // regression) i would stay 0 and the fall-through 999 would return.
+    expect(
+      await run(
+        `export function test(): number {
+           function* values() { yield 1; throw 42; }
+           var iterator = values();
+           var i = 0;
+           outer:
+           while (true) {
+             for (var x of iterator) {
+               try {
+               } finally {
+                 i += 1;
+                 break outer;
+               }
+             }
+             return 999;
+           }
+           return i; // 1
+         }`,
+      ),
+    ).toBe(1);
+  });
+
+  it("host: DIRECT-call for-of native driver still sums correctly (W6 improvement preserved)", async () => {
+    expect(
+      await run(
+        `export function test(): number {
+           function* g() { yield 10; yield 20; yield 30; }
+           var sum = 0;
+           for (var x of g()) { sum += x; }
+           return sum; // 60
+         }`,
+      ),
+    ).toBe(60);
+  });
+
+  it("host: for-of + spread + Array.from over a generator BINDING all yield real values (#3468)", async () => {
+    expect(
+      await run(
+        `export function test(): number {
+           function* g() { yield 3; yield 4; }
+           var it1 = g();
+           var s = 0;
+           for (var x of it1) { s += x; }         // 7
+           var it2 = g();
+           var arr = [...it2];                     // [3,4]
+           var it3 = g();
+           var arr2 = Array.from(it3);             // [3,4]
+           return s * 100 + (arr[0] + arr[1]) * 10 + (arr2[0] + arr2[1]); // 700+70+7
+         }`,
+      ),
+    ).toBe(777);
+  });
 });

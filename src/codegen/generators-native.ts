@@ -1725,8 +1725,32 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     return safe;
   };
 
-  /** A reference/result value consumed in an allowlisted, host-safe position? */
-  const useIsSafe = (node: ts.Node): boolean => {
+  /**
+   * A reference/result value consumed in an allowlisted, host-safe position?
+   *
+   * `viaBinding` distinguishes the TWO ways this walk reaches a consumer:
+   *
+   *   - `false` — the node is the generator CALL expression itself
+   *     (`for (x of g())`, `[...g()]`, `Array.from(g())`, `g().next()`). The
+   *     for-of driver / spread-drain / Array.from-drain all see the call's
+   *     native state-struct ValType directly, so they lower to the WasmGC
+   *     native path (`tryCompileNativeGeneratorForOf` / `emitNativeGeneratorToVec`).
+   *
+   *   - `true` — the node is a REFERENCE to a `var/let iter = g()` binding
+   *     (`for (x of iter)`, `[...iter]`, `Array.from(iter)`). The binding's
+   *     inferred TS type is `Generator<T>`, which resolves to **externref**, so
+   *     the generator result is `extern.convert_any`-coerced on assignment and
+   *     the state-struct type is LOST at the reference. An iteration/drain
+   *     consumer over that externref falls to the JS-host iterator protocol,
+   *     which cannot drive a raw WasmGC struct — `next()` reports `done` on the
+   *     first call and the loop body is silently skipped (#3468: for-of
+   *     break/continue/return-label tests over `var it = values()` regressed to
+   *     "unreachable following for..of"). Only `.next()/.throw()/.return()`
+   *     member CALLS have a native-aware lowering that recognises the struct
+   *     through the externref; every host-protocol iteration consumer of a
+   *     binding is unsafe and keeps the generator on the eager host path.
+   */
+  const useIsSafe = (node: ts.Node, viaBinding: boolean): boolean => {
     const p = node.parent;
     if (ts.isPropertyAccessExpression(p) && p.expression === node) {
       // (#3032 W6) A resume-method CALL (`it.next()/…`) produces a raw result
@@ -1743,10 +1767,15 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       }
       return true;
     }
-    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
-    if (ts.isSpreadElement(p)) return true;
-    if (isArrayFromArg(node)) return true;
-    if (ts.isParenthesizedExpression(p)) return useIsSafe(p);
+    // Iteration / drain consumers are native-safe ONLY over the direct call
+    // expression (state-struct ValType visible), NOT over an externref binding
+    // reference (#3468).
+    if (!viaBinding) {
+      if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
+      if (ts.isSpreadElement(p)) return true;
+      if (isArrayFromArg(node)) return true;
+    }
+    if (ts.isParenthesizedExpression(p)) return useIsSafe(p, viaBinding);
     return false;
   };
 
@@ -1777,22 +1806,18 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
           return;
         }
         const p = node.parent;
-        if (useIsSafe(node)) return;
+        if (useIsSafe(node, /* viaBinding */ true)) return;
         // Reassignment target (`iter = g()` again) — the RHS call is checked
         // at its own call site.
         if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.left === node) {
           return;
         }
-        // Array-destructuring SOURCE: `[a] = iter` / `const [a] = iter`.
-        if (ts.isVariableDeclaration(p) && p.initializer === node && !ts.isIdentifier(p.name)) return;
-        if (
-          ts.isBinaryExpression(p) &&
-          p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          p.right === node &&
-          ts.isArrayLiteralExpression(p.left)
-        ) {
-          return;
-        }
+        // (#3468) Array-destructuring SOURCE over a binding (`[a] = iter` /
+        // `const [a] = iter`) is NOT native-safe: the binding is externref, so
+        // the destructure drain falls to the host protocol (yields NaN/defaults).
+        // Only the DIRECT-call destructuring form (`[a] = g()`) drains natively;
+        // it is admitted at the call site below, not here. So a binding used as a
+        // destructuring source keeps the generator on the eager host path.
         safe = false;
       }
       ts.forEachChild(node, visitRef);
@@ -1835,7 +1860,7 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       (checker.getSymbolAtLocation(node.expression)?.declarations?.includes(decl) ?? true)
     ) {
       const p = node.parent;
-      if (useIsSafe(node)) {
+      if (useIsSafe(node, /* viaBinding */ false)) {
         // safe direct consumer
       } else if (ts.isVariableDeclaration(p) && p.initializer === node) {
         if (ts.isIdentifier(p.name)) {
