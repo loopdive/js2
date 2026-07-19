@@ -62,6 +62,7 @@ import {
   typedArrayVecStorage,
 } from "../index.js";
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js";
+import { ensureHostIteratorHelperBridge, NATIVE_ITER_HOF_METHODS } from "../iter-hof-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { compilePropertyIntrospection } from "../object-ops.js";
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveBindDynHelper } from "../object-runtime.js";
@@ -367,6 +368,24 @@ export function compileReceiverMethodCall(
   // Generator method calls: gen.next(), gen.return(value), gen.throw(error)
   if (isGeneratorType(receiverType)) {
     const methodName = propAccess.name.text;
+    // (#3470) ES2025 Iterator helpers inherited by a statically-typed
+    // Generator are host prototype methods in the JS-host lane. The old
+    // generator-specialized arm only recognized next/return/throw; helper
+    // names then missed the any/externref ladder and reached the generic
+    // fallback as an absent method. Route the complete helper set through the
+    // same dynamic bridge an explicit `as any` receiver already uses. This
+    // preserves the real helper function's receiver/IteratorRecord semantics
+    // and keeps standalone/WASI on their native iterator-helper lowering.
+    if (!noJsHost(ctx) && (LAZY_ITER_METHODS.has(methodName) || NATIVE_ITER_HOF_METHODS.has(methodName))) {
+      // The native generator stepper uses the UNDEF_F64 sentinel for an
+      // exhausted numeric generator. Reserve the host's real `undefined`
+      // producer before the bridge so its finalize-time value reader can keep
+      // `null` distinct from `undefined` at the JS boundary.
+      ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+      ensureHostIteratorHelperBridge(ctx);
+      const dynamicResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
+      if (dynamicResult !== undefined) return dynamicResult;
+    }
     const nativeResult = tryCompileNativeGeneratorMethodCall(
       ctx,
       fctx,

@@ -730,6 +730,17 @@ export function compileObjectDestructuring(
     compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, resultType);
     return;
   }
+  // (#3470) Dynamic method results can be carried as internal anyref/eqref
+  // even when their TypeScript surface is a named object shape (notably
+  // `IteratorResult` from a host Iterator-helper's `.next()`). Externalize the
+  // value and use the same property-based fallback as an externref result.
+  // Keeping it on the typed-struct path cannot work: abstract heap refs have no
+  // concrete type index or field layout to feed struct.get.
+  if (resultType.kind === "anyref" || resultType.kind === "eqref") {
+    fctx.body.push({ op: "extern.convert_any" });
+    compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+    return;
+  }
   if (resultType.kind === "f64" || resultType.kind === "i32") {
     // Box scalar to externref and use externref fallback
     if (resultType.kind === "i32") {

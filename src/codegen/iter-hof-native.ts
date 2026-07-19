@@ -474,6 +474,33 @@ export function reserveIterHofSteppers(
 }
 
 /**
+ * Expose the shared iterator-helper steppers to the JS-host runtime when a
+ * statically typed native generator calls an ES2025 Iterator helper. Native
+ * generator frames are opaque WasmGC structs in JavaScript, so the host's real
+ * `%Iterator.prototype%` methods cannot read their `next` method directly.
+ * The runtime builds a spec-shaped IteratorRecord around these three exports;
+ * stepping still delegates to the same generator resume function used by the
+ * compiler's native iterator consumers.
+ *
+ * The bridge is host-only and demand-driven. Standalone/WASI keep using the
+ * closed-method native helper path and modules without typed generator-helper
+ * calls gain no exports.
+ */
+export function ensureHostIteratorHelperBridge(ctx: CodegenContext): void {
+  if (ctx.standalone || ctx.wasi) return;
+  const steppers = reserveIterHofSteppers(ctx);
+  if (steppers === undefined) return;
+
+  const addExport = (name: string, index: number): void => {
+    if (ctx.mod.exports.some((entry) => entry.name === name)) return;
+    ctx.mod.exports.push({ name, desc: { kind: "func", index } });
+  };
+  addExport("__j2w_iter_helper_open", steppers.openIdx);
+  addExport("__j2w_iter_helper_next", steppers.nextIdx);
+  addExport("__j2w_iter_helper_close", steppers.closeIdx);
+}
+
+/**
  * (#2903) Closed-struct types the `__iterator` USER arm can drive —
  * `<Struct>_@@iterator` (iterable) or `<Struct>_next` (iterator object).
  * Replicates iterator-native.ts's private `collectUserIterableStructTypeIdxs`
@@ -543,6 +570,7 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
   producers.sort((a, b) => a.stateTypeIdx - b.stateTypeIdx);
 
   const boxNumIdx = ctx.funcMap.get("__box_number");
+  const getUndefinedIdx = !ctx.standalone && !ctx.wasi ? ctx.funcMap.get("__get_undefined") : undefined;
   const iteratorIdx = ctx.funcMap.get("__iterator");
   const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
   const iteratorReturnIdx = ctx.funcMap.get("__iterator_return");
@@ -600,7 +628,14 @@ export function fillIterHofSteppers(ctx: CodegenContext): void {
     ];
     if (p.elemValType.kind === "externref") return read;
     if (p.elemValType.kind === "f64" && boxNumIdx !== undefined) {
-      return [...read, ...sentinelAwareF64BoxInstrs(F64_TMP, boxNumIdx)];
+      return [
+        ...read,
+        ...sentinelAwareF64BoxInstrs(
+          F64_TMP,
+          boxNumIdx,
+          getUndefinedIdx !== undefined ? [{ op: "call", funcIdx: getUndefinedIdx }] : undefined,
+        ),
+      ];
     }
     if (p.elemValType.kind === "i32" && boxNumIdx !== undefined) {
       return [...read, { op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx }];

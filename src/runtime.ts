@@ -4790,6 +4790,46 @@ function _iteratorRecordForHost(
   const wrapStep = (r: any): any =>
     r != null && typeof r === "object" && _isWasmStruct(r) ? _wrapForHost(r, exports) : r;
   const shim: any = Object.create(base);
+  // (#3470) A statically typed generator is a native Wasm state struct. It has
+  // no host-visible `next`, but the compiler exports its already-existing
+  // iterator-helper steppers on demand. Present those as a normal Iterator
+  // record so Node's original `%Iterator.prototype%` helper performs argument
+  // validation and the helper algorithm while each IteratorStep resumes Wasm.
+  const bridgeOpen = exports?.__j2w_iter_helper_open as ((recv: any) => any) | undefined;
+  const bridgeNext = exports?.__j2w_iter_helper_next as ((recv: any) => [number, any]) | undefined;
+  const bridgeClose = exports?.__j2w_iter_helper_close as ((recv: any) => void) | undefined;
+  let bridgeHandle: any;
+  if (_isWasmStruct(v) && typeof bridgeOpen === "function" && typeof bridgeNext === "function") {
+    try {
+      bridgeHandle = bridgeOpen(v);
+    } catch {
+      bridgeHandle = undefined;
+    }
+  }
+  if (bridgeHandle != null) {
+    const stepBridge = bridgeNext!;
+    Object.defineProperties(shim, {
+      next: {
+        value() {
+          const [done, value] = stepBridge(bridgeHandle);
+          return { value, done: Boolean(done) };
+        },
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      },
+      return: {
+        value(value?: any) {
+          bridgeClose?.(bridgeHandle);
+          return { value, done: true };
+        },
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      },
+    });
+    return shim;
+  }
   // LAZY accessors, resolved only when the helper itself performs the spec
   // `Get(iterator, "next")` — an EAGER read here fired user getter effects
   // BEFORE the helper's own argument validation, breaking the
@@ -10236,7 +10276,16 @@ assert._isSameValue = isSameValue;
               if (drained !== null) wrappedArgs[1] = [drained, ...wrappedArgs[1].slice(1)];
             }
           }
-          const fn = wrappedObj[method];
+          let fn = wrappedObj[method];
+          // (#3470) A native generator frame is opaque to JavaScript and has
+          // no prototype-visible Iterator helpers. Resolve the real host
+          // helper explicitly; `_iteratorRecordForHost` below adapts only the
+          // receiver representation, leaving the helper algorithm untouched.
+          if (typeof fn !== "function" && _isWasmStruct(obj)) {
+            const iteratorProto = (globalThis as any).Iterator?.prototype;
+            const candidate = iteratorProto?.[method];
+            if (typeof candidate === "function" && _isIteratorHelperFn(candidate)) fn = candidate;
+          }
           // (#1320) Some chained `Array.from.call(C, items)` shapes lower as a
           // generic `method="from"` dispatch on `Array`. Drain Wasm-closure
           // iterables before the native Array.from performs GetMethod(items,
@@ -12645,8 +12694,15 @@ assert._isSameValue = isSameValue;
         };
       if (name === "__gen_result_value")
         return (result: any) => {
-          let val = result.value;
-          if (val !== undefined) return val;
+          // (#3470) Presence, not value, decides whether the host result owns
+          // the field. Iterator Helper exhaustion deliberately stores
+          // `value: undefined`; treating that as a miss fell through to the
+          // Wasm struct getter, whose shape-miss sentinel is null, and changed
+          // the observable IteratorResult from undefined to null.
+          if (result != null && (typeof result === "object" || typeof result === "function") && "value" in result) {
+            return result.value;
+          }
+          let val: any;
           val = _sidecarGet(result, "value");
           if (val !== undefined) return val;
           const exports = callbackState?.getExports();
@@ -12654,8 +12710,13 @@ assert._isSameValue = isSameValue;
         };
       if (name === "__gen_result_value_f64")
         return (result: any) => {
-          let val = result.value ?? _sidecarGet(result, "value");
-          if (val === undefined) {
+          let val: any;
+          if (result != null && (typeof result === "object" || typeof result === "function") && "value" in result) {
+            val = result.value;
+          } else {
+            val = _sidecarGet(result, "value");
+          }
+          if (val === undefined && !(result != null && "value" in Object(result))) {
             const exports = callbackState?.getExports();
             val = exports?.__sget_value?.(result);
           }
