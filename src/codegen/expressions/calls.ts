@@ -2355,6 +2355,19 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   const decl = sym?.valueDeclaration;
   if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
 
+  // (#3432 follow-up) A declaration that SKIPPED the closure match-and-recast
+  // (callable-typed var whose slot stayed externref, see
+  // `skippedClosureRecastDecls` in context/types.ts) holds a raw externref
+  // that can be a foreign callable — a bridge-wrapped wasm closure read back
+  // off a property/array element (`var format = compareArray.format;`), a
+  // bound function, or a host builtin. The #1941 "always normalized to
+  // struct-or-null" assumption does not hold for these, so the #1712
+  // `__call_function` fallback arm MUST be emitted or the closure-struct
+  // dispatch traps `struct.get` on the nulled cast. Precise (per-decl, only
+  // when the skip actually happened at compile time), so the #1941 dual-mode
+  // guarantee for pure local-closure programs is preserved.
+  if (ctx.skippedClosureRecastDecls?.has(decl)) return true;
+
   // Does `node` reference a host-builtin member (Object.hasOwn, Math.max, …)?
   const isHostBuiltinMember = (node: ts.Expression): boolean => {
     const inner = ts.isParenthesizedExpression(node) ? node.expression : node;

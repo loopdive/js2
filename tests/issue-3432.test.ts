@@ -43,4 +43,25 @@ export function test(): number {
 `)) as Record<string, unknown>;
     expect((ex.test as () => number)()).toBe(42);
   });
+
+  // (#3432 follow-up — the +107 null_deref merge_group cluster) Skipping the
+  // recast leaves a raw externref in the slot, which can be a FOREIGN callable
+  // (host builtin / bridge-wrapped closure read off a property, e.g. test262
+  // harness `var format = compareArray.format; … format(actual)`). A DIRECT
+  // call of such a var must dispatch through the #1712 `__call_function` host
+  // arm — without it the closure-struct dispatch nulls the guarded root cast
+  // and traps "dereferencing a null pointer" (RuntimeError, uncatchable).
+  it("direct call of a skipped-recast externref var holding a host function does not trap", async () => {
+    const ex = (await compileAndInstantiate(`
+// Register a closure with a matching wasm signature so the decl below finds a
+// matchedClosureInfo (stand-in for the harness's many sibling closures).
+var sibling: any = function (x: any): any { return x; };
+export function test(): number {
+  var isNaNFn: (x: any) => any = (globalThis as any).isNaN;
+  var r: any = isNaNFn(0 / 0);
+  return r === true ? 1 : 0;
+}
+`)) as Record<string, unknown>;
+    expect((ex.test as () => number)()).toBe(1);
+  });
 });
