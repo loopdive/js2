@@ -1285,6 +1285,20 @@ function compileNativeStringCompoundAssignment(
   // Load current value as ref $AnyString
   if (localIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: localIdx });
+    // #3472 — A local whose PHYSICAL slot is `externref` but whose static type
+    // flow-narrowed to `string` (e.g. a function-EXPRESSION/closure param used
+    // as `m = ''; m += 'x'`) reaches here: the bare `local.get` yields externref,
+    // but `__str_concat` expects `(ref null $AnyString)` on arg[0]. Coerce it,
+    // mirroring the RHS externref arm below. Unblocks the #3468 assert-harness
+    // message build (`assert.sameValue`'s externref `message` param).
+    const physLhsType =
+      localIdx < fctx.params.length
+        ? fctx.params[localIdx]?.type
+        : fctx.locals[localIdx - fctx.params.length]?.type;
+    if (physLhsType?.kind === "externref") {
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+    }
   } else if (capturedIdx !== undefined) {
     fctx.body.push({ op: "global.get", index: capturedIdx });
   } else if (moduleIdx !== undefined) {
