@@ -1,9 +1,8 @@
 {
   "id": "3476",
-  "assignee": "ttraenkler/codex-architect",
-  "status": "released",
-  "branch": "codex/porffor-source-native-canary-plan",
-  "claimed_at": "2026-07-19T23:16:13Z",
-  "updated_at": "2026-07-19T23:26:23Z",
-  "released_at": "2026-07-19T23:26:23Z"
+  "assignee": "ttraenkler/porffor-3476-dev",
+  "status": "in-progress",
+  "branch": "codex/3476-porffor-source-native-canary",
+  "claimed_at": "2026-07-19T23:30:17Z",
+  "updated_at": "2026-07-19T23:30:17Z"
 }
