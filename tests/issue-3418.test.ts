@@ -69,43 +69,56 @@ assert(true, "plain assert");
   });
 });
 
-describe("#3418 — live uses keep their imports (honesty: no semantic laundering)", () => {
-  it("a test that CALLS print keeps console_log_externref", async () => {
+// NOTE (post-#3369 / #3436): the standalone contract changed underneath these
+// tests. Sibling PR #3369 made standalone `console.*` a native no-op sink that
+// registers NO `console_*` host import, and skips the `structuredClone` host
+// import entirely (the global stays undefined, `typeof structuredClone` folds
+// to "undefined"). So on the standalone/wasi lane a LIVE use of `print`/`$262`
+// no longer materializes any host import — the imports these tests originally
+// guarded no longer exist there. The "no semantic laundering" honesty question
+// (does eliding a dead binding hide a genuinely-needed import?) is therefore
+// moot for `print`/`$262` on standalone: even a kept, live binding imports
+// nothing. These cases are reworked to assert the NEW invariant (standalone
+// use ⇒ zero imports); the honesty guard that a live use keeps a REAL import
+// now lives on the js-host lane below, where the imports are genuine.
+describe("#3418 — standalone print/$262 use emits no imports (post-#3369 host-free contract)", () => {
+  it("a test that CALLS print emits zero imports (standalone console no-op sink) and runs", async () => {
     const r = await compile(harnessPrefix + 'print("hello");\n', standaloneOpts);
     expect(r.success).toBe(true);
-    expect(importNames(r)).toContain("console_log_externref");
+    expect(importNames(r)).toEqual([]);
+    await runStandalone(r.binary);
   });
 
-  it("doneprintHandle.js (async include) references print → kept", async () => {
+  it("doneprintHandle.js (async include) references print → binding kept, still host-free", async () => {
     const done = readFileSync(join(ROOT, "test262", "harness", "doneprintHandle.js"), "utf8");
     const r = await compile(done + harnessPrefix + "$DONE();\n", standaloneOpts);
     expect(r.success).toBe(true);
-    expect(importNames(r)).toContain("console_log_externref");
+    expect(importNames(r)).toEqual([]);
   });
 
-  it("a test using $262.detachArrayBuffer keeps structuredClone (and independently drops print)", async () => {
+  it("a test using $262.detachArrayBuffer emits no structuredClone import (standalone skips it)", async () => {
     const r = await compile(
       harnessPrefix + "var ab = new ArrayBuffer(8);\n$262.detachArrayBuffer(ab);\n",
       standaloneOpts,
     );
     expect(r.success).toBe(true);
-    expect(importNames(r)).toContain("structuredClone");
-    expect(importNames(r)).not.toContain("console_log_externref");
+    expect(importNames(r)).toEqual([]);
   });
 
-  it("typeof print is a mention → conservative keep", async () => {
+  it("typeof print is a mention → binding kept, but still zero imports (no console host)", async () => {
     const r = await compile(harnessPrefix + 'assert.sameValue(typeof print, "function");\n', standaloneOpts);
     expect(r.success).toBe(true);
-    expect(importNames(r)).toContain("console_log_externref");
+    expect(importNames(r)).toEqual([]);
+    await runStandalone(r.binary);
   });
 
-  it('a string mention ("print" / globalThis["print"]) blocks the drop', async () => {
+  it('a string mention ("print" / globalThis["print"]) blocks the drop but adds no import', async () => {
     const r = await compile(
       harnessPrefix + 'var f = globalThis["print"];\nassert.sameValue(typeof f, "function");\n',
       standaloneOpts,
     );
     expect(r.success).toBe(true);
-    expect(importNames(r)).toContain("console_log_externref");
+    expect(importNames(r)).toEqual([]);
   });
 });
 
@@ -116,6 +129,25 @@ describe("#3418 — host lane is byte-identical (gate excludes gc/linear)", () =
     const r = await compile(src, hostOpts);
     expect(r.success).toBe(true);
     expect(importNames(r)).toContain("console_log_externref");
+    expect(importNames(r)).toContain("structuredClone");
+  });
+
+  // Honesty guard (relocated from standalone → js-host, post-#3369): on the
+  // host lane the console/structuredClone imports ARE real, so a live use must
+  // keep them — the elision (standalone/wasi-only) never runs here, and no
+  // no-op-sink lowering applies. This is the "no semantic laundering" check
+  // that standalone can no longer host.
+  it("js-host: a test that CALLS print keeps console_log_externref (import is real)", async () => {
+    const hostOpts = { ...standaloneOpts, target: undefined };
+    const r = await compile(harnessPrefix + 'print("hello");\n', hostOpts);
+    expect(r.success).toBe(true);
+    expect(importNames(r)).toContain("console_log_externref");
+  });
+
+  it("js-host: $262.detachArrayBuffer keeps structuredClone (import is real)", async () => {
+    const hostOpts = { ...standaloneOpts, target: undefined };
+    const r = await compile(harnessPrefix + "var ab = new ArrayBuffer(8);\n$262.detachArrayBuffer(ab);\n", hostOpts);
+    expect(r.success).toBe(true);
     expect(importNames(r)).toContain("structuredClone");
   });
 });

@@ -11,6 +11,7 @@
 // the callee is not one of these, so the caller in calls.ts continues into the
 // receiver-type method dispatch. Moved verbatim: emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
+import { integrityVarKey } from "../widened-var-key.js";
 import { isSymbolType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import {
@@ -905,7 +906,7 @@ export function compileNamespaceStaticCall(
     if (reflectMethod === "preventExtensions" && expr.arguments.length >= 1) {
       const arg0 = expr.arguments[0]!;
       if (ts.isIdentifier(arg0)) {
-        ctx.nonExtensibleVars.add(arg0.text);
+        ctx.nonExtensibleVars.add(integrityVarKey(ctx, arg0)); // (#3403) per-declaration key
       }
       emitReflectArgs(1);
       const funcIdx = ensureLateImport(ctx, "__reflect_preventExtensions", [externRef], [i32Ty]);

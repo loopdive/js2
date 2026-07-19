@@ -10,6 +10,7 @@
 // chain. Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
+import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import {
@@ -1390,14 +1391,17 @@ export function compileBuiltinStaticCall(
       }
     };
     if (ts.isIdentifier(arg0)) {
-      markIntegrity(arg0.text);
+      // (#3403) per-declaration key (USE-site) so `Object.freeze(o)` in one
+      // function does not mark every other function's `o` frozen.
+      markIntegrity(integrityVarKey(ctx, arg0));
     } else if (
       // (#2012) `const/let o = Object.<freeze|seal|preventExtensions>(<expr>)`
       ts.isVariableDeclaration(expr.parent) &&
       ts.isIdentifier(expr.parent.name) &&
       expr.parent.initializer === expr
     ) {
-      markIntegrity(expr.parent.name.text);
+      // (#3403) DECLARATION-site key (matches integrityVarKey at any later use).
+      markIntegrity(widenedVarKeyFromDecl(expr.parent.name));
     }
 
     // Compile the argument — returns the object itself (freeze/seal return their arg)
@@ -2342,7 +2346,9 @@ export function compileBuiltinStaticCall(
           const userFieldIdx = userFields.indexOf(entry);
           let flags = flagsArr && userFieldIdx >= 0 ? flagsArr[userFieldIdx]! : 0x07; // default WEC
           if (ts.isIdentifier(arg0)) {
-            const dpfKey = `${arg0.text}:${propLiteral}`;
+            // (#3403) per-declaration key so a foreign same-named var's flags
+            // don't leak into this receiver's gOPD.
+            const dpfKey = `${integrityVarKey(ctx, arg0)}:${propLiteral}`;
             const dpfFlags = ctx.definedPropertyFlags.get(dpfKey);
             if (dpfFlags !== undefined) flags = dpfFlags & 0x0f;
           }

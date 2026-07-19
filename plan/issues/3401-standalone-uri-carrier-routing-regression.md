@@ -1,7 +1,9 @@
 ---
 id: 3401
 title: "standalone: URI carrier routing gap — #2500 native decode/encodeURI* landed but 48 conformance tests still leak env::decodeURI"
-status: ready
+status: done
+assignee: ttraenkler/fable-dev-4
+completed: 2026-07-18
 created: 2026-07-18
 updated: 2026-07-18
 priority: high
@@ -15,6 +17,14 @@ language_feature: uri-functions
 goal: standalone-mode
 umbrella: 2860
 related: [2500, 863, 2961]
+loc-budget-allow:
+  # (#3401) +27 LOC in extern-declarations.ts: the standalone/wasi native-skip
+  # is extended from parseInt/parseFloat to the URI family + escape/unescape
+  # (which have standalone natives since #2500/#3063/#3064), plus a load-bearing
+  # explanatory comment on WHY the leak was context-dependent (libReferencedNames).
+  # The added logic belongs on this collector arm (it IS the extern-declaration
+  # skip list); there is no separate subsystem module for it.
+  - src/codegen/extern-declarations.ts
 origin: "2026-07-18 fable-dev-4 #2860 re-measurement — #2500 (native URI carrier) is done, yet 48 official built-ins/{decode,encode}URI* tests still emit env::decodeURI/... host imports (host_import_leak). The carrier exists but is not dispatched for these call shapes."
 ---
 
@@ -117,3 +127,55 @@ GENERAL call form the conformance harness uses, not one exotic edge.
 - `URIError` construction in standalone must use the in-module error
   constructor (`emitWasiErrorConstructor`, as `buildDestructureNullThrow` does),
   not a host `__throw_*` import, or the malformed-URI `A1` tests will re-leak.
+
+## Root cause (CONFIRMED) + fix (fable-dev-4, 2026-07-18)
+
+The investigation-first plan above hypothesised a value-reference / call-shape
+dispatch gap. The ACTUAL root cause is narrower and upstream of the call site:
+
+**`collectExternDeclarations` (`src/codegen/extern-declarations.ts:~686`)** walks
+every ambient `declare function` the user references and registers it as an
+`env.*` host import. It had a standalone/wasi skip for `parseInt`/`parseFloat`
+(which have WasmGC natives) but **no equivalent skip for the URI family**
+(`decodeURI`/`decodeURIComponent`/`encodeURI`/`encodeURIComponent`, native since
+#2500) nor `escape`/`unescape` (native since #3063/#3064). So in standalone this
+pass registered `env::decodeURI` FIRST; the URI finalize in
+`import-collector.ts` (`collectURIImports finalize`) then hit its
+`if (ctx.funcMap.has(name)) continue;` guard and **skipped `emitNativeUriDecode`**
+— the call site fell through to the leaked `env::decodeURI` import (a
+`host_import_leak` CE under #2961).
+
+**Why it was context-dependent** (and why #2500 shipped green): the registration
+is gated on `libReferencedNames.has(name)` (extern-declarations.ts:656). A bare
+`decodeURI("%41")` on its own does NOT put `decodeURI` in that lib-referenced
+set, so the leak did not reproduce in isolation. But an unrelated builtin in the
+same module — `String.fromCharCode`, `new Error`, … (which the S15.1.3.* URI
+conformance tests all use) — drags `decodeURI` into `libReferencedNames`,
+triggering the early `env::decodeURI` registration. Bisected live: `return
+decodeURI("%41")` is host-free, but `decodeURI("%41") === String.fromCharCode(65)`
+leaks. Confirmed the exact branch with a `funcMap.has("decodeURI")` probe in the
+URI finalize (`true` in the leak case, `false` in the clean case) and an
+`addImport` stack trace pointing at `collectExternDeclarations`.
+
+**Fix** (one-liner, mirrors the parseInt/parseFloat precedent): extend the
+standalone/wasi native-skip in `collectExternDeclarations` to
+`decodeURI`/`decodeURIComponent`/`encodeURI`/`encodeURIComponent`/`escape`/
+`unescape`, so the finalize owns their native emit. Gated on
+`ctx.wasi || ctx.standalone` → host (gc) lane byte-identical (still uses the
+`env.*` import). `escape`/`unescape` were carrying the identical latent leak and
+are fixed in the same change.
+
+### Files
+- `src/codegen/extern-declarations.ts` — extend the native-skip name set.
+- `tests/issue-3401.test.ts` — 7 cases, each co-locating a sibling builtin
+  (String.fromCharCode / new Error) with the URI/escape call: host-free import
+  set + correct decoded/encoded value + native `URIError` on malformed input.
+
+### Validation
+- `tests/issue-3401.test.ts` — 7/7 green (all 4 URI fns + escape + malformed-URI
+  URIError + the loop/helper module shape).
+- No regressions: issue-2500-uri-encoding, issue-3063-escape-unescape-host,
+  parseint-edge, issue-2160-number-parse (28 tests). `tsc --noEmit` clean.
+- Expected flip: the ~48/52 official `built-ins/{decode,encode}URI*`
+  host_import_leak rows → pass (plus any escape/unescape siblings), zero
+  host-mode change.

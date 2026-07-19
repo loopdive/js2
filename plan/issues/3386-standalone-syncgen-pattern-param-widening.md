@@ -1,7 +1,9 @@
 ---
 id: 3386
 title: "standalone: native sync-generator DESTRUCTURING-pattern params — methods, fn-expressions, element defaults, untyped array patterns (~1,860 host_import_leak rows)"
-status: ready
+status: done
+assignee: ttraenkler/fable-dev-4
+completed: 2026-07-18
 sprint: current
 created: 2026-07-17
 updated: 2026-07-17
@@ -17,6 +19,9 @@ goal: standalone-mode
 umbrella: 3178
 related: [2920, 3164, 3302, 3032, 2938, 3312, 2581]
 origin: "2026-07-17 fable-3178 umbrella decomposition — largest sync-gen residual cohort in the standalone host_import_leak baseline (post-#2961 accounting)."
+loc-budget-allow:
+  - src/codegen/generators-native.ts
+  - src/codegen/context/types.ts
 ---
 
 # #3386 — sync-generator pattern params: widen the native admission
@@ -175,3 +180,81 @@ the residual count.
   corpus compile-validity scan (0 invalid wasm).
 - The wrapped-vs-module-scope delta above means ALL probes must use the test262
   wrapper shape.
+
+## Implementation record (fable-dev-4, 2026-07-18)
+
+### Key design decision — EAGER (call-time) destructure, not resume-prelude
+
+The architect plan (W2/W3) proposed re-destructuring pattern params inside the
+resume function's **state-0 prelude**. I did **not** do that — it is both a
+spec-TIMING bug and a double-drive hazard. §10.2.11
+FunctionDeclarationInstantiation (step 23-25 → IteratorBindingInitialization)
+runs parameter destructuring at **CALL time**, for generators too. The test262
+`dstr` templates prove it: `assert.throws(Test262Error, function () { f(g); })`
+with **no `.next()`** — the iterator's poisoned `.next()`/`value` getter must
+throw at `f(g)`. A resume-prelude destructure fires at first `.next()` (wrong),
+and now that untyped array patterns go through the iterator protocol it would
+also drive a one-shot iterator twice.
+
+**What I did instead:** every native-generator emit site ALREADY destructures
+pattern params into factory locals BEFORE the factory emit (function-body.ts,
+class-bodies.ts, literals.ts, closures.ts, nested-declarations.ts) using the
+ordinary corpus-proven emitters (`destructureParamArray/Object` → standalone-
+native `__array_from_iter_n`, null guards, elision, defaults). I made
+`compileNativeGeneratorFunction` **pack those bound factory locals into the
+generator state-struct spill fields** at `struct.new`, and the resume function
+reads them back through the ordinary spill-load loop. The old state-0
+re-destructure is deleted. This reuses ALL existing destructure semantics for
+free and gets call-time timing correct by construction.
+
+### Files / functions touched
+
+- `src/codegen/generators-native.ts`:
+  - `buildNativeGeneratorPlan` param loop — replaced the #2920 conservative gate
+    (typed-array-only, no element defaults) with: admit array/object patterns,
+    nested sub-patterns, element defaults; spill-type each bound name via
+    `resolveBindingElementType` (incl. #3315 undef-widening); bail rest elements
+    and **function/arrow/class-valued element defaults** (`[g = function(){}]`
+    → illegal cast in the class-method lane, the #3164 host-mix fixture).
+  - `NativeGeneratorPlan` + `NativeGeneratorInfo` (context/types.ts) — new
+    `patternParamBindings` / `undefWidenedPatternBindings` sets.
+  - `compileNativeGeneratorFunction` — pack pattern-bound factory locals into
+    spill fields (coerce when lane-local type != spill type; pure ref→ref_null
+    widen is free) instead of the inert default.
+  - `ensureNativeGeneratorResumeFunction` — removed the state-0 prelude
+    re-destructure; mark undef-widened pattern bindings in the resume fctx.
+  - `isNativeGeneratorExpressionShape` — admit binding-pattern fn-expr params.
+  - Dropped now-unused imports (`destructureParam*`,
+    `collectPatternBindingIdentifiers`); added `resolveBindingElementType`,
+    `isUndefWidenedBindingElement`.
+- `tests/issue-3386.test.ts` — 17 cases incl. spec-timing (throws at call, body
+  lazy) + the function-valued-default exclusion.
+- NOTE: I did **NOT** need the class-bodies.ts COLLECTION-phase binding-pattern
+  widen after all — an earlier attempt at it regressed the non-generator
+  class-method baseline, and origin/main advanced (post-#3311/#3312 merge) so the
+  class array-pattern lane now agrees between collection and emit without it.
+  Left class-bodies.ts untouched.
+
+### Done vs remaining
+
+- [x] W1 fn-expression pattern params (host-free + correct)
+- [x] W2 untyped array patterns via native iterator protocol (call-time)
+- [x] W3 element defaults (numeric / object / call-expr incl. throwing)
+- [x] W4 nested sub-patterns
+- [x] whole-param defaults (`[x,y] = [..]`)
+- [x] spec timing: destructure at CALL, body lazy at first `.next()`
+- [x] class instance/static + object-literal + free-fn + fn-expr lanes
+- [ ] rest ELEMENTS (`[a, ...r]` / `{a, ...r}`) — bail (rest local type minted
+      inside destructure helpers, not via `resolveBindingElementType`; spill
+      typing not reconciled). Follow-up slice.
+- [ ] FUNCTION/arrow/class-valued element defaults — bail (closure-valued spill
+      round-trip → illegal cast in class-method lane). Follow-up slice.
+- [ ] object-literal method param defaults/optionals — keep the #2581
+      `__argc_default` bail (out of scope, unchanged).
+
+### Known pre-existing (NOT introduced here)
+
+`tests/generator-yield-contexts.test.ts > "yield in a generator function
+expression"` fails on clean origin/main too (host-lane lazy-thunk needs
+setExports wiring — #3032-adjacent). Verified by resetting the 3 source files to
+origin/main and re-running. Unrelated to #3386.

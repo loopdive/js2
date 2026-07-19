@@ -227,27 +227,38 @@ export interface ObjectRuntimeTypes {
  * ArgumentListEvaluation ordering.
  *
  * Emits an in-module `__new_Object : (externref × argCount) -> externref` whose
- * body ignores its params and tail-returns `call __new_plain_object`. Idempotent
- * on `__new_Object`. Host/gc mode never calls this — it keeps the import.
+ * body ignores its params and tail-returns `call __new_plain_object`.
+ * Host/gc mode never calls this — it keeps the import.
+ *
+ * (#2917) PER-ARITY registration — funcMap key `__new_Object@<argCount>`, one
+ * defined function per distinct call-site arity, funcIdx RETURNED to the
+ * caller. A single plain-name registration keyed off the FIRST caller's arity
+ * mis-called from every later site with a different arity: the extra args
+ * stayed on the operand stack and (validly!) became the enclosing forwarder's
+ * return value — `class B extends A`, `A extends Array` returned its first
+ * ctor arg instead of the new instance. Idempotent per key.
  */
-export function emitStandaloneObjectConstructor(ctx: CodegenContext, argCount: number): void {
-  if (ctx.funcMap.has("__new_Object")) return;
+export function emitStandaloneObjectConstructor(ctx: CodegenContext, argCount: number): number | undefined {
+  const key = `__new_Object@${argCount}`;
+  const existing = ctx.funcMap.get(key);
+  if (existing !== undefined) return existing;
 
   // Guarantee the native plain-object substrate is registered (registers
   // `__new_plain_object` as a DEFINED func; idempotent).
   ensureObjectRuntime(ctx);
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
-  if (newPlainObjectIdx === undefined) return; // defensive: substrate unavailable
+  if (newPlainObjectIdx === undefined) return undefined; // defensive: substrate unavailable
 
   const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
-  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], "__new_Object_type");
+  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `${key}_type`);
   const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set("__new_Object", funcIdx);
+  ctx.funcMap.set(key, funcIdx);
   // Ignore the (already side-effect-evaluated) constructor arguments and return
   // a fresh native plain object. `return_call` keeps the tail position so no
   // extra frame is retained.
   const body: Instr[] = [{ op: "return_call", funcIdx: newPlainObjectIdx }];
-  pushDefinedFunc(ctx, funcIdx, { name: "__new_Object", typeIdx, locals: [], body, exported: false });
+  pushDefinedFunc(ctx, funcIdx, { name: key, typeIdx, locals: [], body, exported: false });
+  return funcIdx;
 }
 
 /**
@@ -300,10 +311,19 @@ export const STANDALONE_VEC_BUILTIN_PARENTS: ReadonlySet<string> = new Set([
  *
  * Host/gc mode never calls this — the caller gates on `ctx.standalone || ctx.wasi`
  * and keeps the `__new_<Parent>` import there, so those lanes stay byte-identical.
- * Idempotent on `importName`.
+ *
+ * (#2917) PER-ARITY registration — funcMap key `<importName>@<argCount>`,
+ * funcIdx RETURNED (see `emitStandaloneObjectConstructor` for the mis-call
+ * hazard a single plain-name registration created). Idempotent per key.
  */
-export function emitStandaloneVecBuiltinConstructor(ctx: CodegenContext, importName: string, argCount: number): void {
-  if (ctx.funcMap.has(importName)) return;
+export function emitStandaloneVecBuiltinConstructor(
+  ctx: CodegenContext,
+  importName: string,
+  argCount: number,
+): number | undefined {
+  const key = `${importName}@${argCount}`;
+  const existing = ctx.funcMap.get(key);
+  if (existing !== undefined) return existing;
 
   // A single shared externref-element vec type backs every one of these parents:
   // the element kind is irrelevant to the identity-only `instanceof` result, and
@@ -312,9 +332,9 @@ export function emitStandaloneVecBuiltinConstructor(ctx: CodegenContext, importN
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
 
   const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
-  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `${importName}_type`);
+  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `${key}_type`);
   const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(importName, funcIdx);
+  ctx.funcMap.set(key, funcIdx);
   // Ignore the (already side-effect-evaluated) constructor arguments and return
   // a fresh empty vec boxed to externref (`extern.convert_any` — the same no-op
   // boxing the object runtime uses to expose `$Object`/vec structs as externref).
@@ -325,7 +345,218 @@ export function emitStandaloneVecBuiltinConstructor(ctx: CodegenContext, importN
     { op: "struct.new", typeIdx: vecTypeIdx },
     { op: "extern.convert_any" },
   ];
-  pushDefinedFunc(ctx, funcIdx, { name: importName, typeIdx, locals: [], body, exported: false });
+  pushDefinedFunc(ctx, funcIdx, { name: key, typeIdx, locals: [], body, exported: false });
+  return funcIdx;
+}
+
+/**
+ * (#2917 slice 2) Standalone/WASI-native `class Sub extends Array` parent
+ * construction — a REAL native `$__vec_externref` backing, honoring the
+ * §23.1.1.1 `Array(...values)` argument semantics (unlike the identity-only
+ * TypedArray helper above):
+ *
+ *   - the trailing `undefined` padding the synthetic forwarder adds up to
+ *     `argCount` is stripped first (mirroring the JS-host `__new_<Parent>`
+ *     resolver, which strips args the wasm side passes as undefined —
+ *     class-bodies.ts ~L869);
+ *   - 0 effective args → empty array;
+ *   - 1 effective arg that IS a boxed number (`$__box_number_struct` — the
+ *     representation `compileExternrefArgument` produces for numeric args;
+ *     deliberately NOT ToNumber-coercing, so `new Sub("3")` stays `["3"]`) →
+ *     array with that length (elements are holes, read back as undefined via
+ *     the null externref slots). A non-integral / negative / ≥2^32 length
+ *     throws a real RangeError per §23.1.1.1 step 4b;
+ *   - otherwise → array OF the effective args (raw externrefs — already the
+ *     uniform boxed element representation the `$__vec_base` dynamic
+ *     accessors read back).
+ *
+ * The result is a genuine vec, so dynamic element ops and `.length`
+ * (`__extern_get_idx` / `__extern_set_idx` / `__extern_length` `$__vec_base`
+ * arms) and `Array.isArray` behave like a real array. Subclass identity
+ * (`instanceof Sub` / `instanceof Array`) is resolved statically
+ * (`tryStaticInstanceOf`), as with the other externref-backed builtins.
+ *
+ * Host/gc mode never calls this — the caller gates on
+ * `ctx.standalone || ctx.wasi`, so those lanes stay byte-identical.
+ *
+ * (#2917) PER-ARITY registration — funcMap key `__new_Array@<argCount>`,
+ * funcIdx RETURNED (see `emitStandaloneObjectConstructor` for the mis-call
+ * hazard a single plain-name registration created). Idempotent per key.
+ */
+export function emitStandaloneArrayConstructor(ctx: CodegenContext, argCount: number): number | undefined {
+  const key = `__new_Array@${argCount}`;
+  const existing = ctx.funcMap.get(key);
+  if (existing !== undefined) return existing;
+
+  // Dependencies FIRST, so their funcIdx/typeIdx are settled before this body
+  // bakes them (any later late-import batch shift-repairs mod.functions bodies,
+  // including this one — the standard defined-native invariant).
+  ensureObjectRuntime(ctx); // registers __extern_is_undefined (native, no import)
+  addUnionImportsViaRegistry(ctx); // registers $__box_number_struct + boxing natives
+  const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
+  const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
+  if (isUndefIdx === undefined || boxNumTypeIdx === undefined || boxNumTypeIdx < 0) return undefined; // defensive
+  // §23.1.1.1 step 4b — a non-integral / negative / ≥2^32 single numeric arg
+  // throws a real RangeError (`$Error_struct` via the native ctor, so
+  // `catch (e) { e instanceof RangeError }` works — the throwNativeError
+  // pattern from registry/imports.ts).
+  emitWasiErrorConstructor(ctx, "RangeError", 1);
+  const rangeErrCtorIdx = ctx.funcMap.get("__new_RangeError");
+  const rangeErrMsg = "Invalid array length";
+  addStringConstantGlobal(ctx, rangeErrMsg);
+  const exnTagIdx = ensureExnTag(ctx);
+  const throwRangeInstrs: Instr[] =
+    rangeErrCtorIdx !== undefined
+      ? [
+          ...stringConstantExternrefInstrs(ctx, rangeErrMsg),
+          { op: "call", funcIdx: rangeErrCtorIdx },
+          { op: "throw", tagIdx: exnTagIdx },
+        ]
+      : [...stringConstantExternrefInstrs(ctx, rangeErrMsg), { op: "throw", tagIdx: exnTagIdx }];
+
+  const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+
+  const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
+  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `${key}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(key, funcIdx);
+
+  // Locals (after the argCount externref params):
+  const kLocal = argCount; // i32 — effective arg count after padding strip
+  const anyLocal = argCount + 1; // anyref — number-box test scratch
+  const lenLocal = argCount + 2; // i32 — single-numeric-arg length
+  const dataLocal = argCount + 3; // (ref null $__arr_externref)
+  const nLocal = argCount + 4; // f64 — single-numeric-arg raw value (RangeError check)
+  const locals: { name: string; type: ValType }[] = [
+    { name: "k", type: { kind: "i32" } },
+    { name: "any", type: { kind: "anyref" } },
+    { name: "len", type: { kind: "i32" } },
+    { name: "data", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
+    { name: "n", type: { kind: "f64" } },
+  ];
+
+  const body: Instr[] = [];
+  // k = argCount, then strip trailing nullish (ref.null padding pre-#2106, or
+  // the non-null $undefined singleton under the S1 regime) args:
+  // for i = argCount-1 downTo 0: if (k == i+1 && isNullish(a_i)) k = i
+  body.push({ op: "i32.const", value: argCount }, { op: "local.set", index: kLocal });
+  for (let i = argCount - 1; i >= 0; i--) {
+    body.push(
+      { op: "local.get", index: kLocal },
+      { op: "i32.const", value: i + 1 },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: i },
+          { op: "ref.is_null" },
+          { op: "local.get", index: i },
+          { op: "call", funcIdx: isUndefIdx },
+          { op: "i32.or" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "i32.const", value: i },
+              { op: "local.set", index: kLocal },
+            ],
+            else: [],
+          },
+        ],
+        else: [],
+      },
+    );
+  }
+  // Single boxed-number arg → array of that length (§23.1.1.1 step 4).
+  if (argCount >= 1) {
+    body.push(
+      { op: "local.get", index: kLocal },
+      { op: "i32.const", value: 1 },
+      { op: "i32.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "local.tee", index: anyLocal },
+          { op: "ref.test", typeIdx: boxNumTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: boxNumTypeIdx },
+              { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+              { op: "local.set", index: nLocal },
+              // RangeError when n != trunc(n) (also catches NaN) | n < 0 | n >= 2^32
+              { op: "local.get", index: nLocal },
+              { op: "local.get", index: nLocal },
+              { op: "f64.trunc" },
+              { op: "f64.ne" },
+              { op: "local.get", index: nLocal },
+              { op: "f64.const", value: 0 },
+              { op: "f64.lt" },
+              { op: "i32.or" },
+              { op: "local.get", index: nLocal },
+              { op: "f64.const", value: 4294967296 },
+              { op: "f64.ge" },
+              { op: "i32.or" },
+              { op: "if", blockType: { kind: "empty" }, then: throwRangeInstrs, else: [] },
+              { op: "local.get", index: nLocal },
+              { op: "i32.trunc_sat_f64_u" },
+              { op: "local.tee", index: lenLocal },
+              { op: "local.get", index: lenLocal },
+              { op: "array.new_default", typeIdx: arrTypeIdx },
+              { op: "struct.new", typeIdx: vecTypeIdx },
+              { op: "extern.convert_any" },
+              { op: "return" },
+            ],
+            else: [],
+          },
+        ],
+        else: [],
+      },
+    );
+  }
+  // General case: array OF the k effective args.
+  body.push(
+    { op: "local.get", index: kLocal },
+    { op: "array.new_default", typeIdx: arrTypeIdx },
+    {
+      op: "local.set",
+      index: dataLocal,
+    },
+  );
+  for (let i = 0; i < argCount; i++) {
+    body.push(
+      { op: "i32.const", value: i },
+      { op: "local.get", index: kLocal },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: dataLocal },
+          { op: "i32.const", value: i },
+          { op: "local.get", index: i },
+          { op: "array.set", typeIdx: arrTypeIdx },
+        ],
+        else: [],
+      },
+    );
+  }
+  body.push(
+    { op: "local.get", index: kLocal },
+    { op: "local.get", index: dataLocal },
+    { op: "struct.new", typeIdx: vecTypeIdx },
+    { op: "extern.convert_any" },
+  );
+
+  pushDefinedFunc(ctx, funcIdx, { name: key, typeIdx, locals, body, exported: false });
+  return funcIdx;
 }
 
 export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {

@@ -57,6 +57,7 @@
  * instructions in `fctx.body`.
  */
 import { ts } from "../ts-api.js";
+import { integrityVarKey } from "./widened-var-key.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { emitUndefinedExtern, undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -616,7 +617,7 @@ export function tryEmitStandaloneStructGopdKeyDispatch(
   const flagsFor = (userIdx: number, name: string): number => {
     let flags = flagsArr && userIdx >= 0 ? (flagsArr[userIdx] ?? 0x07) : 0x07;
     if (ts.isIdentifier(arg0)) {
-      const dpf = ctx.definedPropertyFlags.get(`${arg0.text}:${name}`);
+      const dpf = ctx.definedPropertyFlags.get(`${integrityVarKey(ctx, arg0)}:${name}`); // (#3403) per-declaration key
       if (dpf !== undefined) flags = dpf & 0x0f;
     }
     return flags;

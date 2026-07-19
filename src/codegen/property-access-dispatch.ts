@@ -3106,7 +3106,7 @@ export function finalizeStructAndDynamicMemberGet(
     // open-`$Object` backing. Read it via `__extern_get(self.props, propName)`
     // (null/undefined when props is null). Standalone only.
     if (ctx.standalone && ctx.classExternrefBackedSet.has(typeName)) {
-      const ownRead = emitExternrefBackedOwnFieldRead(ctx, fctx, expr, propName);
+      const ownRead = emitExternrefBackedOwnFieldRead(ctx, fctx, expr, propName, typeName);
       if (ownRead !== undefined) return ownRead;
       // undefined → helper unavailable; fall through to the legacy path.
     }

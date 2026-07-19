@@ -56,6 +56,7 @@ import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
+  emitStandaloneArrayConstructor, // (#2917) native `class Sub extends Array`
   emitStandaloneObjectConstructor, // (#3238) native `class Sub extends Object`
   emitStandaloneVecBuiltinConstructor, // (#3239) native `class Sub extends <TypedArray|SharedArrayBuffer>`
   STANDALONE_VEC_BUILTIN_PARENTS,
@@ -309,6 +310,51 @@ function getImplicitExternrefForwarderArity(
 
 function externrefParams(count: number): ValType[] {
   return Array.from({ length: count }, () => ({ kind: "externref" }) as ValType);
+}
+
+/**
+ * (#2917 shared resolver) Standalone/WASI dispatch ladder for native
+ * `__new_<Parent>` super-construction — the single source of truth for which
+ * builtin parents construct host-free, shared by the implicit-derived-ctor
+ * forwarder and `compileSuperCall`'s explicit-`super(...)` arm (previously
+ * copy-paste twins; per-builtin slices of #2917 extend THIS ladder only).
+ *
+ * Arms: Error family (#1536c, real `$Error_struct`) → `Object` (#3238, fresh
+ * native plain object) → `Array` (#2917, real `$__vec_externref` honoring
+ * Array(...) argument semantics) → TypedArray/SharedArrayBuffer (#3239,
+ * identity-only empty vec). All helpers register PER-ARITY and return the
+ * DEFINED funcIdx (no import → no index shift).
+ *
+ * Returns:
+ *   - `number` — a native arm matched; call this DEFINED funcIdx.
+ *   - `null` — a native arm matched but its helper could not register
+ *     (defensive). The caller must NOT fall back to the host import (it
+ *     would leak `env::__new_<Parent>`); the legacy first-arg-as-instance
+ *     fallback applies instead.
+ *   - `undefined` — no native arm (gc/host mode, or a parent with no native
+ *     ctor yet — Date/RegExp/Function/…): caller falls back to
+ *     `ensureLateImport` exactly as before.
+ */
+function resolveStandaloneBuiltinSuperCtorIdx(
+  ctx: CodegenContext,
+  parentName: string,
+  arity: number,
+): number | null | undefined {
+  if (!(ctx.wasi || ctx.standalone)) return undefined;
+  if (isWasiErrorName(parentName)) {
+    emitWasiErrorConstructor(ctx, parentName, arity);
+    return ctx.funcMap.get(`__new_${parentName}`) ?? null;
+  }
+  if (parentName === "Object") {
+    return emitStandaloneObjectConstructor(ctx, arity) ?? null;
+  }
+  if (parentName === "Array") {
+    return emitStandaloneArrayConstructor(ctx, arity) ?? null;
+  }
+  if (STANDALONE_VEC_BUILTIN_PARENTS.has(parentName)) {
+    return emitStandaloneVecBuiltinConstructor(ctx, `__new_${parentName}`, arity) ?? null;
+  }
+  return undefined;
 }
 
 /**
@@ -1788,28 +1834,16 @@ function compileClassBodiesInner(
       if (parentName) {
         const importName = `__new_${parentName}`;
         const forwardParams = externrefParams(implicitForwarderArity);
-        // (#1536c) Standalone / WASI: route the parent instance creation through
-        // the native `__new_<Parent>` internal function (a real `$Error_struct`
-        // with the parent's `$tag`, `.message`, `.name`) instead of a host
-        // import, so `class MyError extends Error {}` instantiates with zero
-        // env:: imports. The native function is emitted idempotently and
-        // registered in `ctx.funcMap`. JS-host mode keeps the host import.
+        // Standalone / WASI: route the parent instance creation through the
+        // shared native-`__new_<Parent>` dispatch ladder
+        // (`resolveStandaloneBuiltinSuperCtorIdx` — #1536c Error family, #3238
+        // Object, #2917 Array, #3239 vec builtins; per-arity helpers, DEFINED
+        // funcs, no index shift). JS-host mode / parents with no native ctor
+        // yet keep the host import.
         let funcIdx: number | undefined;
-        if ((ctx.wasi || ctx.standalone) && isWasiErrorName(parentName)) {
-          emitWasiErrorConstructor(ctx, parentName, implicitForwarderArity);
-          funcIdx = ctx.funcMap.get(importName);
-        } else if ((ctx.wasi || ctx.standalone) && parentName === "Object") {
-          // (#3238) `class Sub extends Object` — construct a fresh native plain
-          // object instead of leaking the `env::__new_Object` host import. The
-          // subclass proto/brand fixups below re-point [[Prototype]].
-          emitStandaloneObjectConstructor(ctx, implicitForwarderArity);
-          funcIdx = ctx.funcMap.get(importName);
-        } else if ((ctx.wasi || ctx.standalone) && STANDALONE_VEC_BUILTIN_PARENTS.has(parentName)) {
-          // (#3239) `class Sub extends <TypedArray | SharedArrayBuffer>` — native
-          // empty-vec parent, dropping the `env::__new_<Parent>` host import.
-          // Identity-only (instanceof is statically resolved); see the helper.
-          emitStandaloneVecBuiltinConstructor(ctx, importName, implicitForwarderArity);
-          funcIdx = ctx.funcMap.get(importName);
+        const nativeCtorIdx = resolveStandaloneBuiltinSuperCtorIdx(ctx, parentName, implicitForwarderArity);
+        if (nativeCtorIdx !== undefined) {
+          funcIdx = nativeCtorIdx ?? undefined;
         } else {
           funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
           flushLateImportShifts(ctx, fctx);
@@ -2992,26 +3026,15 @@ export function compileSuperCall(
     const importName = `__new_${builtinParent}`;
     const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
     const forwardParams = externrefParams(forwardArity);
-    // (#1536c) Standalone / WASI: emit the native `__new_<Parent>` internal
-    // function (real `$Error_struct`) and call it instead of a host import, so
-    // `super(msg)` in a user Error subclass works with zero env:: imports.
+    // Standalone / WASI: explicit `super(...)` routes through the same shared
+    // native-`__new_<Parent>` dispatch ladder as the implicit forwarder
+    // (`resolveStandaloneBuiltinSuperCtorIdx`). Args are still evaluated below
+    // and forwarded (Array honors them; Object/vec builtins ignore them).
+    // JS-host mode / parents with no native ctor yet keep the host import.
     let funcIdx: number | undefined;
-    if ((ctx.wasi || ctx.standalone) && isWasiErrorName(builtinParent)) {
-      emitWasiErrorConstructor(ctx, builtinParent, forwardArity);
-      funcIdx = ctx.funcMap.get(importName);
-    } else if ((ctx.wasi || ctx.standalone) && builtinParent === "Object") {
-      // (#3238) Explicit `super(...)` in a `class Sub extends Object` ctor —
-      // native fresh plain object, no `env::__new_Object` leak. Arg side
-      // effects are still evaluated below and passed as (ignored) params.
-      emitStandaloneObjectConstructor(ctx, forwardArity);
-      funcIdx = ctx.funcMap.get(importName);
-    } else if ((ctx.wasi || ctx.standalone) && STANDALONE_VEC_BUILTIN_PARENTS.has(builtinParent)) {
-      // (#3239) Explicit `super(...)` in a `class Sub extends <TypedArray |
-      // SharedArrayBuffer>` ctor — native empty-vec parent, no
-      // `env::__new_<Parent>` leak. Arg side effects are still evaluated below
-      // and passed as (ignored) params.
-      emitStandaloneVecBuiltinConstructor(ctx, importName, forwardArity);
-      funcIdx = ctx.funcMap.get(importName);
+    const nativeCtorIdx = resolveStandaloneBuiltinSuperCtorIdx(ctx, builtinParent, forwardArity);
+    if (nativeCtorIdx !== undefined) {
+      funcIdx = nativeCtorIdx ?? undefined;
     } else {
       funcIdx = ensureLateImport(ctx, importName, forwardParams, [{ kind: "externref" }]);
       flushLateImportShifts(ctx, fctx);

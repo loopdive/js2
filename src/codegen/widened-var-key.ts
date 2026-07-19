@@ -67,3 +67,27 @@ export function widenedStructNameForUse(ctx: CodegenContext, ident: ts.Identifie
   const key = resolveWidenedVarKey(ctx, ident);
   return key === undefined ? undefined : ctx.widenedVarStructMap.get(key);
 }
+
+/**
+ * (#3403) The per-declaration key for the object-INTEGRITY tracking maps
+ * (`frozenVars` / `sealedVars` / `nonExtensibleVars` and the `varName`-half of
+ * the `definedPropertyFlags` / `widenedDefinePropertyKeys` composite keys).
+ *
+ * These maps were originally keyed by the BARE identifier text, module-wide, so
+ * a `const o = {}; Object.freeze(o)` in one function poisoned every other
+ * function's `o` (spurious "assign to frozen" / "cannot redefine" throws —
+ * #3403, same archetype as #3364's shape maps). This resolves the receiver
+ * identifier to its declaration-scoped key (`name@declStart`) via
+ * {@link resolveWidenedVarKey}, so same-named locals in different functions get
+ * DISTINCT keys.
+ *
+ * Falls back to the bare `ident.text` when the identifier does NOT resolve to a
+ * local `var/let/const` declaration — i.e. module-level / ambient globals with
+ * no `valueDeclaration` keep exactly today's behavior (they cannot collide
+ * cross-function anyway). SET and USE sites both route through this (or through
+ * {@link widenedVarKeyFromDecl} at a declaration site), so the two agree on the
+ * same key for the same variable.
+ */
+export function integrityVarKey(ctx: CodegenContext, ident: ts.Identifier): string {
+  return resolveWidenedVarKey(ctx, ident) ?? ident.text;
+}
