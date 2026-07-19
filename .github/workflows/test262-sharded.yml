@@ -337,6 +337,59 @@ jobs:
   # itself fails so no required-context stub can hide the red shard.
   # =====================================================================
 
+  # #3448 — on push:main, probe for the merge_group's own merged JSONLs
+  # (artifact `test262-group-<sha>`, published for #1956 at ~line 1158). The
+  # merge queue fast-forwards main to the group head SHA, so on push
+  # github.sha EQUALS the artifact key. A HIT lets promote-baseline reuse those
+  # JSONLs and SKIP the 114-job `test262-shard` rerun of the exact tree the
+  # merge_group just validated (the biggest remaining CI-contention win — CI
+  # acceleration review §5-A / lever L1). A MISS (direct push, expired
+  # artifact, doc-only group that uploaded no shard artifact) runs the full
+  # matrix, same fail-safe bias as the `changes` job. Runs on push AND
+  # workflow_dispatch (forcing hit=false on non-push) so `success()`
+  # propagation to `test262-shard`/`promote-baseline` — which now `needs` this
+  # job — holds; skipped on pull_request/merge_group (those don't run
+  # test262-shard's push arm), where the downstream jobs run under `always()`.
+  mg-artifact-probe:
+    name: probe merge_group baseline artifact
+    if: |
+      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # actions:read — query the artifacts REST API of THIS repo (a cross-run
+    # read), same permission the #1956 predecessor-group step already uses.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      hit: ${{ steps.probe.outputs.hit }}
+    steps:
+      - name: Probe for test262-group-<sha> artifact
+        id: probe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          # workflow_dispatch (manual rerun) must ALWAYS run a fresh full matrix
+          # — that is the entire point of a manual rerun — so never short-circuit
+          # it via an artifact, even if a same-SHA group artifact still exists.
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+            echo "Non-push event (${{ github.event_name }}) — forcing MISS, full matrix runs."
+            exit 0
+          fi
+          ART_NAME="test262-group-${{ github.sha }}"
+          # Pick the newest non-expired artifact with this exact name.
+          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty' 2>/dev/null || echo "")
+          if [ -n "$ART_ID" ]; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            echo "HIT: ${ART_NAME} (id=${ART_ID}) present — promote-baseline will reuse it; skipping the 114-job test262-shard matrix."
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+            echo "MISS: ${ART_NAME} not found (direct push, expired artifact, or doc-only group) — running the full matrix (fail-safe)."
+          fi
+
   test262-shard:
     # Heavy 57-shard test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR:
@@ -361,9 +414,16 @@ jobs:
     # concurrently — see scripts/gen-test262-mg-matrix.mjs). This job keeps
     # its ORIGINAL 57-shard x 2-target matrix, UNCHANGED, for push (baseline
     # update) and workflow_dispatch (manual reruns).
-    needs: [changes]
+    needs: [changes, mg-artifact-probe]
+    # #3448 — the push arm is now AND-ed with a MISS on the merge_group
+    # baseline-artifact probe: on a HIT the merge_group already produced the
+    # merged JSONLs for this exact SHA, so this 114-job matrix is SKIPPED and
+    # promote-baseline reuses that artifact. workflow_dispatch always runs the
+    # full matrix (the probe forces hit=false there). Both `changes` and
+    # `mg-artifact-probe` run+succeed on push and workflow_dispatch, so the
+    # implicit `success()` over `needs` holds for both arms.
     if: |
-      (github.event_name == 'push' && github.actor != 'github-actions[bot]') ||
+      ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
       github.event_name == 'workflow_dispatch'
     # Runs in PARALLEL with `gate` — both are independently required by the
     # ruleset (`cheap gate (main-ancestor + lint)` and `merge shard reports`),
@@ -700,7 +760,13 @@ jobs:
       always() &&
       (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: merge shard reports
-    needs: [changes, test262-shard, test262-shard-mg]
+    # #3448 — mg-artifact-probe added so SHARD_SKIP_OK can green-skip the
+    # push:main HIT path (the matrix is skipped; promote-baseline sources the
+    # baseline from the merge_group artifact instead). This job already runs
+    # under `always()`, so the probe being skipped on pull_request/merge_group
+    # cannot force-skip it, and its empty output leaves SHARD_SKIP_OK unchanged
+    # in those contexts.
+    needs: [changes, test262-shard, test262-shard-mg, mg-artifact-probe]
     runs-on: ubuntu-latest
     env:
       # 'true' when EITHER the static (test262-shard) or consolidated
@@ -712,8 +778,11 @@ jobs:
       SHARDS_RAN: ${{ (needs.test262-shard.result == 'success' || needs.test262-shard-mg.result == 'success') && 'true' || 'false' }}
       # Green-skip when shards legitimately did not run: a merge_group with no
       # test262-relevant change, OR any pull_request (heavy shards are
-      # merge_group-only under the #2519 slim-down).
-      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || github.event_name == 'pull_request') && 'true' || 'false' }}
+      # merge_group-only under the #2519 slim-down), OR a push:main HIT where
+      # the merge_group's own baseline artifact is reused (#3448 — the matrix is
+      # skipped and promote-baseline sources the JSONLs from that artifact, so
+      # there are no shards to merge here and this required check green-skips).
+      SHARD_SKIP_OK: ${{ ((github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'false') || github.event_name == 'pull_request' || (github.event_name == 'push' && needs.mg-artifact-probe.outputs.hit == 'true')) && 'true' || 'false' }}
 
     steps:
       - name: Fail if required test262 shards did not succeed
@@ -731,6 +800,11 @@ jobs:
             echo "   (changes.run_shards=='false'); the consolidated 59-job matrix (#3431,"
             echo "   test262-shard-mg) was intentionally skipped. Reporting 'merge shard"
             echo "   reports' green."
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "-> push:main HIT (#3448): the merge_group that just landed already"
+            echo "   published its merged JSONLs as test262-group-${{ github.sha }}. The"
+            echo "   114-job test262-shard rerun was skipped; promote-baseline reuses that"
+            echo "   artifact. Reporting 'merge shard reports' green."
           else
             echo "-> pull_request: heavy test262 shards are merge_group-only under the"
             echo "   #2519 slim-down, so they do not run at PR-time. The cheap gate"
@@ -1637,7 +1711,14 @@ jobs:
     # deliverable; the baseline stays owned by unflagged runs.
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.actor != 'github-actions[bot]' && !(github.event_name == 'workflow_dispatch' && inputs.ir_first)
     name: promote merged report to main baseline
-    needs: merge-report
+    # #3448 — mg-artifact-probe decides where the merged JSONLs come from:
+    # MISS → the `test262-merged-report` artifact built by merge-report from a
+    # fresh matrix (unchanged); HIT → the merge_group's own
+    # `test262-group-<sha>` artifact, skipping the 114-job rerun. Both jobs
+    # run+succeed on push and workflow_dispatch, so the implicit `success()`
+    # over `needs` holds (merge-report green-skips on the HIT path — still
+    # success).
+    needs: [merge-report, mg-artifact-probe]
     runs-on: ubuntu-latest
     # Gate the MAIN_DEPLOY_KEY secret behind a GitHub Environment so only this
     # job — running on a `push`/`workflow_dispatch` against main — can read it.
@@ -1652,6 +1733,11 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # #3448 — the HIT path downloads test262-group-<sha> via the artifacts
+      # REST API (a cross-run read), same permission the #1956 predecessor
+      # step uses. The top-level `contents: write` would otherwise leave
+      # actions at `none` for this job.
+      actions: read
 
     steps:
       - name: Checkout
@@ -1666,12 +1752,58 @@ jobs:
         with:
           node-version: 25
 
-      - name: Download merged reports
+      # #3448 — MISS path: the full matrix ran and merge-report built +
+      # uploaded `test262-merged-report`. Download it exactly as before.
+      - name: Download merged reports (full-matrix path)
+        if: needs.mg-artifact-probe.outputs.hit != 'true'
         uses: actions/download-artifact@v7
         with:
           path: shard-artifacts
           pattern: test262-merged-report
           merge-multiple: true
+
+      # #3448 — HIT path: the 114-job matrix was skipped. Source the merged
+      # JSONLs from the merge_group's own `test262-group-<sha>` artifact (keyed
+      # by exactly this push's github.sha — the merge queue fast-forwarded main
+      # to the group head SHA). Downloaded via the artifacts REST API, the same
+      # pattern the #1956 predecessor-group step uses (~line 1333). The artifact
+      # holds the two merged JSONLs; the heal-poison step below rebuilds the
+      # report JSONs from them, so the rest of this job is byte-identical to the
+      # full-matrix path.
+      - name: Download merged reports (merge_group artifact, #3448)
+        if: needs.mg-artifact-probe.outputs.hit == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ART_NAME="test262-group-${{ github.sha }}"
+          ART_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=100" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id // empty')
+          if [ -z "$ART_ID" ]; then
+            echo "::error::#3448 probe reported HIT but artifact ${ART_NAME} is now gone (raced expiry?). Re-run the push, or dispatch workflow_dispatch to force a full-matrix promote."
+            exit 1
+          fi
+          mkdir -p shard-artifacts
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > /tmp/mg-group.zip
+          unzip -o /tmp/mg-group.zip -d shard-artifacts >/dev/null
+          # The heal-poison step below reads exactly these two files.
+          test -s shard-artifacts/test262-results-merged.jsonl
+          test -s shard-artifacts/test262-standalone-results-merged.jsonl
+          # #3448 fail-SAFE guard at ingestion: reject a truncated/corrupt group
+          # artifact BEFORE it can reach the promote/commit steps. One JSONL row
+          # per test, so a full run is ~43k rows; a floor of 40000 mirrors the
+          # existing TOTAL>=40000 sanity check in the baselines-push step. A
+          # short artifact fails HERE (job red, old baseline retained) rather
+          # than promoting a partial baseline — the whole point of this change is
+          # to stay strictly no-worse than the full-matrix path.
+          HOST_ROWS=$(wc -l < shard-artifacts/test262-results-merged.jsonl)
+          SA_ROWS=$(wc -l < shard-artifacts/test262-standalone-results-merged.jsonl)
+          echo "Group artifact rows: host=${HOST_ROWS}, standalone=${SA_ROWS}."
+          if [ "$HOST_ROWS" -lt 40000 ] || [ "$SA_ROWS" -lt 40000 ]; then
+            echo "::error::#3448 group artifact ${ART_NAME} looks truncated (host=${HOST_ROWS}, standalone=${SA_ROWS}, floor=40000). Refusing to promote from it; re-run the push or dispatch a full-matrix workflow_dispatch."
+            exit 1
+          fi
+          echo "Promoting from merge_group artifact ${ART_NAME} (id=${ART_ID}); skipped the 114-job rerun (#3448)."
 
       # #2099 — heal poison-classified rows BEFORE promotion. A phantom
       # "Binary emit error" (etc.) row from a contaminated sharded worker would
