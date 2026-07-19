@@ -1530,10 +1530,13 @@ jobs:
           MAIN_HEAD_TS=$(git log -1 --format=%ct origin/main 2>/dev/null || git log -1 --format=%ct main 2>/dev/null || echo 0)
           BASELINE_TS="${{ steps.fetch_baseline.outputs.baseline_ts }}"
           BASELINE_SHA="${{ steps.fetch_baseline.outputs.baseline_sha }}"
-          DIFF_M=0
-          if [ "$MAIN_HEAD_TS" != "0" ] && [ "$BASELINE_TS" != "0" ]; then
-            DIFF_M=$(( (MAIN_HEAD_TS - BASELINE_TS) / 60 ))
-          fi
+          # #3459 — compute the clock age via the extracted, unit-tested helper.
+          # Both operands are epoch SECONDS but come from DIFFERENT clock sources
+          # (main HEAD committer time vs. baseline-generation wall-clock), so the
+          # raw difference can be negative when the post-merge baseline refresh is
+          # fresher than main HEAD — which used to print a nonsensical `-43m clock
+          # age`. The helper clamps to a non-negative age and flags the skew.
+          DIFF_M=$(node scripts/baseline-clock-age.mjs --main-ts "$MAIN_HEAD_TS" --baseline-ts "$BASELINE_TS")
           echo "stale_minutes=$DIFF_M" >> "$GITHUB_OUTPUT"
 
           # Parse the baseline's recorded main-sha from the baselines-repo commit
