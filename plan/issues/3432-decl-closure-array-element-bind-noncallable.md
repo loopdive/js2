@@ -18,6 +18,12 @@ related: [3419, 3417, 3370]
 # arm in variables.ts (mostly comment lines documenting the #2873 RTT hazard).
 loc-budget-allow:
   - src/codegen/statements/variables.ts
+  # Follow-up (CI-FIX #16): the skipped-recast decl registry field doc lives
+  # with the other closure maps in context/types.ts, and the per-decl gate
+  # check belongs inside calleeMayBeHostCallable (calls.ts) next to the #1941
+  # rationale it amends — mostly comment lines.
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/calls.ts
 ---
 
 # #3432 — `argFactory.bind` non-callable: declaration-closures in arrays lose host callability
