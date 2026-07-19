@@ -10,8 +10,10 @@
 // chain. Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
+import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
+import { numberIsPredicateOps } from "../number-is-predicate-ops.js";
 import {
   emitArrayIteratorPrototypeSingleton,
   emitFunctionPrototypeObjectSingleton,
@@ -354,59 +356,19 @@ export function compileBuiltinStaticCall(
     }
     if (method === "isNaN" && expr.arguments.length >= 1) {
       // NaN !== NaN is true; for any other number it's false.
-      return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
-        { op: "local.get", index: v },
-        { op: "local.get", index: v },
-        { op: "f64.ne" },
-      ]);
+      return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => numberIsPredicateOps("isNaN", v));
     }
     if (method === "isInteger" && expr.arguments.length >= 1) {
       // n === trunc(n) && isFinite(n)
-      return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
-        { op: "local.get", index: v },
-        { op: "local.get", index: v },
-        { op: "f64.trunc" },
-        { op: "f64.eq" },
-        // finite: n - n === 0 (Infinity - Infinity = NaN, NaN !== 0)
-        { op: "local.get", index: v },
-        { op: "local.get", index: v },
-        { op: "f64.sub" },
-        { op: "f64.const", value: 0 },
-        { op: "f64.eq" },
-        { op: "i32.and" },
-      ]);
+      return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => numberIsPredicateOps("isInteger", v));
     }
     if (method === "isFinite" && expr.arguments.length >= 1) {
       // isFinite(n) → n - n === 0.0
-      return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
-        { op: "local.get", index: v },
-        { op: "local.get", index: v },
-        { op: "f64.sub" },
-        { op: "f64.const", value: 0 },
-        { op: "f64.eq" },
-      ]);
+      return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => numberIsPredicateOps("isFinite", v));
     }
     if (method === "isSafeInteger" && expr.arguments.length >= 1) {
       // isSafeInteger(n) = isInteger(n) && abs(n) <= MAX_SAFE_INTEGER
-      return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => [
-        // isInteger: n === trunc(n) && isFinite(n)
-        { op: "local.get", index: v },
-        { op: "local.get", index: v },
-        { op: "f64.trunc" },
-        { op: "f64.eq" },
-        { op: "local.get", index: v },
-        { op: "local.get", index: v },
-        { op: "f64.sub" },
-        { op: "f64.const", value: 0 },
-        { op: "f64.eq" },
-        { op: "i32.and" },
-        // abs(n) <= MAX_SAFE_INTEGER
-        { op: "local.get", index: v },
-        { op: "f64.abs" },
-        { op: "f64.const", value: Number.MAX_SAFE_INTEGER },
-        { op: "f64.le" },
-        { op: "i32.and" },
-      ]);
+      return compileNumberIsPredicate(ctx, fctx, expr.arguments[0]!, (v) => numberIsPredicateOps("isSafeInteger", v));
     }
     if ((method === "parseFloat" || method === "parseInt") && expr.arguments.length >= 1) {
       // Delegate to the global parseInt / parseFloat host import
@@ -1390,14 +1352,17 @@ export function compileBuiltinStaticCall(
       }
     };
     if (ts.isIdentifier(arg0)) {
-      markIntegrity(arg0.text);
+      // (#3403) per-declaration key (USE-site) so `Object.freeze(o)` in one
+      // function does not mark every other function's `o` frozen.
+      markIntegrity(integrityVarKey(ctx, arg0));
     } else if (
       // (#2012) `const/let o = Object.<freeze|seal|preventExtensions>(<expr>)`
       ts.isVariableDeclaration(expr.parent) &&
       ts.isIdentifier(expr.parent.name) &&
       expr.parent.initializer === expr
     ) {
-      markIntegrity(expr.parent.name.text);
+      // (#3403) DECLARATION-site key (matches integrityVarKey at any later use).
+      markIntegrity(widenedVarKeyFromDecl(expr.parent.name));
     }
 
     // Compile the argument — returns the object itself (freeze/seal return their arg)
@@ -2342,7 +2307,9 @@ export function compileBuiltinStaticCall(
           const userFieldIdx = userFields.indexOf(entry);
           let flags = flagsArr && userFieldIdx >= 0 ? flagsArr[userFieldIdx]! : 0x07; // default WEC
           if (ts.isIdentifier(arg0)) {
-            const dpfKey = `${arg0.text}:${propLiteral}`;
+            // (#3403) per-declaration key so a foreign same-named var's flags
+            // don't leak into this receiver's gOPD.
+            const dpfKey = `${integrityVarKey(ctx, arg0)}:${propLiteral}`;
             const dpfFlags = ctx.definedPropertyFlags.get(dpfKey);
             if (dpfFlags !== undefined) flags = dpfFlags & 0x0f;
           }

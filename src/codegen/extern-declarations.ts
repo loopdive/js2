@@ -683,7 +683,34 @@ export function collectExternDeclarations(
       // #1663: parseInt / parseFloat have no JS host under WASI / standalone —
       // skip the stub so the unified-collector finalize can emit the WasmGC
       // native scanners (registered under the same funcMap names) instead.
-      if ((ctx.wasi || ctx.standalone) && (name === "parseInt" || name === "parseFloat")) continue;
+      //
+      // (#3401) The URI globals (`decodeURI`/`decodeURIComponent`/`encodeURI`/
+      // `encodeURIComponent`, native since #2500) and the legacy `escape`/
+      // `unescape` (native since #3063/#3064) are in the SAME "has a standalone
+      // native, must NOT register an env host import" family — but were missing
+      // from this skip. When an unrelated builtin (`String.fromCharCode`, `new
+      // Error`, …) pulls the URI name into `libReferencedNames`, this pass
+      // registered `env::decodeURI` FIRST; the URI finalize (import-collector.ts)
+      // then saw `funcMap.has(name)` and SKIPPED its native emit, so the call
+      // site fell through to the leaked `env::*URI*` import — a host_import_leak
+      // CE in standalone (#2961). Verified: 48 official `built-ins/{decode,
+      // encode}URI*` tests. The context-dependence (only leaks when a sibling
+      // builtin drags the name into the lib-referenced set) is why #2500 shipped
+      // green on its own probes. Skip the stub here so the finalize owns the
+      // native emit, exactly as parseInt/parseFloat do.
+      if (
+        (ctx.wasi || ctx.standalone) &&
+        (name === "parseInt" ||
+          name === "parseFloat" ||
+          name === "decodeURI" ||
+          name === "decodeURIComponent" ||
+          name === "encodeURI" ||
+          name === "encodeURIComponent" ||
+          name === "escape" ||
+          name === "unescape")
+      ) {
+        continue;
+      }
       // #3436: `structuredClone` has no host under WASI / standalone. The
       // universal test262 prelude's `$262.detachArrayBuffer` references the
       // ambient global (a `typeof structuredClone !== "function"` guard, then a

@@ -29,6 +29,8 @@ import { asVal, irDynamic, isDynamic, irVal, type IrType } from "../ir/nodes.js"
 import { buildTypeMap, type LatticeType } from "../ir/propagate.js";
 import { planIrCompilation, irClosureSignatureFromFunctionTypeNode, type IrFallbackReason } from "../ir/select.js";
 import { makeIrHostGlobalResolver } from "../ir/host-extern.js"; // (#2856)
+import { asyncEngineWouldActivate } from "./async-activation.js"; // (#1373b C-1)
+import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
 import { collectLocalCallEdges, irFirstBodyIsProvenLowerable, type ValueDomain } from "./ir-first-gate.js";
 import type { FallbackCounts } from "./fallback-telemetry.js";
@@ -1741,6 +1743,12 @@ function planIrOverlay(ctx: CodegenContext, ast: TypedAST): IrOverlayPlan {
       jsHostExterns,
       dynMemberReadBuildable,
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
+      // (#1373b C-1) Async claim gate: IR claims an async fn IFF the ONE
+      // async engine ($AsyncFrame drive / host-drive) declines it — the
+      // legacy sync-pass-through population. Engine-activated functions keep
+      // byte-identical routing.
+      supportsAsyncIr: ctx.supportsAsyncIr,
+      asyncEngineClaims: (fn) => asyncEngineWouldActivate(ctx, fn),
     },
     typeMap,
   );
@@ -1804,15 +1812,25 @@ function planIrOverlay(ctx: CodegenContext, ast: TypedAST): IrOverlayPlan {
       // — `Generator<T>` doesn't resolve as `IrType.object` and
       // would otherwise drop the generator from `safeSelection`.
       const isGenerator = !!fn.asteriskToken;
+      // (#1373b C-1) IR-claimed async fns (sync-pass-through model) register
+      // the raw `T` unwrapped from the `Promise<T>` annotation — matching
+      // the declaration pre-pass's `unwrapPromiseType` result type, so the
+      // IR-lowered signature equals the legacy-registered one (the #1796
+      // call-site contract stays intact). The selector only claims asyncs
+      // with an explicit `Promise<T>` annotation, so the unwrap is non-null
+      // for every claimed async fn.
+      const isAsyncFn = !isGenerator && hasAsyncModifier(fn);
+      const asyncUnwrapped = isAsyncFn ? unwrapPromiseTypeNode(fn.type) : null;
+      const effectiveReturnNode = isAsyncFn ? (asyncUnwrapped ?? undefined) : fn.type;
       // Slice 14 (#1228) — VoidKeyword return: bypass resolvePositionType
       // (it has no representation for void in IrType) and set returnType
       // to null. The lowerer treats null returnType as "no result".
-      const isVoidReturn = !isGenerator && fn.type?.kind === ts.SyntaxKind.VoidKeyword;
+      const isVoidReturn = !isGenerator && effectiveReturnNode?.kind === ts.SyntaxKind.VoidKeyword;
       const returnType: IrType | null = isGenerator
         ? ({ kind: "val", val: { kind: "externref" } } as IrType)
         : isVoidReturn
           ? null
-          : resolvePositionType(fn.type, entry?.returnType, ctx, classShapes);
+          : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapes);
       const params: IrType[] = [];
       for (let i = 0; i < fn.parameters.length; i++) {
         const p = fn.parameters[i]!;

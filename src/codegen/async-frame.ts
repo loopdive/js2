@@ -950,6 +950,8 @@ function validateAsyncCfg(cfg: AsyncCfgPlan): string | null {
     if (t.kind === "suspend" && !inRange(t.resumeState)) return `suspend.resumeState ${t.resumeState} out of range`;
     if (t.kind === "settleYield" && !inRange(t.resumeState))
       return `settleYield.resumeState ${t.resumeState} out of range`;
+    if (t.kind === "settleReturn" && !inRange(t.resumeState))
+      return `settleReturn.resumeState ${t.resumeState} out of range`;
     if (t.kind === "goto" && !inRange(t.target)) return `goto.target ${t.target} out of range`;
     if (t.kind === "condGoto" && (!inRange(t.whenTrue) || !inRange(t.whenFalse))) {
       return `condGoto targets ${t.whenTrue}/${t.whenFalse} out of range`;
@@ -1721,6 +1723,41 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
           out.push({ op: "call", funcIdx: settleFulfillIdx });
           out.push({ op: "drop" });
           // Suspend: STATE=resumeState, persist spills, return (await the next kick).
+          out.push(...setStateI32FromConst(info, frameLocal, STATE_FIELD, term.resumeState));
+          out.push(...storeSpills(info, resumeFctx, frameLocal));
+          out.push({ op: "return" });
+          break;
+        }
+        case "settleReturn": {
+          // (#3389) `return E` completion — fulfil the current `next()`-promise
+          // with `{value: E, done: true}` (§27.6.3.8 with a return completion),
+          // set STATE=resumeState (the trailing settleDone), persist spills, and
+          // `return`. The next `next()` kick re-dispatches at settleDone →
+          // `{value: undefined, done: true}` on the completed frame. Mirrors
+          // `settleYield` but with done=1 and no back-edge.
+          const resultTypeIdx = info.asyncGenResultTypeIdx!;
+          if (term.value === null) {
+            out.push({ op: "ref.null.extern" }); // bare `return;` → undefined
+          } else {
+            const vt = isEmitOperand(term.value)
+              ? term.value.emit(ctx, resumeFctx)
+              : compileExpression(ctx, resumeFctx, term.value);
+            if (vt !== null && vt !== undefined) {
+              coerceType(ctx, resumeFctx, vt as ValType, { kind: "externref" });
+            } else {
+              out.push({ op: "ref.null.extern" });
+            }
+          }
+          out.push({ op: "local.set", index: yieldValLocal });
+          // result_promise.fulfil( IteratorResult{value: retVal, done: 1} )
+          out.push({ op: "local.get", index: resultPromiseLocal });
+          out.push({ op: "local.get", index: yieldValLocal });
+          out.push({ op: "i32.const", value: 1 }); // done = true
+          out.push({ op: "struct.new", typeIdx: resultTypeIdx });
+          out.push({ op: "extern.convert_any" });
+          out.push({ op: "call", funcIdx: settleFulfillIdx });
+          out.push({ op: "drop" });
+          // Complete the frame: STATE=resumeState (settleDone), persist spills, return.
           out.push(...setStateI32FromConst(info, frameLocal, STATE_FIELD, term.resumeState));
           out.push(...storeSpills(info, resumeFctx, frameLocal));
           out.push({ op: "return" });

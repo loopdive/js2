@@ -94,25 +94,6 @@ export function nodeContainsYield(root: ts.Node): boolean {
 }
 
 /**
- * (#2920) Collect every bound identifier in a param binding pattern
- * (recursively — nested array/object patterns and rest elements included;
- * array holes skipped). Used to register each destructured PARAM name as a
- * live-across-yield spill and to resolve its spill ValType from the checker.
- */
-export function collectPatternBindingIdentifiers(pattern: ts.BindingPattern): ts.Identifier[] {
-  const out: ts.Identifier[] = [];
-  const visitPattern = (pat: ts.BindingPattern): void => {
-    for (const el of pat.elements) {
-      if (ts.isOmittedExpression(el)) continue;
-      if (ts.isIdentifier(el.name)) out.push(el.name);
-      else visitPattern(el.name);
-    }
-  };
-  visitPattern(pattern);
-  return out;
-}
-
-/**
  * (#2920) A spilled destructured-param local must round-trip through a state
  * struct field, so its ValType needs a struct-construction default. Scalars and
  * nullable refs qualify; a non-null `ref` is widened to `ref_null` (matching the

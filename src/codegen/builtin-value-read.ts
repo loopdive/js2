@@ -15,6 +15,7 @@
 
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { numberIsPredicateOps } from "./number-is-predicate-ops.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addUnionImports, TYPED_ARRAY_NAMES, typedArrayPackedSignedness } from "./index.js";
 import {
@@ -918,6 +919,38 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       returnType = { kind: "externref" };
       break;
     }
+    // (#2963 Tier 2a) `Number.is{Integer,Finite,NaN,SafeInteger}` as first-class
+    // VALUES. Fixed 1-arg predicates: the reified closure takes the boxed arg as
+    // externref (the all-externref convention — coercion moves INSIDE the body)
+    // and returns i32 (0/1), exactly like the `Array.isArray` value closure. The
+    // body applies the `__typeof_number` guard (NO ToNumber — a non-Number arg is
+    // `false` per §21.1.2.x, and the settled guard already excludes the #2979
+    // UNDEF_F64-sentinel `$BoxedNumber` that carries `undefined`), then
+    // `__unbox_number` → the SHARED `numberIsPredicateOps` f64 test (the SAME ops
+    // the direct `Number.is*(n)` call emits → observational identity). Both
+    // natives are standalone-DEFINED funcs (host-free) registered by
+    // `addUnionImports`; if the substrate is unavailable, degrade to the generic
+    // catchable-TypeError body (identity/meta still hold).
+    case "Number.isInteger":
+    case "Number.isFinite":
+    case "Number.isNaN":
+    case "Number.isSafeInteger": {
+      addUnionImports(ctx);
+      const typeofNumIdx = ctx.funcMap.get("__typeof_number");
+      const unboxNumIdx = ctx.funcMap.get("__unbox_number");
+      if (typeofNumIdx === undefined || unboxNumIdx === undefined) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "i32" };
+      break;
+    }
     default: {
       // (#2984 Phase 3) Any OTHER standard builtin static method — the
       // `BUILTIN_STATIC_METHOD_ARITY` membership is the complete own
@@ -1115,6 +1148,38 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         },
         { op: "local.get", index: accLocal },
         { op: "call", funcIdx: boxNumIdx },
+      );
+    } else if (
+      (key === "Number.isInteger" ||
+        key === "Number.isFinite" ||
+        key === "Number.isNaN" ||
+        key === "Number.isSafeInteger") &&
+      !genericThrowBody
+    ) {
+      // (#2963 Tier 2a) Predicate body. Params: 0=self, 1=arg (boxed externref).
+      // `__typeof_number` answers "is this box a Number?" (excludes null /
+      // undefined / the UNDEF_F64-sentinel box / non-number tags) WITHOUT
+      // coercing — a non-Number arg yields `false` per §21.1.2.x. On a hit,
+      // `__unbox_number` recovers the f64 and the shared `numberIsPredicateOps`
+      // runs the exact test the direct call emits.
+      const typeofNumIdx = ctx.funcMap.get("__typeof_number");
+      const unboxNumIdx = ctx.funcMap.get("__unbox_number");
+      if (typeofNumIdx === undefined || unboxNumIdx === undefined) return null;
+      const valTmp = allocLocal(closureFctx, "np_val", { kind: "f64" });
+      closureFctx.body.push(
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: typeofNumIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: unboxNumIdx },
+            { op: "local.set", index: valTmp },
+            ...numberIsPredicateOps(propName, valTmp),
+          ],
+          else: [{ op: "i32.const", value: 0 }],
+        },
       );
     } else if (genericThrowBody) {
       // (#2984 Phase 3) Degrade-to-catchable body: a real TypeError instance +

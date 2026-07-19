@@ -55,6 +55,9 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+// (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
+// ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
+import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
 import type { IrClosureSignature, IrType } from "./nodes.js";
 
 import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
@@ -259,6 +262,23 @@ export interface IrSelectionOptions {
    */
   readonly supportsAsyncIr?: boolean;
   /**
+   * (#1373b C-1) The ONE-engine consistency predicate: returns `true` when
+   * the converged async engine (the #2906 `$AsyncFrame` drive / host-drive
+   * machine, entry `decideAsyncActivation` in `async-activation.ts`) would
+   * ACTIVATE for this async function declaration. The IR path claims an
+   * async function IFF the engine declines it — the legacy synchronous
+   * pass-through population — so engine-activated functions keep
+   * byte-identical routing and the IR never builds a second suspension
+   * machine (the #2367 graveyard rule).
+   *
+   * Bound by the real-compile call site (`planIrOverlay` in
+   * codegen/index.ts) to `asyncEngineWouldActivate(ctx, fn)`. When ABSENT
+   * (bare `planIrCompilation` callers without a codegen context), the gate
+   * treats every async fn as engine-claimed — the safe default: never
+   * IR-claim without the engine's verdict.
+   */
+  readonly asyncEngineClaims?: (fn: ts.FunctionLikeDeclaration) => boolean;
+  /**
    * (#2856) Host-extern support — resolves a bare identifier that is NOT a
    * local/param binding to an ambient host global (`document`, `console`, …).
    * Returns the extern class name (`"Document"`, `"Console"`) when the
@@ -296,20 +316,62 @@ export interface IrSelectionOptions {
 }
 
 /**
- * (#1373b Slice 1) Centralised gate for whether the IR path can claim a
- * given async function. The first scaffolding slice hardcodes the answer
- * to `false` regardless of context — only later slices flip this on once
- * the CPS continuation synthesis (Slice 2) is parity-tested.
+ * (#1373b C-1) Centralised gate for whether the IR path can claim a given
+ * async function. C-1 opens the gate for the SYNC-PASS-THROUGH population
+ * only — async function DECLARATIONS the converged engine declines
+ * (`asyncEngineClaims(fn) === false`). Engine-activated functions (genuinely
+ * suspending, engine-drivable shapes) stay on the `$AsyncFrame` machine;
+ * claiming one here would regress real suspension back to sync semantics.
  *
- * Body-shape checks (try/catch wrapping await, etc.) live here too so the
- * selector and lowerer share a single source of truth on what's accepted.
+ * Accepting here only opens the door: the normal Phase-1 body-shape pipeline
+ * still runs (with `await` accepted via the `isPhase1Expr` arm), so anything
+ * the IR can't build stays legacy (correct-or-legacy).
+ *
+ * Out of C-1 scope (kept in their fallback buckets):
+ *   - async methods / arrows / function expressions (#2957 activation paths);
+ *   - async generators (`async-generator` bucket, engine 3d lanes);
+ *   - bodies containing `for await` (engine 3b/3dii lanes) or nested async
+ *     function-likes (closure-lifted async lowering not wired).
  */
-export function isAsyncIrReady(options: IrSelectionOptions | undefined, _fn: ts.FunctionLikeDeclaration): boolean {
+export function isAsyncIrReady(options: IrSelectionOptions | undefined, fn: ts.FunctionLikeDeclaration): boolean {
   if (!options?.supportsAsyncIr) return false;
-  // TODO(#1373b Slice 2): body-shape check — reject try/catch wrapping
-  // an `await` until catch-handler continuation routing lands.
-  // For now the gate is closed regardless of body shape.
-  return false;
+  // C-1 scope: top-level function declarations only.
+  if (!ts.isFunctionDeclaration(fn)) return false;
+  if (fn.asteriskToken) return false; // async generator — never this gate
+  if (!fn.body) return false;
+  // ONE-engine invariant: without the engine's verdict, never claim.
+  if (options.asyncEngineClaims === undefined) return false;
+  if (options.asyncEngineClaims(fn)) return false;
+  // Body-scope bounds: `for await` and nested async function-likes are out.
+  if (bodyHasAsyncOutOfIrScope(fn.body)) return false;
+  return true;
+}
+
+/**
+ * (#1373b C-1) Walk an async fn body for shapes the C-1 claim excludes:
+ * `for await` loops and nested async function-likes (async arrows / function
+ * expressions / declarations — their lowering rides the closure-lift path,
+ * which has no async arm yet).
+ */
+function bodyHasAsyncOutOfIrScope(body: ts.Node): boolean {
+  let found = false;
+  const walk = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isForOfStatement(node) && node.awaitModifier) {
+      found = true;
+      return;
+    }
+    if (
+      (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) &&
+      node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, walk);
+  };
+  ts.forEachChild(body, walk);
+  return found;
 }
 
 const EMPTY: IrSelection = { funcs: new Set<string>() };
@@ -351,6 +413,25 @@ export function planIrCompilation(
     options?.resolveHostGlobal && hostExternCapability(options?.jsHostExterns === true) !== "defer"
       ? options.resolveHostGlobal
       : null;
+  // (#1373b C-1) Arm the async claim gate for this run (consulted by
+  // `whyNotIrClaimable`'s async-modifier arm via `isAsyncIrReady`), and
+  // collect the top-level async declaration names for the await-only
+  // consumption rule in the call arm.
+  currentSelectionOptions = options;
+  {
+    const asyncNames = new Set<string>();
+    for (const stmt of sourceFile.statements) {
+      if (
+        ts.isFunctionDeclaration(stmt) &&
+        stmt.name &&
+        !stmt.asteriskToken &&
+        stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+      ) {
+        asyncNames.add(stmt.name.text);
+      }
+    }
+    currentAsyncDeclNames = asyncNames;
+  }
   // (#2856 C3) Module-scope `const <m> = new Map(...)` bindings — the
   // `<m>.get(k)` / `<m>.set(k, v)` method-call receiver arm of isPhase1Expr
   // consults this set. JS-host lane only (same capability gate as the
@@ -790,6 +871,25 @@ let earlyReturnLoopDepth = 0;
 let earlyReturnBarrierDepth = 0;
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
+// (#1373b C-1) True while walking the body of an async fn the C-1 gate
+// accepted — arms the `AwaitExpression` case in `isPhase1Expr`. Reset per
+// function walk (and false for the module-init assessment).
+let currentFnIsAsync = false;
+// (#1373b C-1) The options of the CURRENT `planIrCompilation` run, so
+// `whyNotIrClaimable` (whose signature is shared by many recursion helpers)
+// can consult the async gate without threading a param through every
+// `isPhase1*` helper — same module-state pattern as
+// `currentHostGlobalResolver` / `currentDynScanDecls`. `undefined` outside a
+// selector run (async fns then keep their fallback bucket).
+let currentSelectionOptions: IrSelectionOptions | undefined;
+// (#1373b C-1) Names of the top-level ASYNC (non-generator) function
+// declarations of the current run. A claimed body may reference these ONLY as
+// the immediate operand of an `await`: legacy classifies any other call-site
+// use as a THENABLE consumer and wraps the raw result in `Promise.resolve`
+// (#1796 `classifyAsyncConsumer` — no cast, no await ⇒ thenable), a wrap the
+// IR does not emit. Claiming such a shape would change observable behavior,
+// so the call arm rejects it (parity-first; the shape stays legacy).
+let currentAsyncDeclNames: ReadonlySet<string> = new Set();
 
 /**
  * (#2856) Names LEAKED into the flat scope set by a sibling for-init
@@ -859,6 +959,7 @@ function whyNotIrClaimable(
   //     and `static` for the IR claim check; reject `abstract`, `async`, and
   //     accessor (`get`/`set`) modifiers explicitly so they slot into the
   //     right fallback bucket.
+  let isAsyncFn = false;
   if (!isMethod) {
     if (fn.modifiers) {
       // (#1373) Bucket `async` separately from generic non-export modifiers
@@ -870,9 +971,16 @@ function whyNotIrClaimable(
       const isGeneratorFn =
         (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) && !!(fn as ts.FunctionDeclaration).asteriskToken;
       if (hasAsyncModifier) {
-        return isGeneratorFn ? "async-generator" : "async-function";
+        if (isGeneratorFn) return "async-generator";
+        // (#1373b C-1) Gate open? Then the sync-pass-through async fn falls
+        // through to the NORMAL body-shape pipeline (with `await` accepted
+        // in `isPhase1Expr` and the return type unwrapped from Promise<T>).
+        // Engine-activated / out-of-scope asyncs keep the fallback bucket.
+        if (!isAsyncIrReady(currentSelectionOptions, fn)) return "async-function";
+        isAsyncFn = true;
       }
-      if (fn.modifiers.some((m) => m.kind !== ts.SyntaxKind.ExportKeyword)) return "non-export-modifier";
+      if (fn.modifiers.some((m) => m.kind !== ts.SyntaxKind.ExportKeyword && m.kind !== ts.SyntaxKind.AsyncKeyword))
+        return "non-export-modifier";
     }
   } else {
     if (fn.modifiers) {
@@ -924,6 +1032,19 @@ function whyNotIrClaimable(
       // inherently void. Its body is a void tail (the lone `this.#x = v;`
       // property store, accepted by `isPhase1Tail`'s void-tail arm).
       isVoidReturn = true;
+    } else if (isAsyncFn) {
+      // (#1373b C-1) An IR-claimed async fn compiles on the legacy SYNC
+      // pass-through model: its wasm result is the raw `T` unwrapped from the
+      // `Promise<T>` annotation (matching the declaration pre-pass's
+      // checker-based `unwrapPromiseType` — the #1796 call-site consumption
+      // contract wraps thenable consumers). C-1 requires the explicit
+      // `Promise<T>` annotation; unannotated async fns stay legacy.
+      const unwrapped = unwrapPromiseTypeNode((fn as ts.FunctionDeclaration).type);
+      if (unwrapped === null) return "return-type-not-resolvable";
+      const returnResolved = resolveReturnTypeNode(unwrapped);
+      if (returnResolved === null) return "return-type-not-resolvable";
+      isVoidReturn = returnResolved === "void";
+      isDynamicReturn = returnResolved === "dynamic";
     } else {
       const returnResolved = resolveReturnType(fn, entry?.returnType);
       if (returnResolved === null) return "return-type-not-resolvable";
@@ -991,6 +1112,7 @@ function whyNotIrClaimable(
   forInitLeakedNames = new Set();
   currentFnIsGenerator = isGenerator;
   currentFnIsVoidReturn = isVoidReturn;
+  currentFnIsAsync = isAsyncFn; // (#1373b C-1) arms the isPhase1Expr await arm
   // #1370 Phase A: constructor bodies don't have a return-statement tail —
   // the legacy lowerer (and Phase C) synthesise the implicit `return this;`.
   // Accept the body as a list of Phase-1 body statements instead, which
@@ -1211,6 +1333,24 @@ function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | unde
 // nodes (it's `TypeNode | undefined`), and so is the dispatch logic below.
 // ts.ConstructorDeclaration is excluded — constructors don't carry a
 // source-level return type; the caller short-circuits before this.
+/**
+ * (#1373b C-1) Annotation arm of {@link resolveReturnType}, extracted so the
+ * async claim can resolve the `T` unwrapped from a `Promise<T>` annotation
+ * with the exact same kind mapping. Keep the two in lockstep.
+ */
+function resolveReturnTypeNode(t: ts.TypeNode): ResolvedKind {
+  if (t.kind === ts.SyntaxKind.NumberKeyword) return "f64";
+  if (t.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
+  if (t.kind === ts.SyntaxKind.StringKeyword) return "string";
+  // Slice 14 (#1228) — `void` return: function has zero result types.
+  if (t.kind === ts.SyntaxKind.VoidKeyword) return "void";
+  // (#2949 slice 3b) `any` return IS the dynamic type (same rationale as
+  // the param arm — one `any` ABI, move-only-scanned).
+  if (t.kind === ts.SyntaxKind.AnyKeyword) return "dynamic";
+  if (ts.isTypeLiteralNode(t) || ts.isTypeReferenceNode(t) || ts.isArrayTypeNode(t)) return "object";
+  return null;
+}
+
 function resolveReturnType(
   // #3000-B: also accept a GET accessor — its return type is `fn.type` exactly
   // like a method. (SET accessors are void and never reach here.)
@@ -1218,17 +1358,7 @@ function resolveReturnType(
   mapped: LatticeType | undefined,
 ): ResolvedKind {
   if (fn.type) {
-    if (fn.type.kind === ts.SyntaxKind.NumberKeyword) return "f64";
-    if (fn.type.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
-    if (fn.type.kind === ts.SyntaxKind.StringKeyword) return "string";
-    // Slice 14 (#1228) — `void` return: function has zero result types.
-    if (fn.type.kind === ts.SyntaxKind.VoidKeyword) return "void";
-    // (#2949 slice 3b) `any` return IS the dynamic type (same rationale as
-    // the param arm — one `any` ABI, move-only-scanned).
-    if (fn.type.kind === ts.SyntaxKind.AnyKeyword) return "dynamic";
-    if (ts.isTypeLiteralNode(fn.type) || ts.isTypeReferenceNode(fn.type) || ts.isArrayTypeNode(fn.type))
-      return "object";
-    return null;
+    return resolveReturnTypeNode(fn.type);
   }
   if (mapped?.kind === "f64") return "f64";
   if (mapped?.kind === "bool") return "bool";
@@ -2632,6 +2762,32 @@ function isKnownExternClass(name: string): boolean {
 
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
+  // (#1373b C-1) `await <e>` inside a C-1-claimed async body. Shape-accept
+  // mirrors the legacy sync-model lowering from-ast emits:
+  //   - `await Promise.resolve(x)` → the settled expression `x` (#3227
+  //     static substitution) — check THAT shape; the zero-arg form settles
+  //     to `undefined`, which from-ast has no value lowering for → reject.
+  //   - anything else → the operand itself (identity / one-level unwrap).
+  if (ts.isAwaitExpression(expr)) {
+    if (!currentFnIsAsync) return shapeNo("expr-await-outside-async", expr);
+    const settled = staticPromiseResolveSettledExpr(expr.expression);
+    if (settled === "undefined") return shapeNo("expr-await-undefined-settle", expr);
+    if (settled !== null) return isPhase1Expr(settled, scope, localClasses);
+    // Direct `await f(...)` of a local async fn — the ONE consumer position
+    // where an async callee is claimable (both legacy and IR deliver the raw
+    // `T`; #1796). Handled inline so the generic call arm can reject every
+    // other async-callee use.
+    let op: ts.Expression = expr.expression;
+    while (ts.isParenthesizedExpression(op)) op = op.expression;
+    if (ts.isCallExpression(op) && ts.isIdentifier(op.expression) && currentAsyncDeclNames.has(op.expression.text)) {
+      for (const arg of op.arguments) {
+        if (ts.isSpreadElement(arg)) return shapeNo("expr-await-async-call-spread", arg);
+        if (!isPhase1Expr(arg, scope, localClasses)) return false;
+      }
+      return true;
+    }
+    return isPhase1Expr(expr.expression, scope, localClasses);
+  }
   if (ts.isNumericLiteral(expr)) return true;
   if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
   // Slice 10 (#1169i): RegExp literals lower to `extern.regex` (a
@@ -2829,6 +2985,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       return true;
     }
     if (!ts.isIdentifier(expr.expression)) return false;
+    // (#1373b C-1) A local ASYNC callee is claimable ONLY as the immediate
+    // operand of an `await` (handled inline in the await arm above, which
+    // never recurses here for that shape). Every other use — `return f();`,
+    // `const p = f();`, an argument position — is a THENABLE consumer under
+    // the legacy #1796 call-site contract (wrapped in `Promise.resolve`),
+    // which the IR does not emit. Reject to keep claimed-vs-legacy behavior
+    // identical; the fn stays on the legacy path.
+    if (currentAsyncDeclNames.has(expr.expression.text) && !scope.has(expr.expression.text)) {
+      return shapeNo("expr-async-callee-not-awaited", expr);
+    }
     for (const arg of expr.arguments) {
       // Slice 8a (#1169g): accept `f(...source)` where the spread source
       // is an ArrayLiteralExpression with no nested spread. The lowerer
@@ -3235,6 +3401,7 @@ function assessModuleInit(
   forInitLeakedNames = new Set();
   currentFnIsGenerator = false;
   currentFnIsVoidReturn = true;
+  currentFnIsAsync = false; // (#1373b C-1) module-init is never an async body
   const scope = new Set<string>();
   for (const stmt of population) {
     if (!isPhase1BodyStatement(stmt, scope, localClasses)) {

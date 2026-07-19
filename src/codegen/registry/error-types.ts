@@ -81,6 +81,40 @@ export function isWasiErrorName(name: string): name is WasiErrorName {
 }
 
 /**
+ * (#2917 slice 1) Native backing representation of an externref-backed class
+ * instance in standalone/WASI mode, for OWN-FIELD storage routing.
+ *
+ * An externref-backed subclass (`ctx.classExternrefBackedSet`) has no `$X`
+ * WasmGC struct instance at runtime — the value `super(...)` produced depends
+ * on the transitive BUILTIN ancestor (`ctx.classBuiltinParentMap`):
+ *
+ *   - Error family (+ `SuppressedError`, whose native instances are also
+ *     `$Error_struct`s — #3234): a `$Error_struct` from
+ *     `emitWasiErrorConstructor`. Own fields live in its `$props` side-slot
+ *     (fieldIdx 5) — the #2101a R5 path.
+ *   - `Object` (#3238): a native open `$Object` from
+ *     `emitStandaloneObjectConstructor`. The instance ITSELF is the property
+ *     store — own fields go straight through `__extern_set`/`__extern_get` on
+ *     it. Casting it to `$Error_struct` (what the #2101a path did) TRAPS —
+ *     that was the `class X extends Object { own = 1 }` illegal-cast bug.
+ *   - anything else (TypedArray/SAB vec backing #3239, String, Promise, …):
+ *     neither representation holds — return `undefined` so callers fall
+ *     through to the legacy multi-dispatch path instead of baking a cast that
+ *     can only trap.
+ */
+export type ExternrefBackedOwnFieldBacking = "error-struct" | "plain-object";
+
+export function externrefBackedOwnFieldBacking(
+  ctx: CodegenContext,
+  className: string,
+): ExternrefBackedOwnFieldBacking | undefined {
+  const ancestor = ctx.classBuiltinParentMap.get(className) ?? className;
+  if (ancestor === "Object") return "plain-object";
+  if (isWasiErrorName(ancestor) || ancestor === "SuppressedError") return "error-struct";
+  return undefined;
+}
+
+/**
  * Emit an internal Wasm function `__new_<errorName>` that constructs a new
  * `$Error_struct` and returns it as externref. The function takes `argCount`
  * externref params (the constructor arguments seen at call sites — typically

@@ -15,6 +15,7 @@ task_type: refactor
 area: compiler
 language_feature: compiler-internals
 goal: maintainability
+loc-budget-allow: [src/codegen/binary-ops.ts]
 ---
 
 > **Unblocked 2026-07-02**: `blocked_by: [2167]` removed — #2167 (Fable model
@@ -429,3 +430,44 @@ conservatism table as the parity spec.
 5. **Slice 6** — #2135 resolvability-leg adoption (their lane).
 6. **Slice 7** — nullable-primitive lowering + `compiler.ts` suppression
    deletion; still gated on #1852 alignment; LAST.
+
+## Slice-3 salvage LANDED (opus-dev-a, 2026-07-18)
+
+The reserved Slice-3 lane (`issue-1930-slice3-i32-matchers` @ `724c272065`,
+2026-07-02) sat stranded 16 days with no PR. Its central payload was a **live
+silent miscompile on main**: the scalar Q-CANON matcher `isI32SafeExpr`
+(`function-body.ts`) still accepted unary `-x` for any i32-safe operand, so
+`let x = 0; let y = -x; Object.is(y, -0)` returned `false` (spec `true`) — the
+#2789 −0 fix reached the array sibling but never the scalar one. Re-verified
+live on current main before the fix.
+
+Per the silent-revert hazard the stale branch was NOT merged. The additions
+were **extracted onto a fresh branch off `upstream/main`** and re-grounded
+against drift (the `isBooleanExpr` closure had moved from `declarations.ts` to
+`declarations/param-return-inference.ts`; the `array-element-typing.ts` header
+had already absorbed the #2789 wording). Ported verbatim:
+
+- **V1 fix** (`function-body.ts`): unary `-` now admits ONLY
+  `-<non-zero integer literal>` (a `-1`-style sentinel, no −0 hazard). Strict
+  subset of prior acceptance ⇒ demotion-only ⇒ sound, matching #1236/#2789.
+- **Q-TAG spine extraction**: `isSyntacticallyBooleanExpr` defined ONCE in
+  `src/checker/oracle.ts` (Constraint-A-clean — the kernel-fixpoint's evolving
+  candidate set is an explicit hook parameter); the #2795 `isBooleanExpr`
+  kernel closure delegates with a verbatim-identical accept-set.
+- **Doctrine cross-references** at every matcher site (Q-CANON in
+  `array-element-typing.ts`, Q-WRAP in `binary-ops.ts`, Q-TAG in `shared.ts`)
+  forbidding cross-question arm copying (verdicts V2/V3/V7).
+- Guards: `tests/issue-1930-i32-safety.test.ts` (V1 both shapes + sentinel
+  non-demotion + #2795 branding + spine spot-checks).
+
+No `oracle_version` bump: this is a codegen fix, not a test262 verdict-logic
+change — `check-verdict-oracle-bump` gates only the harness scorer files.
+The V1 fix and the spine extraction are separable; both landed together here.
+The remaining oracle slices (2, 4–7) and the Q-CANON structural merge are
+unchanged follow-ups.
+
+**loc-budget note**: the Q-WRAP doctrine comment adds +11 LOC to the god-file
+`binary-ops.ts` (2815→2826). This is intended, load-bearing documentation (the
+cross-reference that prevents the next dev from copy-pasting a Q-WRAP arm into a
+Q-CANON matcher — the exact V1 bug class), so it is granted the change-scoped
+`loc-budget-allow` frontmatter entry on this issue file.

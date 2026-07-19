@@ -38,6 +38,8 @@
 import { ts, forEachChild } from "../ts-api.js";
 
 import { FMOD_FN } from "../codegen/fmod.js"; // #2945 — `%` lowers to a call of the shared exact-fmod helper
+// (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
+import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
 import { evaluateConstantCondition } from "../codegen/statements/control-flow.js";
 // #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
@@ -565,6 +567,19 @@ export function lowerFunctionAstToIr(
   // `fn.type?.kind === VoidKeyword` indicates a void-returning function.
   // The IR builder is constructed with `[]` results; lowerTail accepts
   // bare `return;` / fall-through tails.
+  // (#1373b C-1) A C-1-claimed async fn compiles on the legacy SYNC
+  // pass-through model: its wasm result is the raw `T` unwrapped from the
+  // `Promise<T>` annotation (matching the declaration pre-pass's
+  // `unwrapPromiseType`); the #1796 call-site consumption contract owns the
+  // Promise wrap for thenable consumers. Async METHODS are out of C-1 scope
+  // (the selector never claims them), so the declaration-only check is safe.
+  const isAsync =
+    !isGenerator &&
+    !isCtor &&
+    ts.isFunctionDeclaration(fn) &&
+    !!fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+  const asyncUnwrappedReturn = isAsync ? unwrapPromiseTypeNode(fn.type) : null;
+  const effectiveReturnTypeNode = isAsync ? (asyncUnwrappedReturn ?? undefined) : fn.type;
   const isVoidReturn =
     !isGenerator &&
     !isCtor &&
@@ -572,7 +587,7 @@ export function lowerFunctionAstToIr(
     // treat it as void even if the caller forgot the explicit override.
     (ts.isSetAccessorDeclaration(fn) ||
       options.returnTypeOverride === null ||
-      (options.returnTypeOverride === undefined && fn.type?.kind === ts.SyntaxKind.VoidKeyword));
+      (options.returnTypeOverride === undefined && effectiveReturnTypeNode?.kind === ts.SyntaxKind.VoidKeyword));
   const returnType: IrType | null = isGenerator
     ? irVal({ kind: "externref" })
     : // #3000-C: a constructor returns the constructed instance — `(ref $struct)`.
@@ -580,7 +595,7 @@ export function lowerFunctionAstToIr(
       ? ({ kind: "class", shape: options.constructorClassShape! } as IrType)
       : isVoidReturn
         ? null
-        : resolveIrType(fn.type, options.returnTypeOverride ?? undefined, `return type of ${name}`);
+        : resolveIrType(effectiveReturnTypeNode, options.returnTypeOverride ?? undefined, `return type of ${name}`);
   // #1372 — binding-pattern params: synthesize a stable internal name
   // (`__pattern_param_<idx>`) so the IR `addParam` machinery has a regular
   // identifier to bind, then emit destructuring reads (object.get / vec.get
@@ -660,6 +675,12 @@ export function lowerFunctionAstToIr(
   // against the slot. The lowerer reads `func.generatorBufferSlot` to
   // produce the `local.get $__gen_buffer` op.
   let generatorBufferSlot: number | undefined;
+  if (isAsync) {
+    // (#1373b C-1) Mark the IrFunction async. No prologue is needed — the
+    // sync-pass-through model compiles the body as an ordinary synchronous
+    // function; `await` lowers per-lane in lower.ts (`case "await"`).
+    builder.setFuncKind("async");
+  }
   if (isGenerator) {
     builder.setFuncKind("generator");
     generatorBufferSlot = builder.declareSlot("__gen_buffer", { kind: "externref" });
@@ -696,7 +717,7 @@ export function lowerFunctionAstToIr(
     // (#2972) statically-known literal string lengths — proven-in-bounds
     // string element reads (`hex[(n >> 4) & 0xf]`) consult this.
     stringLiteralLens: collectStringLiteralLens(fn),
-    funcKind: isGenerator ? "generator" : "regular",
+    funcKind: isGenerator ? "generator" : isAsync ? "async" : "regular",
     generatorBufferSlot,
     checker: options.checker,
     allocRegistry: options.allocRegistry,
@@ -1881,6 +1902,34 @@ function resolveIrType(node: ts.TypeNode | undefined, override: IrType | undefin
 function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (ts.isParenthesizedExpression(expr)) {
     return lowerExpr(expr.expression, cx, hint);
+  }
+  // (#1373b C-1) `await <e>` in a claimed async body — the legacy SYNC
+  // pass-through model, mirrored exactly:
+  //   1. `await Promise.resolve(x)` → lower `x` (#3227 static substitution;
+  //      the selector already rejected the zero-arg undefined-settle form).
+  //   2. Non-externref-shaped operand (f64/i32/... — e.g. a call to another
+  //      sync-model async fn, which returns raw `T` per the #1796 call-site
+  //      contract) → passthrough, no await node.
+  //   3. Externref-shaped operand → `await` instr; lower.ts decides per lane
+  //      (native-`$Promise` carrier: one-level unwrap; JS-host: identity).
+  if (ts.isAwaitExpression(expr)) {
+    if (cx.funcKind !== "async") {
+      throw new Error(`ir/from-ast: await outside an async function (${cx.funcName})`);
+    }
+    const settled = staticPromiseResolveSettledExpr(expr.expression);
+    if (settled === "undefined") {
+      throw new Error(`ir/from-ast: await Promise.resolve() (undefined settle) not in C-1 scope (${cx.funcName})`);
+    }
+    if (settled !== null) {
+      return lowerExpr(settled, cx, hint);
+    }
+    const operand = lowerExpr(expr.expression, cx, hint);
+    const opType = cx.builder.valueType(operand);
+    const opVal = opType !== undefined ? asVal(opType) : undefined;
+    const externShaped =
+      (opVal !== undefined && opVal !== null && opVal.kind === "externref") || opType?.kind === "extern";
+    if (!externShaped) return operand;
+    return cx.builder.emitAwait(operand);
   }
   if (ts.isNumericLiteral(expr)) {
     return cx.builder.emitConst({ kind: "f64", value: Number(expr.text) }, irVal({ kind: "f64" }));

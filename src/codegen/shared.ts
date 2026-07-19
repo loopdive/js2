@@ -442,6 +442,15 @@ export function isAnyValue(type: ValType, ctx: CodegenContext): boolean {
  * union, `number`, etc. carry the outer `Union`/`Number` flag — NOT the
  * `Boolean` flag — so they are rejected. This gates the boolean-result branding
  * below so only genuine boolean returns are re-tagged.
+ *
+ * (#1930 Slice 3 — Q-TAG, checker lane.) This flag test is EXACTLY the
+ * oracle's boolean fact (`typeFactOf(...).kind === "boolean"`, including the
+ * strict union rejection — verdict V7). It cannot delegate yet because its
+ * callers hold a raw `ts.Type` (not a node) from signature plumbing; the
+ * migration is the Slice-4 `signatureOf` bucket
+ * (`oracle.signatureOf(callNode).returns.kind === "boolean"` at the six
+ * `brandExternMethodResult` call sites). Keep semantics locked to the
+ * oracle's boolean arm until then.
  */
 function isStrictBooleanReturnType(t: ts.Type): boolean {
   return (t.flags & (ts.TypeFlags.Boolean | ts.TypeFlags.BooleanLiteral)) !== 0;

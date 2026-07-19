@@ -35,6 +35,21 @@ import { ts, forEachChild } from "../ts-api.js";
  * distinction i32 erases. That discharges the read-side proof obligation in the
  * hybrid fast-path audit (Row 3) for free — there is no distinction to observe.
  *
+ * (#1930 Slice 3 — three-question doctrine.) This is a **Q-CANON** matcher:
+ * "is this VALUE a canonical int32 (no observable i32↔f64 divergence,
+ * including −0 and overflow)?" — one of the three DISTINCT i32-safety
+ * questions the compiler asks (see issue #1930's divergence-verdict table):
+ *   Q-CANON  — value canonicality (this matcher + `isI32SafeExpr`,
+ *              function-body.ts — the scalar-local sibling, now aligned on
+ *              the #2789 unary-minus verdict V1);
+ *   Q-WRAP   — evaluate-in-i32 wrap-equivalence UNDER a ToInt32 context
+ *              (`isI32PureExpr`/`isI32MulSafe`, binary-ops.ts) — accepts
+ *              `+`/`-`/gated `*` and `>>>` that Q-CANON must reject (V2/V3);
+ *   Q-TAG    — static JS tag (oracle `isBooleanProducing` /
+ *              `isSyntacticallyBooleanExpr`, src/checker/oracle.ts).
+ * These CANNOT merge into one predicate — `a + b` is Q-WRAP-safe but
+ * Q-CANON-unsafe; `x >>> 1` likewise. Keep changes question-scoped.
+ *
  * Recognised canonical-i32 forms (mirrors `isI32SafeExpr` in function-body.ts;
  * intentionally narrow — we err on the side of disqualification):
  *   - integer numeric literal in [-2^31, 2^31)  (always +0, never -0)

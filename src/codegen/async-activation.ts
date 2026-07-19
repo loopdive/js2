@@ -121,6 +121,24 @@ function decideAsyncActivation(
 }
 
 /**
+ * (#1373b C-1) Pure activation PREDICATE for the IR selector: would the ONE
+ * async engine (drive / host-drive frame machine) claim this async function
+ * declaration? Decision-only — no emission, no signature rewrite.
+ *
+ * The IR path claims an async function IFF the engine declines it (the legacy
+ * synchronous pass-through population). This predicate is the engine side of
+ * that invariant, threaded into `planIrCompilation` as
+ * `IrSelectionOptions.asyncEngineClaims` so engine-activated functions keep
+ * byte-identical routing while IR takes over the sync-model residue. Keep it
+ * in lockstep with `maybeActivateAsync` (same `allowNonDeclaration: false`
+ * gating — C-1 claims FunctionDeclarations only; #2957's closure shapes stay
+ * on their own activation path).
+ */
+export function asyncEngineWouldActivate(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): boolean {
+  return decideAsyncActivation(ctx, decl, /*isAsync*/ true, /*allowNonDeclaration*/ false) !== null;
+}
+
+/**
  * Emit the async body for a decided lane into `fctx.body`. Does NOT rewrite the
  * result type — callers that own the signature (the closure path bakes
  * `externref` into the lifted func/struct type up front) must ensure

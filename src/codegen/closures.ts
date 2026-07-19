@@ -450,6 +450,21 @@ export function arrowOwnLocals(arrow: ts.ArrowFunction | ts.FunctionExpression):
   const ownLocals = new Set<string>();
   addFunctionOwnLocals(arrow, ownLocals); // (#2103) memoized own-locals
   if (ts.isFunctionExpression(arrow) && arrow.name) ownLocals.add(arrow.name.text);
+  // (#3398) Only ARROWS inherit the enclosing `this` lexically (§8.1.1.3 —
+  // a function expression / object-literal method / accessor binds its OWN
+  // dynamic `this` at call time, installed by the closure-call path via
+  // `__current_this`). Shadow `this` for non-arrows so the free-var scan
+  // never lexically captures the ENCLOSING function's `this`. Concretely: an
+  // object-literal getter nested in a struct-method return value
+  // (`{ make() { return { index: 0, get val() { return this.index; } } } }`)
+  // captured `make`'s `(ref $__anon_N)` self as its `this`, so `this.index`
+  // statically resolved against the OUTER struct and the dynamic-property
+  // auto-add (property-access-dispatch.ts) APPENDED `index` to that already-
+  // emitted struct — `struct.new` arity mismatch, invalid Wasm in BOTH lanes
+  // (the #3398 Array.from sub-mechanism). NOTE: callers pass accessor/method
+  // declarations force-cast to FunctionExpression — `isArrowFunction` is the
+  // only reliable discriminator here.
+  if (!ts.isArrowFunction(arrow)) ownLocals.add("this");
   return ownLocals;
 }
 

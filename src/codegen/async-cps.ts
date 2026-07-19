@@ -23,6 +23,7 @@
 // lands in follow-up PRs. See plan/issues/backlog/1042-async-await-state-machine-lowering.md.
 
 import type { TypeOracle } from "../checker/oracle.js";
+import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "./async-static.js";
 import { isPromiseType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
@@ -171,135 +172,11 @@ export function analyzeAsyncBody(_ctx: CodegenContext, fn: ts.FunctionLikeDeclar
   };
 }
 
-/**
- * Conservative compile-time predicate: is the operand of an `await` already a
- * *settled* value, so that `await operand` performs no observable suspension?
- *
- * Per §27.7.5.3, `await V` ≡ `PromiseResolve(%Promise%, V)` then a job. When `V`
- * is not a thenable the resumption is a single microtask carrying `V` unchanged;
- * when `V` is `Promise.resolve(x)` with a non-thenable `x` it likewise settles
- * to `x`. In both cases the *value* is statically known to be the operand (or
- * its resolve-argument); only the scheduling differs. js2wasm's synchronous
- * model already collapses that scheduling, so these awaits are safe to treat as
- * pass-through.
- *
- * Recognised static forms (intentionally narrow — over-approximating here would
- * mis-elide a genuinely-suspending await):
- *   - numeric / string / boolean / null literals
- *   - `void`-prefixed, unary `+`/`-`/`!` over a static operand
- *   - binary arithmetic / comparison where BOTH operands are static
- *   - parenthesised / `as`-cast wrappers around a static operand
- *   - `Promise.resolve(<static>)` and `Promise.resolve()` (settles to undefined)
- *
- * Everything else — a call result, a member access, a bare identifier (which may
- * hold a pending Promise) — returns `false`.
- */
-export function awaitIsStaticallyResolved(operand: ts.Expression): boolean {
-  // Unwrap transparent wrappers first.
-  let expr: ts.Expression = operand;
-  while (
-    ts.isParenthesizedExpression(expr) ||
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isNonNullExpression(expr)
-  ) {
-    expr = expr.expression;
-  }
-
-  // Literals: numeric / string / no-substitution template / true / false / null.
-  if (
-    ts.isNumericLiteral(expr) ||
-    ts.isStringLiteral(expr) ||
-    ts.isNoSubstitutionTemplateLiteral(expr) ||
-    expr.kind === ts.SyntaxKind.TrueKeyword ||
-    expr.kind === ts.SyntaxKind.FalseKeyword ||
-    expr.kind === ts.SyntaxKind.NullKeyword
-  ) {
-    return true;
-  }
-
-  // `undefined` as an identifier is a settled value too.
-  if (ts.isIdentifier(expr) && expr.text === "undefined") return true;
-
-  // Unary `+x` / `-x` / `!x` / `void x` over a static operand.
-  if (ts.isPrefixUnaryExpression(expr)) {
-    return awaitIsStaticallyResolved(expr.operand);
-  }
-  if (ts.isVoidExpression(expr)) {
-    return awaitIsStaticallyResolved(expr.expression);
-  }
-
-  // Binary arithmetic/comparison where both sides are static.
-  if (ts.isBinaryExpression(expr)) {
-    return awaitIsStaticallyResolved(expr.left) && awaitIsStaticallyResolved(expr.right);
-  }
-
-  // `Promise.resolve(<static?>)` — settles to the (static) argument, or undefined.
-  if (
-    ts.isCallExpression(expr) &&
-    ts.isPropertyAccessExpression(expr.expression) &&
-    ts.isIdentifier(expr.expression.expression) &&
-    expr.expression.expression.text === "Promise" &&
-    expr.expression.name.text === "resolve"
-  ) {
-    if (expr.arguments.length === 0) return true; // resolves to undefined
-    if (expr.arguments.length === 1) return awaitIsStaticallyResolved(expr.arguments[0]!);
-    return false;
-  }
-
-  return false;
-}
-
-/**
- * (#3227 S2) When an awaited operand is the `Promise.resolve(...)` form that
- * {@link awaitIsStaticallyResolved} recognises, return the expression the
- * `await` actually settles to: the single resolve argument, or `"undefined"`
- * for the zero-arg form. Unwraps transparent wrappers and NESTED
- * `Promise.resolve(Promise.resolve(x))` chains (PromiseResolve is idempotent:
- * resolving a promise returns it, so `await` settles to the innermost value).
- *
- * Returns `null` when the operand is not a `Promise.resolve` call — callers
- * then compile the operand itself.
- *
- * Why this exists: the JS-host legacy await passthrough compiled the OPERAND
- * for statically-resolved awaits, but `Promise.resolve(7)` compiles to a host
- * call returning the Promise OBJECT (externref) — not the settled value — so
- * a numeric consumer's externref→f64 coercion read NaN (the await-NaN cluster
- * behind ~875 honest fails in the #3227 S1 census). Substituting the resolve
- * argument delivers the settled value (§27.7.5.3 Await + §27.2.4.7
- * Promise.resolve: for non-thenable x, `await Promise.resolve(x)` ≡ x up to
- * scheduling, which js2wasm's synchronous model collapses).
- */
-export function staticPromiseResolveSettledExpr(operand: ts.Expression): ts.Expression | "undefined" | null {
-  let expr: ts.Expression = operand;
-  let settled: ts.Expression | "undefined" | null = null;
-  for (;;) {
-    while (
-      ts.isParenthesizedExpression(expr) ||
-      ts.isAsExpression(expr) ||
-      ts.isTypeAssertionExpression(expr) ||
-      ts.isNonNullExpression(expr)
-    ) {
-      expr = expr.expression;
-    }
-    if (
-      ts.isCallExpression(expr) &&
-      ts.isPropertyAccessExpression(expr.expression) &&
-      ts.isIdentifier(expr.expression.expression) &&
-      expr.expression.expression.text === "Promise" &&
-      expr.expression.name.text === "resolve"
-    ) {
-      if (expr.arguments.length === 0) return "undefined";
-      if (expr.arguments.length === 1) {
-        settled = expr.arguments[0]!;
-        expr = settled;
-        continue; // keep unwrapping nested Promise.resolve(Promise.resolve(x))
-      }
-      return settled; // >1 args: not the recognised form; keep last match (or null)
-    }
-    return settled;
-  }
-}
+// (#1373b C-1) `awaitIsStaticallyResolved` + `staticPromiseResolveSettledExpr`
+// moved to the leaf module `async-static.ts` so the IR front-end can import
+// them without an import cycle (this file imports codegen/index.ts, which
+// imports ir/select.ts). Re-exported here for existing callers.
+export { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "./async-static.js";
 
 /** Promise static combinators whose call result is already a real Promise. */
 const PROMISE_COMBINATOR_NAMES = new Set(["all", "race", "any", "allSettled"]);
@@ -1018,6 +895,20 @@ export type AsyncCfgTerminator =
       /** Yield `SENT_FIELD` directly (`yield await P` — the awaited value). */
       readonly fromSent: boolean;
       /** State entered on the next `next()` kick after this yield. */
+      readonly resumeState: number;
+    }
+  | {
+      // (#3389) Async-generator `return E` completion: fulfil the CURRENT
+      // `next()`-promise with an IteratorResult `{value: E, done: true}`
+      // (§27.6.3.8 with a return completion — distinct from `settleDone`'s
+      // `{value: undefined, done: true}`), set STATE=resumeState (a trailing
+      // `settleDone` state), and `return`. Every SUBSEQUENT `next()` kick then
+      // re-dispatches at that `settleDone`, giving `{value: undefined, done:
+      // true}` on a completed frame.
+      readonly kind: "settleReturn";
+      /** The returned value. `null` ⇒ bare `return;` (value undefined). */
+      readonly value: AsyncCfgOperand | null;
+      /** State entered on the next `next()` kick (the trailing settleDone). */
       readonly resumeState: number;
     }
   | { readonly kind: "settleDone" }; // async-gen body end — fulfil `{value: undefined, done: true}`
@@ -2364,6 +2255,17 @@ function yieldOperandIsPromiseTyped(oracle: TypeOracle, operand: ts.Expression):
 interface AsyncGenShape {
   readonly segments: AsyncGenYield[];
   readonly tailLeads: ts.Statement[];
+  /**
+   * (#3389) A top-level `return` completion terminating the body:
+   *   - `undefined` — no top-level return (fall-through ⇒ `settleDone`,
+   *     `{value: undefined, done: true}`);
+   *   - `null` — bare `return;` (also `{value: undefined, done: true}`, but via
+   *     a return completion — observable only with `finally`, which stays
+   *     bailed, so slice 1 emits it identically to fall-through);
+   *   - `ts.Expression` — `return E` ⇒ `settleReturn(E)`, `{value: E, done: true}`.
+   * `tailLeads` are the statements before the return (they run before it settles).
+   */
+  readonly returnExpr?: ts.Expression | null;
 }
 
 /** Recognise the bounded async-gen body; return its segment list, or `null`
@@ -2491,6 +2393,25 @@ function analyzeAsyncGen(
       }
       leads = [];
       continue;
+    }
+    // (#3389) A TOP-LEVEL `return E` / bare `return;` — a return completion that
+    // terminates the body. Admitted as a `settleReturn` terminator (below). Only
+    // a DIRECT top-level statement (a return nested in control flow is still
+    // caught by `containsOwnScopeReturn` on a LEAD and bails — correct-or-legacy).
+    // The operand must be suspend-free; a Promise-typed operand on the CARRIER
+    // lane bails (the §27.6.3.8 return-value Await is deferred, same policy as
+    // `yield await` / #3120 — carrier-off admits it with the documented
+    // promise-return value gap). Statements after a top-level return are
+    // unreachable, so we stop here (`leads` become the return state's tail).
+    if (ts.isReturnStatement(st)) {
+      const operand = st.expression;
+      if (operand !== undefined) {
+        if (containsAwaitOrYield(operand)) return null; // `return await P` / nested — follow-up
+        if (implicitYieldAwait !== null && yieldOperandIsPromiseTyped(implicitYieldAwait.oracle, operand)) {
+          return null; // Promise-typed return on the carrier lane — deferred
+        }
+      }
+      return { segments, tailLeads: leads, returnExpr: operand ?? null };
     }
     // A LEAD statement: must be suspend-free (a yield/await nested in control
     // flow needs expression-level suspend numbering) and return-free.
@@ -2874,6 +2795,23 @@ export function planAsyncGenCfg(
       });
       id += 1;
     }
+  }
+  // (#3389) A top-level `return E` terminates with `settleReturn(E)` — the tail
+  // state runs the pre-return leads then fulfils `{value: E, done: true}` and
+  // suspends into a TRAILING `settleDone` state, so the first settling `next()`
+  // delivers E-with-done and every subsequent `next()` on the completed frame
+  // delivers `{value: undefined, done: true}`. A bare `return;` (returnExpr ===
+  // null) carries a `null` value ⇒ `{value: undefined, done: true}` directly.
+  if (shape.returnExpr !== undefined) {
+    const value: AsyncCfgOperand | null = shape.returnExpr === null ? null : shape.returnExpr;
+    states.push({
+      id,
+      resumeFrom: null,
+      lead: asLead(shape.tailLeads),
+      terminator: { kind: "settleReturn", value, resumeState: id + 1 },
+    });
+    states.push({ id: id + 1, resumeFrom: null, lead: [], terminator: { kind: "settleDone" } });
+    return { states, handlers: [] };
   }
   states.push({ id, resumeFrom: null, lead: asLead(shape.tailLeads), terminator: { kind: "settleDone" } });
   return { states, handlers: [] };

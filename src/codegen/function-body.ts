@@ -452,8 +452,24 @@ export function collectI32CoercedLocals(decl: ts.FunctionLikeDeclaration): Set<s
     }
     if (ts.isPrefixUnaryExpression(expr)) {
       const o = expr.operator;
-      if (o === ts.SyntaxKind.MinusToken || o === ts.SyntaxKind.PlusToken || o === ts.SyntaxKind.TildeToken) {
+      if (o === ts.SyntaxKind.PlusToken || o === ts.SyntaxKind.TildeToken) {
         return isI32SafeExpr(expr.operand, depth + 1);
+      }
+      // (#1930 Slice 3, divergence verdict V1 — the #2789 fix propagated to
+      // the SCALAR lane.) Unary `-` can produce negative zero: `let y = -x`
+      // with `x === 0` is spec `-0`, which an i32 local collapses to `+0`
+      // (observable via `Object.is(y, -0)` / sign-of-zero reads). This arm
+      // previously accepted ANY i32-safe operand — violating this matcher's
+      // own documented canonical contract ("not -0", header lines above) and
+      // diverging from `isI32SafeExprForArray`, which was fixed in #2789.
+      // Mirror that fix exactly: admit ONLY `-<non-zero integer literal>` —
+      // a constant sentinel like `-1` with no `-0` hazard. Strict subset of
+      // the prior acceptance ⇒ can only DEMOTE candidates to f64 (sound,
+      // same direction as #1236/#2789).
+      if (o === ts.SyntaxKind.MinusToken) {
+        if (!ts.isNumericLiteral(expr.operand)) return false;
+        if (!isI32SafeExpr(expr.operand, depth + 1)) return false;
+        return Number(expr.operand.text.replace(/_/g, "")) !== 0;
       }
       if (o === ts.SyntaxKind.PlusPlusToken || o === ts.SyntaxKind.MinusMinusToken) {
         return (

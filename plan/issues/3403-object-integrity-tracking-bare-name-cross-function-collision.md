@@ -1,7 +1,8 @@
 ---
 id: 3403
 title: "Object-integrity tracking maps (frozenVars/sealedVars/nonExtensibleVars/definedPropertyFlags/widenedDefinePropertyKeys) keyed by BARE variable name → cross-function collision (same archetype as #3364)"
-status: ready
+status: done
+completed: 2026-07-18
 sprint: current
 priority: high
 feasibility: medium
@@ -13,6 +14,12 @@ horizon: m
 goal: core-semantics
 related: [3364, 2012, 2744, 1460]
 origin: "2026-07-17 codebase audit — VERIFIED reproducing on upstream/main c4c13cbe31"
+loc-budget-allow:
+  - src/codegen/object-ops.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/call-namespace-static.ts
 ---
 
 # #3403 — object-integrity tracking is keyed by bare variable name (cross-function collision)
@@ -102,3 +109,43 @@ test mirroring the two repros above (no acorn compile needed).
 - `frozenVars`/`sealedVars`/`nonExtensibleVars`/`definedPropertyFlags`/
   `widenedDefinePropertyKeys` no longer keyed by a bare identifier that can
   repeat across functions.
+
+## Implementation landed (opus-dev-a, 2026-07-18)
+
+Added `integrityVarKey(ctx, ident) = resolveWidenedVarKey(ctx, ident) ??
+ident.text` to `src/codegen/widened-var-key.ts` (per-declaration key
+`name@declStart` for locals; bare-name fallback for module-level/ambient
+globals that cannot collide cross-function — keeps non-colliding modules
+byte-identical). Routed every SET/READ of the five maps through it (or through
+`widenedVarKeyFromDecl` at a declaration site):
+
+- **frozenVars / sealedVars / nonExtensibleVars** — `call-builtin-static.ts`
+  `markIntegrity` (both binding shapes), `call-namespace-static.ts`
+  `Reflect.preventExtensions`, `assignment.ts` frozen-write + non-extensible
+  guards.
+- **definedPropertyFlags** (varName-half) — `object-ops.ts` (dpKey + all
+  varName/key derivations + a separate `argVarKey`/`recvVarKey`/`dpfPrefix` at
+  the mixed sites that also feed out-of-scope maps), `builtin-static-gopd.ts`,
+  `property-access.ts` `runtimeAccessorDescriptorKey`, `call-builtin-static.ts`
+  gOPD.
+- **widenedDefinePropertyKeys** (varName-half) — `object-shape-widening.ts`
+  threads a per-declaration `varKey` through `collectPropsFromStatements` /
+  `recordDefinePropertyWiden`; `object-ops.ts` read sites.
+
+Out-of-scope maps that share the same receiver identifier but stay bare-keyed
+(`sidecarDefinedPropertyKeys`, `definePropertyReceiverKeys`,
+`nonConfigurableAccessorKeys`, `moduleGlobals`) keep their inline bare-name
+derivations; the mixed sites (`argVarName`/`recvVarName`/`receiverName`,
+`property-access` key) compute BOTH a bare key for those and a per-declaration
+key for the five maps.
+
+**Validation**: `tests/issue-3403-object-integrity-var-key.test.ts` — 5/5 pass;
+the two repros return 6 and 4 in BOTH standalone and host lanes; a distinct-name
+control keeps correct freeze semantics.
+
+**loc-budget note**: the per-declaration-key routing adds +19 net LOC across five
+god-files (`object-ops.ts` +7, `call-builtin-static.ts` +6, `assignment.ts` +3,
+`property-access.ts` +2, `call-namespace-static.ts` +1) — irreducible
+correctness code (the new `argVarKey`/`recvVarKey`/`dpfPrefix` locals + the
+split-key sites), granted the change-scoped `loc-budget-allow` in the
+frontmatter above.

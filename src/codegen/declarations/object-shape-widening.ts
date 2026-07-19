@@ -38,11 +38,14 @@ export function collectEmptyObjectWidening(
 
           // Found `var X = {}` — now scan siblings for `X.prop = val`
           const varName = decl.name.text;
+          // (#3403) per-declaration key for `widenedDefinePropertyKeys`; matches
+          // what `integrityVarKey` yields at the USE sites in object-ops.ts.
+          const varKey = widenedVarKeyFromDecl(decl.name);
           const extraProps: { name: string; type: ValType }[] = [];
           const seenProps = new Set<string>();
 
           // Scan all following statements in the same block for property assignments
-          collectPropsFromStatements(checker, ctx, stmts, varName, extraProps, seenProps);
+          collectPropsFromStatements(checker, ctx, stmts, varName, varKey, extraProps, seenProps);
 
           // (#2584/#2849/#2944) If this var is ALSO the subject of any
           // `$Object`-hash-only consumer (bracket read/write, `in`, Object.keys
@@ -890,7 +893,9 @@ function markObjectHashConsumers(node: ts.Node, varName: string, poisonSet: Set<
 function recordDefinePropertyWiden(
   ctx: CodegenContext,
   checker: ts.TypeChecker,
-  varName: string,
+  // (#3403) the per-declaration key (`name@declStart`), NOT the bare name, so a
+  // same-named `{}` var in another function does not share this entry.
+  varKey: string,
   propName: string,
   descArg: ts.Expression,
   extraProps: { name: string; type: ValType }[],
@@ -910,7 +915,7 @@ function recordDefinePropertyWiden(
       }
     }
     extraProps.push({ name: propName, type: wasmType });
-    ctx.widenedDefinePropertyKeys.add(`${varName}:${propName}`);
+    ctx.widenedDefinePropertyKeys.add(`${varKey}:${propName}`);
   }
 }
 
@@ -919,6 +924,10 @@ export function collectPropsFromStatements(
   ctx: CodegenContext,
   stmts: readonly ts.Statement[],
   varName: string,
+  // (#3403) per-declaration key for `widenedDefinePropertyKeys` (threaded to
+  // `recordDefinePropertyWiden`); `varName` stays bare for the `objArg.text ===
+  // varName` receiver match below.
+  varKey: string,
   extraProps: { name: string; type: ValType }[],
   seenProps: Set<string>,
 ): void {
@@ -976,7 +985,7 @@ export function collectPropsFromStatements(
           if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
             ctx.dynamicDescriptorWidenVars.add(varName);
           }
-          recordDefinePropertyWiden(ctx, checker, varName, propName, descArg, extraProps, seenProps);
+          recordDefinePropertyWiden(ctx, checker, varKey, propName, descArg, extraProps, seenProps);
         }
       }
     }
@@ -998,7 +1007,7 @@ export function collectPropsFromStatements(
             const descArg = call.arguments[2]!;
             if (ts.isIdentifier(objArg) && objArg.text === varName && ts.isStringLiteral(propArg)) {
               const propName = propArg.text;
-              recordDefinePropertyWiden(ctx, checker, varName, propName, descArg, extraProps, seenProps);
+              recordDefinePropertyWiden(ctx, checker, varKey, propName, descArg, extraProps, seenProps);
             }
           }
         }
@@ -1006,24 +1015,32 @@ export function collectPropsFromStatements(
     }
     // Recurse into compound statement bodies to find property assignments
     if (ts.isBlock(s)) {
-      collectPropsFromStatements(checker, ctx, s.statements, varName, extraProps, seenProps);
+      collectPropsFromStatements(checker, ctx, s.statements, varName, varKey, extraProps, seenProps);
     }
     if (ts.isIfStatement(s)) {
       if (ts.isBlock(s.thenStatement)) {
-        collectPropsFromStatements(checker, ctx, s.thenStatement.statements, varName, extraProps, seenProps);
+        collectPropsFromStatements(checker, ctx, s.thenStatement.statements, varName, varKey, extraProps, seenProps);
       }
       if (s.elseStatement && ts.isBlock(s.elseStatement)) {
-        collectPropsFromStatements(checker, ctx, s.elseStatement.statements, varName, extraProps, seenProps);
+        collectPropsFromStatements(checker, ctx, s.elseStatement.statements, varName, varKey, extraProps, seenProps);
       }
     }
     // Recurse into try/catch/finally blocks (wrapTest wraps test bodies in try blocks)
     if (ts.isTryStatement(s)) {
-      collectPropsFromStatements(checker, ctx, s.tryBlock.statements, varName, extraProps, seenProps);
+      collectPropsFromStatements(checker, ctx, s.tryBlock.statements, varName, varKey, extraProps, seenProps);
       if (s.catchClause) {
-        collectPropsFromStatements(checker, ctx, s.catchClause.block.statements, varName, extraProps, seenProps);
+        collectPropsFromStatements(
+          checker,
+          ctx,
+          s.catchClause.block.statements,
+          varName,
+          varKey,
+          extraProps,
+          seenProps,
+        );
       }
       if (s.finallyBlock) {
-        collectPropsFromStatements(checker, ctx, s.finallyBlock.statements, varName, extraProps, seenProps);
+        collectPropsFromStatements(checker, ctx, s.finallyBlock.statements, varName, varKey, extraProps, seenProps);
       }
     }
     // Recurse into for/while/do-while/switch bodies
@@ -1035,12 +1052,12 @@ export function collectPropsFromStatements(
       ts.isDoStatement(s)
     ) {
       if (ts.isBlock(s.statement)) {
-        collectPropsFromStatements(checker, ctx, s.statement.statements, varName, extraProps, seenProps);
+        collectPropsFromStatements(checker, ctx, s.statement.statements, varName, varKey, extraProps, seenProps);
       }
     }
     if (ts.isSwitchStatement(s)) {
       for (const clause of s.caseBlock.clauses) {
-        collectPropsFromStatements(checker, ctx, clause.statements, varName, extraProps, seenProps);
+        collectPropsFromStatements(checker, ctx, clause.statements, varName, varKey, extraProps, seenProps);
       }
     }
   }

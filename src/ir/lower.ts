@@ -277,6 +277,17 @@ export interface IrLowerResolver {
    * falls back to a throw stub when missing.
    */
   resolvePromiseType?(): number;
+  /**
+   * (#1373b C-1) True iff the compile's awaited values are the Wasm-native
+   * `$Promise` carrier (`isStandalonePromiseActive(ctx)` — currently the
+   * wasi lane). Decides the `await` lowering:
+   *   - `true`  → one-level guarded `$Promise` unwrap (mirrors the legacy
+   *     `emitStandaloneAwaitUnwrap` in expressions.ts — keep in lockstep);
+   *   - `false`/absent → identity passthrough (JS-host sync model — host
+   *     promises are host objects; the #1796 call-site contract owns
+   *     wrapping/unwrapping).
+   */
+  nativePromiseCarrierActive?(): boolean;
 }
 
 /**
@@ -836,10 +847,10 @@ export function lowerIrFunctionBody<S, Slot>(
   let jsBitwiseRhsIdxF64: number | null = null;
   let jsBitwiseRhsIdxI32: number | null = null;
   let jsBitwiseTmpIdx: number | null = null;
-  // #1373b Slice 1 — scratch local for `await` lowering. Holds the
-  // ref-cast `$Promise` value across the state-branch dispatch. Allocated
-  // lazily on the first await in the function; reused across subsequent
-  // awaits in the same function body.
+  // #1373b C-1 — scratch externref local for the native-carrier `await`
+  // unwrap (holds the operand across the ref.test/if discrimination, exactly
+  // like `emitStandaloneAwaitUnwrap`'s temp local). Allocated lazily on the
+  // first await in the function; reused across subsequent awaits.
   let awaitScratchPromiseIdx: number | null = null;
   // #1804 — scratch locals for `vec.new_fixed`: one per (array typeIdx) to stash
   // the `array.new_fixed` data ref while the length is pushed below it for the
@@ -2884,31 +2895,17 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitBlock({ kind: "empty" }, loopWrap, out);
         return;
       }
-      // (#1373b Phase C Slice 1) Async / await IR node lowering.
+      // (#1373b Phase C) Async / await IR node lowering.
       //
-      // The IR selector still rejects async functions today (gate
-      // hardcoded `false` in `isAsyncIrReady`), so these arms only fire
-      // when a future caller flips the flag OR when a synthesised IR
-      // construction reaches the lowerer directly (e.g. from tests).
-      // The Slice 1 implementation covers the synchronous cases:
-      //
-      //   - `async.return v` → struct.new $Promise with state=FULFILLED
-      //     and value=v. Result is a settled-fulfilled Promise as
-      //     externref. Reuses the same struct shape as
-      //     `emitStandalonePromiseResolve` in async-scheduler.ts.
-      //
-      //   - `async.throw r` → struct.new $Promise with state=REJECTED
-      //     and value=r. Result is a settled-rejected Promise as
-      //     externref. Mirrors `emitStandalonePromiseReject`.
-      //
-      //   - `await p` → cast p to ref $Promise and branch on its state:
-      //     * FULFILLED (1): read $value field → push as externref result
-      //     * REJECTED  (2): throw $value via the shared exn tag
-      //     * PENDING   (0): blocked on #1326c Phase 1C-B
-      //       (`emitStandalonePromiseThen`). Slice 1 emits an
-      //       `unreachable` after a runtime-throw marker so the
-      //       failure mode is observable but the gate's hardcoded
-      //       `false` prevents it from ever firing.
+      // C-1 model: the IR claims only the SYNC-PASS-THROUGH async
+      // population (the ONE engine — the #2906 $AsyncFrame machine —
+      // declines them; see `asyncEngineClaims` in select.ts). `await`
+      // lowers per lane below. `async.return` / `async.throw` are NOT
+      // emitted by from-ast in C-1 (returns stay plain `return` — the raw-T
+      // #1796 contract); their settled-`$Promise` mint arms are retained
+      // for C-3, where the IR lowers engine-activated functions onto the
+      // frame machine and returns settle the frame's result promise. See
+      // plan/issues/1373b-ir-async-cps-lowering.md (Implementation Plan).
       case "async.return": {
         const promiseTypeIdx = resolver.resolvePromiseType?.();
         if (promiseTypeIdx === undefined) {
@@ -2946,99 +2943,63 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "await": {
+        // (#1373b C-1) Sync-pass-through await, per lane:
+        //
+        //   - JS-host (no native carrier): IDENTITY — under the legacy
+        //     synchronous async model the operand already IS the value (the
+        //     #1796 call-site consumption contract owns Promise wrapping),
+        //     and host promises are opaque host objects the wasm side cannot
+        //     inspect. Mirrors the legacy AwaitExpression passthrough in
+        //     expressions.ts.
+        //
+        //   - Native-`$Promise` carrier (wasi): one-level GUARDED unwrap —
+        //     mirrors `emitStandaloneAwaitUnwrap` (expressions.ts) EXACTLY;
+        //     keep the two in lockstep. `ref.test $Promise` discriminates: a
+        //     non-`$Promise` externref (plain value / null / non-native
+        //     thenable) passes through unchanged; a `$Promise` yields its
+        //     `value` field regardless of state (pending → null — the AG0
+        //     synchronous-settlement model). Genuine suspension is the ONE
+        //     engine's job; engine-activated fns are never IR-claimed
+        //     (`asyncEngineClaims` gate in select.ts), so this arm only ever
+        //     sees the sync-model population.
+        if (resolver.nativePromiseCarrierActive?.() !== true) {
+          emitValue(instr.operand, out);
+          return;
+        }
         const promiseTypeIdx = resolver.resolvePromiseType?.();
         if (promiseTypeIdx === undefined) {
           throw new Error(
-            "ir/lower: await requires resolver.resolvePromiseType (#1373b Slice 1) — not wired for this backend",
+            "ir/lower: await on the native-Promise carrier lane requires resolver.resolvePromiseType (#1373b C-1)",
           );
         }
-        // Strategy:
-        //   1. Push the operand (a Promise as externref)
-        //   2. extern.convert_any → anyref → ref.cast $Promise
-        //   3. Save to a scratch local so we can read state + value
-        //   4. Branch on state:
-        //      - FULFILLED: return $value (externref) — fast path
-        //      - REJECTED: read $value, throw via exn tag
-        //      - PENDING: throw "Phase 1C-B not yet landed" marker
-        //
-        // Result type: externref (the resolved value, OR the function
-        // ungracefully terminates via throw on REJECTED/PENDING).
-        //
-        // SSA scope note: this implementation evaluates the operand
-        // exactly once and binds the result inline. There is no
-        // continuation closure here — the function continues in the
-        // same wasm frame. PENDING-path continuation synthesis is
-        // Slice 2 (blocked on #1326c Phase 1C-B).
-        //
-        // #1584 (a0-tail): out-of-subset — embeds Instr[] `if`-arm sub-buffers
-        // (rejectedBranch / pendingBranch) into a raw WasmGC `{op:"if"...}`.
-        // Assert S = Instr[].
+        // #1584 (a0-tail): out-of-subset — raw WasmGC ref.test/if sequence.
         const wasmOut = requireInstrSink(out);
         emitValue(instr.operand, out);
-        emitter.emitFromExternref({ typeIdx: promiseTypeIdx }, out);
-        // The next emit needs a scratch local. Reuse the
-        // jsBitwiseTmp pattern: allocate lazily into `locals` and
-        // remember the index for any further await in the same fn.
+        // Scratch externref local, allocated lazily on the first await and
+        // reused by subsequent awaits in the same function body.
         if (awaitScratchPromiseIdx === null) {
           awaitScratchPromiseIdx = func.params.length + locals.length;
           locals.push({
-            name: "$await_promise",
-            type: { kind: "ref", typeIdx: promiseTypeIdx },
-            logicalType: { kind: "val", val: { kind: "ref", typeIdx: promiseTypeIdx } },
+            name: "$await_operand",
+            type: { kind: "externref" },
+            logicalType: { kind: "val", val: { kind: "externref" } },
           });
         }
-        wasmOut.push({ op: "local.tee", index: awaitScratchPromiseIdx });
-        emitter.emitPromiseStateGet(promiseTypeIdx, out); // state: i32
-        // Build:
-        //   if state == FULFILLED then
-        //     local.get $await_promise
-        //     struct.get $Promise $value      ;; externref
-        //   else
-        //     if state == REJECTED then
-        //       throw $exn ( $value )
-        //     else
-        //       unreachable + #1326c-1C-B marker
-        //     end
-        //   end
-        const exnTagIdx = resolver.ensureExnTag?.();
-        const rejectedBranch: Instr[] = [];
-        if (exnTagIdx !== undefined) {
-          rejectedBranch.push({
-            op: "local.get",
-            index: awaitScratchPromiseIdx,
-          });
-          emitter.emitPromiseValueGet(promiseTypeIdx, rejectedBranch as unknown as S);
-          // #1584 (a4): throw routes through the trait.
-          emitter.emitThrow(exnTagIdx, rejectedBranch as unknown as S);
-        }
-        rejectedBranch.push({ op: "unreachable" });
-        // PENDING / fall-through marker. Slice 2 (#1373b) replaces with
-        // the CPS continuation synthesis once #1326c Phase 1C-B lands.
-        const pendingBranch: Instr[] = [{ op: "unreachable" }];
-        const fulfilledBranch: Instr[] = [{ op: "local.get", index: awaitScratchPromiseIdx }];
-        emitter.emitPromiseValueGet(promiseTypeIdx, fulfilledBranch as unknown as S);
-        const unsettledBranch: Instr[] = [{ op: "local.get", index: awaitScratchPromiseIdx }];
-        emitter.emitPromiseStateGet(promiseTypeIdx, unsettledBranch as unknown as S);
-        unsettledBranch.push(
-          { op: "i32.const", value: PROMISE_STATE_REJECTED },
-          { op: "i32.eq" },
-          {
-            op: "if",
-            blockType: {
-              kind: "val",
-              type: { kind: "externref" } as ValType,
-            },
-            then: rejectedBranch,
-            else: pendingBranch,
-          },
-        );
-        wasmOut.push({ op: "i32.const", value: PROMISE_STATE_FULFILLED });
-        wasmOut.push({ op: "i32.eq" });
+        wasmOut.push({ op: "local.set", index: awaitScratchPromiseIdx });
+        wasmOut.push({ op: "local.get", index: awaitScratchPromiseIdx });
+        wasmOut.push({ op: "any.convert_extern" });
+        wasmOut.push({ op: "ref.test", typeIdx: promiseTypeIdx });
         wasmOut.push({
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
-          then: fulfilledBranch,
-          else: unsettledBranch,
+          then: [
+            { op: "local.get", index: awaitScratchPromiseIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: promiseTypeIdx },
+            // $Promise field 1 = `value` (externref). See getOrRegisterPromiseType.
+            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+          ],
+          else: [{ op: "local.get", index: awaitScratchPromiseIdx }],
         });
         return;
       }

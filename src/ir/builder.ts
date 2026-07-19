@@ -1128,6 +1128,35 @@ export class IrFunctionBuilder {
     this.generatorBufferSlot = slotIndex;
   }
 
+  /**
+   * (#1373b C-1) The IrType recorded for an SSA value, or `undefined` for an
+   * unknown id. Used by from-ast's `await` lowering to decide passthrough
+   * (non-externref operand — already the raw value under the sync model) vs
+   * emitting an `await` instr (externref operand — per-lane unwrap/identity
+   * decided in lower.ts).
+   */
+  valueType(value: IrValueId): IrType | undefined {
+    return this.valueTypes.get(value);
+  }
+
+  /**
+   * (#1373b C-1) Emit an `await` instr over an externref-shaped operand.
+   * Result is externref (the settled value under the sync-pass-through model:
+   * native-carrier lanes unwrap one `$Promise` level, JS-host lanes pass the
+   * operand through — see lower.ts `case "await"`). Only valid inside
+   * `funcKind === "async"` functions.
+   */
+  emitAwait(operand: IrValueId): IrValueId {
+    if (this.funcKind !== "async") {
+      throw new Error(`IrFunctionBuilder: emitAwait requires funcKind=async (${this.name})`);
+    }
+    const resultType: IrType = { kind: "val", val: { kind: "externref" } };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "await", operand, result, resultType });
+    return result;
+  }
+
   /** Emit a `gen.push` instr — push a yielded value onto the buffer. */
   emitGenPush(value: IrValueId): void {
     if (this.funcKind !== "generator") {

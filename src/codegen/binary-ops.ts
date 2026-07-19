@@ -1430,6 +1430,17 @@ export function compileBinaryExpression(
   //
   // #1179-followup: the multiplication arm is guarded by `isI32MulSafe`
   // — see comment on that helper for the rationale.
+  //
+  // (#1930 Slice 3 — three-question doctrine.) This is THE **Q-WRAP**
+  // matcher: "may this expression be EVALUATED in i32 such that the result
+  // is bit-identical to ToInt32(spec value) — GIVEN the caller guarantees an
+  // enclosing ToInt32 (bitwise / `| 0`) context?" It legitimately accepts
+  // forms the Q-CANON matchers (`isI32SafeExprForArray`,
+  // array-element-typing.ts; `isI32SafeExpr`, function-body.ts) must reject:
+  // `+`/`-` (exact in f64 ≤ 2^32; wrap ≡ ToInt32 — verdict V2), gated `*`
+  // (2^53 proof via `isI32MulSafe`), and `>>>` (uint32 VALUE diverges above
+  // 2^31 but the i32 BITS are ToInt32-identical — verdict V3). Do NOT copy
+  // arms between the questions; see issue #1930's divergence-verdict table.
   const isI32PureExpr = (e: ts.Expression): boolean => {
     const inner = peel(e);
     if (ts.isIdentifier(inner)) return isI32LocalRef(inner);

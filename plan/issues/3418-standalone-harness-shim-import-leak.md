@@ -131,3 +131,13 @@ weakening.
 ## Notes
 - Do NOT relitigate the v8 basis (#3370) — this recovers the honest gap v8 exposed.
 - Umbrella: #3417. Standalone umbrellas: #2860, #1781.
+- **Architect verification (2026-07-19)**: plan verified current against source
+  (`tests/test262-original-harness.ts::assembleVariant`, `src/treeshake.ts`,
+  `ImportDescriptor` at `src/index.ts:132`, #2961 gate at
+  `scripts/test262-worker.mjs:~1388`) — no rewrite needed. NOTE: open PR #3362
+  (`issue-3418-standalone-shim-import-leak`) is already implementing this via a
+  third route — "pre-parse dead-binding elision" (shim-only tests compile
+  host-free). That is a legitimate narrower variant of Option A's goal; whoever
+  picks this issue up must coordinate with / review PR #3362 rather than start
+  Option A from scratch. Sequencing with #3442 (assert-call trap fix) matters
+  for measuring the recovery: both gate the same standalone population.

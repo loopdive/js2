@@ -1,9 +1,10 @@
 ---
 id: 1373b
 title: "IR async Phase C: CPS lowering for await + async-return + async-throw"
-status: backlog
+status: in-progress
+assignee: ttraenkler/fable-4
 created: 2026-05-09
-updated: 2026-06-24
+updated: 2026-07-18
 priority: top
 feasibility: hard
 model: fable
@@ -16,8 +17,294 @@ sprint: Backlog
 depends_on: [1326c]
 note: "Verified 2026-05-21: src/codegen/async-scheduler.ts exists; src/codegen/async-cps.ts does NOT exist yet (still pending #1042 introducing it). async-cluster-architect-spec.md exists. Unblocked 2026-06-16 (se1): sole dependency #1326c flipped done — Phase 1C microtask queue + chained .then landed on main."
 reconcile_note: "2026-06-24 (PO reconcile vs upstream/main): DEFERRED EPIC, NOT dev-claimable this sprint. Commit 79dad304f ('docs(#55/#1373b): re-ground verdict — genuine EPIC, deferral correct') + 3897722bf de-prioritised CPS off top. The CPS gate-flip is blocked on the synchronous-consumption-contract architecture wall (larger than one sprint). Same epic as #1042. → backlog (was ready, but no landable slice)."
+loc-budget-allow:
+  # #1373b Phase C-1: IR claims the sync-pass-through async population.
+  # Growth is the core feature work (IR selection/build/lowering + the
+  # engine-consistency wiring in the codegen driver). Intended.
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+  - src/ir/builder.ts
+  - src/ir/integration.ts
+  - src/codegen/index.ts
+  - src/codegen/context/types.ts
 ---
 # #1373b — IR async Phase C: CPS lowering
+
+## Implementation Plan (AUTHORITATIVE — re-grounded 2026-07-18, fable-4, fable-final sprint)
+
+**This section supersedes every plan below it for execution purposes.** The S53
+joint spec (N+1 lifted continuation functions, `splitAsyncIntoStates`,
+per-state funcs) and the June re-measurements were written before the async
+engine convergence landed. Building the S53 design today would FORK the engine
+— exactly the #2367 graveyard anti-pattern. Read this section; treat everything
+below as history.
+
+### What changed on main since the S53 spec (the re-grounding)
+
+1. **ONE async engine exists and owns activation.** `src/codegen/async-cps.ts`
+   (planners: `planAsyncCfg` / `planLinearAwaits` / `planWhileLoopCfg` /
+   `planForAwaitCfg` / `planForAwaitAsyncCfg` / `planAsyncGenCfg`) +
+   `src/codegen/async-frame.ts` (the #2906 N-state CFG `$AsyncFrame` resume
+   machine) + `src/codegen/async-scheduler.ts` (native `$Promise`, microtask
+   ring, drain). #2967 slice 2c DELETED the old CPS engine (−582 LoC): one
+   machine, two settle backends (`drive` = native/wasi, `host-drive` = JS-host).
+   Entry point: `src/codegen/async-activation.ts` `decideAsyncActivation` →
+   `maybeActivateAsync` (declarations) / `planAsyncClosureActivation`+
+   `emitAsyncClosureBody` (arrows/fn-exprs).
+2. **Two coexisting async models on the legacy path**, per function:
+   - **Engine-activated** (`decideAsyncActivation ≠ null`): body = frame state
+     machine; the fn's wasm result type is REWRITTEN to externref (a real
+     Promise); call sites detect drive-lowered callees and skip wrapping.
+   - **Legacy synchronous pass-through** (`decideAsyncActivation === null`):
+     the fn compiles as a NORMAL synchronous function returning **raw T**
+     (declarations.ts `unwrapPromiseType` unwraps `Promise<T>` in the
+     registered signature); `await` is per-lane: native-carrier one-level
+     unwrap (`emitStandaloneAwaitUnwrap`) on wasi, identity + the #3227
+     `await Promise.resolve(x)` → `x` static substitution on the JS-host lane.
+     The #1796/#1727 CONSUMPTION CONTRACT lives at the call site:
+     `ctx.asyncFunctions` + `classifyAsyncConsumer` decide raw-T passthrough
+     (value/await consumers) vs `wrapAsyncReturn` (thenable consumers).
+3. **The July audit's sequencing rule** (plan/log/analysis-2026-07/00, §"Track
+   B"): "#1042 convergence before #1373b (one engine)" — SATISFIED (#2967 done
+   2026-07-11). #1373b is now: **"IR emits await nodes → ONE engine."** The IR
+   must never build a second suspension machine.
+4. **IR control flow is hybrid** (#2952): if/loop/try are *instructions with
+   nested Instr buffers*, not CFG blocks; no br_table, no multi-level labeled
+   exit. A general IR-level state split is therefore NOT buildable today — it
+   needs #2952 (multi-exit CF) + #2949 (dynamic IrType) first. This bounds what
+   Phase C can honestly ship this window.
+5. `scripts/ir-fallback-baseline.json` `async-function` bucket = 4 (ratchet
+   corpus). Slice-1 lowering arms exist in `src/ir/lower.ts` (`case "await"` /
+   `"async.return"` / `"async.throw"` at ~L2887–3060) but are WRONG for the
+   converged world (see C-1.3 below): unconditional `ref.cast $Promise` (traps
+   on non-Promise operands), `unreachable` PENDING arm, and `async.return`
+   mints a `$Promise` — which double-wraps against the #1796 call-site
+   contract. From-ast constructs none of these nodes yet; `isAsyncIrReady`
+   (select.ts:307) is hardcoded `false`.
+
+### The Phase C shape (three sub-phases; C-1 is this PR)
+
+The population of async functions splits cleanly by who owns them:
+
+| population | owner today | Phase C disposition |
+|---|---|---|
+| engine-activated (genuinely suspending, engine-drivable shape) | `$AsyncFrame` machine | **stays on the engine — IR must DECLINE these** (C-2 re-buckets them as intended routing; C-3 eventually lowers them from IR onto the same engine) |
+| legacy sync pass-through (await-elidable / non-drivable shapes) | legacy synchronous body compile | **C-1: IR claims these** with parity semantics (raw-T return, per-lane await unwrap) |
+
+#### C-1 (THIS PR): IR claims the sync-pass-through population, engine-consistency gated
+
+The invariant that makes this safe: **IR claims an async fn iff the engine
+declines it** (`decideAsyncActivation === null`). Engine-activated functions
+keep byte-identical routing; claimed functions get IR-lowered bodies with
+semantics equal to the legacy sync pass-through they replace.
+
+1. **`src/ir/select.ts`**
+   - `IrSelectionOptions`: add
+     `asyncEngineClaims?: (fn: ts.FunctionLikeDeclaration) => boolean`
+     (bound by the real-compile call site to the engine's activation decision;
+     `undefined` ⇒ treat as "engine claims" ⇒ never IR-claim — the safe
+     default for bare `planIrCompilation` calls without codegen context).
+   - `isAsyncIrReady(options, fn)`: return `true` iff
+     `options.supportsAsyncIr === true` AND `ts.isFunctionDeclaration(fn)`
+     (C-1 scope: declarations only — async methods/arrows have separate
+     activation paths, #2957) AND fn has no asterisk AND
+     `options.asyncEngineClaims?.(fn) === false` AND the body contains no
+     `for await` (async iteration owned by the engine's 3b/3d lanes) and no
+     nested async function-like (async arrow/fn-expr inside the body — their
+     closure-lifted lowering is out of C-1 scope).
+   - At the two `"async-function"` bucketing sites (~L873 declaration
+     modifiers, ~L886 method modifiers): consult `isAsyncIrReady` — when ready,
+     fall through to the NORMAL body-shape pipeline instead of returning the
+     bucket (the body checks then see `await` expressions — extend the
+     expression-shape whitelist to accept `ts.AwaitExpression` recursively on
+     its operand). Methods keep returning the bucket in C-1.
+2. **`src/ir/from-ast.ts`**
+   - `funcKind: "async"` when the declaration has the AsyncKeyword (no
+     asterisk).
+   - Return type resolution: unwrap `Promise<T>` → `T` for the IR result type,
+     matching declarations.ts's `unwrapPromiseType` so the IR-registered wasm
+     signature equals the legacy-registered one (raw-T contract). Use the
+     typeMap/annotation path — NO raw checker calls (oracle ratchet #1930).
+   - `ts.AwaitExpression` lowering in the expression builder:
+     - `await Promise.resolve(x)` / zero-arg form → lower `x` (resp.
+       `undefined`) directly — parity with the #3227 static substitution
+       (mirror `staticPromiseResolveSettledExpr`'s syntactic test).
+     - operand whose IR type is non-externref (f64/i32 — e.g. awaiting a call
+       to another sync-pass-through async fn) → passthrough, NO await node
+       (parity: legacy identity await on a raw-T value).
+     - otherwise → `IrInstrAwait { operand }`, result type externref.
+   - `return e` in an async body → plain `IrTerminatorReturn` (raw-T
+     contract). **`IrInstrAsyncReturn`/`IrInstrAsyncThrow` are NOT emitted in
+     C-1** — they are reserved for C-3 (engine-targeted lowering, where the
+     settle goes through the frame's result promise).
+3. **`src/ir/lower.ts` — rewrite the `case "await"` arm** (the Slice-1 arm is
+   wrong for the converged world):
+   - New resolver capability
+     `nativePromiseCarrierActive?: () => boolean` (bound to
+     `isStandalonePromiseActive(ctx)` in integration.ts `makeResolver`).
+   - Carrier ON (wasi lane): mirror `emitStandaloneAwaitUnwrap` semantics —
+     **`ref.test $Promise` guard first** (non-`$Promise` externref passes
+     through unchanged; the current unconditional `ref.cast` would trap on
+     `await <plain object>`), then state branch: FULFILLED → value field;
+     REJECTED → throw via exn tag; PENDING → match `emitStandaloneAwaitUnwrap`
+     exactly (read what it does for pending — parity, NOT `unreachable`).
+     Before writing this arm, diff it against
+     `async-scheduler.ts emitStandaloneAwaitUnwrap` and keep the instruction
+     sequence semantically identical; note in-code where they must stay in
+     sync.
+   - Carrier OFF (JS-host lane): identity — `emitValue(operand)` only, no
+     Promise struct inspection (host promises are host objects; the sync model
+     treats `await` as identity there).
+   - `case "async.return"` / `case "async.throw"`: keep, but update the
+     comment — unreachable from C-1 from-ast; C-3 consumers.
+4. **Threading + integration**
+   - `src/codegen/index.ts` `planIrCompilation` call (~L1733): pass
+     `supportsAsyncIr: ctx.supportsAsyncIr` and `asyncEngineClaims` bound to a
+     new exported pure helper in `async-activation.ts`:
+     `asyncEngineWouldActivate(ctx, decl): boolean` (=
+     `decideAsyncActivation(ctx, decl, /*isAsync*/ true,
+     /*allowNonDeclaration*/ false) !== null`). Decision-only — no emission,
+     no type rewrite.
+   - `src/ir/integration.ts`: same options threading at its own
+     `planIrCompilation` fallback (L157) — default absent (bare callers never
+     claim async); `makeResolver`: bind `nativePromiseCarrierActive`.
+   - Verify (do not assume): declarations.ts pre-pass registration
+     (`ctx.asyncFunctions.add(name)`, unwrapped result type) runs for
+     IR-claimed fns unchanged, so the #1796 call-site contract at LEGACY call
+     sites of an IR-claimed async fn is untouched. Also verify the export-glue
+     path (`function-body.ts:662` isAsync handling) for exported claimed fns.
+   - `src/codegen/context/create-context.ts` `supportsAsyncIr` default: flip
+     to `true` ONLY after local parity evidence (step 6); otherwise land
+     default-false + follow-up flip PR. Decide on measurement, not optimism.
+5. **What C-1 must NOT do**: no new suspension machinery, no frame structs, no
+   microtask calls from IR, no changes to async-frame/async-cps planners, no
+   claiming of engine-activated fns, no async methods/arrows, no async
+   generators (stay in `async-generator` bucket).
+5b. **The await-only consumption rule (discovered during implementation —
+   load-bearing for parity).** Legacy's #1796 call-site contract classifies a
+   call to an async fn per consumer (`classifyAsyncConsumer`, async-cps.ts):
+   `await`/non-Promise-cast consumers get the raw `T`; **everything else is a
+   THENABLE consumer and gets `wrapAsyncReturn` (`Promise.resolve` mint) at
+   the call site**. The IR emits no such wrap, so a claimed caller using
+   `return f();` / `const p = f();` would observably diverge from legacy
+   (legacy: wrapped Promise → NaN under numeric coercion; IR: raw 42).
+   Parity therefore requires: **a claimed body may reference a local async
+   declaration ONLY as the immediate operand of an `await`** — enforced by
+   the new `expr-async-callee-not-awaited` rejection in `isPhase1Expr`'s
+   identifier-callee call arm (the await arm handles the direct
+   `await f(...)` shape inline). Combined with the call-graph closure, the
+   practical C-1 population is: **exported async declarations + the async
+   fns they (transitively) await, plus fully-claimable sync callers that
+   only `await` them.** Casts (`f() as any as number`) are not IR-claimable
+   expressions anyway, so the cast-consumer population stays legacy
+   automatically.
+6. **Tests / verification**
+   - `tests/ir/issue-1373b.test.ts`: extend — (a) selector: engine-activated
+     shape (single tail await of a genuinely-pending call, wasi) is NOT
+     claimed; sync-pass-through shape IS claimed when the flag is on;
+     (b) lowering parity on both lanes: `async function f() { return await
+     Promise.resolve(41) + 1 }` (host + wasi), `await <non-promise>`,
+     `await <call to sync-async fn>` consumed as value, rejected settled
+     promise → throw (wasi), exported async fn.
+   - Byte-inertness probe (the −16/−29 discipline): for a program set covering
+     engine-activated asyncs (multi-await wasi, host single-tail-await) hash
+     gc/standalone/wasi binaries with the gate ON vs base — engine-activated
+     routing must be byte-identical; only claimed sync-pass-through programs'
+     bytes may change.
+   - `pnpm run check:ir-fallbacks -- --update` refresh: `async-function` 4 →
+     expected ≤ engine-activated residue.
+   - Scoped suites: `tests/ir/*`, `tests/equivalence/async-function.test.ts`,
+     `tests/equivalence/promise-chains.test.ts`, issue-1042*/2895/2906*
+     async files, `tsc --noEmit`. ONE heavy run at a time (box discipline).
+7. **Regression risks + rollback**: single-line rollback = default-false
+   `supportsAsyncIr`. Risks: (a) signature drift between IR-registered and
+   declaration-registered result types (unwrap mismatch) → covered by the
+   exported-fn + call-site tests; (b) claimed body contains a shape whose IR
+   lowering diverges from legacy sync semantics — bounded by the normal
+   selector body checks (anything IR can't build stays legacy); (c) engine
+   activation predicate drift (a future engine widening makes
+   `asyncEngineClaims` true for a previously-claimed fn) — safe direction:
+   IR declines more, engine claims more.
+
+#### C-2 (follow-up, S): honest bucketing of the engine-activated residue
+
+Split the fallback reason: `"async-function"` (unintended, ratchet to 0) vs a
+new `"async-engine"` DEFERRED reason for fns the engine activates. After C-1 +
+C-2 the unintended async bucket is 0 and the ratchet becomes meaningful; the
+`async-engine` rows are *correct routing*, not a gap — they retire only via
+C-3. Update `plan/log/ir-adoption.md` accordingly.
+
+#### C-3 (next window, XL — blocked on #2952 + #2949): IR-CFG suspension onto the ONE engine
+
+The durable end-state, spec'd here for a future window (Opus-buildable once
+the blockers land):
+
+- **Blockers**: #2952 (IR multi-exit control flow — loops/try as real CFG with
+  back-edges, br_table) and #2949 (dynamic IrType). Without CFG-normalized
+  control flow, block-splitting at awaits cannot represent an await inside a
+  loop/try instr buffer — the same wall the AST planners hit, re-derived.
+- **Design**: (1) new IR terminator `suspend { awaited: IrValueId, resume:
+  IrBlockId, handler?: IrHandlerId }` — from-ast/normalization splits any
+  block at each `IrInstrAwait`, the await's result becoming the resume block's
+  blockArg; (2) lower.ts, for `funcKind: "async"` with suspend terminators,
+  emits an ENTRY fn (allocate `$AsyncFrame` via the frame-core ABI —
+  `buildAsyncFrameInfo`, `STATE`/`SENT`/`MODE`/`ABRUPT`/`ERROR` +
+  `result_promise` — REUSED via resolver bindings, never forked) + ONE resume
+  fn with the engine's dispatch shape (`try { block { loop { if-chain }}}`,
+  states = resume blocks, spills = blockArgs + values live across a suspend —
+  IR liveness is exact here, better than the AST planners' textual-remainder
+  approximation); (3) settle backends: the SAME two (`__promise_fulfill`/
+  `__promise_reject` native; `Promise_then2` host) bound through the resolver;
+  step adapters reuse `async-frame.ts`'s per-fn adapter emission via an
+  integration-side hook taking (resumeFuncIdx, frameTypeIdx). (4)
+  `IrInstrAsyncReturn`/`IrInstrAsyncThrow` become the settle terminators.
+- **Payoff**: awaits in arbitrary IR control flow (the shapes
+  `planLinearAwaits` rejects), one engine, IR-exact liveness, and the
+  `async-engine` bucket retires. Async generators follow as `settleYield` on
+  the same machine (#2570/#2865 convergence), which is what finally retires
+  the eager host generator buffer (#2662).
+
+### Sync/coordination notes
+
+- #2895 / #2570 / #2865 / #2662 (Track I siblings) build on the ENGINE, not on
+  IR — C-1 touches none of their files except the pure
+  `asyncEngineWouldActivate` export in async-activation.ts (additive).
+- Do not touch `async-frame.ts` / `async-cps.ts` planner logic in this PR.
+
+## Resume State (update as work proceeds)
+
+- **Branch**: `issue-1373-ir-async-cps` (fork `ttraenkler/js2`, pushed).
+  Working tree: the fable-4 agent worktree
+  (`/workspace/.claude/worktrees/agent-a09a1f88a93af0c16`).
+- **Claim**: `claim-issue.mjs 1373b ttraenkler/fable-4` taken 2026-07-18.
+- **Done**: re-grounding vs main @667d162225; this plan; C-1 implementation —
+  `src/codegen/async-static.ts` (leaf extraction of
+  `awaitIsStaticallyResolved`/`staticPromiseResolveSettledExpr` +
+  `unwrapPromiseTypeNode`; async-cps.ts re-exports), `asyncEngineWouldActivate`
+  (async-activation.ts), select.ts (real `isAsyncIrReady`, async fall-through
+  in `whyNotIrClaimable`, Promise<T> return unwrap, `isPhase1Expr` await arm,
+  await-only consumption rule `expr-async-callee-not-awaited`), from-ast.ts
+  (funcKind async, return unwrap, await lowering w/ settled substitution +
+  passthrough), builder.ts (`valueType` accessor, `emitAwait`), lower.ts
+  (await arm rewritten: host identity / native-carrier guarded unwrap
+  mirroring `emitStandaloneAwaitUnwrap`; resolver
+  `nativePromiseCarrierActive`), integration.ts (resolver binding), index.ts
+  (`planIrOverlay` options + overrideMap async unwrap), create-context.ts
+  (default ON, `JS2WASM_IR_ASYNC=0` rollback lever), tests extended in
+  `tests/ir/issue-1373b.test.ts`.
+- **Validation so far**: tsc clean (pre + post upstream-merge);
+  tests/ir/issue-1373b.test.ts 26/26 (pre + post-merge); tests/ir +
+  async-function/promise-chains equivalence batch → failure set IDENTICAL to
+  a clean-base control worktree (7 pre-existing: 4× ir/passes end-to-end +
+  3× ir/inline-small end-to-end LinkError __unbox_number — NOT this change;
+  probe-verified plain fns byte-identical gate on/off). Empirical claim
+  split (probe): `base` (statically-resolved await) → engine declines → IR
+  claims; `twice` (`await base()` call operand) → HOST-DRIVE engine claims →
+  IR declines. Merged upstream/main 852c40a9f cleanly.
+- **Pending**: `pnpm run check:ir-fallbacks` (expect baseline unchanged —
+  the gate script passes no engine binding, so asyncs stay bucketed),
+  async engine blast radius (issue-1042*/2895*/2906* files) post-merge,
+  PR, CI, self-merge.
 
 ## Joint architect spec (S53)
 

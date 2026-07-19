@@ -68,6 +68,14 @@ export const STANDALONE_STATIC_METHOD_META: Record<string, { name: string; lengt
   // `ctx.variadicBuiltinClosure`). Spec `.length` is 2 for both (§21.3.2.24/.25).
   "Math.max": { name: "max", length: 2 },
   "Math.min": { name: "min", length: 2 },
+  // (#2963 Tier 2a) Number.is* fixed 1-arg predicates as VALUES. `.name` === the
+  // property key (§10.2.9); `.length` 1 (§21.1.2.x). These agree byte-for-byte
+  // with the generic `BUILTIN_STATIC_METHOD_ARITY` fallback, listed explicitly
+  // per the file-header sync rule for newly-wired closures.
+  "Number.isInteger": { name: "isInteger", length: 1 },
+  "Number.isFinite": { name: "isFinite", length: 1 },
+  "Number.isNaN": { name: "isNaN", length: 1 },
+  "Number.isSafeInteger": { name: "isSafeInteger", length: 1 },
 };
 
 /**

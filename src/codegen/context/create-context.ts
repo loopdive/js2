@@ -306,9 +306,13 @@ export function createCodegenContext(
     // reduced literal-substring backend; broader QuickJS libregexp ABI linking
     // remains the follow-up path for near-JS parity.
     standaloneRegExpEngine: options?.standalone ? nativeLiteralRegExpEngineConfig() : null,
-    // (#1373b Slice 1) Scaffolding only — hardcoded false. Future slices
-    // expose a CLI/option flag once the CPS lowering is parity-tested.
-    supportsAsyncIr: false,
+    // (#1373b C-1) ON by default. The gate is narrow by construction: the IR
+    // claims an async fn ONLY when the ONE async engine declines it
+    // (`asyncEngineClaims` — sync-pass-through population), it is a top-level
+    // declaration with an explicit `Promise<T>` annotation, and its body
+    // passes the normal Phase-1 shape checks. Set JS2WASM_IR_ASYNC=0 to
+    // disable (rollback lever).
+    supportsAsyncIr: process.env.JS2WASM_IR_ASYNC !== "0",
     wasiFdWriteIdx: -1,
     wasiProcExitIdx: -1,
     wasiPathOpenIdx: -1,

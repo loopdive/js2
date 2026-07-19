@@ -357,6 +357,86 @@ export class TsCheckerOracle implements TypeOracle {
   }
 }
 
+/**
+ * (#1930 Slice 3 — the Q-TAG syntactic spine) Does this expression
+ * SYNTACTICALLY produce a JS boolean? THE single definition of the
+ * boolean-producing spine, extracted verbatim from `declarations.ts`'s
+ * `isBooleanExpr` kernel-fixpoint closure (#2795) so future edits happen in
+ * one place. The accept-set is EXACTLY the extracted matcher's:
+ *
+ *   - `true` / `false` literals
+ *   - `!x` (boolean regardless of operand)
+ *   - relational / equality binaries (`< <= > >= == === != !==`) and
+ *     `instanceof` / `in`
+ *   - `&&` / `||` when BOTH operands qualify
+ *   - ternary when BOTH branches qualify
+ *   - a call `f(...)` when `isBooleanCallable(f)` says so (the kernel
+ *     fixpoint passes live membership of its boolean-kernel set; the default
+ *     recognizes only `Boolean(x)`)
+ *   - parenthesized / `as` / non-null / type-assertion wrappers recurse
+ *
+ * Pure function of (AST, hook) — Constraint-A-clean: the hook is an explicit
+ * input, so the fixpoint's evolving candidate set stays with its owner.
+ * Deliberately SEPARATE from `TypeOracle.isBooleanProducing` (the
+ * checker-fact lane): merging them would newly brand kernels whose returns
+ * are checker-typed-boolean identifiers the syntactic spine rejects (e.g. a
+ * `: boolean` param read) — a behavior change needing its own measured slice
+ * (recorded as verdict V6 in the issue's divergence table).
+ */
+export function isSyntacticallyBooleanExpr(
+  expr: ts.Expression,
+  isBooleanCallable: (name: string) => boolean = (name) => name === "Boolean",
+  depth = 0,
+): boolean {
+  if (depth > 64) return false;
+  if (ts.isParenthesizedExpression(expr)) {
+    return isSyntacticallyBooleanExpr(expr.expression, isBooleanCallable, depth + 1);
+  }
+  if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr) || ts.isNonNullExpression(expr)) {
+    return isSyntacticallyBooleanExpr(expr.expression, isBooleanCallable, depth + 1);
+  }
+  if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
+  if (ts.isPrefixUnaryExpression(expr)) {
+    // `!x` is boolean regardless of operand type.
+    return expr.operator === ts.SyntaxKind.ExclamationToken;
+  }
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    if (
+      op === ts.SyntaxKind.LessThanToken ||
+      op === ts.SyntaxKind.LessThanEqualsToken ||
+      op === ts.SyntaxKind.GreaterThanToken ||
+      op === ts.SyntaxKind.GreaterThanEqualsToken ||
+      op === ts.SyntaxKind.EqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsToken ||
+      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      op === ts.SyntaxKind.InstanceOfKeyword ||
+      op === ts.SyntaxKind.InKeyword
+    ) {
+      return true;
+    }
+    // `&&` / `||` are boolean only when BOTH operands are boolean.
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
+      return (
+        isSyntacticallyBooleanExpr(expr.left, isBooleanCallable, depth + 1) &&
+        isSyntacticallyBooleanExpr(expr.right, isBooleanCallable, depth + 1)
+      );
+    }
+    return false;
+  }
+  if (ts.isConditionalExpression(expr)) {
+    return (
+      isSyntacticallyBooleanExpr(expr.whenTrue, isBooleanCallable, depth + 1) &&
+      isSyntacticallyBooleanExpr(expr.whenFalse, isBooleanCallable, depth + 1)
+    );
+  }
+  if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) {
+    return isBooleanCallable(expr.expression.text);
+  }
+  return false;
+}
+
 /** Fact → static JS tag, when unambiguous. */
 export function jsTagOfFact(fact: TypeFact): JsTag | undefined {
   switch (fact.kind) {

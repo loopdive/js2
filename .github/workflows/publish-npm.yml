@@ -181,3 +181,43 @@ jobs:
       # slow-type check would otherwise reject the publish.
       - name: Publish to JSR
         run: npx jsr publish --allow-slow-types
+
+  # Publish (or create) the GitHub Release for the tag so it goes live
+  # automatically alongside the npm/JSR pushes. Previously the GH release object
+  # was created by hand and left in DRAFT state — v0.62.0 published to npm+JSR
+  # but sat as a draft on GitHub until a manual undraft (2026-07-19). This job
+  # closes that gap: on a real tag push, once version verification passes, it
+  # marks the release published + latest (or creates it with auto-generated
+  # notes if it doesn't exist yet). Gated on verify-version success only — a
+  # transient registry hiccup in an individual publish job must not block the
+  # release from going live (each publish target is independent + re-runnable).
+  publish-github-release:
+    name: publish GitHub release
+    runs-on: ubuntu-latest
+    needs: [verify-version, publish-npm, publish-npm-proxy, publish-jsr]
+    # Job-level permissions REPLACE the workflow-level set, so this grants the
+    # contents:write needed for `gh release` (the workflow default is
+    # contents:read); id-token is not needed here.
+    permissions:
+      contents: write
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      needs.verify-version.result == 'success'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Publish or create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag exists — undrafting and marking latest."
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          else
+            echo "Creating published release $tag with auto-generated notes."
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "$tag" --generate-notes --latest
+          fi
+          echo "GitHub release $tag is published and marked latest."

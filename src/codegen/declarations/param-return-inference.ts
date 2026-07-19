@@ -5,6 +5,7 @@
  * codegen/declarations.ts (#3268).
  */
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
+import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
@@ -485,52 +486,15 @@ export function inferNumericReturnTypes(ctx: CodegenContext, sourceFile: ts.Sour
   // JS boolean `true`/`false` rather than the number 1/0 (#2795 closures/10-mutual).
   // A boolean kernel's body still produces i32 0/1, so the brand is the only
   // change; arithmetic kernels keep f64.
-  const isBooleanExpr = (expr: ts.Expression, depth = 0): boolean => {
-    if (depth > MAX_NUMERIC_DEPTH) return false;
-    if (ts.isParenthesizedExpression(expr)) return isBooleanExpr(expr.expression, depth + 1);
-    if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr) || ts.isNonNullExpression(expr)) {
-      return isBooleanExpr(expr.expression, depth + 1);
-    }
-    if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return true;
-    if (ts.isPrefixUnaryExpression(expr)) {
-      // `!x` is boolean regardless of operand type.
-      return expr.operator === ts.SyntaxKind.ExclamationToken;
-    }
-    if (ts.isBinaryExpression(expr)) {
-      const op = expr.operatorToken.kind;
-      // Relational / equality operators yield boolean.
-      if (
-        op === ts.SyntaxKind.LessThanToken ||
-        op === ts.SyntaxKind.LessThanEqualsToken ||
-        op === ts.SyntaxKind.GreaterThanToken ||
-        op === ts.SyntaxKind.GreaterThanEqualsToken ||
-        op === ts.SyntaxKind.EqualsEqualsToken ||
-        op === ts.SyntaxKind.ExclamationEqualsToken ||
-        op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-        op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-        op === ts.SyntaxKind.InstanceOfKeyword ||
-        op === ts.SyntaxKind.InKeyword
-      ) {
-        return true;
-      }
-      // `&&` / `||` are boolean only when BOTH operands are boolean.
-      if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
-        return isBooleanExpr(expr.left, depth + 1) && isBooleanExpr(expr.right, depth + 1);
-      }
-      return false;
-    }
-    if (ts.isConditionalExpression(expr)) {
-      return isBooleanExpr(expr.whenTrue, depth + 1) && isBooleanExpr(expr.whenFalse, depth + 1);
-    }
-    if (ts.isCallExpression(expr) && ts.isIdentifier(expr.expression)) {
-      // A recursive/mutual call to a fellow boolean kernel stays boolean.
-      if (boolean.has(expr.expression.text)) return true;
-      // `Boolean(x)` yields boolean.
-      if (expr.expression.text === "Boolean") return true;
-      return false;
-    }
-    return false;
-  };
+  // (#1930 Slice 3) The boolean-producing SPINE is now defined once in the
+  // oracle module (`isSyntacticallyBooleanExpr`, src/checker/oracle.ts —
+  // Q-TAG's syntactic layer; see the issue's three-question doctrine). This
+  // closure keeps ONLY what is local to the kernel fixpoint: live membership
+  // of the evolving `boolean` candidate set, passed as the callable hook.
+  // Accept-set is verbatim-identical to the pre-extraction matcher
+  // (byte-diff-verified); MAX_NUMERIC_DEPTH (64) matches the spine's bound.
+  const isBooleanExpr = (expr: ts.Expression, depth = 0): boolean =>
+    isSyntacticallyBooleanExpr(expr, (name) => boolean.has(name) || name === "Boolean", depth);
 
   // Boolean kernels are a subset of the numeric kernels — seed with all of them
   // and shrink by the same fixpoint discipline (a candidate stays boolean only

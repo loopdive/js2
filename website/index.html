@@ -5324,6 +5324,41 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           }
           return null;
         };
+        // (#3458) Sum the standalone per-edition buckets for every edition up
+        // through (and including) the selected scope, in the shared
+        // featureEditionRank order — the same accumulation the js-host
+        // <t262-edition-bars> widget performs (cumulativeScopes in
+        // t262-charts.js). This keeps the standalone and js-host TOTALS
+        // identical at every edition scope; returning a single-edition bucket
+        // made them disagree (e.g. ES2015 standalone showed the ~15.4k
+        // ES2015-only bucket instead of the ~28.7k cumulative total). Strict-
+        // mode scaling is applied to the SUM, mirroring the single-bucket path
+        // it replaces.
+        const getStandaloneCumulativeEditionSummary = (standaloneData, scope, strictOnly) => {
+          if (!(standaloneData?.editionBuckets instanceof Map)) return null;
+          const selectedRank = featureEditionRank.get(normalizeEditionLabel(scope));
+          if (typeof selectedRank !== "number") return null;
+          const running = { pass: 0, fail: 0, ce: 0, skip: 0, total: 0 };
+          let matched = false;
+          for (const [label, bucket] of standaloneData.editionBuckets) {
+            const rank = featureEditionRank.get(label);
+            // Only real editions (rank < 98 excludes Legacy/Deprecated +
+            // Proposals) at or below the selected scope contribute.
+            if (typeof rank !== "number" || rank >= 98 || rank > selectedRank) continue;
+            if (!hasUsableSummary(bucket)) continue;
+            const s = normalizeSummary(bucket);
+            running.pass += s.pass;
+            running.fail += s.fail;
+            running.ce += s.ce;
+            running.skip += s.skip;
+            running.total += s.total;
+            matched = true;
+          }
+          if (!matched) return null;
+          return strictOnly && standaloneData.strictRatios
+            ? applySummaryRatios(running, standaloneData.strictRatios)
+            : running;
+        };
         const getStandaloneSummary = (standaloneData, scope, strictOnly) => {
           if (!standaloneData?.report) {
             return {
@@ -5342,26 +5377,22 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               ? getNamedSummary(report, ["strict_full_summary", "standalone_strict_full_summary"])
               : getNamedSummary(report, ["full_summary", "standalone_full_summary"]);
           } else {
-            summary = getStandaloneEditionSummary(report, scope, strictOnly);
-            // (#2636) The standalone report carries only headline/scope
-            // summaries — never per-edition breakdowns. Fall back to the
-            // dedicated standalone editions file (built by generate-editions.ts
-            // over the standalone-lane baseline JSONL), so selecting an edition
-            // other than the latest shows real standalone numbers instead of
-            // "Unavailable". Strict-mode per-edition standalone data isn't
-            // computed, so approximate it by scaling the edition bucket by the
-            // standalone strict/overall ratio — the same approach the JS-host
-            // path uses for its strict edition donuts.
-            if (!hasUsableSummary(summary) && standaloneData.editionBuckets instanceof Map) {
-              const bucket =
-                standaloneData.editionBuckets.get(scope) ??
-                standaloneData.editionBuckets.get(normalizeEditionLabel(scope));
-              if (hasUsableSummary(bucket)) {
-                summary =
-                  strictOnly && standaloneData.strictRatios
-                    ? applySummaryRatios(normalizeSummary(bucket), standaloneData.strictRatios)
-                    : bucket;
-              }
+            // (#3458) An edition scope must be CUMULATIVE (all editions up
+            // through the selection), matching the js-host <t262-edition-bars>
+            // widget. Build it from the dedicated standalone editions file
+            // (built by generate-editions.ts over the standalone-lane baseline
+            // JSONL) — the authoritative per-edition source. Strict-mode data
+            // isn't computed per-edition, so the cumulative sum is scaled by
+            // the standalone strict/overall ratio inside the helper, the same
+            // approach the JS-host path uses for its strict edition donuts.
+            summary = getStandaloneCumulativeEditionSummary(standaloneData, scope, strictOnly);
+            // (#2636) Fallback for the degraded case where the standalone
+            // editions file is absent: the report only ever carries headline/
+            // scope summaries (never per-edition breakdowns), so this returns
+            // a single-edition slice at best — used only to avoid a bare
+            // "Unavailable" when no cumulative data exists.
+            if (!hasUsableSummary(summary)) {
+              summary = getStandaloneEditionSummary(report, scope, strictOnly);
             }
           }
 
