@@ -1,8 +1,9 @@
 {
   "id": "3470",
   "assignee": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3470-host-verifyproperty-name-length-realm-restore",
   "claimed_at": "2026-07-19T15:07:18Z",
-  "updated_at": "2026-07-19T15:07:18Z"
+  "updated_at": "2026-07-19T16:06:06Z",
+  "released_at": "2026-07-19T16:06:06Z"
 }
