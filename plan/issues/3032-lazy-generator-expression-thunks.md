@@ -25,6 +25,9 @@ loc-budget-allow:
   - src/codegen/generators-native.ts
   - src/codegen/statements/nested-declarations.ts
   - src/codegen/context/types.ts
+  # (#3032 W6) sentinel-aware dynamic value reads for the GenState brand
+  # property dispatch (+42, host-lane laziness). Intended, canonical site.
+  - src/codegen/property-access-dispatch.ts
 origin: "2026-07-04 #2141 S2 root-cause (fable-tag5): the −162 dstr eject was never a dstr/eq dependency — it was eager generator bodies + comparator vacuity"
 note: "W3 (TDZ-native-threading) + W4 (method generators, standalone lane) LANDED (sendev-3032-w3/-w4, 2026-07-16) — see '## W3 landed' / '## W4 landed'; #3302 covered capturing fn-EXPRESSIONS in between. The A1/tag-5-vacuity unblock is fully delivered on the standalone side. Remaining banked waves: W2 (paramful gen expressions — MEASURE FIRST, predicted wont-build), W5 (retVal marshalling), W6 (retire the buffer / host-lane laziness; next(v) two-way under the buffer stays broken until W6). Issue stays open for those."
 ---
