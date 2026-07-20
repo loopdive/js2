@@ -1,8 +1,8 @@
 {
   "id": "3501",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-20T15:16:37Z",
-  "updated_at": "2026-07-20T15:16:37Z"
+  "assignee": "ttraenkler/codex-3501-empty-array-element-inference",
+  "status": "in-progress",
+  "branch": "codex/3501-empty-array-element-inference",
+  "claimed_at": "2026-07-20T15:44:03Z",
+  "updated_at": "2026-07-20T15:44:03Z"
 }
