@@ -1,8 +1,8 @@
 {
   "id": "3423",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-18T07:22:57Z",
-  "updated_at": "2026-07-18T07:22:57Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3423-module-global-representation",
+  "claimed_at": "2026-07-20T00:08:52Z",
+  "updated_at": "2026-07-20T00:08:52Z"
 }
