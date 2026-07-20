@@ -1,8 +1,8 @@
 {
   "id": "3484",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-20T01:08:14Z",
-  "updated_at": "2026-07-20T01:08:14Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3484-iterator-helpers",
+  "claimed_at": "2026-07-20T23:24:29Z",
+  "updated_at": "2026-07-20T23:24:29Z"
 }
