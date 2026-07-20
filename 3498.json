@@ -1,8 +1,8 @@
 {
   "id": "3498",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-20T14:20:05Z",
-  "updated_at": "2026-07-20T14:20:05Z"
+  "assignee": "ttraenkler/sendev-3498",
+  "status": "in-progress",
+  "branch": "codex/3498-landing-four-lane-benchmark-impl",
+  "claimed_at": "2026-07-20T14:33:27Z",
+  "updated_at": "2026-07-20T14:33:27Z"
 }
