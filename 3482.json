@@ -1,9 +1,8 @@
 {
   "id": "3482",
-  "assignee": "ttraenkler/codex-porffor-direct-ab-plan-20260720",
-  "status": "released",
-  "branch": "codex/porffor-direct-ab-plan",
-  "claimed_at": "2026-07-20T00:41:00Z",
-  "updated_at": "2026-07-20T00:52:26Z",
-  "released_at": "2026-07-20T00:52:26Z"
+  "assignee": "ttraenkler/porffor-3482-dev",
+  "status": "in-progress",
+  "branch": "codex/3482-direct-porffor-ab",
+  "claimed_at": "2026-07-20T00:57:10Z",
+  "updated_at": "2026-07-20T00:57:10Z"
 }
