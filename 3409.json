@@ -1,8 +1,8 @@
 {
   "id": "3409",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-18T06:17:26Z",
-  "updated_at": "2026-07-18T06:17:26Z"
+  "assignee": "ttraenkler/sr-3409",
+  "status": "in-progress",
+  "branch": "issue-3409-portable-format-timeout",
+  "claimed_at": "2026-07-21T17:00:53Z",
+  "updated_at": "2026-07-21T17:00:53Z"
 }
