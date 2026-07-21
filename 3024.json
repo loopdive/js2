@@ -1,9 +1,8 @@
 {
   "id": "3024",
-  "assignee": "ttraenkler/opus-3024",
-  "status": "released",
-  "branch": "issue-3024-invalid-wasm-slice5",
-  "claimed_at": "2026-07-13T06:42:07Z",
-  "updated_at": "2026-07-21T21:49:32Z",
-  "released_at": "2026-07-21T21:49:32Z"
+  "assignee": "ttraenkler/dev-serve",
+  "status": "in-progress",
+  "branch": "issue-3024-toString-closure-anyconvert",
+  "claimed_at": "2026-07-21T23:21:49Z",
+  "updated_at": "2026-07-21T23:21:49Z"
 }
