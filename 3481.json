@@ -1,8 +1,9 @@
 {
   "id": "3481",
   "assignee": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3481-value-rep-coercion",
   "claimed_at": "2026-07-21T00:00:42Z",
-  "updated_at": "2026-07-21T00:00:42Z"
+  "updated_at": "2026-07-21T00:22:06Z",
+  "released_at": "2026-07-21T00:22:06Z"
 }
