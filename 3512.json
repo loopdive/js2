@@ -1,8 +1,8 @@
 {
   "id": "3512",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-21T01:08:05Z",
-  "updated_at": "2026-07-21T01:08:05Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3512-instance-field-leak-classobj",
+  "claimed_at": "2026-07-21T01:19:21Z",
+  "updated_at": "2026-07-21T01:19:21Z"
 }
