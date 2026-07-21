@@ -1,8 +1,9 @@
 {
   "id": "2717",
   "assignee": "ttraenkler/dev2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2717-array-flat-flatmap-standalone",
   "claimed_at": "2026-06-26T21:14:20Z",
-  "updated_at": "2026-06-26T21:14:20Z"
+  "updated_at": "2026-07-21T21:49:15Z",
+  "released_at": "2026-07-21T21:49:15Z"
 }
