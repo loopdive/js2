@@ -1,8 +1,8 @@
 {
   "id": "3511",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-21T00:35:08Z",
-  "updated_at": "2026-07-21T00:35:08Z"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-3511-symbol-key-index-probe",
+  "claimed_at": "2026-07-21T00:47:28Z",
+  "updated_at": "2026-07-21T00:47:28Z"
 }
