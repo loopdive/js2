@@ -1,8 +1,9 @@
 {
   "id": "3516",
   "assignee": "ttraenkler/codex",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3516-js2wasm-proxy-lockstep",
   "claimed_at": "2026-07-21T05:31:05Z",
-  "updated_at": "2026-07-21T05:31:05Z"
+  "updated_at": "2026-07-21T07:03:27Z",
+  "released_at": "2026-07-21T07:03:27Z"
 }
