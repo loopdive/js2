@@ -1,8 +1,8 @@
 {
   "id": "3529",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-21T14:08:33Z",
-  "updated_at": "2026-07-21T14:08:33Z"
+  "assignee": "ttraenkler/codex-3529-plan",
+  "status": "in-progress",
+  "branch": "symphony/3529-typed-producer-parity",
+  "claimed_at": "2026-07-21T14:10:16Z",
+  "updated_at": "2026-07-21T14:10:16Z"
 }
