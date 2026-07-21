@@ -1,8 +1,8 @@
 {
   "id": "3520",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-21T12:41:42Z",
-  "updated_at": "2026-07-21T12:41:42Z"
+  "assignee": "ttraenkler/codex-r1",
+  "status": "in-progress",
+  "branch": "symphony/3520-r1-identity-abi",
+  "claimed_at": "2026-07-21T20:21:29Z",
+  "updated_at": "2026-07-21T20:21:29Z"
 }
