@@ -1,8 +1,9 @@
 {
   "id": "3109",
   "assignee": "ttraenkler/opus-tests",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3109-test-helper-consolidation",
   "claimed_at": "2026-07-13T07:55:15Z",
-  "updated_at": "2026-07-13T07:55:15Z"
+  "updated_at": "2026-07-21T21:49:47Z",
+  "released_at": "2026-07-21T21:49:47Z"
 }
