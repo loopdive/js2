@@ -1,9 +1,8 @@
 {
   "id": "3024",
-  "assignee": "ttraenkler/dev-serve",
-  "status": "released",
-  "branch": "issue-3024-toString-closure-anyconvert",
-  "claimed_at": "2026-07-21T23:21:49Z",
-  "updated_at": "2026-07-21T23:32:34Z",
-  "released_at": "2026-07-21T23:32:34Z"
+  "assignee": "ttraenkler/sr-3024",
+  "status": "in-progress",
+  "branch": "issue-3024-toString-closure-funcref",
+  "claimed_at": "2026-07-21T23:38:05Z",
+  "updated_at": "2026-07-21T23:38:05Z"
 }
