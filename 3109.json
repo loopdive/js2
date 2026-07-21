@@ -1,8 +1,9 @@
 {
   "id": "3109",
   "assignee": "ttraenkler/dev-serve",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3109-test-helper-consolidation-slice3",
   "claimed_at": "2026-07-21T22:16:00Z",
-  "updated_at": "2026-07-21T22:16:00Z"
+  "updated_at": "2026-07-21T22:40:37Z",
+  "released_at": "2026-07-21T22:40:37Z"
 }
