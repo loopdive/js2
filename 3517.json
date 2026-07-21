@@ -1,8 +1,8 @@
 {
   "id": "3517",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-21T11:44:56Z",
-  "updated_at": "2026-07-21T11:44:56Z"
+  "assignee": "ttraenkler/codex-3517-map",
+  "status": "in-progress",
+  "branch": "symphony/3517-ir-map-module-init",
+  "claimed_at": "2026-07-21T11:47:11Z",
+  "updated_at": "2026-07-21T11:47:11Z"
 }
