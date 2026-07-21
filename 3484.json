@@ -1,8 +1,9 @@
 {
   "id": "3484",
   "assignee": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3484-iterator-helpers",
   "claimed_at": "2026-07-20T23:24:29Z",
-  "updated_at": "2026-07-20T23:24:29Z"
+  "updated_at": "2026-07-21T00:36:34Z",
+  "released_at": "2026-07-21T00:36:34Z"
 }
