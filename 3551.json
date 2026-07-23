@@ -1,8 +1,9 @@
 {
   "id": "3551",
   "assignee": "ttraenkler/senior-dev-3551",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3551-ir-parity-withdraw-cascade",
   "claimed_at": "2026-07-23T14:26:20Z",
-  "updated_at": "2026-07-23T14:26:20Z"
+  "updated_at": "2026-07-23T15:17:20Z",
+  "released_at": "2026-07-23T15:17:20Z"
 }
