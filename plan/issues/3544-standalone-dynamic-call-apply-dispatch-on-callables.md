@@ -89,6 +89,42 @@ route; verify it stays untouched). Validation protocol (the #3537 template):
 3. `hasOwnProperty.call` / `propertyIsEnumerable.call` harness idioms explicitly
    re-tested.
 
+## WIP FINDING (2026-07-23, fable-exposed) — prototype built; convention split found
+
+A working prototype of the arm exists on branch **`issue-3544-call-dispatch`**
+(pushed to the fork; stacked on `issue-3537-vec-expando-props`; NOT a PR):
+`src/codegen/fn-call-dispatch.ts` (reserve/fill: `__fn_call_name_gate`,
+`__is_fn_callable`, `__fn_call_invoke`) + arm wiring. Measured behavior:
+
+- `Promise.resolve.call(undefined, 1)` **now throws ✓** — the arm + name gate +
+  invoke work end-to-end for static-shape builtin closures.
+- `String.prototype.slice.call(undefined, 0)` **still silent ✗** — and the WHY
+  is the key discovery: **two calling conventions coexist.**
+  - Ordinary user closures: lifted sig `(self, ...args)`; `this` flows via the
+    `__current_this` global → `.call(t, a)` must split argvec: thisArg=t,
+    rest=[a] → `__apply_closure(m, t, [a])` (what the prototype does).
+  - Builtin proto-method closures (`ensureStandaloneNativeMethodClosure`):
+    lifted sig `(self, THIS-AS-PARAM, ...args)` — userParams `[this, p0, …]`
+    (`native-proto.ts` ~461). `.call(t, a)` must pass the ORIGINAL argvec
+    `[t, a]` (this folded as first arg) padded to the member's paramSlots.
+    The prototype's uniform split mis-arities these into the wrong
+    `__call_fn_method_N` (no matching per-type arm at that N) → silent null →
+    the observed undefined. `emitReflectiveNativeProtoClosureCall` (the static
+    `hasOwnProperty.call` route) is the existing precedent for the folded
+    convention — study it before finishing.
+- Also fixed en route: `__is_fn_callable` must use PER-CONCRETE-TYPE arms over
+  `ctx.closureInfoByTypeIdx` (the same set `__call_fn_method_N` tests), NOT
+  `collectClosureBaseWrapperTypeIdxs` — the base-root walk misses the
+  proto-method wrapper structs (measured: gate matched Promise, missed String).
+
+**Next implementer:** distinguish the two conventions inside
+`__fn_call_invoke` — e.g. a fill-time `ref.test` chain over the proto-method
+wrapper types (they are enumerable at finalize from the funcMap
+`__proto_method_*` names / a registry added at mint time) choosing
+argvec-as-is + pad vs split; or normalize the convention at mint time. Then
+run the pre-authorized measurement (stride-8 floor + full-458 cliff; decision
+rule: floor≈0 → ship; material loss → STOP, report per-member).
+
 ## Measurement infrastructure (reusable, in the fable-exposed worktree)
 
 `/workspace/.claude/worktrees/agent-a5ae601287feed137/.tmp/m3468/`:
