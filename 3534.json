@@ -1,8 +1,9 @@
 {
   "id": "3534",
   "assignee": "ttraenkler/fable-3534",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3534-closure-externref-rep",
   "claimed_at": "2026-07-23T09:03:33Z",
-  "updated_at": "2026-07-23T09:03:33Z"
+  "updated_at": "2026-07-23T11:27:08Z",
+  "released_at": "2026-07-23T11:27:08Z"
 }
