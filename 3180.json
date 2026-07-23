@@ -1,8 +1,9 @@
 {
   "id": "3180",
   "assignee": "ttraenkler/fable-2860",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3180-standalone-hof-residual",
   "claimed_at": "2026-07-23T16:13:20Z",
-  "updated_at": "2026-07-23T16:13:20Z"
+  "updated_at": "2026-07-23T16:26:06Z",
+  "released_at": "2026-07-23T16:26:06Z"
 }
