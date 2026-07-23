@@ -1,8 +1,9 @@
 {
   "id": "3420",
   "assignee": "ttraenkler/dev-opus-2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3420-nonwritable-array-elem-write",
   "claimed_at": "2026-07-23T23:34:14Z",
-  "updated_at": "2026-07-23T23:34:14Z"
+  "updated_at": "2026-07-23T23:38:57Z",
+  "released_at": "2026-07-23T23:38:57Z"
 }
