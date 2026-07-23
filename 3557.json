@@ -1,8 +1,8 @@
 {
   "id": "3557",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-23T19:53:23Z",
-  "updated_at": "2026-07-23T19:53:23Z"
+  "assignee": "ttraenkler/sendev-bool-marshal",
+  "status": "in-progress",
+  "branch": "issue-3557-boolean-i32-marshalling",
+  "claimed_at": "2026-07-23T22:19:59Z",
+  "updated_at": "2026-07-23T22:19:59Z"
 }
