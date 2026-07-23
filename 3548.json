@@ -1,8 +1,8 @@
 {
   "id": "3548",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-23T11:37:50Z",
-  "updated_at": "2026-07-23T11:37:50Z"
+  "assignee": "ttraenkler/sendev-3548",
+  "status": "in-progress",
+  "branch": "issue-3548-underapplied-param-nullable",
+  "claimed_at": "2026-07-23T13:46:06Z",
+  "updated_at": "2026-07-23T13:46:06Z"
 }
