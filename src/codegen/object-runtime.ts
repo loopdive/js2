@@ -78,12 +78,15 @@ import {
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
+import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+// (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
+// arms (vec test first, unchanged closure arm as fallthrough).
 import {
-  buildClosurePropGetMissArm,
-  buildClosurePropMethodCallElseArm,
-  buildClosurePropSetMissArm,
-  reserveClosurePropHelpers,
-} from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+  buildVecOrClosurePropGetMissArm,
+  buildVecOrClosurePropMethodCallElseArm,
+  buildVecOrClosurePropSetMissArm,
+  reserveVecPropHelpers,
+} from "./vec-props.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
@@ -843,6 +846,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // these defined arms are not emitted, and nothing here is reserved.
   if (ctx.standalone || ctx.wasi) {
     reserveClosurePropHelpers(ctx);
+    // (#3537) reserve the array-expando side table right after — same
+    // reserve-before-arms-bake discipline, appended indices only.
+    reserveVecPropHelpers(ctx);
   }
 
   // ── __extern_is_array(externref v) -> i32 ────────────────────────────────
@@ -1480,7 +1486,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: buildClosurePropGetMissArm(ctx, getMiss),
+        then: buildVecOrClosurePropGetMissArm(ctx, getMiss),
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 4 },
@@ -2054,7 +2060,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: buildClosurePropSetMissArm(ctx),
+        then: buildVecOrClosurePropSetMissArm(ctx),
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 6 },
@@ -4049,7 +4055,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         // in the side table — mirror the $Object dispatch for it; other brands
         // ($Vec/string/Map/Set) are the Slice-4 arms → undefined for now (never
         // invalid Wasm).
-        else: buildClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx),
+        else: buildVecOrClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx),
       },
     ];
     registerNative(
@@ -5734,9 +5740,12 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             blockType: { kind: "empty" },
             then: [...lenBody, ...numericArm],
           },
-          // vec receiver, unresolved key → undefined miss
-          ...getMiss(),
-          { op: "return" },
+          // Vec receiver, non-"length"/non-index key: FALL THROUGH to the main
+          // body — its non-$Object miss arm consults the #3537 expando side
+          // table (`__vec_prop_get`), which itself answers the undefined-miss
+          // sentinel when the array carries no bag/property. Before #3537 this
+          // arm ended `getMiss(); return`, terminally swallowing every named
+          // expando read on an array.
         ],
       },
     ];
@@ -5846,7 +5855,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        // n = __unbox_number(key) ; skip if NaN (non-numeric key)
+        // n = __unbox_number(key) ; NaN = non-numeric key
         { op: "local.get", index: 1 },
         { op: "call", funcIdx: unboxNumIdx },
         { op: "local.tee", index: setN },
@@ -5874,10 +5883,19 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
               blockType: { kind: "empty" },
               then: carrierArms,
             },
+            // NUMERIC key on a vec: handled here terminally — in-bounds stored
+            // above (each carrier arm returns), OOB/grow/unsupported kind stays
+            // the deferred no-op (#3190 "Grow" note). Never reaches the bag:
+            // numeric keys are vec ELEMENTS, and bagging them would be
+            // incoherent with `__extern_get_idx` element reads.
+            { op: "return" },
           ],
         },
-        // vec receiver, OOB / non-numeric / grow / unsupported kind → no-op
-        { op: "return" },
+        // NON-numeric key on a vec (e.g. `arr.index = 0`, the test262
+        // `__expected` harness shape): FALL THROUGH to the main body, whose
+        // non-$Object miss arm routes vec receivers into the #3537 expando
+        // side table (`__vec_prop_set`; `"length"` refused there). Before
+        // #3537 this was an unconditional `return` (silent drop).
       ],
     },
   ];

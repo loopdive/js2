@@ -148,6 +148,7 @@ import {
   fillProxyDispatch,
 } from "./object-runtime.js";
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
 import { fillReflectIsConstructor } from "./reflect-construct-native.js";
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
@@ -3770,6 +3771,10 @@ export function generateModule(
     // (#3468) Fill after all closure types and object-runtime deps are known.
     fillClosurePropHelpers(ctx);
 
+    // (#3537) Fill the array-expando side-table helpers (same deps: the
+    // object-runtime funcIdxs are all in funcMap by finalize).
+    fillVecPropHelpers(ctx);
+
     // (#3140) Fill the reserved `__bind_dyn` dynamic-bind helper now that every
     // closure root is registered (the callable gate needs the COMPLETE
     // classifier list). No-op when no standalone `.bind`-on-any site reserved it.
@@ -5758,6 +5763,9 @@ export function generateMultiModule(
     // side-table helpers too. Fill their placeholders only after every source
     // has registered its closure types, matching the single-source pipeline.
     fillClosurePropHelpers(ctx);
+
+    // (#3537) Same for the array-expando side table.
+    fillVecPropHelpers(ctx);
 
     // (#3371/#3496) Constructible function-expression wrappers are nominal
     // subtypes of the ordinary closure wrapper. Multi-source harness methods

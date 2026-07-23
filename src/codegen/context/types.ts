@@ -1451,6 +1451,26 @@ export interface CodegenContext {
    */
   closurePropHeadGlobalIdx?: number;
   /**
+   * (#3537) Set when `ensureObjectRuntime` reserved the array ($Vec) expando
+   * side-table helpers (`__is_vec_prop_carrier`, `__vec_bag_lookup`,
+   * `__vec_bag_ensure`, `__vec_prop_get`, `__vec_prop_set`) — the ARRAY arm of
+   * the #3468 own-property family. Bodies self-call `__extern_get`/`__extern_set`
+   * so they are filled by `fillVecPropHelpers` at FINALIZE. Standalone/wasi only.
+   */
+  vecPropHelpersReserved?: boolean;
+  /**
+   * (#3537) Type index of the `$VecPropEntry` linked-list node
+   * `{ next: (ref null $VecPropEntry); key: eqref; bag: externref }`.
+   */
+  vecPropEntryTypeIdx?: number;
+  /** (#3537) Global index of `$__vec_prop_head` (`(mut ref null $VecPropEntry)`). */
+  vecPropHeadGlobalIdx?: number;
+  /**
+   * (#3537) `$__vec_base` type index resolved at RESERVE time (never registers
+   * a type at finalize) — the `ref.test` target for `__is_vec_prop_carrier`.
+   */
+  vecPropBaseTypeIdx?: number;
+  /**
    * (#1100) Set when the standalone Proxy trap-dispatch runtime reserved its
    * `__proxy_call_{get,set,has}` driver placeholders (in `ensureProxyRuntime`).
    * Those drivers invoke the user trap closures through the `__call_fn_method_N`
