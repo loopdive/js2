@@ -1,8 +1,8 @@
 {
   "id": "3468",
-  "assignee": "ttraenkler/sendev-3468-closure-props",
+  "assignee": "ttraenkler/sendev-3468-f1",
   "status": "in-progress",
-  "branch": "issue-3468-closure-own-props",
-  "claimed_at": "2026-07-19T16:12:25Z",
-  "updated_at": "2026-07-19T16:12:25Z"
+  "branch": "issue-3468-f1-harness-routing",
+  "claimed_at": "2026-07-23T20:16:18Z",
+  "updated_at": "2026-07-23T20:16:18Z"
 }
