@@ -1,8 +1,9 @@
 {
   "id": "3459",
   "assignee": "ttraenkler/dev-opus-3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3459-drift-check-clock-age",
   "claimed_at": "2026-07-23T23:05:51Z",
-  "updated_at": "2026-07-23T23:05:51Z"
+  "updated_at": "2026-07-23T23:22:41Z",
+  "released_at": "2026-07-23T23:22:41Z"
 }
