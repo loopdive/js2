@@ -1,8 +1,9 @@
 {
   "id": "3549",
   "assignee": "ttraenkler/fable-2860",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3549-regexp-step-budget",
   "claimed_at": "2026-07-23T12:07:36Z",
-  "updated_at": "2026-07-23T12:07:36Z"
+  "updated_at": "2026-07-23T16:28:03Z",
+  "released_at": "2026-07-23T16:28:03Z"
 }
