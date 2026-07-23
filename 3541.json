@@ -1,8 +1,8 @@
 {
   "id": "3541",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-23T10:41:32Z",
-  "updated_at": "2026-07-23T10:41:32Z"
+  "assignee": "ttraenkler/fable-2860",
+  "status": "in-progress",
+  "branch": "issue-3541-fromcodepoint-apply-vec",
+  "claimed_at": "2026-07-23T11:01:13Z",
+  "updated_at": "2026-07-23T11:01:13Z"
 }
