@@ -1,8 +1,8 @@
 {
   "id": "3549",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-23T11:54:00Z",
-  "updated_at": "2026-07-23T11:54:00Z"
+  "assignee": "ttraenkler/fable-2860",
+  "status": "in-progress",
+  "branch": "issue-3549-regexp-step-budget",
+  "claimed_at": "2026-07-23T12:07:36Z",
+  "updated_at": "2026-07-23T12:07:36Z"
 }
