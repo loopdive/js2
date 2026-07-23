@@ -2,7 +2,7 @@
   "id": "3546",
   "assignee": "ttraenkler/fable-3546",
   "status": "in-progress",
-  "branch": "issue-3546-toplevel-closure-reassign",
-  "claimed_at": "2026-07-23T13:45:05Z",
-  "updated_at": "2026-07-23T13:45:05Z"
+  "branch": "issue-3546-toplevel-closure-dualstore",
+  "claimed_at": "2026-07-23T14:10:19Z",
+  "updated_at": "2026-07-23T14:10:19Z"
 }
