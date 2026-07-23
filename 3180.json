@@ -1,9 +1,8 @@
 {
   "id": "3180",
-  "assignee": "ttraenkler/fable-exposed",
-  "status": "released",
-  "branch": "issue-3180-array-hof-residuals",
-  "claimed_at": "2026-07-23T09:54:03Z",
-  "updated_at": "2026-07-23T10:03:23Z",
-  "released_at": "2026-07-23T10:03:23Z"
+  "assignee": "ttraenkler/fable-2860",
+  "status": "in-progress",
+  "branch": "issue-3180-standalone-hof-residual",
+  "claimed_at": "2026-07-23T16:13:20Z",
+  "updated_at": "2026-07-23T16:13:20Z"
 }
