@@ -1,8 +1,9 @@
 {
   "id": "3536",
   "assignee": "ttraenkler/fable-2860",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3536-standalone-objlit-arg-boundary",
   "claimed_at": "2026-07-23T09:55:51Z",
-  "updated_at": "2026-07-23T09:55:51Z"
+  "updated_at": "2026-07-23T12:08:11Z",
+  "released_at": "2026-07-23T12:08:11Z"
 }
