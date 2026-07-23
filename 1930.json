@@ -1,8 +1,9 @@
 {
   "id": "1930",
   "assignee": "ttraenkler/dev-1930o",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1930-oracle-slices",
   "claimed_at": "2026-07-02T20:53:54Z",
-  "updated_at": "2026-07-02T20:53:54Z"
+  "updated_at": "2026-07-23T15:52:59Z",
+  "released_at": "2026-07-23T15:52:59Z"
 }
