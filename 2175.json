@@ -1,8 +1,9 @@
 {
   "id": "2175",
   "assignee": "ttraenkler/se-2175",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2175-standalone-builtin-prototype-readers",
   "claimed_at": "2026-06-16T05:16:39Z",
-  "updated_at": "2026-06-16T05:16:39Z"
+  "updated_at": "2026-07-23T15:55:37Z",
+  "released_at": "2026-07-23T15:55:37Z"
 }
