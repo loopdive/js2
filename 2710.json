@@ -1,8 +1,9 @@
 {
   "id": "2710",
   "assignee": "ttraenkler/sd-indexshift",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2710-late-bind-handles",
   "claimed_at": "2026-06-26T14:38:20Z",
-  "updated_at": "2026-06-26T14:38:20Z"
+  "updated_at": "2026-07-23T15:57:09Z",
+  "released_at": "2026-07-23T15:57:09Z"
 }
