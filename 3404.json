@@ -1,8 +1,9 @@
 {
   "id": "3404",
   "assignee": "ttraenkler/dev-opus-3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3404-promote-upload-retry",
   "claimed_at": "2026-07-23T23:19:20Z",
-  "updated_at": "2026-07-23T23:19:20Z"
+  "updated_at": "2026-07-23T23:40:11Z",
+  "released_at": "2026-07-23T23:40:11Z"
 }
