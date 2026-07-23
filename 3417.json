@@ -1,8 +1,8 @@
 {
   "id": "3417",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-18T07:21:47Z",
-  "updated_at": "2026-07-18T07:21:47Z"
+  "assignee": "ttraenkler/fable-3417",
+  "status": "in-progress",
+  "branch": "issue-3417-f2-async-split",
+  "claimed_at": "2026-07-23T08:55:53Z",
+  "updated_at": "2026-07-23T08:55:53Z"
 }
