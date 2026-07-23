@@ -1,8 +1,9 @@
 {
   "id": "2141",
   "assignee": "ttraenkler/dev-evalf",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2141-retire-tag5-extern-abi",
   "claimed_at": "2026-07-02T14:38:14Z",
-  "updated_at": "2026-07-02T14:38:14Z"
+  "updated_at": "2026-07-23T15:42:59Z",
+  "released_at": "2026-07-23T15:42:59Z"
 }
