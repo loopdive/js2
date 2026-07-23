@@ -1,8 +1,8 @@
 {
   "id": "3546",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-23T11:29:39Z",
-  "updated_at": "2026-07-23T11:29:39Z"
+  "assignee": "ttraenkler/fable-3534",
+  "status": "in-progress",
+  "branch": "issue-3546-toplevel-closure-reassign",
+  "claimed_at": "2026-07-23T12:03:12Z",
+  "updated_at": "2026-07-23T12:03:12Z"
 }
