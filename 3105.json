@@ -1,9 +1,8 @@
 {
   "id": "3105",
-  "assignee": "ttraenkler/sendev-3105",
-  "status": "released",
-  "branch": "issue-3105-emit-idioms-hashprobe",
-  "claimed_at": "2026-07-14T17:38:13Z",
-  "updated_at": "2026-07-14T18:00:42Z",
-  "released_at": "2026-07-14T18:00:42Z"
+  "assignee": "ttraenkler/dev-opus-1",
+  "status": "in-progress",
+  "branch": "issue-3105-emit-idioms-hashprobe-initial",
+  "claimed_at": "2026-07-23T23:08:14Z",
+  "updated_at": "2026-07-23T23:08:14Z"
 }
