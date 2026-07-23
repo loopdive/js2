@@ -1,8 +1,9 @@
 {
   "id": "1916",
   "assignee": "ttraenkler/dev-1916c",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1916-s3b-index-ts",
   "claimed_at": "2026-07-02T23:24:24Z",
-  "updated_at": "2026-07-02T23:24:24Z"
+  "updated_at": "2026-07-23T15:38:11Z",
+  "released_at": "2026-07-23T15:38:11Z"
 }
