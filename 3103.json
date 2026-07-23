@@ -1,8 +1,9 @@
 {
   "id": "3103",
   "assignee": "ttraenkler/opus-splitrt2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3103-split-runtime-slice2",
   "claimed_at": "2026-07-13T08:30:07Z",
-  "updated_at": "2026-07-13T08:30:07Z"
+  "updated_at": "2026-07-23T16:24:05Z",
+  "released_at": "2026-07-23T16:24:05Z"
 }
