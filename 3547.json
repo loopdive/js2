@@ -1,8 +1,9 @@
 {
   "id": "3547",
   "assignee": "ttraenkler/fable-3534",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3547-remove-3024-stopgap",
   "claimed_at": "2026-07-23T11:36:50Z",
-  "updated_at": "2026-07-23T11:36:50Z"
+  "updated_at": "2026-07-23T12:30:54Z",
+  "released_at": "2026-07-23T12:30:54Z"
 }
