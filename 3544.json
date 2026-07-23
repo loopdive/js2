@@ -1,8 +1,9 @@
 {
   "id": "3544",
   "assignee": "ttraenkler/fable-exposed",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3544-call-dispatch",
   "claimed_at": "2026-07-23T11:30:51Z",
-  "updated_at": "2026-07-23T11:30:51Z"
+  "updated_at": "2026-07-23T11:41:59Z",
+  "released_at": "2026-07-23T11:41:59Z"
 }
