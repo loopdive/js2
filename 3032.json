@@ -1,8 +1,9 @@
 {
   "id": "3032",
   "assignee": "ttraenkler/sendev-3032-w4",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3032-w4-method-generators",
   "claimed_at": "2026-07-16T14:06:00Z",
-  "updated_at": "2026-07-16T14:06:00Z"
+  "updated_at": "2026-07-23T16:20:33Z",
+  "released_at": "2026-07-23T16:20:33Z"
 }
