@@ -1,8 +1,9 @@
 {
   "id": "3417",
   "assignee": "ttraenkler/fable-3417",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3417-f2-async-split",
   "claimed_at": "2026-07-23T08:55:53Z",
-  "updated_at": "2026-07-23T08:55:53Z"
+  "updated_at": "2026-07-23T09:15:32Z",
+  "released_at": "2026-07-23T09:15:32Z"
 }
