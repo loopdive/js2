@@ -1,9 +1,8 @@
 {
   "id": "1712",
-  "assignee": "ttraenkler/sendev-acorn-identity",
-  "status": "released",
-  "branch": "issue-1712-acorn-identity",
-  "claimed_at": "2026-06-21T12:29:03Z",
-  "updated_at": "2026-06-21T16:39:56Z",
-  "released_at": "2026-06-21T16:39:56Z"
+  "assignee": "ttraenkler/sendev-acorn",
+  "status": "in-progress",
+  "branch": "issue-1712-acorn-corpus-regression",
+  "claimed_at": "2026-07-23T18:37:06Z",
+  "updated_at": "2026-07-23T18:37:06Z"
 }
