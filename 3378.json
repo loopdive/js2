@@ -1,8 +1,9 @@
 {
   "id": "3378",
   "assignee": "ttraenkler/sendev-3378",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3378-spurious-property-name-capture",
   "claimed_at": "2026-07-24T13:39:46Z",
-  "updated_at": "2026-07-24T13:39:46Z"
+  "updated_at": "2026-07-24T14:20:28Z",
+  "released_at": "2026-07-24T14:20:28Z"
 }
