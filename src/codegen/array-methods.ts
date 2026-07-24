@@ -3452,10 +3452,22 @@ function compileArraySlice(
   fctx.body.push({ op: "local.set", index: startTmp });
 
   // end arg into a local (only when explicit); null = "use length".
-  const hasEnd = callExpr.arguments.length >= 2;
+  // (#3201) §23.1.3.25 step 6: an explicit `undefined` end is spec-equivalent to
+  // an OMITTED end (relativeEnd = len), NOT `ToIntegerOrInfinity(undefined)` = 0.
+  // Compiling `undefined` in f64 context yields `f64.const NaN` → `trunc_sat` = 0,
+  // which turned `x.slice(3, undefined)` into an empty slice instead of `x.slice(3)`.
+  // Treat a statically-`undefined` end (the literal, or the `undefined` global) as
+  // "no end". A literal/identifier `undefined` has no side effects, so skipping its
+  // compilation preserves observable evaluation order. (undefined START already
+  // coerces correctly: ToIntegerOrInfinity(undefined) = 0 = the default.)
+  const endArg = callExpr.arguments.length >= 2 ? callExpr.arguments[1]! : undefined;
+  const endIsExplicitUndefined =
+    !!endArg &&
+    (endArg.kind === ts.SyntaxKind.UndefinedKeyword || (ts.isIdentifier(endArg) && endArg.text === "undefined"));
+  const hasEnd = endArg !== undefined && !endIsExplicitUndefined;
   const endTmp = allocLocal(fctx, `__arr_slc_e_${fctx.locals.length}`, { kind: "i32" });
   if (hasEnd) {
-    compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
+    compileExpression(ctx, fctx, endArg!, { kind: "f64" });
     fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     fctx.body.push({ op: "local.set", index: endTmp });
   }

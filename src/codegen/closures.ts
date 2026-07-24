@@ -327,6 +327,35 @@ export function collectReferencedIdentifiers(node: ts.Node, names: Set<string>, 
     if (!shadowed || !shadowed.has("this")) names.add("this");
     return;
   }
+  // (#3378) A non-computed MEMBER/PROPERTY NAME is never a free-variable
+  // reference — `a.join`, the key of `{ join: x }`, or `ns.Type` name a
+  // property, not a binding. The generic `forEachChild` walk below would
+  // otherwise collect the `.name` Identifier and, if it collides with an
+  // outer local (e.g. `parts.join('')` vs. a module-scope `let join`), record
+  // a SPURIOUS capture. That capture's `outerLocalIdx` is valid only in the
+  // declaring frame, so baking it into a differently-framed nested closure
+  // emits a `local.get` past the closure's local count ("local index out of
+  // range" — the deepEqual.js `__closure_NN` crash). Recurse only into the
+  // reference-bearing children (the object/expression, the initializer, and
+  // any computed key), skipping the member NAME. Optional chaining
+  // (`a?.b`, `a?.[k]`) shares the same node kinds.
+  if (ts.isPropertyAccessExpression(node)) {
+    collectReferencedIdentifiers(node.expression, names, shadowed);
+    return;
+  }
+  if (ts.isQualifiedName(node)) {
+    collectReferencedIdentifiers(node.left, names, shadowed);
+    return;
+  }
+  if (ts.isPropertyAssignment(node)) {
+    // A computed key (`{ [k]: v }`) IS a reference; a plain identifier / string
+    // / numeric key is a property name. Always recurse the initializer.
+    if (ts.isComputedPropertyName(node.name)) {
+      collectReferencedIdentifiers(node.name, names, shadowed);
+    }
+    collectReferencedIdentifiers(node.initializer, names, shadowed);
+    return;
+  }
   if (isFunctionScopeBoundary(node)) {
     // Augment shadow set with this nested function's own locals before
     // recursing into its body. Function/method names declared by nested

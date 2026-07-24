@@ -114,6 +114,35 @@ Two host-free-FAIL clusters are downstream of the SAME missing substrate:
 
 Total addressable ≈ **250–300 host-free-FAIL** once the overlay is coherent.
 
+### Default (JS-host / gc) lane hits the SAME wall (2026-07-24, #3201 measurement)
+
+The overlay is NOT a standalone-only lever — the default host/gc lane's Array
+method residue bottoms out on the identical missing substrate. The #3201
+fork-per-file measurement (default gc/"honest" lane, 2026-07-12→24 baseline)
+found, across `built-ins/Array/prototype/{indexOf,lastIndexOf,slice,splice,
+sort,concat,pop}`:
+
+- **Indexed accessors** ~34 default-lane fails — `sort/precise-getter-*` /
+  `precise-setter-*` (16) + the search/structural analogues. `Object.
+  defineProperty(arr, i, {get/set})` then a method reads/sorts: the accessor is
+  never stored/consulted (returns `undefined`). Same root as the ~204 host-free
+  cluster above, on the host lane.
+- **Prototype-chain index inheritance** — `Array.prototype.indexOf.call(
+  {length:3}, v)` with `Object.prototype[i]=v` (indexOf/lastIndexOf `.call`
+  cluster), and `Array.prototype[i] = v` inherited-index reads (pop/splice/sort
+  `S15.4.4.*_A4`). The flat `$Vec` can't model inherited/own index descriptors,
+  so these read the backing (or trap) instead of the prototype value.
+- **Hole → `undefined` read** — `new Array(2); x[0]` reads **`null`**, not
+  `undefined` (sort `S15.4.4.11_A1.1_T1` etc.). A hole must materialize as the
+  `undefined` singleton on read; the flat vec serves a raw null. (Adjacent to
+  #2001 sparse-holes-materialize-defaults.)
+
+Same fix (per-index descriptor + hole/accessor coherence through the overlay)
+unblocks both lanes. #3201 split its contained slices out (the sort/coercion
+micro-fixes) and its species/@@isConcatSpreadable mass to **#3575**; this
+accessor/proto-index/hole-read mass is recorded HERE as the shared host-lane
+consumer of the overlay.
+
 ## Proposed direction (for the architect to spec)
 
 Give a `$Vec` receiver a **companion per-index/expando descriptor map** that

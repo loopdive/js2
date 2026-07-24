@@ -1,9 +1,11 @@
 ---
 id: 3201
 title: "default lane: Array.prototype search + structural generics (indexOf/lastIndexOf/slice/splice/sort/concat/pop) (~312 fails)"
-status: ready
+status: done
+completed: 2026-07-24
+assignee: ttraenkler/dev-opus-search
 created: 2026-07-12
-updated: 2026-07-17
+updated: 2026-07-24
 priority: high
 feasibility: hard
 task_type: bug
@@ -321,3 +323,56 @@ lastIndexOf iTmp=-1 (same as the empty default `len-1`).
 Suites: `issue-3201-inherited-length` 8/8 (3 new ordering tests incl. the
 positive valueOf-IS-observed control), the five issue-3201* suites +
 `issue-1360` + `array-prototype-methods` 91/91, tsc clean.
+
+## Progress — 2026-07-24 re-measurement + re-scope + slice undefined-end fix (dev-opus-search)
+
+Full **fork-per-file** re-measurement of the default gc/"honest" lane (the
+in-process harness was unfaithful — the compiled wasm's host glue mutates the
+OUTER realm's intrinsics, e.g. `Object.prototype[i]=v` / `Array.prototype[i]=v`
+tests, which poisons Node's async_hooks for every subsequent file; discarded).
+Method: CI baseline jsonl (`fetch-baseline-jsonl.mjs`) for the pass/fail map +
+one-process-per-file re-run for error strings. Cross-check: **0 flips** — every
+jsonl-fail still fails on origin/main HEAD (no submodule drift).
+
+**Measured map (default gc lane, 2026-07-24)** — pass/total (nonpass):
+indexOf 151/201 (50) · lastIndexOf 145/198 (53) · slice 47/71 (24) · splice
+50/81 (31) · sort 8/54 (46) · concat 23/69 (46) · pop 7/23 (16). **TOTAL
+431/697, 266 nonpass** (the issue's 312 predates the trap-safety / expando /
+inherited-length / len==0 PRs above).
+
+**Re-scope (substrate vs feature vs contained).** The raw residue is dominated
+by two masses that are NOT contained dev slices, now SPLIT OUT:
+- **species / @@isConcatSpreadable (~42, concat/splice/slice)** → **#3575**
+  (ArraySpeciesCreate + @@isConcatSpreadable; ES2015 observable-ctor feature,
+  architect-scale).
+- **indexed accessors + prototype-chain index + hole→undefined read (~34+)** →
+  recorded on the substrate epic **#3251** (array-descriptor overlay) as its
+  shared host-lane consumer. Same flat-`$Vec` wall as the standalone lane; not
+  fixable in `array-methods.ts`.
+- **array-like `.call` receiver value+OOB-traps** → hinge on the shared
+  `__extern_get_idx`/`has_idx` arms + prototype-chain index (overlaps #3200 /
+  the overlay).
+
+So the **≥150-flip acceptance target (#3) is not reachable** in the current
+substrate — it assumed the residue was contained slices; measurement shows it
+is mostly substrate + feature. The contained remainder is small.
+
+**Contained fix LANDED this PR — slice explicit-`undefined` end (§23.1.3.25
+step 6).** `x.slice(3, undefined)` returned an EMPTY slice: an explicit
+`undefined` end compiled to `f64.const NaN` → `i32.trunc_sat` = 0, i.e.
+`slice(3,0)`. Spec: an `undefined` end is equivalent to an OMITTED end
+(`relativeEnd = len`), NOT `ToIntegerOrInfinity(undefined)` = 0. (undefined
+START already coerces correctly to 0 = the default.) Fix in `compileArraySlice`:
+a statically-`undefined` end (literal or the `undefined` global, no side
+effects) is treated as "no end". Measured on the full slice dir via fork-per-
+file: **47→49 pass, +2 flips (`S15.4.4.10_A1.5_T1`, `S15.4.4.10_A2_T6`), 0
+regressions.**
+
+The other contained sort candidates were ceded/blocked: `ESSymbolLike` in
+`isKnownNonCallable` (Symbol comparefn → TypeError, `comparefn-nonfunction-
+call-throws`) is being landed by **#3200** (dev-c-1's flatMap non-callable arm
+needs the identical line — coordinated, not duplicated); the sort undefined/
+hole placement (A1.*) is substrate-blocked (`new Array(2)` holes read as `null`,
+per #3251/#2001), and the `any[]` ToString sort (A2.*) needs a runtime
+any→string step on the shared default-sort path (deferred as a separate
+guarded follow-up).
