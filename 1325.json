@@ -1,8 +1,9 @@
 {
   "id": "1325",
   "assignee": "ttraenkler/dev-std-3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1325-instanceof-builtin-tags",
   "claimed_at": "2026-07-24T08:27:39Z",
-  "updated_at": "2026-07-24T08:27:39Z"
+  "updated_at": "2026-07-24T08:35:14Z",
+  "released_at": "2026-07-24T08:35:14Z"
 }
