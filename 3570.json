@@ -1,8 +1,9 @@
 {
   "id": "3570",
   "assignee": "ttraenkler/dev-std-datemath",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3570-number-plus-radix-parse",
   "claimed_at": "2026-07-24T11:17:23Z",
-  "updated_at": "2026-07-24T11:17:23Z"
+  "updated_at": "2026-07-24T11:37:12Z",
+  "released_at": "2026-07-24T11:37:12Z"
 }
