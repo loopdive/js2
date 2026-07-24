@@ -1,9 +1,8 @@
 {
   "id": "2864",
-  "assignee": "ttraenkler/dev-laneB",
-  "status": "released",
-  "branch": "issue-2864-d2-delegation-abrupt",
-  "claimed_at": "2026-07-23T19:19:28Z",
-  "updated_at": "2026-07-24T00:01:29Z",
-  "released_at": "2026-07-24T00:01:29Z"
+  "assignee": "ttraenkler/dev-opus5-gen",
+  "status": "in-progress",
+  "branch": "issue-2864-d4-catch-across-yield",
+  "claimed_at": "2026-07-24T18:28:07Z",
+  "updated_at": "2026-07-24T18:28:07Z"
 }
