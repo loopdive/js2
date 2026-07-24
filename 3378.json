@@ -1,8 +1,8 @@
 {
   "id": "3378",
-  "assignee": "ttraenkler/dev-2961",
+  "assignee": "ttraenkler/sendev-3378",
   "status": "in-progress",
-  "branch": "issue-3378-standalone-json-parse-crash",
-  "claimed_at": "2026-07-17T18:33:32Z",
-  "updated_at": "2026-07-17T18:33:32Z"
+  "branch": "issue-3378-spurious-property-name-capture",
+  "claimed_at": "2026-07-24T13:39:46Z",
+  "updated_at": "2026-07-24T13:39:46Z"
 }
