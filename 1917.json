@@ -1,8 +1,9 @@
 {
   "id": "1917",
   "assignee": "ttraenkler/sdev-1917",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-1917-stage-b-coercion",
   "claimed_at": "2026-07-24T13:35:09Z",
-  "updated_at": "2026-07-24T13:35:09Z"
+  "updated_at": "2026-07-24T14:37:49Z",
+  "released_at": "2026-07-24T14:37:49Z"
 }
