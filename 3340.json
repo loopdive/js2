@@ -1,8 +1,8 @@
 {
   "id": "3340",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-17T06:27:59Z",
-  "updated_at": "2026-07-17T06:27:59Z"
+  "assignee": "ttraenkler/dev-opus-search",
+  "status": "in-progress",
+  "branch": "issue-3340-inverted-sentinel-baseline",
+  "claimed_at": "2026-07-24T15:37:25Z",
+  "updated_at": "2026-07-24T15:37:25Z"
 }
