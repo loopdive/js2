@@ -1,8 +1,9 @@
 {
   "id": "3400",
   "assignee": "ttraenkler/dev-opus-3",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3400-func-budget-ratchet",
   "claimed_at": "2026-07-24T00:16:43Z",
-  "updated_at": "2026-07-24T00:16:43Z"
+  "updated_at": "2026-07-24T00:39:10Z",
+  "released_at": "2026-07-24T00:39:10Z"
 }
