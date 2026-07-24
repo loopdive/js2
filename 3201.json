@@ -1,8 +1,9 @@
 {
   "id": "3201",
   "assignee": "ttraenkler/dev-opus-search",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3201-array-search-residual",
   "claimed_at": "2026-07-24T13:12:02Z",
-  "updated_at": "2026-07-24T13:12:02Z"
+  "updated_at": "2026-07-24T14:56:40Z",
+  "released_at": "2026-07-24T14:56:40Z"
 }
