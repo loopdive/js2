@@ -1,8 +1,9 @@
 {
   "id": "2875",
   "assignee": "ttraenkler/dev-std-4",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-2875-string-roc-undefined",
   "claimed_at": "2026-07-24T08:14:42Z",
-  "updated_at": "2026-07-24T08:14:42Z"
+  "updated_at": "2026-07-24T08:45:05Z",
+  "released_at": "2026-07-24T08:45:05Z"
 }
