@@ -2,6 +2,7 @@
 id: 1907
 title: "standalone: built-in static method value reads without __get_builtin (#1888 S6-b)"
 status: done
+done_cited_ok: true # #3474 exempt: built-in static reads: refuse unsupported; refusals are the expected cites
 pr: 1292
 sprint: 75
 created: 2026-06-07

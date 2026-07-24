@@ -2,6 +2,7 @@
 id: 1474
 title: "host-independence: eliminate JS host RegExp for standalone Wasm"
 status: done
+done_cited_ok: true # #3474 exempt: scope = eliminate HOST RegExp (done); standalone-native RegExp is #1539's job
 created: 2026-05-20
 updated: 2026-05-24
 completed: 2026-05-24

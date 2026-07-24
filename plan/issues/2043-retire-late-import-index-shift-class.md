@@ -1,11 +1,10 @@
 ---
 id: 2043
 title: "architecture: retire the late-import function-index-shift bug class (always-on emit-time index validation + stale-proof func references)"
-status: done
+status: ready
 sprint: Backlog
 created: 2026-06-10
-updated: 2026-06-10
-completed: 2026-06-10
+updated: 2026-07-24
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -14,11 +13,21 @@ task_type: refactor
 area: codegen, emit
 language_feature: compiler-internals
 goal: standalone-mode
-related: [1809, 1839, 1602, 1886, 1666, 1677, 2029, 2039]
+related: [1809, 1839, 1602, 1886, 1666, 1677, 2029, 2039, 3559, 1177]
 origin: "2026-06-10 standalone gap review: the index-shift class has recurred ≥6 times (#1809, #1839, #1602, #1886, #1666, #1677) and is back again as #2029 (497 tests) — each fix was a point patch; this issue is the structural fix that ends the class."
 ---
 
 # #2043 — Retire the late-import index-shift bug class structurally
+
+> **REOPENED 2026-07-24 (#3474 done-status integrity — genuine false-`done`).**
+> Marked `done` 2026-06-10, but the late-import index-shift class was **not**
+> retired: the done-status audit finds **42 live test262 failures** still emitting
+> invalid Wasm and citing `(#2043)` ("This is the late-import index-shift class
+> (#2043): a captured index went stale…") across both lanes. This is the same
+> #1177 minefield as F1's 4-CE cluster (#3559) — it needs the value-rep /
+> late-bind substrate, not another point patch. **Fable-tier / suspended-substrate
+> backlog (`model: fable`, `sprint: Backlog`) — do NOT work it without the
+> substrate.** See #3559 / #1177.
 
 ## Problem
 

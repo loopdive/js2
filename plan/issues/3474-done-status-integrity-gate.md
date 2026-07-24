@@ -1,7 +1,8 @@
 ---
 id: 3474
 title: "Done-status integrity: complete the false-done triage + add a CI gate blocking status:done while an issue has live test262 citations"
-status: in-progress
+status: done
+completed: 2026-07-24
 assignee: ttraenkler/dev-opus-3
 sprint: current
 priority: high
@@ -48,56 +49,58 @@ self-correcting instead of drifting.
 - CI gate present and green on main; a deliberately-mislabeled test issue fails it.
 - Exemption mechanism documented.
 
-## Part B — DONE (2026-07-24, this PR)
+## DONE (2026-07-24) — Part B (gate + audit) + Part A (dispositions applied)
 
-Shipped the durable fix (the CI gate + audit tool). `status` stays `in-progress`
-because **Part A (the triage / reopen-vs-exempt calls on shared planning
-artifacts) is deferred to the tech lead** per the dispatch decision — marking
-this issue `done` while Part A is open would itself be a false-`done`.
+### Part B — the durable fix, a PERIODIC audit
 
-- **`scripts/check-done-status-integrity.mjs`** — change-scoped gate (sibling to
-  the #2093 probe gate). For each `plan/issues/*.md` a PR touches that is
-  `status: done` and not `done_cited_ok: true`, it counts LIVE test262 failures
-  citing its `#NNNN` across both baseline lanes and FAILS when the count exceeds
-  `DONE_CITE_THRESHOLD` (default 15). Keyed on **code state** (the baseline
-  JSONL), not a commit-message grep — so it catches status-drift even when the
-  fix didn't cite the issue (the #3449-class miss). A PR touching no `done` issue
-  does ZERO network work; a baseline-fetch failure WARNS and PASSES (safety net).
+`scripts/check-done-status-integrity.mjs` keys on **code state** (the
+baselines-repo JSONL: which tests actually fail and which issue each cites), not
+a commit-message grep — so it catches drift even when the "fix" never cited the
+issue (the #3449-class miss).
+
+- **Delivered as a PERIODIC sweep** (`.github/workflows/done-status-audit.yml`,
+  daily), **not a per-PR gate.** The check needs a ~93MB both-lane baseline fetch
+  that isn't justified on every impl PR (most flip their own fresh issue to
+  `done`, which has 0 live cites), and a cheap per-PR variant is impossible: a
+  committed cite-baseline is stale for exactly the fixing PR (its just-passing
+  tests aren't reflected until the next sweep), which would false-flag legitimate
+  done-flips. The sweep goes RED (exit 1) on a genuine false-`done` — visible +
+  actionable, blocks no PR. `check:done-status-integrity` (change-scoped gate
+  mode) remains for local pre-check.
 - **Cite extraction** is robust to BOTH forms — parenthesized `(#N)` and bare
   `#N:` / prose `deferred to #N.` — excludes Wasm function-index noise
   (`function #N`, `#N:"name"`), and cross-references issue-file existence. (An
   earlier parenthesized-only cut silently dropped #1387/#1472, both bare-cited.)
-- **`--audit` / `--json`** whole-tree mode powers Part A.
-- **`done_cited_ok: true`** frontmatter flag = the exemption for legitimate
-  detector / umbrella / intentional-refusal issues.
-- Wired into the required `quality` job (`.github/workflows/ci.yml`);
-  `package.json` `check:done-status-integrity`; tests in
-  `tests/issue-3474-done-status-integrity.test.ts` (11: extractor + verdict +
-  frontmatter). Verified live: touching `done` #2043 (42 cites) FAILS the gate.
+- **`done_cited_ok: true`** frontmatter flag (YAML inline comment allowed, so the
+  reason is recorded inline) = the exemption for legitimate detector / umbrella /
+  intentional-refusal issues.
+- Tests in `tests/issue-3474-done-status-integrity.test.ts` (12: extractor +
+  verdict + frontmatter incl. the inline-comment form). Verified live: touching
+  `done` #2043 (42 cites) FAILS the local gate; the periodic sweep exits 0 after
+  the Part-A dispositions below.
 
-### Part A audit (2026-07-24) — for the tech lead's reopen-vs-exempt calls
+### Part A — dispositions (tech lead's calls, applied 2026-07-24)
 
-`node scripts/check-done-status-integrity.mjs --audit` (both lanes, threshold
-15) → **9 `done` issues over threshold, not yet exempt**:
+Guiding principle: a `done` issue whose deliverable is a detector / loud-refusal
+/ host-scoped-or-deferred feature → **exempt** (the failing cites are the
+intended refusals, tracked under #2860); a `done` issue that CLAIMS to have fixed
+the failing behavior but hasn't → **reopen**.
 
-| issue | cites | nature (my read) | proposed |
-| --- | --- | --- | --- |
-| #2961 | 3646 | detector/umbrella (strictNoHostImports leak guard — cites ARE it working) | **exempt** (unambiguous) |
-| #1387 | 32 | `with` statement intentionally deferred (`#1387: with statement`) | exempt (refusal) |
-| #2717 | 16 | Array flat/flatMap "not yet supported in --target standalone (#2717)" | exempt (refusal) — but was in #3427-era reopen batch; confirm |
-| #1474 | 99 | standalone RegExp refusal; Phase-2 is #1539 | **ambiguous** |
-| #3371 | 89 | title says Reflect.construct "refused — ~160 tests" yet `done` | **ambiguous / likely reopen** |
-| #1906 | 78 | standalone defineProperties "unsupported descriptor shape (#1906)" | **ambiguous** |
-| #1907 | 53 | standalone built-in static value reads | **ambiguous** |
-| #1539 | 44 | standalone RegExp engine (Phase 2 of #1474) | **ambiguous** |
-| #2043 | 42 | "retire the late-import index-shift bug class" — but it STILL emits invalid Wasm 42× | **likely genuine false-done → reopen** |
+**Exempted (`done_cited_ok: true`, reason recorded inline in each file):** #2961
+(detector/leak-guard), #1387 (`with` permanently deferred), #2717 (host-only
+flat/flatMap + refuse-rest), #1474 (eliminate HOST RegExp — standalone-native is
+#1539), #3371 (loud-refuses Reflect.construct ~160), #1906 (native
+defineProperties + refuse-rest), #1907 (built-in static reads: refuse
+unsupported), #1539 (partial native RegExp + refuse complex patterns).
 
-Below threshold (noise, no action): #2029 (8), #2177 (6), #21/#14 (2), #10/#2978/#13/#11 (1).
-Cited-but-NOT-done (already correct, no action): #2046 (in-progress), #2928 (backlog), #680/#1472/#1888/#2620 (ready).
+**Reopened:** #2043 (`done`→`ready`) — genuine false-`done`: claims to retire the
+late-import index-shift class but 42 tests still emit invalid Wasm citing it. The
+same #1177 minefield as #3559; tagged `model: fable` / `sprint: Backlog` (rejoins
+the suspended fable-tier substrate backlog — not worked here).
 
-I did **not** touch any of these issue files — the reopen-vs-exempt calls are the
-tech lead's. Once Part A lands (reopen the genuine ones, `done_cited_ok: true`
-the legitimate ones), flip this issue to `done`.
+Below threshold (noise, no action): #2029 (8), #2177 (6), #21/#14 (2),
+#10/#2978/#13/#11 (1). After these dispositions the periodic sweep reports **0**
+non-exempt false-`done` issues.
 
 ## Notes
 - Audit method + evidence: the sprint-73 harvest (error-field `#NNNN` extraction,

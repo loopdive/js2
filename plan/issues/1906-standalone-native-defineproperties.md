@@ -2,6 +2,7 @@
 id: 1906
 title: "standalone: native Object.defineProperties over $Object descriptors"
 status: done
+done_cited_ok: true # #3474 exempt: native defineProperties + refuse-rest; refusals are the expected cites
 sprint: 61
 created: 2026-06-07
 updated: 2026-06-11

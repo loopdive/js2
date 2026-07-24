@@ -2,6 +2,7 @@
 id: 2717
 title: "Array flat/flatMap are host-import-only — no standalone native arm, no ctx.standalone guard"
 status: done
+done_cited_ok: true # #3474 exempt: host-only flat/flatMap; native flatMap arm landed + loud-refuses the rest
 sprint: 75
 assignee: ttraenkler/dev-serve
 created: 2026-06-26

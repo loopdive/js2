@@ -1,0 +1,46 @@
+# Done-status integrity audit (#3474) — PERIODIC sweep.
+#
+# Catches the systemic false-`done` drift (issues marked `status: done` whose
+# cited test262 tests still fail) by keying on CODE STATE: the baselines-repo
+# JSONL says which tests actually fail and which issue each failure cites, so a
+# stale `done` is found even when the "fix" never cited the issue (#3449-class).
+#
+# This is a periodic sweep, NOT a per-PR gate: the check needs a ~93MB both-lane
+# baseline fetch that isn't justified on every impl PR (see the note in ci.yml).
+# The sweep goes RED (exit 1) when a genuine false-`done` drifts — visible and
+# actionable, without blocking any PR. Legitimate detector / umbrella /
+# intentional-refusal issues carry `done_cited_ok: true` and are exempt.
+name: Done-status audit (#3474)
+
+on:
+  schedule:
+    - cron: "23 6 * * *" # daily 06:23 UTC, offset off the top-of-hour rush
+  workflow_dispatch:
+    inputs:
+      warn_only:
+        description: "Report drift without failing the run"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: done-status-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Audit done-status vs live test262 citations
+        run: |
+          node scripts/check-done-status-integrity.mjs --audit \
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.warn_only) && '--warn-only' || '' }}

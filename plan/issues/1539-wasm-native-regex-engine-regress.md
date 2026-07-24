@@ -2,6 +2,7 @@
 id: 1539
 title: "Standalone Wasm RegExp engine via regress (Phase 2 of #1474)"
 status: done
+done_cited_ok: true # #3474 exempt: partial native RegExp (regress) + refuse complex patterns; gaps tracked
 created: 2026-05-20
 updated: 2026-06-11
 priority: high

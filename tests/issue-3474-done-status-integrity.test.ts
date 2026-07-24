@@ -70,6 +70,11 @@ describe("#3474 parseIssueFrontmatter", () => {
     expect(fm.status).toBe("ready");
     expect(fm.doneCitedOk).toBe(false);
   });
+
+  it("recognizes the exemption flag with a YAML inline comment (each exemption records its reason)", () => {
+    const md = "---\nid: 2961\nstatus: done\ndone_cited_ok: true # #3474 exempt: detector\n---\n";
+    expect(parseIssueFrontmatter(md).doneCitedOk).toBe(true);
+  });
 });
 
 describe("#3474 classifyDoneCites — verdict", () => {

@@ -2,6 +2,7 @@
 id: 2961
 title: "Extend the strictNoHostImports leak guarantee to `--target standalone` (today wasi-only)"
 status: done
+done_cited_ok: true # #3474 exempt: detector/leak-guard — the failing cites ARE the guard's own tests
 completed: 2026-07-17
 assignee: dev-2961
 depends_on: [3009]

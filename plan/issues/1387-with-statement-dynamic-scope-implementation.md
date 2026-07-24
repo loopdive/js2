@@ -2,6 +2,7 @@
 id: 1387
 title: "feat: implement `with` statement — architect exploration of dynamic-scope compilation strategies"
 status: done
+done_cited_ok: true # #3474 exempt: `with` is permanently deferred; the cites are its intentional refusal
 created: 2026-05-08
 updated: 2026-06-11
 priority: high

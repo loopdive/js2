@@ -15,18 +15,23 @@
 // changelog.
 //
 // WHAT IT DOES (change-scoped, sibling to the #2093 probe gate):
-//   - For each `plan/issues/*.md` CHANGED by this change-set that is
-//     `status: done` and NOT exempt (`done_cited_ok: true`), count the LIVE
-//     test262 failures citing its `#NNNN` across BOTH baseline lanes.
-//   - FAIL when any such issue's citation count exceeds THRESHOLD — a PR must
-//     not flip (or leave) an issue `done` while its own tests still fail citing
-//     it. Reopen it (`status: ready`) or, for a legitimate detector / umbrella /
-//     intentional-refusal issue whose citations are EXPECTED, mark it exempt.
-//   - Change-scoped ⇒ a PR touching no `done` issue file does ZERO network work.
-//     The heavy baseline fetch only happens when a `done` issue is actually
-//     edited. On a baseline fetch failure the gate WARNS and PASSES — it is a
-//     safety net, not a hard correctness gate, and a 3rd-party network blip must
-//     never wedge the queue.
+// PRIMARY USE — a PERIODIC sweep (`--audit`, wired in
+// .github/workflows/done-status-audit.yml), NOT a per-PR gate. The check needs
+// a ~93MB both-lane baseline fetch that isn't justified on every impl PR (most
+// flip their own fresh issue to `done`, which has 0 live cites); a cheap per-PR
+// variant is impossible because a committed cite-baseline is stale for exactly
+// the fixing PR (its just-passing tests aren't reflected until the next sweep).
+// The sweep reports every cited issue with its status and goes RED (exit 1) when
+// a genuine false-`done` drifts — an issue `status: done` with more than
+// THRESHOLD live citations that is not exempt — so it is visible and actionable
+// without blocking any PR. On a baseline-fetch failure it errors out (the
+// scheduled run, not a PR, so nothing wedges).
+//
+// The change-scoped GATE mode (default, no flag) remains for LOCAL pre-check:
+// for each `plan/issues/*.md` a change-set touches that is `status: done` and
+// not exempt, it fetches and counts the live citations and fails if over
+// THRESHOLD. A change-set touching no `done` issue does zero network work; a
+// fetch failure warns and passes.
 //
 // EXEMPTION — a detector/umbrella/intentional-refusal issue (e.g. #2961 the
 // host-import leak guard, or an "X is not yet supported in --target standalone
@@ -48,9 +53,10 @@
 //     regardless of surrounding punctuation.
 //
 // USAGE
-//   node scripts/check-done-status-integrity.mjs            # change-scoped gate (CI)
-//   node scripts/check-done-status-integrity.mjs --audit    # whole-tree audit (Part A)
-//   node scripts/check-done-status-integrity.mjs --json     # machine-readable audit
+//   node scripts/check-done-status-integrity.mjs --audit    # periodic sweep (red on drift)
+//   node scripts/check-done-status-integrity.mjs --audit --warn-only   # report, never fail
+//   node scripts/check-done-status-integrity.mjs --json     # machine-readable audit (exit 0)
+//   node scripts/check-done-status-integrity.mjs            # change-scoped local pre-check
 //   THRESHOLD override: DONE_CITE_THRESHOLD env (default 15).
 
 import { readdirSync, readFileSync, existsSync, createReadStream } from "node:fs";
@@ -95,7 +101,9 @@ export function parseIssueFrontmatter(text) {
   const fm = m ? m[1] : "";
   const status = (fm.match(/^status:\s*"?(.*?)"?\s*$/m)?.[1] || "").toLowerCase();
   const title = fm.match(/^title:\s*"?(.*?)"?\s*$/m)?.[1] || "";
-  const doneCitedOk = /^done_cited_ok:\s*true\s*$/m.test(fm);
+  // Allow a YAML inline comment after the flag (each exemption records its
+  // reason inline: `done_cited_ok: true # #3474 exempt: <why>`).
+  const doneCitedOk = /^done_cited_ok:\s*true\s*(#.*)?$/m.test(fm);
   return { status, title, doneCitedOk };
 }
 
@@ -259,8 +267,8 @@ async function runGate() {
   return 0;
 }
 
-/** Whole-tree audit (Part A): report every issue that is cited, with status. */
-async function runAudit(asJson) {
+/** Whole-tree audit (periodic sweep / Part A): report every cited issue with status. */
+async function runAudit(asJson, warnOnly = false) {
   const index = loadIssueIndex();
   const issueExists = (id) => index.has(id);
   const { counts, ok } = await tallyCites(issueExists, null);
@@ -288,13 +296,23 @@ async function runAudit(asJson) {
   const falseDone = rows.filter((r) => r.status === "done" && r.cites > THRESHOLD && !index.get(r.id)?.doneCitedOk);
   console.log(`\n${falseDone.length} \`done\` issue(s) over threshold and NOT exempt (false-done candidates):`);
   for (const r of falseDone) console.log(`  #${r.id} — ${r.cites} cites — ${(r.title || "").slice(0, 74)}`);
+  if (falseDone.length > 0 && !warnOnly) {
+    console.error(
+      `\n✖ ${falseDone.length} false-\`done\` issue(s) drifted: each is \`done\` yet still has >${THRESHOLD} live ` +
+        `test262 failures citing it. Reopen it (\`status: ready\`) or, if the citations are EXPECTED ` +
+        `(detector / umbrella / intentional refusal), mark it \`done_cited_ok: true\`. See #3474.`,
+    );
+    return 1;
+  }
   return 0;
 }
 
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--audit") || argv.includes("--json")) {
-    process.exit(await runAudit(argv.includes("--json")));
+    // Periodic sweep: red (exit 1) on drift so it is visible without blocking
+    // PRs; `--warn-only` / `--json` report without failing.
+    process.exit(await runAudit(argv.includes("--json"), argv.includes("--warn-only") || argv.includes("--json")));
   }
   process.exit(await runGate());
 }

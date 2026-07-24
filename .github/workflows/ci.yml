@@ -304,19 +304,15 @@ jobs:
           git fetch --no-tags --depth=1 origin main 2>/dev/null || true
           ISSUE_COVERAGE_BASE=origin/main pnpm run check:issue-spec-coverage
 
-      - name: Done-status integrity gate (#3474)
-        # Sibling to #2093. CHANGE-SCOPED: for each plan/issues/*.md this PR
-        # touches that is `status: done` and not `done_cited_ok: true`, counts
-        # the LIVE test262 failures citing its #NNNN across both baseline lanes
-        # (keyed on code state, not a commit-message grep, so it catches
-        # status-drift even when the fix didn't cite the issue). HARD FAILS when
-        # a done issue still has > DONE_CITE_THRESHOLD live citations — reopen it
-        # or mark it exempt. A PR touching no `done` issue does ZERO network
-        # work; a baseline-fetch failure WARNS and PASSES (safety net, never
-        # wedges the queue on a 3rd-party network blip).
-        run: |
-          git fetch --no-tags --depth=1 origin main 2>/dev/null || true
-          pnpm run check:done-status-integrity
+      # NOTE (#3474): the done-status-integrity audit is a PERIODIC sweep
+      # (.github/workflows/done-status-audit.yml), NOT a per-PR gate — it needs a
+      # ~93MB both-lane baseline fetch that isn't justified on every impl PR
+      # (most flip their own fresh issue to `done`, which has 0 live cites). A
+      # cheap per-PR variant is not possible: a committed cite-baseline would be
+      # stale for exactly the fixing PR (its just-passing tests aren't reflected
+      # until the next sweep), false-flagging legitimate done-flips. The periodic
+      # sweep catches the same drift (issues that STAY `done`-with-cites over
+      # time). `pnpm run check:done-status-integrity` remains for local pre-check.
 
       - name: Verdict-logic must bump oracle_version (#3003)
         # A test262 VERDICT-LOGIC change (how a per-test result is SCORED:
