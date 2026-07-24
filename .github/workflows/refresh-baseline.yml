@@ -248,11 +248,34 @@ jobs:
           fi
 
       - name: Upload shard artifacts
+        id: upload_shard
         uses: actions/upload-artifact@v6
         if: always()
+        # #3404 — continue on a transient upload flake so the retry below can
+        # run; only if BOTH attempts fail does the shard (and thus the
+        # merge-and-promote job that `needs:` it) fail. Observed 2026-07-18:
+        # standalone shard 49's upload timed out (ETIMEDOUT on CreateArtifact)
+        # and aborted the entire standalone-heal promote until a human reran it.
+        continue-on-error: true
         with:
           retention-days: 1
           name: emergency-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
+          path: |
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+          if-no-files-found: warn
+
+      # #3404 — retry a transient artifact-upload flake once. Idempotent +
+      # `overwrite` clears any partially finalized artifact. A genuinely empty
+      # shard (no result file) is a `warn`, not a failure, so it never triggers
+      # this retry and the merge step's incomplete-data guard still catches a
+      # real missing chunk.
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: emergency-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
+          overwrite: true
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn

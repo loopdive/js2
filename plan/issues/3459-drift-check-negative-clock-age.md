@@ -1,10 +1,11 @@
 ---
 id: 3459
 title: "merge_group drift check reports negative baseline clock age (-43m) — clock-skew bug in instrumentation"
-status: ready
+status: done
+completed: 2026-07-24
 sprint: current
 created: 2026-07-19
-updated: 2026-07-19
+updated: 2026-07-24
 priority: low
 horizon: s
 feasibility: easy
@@ -45,10 +46,33 @@ and clamp/flag rather than print a negative age.
 
 ## Acceptance criteria
 
-- [ ] The baseline clock-age value is never negative.
-- [ ] The age is computed from a single, documented clock source and epoch
+- [x] The baseline clock-age value is never negative.
+- [x] The age is computed from a single, documented clock source and epoch
       unit.
-- [ ] A quick unit/sanity check covers the sign.
+- [x] A quick unit/sanity check covers the sign.
+
+## Resolution (2026-07-24)
+
+Root cause: the age was computed inline in `test262-sharded.yml`'s "Check
+baseline staleness" step as `(MAIN_HEAD_TS - BASELINE_TS) / 60`, where
+`BASELINE_TS` is the git `%ct` of the **baselines-repo** HEAD commit and
+`MAIN_HEAD_TS` is the `%ct` of **this checkout's** main HEAD. Both are already
+Unix epoch **seconds**, so the epoch unit matched — the defect was a clock-
+**source** mismatch: the baselines-repo commit is produced by `promote-baseline`
+*after* the main commit it was generated from, and on a `merge_group`
+re-validation it can reflect a **newer** main state than the speculative
+checkout's `origin/main`. So `MAIN_HEAD_TS - BASELINE_TS` was frequently
+negative (the observed `-43m`).
+
+Fix: extracted the computation into `scripts/baseline-clock-age.mjs`
+(`computeClockAge`), which documents the single clock source/unit (git `%ct`,
+Unix seconds) and **clamps** a fresher-than-main-HEAD baseline to age `0` with
+an honest stderr note (`baselineAhead`) instead of emitting a negative age. The
+staleness step now calls the helper. Unit + CLI tests in
+`tests/issue-3459-baseline-clock-age.test.ts` cover the sign (the `-43m` repro,
+identity, sub-minute truncation, invalid/sentinel timestamps). This also fixes
+the minor functional side-effect where a negative value silently skipped the
+`-ge 30` clock-based fallback warning.
 
 ## Notes
 

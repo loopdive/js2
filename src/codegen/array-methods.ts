@@ -8126,29 +8126,6 @@ function tryCompileArrayFlatNativeDepth1(
 }
 
 /**
- * (#2717) True iff `cbArg` is an INLINE arrow/function-expression whose body
- * syntactically contains a bare empty array literal `[]`. The native flatMap arm
- * refuses these a-priori — see the guard in {@link tryCompileFlatMapNative} for
- * why (an empty `[]` under flatMap's union contextual type mistypes the closure).
- * A named-function-reference callback is not inline → returns false (it compiles
- * as its own correctly-typed function).
- */
-function inlineCallbackHasEmptyArrayLiteral(cbArg: ts.Expression): boolean {
-  if (!ts.isArrowFunction(cbArg) && !ts.isFunctionExpression(cbArg)) return false;
-  let found = false;
-  const walk = (n: ts.Node): void => {
-    if (found) return;
-    if (ts.isArrayLiteralExpression(n) && n.elements.length === 0) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(n, walk);
-  };
-  walk(cbArg.body);
-  return found;
-}
-
-/**
  * (#2717) Native `arr.flatMap(cb, thisArg?)` for the host-free lanes.
  *
  * `flatMap(cb)` is spec-equivalent to `map(cb).flat(1)`, so we compile the native
@@ -8178,20 +8155,13 @@ function tryCompileFlatMapNative(
 ): ValType | null {
   if (callExpr.arguments.length < 1) return null; // flatMap requires a callback
 
-  // (#2717) A-priori guard: an inline callback whose body contains a bare empty
-  // array literal `[]` is compiled — under flatMap's `U | readonly U[]`
-  // contextual type — to a closure whose empty `[]` resolves to a DIFFERENT vec
-  // type than a sibling non-empty array in the same conditional, yielding an
-  // invalid closure (a Wasm fallthru type error). The static return type does NOT
-  // discriminate this (both branches report `number[]`), and the invalid closure
-  // is a global module side effect the native `map` cannot roll back — so this
-  // MUST be caught before compiling map. Refuse loudly instead. Over-conservative
-  // (also refuses a benign always-`[]` callback), but never emits invalid Wasm;
-  // no real test262 flatMap callback uses a bare-`[]` shape. Named-function-ref
-  // callbacks are exempt — they compile as their own function, correctly typed,
-  // outside flatMap's union context. (The underlying conditional-empty-array
-  // vec-type bug is tracked separately, out of scope here.)
-  if (inlineCallbackHasEmptyArrayLiteral(callExpr.arguments[0]!)) return null;
+  // (#3532) The former a-priori guard here — refusing any inline callback whose
+  // body contained a bare `[]` — is no longer needed. The underlying bug (an
+  // empty `[]` under flatMap's `U | readonly U[]` union contextual type resolving
+  // to a DIFFERENT vec type than a sibling non-empty array in the same
+  // conditional, yielding an invalid closure) is fixed at its source in
+  // `compileArrayLiteral` (`resolveEmptyArrayElemWasm`): `[]` now adopts the
+  // union's array-member element type, so `cond ? [] : [x]` unifies correctly.
 
   const mapType = compileArrayMap(ctx, fctx, propAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
   if (!mapType || (mapType.kind !== "ref" && mapType.kind !== "ref_null")) {
