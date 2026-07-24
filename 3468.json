@@ -1,8 +1,9 @@
 {
   "id": "3468",
   "assignee": "ttraenkler/sendev-3468-f1",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3468-f1-harness-routing",
   "claimed_at": "2026-07-23T20:16:18Z",
-  "updated_at": "2026-07-23T20:16:18Z"
+  "updated_at": "2026-07-24T00:01:50Z",
+  "released_at": "2026-07-24T00:01:50Z"
 }
