@@ -1,8 +1,8 @@
 {
   "id": "3576",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-24T14:11:33Z",
-  "updated_at": "2026-07-24T14:11:33Z"
+  "assignee": "ttraenkler/dev-opus-arrayhof",
+  "status": "in-progress",
+  "branch": "issue-3576-array-callback-trampoline-arity",
+  "claimed_at": "2026-07-24T14:40:38Z",
+  "updated_at": "2026-07-24T14:40:38Z"
 }
