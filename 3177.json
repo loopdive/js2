@@ -1,8 +1,9 @@
 {
   "id": "3177",
   "assignee": "ttraenkler/dev-std-2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3177-slice5-from-of",
   "claimed_at": "2026-07-24T08:14:13Z",
-  "updated_at": "2026-07-24T08:14:13Z"
+  "updated_at": "2026-07-24T09:01:14Z",
+  "released_at": "2026-07-24T09:01:14Z"
 }
