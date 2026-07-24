@@ -1,8 +1,8 @@
 {
   "id": "2984",
-  "assignee": "ttraenkler/fable-2984c",
+  "assignee": "ttraenkler/dev-opus5-mop",
   "status": "in-progress",
-  "branch": "issue-2984-gopd-ctor-receivers",
-  "claimed_at": "2026-07-10T12:46:08Z",
-  "updated_at": "2026-07-10T12:46:08Z"
+  "branch": "issue-2984-ctor-carrier-own-props",
+  "claimed_at": "2026-07-24T18:53:45Z",
+  "updated_at": "2026-07-24T18:53:45Z"
 }
