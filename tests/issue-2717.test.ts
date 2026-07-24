@@ -18,8 +18,10 @@ import { compile } from "../src/index.js";
  *     arm is depth-1-only; a variable-depth recursive flatten is a follow-up).
  *   - `flatMap(cb)` with an array-returning / scalar callback → native.
  *   - `flatMap(cb)` whose INLINE callback contains a bare empty array literal
- *     `[]` → refuses loudly (an empty `[]` under flatMap's `U | U[]` contextual
- *     type mistypes the closure; caught a-priori, never invalid Wasm).
+ *     `[]` (e.g. `x => cond ? [] : [x]`) → native, compiles + runs. (#3532 fixed
+ *     the underlying vec-type mismatch — `[]` under flatMap's `U | readonly U[]`
+ *     union context now adopts the sibling's element type — so the former
+ *     a-priori refusal guard was removed.)
  *
  * In every case NO unsatisfiable `__array_flat*` host import is emitted, and the
  * result is either a correct value OR a tracked compile error — never a module
@@ -47,6 +49,16 @@ describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", (
     ],
     ["flatMap() string array callback", `const a: string[] = ["a","bb"]; return a.flatMap(s => [s, s + s]).length;`, 4],
     ["flatMap() scalar callback ≡ map", `const a: number[] = [1,2,3]; return a.flatMap(x => x).length;`, 3],
+    // (#3532) An inline callback with a bare empty array literal `[]` in a
+    // conditional under flatMap's `U | readonly U[]` union context now compiles
+    // and runs — the former a-priori refusal (empty-array-literal guard) was
+    // removed once `resolveEmptyArrayElemWasm` fixed the underlying vec-type
+    // mismatch. 1,3 odd -> [1],[3]; 2 even -> []  ⇒ flattened [1,3], length 2.
+    [
+      "flatMap() empty-array-literal callback",
+      `const a: number[] = [1,2,3]; return a.flatMap(x => (x % 2 === 0 ? [] : [x])).length;`,
+      2,
+    ],
   ];
   for (const [label, body, want] of runCases) {
     it(`${label} → ${want}, no host import`, async () => {
@@ -64,11 +76,9 @@ describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", (
       `const a: number[][] = [[1,2],[3,4]]; return a.flat(1).length;`,
       /flat\(\) is not yet supported in --target standalone/,
     ],
-    [
-      "flatMap() empty-array-literal callback",
-      `const a: number[] = [1,2,3]; return a.flatMap(x => (x % 2 === 0 ? [] : [x])).length;`,
-      /flatMap\(\) with a non-array-returning callback is not yet supported/,
-    ],
+    // NOTE (#3532): the empty-array-literal flatMap callback used to be a loud
+    // case here (guarded a-priori). It now compiles + runs correctly — see the
+    // "flatMap() empty-array-literal callback" entry in `runCases` above.
   ];
   for (const [label, body, re] of loudCases) {
     it(`${label} → tracked compile error, never an unsatisfiable __array_flat* import`, async () => {

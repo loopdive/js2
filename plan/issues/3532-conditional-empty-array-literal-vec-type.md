@@ -1,7 +1,9 @@
 ---
 id: 3532
 title: "codegen: bare empty array literal `[]` in a conditional under a union contextual type mistypes the closure (invalid Wasm)"
-status: ready
+status: done
+completed: 2026-07-24
+assignee: ttraenkler/dev-opus-2
 sprint: current
 created: 2026-07-22
 priority: low
@@ -12,6 +14,8 @@ area: codegen
 language_feature: codegen-correctness
 goal: correctness
 related: [2717]
+loc-budget-allow:
+  - src/codegen/literals.ts
 ---
 
 # #3532 — conditional bare-`[]` under a union contextual type mistypes the closure
@@ -80,3 +84,39 @@ resolution — broad-impact, needs full test262 CI. Once fixed, remove the
 - The `inlineCallbackHasEmptyArrayLiteral` guard can be removed with no new
   invalid-Wasm.
 - No regression in the default gc lane.
+
+## Resolution (2026-07-24)
+
+Fixed at the source in `src/codegen/literals.ts`. New helper
+`resolveEmptyArrayElemWasm(ctx, ctxType)` resolves the element wasm type for a
+bare `[]` from its contextual type, now handling **(a)** a direct
+`ReadonlyArray<T>` context (previously only `Array<T>`), and **(b)** a UNION
+context that contains array member(s) — extracting the array member's element
+type when every array member resolves to the same wasm type (ambiguous
+multi-element-type unions like `number[] | string[]` keep the externref
+default). The empty-`[]` block in `compileArrayLiteral` now calls it, so `[]`
+under flatMap's `U | readonly U[]` union adopts the sibling `[x]`'s numeric vec
+type and the two conditional branches unify.
+
+With the source bug fixed, the #2717 a-priori guard
+(`inlineCallbackHasEmptyArrayLiteral` in `src/codegen/array-methods.ts`) was
+removed.
+
+## Test Results
+
+- `tests/issue-3532.test.ts` (new, 17 tests) — full discriminator table from
+  the issue in BOTH lanes: standalone runs + asserts the flattened `.length`;
+  gc lane asserts module VALIDITY (the regression was invalid Wasm; the gc
+  flatMap runtime path uses a host import). All pass.
+- `tests/issue-2717.test.ts` — the empty-array-literal flatMap callback moved
+  from the loud-refusal cases to the run cases (`x => cond ? [] : [x]` →
+  length 2, standalone, no host import). All pass.
+- Regression sweep (~40 array/coercion/ternary/hole/spread tests): the only
+  failures observed (`arrays-enums`, `fast-arrays array find`,
+  `issue-2160 bareEmptyNoCrash`) are **pre-existing on `origin/main`** —
+  verified by re-running against restored main source — and unrelated to this
+  change.
+- Gates: `tsc --noEmit` clean; `check:ir-fallbacks` OK (no bucket growth);
+  `check:oracle-ratchet` OK (no new checker usage — the helper reuses
+  `getTypeArguments`/`getContextualType`); `check:loc-budget` OK via the
+  `loc-budget-allow` grant above.

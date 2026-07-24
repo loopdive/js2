@@ -583,11 +583,34 @@ jobs:
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
+        id: upload_shard
         uses: actions/upload-artifact@v6
         if: always()
+        # #3404 — continue on a transient upload flake so the retry below can
+        # run; only if BOTH attempts fail does the shard (and thus the promote,
+        # which `needs:` the shard job) fail.
+        continue-on-error: true
         with:
           retention-days: 1
           name: test262-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
+          path: |
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+          if-no-files-found: warn
+
+      # #3404 — a single transient artifact-upload flake (e.g. `Failed to
+      # CreateArtifact: … ETIMEDOUT` on the upload step, NOT a test failure) on
+      # ONE of the 100+ shards otherwise aborts the whole promote. Retry the
+      # upload once; it is idempotent and `overwrite` clears any partially
+      # finalized artifact from the first attempt. This does NOT weaken the
+      # merge step's incomplete-data sanity floor: a genuinely empty shard
+      # (no files) is a `warn`, not a failure, so it never triggers this retry.
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: test262-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
+          overwrite: true
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn
@@ -694,8 +717,13 @@ jobs:
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
+        id: upload_shard_mg
         uses: actions/upload-artifact@v6
         if: always()
+        # #3404 — continue on a transient upload flake so the retry below can
+        # run; only if BOTH attempts fail does the shard (and thus the
+        # merge_group promote path that consumes these artifacts) fail.
+        continue-on-error: true
         with:
           retention-days: 1
           # Same naming convention as `test262-shard` (test262-<target>-shard-<N>)
@@ -705,6 +733,21 @@ jobs:
           # no naming collision risk even though chunk_label ranges overlap
           # (1..72 / 1..34 here vs 1..57 in test262-shard).
           name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
+          path: |
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+          if-no-files-found: warn
+
+      # #3404 — retry a transient artifact-upload flake once (see the matching
+      # rationale on `test262-shard`'s upload above). Idempotent + `overwrite`;
+      # a genuinely empty shard is a `warn`, not a failure, so the incomplete-
+      # data sanity floor at the merge step is preserved.
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard_mg.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
+          overwrite: true
           path: |
             benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
           if-no-files-found: warn

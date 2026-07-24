@@ -3486,6 +3486,40 @@ function isExprFreeOfReference(expr: ts.Node, name: string): boolean {
   return ok;
 }
 
+/**
+ * (#3532) Element wasm type for a bare empty `[]` from its contextual type.
+ * Handles a direct `Array<T>`/`ReadonlyArray<T>` context AND a UNION context
+ * (e.g. flatMap's `U | readonly U[]`) with array member(s), so `[]` adopts the
+ * array member's element type and registers the SAME vec type as a sibling
+ * `[x]` in the same conditional (`cond ? [] : [x]`) — otherwise the union falls
+ * through to `externref` while `[x]` is a numeric vec → invalid closure. Only
+ * adopts a union's element type when EVERY array member resolves to the same
+ * wasm type (ambiguous otherwise, e.g. `number[] | string[]` → keep externref).
+ */
+function resolveEmptyArrayElemWasm(ctx: CodegenContext, ctxType: ts.Type): ValType | undefined {
+  const fromArrayType = (t: ts.Type): ValType | undefined => {
+    const sym = (t as ts.TypeReference).symbol ?? t.symbol;
+    if (sym?.name === "Array" || sym?.name === "ReadonlyArray") {
+      const typeArgs = ctx.checker.getTypeArguments(t as ts.TypeReference);
+      if (typeArgs[0]) return resolveWasmType(ctx, typeArgs[0]);
+    }
+    return undefined;
+  };
+  const direct = fromArrayType(ctxType);
+  if (direct) return direct;
+  if (ctxType.isUnion()) {
+    const elems: ValType[] = [];
+    for (const part of ctxType.types) {
+      const e = fromArrayType(part);
+      if (e) elems.push(e);
+    }
+    if (elems.length > 0 && elems.every((e) => valTypesMatch(e, elems[0]!))) {
+      return elems[0];
+    }
+  }
+  return undefined;
+}
+
 export function compileArrayLiteral(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3571,20 +3605,19 @@ export function compileArrayLiteral(
     // the per-write grow-on-demand path otherwise pays.
     const fillBoundExpr = prealloc > 0 ? null : detectCountedFillLoopBound(expr);
 
-    // Empty array — try to determine element type from contextual type (e.g. number[])
+    // Empty array — try to determine element type from contextual type (e.g. number[]).
+    // Handles a direct `Array<T>`/`ReadonlyArray<T>` context AND a union context
+    // (e.g. flatMap's `U | readonly U[]`) so `[]` in `cond ? [] : [x]` adopts the
+    // sibling's concrete vec type instead of mis-defaulting to externref (#3532).
     let emptyElemKind = "externref";
     const ctxType = ctx.checker.getContextualType(expr) ?? ctx.checker.getTypeAtLocation(expr);
     if (ctxType) {
-      const sym = (ctxType as ts.TypeReference).symbol ?? ctxType.symbol;
-      if (sym?.name === "Array") {
-        const typeArgs = ctx.checker.getTypeArguments(ctxType as ts.TypeReference);
-        if (typeArgs[0]) {
-          const elemWasmType = resolveWasmType(ctx, typeArgs[0]);
-          emptyElemKind =
-            elemWasmType.kind === "ref" || elemWasmType.kind === "ref_null"
-              ? `ref_${(elemWasmType as { typeIdx: number }).typeIdx}`
-              : elemWasmType.kind;
-        }
+      const elemWasmType = resolveEmptyArrayElemWasm(ctx, ctxType);
+      if (elemWasmType) {
+        emptyElemKind =
+          elemWasmType.kind === "ref" || elemWasmType.kind === "ref_null"
+            ? `ref_${(elemWasmType as { typeIdx: number }).typeIdx}`
+            : elemWasmType.kind;
       }
     }
     const vecTypeIdx = getOrRegisterVecType(ctx, emptyElemKind);
