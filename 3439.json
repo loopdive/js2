@@ -1,8 +1,9 @@
 {
   "id": "3439",
   "assignee": "ttraenkler/dev-opus-2",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3439-standalone-unclassified-buckets",
   "claimed_at": "2026-07-23T23:48:02Z",
-  "updated_at": "2026-07-23T23:48:02Z"
+  "updated_at": "2026-07-24T00:17:00Z",
+  "released_at": "2026-07-24T00:17:00Z"
 }
