@@ -1,9 +1,8 @@
 {
   "id": "2872",
-  "assignee": "ttraenkler/fable-dev-5",
-  "status": "released",
-  "branch": "issue-2872-scalar-hof-any-decline",
-  "claimed_at": "2026-07-18T01:13:55Z",
-  "updated_at": "2026-07-18T01:49:58Z",
-  "released_at": "2026-07-18T01:49:58Z"
+  "assignee": "ttraenkler/dev-std-2",
+  "status": "in-progress",
+  "branch": "issue-2872-slice6-throws-prelude",
+  "claimed_at": "2026-07-24T08:45:34Z",
+  "updated_at": "2026-07-24T08:45:34Z"
 }
