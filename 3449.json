@@ -1,8 +1,8 @@
 {
   "id": "3449",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-19T00:52:24Z",
-  "updated_at": "2026-07-19T00:52:24Z"
+  "assignee": "ttraenkler/dev-opus-3",
+  "status": "in-progress",
+  "branch": "issue-3449-mg-shard-constants",
+  "claimed_at": "2026-07-24T00:35:30Z",
+  "updated_at": "2026-07-24T00:35:30Z"
 }
