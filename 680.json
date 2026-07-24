@@ -1,8 +1,9 @@
 {
   "id": "680",
   "assignee": "ttraenkler/dev-opus-2",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-680-standalone-generator-regression",
   "claimed_at": "2026-07-24T00:40:29Z",
-  "updated_at": "2026-07-24T00:40:29Z"
+  "updated_at": "2026-07-24T09:09:01Z",
+  "released_at": "2026-07-24T09:09:01Z"
 }
