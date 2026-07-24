@@ -1,8 +1,9 @@
 {
   "id": "3282",
   "assignee": "ttraenkler/dev-opus-3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3282-anyhelpers-slice",
   "claimed_at": "2026-07-24T01:04:51Z",
-  "updated_at": "2026-07-24T01:04:51Z"
+  "updated_at": "2026-07-24T01:26:00Z",
+  "released_at": "2026-07-24T01:26:00Z"
 }
