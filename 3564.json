@@ -1,8 +1,9 @@
 {
   "id": "3564",
   "assignee": "ttraenkler/dev-std-4",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3564-string-2arg-search-ir-demote",
   "claimed_at": "2026-07-24T08:46:09Z",
-  "updated_at": "2026-07-24T08:46:09Z"
+  "updated_at": "2026-07-24T09:22:31Z",
+  "released_at": "2026-07-24T09:22:31Z"
 }
