@@ -1,8 +1,8 @@
 {
   "id": "3175",
-  "assignee": "ttraenkler/dev-number",
+  "assignee": "ttraenkler/dev-std-2",
   "status": "in-progress",
-  "branch": "issue-3175-standalone-number-prototype",
-  "claimed_at": "2026-07-12T13:03:05Z",
-  "updated_at": "2026-07-12T13:03:05Z"
+  "branch": "issue-3175-slice-number-tostring",
+  "claimed_at": "2026-07-24T09:02:40Z",
+  "updated_at": "2026-07-24T09:02:40Z"
 }
