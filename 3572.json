@@ -1,8 +1,8 @@
 {
   "id": "3572",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-24T11:27:45Z",
-  "updated_at": "2026-07-24T11:27:45Z"
+  "assignee": "ttraenkler/dev-mapset-opus",
+  "status": "in-progress",
+  "branch": "issue-3572-weak-iterable-ctor",
+  "claimed_at": "2026-07-24T11:28:11Z",
+  "updated_at": "2026-07-24T11:28:11Z"
 }
