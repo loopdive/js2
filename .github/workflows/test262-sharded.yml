@@ -895,7 +895,7 @@ jobs:
             --input merged-reports/test262-standalone-results-merged.jsonl \
             --output merged-reports/test262-standalone-report-merged.json \
             --target standalone \
-            --max-unclassified-root-causes 300 \
+            --max-unclassified-root-causes 0 \
             --baseline-sha "${{ github.sha }}" \
             --baseline-generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}

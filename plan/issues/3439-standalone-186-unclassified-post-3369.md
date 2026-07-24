@@ -1,10 +1,12 @@
 ---
 id: 3439
 title: "Classify the 186 standalone failures #3369 exposed; ratchet --max-unclassified-root-causes 300→0"
-status: ready
+status: done
+completed: 2026-07-24
+assignee: ttraenkler/dev-opus-2
 sprint: current
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-24
 priority: high
 horizon: m
 feasibility: medium
@@ -15,6 +17,53 @@ language_feature: n/a
 goal: standalone-mode
 related: [3426, 2961, 3369, 3378]
 ---
+
+## Resolution (2026-07-24, dev-opus-2, verify-first)
+
+**The bucket work the issue anticipated is no longer needed — the fix is the
+gate flip alone.** Measured against CURRENT main (the standalone merged jsonl
+from the merge_group runs of pr-3530 `30053686236` and pr-3531 `30053051082`,
+both 2026-07-23):
+
+- The #3369-era signature `wasm exception during module init` has **0 records**
+  on current main (down from 185), and `error_category: "unreachable"` has **0**
+  (the single import.meta record is gone too). Six days of main movement
+  fixed/reclassified the 186.
+- Running `scripts/build-test262-report.mjs --target standalone
+  --max-unclassified-root-causes 0 --include-proposals` on BOTH runs' merged
+  jsonl exits **0** with the EXISTING `STANDALONE_ROOT_CAUSE_BUCKETS` —
+  `root_cause_map.unclassified.count === 0` on each (20,424 / 20,420
+  non-pass-non-skip records, all classified). The broad residual buckets
+  (`misc-spec-tail`, `demasked-native-assertion`, `nonstringifiable-wasmgc-exception`,
+  `standalone-host-import-leak-reclassification`) absorb every current failure.
+
+So adding a bucket keyed on `wasm exception during module init` would be **dead
+code catching 0 records** — and worse, if that signature ever reappears a
+pre-existing catch-all would silently absorb it, hiding the very regression the
+gate exists to surface (issue acceptance criterion #3 forbids exactly this). No
+bucket added.
+
+**Enforcement confirmed live** before flipping: a fixture with one unclassified
+`fail` record at `--max-unclassified-root-causes 0` exits **1**
+("…1 unclassified failures; threshold is 0."); the enforcement lives at
+`build-test262-report.mjs` ~L1101-1108 (`process.exitCode = 1` when
+`unclassified.count > threshold`). So restoring 300→0 restores a genuinely
+armed gate, not a no-op.
+
+**Change:** `.github/workflows/test262-sharded.yml` "Build merged standalone
+test262 report" step — `--max-unclassified-root-causes 300` → `0` (reverting
+#3378's temporary relaxation). No `scripts/build-test262-report.mjs` change.
+
+**Test:** `tests/issue-3439.test.ts` (4 tests) locks the load-bearing invariant
+— the gate is ARMED at 0 (unclassified → non-zero exit), PASSES when all
+failures are classified, is opt-in (no flag → no enforcement), and the relaxed
+300 masked a single unclassified (why the flip matters).
+
+**Exposure note:** flipping to a hard 0 arms the gate with zero margin — the
+merge_group run gating this PR (or any PR landing while unclassified > 0) will
+park if a NEW/transient unclassified signature appears. That is the designed
+behavior; the fix for a park is to classify the new signature, not to revert
+this flip.
 
 ## Problem
 

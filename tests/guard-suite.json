@@ -47,6 +47,11 @@
       "path": "tests/issue-2980-carrier-fallback.test.ts",
       "guards": "standalone Promise carrier lane split: all-drivable async-gen modules import-free (native $Promise), non-drivable ones host-consistent (legacy __gen_* buffer, no mixing)",
       "broken_by": "#3132 PR-2/PR #3013 (2026-07-13) superseded the blanket #2980 fallback silently — red 10 days, found+reconciled by #3558"
+    },
+    {
+      "path": "tests/issue-2961.test.ts",
+      "guards": "standalone host-import leak scan (warning severity): a non-allowlisted leak (user extern class → env::Widget_*) WARNS + still emits (floor-neutral); an allowlisted import (Math_random) is silent; console.log is host-free (native strings+console); the wasi strict path stays a hard error",
+      "broken_by": "native strings + native console retired the __str_from_mem string bridge, so the old console.log leak example went host-free and the 4 console.log assertions silently rotted — a #3558-class invisible stale guard; refreshed to the durable extern-class example + folded into the required gate by #3561"
     }
   ]
 }
