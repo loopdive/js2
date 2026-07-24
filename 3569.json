@@ -1,8 +1,8 @@
 {
   "id": "3569",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-24T11:09:19Z",
-  "updated_at": "2026-07-24T11:09:19Z"
+  "assignee": "ttraenkler/agent-json-object-reflect",
+  "status": "in-progress",
+  "branch": "issue-3569-json-wellformed-stringify",
+  "claimed_at": "2026-07-24T11:10:41Z",
+  "updated_at": "2026-07-24T11:10:41Z"
 }
