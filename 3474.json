@@ -1,8 +1,9 @@
 {
   "id": "3474",
   "assignee": "ttraenkler/dev-opus-3",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3474-done-status-integrity",
   "claimed_at": "2026-07-24T00:41:34Z",
-  "updated_at": "2026-07-24T00:41:34Z"
+  "updated_at": "2026-07-24T00:43:04Z",
+  "released_at": "2026-07-24T00:43:04Z"
 }
