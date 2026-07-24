@@ -1,8 +1,8 @@
 {
   "id": "3024",
-  "assignee": "ttraenkler/sr-3024",
+  "assignee": "ttraenkler/agent-a3fa3add",
   "status": "in-progress",
-  "branch": "issue-3024-toString-closure-funcref",
-  "claimed_at": "2026-07-21T23:38:05Z",
-  "updated_at": "2026-07-21T23:38:05Z"
+  "branch": "issue-3024-invalid-wasm-remeasure",
+  "claimed_at": "2026-07-24T13:10:35Z",
+  "updated_at": "2026-07-24T13:10:35Z"
 }
