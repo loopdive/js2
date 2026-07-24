@@ -1,8 +1,8 @@
 {
   "id": "3282",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-14T17:31:37Z",
-  "updated_at": "2026-07-14T17:31:37Z"
+  "assignee": "ttraenkler/dev-opus-3",
+  "status": "in-progress",
+  "branch": "issue-3282-anyhelpers-slice",
+  "claimed_at": "2026-07-24T01:04:51Z",
+  "updated_at": "2026-07-24T01:04:51Z"
 }
