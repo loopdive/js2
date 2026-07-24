@@ -1,9 +1,8 @@
 {
   "id": "2875",
-  "assignee": "ttraenkler/fable-dev-3",
-  "status": "released",
-  "branch": "issue-2875-string-proto-fidelity",
-  "claimed_at": "2026-07-18T00:33:29Z",
-  "updated_at": "2026-07-24T08:12:58Z",
-  "released_at": "2026-07-24T08:12:58Z"
+  "assignee": "ttraenkler/dev-std-4",
+  "status": "in-progress",
+  "branch": "issue-2875-string-roc-undefined",
+  "claimed_at": "2026-07-24T08:14:42Z",
+  "updated_at": "2026-07-24T08:14:42Z"
 }
