@@ -1,8 +1,8 @@
 {
   "id": "3565",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-24T10:05:25Z",
-  "updated_at": "2026-07-24T10:05:25Z"
+  "assignee": "ttraenkler/agent-a63dab458f1a10042",
+  "status": "in-progress",
+  "branch": "issue-3565-restore-ir-demote-contracts",
+  "claimed_at": "2026-07-24T10:08:00Z",
+  "updated_at": "2026-07-24T10:08:00Z"
 }
