@@ -1,8 +1,9 @@
 {
   "id": "3200",
   "assignee": "ttraenkler/dev-opus-arrayhof",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3200-array-iter-generics",
   "claimed_at": "2026-07-24T13:09:21Z",
-  "updated_at": "2026-07-24T13:09:21Z"
+  "updated_at": "2026-07-24T14:38:17Z",
+  "released_at": "2026-07-24T14:38:17Z"
 }
