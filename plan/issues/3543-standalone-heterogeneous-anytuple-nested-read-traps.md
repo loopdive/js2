@@ -1,8 +1,9 @@
 ---
 id: 3543
 title: "standalone: heterogeneous inner-tuple (anytuple) nested reads broken — numbers read back NaN, strings trap 'dereferencing a null pointer' (5 red tests on main)"
-status: ready
+status: in-review
 created: 2026-07-23
+updated: 2026-07-26
 priority: medium
 feasibility: hard
 reasoning_effort: high
@@ -15,7 +16,13 @@ umbrella: 2860
 sprint: current
 horizon: m
 related: [2190, 2873, 3497]
-origin: "Red-suite triage 2026-07-23 (fable-exposed): 5 tests in tests/issue-2190.test.ts (#2190b block) fail on clean origin/main; bisect (tech lead) shows identical failures at aa203fdc5b7b3b, the commit BEFORE #3497 — long-standing, not caused by anything landed 2026-07-23."
+origin: "Red-suite triage 2026-07-23 (fable-exposed): 5 tests in tests/issue-2190.test.ts (#2190b block) fail on clean origin/main. A scoped source bisection on 2026-07-26 identified 570c816bbea429b81e672ccc2f9b9caed44ba33a (#745 S4.5 unionAnyRep native-lane default flip) as the first bad commit."
+# The fix belongs at compileArrayLiteral's carrier-selection seam: it must align
+# the outer expected vec type with the inner literal writer before construction.
+loc-budget-allow:
+  - src/codegen/literals.ts
+func-budget-allow:
+  - src/codegen/literals.ts::compileArrayLiteral
 ---
 
 # #3543 — standalone heterogeneous anytuple nested reads: NaN / null-deref traps
@@ -25,41 +32,44 @@ origin: "Red-suite triage 2026-07-23 (fable-exposed): 5 tests in tests/issue-219
 `npx vitest run tests/issue-2190.test.ts` — the 5 failures in the
 `#2190b heterogeneous inner-tuple read-back` block:
 
-| test | expected | actual |
-| --- | --- | --- |
-| `[["a", 7]]` — `e[0][1]` reads the number | 7 | **NaN** |
-| `[["a", 7]]` — `e[0][0]` still reads the string | "a" | **trap: dereferencing a null pointer** |
-| `[[7, "ab"]]` — `e[0][1]` reads the string | "ab" | **trap: dereferencing a null pointer** |
-| `[[7, "ab"]]` — `e[0][0]` still reads the number | 7 | **NaN** |
-| three-element mixed `[string, number, string]` | — | **trap: dereferencing a null pointer** |
+| test                                             | expected | actual                                 |
+| ------------------------------------------------ | -------- | -------------------------------------- |
+| `[["a", 7]]` — `e[0][1]` reads the number        | 7        | **NaN**                                |
+| `[["a", 7]]` — `e[0][0]` still reads the string  | "a"      | **trap: dereferencing a null pointer** |
+| `[[7, "ab"]]` — `e[0][1]` reads the string       | "ab"     | **trap: dereferencing a null pointer** |
+| `[[7, "ab"]]` — `e[0][0]` still reads the number | 7        | **NaN**                                |
+| three-element mixed `[string, number, string]`   | —        | **trap: dereferencing a null pointer** |
 
 The sibling cases in the same block PASS: boolean+number heterogeneous tuple,
 flat `any[]` `[0, "last"]`, pure `number[][]` nested, pure `string[]`. So the
 break is specific to **string⊕number heterogeneous INNER tuples read through
 the nested `e[0][k]` dynamic path**.
 
-## Diagnosis (triage-level, verbatim from the red-suite investigation)
+## Confirmed root cause
 
-- This is a **trap-class** failure (NaN garbage / null-pointer deref), NOT a
-  miss-value-class one — do not confuse it with the two (now re-pinned)
-  `issue-3183` miss-value expectations in the same triage batch.
-- Numbers reading back **NaN** + strings **null-deref** through the same path
-  smells like the inner tuple's element representation and the reader's
-  expected representation diverging per element kind — i.e. the nested read
-  unboxes with the WRONG per-kind arm (a number slot read as a ref → null →
-  deref trap; a ref slot read as a number → NaN).
-- Plausibly value-rep / RTT-creation-order territory: cf.
-  `reference_2873_funcref_wrapper_chain_rtt_order` (wrapper RTT identity is
-  creation-ORDER-dependent) and the #2379 boxed-any element-rep notes
-  (`reference_2379_new_array_n_boxed_any_elem_rep`). The heterogeneous literal
-  path may register/choose a `__vec_<kind>` carrier whose runtime `ref.test`
-  ordering in `__extern_get_idx`'s spliced vec arms
-  (`fillExternGetIdxVecArms`, src/codegen/object-runtime.ts ~5317) resolves a
-  DIFFERENT carrier than the one the literal actually built.
-- Long-standing: identical 7-failure state (these 5 + the 2 since-re-pinned
-  #3183 ones) at `aa203fdc5b7b3b` (pre-#3497). #3497 and #3506/#3537 are both
-  exonerated (verified by running the suite against clean main src and against
-  the #3537 branch — identical failures on both).
+- The first bad commit is
+  `570c816bbea429b81e672ccc2f9b9caed44ba33a`, which made `unionAnyRep` the
+  native-string-lane default. `JS2WASM_UNION_ANYREP=0` restores all 20 focused
+  tests, confirming the representation switch as the causal boundary.
+- The inner `["a", 7]` literal is initially correct: its bare-`any` context
+  activates the existing #2190b/#2106 widening and builds `__vec_externref`,
+  with each element boxed according to its actual JS type.
+- The outer literal instead resolves the inner expression's inferred
+  `(string | number)[]` type under `unionAnyRep`, so it expects
+  `__vec_ref_<AnyValue>`. Generic vec-to-vec coercion immediately copies the
+  correct externref elements through `__any_box_extern_s1` into that different
+  carrier.
+- `__extern_get_idx` then matches the **correct** AnyValue-vec RTT arm; arm
+  creation/test order is not the bug. Its generic GC-ref boxing returns an
+  externref wrapping the `$AnyValue` struct rather than the JS payload. Numeric
+  consumers therefore see an unrecognized wrapper and produce NaN, while
+  native-string casts miss and null-deref.
+- The implementation re-keys only this proven construction mismatch: when both
+  nested literals are contextually `any`, the inferred carrier is specifically
+  `Vec<AnyValue>`, and neither literal spreads, the outer carrier expects the
+  canonical `Vec<externref>` that the inner writer actually emits. Typed unions,
+  homogeneous matrices, flat arrays, spread construction, and the flag-off
+  lane stay outside the predicate.
 
 ## Repro
 

@@ -148,6 +148,16 @@ function arrayLiteralIsUndefinedOrHoleOnly(arr: ts.ArrayLiteralExpression): bool
 }
 
 /**
+ * Is an array literal produced directly into an unconstrained `any` element
+ * position? Accept bare `any` (an inner literal of `any[]`) and
+ * `Array<any>`/`ReadonlyArray<any>` (the outer literal), but not typed unions.
+ */
+function arrayLiteralHasAnyElementContext(ctx: CodegenContext, arr: ts.ArrayLiteralExpression): boolean {
+  const contextual = ctx.oracle.contextualFactOf(arr);
+  return contextual?.kind === "any" || (contextual?.kind === "array" && contextual.element.kind === "any");
+}
+
+/**
  * Ensure that a struct registered for an object literal includes fields for
  * computed property names that TypeScript cannot statically resolve.
  * When TS returns 0 properties (e.g. { [1+1]: 2 }), we resolve the computed
@@ -3982,6 +3992,38 @@ export function compileArrayLiteral(
         }
       }
     }
+  }
+  // (#3543) Preserve the carrier that a nested heterogeneous literal ACTUALLY
+  // builds in an `any` context. With `unionAnyRep` enabled, the outer literal's
+  // first-element TS type `(string | number)[]` resolves to
+  // `__vec_ref_<AnyValue>`. The inner literal's existing #2190b/#2106 writer,
+  // however, correctly widens its mixed elements to canonical
+  // `__vec_externref`. Compiling that inner value against the inferred outer
+  // carrier immediately copies every externref element into `$AnyValue`; the
+  // dynamic vec reader then externalizes the wrapper rather than its payload,
+  // so numbers become NaN and native-string casts null-deref. The RTT arm order
+  // is not involved: the correct AnyValue vec arm matches.
+  //
+  // Re-key only this proven writer/inference mismatch. Both literals must be in
+  // a genuine any context, the inferred element must specifically be a vec of
+  // AnyValue, and neither construction may contain a spread. Typed union
+  // matrices, homogeneous matrices, flat arrays, and the flag-off lane remain
+  // byte-identical.
+  const inferredInnerVec =
+    elemWasm.kind === "ref" || elemWasm.kind === "ref_null" ? getVecInfo(ctx, elemWasm.typeIdx) : null;
+  if (
+    ctx.unionAnyRep &&
+    !hasSpread &&
+    ts.isArrayLiteralExpression(firstElem) &&
+    !firstElem.elements.some(ts.isSpreadElement) &&
+    arrayLiteralHasAnyElementContext(ctx, expr) &&
+    arrayLiteralHasAnyElementContext(ctx, firstElem) &&
+    inferredInnerVec &&
+    (inferredInnerVec.elemType.kind === "ref" || inferredInnerVec.elemType.kind === "ref_null") &&
+    inferredInnerVec.elemType.typeIdx === ctx.anyValueTypeIdx
+  ) {
+    const innerVecIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    elemWasm = { kind: "ref_null", typeIdx: innerVecIdx };
   }
   // (#2769) for-of over a direct array LITERAL whose binding pattern has an
   // element default / nested sub-pattern: the OUTER literal must not coerce an

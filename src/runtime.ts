@@ -989,6 +989,56 @@ function _isWasmStruct(obj: any): boolean {
   }
 }
 
+/**
+ * (#3637) THE vec discriminator for host-side runtime code. Use this — never an
+ * open-coded `typeof __vec_len(v) === "number"` probe.
+ *
+ * WHY THIS EXISTS. `__vec_len` is a *length accessor*, not a predicate. Its
+ * emitted body (`codegen/vec-access-exports.ts` `_emitVecAccessExportsInner`) is
+ * a `ref.test` chain over every registered vec type whose FINAL `else` arm is
+ * `i32.const 0; return` — it answers **0 for any non-vec value and does not
+ * throw**. So `typeof __vec_len(v) === "number" && v >= 0` is *vacuously true
+ * for every WasmGC struct*, and `len === 0` is indistinguishable from "not a
+ * vec". Every call site that used that idiom as a discriminator silently
+ * classified plain objects, class instances, Maps-as-structs, generators and
+ * boxed values as **empty arrays** — erasing their contents rather than failing.
+ *
+ * The positive discriminator is `__is_vec`, emitted by the SAME pass as
+ * `__vec_len` (both unconditional once `ctx.vecTypeMap` is non-empty — asserted
+ * by `tests/issue-3637-*.test.ts`), so `__is_vec` is present whenever
+ * `__vec_len` is. It is the identical `ref.test` chain but returns 1/0, which
+ * makes "empty vec" and "not a vec" distinguishable.
+ *
+ * History: #2836 replaced this idiom at seven sites; #3486 found an eighth
+ * (`extern_get`'s `.constructor` arm, which answered `Array` for every struct);
+ * #3637 is the exhaustive sweep of the remainder plus this shared predicate, so
+ * a ninth site cannot be written by copy-paste.
+ *
+ * The `__vec_len` branch below is LEGACY PARITY ONLY, for a hypothetical module
+ * that exports `__vec_len` without `__is_vec`. Current codegen cannot produce
+ * that shape; the branch exists so an unexpected module degrades to the old
+ * (over-broad) answer rather than losing vec support entirely.
+ */
+function _isWasmVec(v: any, exports: Record<string, Function> | undefined): boolean {
+  if (v == null || typeof v !== "object" || !exports) return false;
+  const isVec = exports.__is_vec;
+  if (typeof isVec === "function") {
+    try {
+      return isVec(v) === 1;
+    } catch {
+      return false;
+    }
+  }
+  const vecLen = exports.__vec_len;
+  if (typeof vecLen !== "function") return false;
+  try {
+    const len = vecLen(v);
+    return typeof len === "number" && len >= 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Check if a value can be used as a WeakMap/WeakSet key (must be object or function). */
 function _canBeWeakKey(obj: any): boolean {
   return obj != null && (typeof obj === "object" || typeof obj === "function");
@@ -1994,16 +2044,25 @@ function _materializeIterable(
     if (!exports) return iter;
     const vecLen = exports.__vec_len;
     const vecGet = exports.__vec_get;
-    if (typeof vecLen !== "function" || typeof vecGet !== "function") return iter;
-    const len = vecLen(iter) as number;
-    if (typeof len !== "number" || len < 0) return iter;
-    const result: any[] = new Array(len);
-    for (let i = 0; i < len; i++) {
-      result[i] = vecGet(iter, i);
+    // (#3637) POSITIVE discriminator. The old `typeof vecLen(iter) === "number"`
+    // guard was vacuous (see `_isWasmVec`), so EVERY wasm struct materialised to
+    // `[]` here — a plain object, a class instance, or a struct whose
+    // `@@iterator` is a wasm closure all came back as an empty array instead of
+    // being drained or reported not-iterable. A non-vec struct now falls
+    // through to the closure-drain path below, and failing that is returned
+    // unchanged so the caller's own not-iterable handling runs.
+    if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(iter, exports)) {
+      const len = vecLen(iter) as number;
+      if (typeof len !== "number" || len < 0) return iter;
+      const result: any[] = new Array(len);
+      for (let i = 0; i < len; i++) {
+        result[i] = vecGet(iter, i);
+      }
+      return result;
     }
-    return result;
   }
-  // Plain JS object. If its `[Symbol.iterator]` is a Wasm closure struct
+  // Plain JS object (or a non-vec wasm struct, #3637). If its
+  // `[Symbol.iterator]` is a Wasm closure struct
   // (compiled `obj[Symbol.iterator] = function(){…}`), native Array.from would
   // see a non-function and throw — drain it through __call_fn_0 instead
   // (#1320/#1684). Otherwise pass through (real JS iterables: Maps, Sets,
@@ -2129,7 +2188,9 @@ function _convertIterableForHost(obj: any, exports: Record<string, Function> | u
         return arr;
       }
     } catch {
-      // not a vec — fall through
+      // (#3637) NOT "not a vec" — `__vec_len` never throws for a non-vec, it
+      // returns 0 (`__is_vec` on the guard above is what answers that). Only a
+      // genuine element-read trap lands here.
     }
   }
   return obj;
@@ -2956,35 +3017,61 @@ function _wasmToPlain(val: any, exports: Record<string, Function> | undefined, s
 
     // Try vec (array wrapper) conversion — vec structs have {length, data} fields
     // but are NOT registered in __struct_field_names (they're internal types).
-    if (exports) {
+    //
+    // (#3637) Gated on the POSITIVE `__is_vec` discriminator. The old code
+    // treated `__vec_len(val) === 0` as "empty array" with the reasoning quoted
+    // in `_normaliseJsonReplacer` — "len === 0 could be an empty array or a
+    // non-vec struct … treat len=0 as an empty array". That was the vacuity
+    // itself: `__vec_len`'s not-a-vec DEFAULT is 0, so every field-less struct
+    // (a class instance carrying only methods, a boxed value, a closure that
+    // slipped past `__is_closure`) flattened to `[]`. Measured pre-fix:
+    // `JSON.stringify(new Empty())` → `"[]"` and `{a: new Empty()}` →
+    // `{"a":[]}`, where the host answers `"{}"` / `{"a":{}}`.
+    const isVec = exports ? _isWasmVec(val, exports) : false;
+    if (isVec && exports) {
       const vecLen = exports.__vec_len;
       const vecGet = exports.__vec_get;
       if (typeof vecLen === "function" && typeof vecGet === "function") {
         try {
           const len = vecLen(val);
-          if (typeof len === "number" && len > 0) {
+          if (typeof len === "number" && len >= 0) {
             const arr: any[] = [];
             for (let i = 0; i < len; i++) {
               arr.push(_wasmToPlain(vecGet(val, i), exports, seen));
             }
             return arr;
           }
-          // len === 0 could be an empty array or a non-vec struct with 0 as first field.
-          // Since we already checked field names above (and it wasn't a named struct),
-          // treat len=0 as an empty array if __vec_get doesn't throw.
-          if (len === 0) {
-            return [];
-          }
         } catch (e) {
-          // Propagate a circular-structure TypeError raised by a deeper element;
-          // only a genuine "not a vec" probe failure should fall through.
+          // Propagate a circular-structure TypeError raised by a deeper element.
           if (e instanceof TypeError) throw e;
-          // Not a vec — fall through
+          // (#3637) The rest is NOT "not a vec" — `_isWasmVec` on the guard
+          // above decided that and `__vec_len` never throws for a non-vec. Only
+          // a genuine element-read trap lands here; fall through to the object
+          // rendering below.
         }
       }
+      // A genuine vec we cannot read (no `__vec_get`) — hand the raw ref back
+      // rather than inventing a shape for it.
+      return val;
     }
 
-    // Unknown WasmGC struct — return as-is
+    // (#3637) A WasmGC struct that is neither a named struct nor a vec is still
+    // an OBJECT, not an array: render it as `{}` plus any sidecar-assigned
+    // dynamic own properties, which is what the host produces for the same
+    // source (`JSON.stringify(new Empty())` → `"{}"`). Before the `__is_vec`
+    // gate above, such values never reached here — the vacuous `len === 0`
+    // probe claimed them as empty arrays.
+    if (exports) {
+      const sidecar = _wasmStructProps.get(val);
+      if (sidecar) {
+        const out: Record<string, any> = {};
+        for (const key of Object.keys(sidecar)) out[key] = _wasmToPlain(sidecar[key], exports, seen);
+        return out;
+      }
+      return {};
+    }
+
+    // No exports to introspect with — return as-is
     return val;
   } finally {
     if (seen) seen.delete(val);
@@ -3027,17 +3114,20 @@ function _normaliseJsonReplacer(
     if (wrapped) return { kind: "fn", fn: wrapped };
     // (#2671) §25.5.2.1 step 4.b — only an *array* replacer becomes a
     // PropertyList; any other object (`JSON.stringify(obj, {})`,
-    // `new String('s')`, …) is silently ignored. `_wasmToPlain` cannot tell an
-    // empty object struct from an empty vec (both report `__vec_len` 0 — the
-    // not-a-vec default), so it mis-materialises `{}` as `[]`, producing an
-    // empty PropertyList that wrongly filters out every key (`{}` → `"{}"`).
-    // Gate the PropertyList path on the *positive* `__is_vec` discriminator
-    // (`ref.test` over all registered vec types); a plain object struct answers
-    // 0 and correctly falls through to `{ kind: "none" }` (no replacer). Genuine
-    // array replacers cross the host boundary as real JS arrays and are handled
-    // by the `Array.isArray(replacer)` branch above, so this branch is reached
-    // only by object structs (and, defensively, any true wasm vec struct, which
+    // `new String('s')`, …) is silently ignored. Gate the PropertyList path on
+    // the *positive* `__is_vec` discriminator (`ref.test` over all registered
+    // vec types); a plain object struct answers 0 and correctly falls through to
+    // `{ kind: "none" }` (no replacer). Genuine array replacers cross the host
+    // boundary as real JS arrays and are handled by the
+    // `Array.isArray(replacer)` branch above, so this branch is reached only by
+    // object structs (and, defensively, any true wasm vec struct, which
     // `__is_vec` still routes to the PropertyList path).
+    //
+    // (#3637) This comment used to justify the gate by noting that
+    // `_wasmToPlain` "mis-materialises `{}` as `[]`" — true when written, and
+    // the clearest surviving statement of the vacuity, but no longer accurate:
+    // `_wasmToPlain` is itself `__is_vec`-gated now, so the gate here is
+    // defence-in-depth rather than a workaround for a broken callee.
     const isVecFn = exports?.__is_vec;
     if (typeof isVecFn === "function" && isVecFn(replacer) === 1) {
       const asPlain = _wasmToPlain(replacer, exports);
@@ -3072,17 +3162,14 @@ function _buildJsonPropertyList(arr: any[]): string[] {
 function _liveIsArray(v: any, exports: Record<string, Function> | undefined): boolean {
   if (Array.isArray(v)) return true;
   if (!_isWasmStruct(v) || !exports) return false;
-  // A WasmGC value is a vec-wrapper when it has no named struct fields but
-  // does respond to __vec_len. Mirrors _wasmToPlain's branch at :1922.
-  if (_getStructFieldNames(v, exports)) return false;
-  const vecLen = exports.__vec_len;
-  if (typeof vecLen !== "function") return false;
-  try {
-    const len = vecLen(v);
-    return typeof len === "number" && len >= 0;
-  } catch {
-    return false;
-  }
+  // (#3637) POSITIVE `__is_vec` discriminator. The old test was
+  // "no named struct fields AND responds to `__vec_len`" — the second half is
+  // vacuous (see `_isWasmVec`), so the `_getStructFieldNames` filter was doing
+  // ALL the work and every FIELD-LESS struct (a class instance carrying only
+  // methods) was classified as an array. That drove the whole JSON live walk:
+  // `JSON.stringify(new Empty(), fn)` serialized as `[]`, and `_liveGet` read
+  // its properties through `__vec_get` instead of `__sget_*`.
+  return _isWasmVec(v, exports);
 }
 
 function _liveGet(obj: any, key: string | number, exports: Record<string, Function> | undefined): any {
@@ -6456,7 +6543,11 @@ function _toJsArray(arr: any, exports: Record<string, Function> | undefined): an
   if (exports) {
     const vecLen = exports.__vec_len;
     const vecGet = exports.__vec_get;
-    if (typeof vecLen === "function" && typeof vecGet === "function") {
+    // (#3637) POSITIVE discriminator — the bare `typeof len === "number"` test
+    // this replaces was vacuous (see `_isWasmVec`), so ANY non-vec wasm struct
+    // handed to an array-method host import silently became `[]` instead of the
+    // documented "wrap single value" fallback.
+    if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(arr, exports)) {
       try {
         const len = vecLen(arr) as number;
         if (typeof len === "number" && len >= 0) {
@@ -6467,7 +6558,9 @@ function _toJsArray(arr: any, exports: Record<string, Function> | undefined): an
           return result;
         }
       } catch {
-        // Not a vec — fall through
+        // (#3637) NOT "not a vec" — `_isWasmVec` on the guard above owns that
+        // question; `__vec_len` returns 0 for a non-vec instead of throwing.
+        // Only a genuine element-read trap lands here.
       }
     }
   }
@@ -6506,6 +6599,12 @@ function _toJsArrayDeep(arr: any, exports: Record<string, Function> | undefined,
   const vecLen = exports.__vec_len;
   const vecGet = exports.__vec_get;
   if (typeof vecLen !== "function" || typeof vecGet !== "function") return arr;
+  // (#3637) "A non-vec value passes through unchanged" (the doc comment above)
+  // was FALSE for a non-vec *struct*: with no discriminator at all, `__vec_len`
+  // answered its not-a-vec default 0 and the struct came back as `[]`. Measured
+  // pre-fix: `[{x: 1}].flat()` → `[]` (the object element was destroyed, then
+  // flattened away). `_isWasmVec` makes the documented behaviour true.
+  if (!_isWasmVec(arr, exports)) return arr;
   try {
     const len = vecLen(arr) as number;
     if (typeof len !== "number" || len < 0) return arr;
@@ -8859,7 +8958,17 @@ assert._isSameValue = isSameValue;
           if (typeof v === "object" && _isWasmStruct(v)) {
             // A WasmGC vec → recurse: ToString(array) === array.join(",").
             const exports = callbackState?.getExports();
-            if (exports && typeof exports.__vec_len === "function" && typeof exports.__vec_get === "function") {
+            // (#3637) POSITIVE discriminator: without it `__vec_len`'s not-a-vec
+            // default of 0 made this loop run zero times for a plain object
+            // element, so ToString(element) was "" instead of the ToPrimitive
+            // answer. Measured pre-fix: `[1, {x: 1}].join("-")` → `"1-"`, where
+            // the host answers `"1-[object Object]"`.
+            if (
+              exports &&
+              typeof exports.__vec_len === "function" &&
+              typeof exports.__vec_get === "function" &&
+              _isWasmVec(v, exports)
+            ) {
               try {
                 const len = exports.__vec_len(v) as number;
                 if (typeof len === "number" && len >= 0) {
@@ -8871,7 +8980,10 @@ assert._isSameValue = isSameValue;
                   return out;
                 }
               } catch {
-                /* not a vec — fall through to ToPrimitive */
+                /* (#3637) NOT "not a vec" — `__vec_len` returns 0 rather than
+                   throwing for a non-vec; `_isWasmVec` on the guard above is
+                   what decides that. Only a genuine element-read trap lands
+                   here, and falling through to ToPrimitive is still right. */
               }
             }
             const prim = _toPrimitive(v, "string", callbackState);
@@ -9350,7 +9462,13 @@ assert._isSameValue = isSameValue;
             const exps = callbackState?.getExports();
             const vecLen = exps?.__vec_len;
             const vecGet = exps?.__vec_get;
-            if (typeof vecLen === "function" && typeof vecGet === "function") {
+            // (#3637) POSITIVE discriminator. Vacuously, every wasm struct was
+            // "a vec of length 0" here, so spreading a plain object produced an
+            // empty list instead of reaching the iterator-protocol handling
+            // below (which raises the spec-mandated TypeError). Measured
+            // pre-fix: `[...{a: 1}]` → `[]`, `var [p] = {a: 1}` → `undefined`,
+            // where the host throws TypeError in both cases.
+            if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(obj, exps)) {
               try {
                 const vlen = vecLen(obj) as number;
                 if (typeof vlen === "number" && vlen >= 0) {
@@ -9360,7 +9478,9 @@ assert._isSameValue = isSameValue;
                   return out;
                 }
               } catch {
-                /* not a vec — fall through to the existing handling */
+                /* (#3637) NOT "not a vec" — that is `_isWasmVec`'s job on the
+                   guard above; `__vec_len` returns 0 instead of throwing. Only
+                   a genuine element-read trap reaches here. */
               }
             }
           }
@@ -11488,8 +11608,12 @@ assert._isSameValue = isSameValue;
               // turned into an empty array; fall through to the TypeError so
               // abrupt/protocol-violation cases still throw (test262
               // errors-iterabletolist-failures).
+              // (#3637) `_isWasmVec` is the positive discriminator; the old
+              // "no named struct fields" heuristic also admitted field-less
+              // non-vec structs, which `_materializeIterable` then flattened to
+              // `[]` via the same vacuity this issue removes.
               const exports = callbackState?.getExports();
-              const looksLikeVec = _isWasmStruct(errors) && _getStructFieldNames(errors, exports) === null;
+              const looksLikeVec = _isWasmVec(errors, exports);
               if (looksLikeVec) {
                 const materialized = _materializeIterable(errors, callbackState);
                 if (Array.isArray(materialized)) {
@@ -12109,7 +12233,9 @@ assert._isSameValue = isSameValue;
         if (exports) {
           const vecLen = exports.__vec_len as Function | undefined;
           const vecGet = exports.__vec_get as Function | undefined;
-          if (typeof vecLen === "function" && typeof vecGet === "function") {
+          // (#3637) POSITIVE discriminator — the vacuous probe turned every
+          // non-vec struct into `[]` instead of the wrap-single-value fallback.
+          if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(arr, exports)) {
             const len = vecLen(arr) as number;
             if (typeof len === "number" && len >= 0) {
               const result: any[] = new Array(len);
@@ -12224,19 +12350,20 @@ assert._isSameValue = isSameValue;
           if (exports) {
             const vecLen = exports.__vec_len as Function | undefined;
             const vecGet = exports.__vec_get as Function | undefined;
-            if (typeof vecLen === "function" && typeof vecGet === "function") {
-              // `__vec_len(non-vec)` returns 0 by design — that's
-              // indistinguishable from an empty vec, so we use a sentinel
-              // probe: if the externref is a vec, calling vecLen+vecGet
-              // succeeds without throwing; if it's a plain JS object that
-              // also happens to be iterable (Set/Map/generator/custom), we
-              // need to NOT convert. Strategy: only materialize when
-              // (a) vecLen > 0 (real non-empty vec), OR
-              // (b) vecLen === 0 AND the object has no Symbol.iterator
-              //     (so it isn't a JS iterable we should preserve).
+            // (#3637) `__vec_len(non-vec)` returns 0 by design, which used to be
+            // indistinguishable from an empty vec — so this site carried a
+            // "sentinel probe" workaround: materialize when `len > 0`, or when
+            // `len === 0` and the value has no `Symbol.iterator`. That second
+            // arm still mapped every non-iterable wasm struct to `[]`, so
+            // `Promise.all({a: 1})` RESOLVED to `[]` where §27.2.4.1
+            // GetIterator requires a TypeError rejection. `__is_vec` answers the
+            // question directly, so the workaround is gone: a real vec (empty or
+            // not) materializes, everything else falls through to the
+            // Symbol.iterator check and then to native's spec-correct rejection.
+            if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(iter, exports)) {
               try {
                 const len = vecLen(iter) as number;
-                if (typeof len === "number" && len > 0) {
+                if (typeof len === "number" && len >= 0) {
                   const result: any[] = new Array(len);
                   for (let i = 0; i < len; i++) {
                     // (#2671) Thenable struct elements get the live-mirror
@@ -12244,18 +12371,6 @@ assert._isSameValue = isSameValue;
                     result[i] = _wrapThenableElement(vecGet(iter, i));
                   }
                   return result;
-                }
-                if (len === 0) {
-                  // Could be empty wasm vec or a non-iterable host object.
-                  // Peek at Symbol.iterator under try/catch — if present,
-                  // it's a JS iterable, pass through.
-                  let hasIter = false;
-                  try {
-                    hasIter = Symbol.iterator in iter;
-                  } catch {
-                    hasIter = false;
-                  }
-                  if (!hasIter) return [];
                 }
               } catch {
                 // Not a vec (vecLen threw) — fall through.
@@ -12768,9 +12883,14 @@ assert._isSameValue = isSameValue;
               if (iter != null) return iter;
             }
             // Fallback: synthesize an array iterator if the struct is a vec (array wrapper)
+            // (#3637) POSITIVE discriminator. Without it every non-iterable wasm
+            // struct got a synthesized ZERO-LENGTH iterator instead of the
+            // §7.4.2 GetIterator TypeError below, so `for (x of {a: 1})` ran its
+            // body zero times and completed normally, and `var [p] = {a: 1}`
+            // bound `undefined`. Both must throw TypeError.
             const vecLen = exports?.__vec_len;
             const vecGet = exports?.__vec_get;
-            if (typeof vecLen === "function" && typeof vecGet === "function") {
+            if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(obj, exports)) {
               const len = vecLen(obj);
               if (typeof len === "number" && len >= 0) {
                 let i = 0;
@@ -12840,9 +12960,12 @@ assert._isSameValue = isSameValue;
               const iter = callIter(obj);
               if (iter != null) return iter;
             }
+            // (#3637) POSITIVE discriminator — see `__iterator` above; the
+            // vacuous probe handed back an empty async iterator for any
+            // non-async-iterable struct instead of throwing TypeError.
             const vecLen = exports?.__vec_len;
             const vecGet = exports?.__vec_get;
-            if (typeof vecLen === "function" && typeof vecGet === "function") {
+            if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(obj, exports)) {
               const len = vecLen(obj);
               if (typeof len === "number" && len >= 0) {
                 let i = 0;
@@ -13160,7 +13283,14 @@ assert._isSameValue = isSameValue;
               Array.isArray(x) ||
               !_isWasmStruct(x) ||
               typeof vecLen !== "function" ||
-              typeof vecGet !== "function"
+              typeof vecGet !== "function" ||
+              // (#3637) POSITIVE discriminator. "Returns … -1 when `x` is not a
+              // vec" (the doc comment above) was FALSE: `__vec_len` answers 0
+              // for a non-vec struct, so a plain-object argument reported spread
+              // length 0 and was SILENTLY DROPPED instead of appended whole.
+              // Measured pre-fix: `[0].concat({x: 1})` → `[0]`, where the host
+              // answers `[0, {x: 1}]`.
+              !_isWasmVec(x, exports)
             ) {
               return -1;
             }
@@ -13168,7 +13298,9 @@ assert._isSameValue = isSameValue;
               const n = vecLen(x);
               return typeof n === "number" && n >= 0 ? n : -1;
             } catch {
-              return -1; // not a vec struct variant
+              // (#3637) NOT "not a vec" — `_isWasmVec` above already settled
+              // that; `__vec_len` returns 0 for a non-vec rather than throwing.
+              return -1; // genuine read trap — treat as non-spreadable
             }
           };
           const applyConcat = (out: any[], xs: any[]): any[] => {
@@ -13629,7 +13761,11 @@ assert._isSameValue = isSameValue;
           const dvSet = exports?.__dv_byte_set as ((v: any, i: number, b: number) => void) | undefined;
           let n: number;
           let setByte: (v: any, i: number, b: number) => void;
-          if (typeof vecLen === "function" && typeof vecSet === "function") {
+          // (#3637) POSITIVE discriminator: `__vec_len` answers 0 for a non-vec,
+          // so a DataView / i32_byte buffer in a module that ALSO exports
+          // `__vec_len` took this branch with n = 0 and was filled with zero
+          // random bytes instead of falling through to the `__dv_byte_*` path.
+          if (typeof vecLen === "function" && typeof vecSet === "function" && _isWasmVec(vec, exports)) {
             n = vecLen(vec);
             setByte = vecSet;
           } else if (typeof dvLen === "function" && typeof dvSet === "function") {
@@ -14899,9 +15035,22 @@ export function wrapExports(
   // 1. If `__is_closure(val)` returns 1 → it's a closure, NOT marshalable
   //    (this is the authoritative codegen-side discriminator).
   // 2. If `__struct_field_names(val)` returns non-empty → named struct.
-  // 3. If `__vec_len(val)` returns a number ≥ 0 → vec wrapper.
-  // Otherwise, fall back to the closure-wrapping path (#1308 default).
+  // 3. If `__is_vec(val)` → vec wrapper.
+  // 4. Otherwise it is a wasm struct that is neither a closure, a named struct,
+  //    nor a vec — e.g. a class instance carrying only methods. It is an
+  //    OBJECT, so it is marshalable; only a module too old to export
+  //    `__vec_len` at all falls back to the closure-wrapping path (#1308).
+  //
+  // (#3637) Step 3 previously read "`__vec_len(val)` returns a number ≥ 0",
+  // which is VACUOUSLY TRUE for every struct (see `_isWasmVec`) — so step 4 was
+  // the arm actually taken for non-vec structs, and the closure-wrapping
+  // fallback was dead code whenever `__vec_len` existed. Do NOT "fix" this by
+  // narrowing step 3 to `__is_vec` alone: that would route field-less instances
+  // into `makeCallableClosureWrapper` and hand JS a FUNCTION where the program
+  // returned an object. The vacuous outcome was right here even though the test
+  // was not, so step 4 is written out explicitly and the behaviour is unchanged.
   const isClosureFn = exportsForMarshal.__is_closure as ((v: any) => number) | undefined;
+  const hasVecLen = typeof exportsForMarshal.__vec_len === "function";
   const looksMarshalable = (val: any): boolean => {
     if (val == null || typeof val !== "object") return false;
     if (typeof isClosureFn === "function") {
@@ -14912,16 +15061,8 @@ export function wrapExports(
       }
     }
     if (_getStructFieldNames(val, exportsForMarshal) != null) return true;
-    const vecLen = exportsForMarshal.__vec_len;
-    if (typeof vecLen === "function") {
-      try {
-        const n = vecLen(val);
-        if (typeof n === "number" && n >= 0) return true;
-      } catch {
-        /* not a vec */
-      }
-    }
-    return false;
+    if (_isWasmVec(val, exportsForMarshal)) return true;
+    return hasVecLen;
   };
 
   const wrapped: Record<string, any> = Object.create(null);
