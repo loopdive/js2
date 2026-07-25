@@ -1,8 +1,9 @@
 {
   "id": "3596",
   "assignee": "ttraenkler/senior-dev-vp",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3596-verifyproperty-vacuity",
   "claimed_at": "2026-07-24T23:19:47Z",
-  "updated_at": "2026-07-24T23:19:47Z"
+  "updated_at": "2026-07-25T01:56:27Z",
+  "released_at": "2026-07-25T01:56:27Z"
 }
