@@ -294,8 +294,15 @@ const FEATURE_EDITION: Record<string, number> = {
   __setter__: 2026,
 };
 
+// (#3639) Sentinels for buckets that are NOT editions. A test lands in one of
+// these because its frontmatter carries no edition evidence — not because it
+// was measured against that edition. They are deliberately named so no reader
+// (or chart) mistakes them for a conformance figure, and they are excluded
+// from the landing page's edition timeline the same way `Proposals` (-1) is.
+const UNCLASSIFIED_LEGACY = -2; // frontmatter present, no edition marker at all
+const UNCLASSIFIED_UNTAGGED = -3; // modern `esid:`, no edition-specific feature tag
+
 const EDITION_NAMES: Record<number, string> = {
-  0: "≤ ES3",
   5: "ES5",
   2015: "ES2015",
   2016: "ES2016",
@@ -310,9 +317,28 @@ const EDITION_NAMES: Record<number, string> = {
   2025: "ES2025",
   2026: "ES2026",
   [-1]: "Proposals",
+  [UNCLASSIFIED_LEGACY]: "Unclassified (legacy)",
+  [UNCLASSIFIED_UNTAGGED]: "Unclassified (untagged)",
 };
 
-const EDITION_ORDER = [0, 5, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, -1];
+const EDITION_ORDER = [
+  5,
+  2015,
+  2016,
+  2017,
+  2018,
+  2019,
+  2020,
+  2021,
+  2022,
+  2023,
+  2024,
+  2025,
+  2026,
+  -1,
+  UNCLASSIFIED_LEGACY,
+  UNCLASSIFIED_UNTAGGED,
+];
 
 /**
  * (#2910) Map a landing-page edition label (as used in feature-examples.json's
@@ -323,7 +349,12 @@ const EDITION_ORDER = [0, 5, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 202
  */
 export function editionStringToYear(label: string): number | undefined {
   const s = label.trim();
-  if (s === "≤ ES3" || s === "ES3 / Core" || s === "ES3") return 0;
+  // (#3639) Legacy labels kept so feature-examples rows written before the
+  // rename still resolve; they now map to the unclassified-legacy sentinel
+  // rather than to a phantom "edition 0".
+  if (s === "≤ ES3" || s === "ES3 / Core" || s === "ES3") return UNCLASSIFIED_LEGACY;
+  if (s === "Unclassified (legacy)") return UNCLASSIFIED_LEGACY;
+  if (s === "Unclassified (untagged)") return UNCLASSIFIED_UNTAGGED;
   if (s === "ES5") return 5;
   if (s === "Proposals") return -1;
   const m = /^ES(\d{4})$/.exec(s);
@@ -469,15 +500,35 @@ function classifyEdition(fm: Frontmatter, filePath: string): number {
   if (norm.includes("/built-ins/WeakRef/")) return 2021;
   if (norm.includes("/built-ins/FinalizationRegistry/")) return 2021;
 
-  // If it has esid and we got here, it's likely ES2015+ (esid was introduced in ES2015)
-  if (fm.esid) return 2015;
+  // (#3639) `esid` is the MODERN frontmatter field — every new test262 file
+  // carries one regardless of which edition specified the feature. Reading it
+  // as "ES2015+" turned ES2015 into a catch-all: measured 2026-07-25, 5,436
+  // tests arrived here by this fall-through versus only 2,990 via the real
+  // `es6id` signal, i.e. ~60% of "ES2015" was sorted there by ACCIDENT. It
+  // swept in all 347 `eval` tests, among much else.
+  //
+  // A bucket assigned by absence-of-evidence is not an edition measurement, so
+  // it now reports as UNCLASSIFIED rather than borrowing ES2015's name. The
+  // landing page treats any label it does not recognise as an edition scope
+  // (see `t262IsEditionScope`) the way it already treats `Proposals` — shown,
+  // but kept off the edition timeline.
+  if (fm.esid) return UNCLASSIFIED_UNTAGGED;
 
   // Tests with no YAML frontmatter at all are old-style legacy tests (ES3/ES5 era).
   // They pre-date the YAML metadata format and live in language/ or built-ins/.
   if (fm.noFrontmatter) return 5;
 
-  // Default: unknown (e.g. features listed but none in our map, no esid)
-  return 0;
+  // Default: frontmatter present but carrying NO edition marker at all
+  // (no es5id/es6id/features/esid) and no path heuristic matched.
+  //
+  // (#3639) This was labelled "≤ ES3", which invited reading it as an ES3
+  // conformance measurement. It is not: it is a 273-test RESIDUE, and the ES3
+  // language's own features are scored elsewhere by their frontmatter vintage
+  // — `eval` (347 tests) sorts to the esid fall-through above, `with` (181)
+  // and the `Function` constructor (509) carry `es5id` and sort to ES5. Those
+  // are ES3 §15.1.2.1 / §12.10 / §15.3 and sit at ~37% combined, so "≤ ES3
+  // 84%" was never a claim about ES3 support.
+  return UNCLASSIFIED_LEGACY;
 }
 
 // ---------------------------------------------------------------------------
@@ -800,7 +851,10 @@ async function main() {
     // so headline-only feature rows can be scored by their `testCategories`.
     pathTests.push({ file, status: key });
 
-    if (edition === 0 || edition === -1) unclassified++;
+    // (#3639) The unclassified set is now explicit: the two absence-of-evidence
+    // sentinels plus Proposals. Edition 0 no longer exists — it was the old
+    // "≤ ES3" default and is now UNCLASSIFIED_LEGACY.
+    if (edition === UNCLASSIFIED_LEGACY || edition === UNCLASSIFIED_UNTAGGED || edition === -1) unclassified++;
     else classified++;
 
     const bucket = buckets[edition] ?? (buckets[edition] = { pass: 0, fail: 0, ce: 0, skip: 0 });

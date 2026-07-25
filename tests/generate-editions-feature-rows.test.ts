@@ -11,9 +11,7 @@ import { describe, expect, it } from "vitest";
 import { computeFeatureRowCounts, editionStringToYear, type ClassifiedTest } from "../scripts/generate-editions.ts";
 
 describe("editionStringToYear", () => {
-  it("maps landing-section labels to edition years", () => {
-    expect(editionStringToYear("≤ ES3")).toBe(0);
-    expect(editionStringToYear("ES3 / Core")).toBe(0);
+  it("maps real edition labels to their edition years", () => {
     expect(editionStringToYear("ES5")).toBe(5);
     expect(editionStringToYear("ES2015")).toBe(2015);
     expect(editionStringToYear("ES2026")).toBe(2026);
@@ -21,6 +19,28 @@ describe("editionStringToYear", () => {
     // No feature axis → undefined (headline-only).
     expect(editionStringToYear("Legacy / Deprecated")).toBeUndefined();
     expect(editionStringToYear("npm libraries")).toBeUndefined();
+  });
+
+  // (#3639) The two absence-of-evidence buckets are NOT editions. They must
+  // resolve to negative sentinels, which the feature-row scorer treats as
+  // headline-only (`yr <= 0`), so they can never present as a conformance
+  // figure for an edition they were never measured against.
+  it("maps the unclassified buckets to non-edition sentinels", () => {
+    expect(editionStringToYear("Unclassified (legacy)")).toBe(-2);
+    expect(editionStringToYear("Unclassified (untagged)")).toBe(-3);
+  });
+
+  // The old "≤ ES3" labels are still accepted so feature-example rows written
+  // before the rename keep resolving — but they must NOT resolve to a positive
+  // edition year any more. `toBe(0)` was the previous contract and is exactly
+  // what this issue removes: 0 was a real edition key that rendered beside
+  // measured editions.
+  it("keeps legacy ES3 labels resolvable, but no longer as an edition", () => {
+    for (const legacy of ["≤ ES3", "ES3 / Core", "ES3"]) {
+      const yr = editionStringToYear(legacy);
+      expect(yr).toBe(-2);
+      expect(yr).toBeLessThan(0); // headline-only, never a feature-row edition
+    }
   });
 });
 
