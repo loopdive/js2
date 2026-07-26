@@ -280,3 +280,76 @@ The remaining acceptance criteria (bare-package `Linter` resolution,
 CJS class export linkage, Tier 1d/1e) depend on resolving these next
 blockers AND on the resolver / CJS-class-linkage work in items #1 and
 #2 of this issue — neither of which is in scope for this PR.
+
+## Suspended Work (2026-07-27, PR #3687 shepherding session)
+
+- **Worktree**: `/workspace/.claude/worktrees/agent-aa8024785860501f4`
+- **Branch**: `codex/1400-eslint-e2e` (upstream head repo — push with
+  `git push upstream codex/1400-eslint-e2e`; do NOT create a fork copy)
+- **PR**: loopdive/js2#3687 (draft; everything below is pushed — nothing local-only)
+
+### Done this session
+
+1. **Merged upstream/main twice** (through #3679/#3678/#3690, then #3686) and
+   resolved all 17 conflicted files / 42 hunks. Key calls, recorded in the merge
+   commit message (`c5fa0ad2e`): main's refactors adopted (multi-file-paths.ts,
+   ir-imported-call-planning.ts, compileMultiIrOverlaySource,
+   IncrementalProjectLanguageService param), branch's genuinely-new work kept
+   (compile profiling, static-JSON resolver, var/let CJS requires, checker-only
+   roots codegen exclusion, scope-aware identity work).
+2. **Renumber 3658→3672 completed on the branch** (main's #3658 is an unrelated
+   issue): `tests/issue-3658.test.ts` → `tests/issue-3672.test.ts`, stale issue
+   file dropped, branch's investigation content carried onto #3672.
+3. Typecheck green (one dup `ambientClassCalls` field removed); biome lint,
+   prettier, issue-schema/id gates, IR gates, loc/func/oracle ratchets all pass
+   locally (change-scoped allowances added to `plan/issues/3672-*.md`).
+4. Pushed: PR went DIRTY → BLOCKED; green now: cheap gate, linear-tests,
+   equivalence shards 1/5/6/8, PR-level test262 checks, cla-check.
+
+### Failing checks — diagnosis so far
+
+- `equivalence-shard (2,3,4,7)` + `equivalence-gate` + `quality` (guard suite,
+  `tests/issue-3164.test.ts`). **7 regressions, one shared family**: calls
+  through a VALUE-held function binding misdispatch —
+  - issue-3164 guard: `var ref: any; ref = function*(){ if (arguments.length===2) ... }; ref(42,43).next()` → callCount 0 (expected 1). REPRODUCED in
+    `.tmp/repro3164.mts` in the worktree (compiles, validates, wrong result).
+  - equivalence: async module-const-arrow dispatch (#1730 pattern), detached
+    prototype methods (#1388/#1394), custom `[Symbol.iterator]()` object
+    (issue-1610, iterator-protocol-custom), async arrow in promise-chains.
+- **Suspected cause (NOT yet proven — needs the control below)**: the branch's
+  scope-aware module-global identity work in `3ba9d4dd2` (`registerImportBindingAliases` rework, `moduleGlobalDeclarations`,
+  `reassigned: Set<ts.FunctionDeclaration>` in codegen/index.ts,
+  `moduleGlobalForSymbol`/`moduleGlobalAtIdentifier`), possibly interacting
+  with the merge's adoption of main's refactored planning path.
+- **Control experiment still missing**: run `tests/issue-3164.test.ts` at
+  pre-merge head `3ba9d4dd2` to split branch-regression vs merge-resolution
+  error. A control worktree at `/workspace/.claude/worktrees/pr3687-premerge-ctl`
+  exists but its checkout is INCOMPLETE (git worktree add timed out under
+  load ~27) — repair with `git -C <path> checkout -f HEAD` from an unrestricted
+  session, or delete and recreate.
+
+### Stress status (the PR's known defect)
+
+- The closure-2056 REDUCED repro passes post-merge (`tests/issue-3672.test.ts`,
+  "does not route minified esquery helpers through same-named globals from
+  another module") — 38/38 focused tests green.
+- The FULL `tests/stress/eslint-tier1.test.ts` run was **inconclusive**: probe
+  SIGTERMed at the 3600 s wall budget under system load ~27 (author measured
+  688–747 s idle). Re-run on a quiet box; log of the attempt in
+  `.tmp/eslint-tier1-full.log`.
+- Local-env note: `node --import tsx` needs tsx in node_modules; the shared
+  `/workspace/node_modules` lacked it — symlinked from the npx cache
+  (`~/.npm/_npx/fd45a72a545557e9/node_modules/tsx`) including `.bin/tsx`.
+
+### Resume steps
+
+1. Fix the value-held-function dispatch family first (repro:
+   `npx tsx .tmp/repro3164.mts`, expect `test(): 1`). Run the pre-merge control
+   to decide where to look (branch identity work vs merge resolution).
+2. `npx vitest run tests/issue-3164.test.ts tests/equivalence/issue-1610.test.ts tests/equivalence/issue-1388.test.ts tests/equivalence/async-function.test.ts tests/equivalence/iterator-protocol-custom.test.ts tests/equivalence/promise-chains.test.ts`
+3. Push, confirm equivalence shards + quality green.
+4. Re-run the full stress on an idle box; if green (verify()===0), flip
+   3654/3655/3656/3657 (+3672 with measurements recorded) per the self-merge
+   status convention, update the PR body, and mark ready for review.
+5. `check:godfiles` fails on CLEAN main too (object-runtime growths) — NOT a
+   required check, not this PR's problem; do not chase it.
