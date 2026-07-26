@@ -1,6 +1,6 @@
 ---
 id: 3658
-title: "ESLint linter.js: resolved 149-file graph does not compile within the integration budget"
+title: "ESLint linter.js: resolved 149-file graph exhausts a 2 GB compiler heap"
 status: ready
 created: 2026-07-26
 updated: 2026-07-26
@@ -37,8 +37,16 @@ node --max-old-space-size=2048 --import tsx \
   '{"allowJs":true,"target":"gc","platform":"node"}'
 ```
 
-The probe emits no structured compile result before the budget. This is not a
-TS2307 resolver failure and must not be folded back into #3654.
+The bounded probe eventually exited 134 after about 45 minutes. V8 reported
+repeated mark-compacts at 2,031 MB followed by:
+
+```text
+FATAL ERROR: Ineffective mark-compacts near heap limit
+Allocation failed - JavaScript heap out of memory
+```
+
+It emitted no structured compile result. This is not a TS2307 resolver failure
+and must not be folded back into #3654.
 
 ## Required investigation
 
@@ -58,8 +66,8 @@ TS2307 resolver failure and must not be folded back into #3654.
 
 - A deterministic reduced fixture reproduces the dominant repeated-work or
   reachability failure if one exists.
-- The direct real `linter.js` child probe completes within an explicit,
-  measured CI-safe budget and emits a structured result.
+- The direct real `linter.js` child probe remains within an explicit,
+  measured CI-safe time and memory budget and emits a structured result.
 - The result records the compile/validate split even if a later semantic
   blocker still prevents execution.
 - The Tier 1 test fails clearly on timeout or abnormal child exit; it never
