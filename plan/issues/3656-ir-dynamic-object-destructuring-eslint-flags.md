@@ -16,6 +16,7 @@ required_by: [1400, 2691]
 es_edition: ES2015
 related: [1169c, 1400, 2691, 3518, 3654]
 ---
+
 # #3656 — IR lowering for an untyped JS destructured parameter
 
 ## Problem
@@ -25,13 +26,13 @@ The real ESLint package graph fails on this function from
 
 ```js
 function getInactivityReasonMessage({ replacedBy }) {
-	if (typeof replacedBy === "undefined") {
-		return "This feature has been abandoned.";
-	}
-	if (typeof replacedBy === "string") {
-		return `This flag has been renamed '${replacedBy}' to reflect its stabilization. Please use '${replacedBy}' instead.`;
-	}
-	return "This feature is now enabled by default.";
+  if (typeof replacedBy === "undefined") {
+    return "This feature has been abandoned.";
+  }
+  if (typeof replacedBy === "string") {
+    return `This flag has been renamed '${replacedBy}' to reflect its stabilization. Please use '${replacedBy}' instead.`;
+  }
+  return "This feature is now enabled by default.";
 }
 ```
 
@@ -76,3 +77,31 @@ must be verified by value for the missing/string/null cases.
 - The full ESLint package-entry probe no longer contains the
   `getInactivityReasonMessage` diagnostic; later blockers are reported
   separately.
+
+## Root cause and implementation (2026-07-26)
+
+Selection and overlay planning used different type sources for the same
+JavaScript parameter:
+
+- selection called `effectiveIrParamTypeNode`, so it saw the JSDoc
+  `InactiveFlagData` reference;
+- overlay planning read only `p.type`, which is absent on a JavaScript
+  parameter, and therefore replaced the selected parameter with propagated
+  `dynamic`.
+
+The overlay planner now uses the shared effective JSDoc-aware parameter helper.
+For ESLint's exact optional `string | null` field, the current object IR cannot
+project the union, so preparation records a typed resolve-time unsupported
+result and retains the legacy body. It no longer hands a dynamic value to the
+object-pattern builder or promotes the mismatch to a fatal invariant.
+
+## Verification (2026-07-26)
+
+- Added `tests/issue-3656.test.ts` with omitted, string, and null runtime
+  branches plus a direct compile/validation of ESLint's real `flags.js`.
+- The real file compiles successfully and validates. Its only IR note is the
+  expected resolve-time object-shape limitation; there is no build-time
+  destructuring invariant.
+- The Tier 1 package-entry probe no longer contains
+  `getInactivityReasonMessage` or `object destructuring source` diagnostics;
+  planning blocker `3654` is the remaining pinned compile frontier.

@@ -122,19 +122,17 @@ describe.skipIf(ESLINT_LINTER === null)(
     /**
      * Tier 1a — run the real package-entry graph in the Node-host JS lane.
      * #3654 restores the resolver layer, but the expanded graph does not yet
-     * complete inside this test's compile budget (#3658). Keep the eventual
-     * #3656 assertion here rather than accepting a timeout as a compiler
-     * diagnostic.
+     * complete inside this test's compile budget (#3658). The independent
+     * dynamic object-destructuring invariant was removed by #3656; an
+     * unexpected process failure is not accepted as an expected test failure.
      */
-    it.skip('Tier 1a — package entry reports the #3656 frontier for `import { Linter } from "eslint"` (blocked by #3658)', async () => {
+    it.skip('Tier 1a — package entry compiles in the Node-host JS lane (blocked by #3658)', async () => {
       const r = await compileTier1Entry();
       const diagnostics = r.errors.map((error) => error.message).join("\n");
-      expect(r.success).toBe(false);
-      expect(r.binaryByteLength).toBe(0);
       expect(diagnostics).not.toContain("Cannot find module");
-      expect(diagnostics).toMatch(
-        /getInactivityReasonMessage:.*object destructuring source must be IrType\.object or IrType\.class \(got dynamic\)/,
-      );
+      expect(diagnostics).not.toContain("object destructuring source must be IrType.object or IrType.class");
+      expect(r.success, diagnostics).toBe(true);
+      expect(r.binaryByteLength).toBeGreaterThan(0);
     }, 180_000);
 
     /**
@@ -147,7 +145,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      * references after dead-elim compaction. Fixed by skipping
      * `collectInterface` for `.d.ts` source files. (#1287)
      */
-    it.skip("Tier 1b — package-entry binary is structurally valid Wasm (blocked before emission by #3656/#3658)", () => {
+    it.skip("Tier 1b — package-entry binary is structurally valid Wasm (blocked before emission by #3658)", () => {
       // Advance this rung once Tier 1a emits a binary.
     });
 
