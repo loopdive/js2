@@ -2,9 +2,7 @@
   "id": "3666",
   "assignee": "ttraenkler/codex-regexp-completion",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-07-26T05:24:02Z",
-  "claimed_at": "2026-07-26T05:24:02Z",
-  "updated_at": "2026-07-26T05:24:02Z",
-  "pr_scan": "ok"
+  "branch": "issue-3666-standalone-regexp-match-indices",
+  "claimed_at": "2026-07-26T05:25:50Z",
+  "updated_at": "2026-07-26T05:25:50Z"
 }
