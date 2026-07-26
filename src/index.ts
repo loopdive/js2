@@ -748,33 +748,53 @@ export function compileToObject(source: string, options?: CompileOptions) {
  * @param options - Compile options including resolve and externals settings
  */
 export async function compileProject(entryFile: string, options?: CompileOptions): Promise<CompileResult> {
-  const resolvedEntry = path.resolve(entryFile);
-  const rootDir = path.dirname(resolvedEntry);
+  const logicalEntry = path.resolve(entryFile);
+  const logicalRootDir = path.dirname(logicalEntry);
 
   // Auto-enable allowJs when entry file is .js/.mjs (#1107)
-  const isJs = /\.[cm]?js$/.test(resolvedEntry);
+  const isJs = /\.[cm]?js$/.test(logicalEntry);
   const effectiveOptions = isJs && !options?.allowJs ? { ...options, allowJs: true } : options;
 
   // Create resolver
-  const resolver = new ModuleResolver(rootDir, effectiveOptions);
+  const resolver = new ModuleResolver(logicalRootDir, effectiveOptions);
+  const resolvedEntry = resolver.canonicalize(logicalEntry);
+  const rootDir = path.dirname(resolvedEntry);
 
   // Resolve all imports recursively
   const allFiles = resolveAllImports(resolvedEntry, resolver);
 
   // Convert to the Record<string, string> format expected by compileMulti
   const files: Record<string, string> = {};
+  const fileKeys = new Map<string, string>();
   for (const [filePath, content] of allFiles) {
     // Use relative paths from root dir as keys
     const relPath = path.relative(rootDir, filePath);
     // Ensure paths start with ./ for the multi-file compiler
     const key = relPath.startsWith(".") ? relPath : `./${relPath}`;
     files[key] = content;
+    fileKeys.set(resolver.canonicalize(filePath), key);
   }
 
-  // Entry file key
-  const entryKey = `./${path.relative(rootDir, resolvedEntry)}`;
+  const entryKey = fileKeys.get(resolvedEntry) ?? `./${path.relative(rootDir, resolvedEntry)}`;
 
-  return withImportObject(await compileMultiSource(files, entryKey, effectiveOptions));
+  // Preserve the exact importer→specifier→target edges discovered against the
+  // physical filesystem. The virtual checker cannot reconstruct pnpm's private
+  // dependency tree from flattened in-memory file names (#3654).
+  const projectResolutions: Record<string, Record<string, string>> = {};
+  for (const filePath of allFiles.keys()) {
+    const importerKey = fileKeys.get(resolver.canonicalize(filePath));
+    if (!importerKey) continue;
+    const resolutions: Record<string, string> = {};
+    for (const [specifier, targetPath] of resolver.getResolvedImports(filePath)) {
+      const targetKey = fileKeys.get(resolver.canonicalize(targetPath));
+      if (targetKey) resolutions[specifier] = targetKey;
+    }
+    if (Object.keys(resolutions).length > 0) {
+      projectResolutions[importerKey] = resolutions;
+    }
+  }
+
+  return withImportObject(await compileMultiSource(files, entryKey, effectiveOptions, projectResolutions));
 }
 
 /**

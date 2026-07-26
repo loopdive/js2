@@ -1341,11 +1341,12 @@ export function registerNodeBuiltinImports(ctx: CodegenContext, builtins: NodeBu
     ctx.mod.nodeBuiltinModules.add(builtin.moduleName);
 
     const importName = `__node_${builtin.moduleName}`;
-    // Skip if already registered (e.g. duplicate imports)
-    if (ctx.funcMap.has(importName)) continue;
-
-    const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
-    addImport(ctx, "env", importName, { kind: "func", typeIdx });
+    // Emit one host import per module, but bind every local alias used across a
+    // multi-file graph to that shared thunk.
+    if (!ctx.funcMap.has(importName)) {
+      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+      addImport(ctx, "env", importName, { kind: "func", typeIdx });
+    }
     const funcIdx = ctx.funcMap.get(importName);
     if (funcIdx !== undefined) {
       // Register as a declared global so identifier resolution picks it up

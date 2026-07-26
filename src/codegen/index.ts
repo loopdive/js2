@@ -5605,6 +5605,14 @@ export function generateMultiModule(
     // Register built-in collection types as extern classes if not already collected from lib files
     registerBuiltinExternClasses(ctx);
 
+    // #3654 — multi-file package graphs keep Node import declarations in the
+    // TypeScript program, but their runtime bindings still belong to the JS
+    // host. Register the graph-wide collector output before source imports and
+    // user bodies, matching the single-file host lane.
+    if (options?.nodeBuiltins && options.nodeBuiltins.length > 0) {
+      registerNodeBuiltinImports(ctx, options.nodeBuiltins);
+    }
+
     // Pre-pass: detect empty object literals that get properties assigned later
     // Must run before import collectors so that widened types are known
     for (const sf of multiAst.sourceFiles) {

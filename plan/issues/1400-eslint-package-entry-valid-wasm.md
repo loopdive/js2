@@ -13,10 +13,11 @@ area: compiler, resolver, codegen
 language_feature: commonjs, package-exports, classes
 goal: npm-library-support
 sprint: 76
-depends_on: [3653, 3654, 3655, 3656]
+depends_on: [3653, 3654, 3655, 3656, 3658]
 es_edition: n/a
 related: [1044, 1075, 1277, 1279, 1282, 1287, 1289, 1573, 1575, 2690, 2691, 2693, 2700, 3657]
 ---
+
 # #1400 - Compile ESLint package entry to valid Wasm
 
 ## Reopened 2026-07-26 — current package entry does not compile
@@ -28,14 +29,14 @@ issue is reopened as `blocked`.
 
 Measured real-package sample:
 
-| Target | Compile | Validate |
-|---|---:|---:|
-| bare `import { Linter } from "eslint"` | **fail** | not reached |
-| `lib/linter/linter.js` direct | **fail** | not reached |
-| `config/config.js` | pass | pass |
-| `linter/apply-disable-directives.js` | pass | pass |
-| `languages/js/source-code/source-code.js` | pass | pass |
-| `rule-tester/rule-tester.js` | pass | **fail** (#2690) |
+| Target                                    |  Compile |         Validate |
+| ----------------------------------------- | -------: | ---------------: |
+| bare `import { Linter } from "eslint"`    | **fail** |      not reached |
+| `lib/linter/linter.js` direct             | **fail** |      not reached |
+| `config/config.js`                        |     pass |             pass |
+| `linter/apply-disable-directives.js`      |     pass |             pass |
+| `languages/js/source-code/source-code.js` |     pass |             pass |
+| `rule-tester/rule-tester.js`              |     pass | **fail** (#2690) |
 
 Honest split: **3/6 compile+validate, 1/6 compiles invalid, 2/6 do not
 compile**. This is a bounded critical-target sample, not a replacement for the
@@ -64,10 +65,12 @@ Current dependency order:
 3. #3655 adds static CommonJS JSON loading for `../../package.json`.
 4. #3656 fixes the independently reproduced IR failure in real
    `eslint/lib/shared/flags.js`.
-5. Re-measure compile and Wasm validation. #2690 remains the known
+5. #3658 bounds the now-expanded 149-file direct graph so the child compile
+   returns a structured result inside the integration budget.
+6. Re-measure compile and Wasm validation. #2690 remains the known
    RuleTester validator blocker; any newly exposed errors must be measured
    rather than inferred.
-6. Runtime host-delegation then depends on #3657.
+7. Runtime host-delegation then depends on #3657.
 
 ## Goal
 

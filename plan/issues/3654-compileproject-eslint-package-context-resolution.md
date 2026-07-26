@@ -16,6 +16,7 @@ required_by: [1400, 2691]
 es_edition: n/a
 related: [81, 1044, 1279, 1400, 1559, 1560, 1575, 1791, 2691, 2700, 3653, 3655]
 ---
+
 # #3654 — Restore the real ESLint `compileProject` module graph
 
 ## Problem
@@ -65,6 +66,39 @@ If package-context resolution, extensionless relative resolution, and
 types-only conditional exports are independent defects, split them into
 separate implementation issues before coding. This issue owns the measured
 frontier and the phase attribution.
+
+## Implementation findings (2026-07-26)
+
+The package, extensionless/directory, and type-only failures share one graph
+boundary:
+
+1. `ModuleResolver` asked TypeScript to resolve from ESLint's logical
+   `node_modules/eslint` symlink. pnpm's private dependencies are reachable
+   only from the physical importer under `.pnpm/eslint@10.0.3/node_modules`.
+2. `resolveAllImports` only rewrote single-declarator CommonJS statements.
+   ESLint's first dependency block is one grouped `const` statement, so its
+   package and relative edges were never visited.
+3. `compileProject` flattened resolved files into an in-memory record and
+   discarded the exact importer/specifier/target edges. The virtual TypeScript
+   host then attempted to rediscover pnpm resolution from flattened names.
+4. JSDoc `import("...")` and `@import ... from "..."` type edges were not
+   included in the graph, and the multi-file checker did not inject the Node
+   ambient module surface used by the single-file Node lane.
+
+The implementation therefore keeps these as one resolver-layer task: resolve
+against physical importers, canonicalize graph identity, retain exact edges
+through the virtual checker, traverse grouped static CommonJS and JSDoc type
+edges, and register Node builtins as JS-host imports in multi-file codegen.
+Static JSON loading remains separate in #3655.
+
+After the change, direct `linter.js` analysis expands 149 canonical sources and
+has no TS2307 for `node:path`, the listed installed packages, the listed
+relative files, or `../types`. The sole entry-file TS2307 is
+`../../package.json`, exactly the #3655 boundary.
+
+The first full codegen probe no longer stops at resolver diagnostics, but it
+does not complete within the existing 180-second ESLint test budget. That
+post-resolution scale/performance frontier is split into #3658.
 
 ## Required behaviour
 

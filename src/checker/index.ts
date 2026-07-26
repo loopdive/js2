@@ -961,6 +961,12 @@ export interface MultiTypedAST {
   syntacticDiagnostics: readonly ts.Diagnostic[];
 }
 
+/**
+ * Exact importer-relative module edges captured by the on-disk project
+ * resolver. Keys and targets use the same file names as the `files` argument.
+ */
+export type ProjectModuleResolutions = Record<string, Record<string, string>>;
+
 /** Script-file extensions we recognize in the multi-source pipeline. */
 const KNOWN_SCRIPT_EXTS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"] as const;
 
@@ -1062,11 +1068,26 @@ export function analyzeMultiSource(
   specifierMap?: Record<string, string>,
   /** Compiler options (allowJs, skipSemanticDiagnostics, ...) */
   analyzeOptions?: AnalyzeOptions,
+  /** Exact per-importer edges captured by compileProject's filesystem resolver. */
+  projectResolutions?: ProjectModuleResolutions,
 ): MultiTypedAST {
   const normalizedFiles = new Map<string, string>();
   for (const [name, content] of Object.entries(files)) {
     normalizedFiles.set(normalizeFileName(name), content);
   }
+
+  // Multi-file package graphs retain their real Node import declarations.
+  // Give the checker the same import-scoped ambient module surface as the
+  // single-file path while codegen passes those modules through to the Node
+  // host. Building once from the joined graph avoids duplicate ambient
+  // declarations when many dependencies import the same builtin (#3654).
+  if (resolveEmulateNode(analyzeOptions)) {
+    const nodeEnvDts = buildNodeEnvDtsForSource(Array.from(normalizedFiles.values()).join("\n"), ts.ScriptKind.JS);
+    if (nodeEnvDts !== undefined) {
+      normalizedFiles.set(NODE_ENV_DTS_NAME, nodeEnvDts);
+    }
+  }
+
   const normalizedEntry = normalizeFileName(entryFile);
   const rootNames = Array.from(normalizedFiles.keys());
 
@@ -1101,6 +1122,46 @@ export function analyzeMultiSource(
     }
   }
 
+  const projectResolutionLookup = new Map<string, Map<string, string>>();
+  if (projectResolutions) {
+    for (const [importer, resolutions] of Object.entries(projectResolutions)) {
+      const normalizedImporter = normalizeFileName(importer);
+      const normalizedResolutions = new Map<string, string>();
+      for (const [specifier, target] of Object.entries(resolutions)) {
+        normalizedResolutions.set(specifier, normalizeFileName(target));
+      }
+      projectResolutionLookup.set(normalizedImporter, normalizedResolutions);
+    }
+  }
+
+  const resolveModule = (moduleName: string, containingFile: string): ts.ResolvedModuleFull | undefined => {
+    const exactTarget = projectResolutionLookup.get(containingFile)?.get(moduleName);
+    if (exactTarget && normalizedFiles.has(exactTarget)) {
+      return {
+        resolvedFileName: exactTarget,
+        isExternalLibraryImport: false,
+        extension: tsExtensionFor(exactTarget),
+      };
+    }
+
+    // Resolve relative paths against the containing file's directory.
+    let resolved: string;
+    if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
+      const containingDir = containingFile.replace(/[^/]*$/, "");
+      resolved = normalizeFileName(containingDir + moduleName);
+    } else {
+      // Bare specifier: check the lookup map first, then fall back to normalizeFileName.
+      resolved = bareSpecifierLookup.get(moduleName) ?? normalizeFileName(moduleName);
+    }
+    const key = probeFileKey(resolved, normalizedFiles) ?? resolved;
+    if (!normalizedFiles.has(key)) return undefined;
+    return {
+      resolvedFileName: key,
+      isExternalLibraryImport: false,
+      extension: tsExtensionFor(key),
+    };
+  };
+
   const compilerHost: ts.CompilerHost = {
     getSourceFile(name, languageVersion) {
       const userContent = normalizedFiles.get(name);
@@ -1124,27 +1185,7 @@ export function analyzeMultiSource(
     directoryExists: () => true,
     resolveModuleNameLiterals(moduleLiterals, containingFile) {
       return moduleLiterals.map((literal) => {
-        const moduleName = literal.text;
-        // Resolve relative paths against the containing file's directory
-        let resolved: string;
-        if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
-          const containingDir = containingFile.replace(/[^/]*$/, "");
-          resolved = normalizeFileName(containingDir + moduleName);
-        } else {
-          // Bare specifier: check the lookup map first, then fall back to normalizeFileName
-          resolved = bareSpecifierLookup.get(moduleName) ?? normalizeFileName(moduleName);
-        }
-        const key = probeFileKey(resolved, normalizedFiles) ?? resolved;
-        if (normalizedFiles.has(key)) {
-          return {
-            resolvedModule: {
-              resolvedFileName: key,
-              isExternalLibraryImport: false,
-              extension: tsExtensionFor(key),
-            },
-          };
-        }
-        return { resolvedModule: undefined };
+        return { resolvedModule: resolveModule(literal.text, containingFile) };
       });
     },
   };
@@ -1200,13 +1241,12 @@ export function analyzeMultiSource(
             : undefined;
         if (!spec) continue;
         // Re-use the same resolver the program used so cycles are treated identically.
-        const resolved = ts.resolveModuleName(spec, name, compilerOptions, compilerHost).resolvedModule
-          ?.resolvedFileName;
+        const resolved = resolveModule(spec, name)?.resolvedFileName;
         if (resolved && resolved !== name) visit(resolved);
       }
       visited.add(name);
       onStack.delete(name);
-      if (sf !== entrySourceFile) userSourceFiles.push(sf);
+      if (sf !== entrySourceFile && name !== NODE_ENV_DTS_NAME) userSourceFiles.push(sf);
     };
     // Entry-anchored DFS; only files reachable from entry are emitted.
     visit(normalizedEntry);
@@ -1215,6 +1255,7 @@ export function analyzeMultiSource(
     // (the previous behaviour was to emit every rootName, so we keep that for safety).
     for (const name of rootNames) {
       if (visited.has(name) || name === normalizedEntry) continue;
+      if (name === NODE_ENV_DTS_NAME) continue;
       const sf = program.getSourceFile(name);
       if (sf && sf !== entrySourceFile && !userSourceFiles.includes(sf)) {
         userSourceFiles.splice(userSourceFiles.length - 1, 0, sf);

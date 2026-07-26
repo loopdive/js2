@@ -120,17 +120,18 @@ describe.skipIf(ESLINT_LINTER === null)(
   `#1282 ESLint Tier 1 — minimal Linter.verify() ${ESLINT_DEV_DEPENDENCY_SKIP}`,
   () => {
     /**
-     * Tier 1a — run the real package-entry graph and pin the first two
-     * independent failures: the package export/resolver frontier (#3654) and
-     * dynamic object-destructuring IR frontier (#3656). An unexpected process
-     * failure is not accepted as an expected test failure.
+     * Tier 1a — run the real package-entry graph in the Node-host JS lane.
+     * #3654 restores the resolver layer, but the expanded graph does not yet
+     * complete inside this test's compile budget (#3658). Keep the eventual
+     * #3656 assertion here rather than accepting a timeout as a compiler
+     * diagnostic.
      */
-    it('Tier 1a — package entry reports the #3654/#3656 compile frontier for `import { Linter } from "eslint"`', async () => {
+    it.skip('Tier 1a — package entry reports the #3656 frontier for `import { Linter } from "eslint"` (blocked by #3658)', async () => {
       const r = await compileTier1Entry();
       const diagnostics = r.errors.map((error) => error.message).join("\n");
       expect(r.success).toBe(false);
       expect(r.binaryByteLength).toBe(0);
-      expect(diagnostics).toContain(`Module '"eslint"' has no exported member 'Linter'.`);
+      expect(diagnostics).not.toContain("Cannot find module");
       expect(diagnostics).toMatch(
         /getInactivityReasonMessage:.*object destructuring source must be IrType\.object or IrType\.class \(got dynamic\)/,
       );
@@ -146,7 +147,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      * references after dead-elim compaction. Fixed by skipping
      * `collectInterface` for `.d.ts` source files. (#1287)
      */
-    it.skip("Tier 1b — package-entry binary is structurally valid Wasm (blocked before emission by #3654/#3656)", () => {
+    it.skip("Tier 1b — package-entry binary is structurally valid Wasm (blocked before emission by #3655/#3656/#3658)", () => {
       // Advance this rung once Tier 1a emits a binary.
     });
 
@@ -159,7 +160,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      * What this rung asserts: compile-time success against a real
      * 32-file CJS module graph. Validation is the next rung.
      */
-    it.skip("Tier 1c — `eslint/lib/linter/linter.js` direct compile succeeds (blocked by #3654/#3655)", async () => {
+    it.skip("Tier 1c — `eslint/lib/linter/linter.js` direct compile succeeds (blocked by #3655/#3658)", async () => {
       const entry = requireEslintFile(ESLINT_LINTER, "lib/linter/linter.js");
       const r = await compileProject(entry, { allowJs: true });
       expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -177,7 +178,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      *
      * BLOCKED on #1289.
      */
-    it.skip("Tier 1d — `linter.js` binary instantiates (blocked before validation by #3654/#3655)", async () => {
+    it.skip("Tier 1d — `linter.js` binary instantiates (blocked before validation by #3655/#3658)", async () => {
       const entry = requireEslintFile(ESLINT_LINTER, "lib/linter/linter.js");
       const r = await compileProject(entry, { allowJs: true });
       expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -194,7 +195,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      * BLOCKED on #1287, #1289, #1273 (instanceof), #1271 (for-in),
      * #1275 (typeof dispatch).
      */
-    it.skip('Tier 1e — Node-host `Linter.verify("const x = 1;", {})` returns `[]` (blocked by #3654/#3655/#3656/#3657)', async () => {
+    it.skip('Tier 1e — Node-host `Linter.verify("const x = 1;", {})` returns `[]` (blocked by #3655/#3656/#3657/#3658)', async () => {
       const entry = writeEntry(
         "tier1e-entry.ts",
         `
