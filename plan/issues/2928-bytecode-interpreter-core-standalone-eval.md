@@ -3,7 +3,7 @@ id: 2928
 title: "Bytecode interpreter core + standalone new Function / indirect eval"
 status: in-progress
 created: 2026-07-02
-updated: 2026-07-21
+updated: 2026-07-26
 priority: medium
 horizon: xl
 feasibility: hard
@@ -13,7 +13,7 @@ task_type: feature
 area: runtime
 language_feature: eval
 goal: runtime-eval
-sprint: Backlog
+sprint: current
 parent: 1584
 depends_on: [2927] # 2853 done (sprint 71) — removed 2026-07-17, see plan/log/analysis-2026-07/02-interpreter-backend-audit-2026-07-17.md
 related: [1715, 1713, 2864, 2865, 2960, 3017, 2929]
@@ -103,7 +103,7 @@ Global-scope evaluation only, deliberately excluding direct-eval scope capture
       boundary into a catching `try/catch`.
 - [x] An AOT function calls an interpreted function and vice versa with identical
       boxed-value identity (a `ref.eq` round-trip test).
-- [x] ≥ 30 test262 eval-positive / Function-positive cases pass under the
+- [ ] ≥ 30 test262 eval-positive / Function-positive cases pass under the
       standalone target.
 - [x] A no-eval module stays within 5% of the current size floor; an
       eval-enabled module documents one measured parser+interpreter size figure.
@@ -349,15 +349,90 @@ only dynamic-code dependencies are
 `__runtime_new_function` and `__runtime_indirect_eval`. The mandatory acceptance
 executes stored and immediate `new Function` values, the `Function(...)` call
 form, indirect eval, exception propagation, built-ins, and the reverse AOT call
-through that real parser. A thirty-body Phase-1-positive corpus additionally
-executes arithmetic, comparison, name resolution, object access, interpreted
-calls, exceptions, and built-ins through the same real pipeline.
+through that real parser. A thirty-body synthetic, Test262-shaped
+Phase-1-positive corpus additionally executes arithmetic, comparison, name
+resolution, object access, interpreted calls, exceptions, and built-ins through
+the same real pipeline. It is a provider-harness capability gate, not the
+official Test262 acceptance criterion above.
 
 The remaining E6 distribution work is to publish/build that provider on demand
 through the #2527 linker instead of constructing it inside the test harness.
 The no-eval control (`export function add(a,b) { return a + b; }`) is 46,023
 bytes both before runtime routing (`542dbe5e9f529b`) and at this head: exactly
 byte-identical, a 0% size-floor change.
+
+## Official Test262 `eval-code` handoff (2026-07-26)
+
+The ordinary standalone Test262 lane was measured at PR #3678 head
+`d50379add2f0d7f46314a48612602baeffe04a4d` and compared file-for-file with a
+fresh `origin/main` control at
+`c17d14ed966eb63cbf315c2cc059390fab2caaec`. The authoritative command was:
+
+```sh
+TEST262_TARGET=standalone \
+TEST262_PATH_FILTER='language/eval-code/' \
+TEST262_REPORTER=dot \
+COMPILER_POOL_SIZE=2 \
+TEST262_WORKERS=2 \
+TEST262_MAX_UNCLASSIFIED_ROOT_CAUSES=9999 \
+pnpm run test:262 -- --official-scope-only
+```
+
+The path filter covers both `test/language/eval-code/` and
+`test/annexB/language/eval-code/`.
+
+| Scope                | Official files |            Pass |
+| -------------------- | -------------: | --------------: |
+| Standard `eval-code` |            347 |             105 |
+| Annex B `eval-code`  |            469 |               1 |
+| **Combined**         |        **816** | **106 (13.0%)** |
+
+The remaining outcomes were 670 runtime failures and 40 compile errors, with no
+skips. Passing cases split into 83 standard direct-eval files, 22 standard
+indirect-eval files, and one Annex B direct-eval file
+(`var-env-lower-lex-catch-non-strict.js`).
+
+The branch and control had identical statuses for all 816 files: **zero files
+flipped to pass on the interpreter branch**. Therefore none of the 106 existing
+passes can be credited to the new runtime route. They are pre-existing
+constant-string compile-away cases, expected negative/error paths, or tests
+whose dynamic evaluation path is not reached.
+
+### Measured blocker
+
+PR #3678's dedicated linked-provider harness is green, but the ordinary
+Test262 runner does not build and supply that provider. Genuine runtime
+indirect-eval cases therefore fail while instantiating the user module:
+
+```text
+WebAssembly.instantiate(): Import #0 "js2wasm:runtime-eval":
+module is not an object or function
+```
+
+Some are classified as `host_import_leak` for the same missing-provider
+boundary. Dynamic direct eval still reaches the intentional
+`TypeError: dynamic eval is not supported in standalone mode (#2928)` fallback;
+lexical capture remains #2929 and is not part of this handoff.
+
+### Next-agent sequence (E6 / official acceptance)
+
+1. PR #3678 has landed on `main` (merge commit `d4ab6613e`, 2026-07-26 —
+   including the coercion-sites allowance recorded below). Consume it without
+   changing the published parser/callable seam:
+   `parse(nativeString, optionsObject) -> ESTree $Object`, then
+   `emitProgram`/`emitFunction -> FuncMeta -> interpEnter`.
+2. Move the provider construction now proven by
+   `tests/issue-2928-runtime-link.test.ts` into the normal standalone packaging
+   path through #2527, with one ordered initializer. The Test262 runner must
+   instantiate the user module with a real `js2wasm:runtime-eval` namespace,
+   not `{}`.
+3. Start with indirect eval and `Function` constructor cases. Do not broaden
+   this slice into direct-eval lexical capture (#2929).
+4. Re-run the exact command above against a same-run `origin/main` control and
+   report exact per-file status flips. Do not count the synthetic thirty-body
+   provider corpus as official Test262 passes.
+5. Check the Test262 acceptance box only after at least 30 named official
+   source files pass because of the linked interpreter route.
 
 ## Coercion-sites allowance (`src/codegen/expressions/eval-inline.ts`)
 

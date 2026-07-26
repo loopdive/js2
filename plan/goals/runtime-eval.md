@@ -2,7 +2,7 @@
 
 **Runtime code evaluation — direct `eval`, indirect `eval`, and the `Function` constructor / `new Function` — works in both JS-host and standalone modes via a tiered fallback ladder, without embedding a third-party JS engine.**
 
-- **Status**: Activatable (Tier-0 slices ready now; interpreter build-out is substrate-gated)
+- **Status**: Active (Tier-2 implementation is open; E6 provider packaging and official Test262 integration remain)
 - **Track**: Parallel — the dynamic-code leg of the dual-mode architecture; does not block conformance goals.
 - **Target**: `eval` / `new Function` produce correct results standalone, not an instantiation trap; the ~225 JS-host mechanism failures and the standalone dynamic-code cliff (roadmap §5) close.
 - **Dependencies**: `standalone-mode` (the whole point is standalone dynamic code), `backend-agnostic-ir` (the IR→bytecode seam, #1713/#1715), `self-hosting-dogfood` (Acorn-via-js2wasm, #1710), plus in-flight substrate `#2864` (`$Frame`) and `#2527` (core-wasm linking).
@@ -53,7 +53,7 @@ MOP-surface signatures with those owners.
 | B | #2924 | M | current | Yes (pure AOT) |
 | C | #2925 | L | Backlog | gated on #2864 |
 | D | #2927 | L | Backlog | gated on #1058/#1710, #2527 |
-| E | #2928 | XL | Backlog | gated on #2927 |
+| E | #2928 | XL | current | E2–E5 proven; E6 packaging remains |
 | F | #2929 | XL | Backlog | gated on #2928/#2925/#2864 |
 
 Umbrella / strategy of record: **#1584**.
@@ -69,7 +69,7 @@ Umbrella / strategy of record: **#1584**.
 | **2924** | 'new Function("<const>") compile-away MVP — replace the no-op stub' | 69 | done | high |
 | **2925** | Direct-eval scope reification (JS-host): per-function tiering + $Frame name-map | Backlog | backlog | medium |
 | **2927** | Interpreter foundation: Acorn-via-js2wasm runtime parser + generic-built-in audit | current | ready | medium |
-| **2928** | Bytecode interpreter core + standalone new Function / indirect eval | Backlog | backlog | medium |
+| **2928** | Bytecode interpreter core + standalone new Function / indirect eval | current | in-progress | medium |
 | **2929** | Interpreter direct eval + with + Proxy-MOP convergence | Backlog | backlog | medium |
 | **2937** | Regression: host-mode $Object-hash poison (#2849) makes compiled-acorn parse null-deref on every input | 69 | done | high |
 | **2948** | standalone: chained dynamic add in lifted foreign bodies yields NaN (any-add result cannot feed another any-add) |  | done | medium |
