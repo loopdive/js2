@@ -486,11 +486,16 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     // ordinary ImportDeclarations. ESLint uses both `import("...")` typedefs
     // and the `@import { T } from "..."` form for declaration-only packages.
     const jsdocSpecifiers = new Set<string>();
-    for (const match of content.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
-      jsdocSpecifiers.add(match[1]);
-    }
-    for (const match of content.matchAll(/@import[^\r\n]*?\bfrom\s+["']([^"']+)["']/g)) {
-      jsdocSpecifiers.add(match[1]);
+    const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, content);
+    for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+      if (token !== ts.SyntaxKind.SingleLineCommentTrivia && token !== ts.SyntaxKind.MultiLineCommentTrivia) continue;
+      const comment = scanner.getTokenText();
+      for (const match of comment.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
+        jsdocSpecifiers.add(match[1]);
+      }
+      for (const match of comment.matchAll(/@import[^\r\n]*?\bfrom\s+["']([^"']+)["']/g)) {
+        jsdocSpecifiers.add(match[1]);
+      }
     }
     for (const specifier of jsdocSpecifiers) resolveAndVisit(specifier);
 

@@ -37,6 +37,7 @@ beforeAll(() => {
       'const dep = require("dep"),',
       '  helper = require("./helper"),',
       '  directory = require("./directory");',
+      "const importText = 'import(\"ghost-json-string\")';",
       "export function answer() {",
       "  return dep.answer() + helper() + directory();",
       "}",
@@ -137,6 +138,7 @@ describe("#3654 — importer-scoped pnpm/CommonJS resolution", () => {
     expect(paths).toContain(realpathSync(join(physicalApp, "lib/helper.js")));
     expect(paths).toContain(realpathSync(join(physicalApp, "lib/directory/index.js")));
     expect(new Set(paths.map((path) => realpathSync(path))).size).toBe(paths.length);
+    expect(resolver.getResolvedImports(logicalEntry).has("ghost-json-string")).toBe(false);
   });
 
   it("keeps a conditional types-only package as declarations instead of inventing a runtime body", () => {
