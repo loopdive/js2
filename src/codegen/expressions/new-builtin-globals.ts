@@ -33,6 +33,7 @@ import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitObjectCoercion } from "./calls-guards.js";
 import {
   emitDynamicNewFunctionHostEval,
+  emitStandaloneDynamicFunctionRuntime,
   emitStandaloneDynamicFunctionStub,
   isGlobalFunctionIdentifier,
   tryStaticNewFunction,
@@ -571,6 +572,8 @@ export function tryCompileBuiltinGlobalNew(
       const hostEval = emitDynamicNewFunctionHostEval(ctx, fctx, args);
       if (hostEval !== undefined) return hostEval;
       if (noJsHost(ctx)) {
+        const runtimeEval = emitStandaloneDynamicFunctionRuntime(ctx, fctx, args);
+        if (runtimeEval !== undefined) return runtimeEval;
         return emitStandaloneDynamicFunctionStub(ctx, fctx, expr, args) as ValType;
       }
     }

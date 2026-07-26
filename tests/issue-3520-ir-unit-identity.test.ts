@@ -21,9 +21,37 @@ import {
   indexIrTerminalDeclarations,
   type IrUnitInventory,
 } from "../src/ir/identity.js";
+import {
+  buildIrPlanningIdentityContext,
+  IrPlanningIdentityInvariantError,
+  requireIrPlanningOwnerUnitId,
+  requireIrPlanningSourceId,
+  type IrPlanningIdentityInvariantCode,
+} from "../src/ir/index.js";
 
 function source(fileName: string, text: string): ts.SourceFile {
   return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
+
+function collectNodes<T extends ts.Node>(root: ts.Node, predicate: (node: ts.Node) => node is T): T[] {
+  const result: T[] = [];
+  const visit = (node: ts.Node): void => {
+    if (predicate(node)) result.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return result;
+}
+
+function expectPlanningInvariant(fn: () => unknown, code: IrPlanningIdentityInvariantCode): void {
+  let caught: unknown;
+  try {
+    fn();
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(IrPlanningIdentityInvariantError);
+  expect(caught).toMatchObject({ code });
 }
 
 function taggedSyntheticInventory(entries: readonly { text: string; role: string }[]): IrUnitInventory {
@@ -447,6 +475,250 @@ describe("#3520 structural IR identity", () => {
     expect(cClasses).toHaveLength(4);
     expect(new Set(cClasses.map((record) => record.id)).size).toBe(4);
     expect(cClasses.filter((record) => record.lexicalOwnerId !== null)).toHaveLength(2);
+  });
+
+  it("builds an exact read-only planning bijection for nested, closure, and class units", () => {
+    const dependency = source(
+      "/repo/dep.ts",
+      `export function same() { return 1; } export class Same { m() { return 2; } }`,
+    );
+    const entry = source(
+      "/repo/entry.ts",
+      `
+        import { same as dependencySame } from "./dep";
+        export function same(value: number) {
+          function same() { return dependencySame(); }
+          const expression = function same() { return 2; };
+          const arrow = () => expression() + same();
+          const Anonymous = class {
+            m() { return 1; }
+            static m() { return 2; }
+            get x() { return 3; }
+            set x(value: number) {}
+            static get x() { return 4; }
+            static set x(value: number) {}
+            ["computed"]() { return arrow(); }
+          };
+          return new Anonymous().m() + value;
+        }
+        const initialized = 1;
+      `,
+    );
+    const inventory = buildIrUnitInventory([entry, dependency], { entrySource: entry });
+    const context = buildIrPlanningIdentityContext(inventory);
+    const moduleInitId = context.moduleInitUnitIdBySourceFile.get(entry)!;
+
+    expect(context.inventory).toBe(inventory);
+    expect(Object.isFrozen(context)).toBe(true);
+    expect("set" in context.unitIdByDeclaration).toBe(false);
+    expect("set" in context.classIdByDeclaration).toBe(false);
+    expect(Reflect.ownKeys(context.unitIdByDeclaration)).toEqual([]);
+    const immutableSize = context.unitIdByDeclaration.size;
+    expect(Reflect.set(context.unitIdByDeclaration, "backingMap", new Map())).toBe(false);
+    expect(context.unitIdByDeclaration.size).toBe(immutableSize);
+    expect(context.declarationByUnitId.size).toBe(inventory.allUnits.length - 1);
+    expect(context.unitIdByDeclaration.size).toBe(context.declarationByUnitId.size);
+    expect(context.declarationByClassId.size).toBe(inventory.classes.length);
+    expect(context.classIdByDeclaration.size).toBe(context.declarationByClassId.size);
+    expect(context.terminalByUnitId.size).toBe(inventory.terminalUnits.length);
+
+    for (const [declaration, id] of context.unitIdByDeclaration) {
+      expect(context.declarationByUnitId.get(id)).toBe(declaration);
+    }
+    for (const [declaration, id] of context.classIdByDeclaration) {
+      expect(context.declarationByClassId.get(id)).toBe(declaration);
+    }
+    for (const terminal of inventory.terminalUnits) {
+      expect(context.terminalByUnitId.get(terminal.id)).toBe(terminal);
+    }
+
+    const namedSame = collectNodes(
+      entry,
+      (node): node is ts.FunctionDeclaration | ts.FunctionExpression =>
+        (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name?.text === "same",
+    );
+    namedSame.push(
+      ...collectNodes(
+        dependency,
+        (node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === "same",
+      ),
+    );
+    const sameIds = namedSame.map((declaration) => context.unitIdByDeclaration.get(declaration)!);
+    expect(namedSame).toHaveLength(4);
+    expect(new Set(sameIds).size).toBe(namedSame.length);
+    expect(new Set(sameIds.map((id) => inventory.allUnits.find((unit) => unit.id === id)!.sourceId)).size).toBe(2);
+
+    const nested = namedSame.find(
+      (declaration) => ts.isFunctionDeclaration(declaration) && !ts.isSourceFile(declaration.parent),
+    )!;
+    const expression = namedSame.find(ts.isFunctionExpression)!;
+    const arrow = collectNodes(entry, ts.isArrowFunction)[0]!;
+    expect(inventory.allUnits.find((unit) => unit.id === context.unitIdByDeclaration.get(nested))?.kind).toBe(
+      "nested-function",
+    );
+    expect(inventory.allUnits.find((unit) => unit.id === context.unitIdByDeclaration.get(expression))?.kind).toBe(
+      "function-expression",
+    );
+    expect(inventory.allUnits.find((unit) => unit.id === context.unitIdByDeclaration.get(arrow))?.kind).toBe(
+      "arrow-function",
+    );
+
+    const anonymousClass = collectNodes(entry, ts.isClassExpression)[0]!;
+    const anonymousClassId = context.classIdByDeclaration.get(anonymousClass)!;
+    const implicitConstructorId = context.unitIdByDeclaration.get(anonymousClass)!;
+    expect(inventory.classes.find((record) => record.id === anonymousClassId)).toMatchObject({
+      declarationKind: "expression",
+      displayName: "<anonymous-class>",
+    });
+    expect(inventory.allUnits.find((unit) => unit.id === implicitConstructorId)?.kind).toBe(
+      "class-implicit-constructor",
+    );
+
+    const executableMembers = anonymousClass.members.filter(
+      (member): member is ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration =>
+        (ts.isMethodDeclaration(member) ||
+          ts.isGetAccessorDeclaration(member) ||
+          ts.isSetAccessorDeclaration(member)) &&
+        member.body !== undefined,
+    );
+    const executableMemberIds = executableMembers.map((member) => context.unitIdByDeclaration.get(member)!);
+    expect(new Set(executableMemberIds).size).toBe(executableMembers.length);
+    expect(
+      executableMemberIds.map((id) => {
+        return inventory.allUnits.find((unit) => unit.id === id)!.kind;
+      }),
+    ).toEqual([
+      "class-instance-method",
+      "class-static-method",
+      "class-instance-getter",
+      "class-instance-setter",
+      "class-static-getter",
+      "class-static-setter",
+      "class-instance-method",
+    ]);
+
+    const entrySourceId = context.sourceIdBySourceFile.get(entry)!;
+    expect(requireIrPlanningSourceId(context, entry)).toBe(entrySourceId);
+    expectPlanningInvariant(
+      () => requireIrPlanningSourceId(context, source(entry.fileName, entry.text)),
+      "source-record-mismatch",
+    );
+    expect(context.sourceFileBySourceId.get(entrySourceId)).toBe(entry);
+    expect(context.moduleInitUnitIdBySourceId.get(entrySourceId)).toBe(moduleInitId);
+    expect(context.declarationByUnitId.has(moduleInitId)).toBe(false);
+    expect(context.unitIdByDeclaration.has(entry)).toBe(false);
+    expect(context.terminalByUnitId.get(moduleInitId)).toMatchObject({
+      sourceId: entrySourceId,
+      kind: "module-init",
+      observedKind: "module-init",
+    });
+    expect(context.moduleInitUnitIdBySourceFile.has(dependency)).toBe(false);
+    expect(indexIrTerminalDeclarations(entry, inventory).get(entry)).toBe(moduleInitId);
+  });
+
+  it("gives field evaluation, nested callable, and implicit-constructor units distinct AST anchors", () => {
+    const fixture = source(
+      "field-callables.ts",
+      `
+        class Fields {
+          static fromArrow = () => 1;
+          fromFunction = function () { return 2; };
+        }
+      `,
+    );
+    const inventory = buildIrUnitInventory([fixture], { entrySource: fixture });
+    const context = buildIrPlanningIdentityContext(inventory);
+    const declaration = collectNodes(fixture, ts.isClassDeclaration)[0]!;
+    const staticField = collectNodes(fixture, ts.isPropertyDeclaration).find(
+      (field) => ts.isIdentifier(field.name) && field.name.text === "fromArrow",
+    )!;
+    const instanceField = collectNodes(fixture, ts.isPropertyDeclaration).find(
+      (field) => ts.isIdentifier(field.name) && field.name.text === "fromFunction",
+    )!;
+    const arrow = collectNodes(fixture, ts.isArrowFunction)[0]!;
+    const expression = collectNodes(fixture, ts.isFunctionExpression)[0]!;
+    const unitKindAt = (node: ts.Node) => context.unitByUnitId.get(context.unitIdByDeclaration.get(node)!)?.kind;
+
+    expect(unitKindAt(declaration)).toBe("class-implicit-constructor");
+    expect(unitKindAt(staticField)).toBe("class-static-field-initializer");
+    expect(unitKindAt(instanceField)).toBe("class-instance-field-initializer");
+    expect(unitKindAt(arrow)).toBe("arrow-function");
+    expect(unitKindAt(expression)).toBe("function-expression");
+    expect(requireIrPlanningOwnerUnitId(context, arrow.body)).toBe(context.moduleInitUnitIdBySourceFile.get(fixture));
+    expect(requireIrPlanningOwnerUnitId(context, expression.body)).toBe(context.unitIdByDeclaration.get(declaration));
+    expect(context.unitIdByDeclaration.size).toBe(context.declarationByUnitId.size);
+    expect(context.declarationByUnitId.size).toBe(inventory.allUnits.length - 1);
+  });
+
+  it("keeps planning declaration identities stable when source input order reverses", () => {
+    const makeRows = (reverse: boolean) => {
+      const a = source(
+        "/repo/a.ts",
+        `import { same } from "./z"; export function outer() { const fn = () => same(); return fn(); }`,
+      );
+      const z = source(
+        "/repo/z.ts",
+        `export function same() { const nested = function same() { return 1; }; return nested(); }
+         export class Same { m() { return 2; } }`,
+      );
+      const inventory = buildIrUnitInventory(reverse ? [z, a] : [a, z], { entrySource: a });
+      const context = buildIrPlanningIdentityContext(inventory);
+      return {
+        sources: inventory.sources.map(({ id, sourceKey, order }) => ({ id, sourceKey, order })),
+        units: inventory.allUnits.map((unit) => {
+          const declaration = context.declarationByUnitId.get(unit.id);
+          return {
+            id: unit.id,
+            sourceId: unit.sourceId,
+            kind: unit.kind,
+            declarationKind: declaration?.kind ?? null,
+            declarationStart: declaration?.getStart(declaration.getSourceFile()) ?? null,
+          };
+        }),
+        classes: inventory.classes.map((record) => {
+          const declaration = context.declarationByClassId.get(record.id)!;
+          return { id: record.id, sourceId: record.sourceId, declarationStart: declaration.getStart() };
+        }),
+      };
+    };
+
+    const forward = makeRows(false);
+    const reversed = makeRows(true);
+    expect(forward.units.length).toBeGreaterThan(3);
+    expect(forward.classes.length).toBeGreaterThan(0);
+    expect(reversed).toEqual(forward);
+  });
+
+  it("rejects duplicate or non-exact planning inventories deterministically", () => {
+    const duplicateUnitSource = source(
+      "duplicate-units.ts",
+      `export function first() { return 1; } export function second() { return 2; }`,
+    );
+    const duplicateUnits = buildIrUnitInventory([duplicateUnitSource], {
+      entrySource: duplicateUnitSource,
+      canonicalUnitOrdinalAt: (_sourceFile, _start, _end, kind) => (kind === "top-level-function" ? 0 : undefined),
+    });
+    expectPlanningInvariant(() => buildIrPlanningIdentityContext(duplicateUnits), "duplicate-unit-id");
+
+    const duplicateClassSource = source("duplicate-classes.ts", `declare class First {} declare class Second {}`);
+    const duplicateClasses = buildIrUnitInventory([duplicateClassSource], {
+      entrySource: duplicateClassSource,
+      canonicalClassOrdinalAt: () => 0,
+    });
+    expectPlanningInvariant(() => buildIrPlanningIdentityContext(duplicateClasses), "duplicate-class-id");
+
+    const exactSource = source("exact.ts", `export function main() { return 1; }`);
+    const exact = buildIrUnitInventory([exactSource], { entrySource: exactSource });
+    const copied = Object.freeze({
+      sources: exact.sources,
+      classes: exact.classes,
+      allUnits: exact.allUnits,
+      terminalUnits: exact.terminalUnits,
+    }) satisfies IrUnitInventory;
+    expectPlanningInvariant(() => buildIrPlanningIdentityContext(copied), "untracked-inventory");
+
+    (exactSource as { fileName: string }).fileName = "renamed-after-inventory.ts";
+    expectPlanningInvariant(() => buildIrPlanningIdentityContext(exact), "source-record-mismatch");
   });
 
   it("encodes static, instance, accessor, private, and computed members as distinct units", () => {

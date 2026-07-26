@@ -17,6 +17,37 @@
 8. [ ] No source files being reverted to old versions
 9. [ ] Commit message references your issue number (#N)
 
+## Lint suppressions — this project uses BIOME, not ESLint
+
+10. [ ] If you suppressed a lint rule, verify the suppression actually works:
+        `npx biome lint src tests scripts --diagnostic-level=error`
+
+Two ways a suppression silently does nothing (both cost a CI cycle on #3603):
+
+- **`// eslint-disable-next-line …` is INERT here.** The `quality` and
+  `cheap gate` lanes run `biome lint src tests scripts`. An eslint pragma is
+  just a comment — it suppresses nothing, and the failure looks like the rule
+  ignoring your suppression rather than the suppression not existing. The
+  correct form is:
+
+  ```ts
+  // biome-ignore lint/<group>/<rule>: <reason>
+  ```
+
+- **The pragma must sit on the line DIRECTLY ABOVE the offending statement.**
+  Prose between the pragma and the statement breaks it. Put the explanation
+  _above_ the pragma, never between it and the code:
+
+  ```ts
+  // Why this delete is deliberate: … (explanation goes here, above the pragma)
+  // biome-ignore lint/performance/noDelete: reproduces test262 realm mutation
+  delete (WeakMap.prototype as any).get;
+  ```
+
+A suppression that silently does nothing is the same failure family as a gate
+that is never read: the outcome is identical to "the rule rejected me", so you
+debug the wrong thing.
+
 ## Commit verification
 
 End your commit message with a **✓** (checkmark) once you've completed the checklist. The pre-commit hook rejects commits without it.

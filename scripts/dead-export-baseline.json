@@ -1,6 +1,5 @@
 [
   "src/codegen/builtin-tags.ts#getBuiltinParent",
-  "src/codegen/context/speculative.ts#withSpeculativeCompile",
   "src/codegen/extern-declarations.ts#getPseudoExternClassInfo",
   "src/codegen/extern-declarations.ts#resolveMethodDispatchTarget",
   "src/codegen/fallback-telemetry.ts#fallbackCountsToJson",

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { ModuleLayout } from "../../../emit/resolve-layout.js";
+import { irGlobalBindingKey } from "../../abi-bindings.js";
 import {
   LINEAR_ARRAY_FORWARDING,
   LINEAR_STACK_ARENA_BYTES,
@@ -20,11 +21,13 @@ import {
   type AllocSiteId,
   type IrFunction,
   type IrFuncRef,
+  type IrGlobalBinding,
   type IrGlobalRef,
   type IrObjectShape,
   type IrTypeRef,
 } from "../../nodes.js";
 import type { IrLoweredBody, IrLowerResolver } from "../../lower.js";
+import { compareIrIdentity, type IrUnitId } from "../../identity.js";
 import type { FuncHandle, FuncTypeDef, GlobalHandle, TypeHandle, ValType } from "../../types.js";
 import type { ModuleAssembler } from "../contract.js";
 import type { IrVecLowering, LinearMemoryFieldLowering, LinearVecLowering, PlannedObjectLowering } from "../handles.js";
@@ -65,7 +68,12 @@ export interface PorfforTypeDefinition {
 
 interface FunctionEntry {
   readonly handle: FuncHandle;
+  /** Diagnostic/public label only. */
   readonly name: string;
+  /** Structural identity for source/synthetic IR units. Runtime providers omit it. */
+  readonly unitId?: IrUnitId;
+  /** Collision-free renderer symbol, assigned deterministically at finalize. */
+  physicalName?: string;
   signature?: PorfforFunctionSymbol;
   definition?: PorfforFunctionDefinition;
   stackRuntime?: "mark" | "allocate" | "restore";
@@ -75,6 +83,7 @@ interface FunctionEntry {
 interface GlobalEntry {
   readonly handle: GlobalHandle;
   readonly name: string;
+  readonly binding?: IrGlobalBinding;
   definition?: PorfforGlobalDefinition;
 }
 
@@ -98,8 +107,9 @@ const PORFFOR_LINEAR_F64_VEC_TYPE_INDEX = 0;
 
 /**
  * Porffor module/index authority. Handles are registration-order identities;
- * final Porffor function/global array positions are assigned once, by stable
- * symbolic name order, in `finalize()`.
+ * final Porffor function/global array positions are assigned once. IR
+ * functions use canonical unit order; provider functions and globals use
+ * their stable physical labels.
  */
 export class PorfforModuleAssembler
   implements
@@ -110,9 +120,13 @@ export class PorfforModuleAssembler
   readonly backend = "porffor" as const;
   private readonly typeConverter = new PorfforTypeConverter();
   private readonly funcsByHandle = new Map<FuncHandle, FunctionEntry>();
+  /** Runtime/provider compatibility namespace; IR display labels never enter it. */
   private readonly funcsByName = new Map<string, FunctionEntry>();
+  private readonly funcsByUnitId = new Map<IrUnitId, FunctionEntry>();
+  private readonly irFuncsByDisplayName = new Map<string, FunctionEntry[]>();
   private readonly globalsByHandle = new Map<GlobalHandle, GlobalEntry>();
   private readonly globalsByName = new Map<string, GlobalEntry>();
+  private readonly globalsByBindingKey = new Map<string, GlobalEntry>();
   private readonly typesByHandle = new Map<TypeHandle, TypeEntry>();
   private readonly typesByKey = new Map<string, TypeEntry>();
   private readonly typesByName = new Map<string, TypeEntry>();
@@ -185,8 +199,20 @@ export class PorfforModuleAssembler
 
   /** Declare an IR function and freeze its scalar signature before bodies lower. */
   declareIrFunction(func: IrFunction): FuncHandle {
-    const handle = this.declareFunc(func.name);
-    const entry = this.requireFunc(handle);
+    this.assertMutable("declare IR function");
+    if (this.funcsByUnitId.has(func.unitId)) {
+      throw new Error(`porffor assembler: duplicate IR function unit '${func.unitId}'`);
+    }
+    const entry: FunctionEntry = {
+      handle: this.nextFuncHandle++,
+      name: func.name,
+      unitId: func.unitId,
+    };
+    this.funcsByHandle.set(entry.handle, entry);
+    this.funcsByUnitId.set(func.unitId, entry);
+    const sameLabel = this.irFuncsByDisplayName.get(func.name);
+    if (sameLabel) sameLabel.push(entry);
+    else this.irFuncsByDisplayName.set(func.name, [entry]);
     entry.signature = {
       name: func.name,
       params: func.params.map((param) => this.oneSlot(param.type, `param ${param.name} of ${func.name}`)),
@@ -195,6 +221,20 @@ export class PorfforModuleAssembler
     if (entry.signature.results.length > 1) {
       throw new Error(`porffor backend does not support multi-value function '${func.name}'`);
     }
+    return entry.handle;
+  }
+
+  declareIrGlobal(ref: IrGlobalRef, type: PorfforValueSlot): GlobalHandle {
+    this.assertMutable("declare structural global");
+    const key = irGlobalBindingKey(ref.binding);
+    if (this.globalsByBindingKey.has(key)) {
+      throw new Error(`porffor assembler: duplicate global binding '${ref.binding.bindingId}'`);
+    }
+    const handle = this.nextGlobalHandle++;
+    const entry: GlobalEntry = { handle, name: ref.name, binding: ref.binding };
+    this.globalsByHandle.set(handle, entry);
+    this.globalsByBindingKey.set(key, entry);
+    this.defineGlobal(handle, { type });
     return handle;
   }
 
@@ -231,6 +271,22 @@ export class PorfforModuleAssembler
 
   lookupFunc(name: string): FuncHandle | undefined {
     return this.funcsByName.get(name)?.handle;
+  }
+
+  lookupIrFunction(unitId: IrUnitId): FuncHandle | undefined {
+    return this.funcsByUnitId.get(unitId)?.handle;
+  }
+
+  /**
+   * Public-label compatibility lookup for renderer entry selection.
+   * Ambiguity is rejected; semantic call resolution always uses unit IDs.
+   */
+  lookupUniqueIrFunctionByDisplayName(name: string): FuncHandle | undefined {
+    const entries = this.irFuncsByDisplayName.get(name) ?? [];
+    if (entries.length > 1) {
+      throw new Error(`porffor assembler: entry label '${name}' matches ${entries.length} IR function units`);
+    }
+    return entries[0]?.handle;
   }
 
   declareGlobal(name: string): GlobalHandle {
@@ -322,7 +378,8 @@ export class PorfforModuleAssembler
     this.assertMutable("finalize");
     this.frozen = true;
 
-    const functions = [...this.funcsByHandle.values()].sort(byName);
+    this.assignPhysicalFunctionNames();
+    const functions = [...this.funcsByHandle.values()].sort(compareFunctionEntry);
     const globals = [...this.globalsByHandle.values()].sort(byName);
     const types = [...this.typesByHandle.values()].sort((left, right) => compareText(left.key, right.key));
     for (const entry of functions) {
@@ -348,7 +405,7 @@ export class PorfforModuleAssembler
       funcs: functionRecords,
       data: [],
       globals: globalRecords,
-      entry: this.start === null ? null : this.requireFunc(this.start).name,
+      entry: this.start === null ? null : this.functionPhysicalName(this.requireFunc(this.start)),
       prefs: this.preferences,
       usedTypes: new Set<number>(),
     };
@@ -366,23 +423,44 @@ export class PorfforModuleAssembler
   }
 
   resolveFunc(ref: IrFuncRef): number {
-    const arrayRuntime = linearArrayRuntimeKind(ref.name);
-    if (arrayRuntime) return this.ensureLinearArrayRuntime(ref.name, arrayRuntime);
-    const handle = this.lookupFunc(ref.name);
-    if (handle === undefined) throw new Error(`porffor assembler: unresolved function '${ref.name}'`);
-    return handle;
+    switch (ref.binding.kind) {
+      case "unit": {
+        const entry = this.funcsByUnitId.get(ref.binding.unitId);
+        if (!entry) {
+          throw new Error(`porffor assembler: unresolved function unit '${ref.binding.unitId}' (${ref.name})`);
+        }
+        return entry.handle;
+      }
+      case "runtime":
+      case "intrinsic": {
+        const symbol = ref.binding.symbol;
+        const arrayRuntime = linearArrayRuntimeKind(symbol);
+        if (arrayRuntime) return this.ensureLinearArrayRuntime(symbol, arrayRuntime);
+        const entry = this.funcsByName.get(symbol);
+        if (!entry?.stackRuntime && !entry?.linearArrayRuntime) {
+          throw new Error(`porffor assembler: unresolved ${ref.binding.kind} '${symbol}'`);
+        }
+        return entry.handle;
+      }
+      case "import":
+        throw new Error(
+          `porffor assembler: imported function '${ref.binding.module}.${ref.binding.field}' is unsupported`,
+        );
+      case "support":
+        throw new Error(`porffor assembler: unresolved support binding '${ref.binding.bindingId}'`);
+    }
   }
 
   resolveGlobal(ref: IrGlobalRef): number {
-    const handle = this.lookupGlobal(ref.name);
-    if (handle === undefined) throw new Error(`porffor assembler: unresolved global '${ref.name}'`);
-    return handle;
+    const entry = this.globalsByBindingKey.get(irGlobalBindingKey(ref.binding));
+    if (!entry) {
+      throw new Error(`porffor assembler: unresolved global binding '${ref.binding.bindingId}' (${ref.name})`);
+    }
+    return entry.handle;
   }
 
   resolveType(ref: IrTypeRef): number {
-    const handle = this.lookupType(ref.name);
-    if (handle === undefined) throw new Error(`porffor assembler: unresolved type '${ref.name}'`);
-    return handle;
+    throw new Error(`porffor assembler: symbolic type binding '${ref.binding.bindingId}' is unsupported`);
   }
 
   resolveString(): ValType {
@@ -451,7 +529,7 @@ export class PorfforModuleAssembler
   functionSymbol(handle: number): PorfforFunctionSymbol {
     const entry = this.requireFunc(handle);
     if (!entry.signature) throw new Error(`porffor assembler: function '${entry.name}' has no registered signature`);
-    return entry.signature;
+    return { ...entry.signature, name: entry.physicalName ?? entry.signature.name };
   }
 
   globalSymbol(handle: number): PorfforGlobalSymbol {
@@ -503,7 +581,7 @@ export class PorfforModuleAssembler
       body = this.instrumentPorfforStackFrame(body, stackMarkName, resultType ? stackResultName : null, resultType);
     }
     return {
-      name: entry.name,
+      name: this.functionPhysicalName(entry),
       index,
       params: params.map((param) => ({ name: param.name, type: typeOrdinal(param.type) })),
       retType:
@@ -588,7 +666,7 @@ export class PorfforModuleAssembler
       ];
     }
     return {
-      name: entry.name,
+      name: this.functionPhysicalName(entry),
       index,
       params,
       retType: typeOrdinal(retType),
@@ -888,7 +966,7 @@ export class PorfforModuleAssembler
       ];
     }
 
-    return { name: entry.name, index, params, retType: typeOrdinal(retType), locals, body };
+    return { name: this.functionPhysicalName(entry), index, params, retType: typeOrdinal(retType), locals, body };
   }
 
   /**
@@ -1234,6 +1312,55 @@ export class PorfforModuleAssembler
     };
   }
 
+  private assignPhysicalFunctionNames(): void {
+    const entries = [...this.funcsByHandle.values()];
+    const reserved = new Set(entries.map((entry) => entry.name));
+    const used = new Set<string>();
+    const byDisplayName = new Map<string, FunctionEntry[]>();
+    for (const entry of entries) {
+      const sameLabel = byDisplayName.get(entry.name);
+      if (sameLabel) sameLabel.push(entry);
+      else byDisplayName.set(entry.name, [entry]);
+    }
+
+    for (const displayName of [...byDisplayName.keys()].sort(compareText)) {
+      const sameLabel = byDisplayName.get(displayName)!.sort(compareFunctionEntry);
+      if (sameLabel.length === 1) {
+        sameLabel[0]!.physicalName = displayName;
+        used.add(displayName);
+        continue;
+      }
+
+      const provider = sameLabel.find((entry) => entry.unitId === undefined);
+      if (provider) {
+        provider.physicalName = displayName;
+        used.add(displayName);
+      }
+      for (const entry of sameLabel) {
+        if (entry === provider) continue;
+        const unitId = entry.unitId;
+        if (unitId === undefined) {
+          throw new Error(`porffor assembler: duplicate provider function label '${displayName}'`);
+        }
+        const encoded = encodeURIComponent(unitId);
+        let candidate = `${displayName}__ir_${encoded}`;
+        let discriminator = 0;
+        while (reserved.has(candidate) || used.has(candidate)) {
+          candidate = `__ir_identity_${encoded}_${discriminator++}`;
+        }
+        entry.physicalName = candidate;
+        used.add(candidate);
+      }
+    }
+  }
+
+  private functionPhysicalName(entry: FunctionEntry): string {
+    if (!entry.physicalName) {
+      throw new Error(`porffor assembler: function '${entry.name}' has no finalized physical name`);
+    }
+    return entry.physicalName;
+  }
+
   private bindTypeName(name: string, entry: TypeEntry): void {
     const existing = this.typesByName.get(name);
     if (existing && existing !== entry) throw new Error(`porffor assembler: duplicate type name '${name}'`);
@@ -1356,6 +1483,17 @@ function requirePosition<Handle extends number>(
 }
 
 function byName(left: { readonly name: string }, right: { readonly name: string }): number {
+  return compareText(left.name, right.name);
+}
+
+function compareFunctionEntry(left: FunctionEntry, right: FunctionEntry): number {
+  const nameOrder = compareText(left.name, right.name);
+  if (nameOrder !== 0) return nameOrder;
+  if (left.unitId !== undefined && right.unitId !== undefined) {
+    return compareIrIdentity(left.unitId, right.unitId);
+  }
+  if (left.unitId !== undefined) return 1;
+  if (right.unitId !== undefined) return -1;
   return compareText(left.name, right.name);
 }
 

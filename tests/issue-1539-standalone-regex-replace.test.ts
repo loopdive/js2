@@ -118,14 +118,45 @@ describe("#1913 $-substitution replace — formerly refused, now matches native"
   }
 });
 
-describe("#1539 standalone replace narrowed refusals (Phase 2c)", () => {
-  async function expectRefused(src: string): Promise<void> {
-    const r = await compile(src, { target: "standalone" });
+describe("#1539/#3567 standalone/WASI replace narrowed refusals (Phase 2c)", () => {
+  async function expectRefused(src: string, target: "standalone" | "wasi"): Promise<void> {
+    const r = await compile(src, { fileName: "issue-3567.ts", target });
     expect(r.success, `expected refusal for:\n${src}`).toBe(false);
     expect(r.errors.some((e) => /#1539|#1474/.test(e.message))).toBe(true);
+    const refusal = r.errors.find((e) => /#1539|#1474/.test(e.message))!;
+    expect(refusal.line).toBeGreaterThan(0);
   }
 
-  it("refuses function replacer", async () => {
-    await expectRefused(`export function f(s: string): string { return s.replace(/\\d/, (m: string) => m + m); }`);
+  for (const target of ["standalone", "wasi"] as const) {
+    it(`${target}: refuses replace function replacer`, async () => {
+      await expectRefused(
+        `export function f(s: string): string { return s.replace(/\\d/, (m: string) => m + m); }`,
+        target,
+      );
+    });
+
+    it(`${target}: refuses replaceAll function replacer`, async () => {
+      await expectRefused(
+        `export function f(s: string): string { return s.replaceAll(/\\d/g, (m: string) => m + m); }`,
+        target,
+      );
+    });
+  }
+
+  for (const target of ["standalone", "wasi"] as const) {
+    it(`${target}: refuses direct RegExp @@replace function replacer`, async () => {
+      await expectRefused(
+        `export function f(s: string): string { return /\\d/[Symbol.replace](s, (m: string) => m + m); }`,
+        target,
+      );
+    });
+  }
+
+  it("keeps function replacers available in the default host target", async () => {
+    const r = await compile(
+      `export function f(s: string): string { return s.replace(/\\d/g, (m: string) => m + m); }`,
+      { fileName: "issue-3567-host.ts" },
+    );
+    expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   });
 });

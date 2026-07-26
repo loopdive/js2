@@ -2,6 +2,40 @@
 
 Lightweight pointer index for unscheduled issues that need sprint candidacy. Authoritative status lives in each issue file's frontmatter.
 
+## 2026-07-26 — compiled Acorn full-Test262 differential follow-ups
+
+The #1712 acceptance branch compares pinned compiled Acorn 8.16.0 against
+node-acorn on every Git-tracked Test262 JavaScript parser input, including exact
+positions and Test262 strict/module variants. The clean published-head
+four-shard result is **53,259/53,259 exact files** and
+**102,312/102,312 exact variants**, with zero mismatches. Recursive
+Wasm→host→Wasm prototype-method dispatch is stack-flat, dynamic indexed and
+nested-vec mutations update the live compiled backing, lexical early errors
+preserve null sentinels, and arbitrary-width BigInt literals remain exact.
+[#2802](../2802-nested-any-vec-multipush-join-first-element-drop.md) and
+[#2846](../2846-acorn-bigint-literal-corrupted-to-f64.md) are completed under
+the #1712 umbrella; no parser-fidelity residual remains in this census.
+
+## 2026-07-26 — TypeScript frontend incremental reuse
+
+- [#700](../700-superseded-reuse-typescript-host-state.md) — **in review,
+  PRs #3645 / #3650**: replace per-build TypeScript Program/checker construction
+  with persistent single- and multi-file Language Services. Measured edited
+  single-file rebuilds improve 2.2–2.6× and unchanged rebuilds 4.1–6.2×, with
+  Program invalidation, cross-service isolation, JS byte parity, 100-source
+  sequential isolation, and Test262 fixture-graph reuse covered by focused
+  tests.
+
+## 2026-07-26 — Test262 linked-harness implementation
+
+- [#3451](../3451-linked-harness-wasm-separate-compilation.md) — **in progress,
+  high priority, hard, XL.** Slice 1 now provides the deterministic
+  strict-neutral harness/body split, target-specific content keys, and a
+  maintained-corpus inventory: 64 harness sources / 128 target objects versus
+  82,628 potential harness-bearing variants per lane, with 82,660 authoritative
+  split-parity checks. Next is the two-target `assert.sameValue` linked smoke,
+  gated on WasmGC/shared-realm linker substrate.
+
 ## 2026-07-17 - /harvest-errors (baselines run 20260717-151504, 32,139 pass)
 
 Harvested both lanes (default JS-host + standalone) from

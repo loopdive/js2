@@ -6,12 +6,37 @@
 
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 import { ts } from "../ts-api.js";
+import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
+import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
+import {
+  IrPlanningIdentityInvariantError,
+  requireIrPlanningOwnerUnitId,
+  requireIrPlanningSourceId,
+  type IrPlanningIdentityContext,
+  type IrPlanningIdentityInvariantCode,
+} from "./planning-identity.js";
 
 export type IrPrimitiveExpressionFamily = "number" | "boolean" | "string";
 export type IrDeclaredPrimitiveExpressionFamily = IrPrimitiveExpressionFamily | "primitive-union";
 
-export type IrLocalClassExpressionResolver = (expression: ts.Expression) => string | undefined;
+export type IrLegacyLocalClassExpressionResolver = (expression: ts.Expression) => string | undefined;
+
+/** Exact local-class evidence retained across the legacy class-name seam. */
+export interface IrLocalClassExpressionIdentity {
+  readonly classId: IrClassId;
+  readonly legacyName: string;
+}
+
+export type IrLocalClassExpressionResolver = (expression: ts.Expression) => IrLocalClassExpressionIdentity | undefined;
+
+function planningInvariant(code: IrPlanningIdentityInvariantCode, message: string): never {
+  throw new IrPlanningIdentityInvariantError(code, message);
+}
+
+function rethrowPlanningInvariant(error: unknown): void {
+  if (error instanceof IrPlanningIdentityInvariantError) throw error;
+}
 
 /**
  * Build a checker-backed resolver from an expression's exact instance type to
@@ -23,7 +48,31 @@ export function makeIrLocalClassExpressionResolver(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
   projectedShapes: ReadonlyMap<string, IrClassShape>,
-): IrLocalClassExpressionResolver {
+): IrLegacyLocalClassExpressionResolver;
+export function makeIrLocalClassExpressionResolver(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  projectedShapes: ReadonlyMap<string, IrClassShape>,
+  identityContext: IrPlanningIdentityContext,
+): IrLocalClassExpressionResolver;
+export function makeIrLocalClassExpressionResolver(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  projectedShapes: ReadonlyMap<string, IrClassShape>,
+  identityContext?: IrPlanningIdentityContext,
+): IrLegacyLocalClassExpressionResolver | IrLocalClassExpressionResolver {
+  if (identityContext) {
+    return makeIrIdentityLocalClassExpressionResolver(checker, sourceFile, projectedShapes, identityContext);
+  }
+  return makeIrLegacyLocalClassExpressionResolver(checker, sourceFile, projectedShapes);
+}
+
+/** Existing name-projected resolver retained for the temporary class-shape API. */
+export function makeIrLegacyLocalClassExpressionResolver(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  projectedShapes: ReadonlyMap<string, IrClassShape>,
+): IrLegacyLocalClassExpressionResolver {
   const declarations: { readonly name: string; readonly symbol: ts.Symbol }[] = [];
   const nameCounts = new Map<string, number>();
   const symbolCounts = new Map<ts.Symbol, number>();
@@ -112,6 +161,195 @@ export function makeIrLocalClassExpressionResolver(
   return (expression) => resolveExpression(expression, new Set());
 }
 
+/** Explicit structural factory; the four-argument overload above is equivalent. */
+export function makeIrIdentityLocalClassExpressionResolver(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  projectedShapes: ReadonlyMap<string, IrClassShape>,
+  identityContext: IrPlanningIdentityContext,
+): IrLocalClassExpressionResolver {
+  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
+  if (identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
+    return planningInvariant(
+      "source-record-mismatch",
+      `local-class source ${sourceFile.fileName} does not resolve back to the exact planning SourceFile`,
+    );
+  }
+
+  interface ProjectedClass extends IrLocalClassExpressionIdentity {
+    readonly declaration: ts.ClassDeclaration;
+    readonly symbol: ts.Symbol;
+  }
+
+  const projectedByClassId = new Map<IrClassId, ProjectedClass>();
+  const declarationCounts = new Map<ts.ClassDeclaration, number>();
+  const symbolCounts = new Map<ts.Symbol, number>();
+  const candidates: ProjectedClass[] = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isClassDeclaration(statement) || !statement.name) continue;
+    const legacyName = statement.name.text;
+    const shape = projectedShapes.get(legacyName);
+    if (!shape || shape.className !== legacyName) continue;
+    const classId = identityContext.classIdByDeclaration.get(statement);
+    if (classId === undefined || identityContext.declarationByClassId.get(classId) !== statement) {
+      return planningInvariant(
+        "missing-class-declaration",
+        `projected local class ${legacyName} has no exact structural class identity`,
+      );
+    }
+    if (shape.classId !== classId) {
+      return planningInvariant(
+        "class-record-mismatch",
+        `projected local class ${legacyName} carries ${shape.classId} instead of ${classId}`,
+      );
+    }
+    const symbol = checker.getSymbolAtLocation(statement.name);
+    if (!symbol) continue;
+    const candidate = { classId, legacyName, declaration: statement, symbol };
+    candidates.push(candidate);
+    declarationCounts.set(statement, (declarationCounts.get(statement) ?? 0) + 1);
+    symbolCounts.set(symbol, (symbolCounts.get(symbol) ?? 0) + 1);
+  }
+  for (const candidate of candidates) {
+    if (declarationCounts.get(candidate.declaration) !== 1 || symbolCounts.get(candidate.symbol) !== 1) continue;
+    if (projectedByClassId.has(candidate.classId)) {
+      return planningInvariant(
+        "duplicate-class-declaration",
+        `class identity ${candidate.classId} occurs more than once in the local-class projection`,
+      );
+    }
+    projectedByClassId.set(candidate.classId, candidate);
+  }
+
+  const assertExpressionSource = (expression: ts.Expression): void => {
+    const expressionSource = expression.getSourceFile();
+    const expressionSourceId = requireIrPlanningSourceId(identityContext, expressionSource);
+    if (expressionSource !== sourceFile || expressionSourceId !== sourceId) {
+      planningInvariant(
+        "source-record-mismatch",
+        `local-class expression source ${expressionSource.fileName} is outside ${sourceFile.fileName}`,
+      );
+    }
+  };
+
+  const projectedClassForSymbol = (symbol: ts.Symbol | undefined): ProjectedClass | undefined => {
+    if (!symbol) return undefined;
+    const declarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
+      (declaration, index, all): declaration is ts.ClassDeclaration | ts.ClassExpression =>
+        declaration !== undefined &&
+        (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) &&
+        all.indexOf(declaration) === index,
+    );
+    if (declarations.length !== 1) return undefined;
+    const declaration = declarations[0]!;
+    const classId = identityContext.classIdByDeclaration.get(declaration);
+    if (classId === undefined || identityContext.declarationByClassId.get(classId) !== declaration) return undefined;
+    const projected = projectedByClassId.get(classId);
+    return projected?.declaration === declaration ? projected : undefined;
+  };
+
+  const exactProjectedType = (expression: ts.Expression): ProjectedClass | undefined => {
+    try {
+      const type = checker.getTypeAtLocation(expression);
+      if (
+        type.isUnionOrIntersection() ||
+        type.aliasSymbol !== undefined ||
+        (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter | ts.TypeFlags.Never)) !==
+          0 ||
+        type.getCallSignatures().length !== 0 ||
+        type.getConstructSignatures().length !== 0
+      ) {
+        return undefined;
+      }
+      return projectedClassForSymbol(type.getSymbol());
+    } catch (error) {
+      rethrowPlanningInvariant(error);
+      return undefined;
+    }
+  };
+
+  const parameterProjectedType = (parameter: ts.ParameterDeclaration): ProjectedClass | undefined => {
+    const typeNode = parameter.type;
+    if (!typeNode || !ts.isTypeReferenceNode(typeNode)) return undefined;
+    try {
+      // Resolve the annotation's symbol itself. De-aliasing or comparing its
+      // text would let a same-spelled alias/shadow stand in for another class.
+      return projectedClassForSymbol(checker.getSymbolAtLocation(typeNode.typeName));
+    } catch (error) {
+      rethrowPlanningInvariant(error);
+      return undefined;
+    }
+  };
+
+  const resolveExpression = (
+    rawExpression: ts.Expression,
+    seen: Set<ts.VariableDeclaration>,
+  ): ProjectedClass | undefined => {
+    let expression = unwrapParens(rawExpression);
+    while (
+      ts.isAsExpression(expression) ||
+      ts.isTypeAssertionExpression(expression) ||
+      ts.isSatisfiesExpression(expression) ||
+      ts.isNonNullExpression(expression)
+    ) {
+      expression = unwrapParens(expression.expression);
+    }
+
+    const projected = exactProjectedType(expression);
+    if (!projected) return undefined;
+    if (ts.isConditionalExpression(expression)) {
+      const whenTrue = resolveExpression(expression.whenTrue, new Set(seen));
+      const whenFalse = resolveExpression(expression.whenFalse, new Set(seen));
+      return whenTrue?.classId === projected.classId && whenFalse?.classId === projected.classId
+        ? projected
+        : undefined;
+    }
+    if (!ts.isIdentifier(expression)) return projected;
+
+    try {
+      const symbol = checker.getSymbolAtLocation(expression);
+      const declaration = symbol?.valueDeclaration;
+      if (declaration && ts.isVariableDeclaration(declaration)) {
+        if (
+          seen.has(declaration) ||
+          !declaration.initializer ||
+          (declaration.parent.flags & ts.NodeFlags.Const) === 0
+        ) {
+          return undefined;
+        }
+        const nextSeen = new Set(seen);
+        nextSeen.add(declaration);
+        return resolveExpression(declaration.initializer, nextSeen)?.classId === projected.classId
+          ? projected
+          : undefined;
+      }
+      if (declaration && ts.isParameter(declaration)) {
+        return parameterProjectedType(declaration)?.classId === projected.classId ? projected : undefined;
+      }
+      // Binding elements, imports, and other alias-like value declarations
+      // require their own producer proof before they become class evidence.
+      if (declaration) return undefined;
+      return projected;
+    } catch (error) {
+      rethrowPlanningInvariant(error);
+      return undefined;
+    }
+  };
+
+  return (expression) => {
+    assertExpressionSource(expression);
+    const projected = resolveExpression(expression, new Set());
+    return projected ? { classId: projected.classId, legacyName: projected.legacyName } : undefined;
+  };
+}
+
+/** Explicit compatibility boundary for consumers that still require a class name. */
+export function projectIrLocalClassExpressionResolverToLegacy(
+  resolver: IrLocalClassExpressionResolver,
+): IrLegacyLocalClassExpressionResolver {
+  return (expression) => resolver(expression)?.legacyName;
+}
+
 /**
  * Build a checker-backed Array/tuple predicate for selector-only method
  * routing. The IR front-end currently lowers vec `.push(...)`, but not the
@@ -132,6 +370,38 @@ export function makeIrArrayExpressionPredicate(checker: ts.TypeChecker): (expr: 
         );
       }
       return checker.isArrayType(type) || checker.isTupleType(type);
+    } catch {
+      return false;
+    }
+  };
+}
+
+/**
+ * Build a checker-backed proof that an expression has the ambient lib
+ * `RegExp` type. Host-free backends use this only to keep RegExp prototype
+ * calls on the native legacy path; user classes that happen to be named
+ * `RegExp` must retain normal IR class dispatch.
+ */
+export function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr: ts.Expression) => boolean {
+  const isAmbientRegExp = (type: ts.Type): boolean => {
+    const symbol = type.aliasSymbol ?? type.getSymbol();
+    if (symbol?.getName() !== "RegExp") return false;
+    const declarations = symbol.getDeclarations() ?? [];
+    return (
+      declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+    );
+  };
+
+  return (expr) => {
+    try {
+      const type = checker.getTypeAtLocation(unwrapParens(expr));
+      if (type.isUnion()) {
+        const members = type.types.filter(
+          (member) => (member.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Never)) === 0,
+        );
+        return members.length > 0 && members.every(isAmbientRegExp);
+      }
+      return isAmbientRegExp(type);
     } catch {
       return false;
     }
@@ -275,11 +545,24 @@ export type IrModuleBindingValueKind =
   | { readonly kind: "i32"; readonly semantic: "boolean" }
   | { readonly kind: "extern"; readonly className: string };
 
-export interface IrModuleBindingIdentity {
+/** Name-compatible binding evidence used only by the pre-R1 planning seam. */
+export interface IrLegacyModuleBindingIdentity {
   /** The checker-resolved top-level declaration. Node identity is the key. */
   readonly declaration: ts.VariableDeclaration;
   readonly mutable: boolean;
   readonly valueKind: IrModuleBindingValueKind;
+}
+
+/** Exact binding evidence for one AST use site and its terminal owner. */
+export interface IrModuleBindingIdentity extends IrLegacyModuleBindingIdentity {
+  readonly ownerUnitId: IrUnitId;
+  /** Stable across every use site of the exact source declaration. */
+  readonly globalBindingId: IrBindingId;
+  /** Separate storage identity for the declaration's TDZ state. */
+  readonly tdzBindingId: IrBindingId;
+  readonly sourceId: IrSourceId;
+  /** Top-level declaration order within the exact source. */
+  readonly declarationOrdinal: number;
 }
 
 /**
@@ -292,19 +575,24 @@ export interface IrModuleBindingIdentity {
  * node that is no longer the direct declaration the selector assessed is an
  * invariant.
  */
+export type IrLegacyModuleBindingInspection =
+  | { readonly kind: "supported"; readonly identity: IrLegacyModuleBindingIdentity }
+  | { readonly kind: "unsupported"; readonly declaration: ts.VariableDeclaration }
+  | { readonly kind: "not-direct" };
+
 export type IrModuleBindingInspection =
   | { readonly kind: "supported"; readonly identity: IrModuleBindingIdentity }
   | { readonly kind: "unsupported"; readonly declaration: ts.VariableDeclaration }
   | { readonly kind: "not-direct" };
 
-export interface IrModuleBindingResolver {
-  (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingIdentity | undefined;
+interface IrModuleBindingResolverSurface<TIdentity, TInspection> {
+  (node: ts.Identifier, writeValue?: ts.Expression): TIdentity | undefined;
   /**
    * Inspect the exact source declaration without swallowing checker failures.
    * Integration uses this after a module-init claim, where an unexpected
    * checker throw is an Invariant rather than an Unsupported capability.
    */
-  readonly inspectDirectBinding: (node: ts.Identifier, writeValue?: ts.Expression) => IrModuleBindingInspection;
+  readonly inspectDirectBinding: (node: ts.Identifier, writeValue?: ts.Expression) => TInspection;
   /** True for any checker-owned top-level lexical, including unsupported reps. */
   readonly isDirectModuleBinding: (node: ts.Identifier) => boolean;
   /** True when the identifier resolves to an ambient declaration-file symbol. */
@@ -322,6 +610,16 @@ export interface IrModuleBindingResolver {
   /** Prove an initializer/RHS matches the binding's actual IR representation. */
   readonly bindingValueMatches: (node: ts.Identifier, value: ts.Expression) => boolean;
 }
+
+export interface IrLegacyModuleBindingResolver extends IrModuleBindingResolverSurface<
+  IrLegacyModuleBindingIdentity,
+  IrLegacyModuleBindingInspection
+> {}
+
+export interface IrModuleBindingResolver extends IrModuleBindingResolverSurface<
+  IrModuleBindingIdentity,
+  IrModuleBindingInspection
+> {}
 
 export interface IrModuleBindingResolverOptions {
   /** Actual legacy storage choice for an ordinary TS `number`. */
@@ -696,7 +994,7 @@ function externValueIsPassable(
 
 function callReceiverIsModuleExtern(
   call: ts.CallExpression,
-  resolve: (node: ts.Identifier) => IrModuleBindingIdentity | undefined,
+  resolve: (node: ts.Identifier) => IrLegacyModuleBindingIdentity | undefined,
 ): boolean {
   const visit = (expr: ts.Expression): boolean => {
     const candidate = unwrapParens(expr);
@@ -816,12 +1114,12 @@ function writeValueMatches(
   return targetKind.kind !== "i32" || (valueKind.kind === "i32" && valueKind.semantic === targetKind.semantic);
 }
 
-export function makeIrModuleBindingResolver(
+export function makeIrLegacyModuleBindingResolver(
   checker: ts.TypeChecker,
   options: IrModuleBindingResolverOptions,
-): IrModuleBindingResolver {
+): IrLegacyModuleBindingResolver {
   const isAmbientBinding = makeIrAmbientBindingPredicate(checker);
-  const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingInspection => {
+  const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
     const declaration = directTopLevelDeclaration(node, checker);
     if (!declaration) return { kind: "not-direct" };
     const list = declaration.parent as ts.VariableDeclarationList;
@@ -854,7 +1152,7 @@ export function makeIrModuleBindingResolver(
     }
     return { kind: "supported", identity: { declaration, mutable, valueKind } };
   };
-  const resolve = (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingIdentity | undefined => {
+  const resolve = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingIdentity | undefined => {
     try {
       const inspected = inspectDirectBinding(node, writeValue);
       return inspected.kind === "supported" ? inspected.identity : undefined;
@@ -970,5 +1268,161 @@ export function makeIrModuleBindingResolver(
         return false;
       }
     },
+  });
+}
+
+export function makeIrModuleBindingResolver(
+  checker: ts.TypeChecker,
+  options: IrModuleBindingResolverOptions,
+): IrLegacyModuleBindingResolver;
+export function makeIrModuleBindingResolver(
+  checker: ts.TypeChecker,
+  options: IrModuleBindingResolverOptions,
+  identityContext: IrPlanningIdentityContext,
+): IrModuleBindingResolver;
+export function makeIrModuleBindingResolver(
+  checker: ts.TypeChecker,
+  options: IrModuleBindingResolverOptions,
+  identityContext?: IrPlanningIdentityContext,
+): IrLegacyModuleBindingResolver | IrModuleBindingResolver {
+  const legacy = makeIrLegacyModuleBindingResolver(checker, options);
+  if (!identityContext) return legacy;
+
+  const ownerAt = (node: ts.Node): IrUnitId => requireIrPlanningOwnerUnitId(identityContext, node);
+  const bindingIdentity = (
+    identity: IrLegacyModuleBindingIdentity,
+  ): Pick<IrModuleBindingIdentity, "globalBindingId" | "tdzBindingId" | "sourceId" | "declarationOrdinal"> => {
+    const sourceFile = identity.declaration.getSourceFile();
+    const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
+    if (identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
+      return planningInvariant(
+        "source-record-mismatch",
+        `module binding source ${sourceFile.fileName} does not resolve back to the exact planning SourceFile`,
+      );
+    }
+    let declarationOrdinal = 0;
+    let found = false;
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (declaration === identity.declaration) {
+          found = true;
+          break;
+        }
+        declarationOrdinal++;
+      }
+      if (found) break;
+    }
+    if (!found) {
+      return planningInvariant(
+        "source-record-mismatch",
+        `module binding declaration is not in the exact top-level population of ${sourceFile.fileName}`,
+      );
+    }
+    return {
+      globalBindingId: irModuleGlobalBindingId(sourceId, declarationOrdinal),
+      tdzBindingId: irModuleTdzGlobalBindingId(sourceId, declarationOrdinal),
+      sourceId,
+      declarationOrdinal,
+    };
+  };
+  const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingInspection => {
+    const ownerUnitId = ownerAt(node);
+    const inspected = legacy.inspectDirectBinding(node, writeValue);
+    return inspected.kind === "supported"
+      ? {
+          kind: "supported",
+          identity: { ...inspected.identity, ownerUnitId, ...bindingIdentity(inspected.identity) },
+        }
+      : inspected;
+  };
+  const resolve = (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingIdentity | undefined => {
+    try {
+      const inspected = inspectDirectBinding(node, writeValue);
+      return inspected.kind === "supported" ? inspected.identity : undefined;
+    } catch (error) {
+      rethrowPlanningInvariant(error);
+      return undefined;
+    }
+  };
+
+  return Object.assign(resolve, {
+    inspectDirectBinding,
+    isDirectModuleBinding(node: ts.Identifier): boolean {
+      ownerAt(node);
+      return legacy.isDirectModuleBinding(node);
+    },
+    isAmbientBinding(node: ts.Identifier): boolean {
+      ownerAt(node);
+      return legacy.isAmbientBinding(node);
+    },
+    localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
+      ownerAt(node);
+      return legacy.localVariableDeclaration(node);
+    },
+    externCallArgumentsMatch(call: ts.CallExpression | ts.NewExpression): boolean {
+      ownerAt(call);
+      return legacy.externCallArgumentsMatch(call);
+    },
+    externValueIsPassable(value: ts.Expression): boolean {
+      ownerAt(value);
+      return legacy.externValueIsPassable(value);
+    },
+    scalarExpressionFamily(expr: ts.Expression): "f64" | "boolean" | undefined {
+      ownerAt(expr);
+      return legacy.scalarExpressionFamily(expr);
+    },
+    supportsHostNumberToString: legacy.supportsHostNumberToString,
+    bindingValueMatches(node: ts.Identifier, value: ts.Expression): boolean {
+      ownerAt(node);
+      return legacy.bindingValueMatches(node, value);
+    },
+  });
+}
+
+/** Explicit structural factory; the three-argument overload above is equivalent. */
+export function makeIrIdentityModuleBindingResolver(
+  checker: ts.TypeChecker,
+  options: IrModuleBindingResolverOptions,
+  identityContext: IrPlanningIdentityContext,
+): IrModuleBindingResolver {
+  return makeIrModuleBindingResolver(checker, options, identityContext);
+}
+
+/** Drop the owner sidecar only at a deliberately name-era compatibility boundary. */
+export function projectIrModuleBindingIdentityToLegacy(
+  identity: IrModuleBindingIdentity,
+): IrLegacyModuleBindingIdentity {
+  return {
+    declaration: identity.declaration,
+    mutable: identity.mutable,
+    valueKind: identity.valueKind,
+  };
+}
+
+/** Explicit compatibility adapter for selector/integration consumers not yet owner-aware. */
+export function projectIrModuleBindingResolverToLegacy(
+  resolver: IrModuleBindingResolver,
+): IrLegacyModuleBindingResolver {
+  const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
+    const inspected = resolver.inspectDirectBinding(node, writeValue);
+    return inspected.kind === "supported"
+      ? { kind: "supported", identity: projectIrModuleBindingIdentityToLegacy(inspected.identity) }
+      : inspected;
+  };
+  const resolve = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingIdentity | undefined => {
+    const identity = resolver(node, writeValue);
+    return identity ? projectIrModuleBindingIdentityToLegacy(identity) : undefined;
+  };
+  return Object.assign(resolve, {
+    inspectDirectBinding,
+    isDirectModuleBinding: (node: ts.Identifier) => resolver.isDirectModuleBinding(node),
+    isAmbientBinding: (node: ts.Identifier) => resolver.isAmbientBinding(node),
+    localVariableDeclaration: (node: ts.Identifier) => resolver.localVariableDeclaration(node),
+    externCallArgumentsMatch: (call: ts.CallExpression | ts.NewExpression) => resolver.externCallArgumentsMatch(call),
+    externValueIsPassable: (value: ts.Expression) => resolver.externValueIsPassable(value),
+    scalarExpressionFamily: (expr: ts.Expression) => resolver.scalarExpressionFamily(expr),
+    supportsHostNumberToString: resolver.supportsHostNumberToString,
+    bindingValueMatches: (node: ts.Identifier, value: ts.Expression) => resolver.bindingValueMatches(node, value),
   });
 }

@@ -818,6 +818,20 @@ export function compileTailDispatch(
           const recvIsUserClass = !!resolvedClassName && ctx.classSet.has(resolvedClassName);
           const recvIsUnresolved = (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
           if ((isRegExpRecv || recvIsUnresolved) && !recvIsUserClass) {
+            // #3567 — WASI shares the fail-loud function-replacer contract
+            // without opting its supported symbol-method forms into the
+            // standalone native engine. A string replacer returns undefined
+            // here and preserves the existing WASI dispatch.
+            if (ctx.wasi && methodName === "@@replace" && expr.arguments.length === 2) {
+              const wasiReplaceRefusal = tryCompileStandaloneRegExpSymbolCall(
+                ctx,
+                fctx,
+                expr,
+                elemAccess.expression,
+                methodName,
+              );
+              if (wasiReplaceRefusal !== undefined) return wasiReplaceRefusal;
+            }
             if (ctx.standalone) {
               // (#2161) Route the well-known-symbol protocol READ forms
               // (`re[Symbol.match/matchAll/search](str)`) to the native engine

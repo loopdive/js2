@@ -98,7 +98,7 @@ relative files, or `../types`. The sole entry-file TS2307 is
 
 The first full codegen probe no longer stops at resolver diagnostics, but it
 does not complete within the existing 180-second ESLint test budget. That
-post-resolution scale/performance frontier is split into #3658.
+post-resolution scale/performance frontier is split into #3672.
 
 ## Required behaviour
 

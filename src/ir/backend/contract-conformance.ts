@@ -22,7 +22,9 @@
 // The stub is NOT a compilation path. Nothing in the compiler imports it.
 // ---------------------------------------------------------------------------
 
-import type { AllocSiteId, IrFunction, IrInstr, IrType } from "../nodes.js";
+import { irGlobalBindingKey, irTypeBindingKey } from "../abi-bindings.js";
+import { irCallableBindingKey } from "../callable-bindings.js";
+import type { AllocSiteId, IrFuncRef, IrFunction, IrGlobalRef, IrInstr, IrType, IrTypeRef } from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { BlockType, FuncHandle, FuncTypeDef, GlobalHandle, Instr, TypeHandle, ValType } from "../types.js";
 import type { ModuleLayout } from "../../emit/resolve-layout.js";
@@ -277,27 +279,30 @@ class StubLayoutResolver implements IrLowerResolver {
   private readonly funcs = new Map<string, number>();
   private readonly globals = new Map<string, number>();
   private readonly types = new Map<string, number>();
-  resolveFunc(ref: { readonly name: string }): number {
-    let idx = this.funcs.get(ref.name);
+  resolveFunc(ref: IrFuncRef): number {
+    const key = irCallableBindingKey(ref.binding);
+    let idx = this.funcs.get(key);
     if (idx === undefined) {
       idx = this.nextFunc++;
-      this.funcs.set(ref.name, idx);
+      this.funcs.set(key, idx);
     }
     return idx;
   }
-  resolveGlobal(ref: { readonly name: string }): number {
-    let idx = this.globals.get(ref.name);
+  resolveGlobal(ref: IrGlobalRef): number {
+    const key = irGlobalBindingKey(ref.binding);
+    let idx = this.globals.get(key);
     if (idx === undefined) {
       idx = this.nextGlobal++;
-      this.globals.set(ref.name, idx);
+      this.globals.set(key, idx);
     }
     return idx;
   }
-  resolveType(ref: { readonly name: string }): number {
-    let idx = this.types.get(ref.name);
+  resolveType(ref: IrTypeRef): number {
+    const key = irTypeBindingKey(ref.binding);
+    let idx = this.types.get(key);
     if (idx === undefined) {
       idx = this.nextType++;
-      this.types.set(ref.name, idx);
+      this.types.set(key, idx);
     }
     return idx;
   }

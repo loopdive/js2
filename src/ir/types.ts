@@ -168,6 +168,19 @@ export interface FieldDef {
   name: string;
   type: ValType;
   mutable: boolean;
+  /**
+   * The physical carrier was inferred as numeric, but whole-program source
+   * analysis proved every definition/write produces a JS boolean (#2847).
+   * Kept separate from ValType so finalize-time host boxing can recover the
+   * boolean without changing the already-emitted struct storage ABI.
+   */
+  jsBoolean?: true;
+  /**
+   * This source property is only assigned on conditional/loop paths. A hidden
+   * companion slot records per-instance own-property presence so an untouched
+   * default slot is distinguishable from an explicit null/zero assignment.
+   */
+  presenceTracked?: true;
 }
 
 export type ValType =

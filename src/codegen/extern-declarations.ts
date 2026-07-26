@@ -1341,8 +1341,7 @@ export function registerNodeBuiltinImports(ctx: CodegenContext, builtins: NodeBu
     ctx.mod.nodeBuiltinModules.add(builtin.moduleName);
 
     const importName = `__node_${builtin.moduleName}`;
-    // Emit one host import per module, but bind every local alias used across a
-    // multi-file graph to that shared thunk.
+    // Emit one host import per module; bind every graph alias to its shared thunk.
     if (!ctx.funcMap.has(importName)) {
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
       addImport(ctx, "env", importName, { kind: "func", typeIdx });

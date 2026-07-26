@@ -114,6 +114,12 @@ export interface TypeOracle {
    * `ts.Type`, so it honors the no-checker-object-escapes contract.
    */
   constInitializerOf(id: ts.Node): ts.Expression | undefined;
+  /**
+   * Initializer for a plain identifier variable binding (`const`/`let`/`var`).
+   * This is the binding-resolution seam for analyses that separately prove
+   * single assignment and therefore must not narrow the query to `const`.
+   */
+  variableInitializerOf(id: ts.Node): ts.Expression | undefined;
 }
 
 /** Builtins with first-class compiler handling (mirrors type-mapper's set —
@@ -292,6 +298,20 @@ export class TsCheckerOracle implements TypeOracle {
       if (!ts.isIdentifier(decl.name)) return undefined;
       const list = decl.parent;
       if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) === 0) return undefined;
+      return decl.initializer;
+    } catch {
+      return undefined;
+    }
+  }
+
+  variableInitializerOf(id: ts.Node): ts.Expression | undefined {
+    try {
+      if (!ts.isIdentifier(id)) return undefined;
+      const sym = this.checker.getSymbolAtLocation(id);
+      const decl = sym?.valueDeclaration;
+      if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer || !ts.isIdentifier(decl.name)) {
+        return undefined;
+      }
       return decl.initializer;
     } catch {
       return undefined;

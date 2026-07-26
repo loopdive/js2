@@ -29,7 +29,7 @@
 // and reports coverage (they are named follow-ups in the issue).
 
 import { Builtin, Encoder, type JumpSlot } from "./encoder.js";
-import { FLAG_SCRIPT, type FuncMeta, type JSValue } from "./types.js";
+import { FLAG_SCRIPT, FLAG_STRICT, type FuncMeta, type JSValue } from "./types.js";
 import { Op } from "./opcodes.js";
 
 /** Thrown when the emitter meets a Phase-1-out-of-scope ESTree node/operator. */
@@ -67,6 +67,13 @@ class FunctionEmitter {
   private readonly enc = new Encoder();
   /** name → fixed register (params + hoisted locals). */
   private readonly names = new Map<string, number>();
+  /** Self-compile-stable membership mirror for `names`.
+   *
+   * A missing numeric Map value is not a reliable `undefined` discriminator in
+   * every standalone generic-Map lowering. Register lookup still uses `names`;
+   * global-builtin shadow classification uses this explicit string list.
+   */
+  private readonly boundNames: string[] = [];
   /** bump pointer: next free register (temporaries live at/above this). */
   private regTop = 1; // regs[0] reserved for `this`
   private maxReg = 1;
@@ -77,6 +84,8 @@ class FunctionEmitter {
   private readonly hoistedVars: string[] = [];
   /** Hoisted function declarations (collected before emission). */
   private readonly hoistedFuncs: Node[] = [];
+  /** Function directive-prologue strictness (scripts keep their global-this entry semantics). */
+  private strictMode = false;
 
   constructor(params: Node[], body: Node, name: JSValue, isScript: boolean, isExpressionBody: boolean) {
     // Use explicit fields instead of TypeScript parameter properties: the E2
@@ -107,6 +116,7 @@ class FunctionEmitter {
     if (existing !== undefined) return existing;
     const r = this.allocReg();
     this.names.set(name, r);
+    this.boundNames.push(name);
     return r;
   }
 
@@ -152,6 +162,18 @@ class FunctionEmitter {
       this.enc.emit0(Op.Return);
     } else {
       const stmts: Node[] = this.body.body;
+      if (!this.isScript) {
+        // Detect the directive prologue inline. A newly-added late class helper
+        // is not a stable self-compile call seam until #3651 lands.
+        for (const statement of stmts) {
+          if (statement.type !== "ExpressionStatement" || statement.expression.type !== "Literal") break;
+          if (statement.expression.value === "use strict") {
+            this.strictMode = true;
+            break;
+          }
+          if (typeof statement.expression.value !== "string") break;
+        }
+      }
       // Collect all var/function/let/const declarations (function-scoped).
       this.collectHoist(stmts);
       if (this.isScript) {
@@ -181,7 +203,7 @@ class FunctionEmitter {
       }
     }
 
-    const flags = this.isScript ? FLAG_SCRIPT : 0;
+    const flags = (this.isScript ? FLAG_SCRIPT : 0) | (this.strictMode ? FLAG_STRICT : 0);
     return this.enc.finish(this.maxReg, paramCount, this.name, flags);
   }
 
@@ -504,8 +526,13 @@ class FunctionEmitter {
   // ── expressions (each leaves its value in acc, restores regTop) ──────────────
   private emitExpr(node: Node): void {
     if (node.type === "Literal") this.emitLiteral(node);
-    else if (node.type === "Identifier") this.emitLoadName(node.name);
-    else if (node.type === "ThisExpression") this.enc.emitReg(Op.Ldar, 0);
+    else if (node.type === "Identifier") {
+      if (node.name === "globalThis" && !this.isBoundName("globalThis")) {
+        this.enc.emitCallBuiltin(Builtin.GlobalThis, 0, 0);
+      } else {
+        this.emitLoadName(node.name);
+      }
+    } else if (node.type === "ThisExpression") this.enc.emitReg(Op.Ldar, 0);
     else if (node.type === "ArrayExpression") this.emitArray(node);
     else if (node.type === "ObjectExpression") this.emitObject(node);
     else if (node.type === "MemberExpression") this.emitMemberGet(node);
@@ -555,6 +582,26 @@ class FunctionEmitter {
     const r = this.names.get(name);
     if (r !== undefined) this.enc.emitReg(Op.Star, r);
     else this.enc.emitConst(Op.StName, this.enc.internConst(name));
+  }
+
+  /** Whether a syntactic global name is shadowed anywhere in this function.
+   *
+   * Hoisted script bindings are environment-backed rather than register-backed,
+   * so checking only `names` would incorrectly fold `var Error; new Error()`
+   * to the intrinsic. The explicit scans keep this helper inside the
+   * self-compile subset.
+   */
+  private isBoundName(name: string): boolean {
+    for (const bound of this.boundNames) {
+      if (bound === name) return true;
+    }
+    for (const local of this.hoistedVars) {
+      if (local === name) return true;
+    }
+    for (const fn of this.hoistedFuncs) {
+      if (fn.id && fn.id.name === name) return true;
+    }
+    return false;
   }
 
   private emitArray(node: Node): void {
@@ -628,6 +675,41 @@ class FunctionEmitter {
 
   private emitCall(node: Node): void {
     if (node.optional) throw new UnsupportedNodeError("optional call", "CallExpression");
+    // Resolve the small Phase-1 generic-builtin surface that has no property on
+    // the sparse standalone global object. Keep this classification inline:
+    // the current self-compiler can lose a newly-added late class-method call
+    // on this dynamic ESTree receiver (#3651's adjacent method seam).
+    const directCallee = node.callee;
+    let directBuiltin = -1;
+    if (directCallee.type === "Identifier" && !this.isBoundName(directCallee.name)) {
+      if (directCallee.name === "Number") directBuiltin = Builtin.Number;
+    } else if (
+      directCallee.type === "MemberExpression" &&
+      !directCallee.optional &&
+      !directCallee.computed &&
+      directCallee.object.type === "Identifier" &&
+      directCallee.object.name === "Math" &&
+      !this.isBoundName("Math") &&
+      directCallee.property.type === "Identifier"
+    ) {
+      const mathName = directCallee.property.name;
+      if (mathName === "max") directBuiltin = Builtin.MathMax;
+      else if (mathName === "min") directBuiltin = Builtin.MathMin;
+      else if (mathName === "abs") directBuiltin = Builtin.MathAbs;
+      else if (mathName === "floor") directBuiltin = Builtin.MathFloor;
+      else if (mathName === "ceil") directBuiltin = Builtin.MathCeil;
+      else if (mathName === "round") directBuiltin = Builtin.MathRound;
+    }
+    if (directBuiltin >= 0) {
+      const builtinCallMark = this.mark();
+      const builtinCallBase = this.regTop;
+      for (let i = 0; i < node.arguments.length; i += 1) this.allocReg();
+      this.emitArgWindow(node.arguments, builtinCallBase);
+      this.enc.emitCallBuiltin(directBuiltin, builtinCallBase, node.arguments.length);
+      this.release(builtinCallMark);
+      return;
+    }
+
     const argc = node.arguments.length;
     const m = this.mark();
     const base = this.regTop;
@@ -670,6 +752,29 @@ class FunctionEmitter {
   }
 
   private emitNew(node: Node): void {
+    // The standalone global object is deliberately a per-module open object,
+    // not a complete JS realm. Lower the direct, unshadowed native Error family
+    // through CallBuiltin so the E4 boundary can transport real catchable error
+    // values without requiring host globals or synthetic constructor carriers.
+    // Alias/dynamic-constructor forms continue through the ordinary Construct
+    // seam; this arm is the Phase-1 acceptance path.
+    if (node.callee.type === "Identifier" && !this.isBoundName(node.callee.name)) {
+      const builtinId = this.errorBuiltinId(node.callee.name);
+      if (builtinId >= 0) {
+        // Keep names distinct from the ordinary Construct locals below. The
+        // self-compiler currently flattens block-scoped locals in this method
+        // before its TDZ pass (#3651), so reusing `m`/`base` in sibling blocks
+        // produces a false "before initialization" diagnostic.
+        const builtinMark = this.mark();
+        const builtinBase = this.regTop;
+        for (let i = 0; i < node.arguments.length; i += 1) this.allocReg();
+        this.emitArgWindow(node.arguments, builtinBase);
+        this.enc.emitCallBuiltin(builtinId, builtinBase, node.arguments.length);
+        this.release(builtinMark);
+        return;
+      }
+    }
+
     const argc = node.arguments.length;
     const m = this.mark();
     const base = this.regTop;
@@ -683,6 +788,15 @@ class FunctionEmitter {
     this.enc.emitReg(Op.Ldar, rCallee);
     this.enc.emitCall(Op.Construct, base, argc);
     this.release(m);
+  }
+
+  private errorBuiltinId(name: string): number {
+    if (name === "Error") return Builtin.Error;
+    if (name === "TypeError") return Builtin.TypeError;
+    if (name === "RangeError") return Builtin.RangeError;
+    if (name === "SyntaxError") return Builtin.SyntaxError;
+    if (name === "ReferenceError") return Builtin.ReferenceError;
+    return -1;
   }
 
   private emitArgWindow(args: Node[], firstSlot: number): void {
@@ -1021,5 +1135,28 @@ class FunctionEmitter {
 export function emitProgram(ast: Node): FuncMeta {
   if (ast.type !== "Program") throw new UnsupportedNodeError(`top-level ${ast.type}`, ast.type);
   const emitter = new FunctionEmitter([], ast, "", /*isScript*/ true, /*isExpressionBody*/ false);
+  return emitter.emit();
+}
+
+/** Emit one parsed function node to callable metadata.
+ *
+ * `new Function` is parsed through a synthetic `FunctionDeclaration`, then
+ * handed here instead of compiling the enclosing `Program` as an eval script.
+ * The resulting metadata binds the parsed parameters in `regs[1..]`, returns
+ * from the function body normally, and carries the synthetic `anonymous` name
+ * without installing it as a global declaration.
+ */
+export function emitFunction(node: Node): FuncMeta {
+  if (
+    node.type !== "FunctionDeclaration" &&
+    node.type !== "FunctionExpression" &&
+    node.type !== "ArrowFunctionExpression"
+  ) {
+    throw new UnsupportedNodeError(`function entry ${node.type}`, node.type);
+  }
+  const isArrow = node.type === "ArrowFunctionExpression";
+  const isExpressionBody = isArrow && node.body.type !== "BlockStatement";
+  const name = node.id && node.id.name ? node.id.name : "";
+  const emitter = new FunctionEmitter(node.params, node.body, name, /*isScript*/ false, isExpressionBody);
   return emitter.emit();
 }

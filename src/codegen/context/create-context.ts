@@ -12,13 +12,16 @@ import { UsageInference } from "../../checker/usage-inference.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
+import type { ProgramAbiSession } from "../program-abi-session.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 
 export function createCodegenContext(
   mod: WasmModule,
   checker: ts.TypeChecker,
   options?: CodegenOptions,
+  programAbiSession?: ProgramAbiSession,
 ): CodegenContext {
+  programAbiSession?.assertModule(mod);
   // #1524 — strict-mode default policy. WASI builds enforce the dual-mode
   // architectural principle by default (`CLAUDE.md` → "JS host optional");
   // pass `strictNoHostImports: false` to opt out (the CLI's
@@ -42,6 +45,7 @@ export function createCodegenContext(
   const linkedNamespaces: ReadonlySet<string> = new Set(options?.wasi ? (options?.link ?? []) : []);
   const ctx: CodegenContext = {
     mod,
+    programAbiSession,
     checker,
     sourceIsModule: false,
     // (#1930) THE type-query boundary. New codegen code MUST prefer
@@ -56,9 +60,11 @@ export function createCodegenContext(
     usageInference: new UsageInference(checker),
     useUsageInfer: options?.useUsageInfer ?? process.env.JS2WASM_USAGE_INFER !== "0",
     funcMap: new Map(),
+    irUnitFuncMap: new Map(),
     structMap: new Map(),
     typeIdxToStructName: new Map(),
     structFields: new Map(),
+    booleanPropertyNames: new Set(),
     noBrandShapeTypes: new Set(),
     fnctorReservedTypeIdx: new Map(), // #2773 S1 — up-front fnctor struct-type slots
 
@@ -238,6 +244,7 @@ export function createCodegenContext(
     dynamicDescriptorWidenVars: new Set(),
     objectHashConsumerVars: new Set(),
     objectHashConsumerTypes: new Set(),
+    dynamicObjectReturnFunctions: new Set(),
     growableObjectLiteralVars: new Set(),
     externrefAccessorVars: new Set(),
     pendingMathMethods: new Set(),

@@ -7,11 +7,10 @@
 //     meta-circular runtime-eval shim (`__extern_new_function`), producing a
 //     REAL callable value; the immediate-call form goes through
 //     `__call_function`.
-//  2. Standalone dynamic `eval` / `new Function` leaked / stubbed silently. Now
-//     they emit a source-located compile-time WARNING and a CATCHABLE throw
-//     (eval: at the call site; new Function: at call time, so a program that
-//     never invokes the constructed function keeps working), with NO
-//     unsatisfiable `env::__extern_eval` host import.
+//  2. Standalone dynamic direct `eval` still throws catchably without leaking a
+//     host import because caller-scope reification belongs to #2929. Indirect
+//     eval and dynamic `new Function` import the core-Wasm runtime-eval provider;
+//     #2928's linked acceptance test proves execution.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
@@ -64,7 +63,7 @@ describe("#2960 — host-mode dynamic new Function routes to the meta-circular s
   });
 });
 
-describe("#2960 — standalone dynamic eval: warning + host-free + catchable throw", () => {
+describe("#2960 — standalone dynamic direct eval: warning + host-free + catchable throw", () => {
   it("does NOT leak env::__extern_eval and warns", async () => {
     const r = await compile(`export function test(): number { let s = "1"; s = s + "+1"; return eval(s) as number; }`, {
       target: "standalone",
@@ -89,28 +88,35 @@ describe("#2960 — standalone dynamic eval: warning + host-free + catchable thr
   });
 });
 
-describe("#2960 — standalone dynamic new Function: construct-succeeds, throws only at call", () => {
-  it("warns, stays host-free, and CONSTRUCTION does not throw (program not calling it keeps working)", async () => {
+describe("#2928 — standalone dynamic indirect eval links the runtime provider", () => {
+  it("emits one core-Wasm provider import and no unsupported-code warning", async () => {
+    const r = await compile(
+      `export function test(): number { let s = "1"; s = s + "+1"; return (0, eval)(s) as number; }`,
+      { target: "standalone" },
+    );
+    expect(r.success, JSON.stringify(r.errors)).toBe(true);
+    expect(importNames(r.binary)).toEqual(["js2wasm:runtime-eval::__runtime_indirect_eval"]);
+    expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
+  });
+});
+
+describe("#2960/#2928 — standalone dynamic new Function links the runtime provider", () => {
+  it("emits one core-Wasm provider import and no unsupported-code warning", async () => {
     const r = await compile(
       `export function test(): number { let op = "+"; op = op + ""; const f: any = new Function("a","b","return a"+op+"b"); return 7; }`,
       { target: "standalone" },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    expect(importNames(r.binary).some((n) => n.includes("__extern_eval") || n.includes("__extern_new_function"))).toBe(
-      false,
-    );
-    expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(true);
-    const { instance } = await WebAssembly.instantiate(r.binary, {});
-    expect((instance.exports as { test(): number }).test()).toBe(7);
+    expect(importNames(r.binary)).toEqual(["js2wasm:runtime-eval::__runtime_new_function"]);
+    expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
   });
 
-  it("CALLING the constructed standalone function throws CATCHABLY", async () => {
+  it("uses the same provider import for the Function(...) call form", async () => {
     const r = await compile(
-      `export function test(): number { let op = "+"; op = op + ""; const f: any = new Function("a","b","return a"+op+"b"); try { return f(1,2); } catch (e) { return 99; } }`,
+      `export function test(): any { let op = "+"; op = op + ""; return Function("a","b","return a"+op+"b"); }`,
       { target: "standalone" },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    const { instance } = await WebAssembly.instantiate(r.binary, {});
-    expect((instance.exports as { test(): number }).test()).toBe(99);
+    expect(importNames(r.binary)).toEqual(["js2wasm:runtime-eval::__runtime_new_function"]);
   });
 });

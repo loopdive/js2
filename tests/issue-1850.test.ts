@@ -26,6 +26,9 @@ import {
   type IrLowerResolver,
   type IrType,
 } from "../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-1850");
 
 const I32 = irVal({ kind: "i32" });
 const STRING: IrType = { kind: "string" };
@@ -60,7 +63,7 @@ describe("#1850 — IR verifier cross-block dominance", () => {
     // b3: return v1        (v1 defined in b0, which dominates b3 → OK)
     const v1 = asValueId(1);
     const fn: IrFunction = {
-      name: "domOk",
+      ...irIdentities.next("domOk"),
       params: [],
       resultTypes: [I32],
       blocks: [
@@ -88,7 +91,7 @@ describe("#1850 — IR verifier cross-block dominance", () => {
     const v1 = asValueId(1);
     const v2 = asValueId(2);
     const fn: IrFunction = {
-      name: "domBad",
+      ...irIdentities.next("domBad"),
       params: [],
       resultTypes: [I32],
       blocks: [
@@ -116,7 +119,7 @@ describe("#1850 — IR verifier cross-block dominance", () => {
     // b2: return v1   (b0 dominates b2 transitively → OK)
     const v1 = asValueId(1);
     const fn: IrFunction = {
-      name: "domChain",
+      ...irIdentities.next("domChain"),
       params: [],
       resultTypes: [I32],
       blocks: [
@@ -136,7 +139,7 @@ describe("#1850 — IR verifier cross-block dominance", () => {
     // rejected as a cross-block dominance violation.
     const v2 = asValueId(2);
     const fn: IrFunction = {
-      name: "useFromSuccessor",
+      ...irIdentities.next("useFromSuccessor"),
       params: [],
       resultTypes: [],
       blocks: [
@@ -160,7 +163,7 @@ describe("#1850 — IR verifier cross-block dominance", () => {
     // b0: v1 = const; v2 = const; return v2  — all local, no cross-block uses.
     const v2 = asValueId(2);
     const fn: IrFunction = {
-      name: "singleBlock",
+      ...irIdentities.next("singleBlock"),
       params: [],
       resultTypes: [I32],
       blocks: [block(0, [constI32(1, 1), constI32(2, 2)], { kind: "return", values: [v2] })],
@@ -176,7 +179,7 @@ describe("#1850 — IR verifier cross-block dominance", () => {
     const v1 = asValueId(1);
     const v2 = asValueId(2);
     const fn: IrFunction = {
-      name: "blockArgThread",
+      ...irIdentities.next("blockArgThread"),
       params: [],
       resultTypes: [I32],
       blocks: [
@@ -194,7 +197,7 @@ describe("#1850 — per-backend IR legality and hard verifier fallback", () => {
   it("accepts ordinary scalar IR for the WasmGC backend", () => {
     const v1 = asValueId(1);
     const fn: IrFunction = {
-      name: "wasmgcLegal",
+      ...irIdentities.next("wasmgcLegal"),
       params: [],
       resultTypes: [I32],
       blocks: [block(0, [constI32(1, 4)], { kind: "return", values: [v1] })],
@@ -208,7 +211,7 @@ describe("#1850 — per-backend IR legality and hard verifier fallback", () => {
   it("rejects string IR before lowering through the bytecode backend", () => {
     const v1 = asValueId(1);
     const fn: IrFunction = {
-      name: "bytecodeString",
+      ...irIdentities.next("bytecodeString"),
       params: [],
       resultTypes: [STRING],
       blocks: [
@@ -243,7 +246,7 @@ describe("#1850 — per-backend IR legality and hard verifier fallback", () => {
     // to WasmGc). Cf. the divergent-family rejection test below.
     const v1 = asValueId(1);
     const fn: IrFunction = {
-      name: "linearConst",
+      ...irIdentities.next("linearConst"),
       params: [],
       resultTypes: [I32],
       blocks: [block(0, [constI32(1, 1)], { kind: "return", values: [v1] })],
@@ -269,7 +272,7 @@ describe("#1850 — per-backend IR legality and hard verifier fallback", () => {
       resultType: { kind: "object", shape: { fields: [] } },
     } as unknown as IrInstr;
     const fn: IrFunction = {
-      name: "linearObject",
+      ...irIdentities.next("linearObject"),
       params: [],
       resultTypes: [I32],
       // object.new (v1, divergent) then a plain i32 const (v2) returned.

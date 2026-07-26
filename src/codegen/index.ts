@@ -7,6 +7,7 @@ import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { fillHostFnctorMethodDrivers, maxReservedHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { TypeFact } from "../checker/oracle.js";
@@ -27,8 +28,8 @@ import {
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
 import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
-import { asVal, irDynamic, isDynamic, irVal, type IrType } from "../ir/nodes.js";
-import { buildTypeMap, type LatticeType } from "../ir/propagate.js";
+import { asVal, irDynamic, isDynamic, irVal, type IrFuncRef, type IrType } from "../ir/nodes.js";
+import type { LatticeType } from "../ir/propagate.js";
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -37,19 +38,15 @@ import {
   type IrPreparationFailure,
 } from "../ir/outcomes.js";
 import {
-  certifyImportedIrCall,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
-  planIrCompilation,
   irClosureSignatureFromFunctionTypeNode,
   type IrFallbackReason,
   type IrSelection,
 } from "../ir/select.js";
-import { makeIrImportedFunctionResolver, type IrImportedFunctionResolver } from "../ir/imported-functions.js";
 import type {
   IrHostVoidCallbackLoweringPlan,
   IrImportedCallLoweringPlan,
-  IrImportedOptionalParamPlan,
   IrTopLevelFunctionValueLoweringPlan,
 } from "../ir/ast-lowering-plans.js";
 import {
@@ -62,12 +59,15 @@ import { supportsIrBackendTargetCapability, type IrBackendTargetCapability } fro
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import {
   buildIrUnitInventory,
-  terminalIrUnitsForSource,
   type BuildIrUnitInventoryOptions,
-  type IrSourceId,
+  type IrClassId,
   type IrUnitId,
-  type IrUnitInventory,
 } from "../ir/identity.js";
+import {
+  buildIrPlanningIdentityContext,
+  requireIrPlanningSourceId,
+  type IrPlanningIdentityContext,
+} from "../ir/planning-identity.js";
 import { makeIrPromiseDelayResolver } from "../ir/promise-delay.js";
 import {
   buildIrPromiseDelayLoweringPlans,
@@ -80,22 +80,51 @@ import {
   makeIrLocalClassExpressionResolver,
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
+  makeIrRegExpExpressionPredicate,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
 import { asyncEngineWouldActivate } from "./async-activation.js"; // (#1373b C-1)
 import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
+import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
+import { eliminateDeadImportsAndPlanAbiCallables } from "./program-abi-import-planning.js";
+import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
+import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
-  collectLocalCallEdges,
-  irFirstBodyIsProvenLowerable,
-  MODULE_INIT_CALLER,
-  type ValueDomain,
-} from "./ir-first-gate.js";
+  planIrImportedCalls,
+  prepareIrAmbientClassCallLowering,
+  recordIrOverlayPreparationFailure,
+} from "./ir-imported-call-planning.js";
 import {
-  closeIrBlockedComponent,
-  prepareHostDateSnapshotLowering,
-  prepareHostVoidCallbackLowering,
-  preparePromiseDelayLowering,
+  applyIrFinalContextFunctionRetention,
+  closeIrBlockedComponentByIdentity,
+  prepareHostDateSnapshotLoweringByIdentity,
+  prepareHostVoidCallbackLoweringByIdentity,
+  preparePromiseDelayLoweringByIdentity,
+  type IrHostDateSnapshotImportPlan,
 } from "./ir-overlay-finalize.js";
+import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import {
+  auditIrSkippedFunctionSlots,
+  buildWholeSourceFailureOutcomes,
+  reconcileIrOverlayOutcomes,
+} from "./ir-overlay-outcomes.js";
+import {
+  collectIrClassShapeDeclarations,
+  createIrClassShapeSidecar,
+  resolveIrClassShapeFromType,
+  resolveIrClassShapeFromTypeReference,
+  resolveIrParentClassId,
+  type IrClassShapeEntry,
+  type IrClassShapeLookup,
+  type IrClassShapeSidecar,
+} from "./ir-class-shapes.js";
+import {
+  buildIrExactFunctionClaimIndex,
+  buildIrRequestedFunctionSkipProjection,
+  computeIrFirstSkipUnitIds,
+  correlateIrSkippedFunctionNames,
+  type IrExactFunctionClaim,
+} from "./ir-overlay-safety.js";
 import type { FallbackCounts } from "./fallback-telemetry.js";
 import { buildLeakedHostImportError, scanForLeakedHostImports } from "./host-import-allowlist.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
@@ -111,7 +140,6 @@ import type {
 } from "./context/types.js";
 import type { NodeBuiltinImport } from "../import-resolver.js";
 import { moduleGlobalForSymbol } from "./function-identity.js";
-import { eliminateDeadImports } from "./dead-elimination.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
@@ -119,6 +147,7 @@ import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 
 import { hoistedVarRetypesToConcreteRef, usageInferredLocalType } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
 import { collectClosureBaseWrapperTypeIdxs, buildClosureRefTestArms } from "./closure-classifier.js"; // (#2175 V2-S1)
+import { ensureRuntimeEvalAotCallableCarrierTypes } from "./runtime-eval-callable.js";
 import { ensureNativeIteratorRuntime, fillNativeIteratorLateArms } from "./iterator-native.js";
 import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
@@ -131,7 +160,6 @@ import { fillMemberGetDispatch } from "./member-get-dispatch.js";
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
-import { fillVecOverlayHelpers } from "./vec-overlay.js"; // (#3251 S1)
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
 import {
   recordSloppyImplicitGlobalNames,
@@ -148,16 +176,21 @@ import {
   fillApplyClosure,
   fillBindDynHelper,
   fillBuiltinFnMeta,
+  fillClosedStructExternGetArms,
+  fillClosedStructHasOwnArms,
+  fillClosedStructOwnPropertyNamesArms,
   fillDynamicForinVecArms,
   fillExternArrayLikeStructArms,
   fillExternGetIdxVecArms,
   fillExternSetVecArms,
+  fillFnctorPrototypeDispatchArms,
   fillExternIsArray,
   fillProxyDispatch,
 } from "./object-runtime.js";
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
+import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
 import { fillReflectIsConstructor } from "./reflect-construct-native.js";
 import { fillArrayToPrimitive } from "./array-to-primitive.js";
 import { fillClassToPrimitive } from "./class-to-primitive.js";
@@ -238,6 +271,7 @@ import { classMemberFuncKey, fnctorAncestorOfClass, moduleHasFnctorSubclass } fr
 import {
   applyShapeInference,
   collectDeclarations,
+  collectDynamicObjectReturnCarrierTypes,
   inferNumericReturnTypes,
   collectEmptyObjectWidening,
   collectGrowableObjectLiterals,
@@ -298,14 +332,18 @@ import {
   emitClosureMethodCallExportN,
   emitIsClosureExport,
   emitClosureArityExport,
+  emitClosureHasRestExport,
   emitIsDataStructExport,
   fillStandaloneTypeofClosureArms,
 } from "./closure-exports.js"; // (#3272) extracted verbatim
 import {
   emitStructFieldGetters,
+  emitStructFieldBooleanMarkers,
+  emitStructFieldPresenceGetters,
   emitStructFieldSetters,
   resolveSameShapeFieldNameCollisions,
 } from "./struct-field-exports.js"; // (#3272) extracted verbatim
+import { analyzeBooleanPropertyNames, recoverBooleanStructFieldBrands } from "./struct-field-boolean-brand.js";
 import {
   registerWasiImports,
   emitDeferredWasiHelpers,
@@ -766,7 +804,7 @@ function resolvePositionType(
   node: ts.TypeNode | undefined,
   mapped: LatticeType | undefined,
   ctx: CodegenContext,
-  classShapes?: ReadonlyMap<string, import("../ir/nodes.js").IrClassShape>,
+  classShapes?: IrClassShapeLookup,
 ): IrType {
   if (node) {
     // `readonly T[]` parses as a `readonly`-TypeOperatorNode wrapping the array
@@ -823,20 +861,16 @@ function resolvePositionType(
       return irVal({ kind: "ref_null", typeIdx: vecIdx });
     }
     if (ts.isTypeLiteralNode(node) || ts.isTypeReferenceNode(node)) {
-      // Slice 4 (#1169d) — TypeReferenceNode that names a local class
-      // resolves to `IrType.class`. The classShapes registry is seeded
-      // by `buildIrClassShapes` from the legacy class registry before
-      // the IR runs. Take this path FIRST: classes also satisfy the
+      // Slice 4 (#1169d) — a TypeReferenceNode whose checker symbol resolves
+      // to an exact projected class resolves to `IrType.class`. Take this path
+      // FIRST: classes also satisfy the
       // generic `objectIrTypeFromTsType` heuristic (they're "Object"
       // type-flag types), so without the explicit class detection we'd
       // fall into the data-object path, which doesn't carry method or
       // constructor info.
       if (classShapes && ts.isTypeReferenceNode(node)) {
-        const ref = node.typeName;
-        if (ts.isIdentifier(ref)) {
-          const cs = classShapes.get(ref.text);
-          if (cs) return { kind: "class", shape: cs };
-        }
+        const entry = resolveIrClassShapeFromTypeReference(ctx.checker, node, classShapes);
+        if (entry) return { kind: "class", shape: entry.shape };
       }
       // TypedArray<TArrayBuffer> (TS 5.7+) carries an ArrayBufferLike type
       // argument that is erased at runtime. Lower it exactly like the bare
@@ -1084,7 +1118,7 @@ function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type, activeTypes: Set<ts.Ty
  * nodes are included (no class expressions, no nested-in-function
  * classes — same scope as the IR selector's `localClasses` set).
  *
- * The returned map carries:
+ * The returned exact sidecar carries:
  *   - `fields`: user-visible struct fields in canonical (alphabetical)
  *               order. The legacy `__tag` prefix is stripped here so
  *               consumers see only TS-source-level fields. The IR's
@@ -1100,25 +1134,22 @@ function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type, activeTypes: Set<ts.Ty
  *                          re-derived from the AST.
  *
  * Classes whose constructor or any field/method type can't be lowered
- * to a representable IrType are SKIPPED — the IR selector can still
- * accept the class name as a TypeReference, but `resolvePositionType`
- * will throw when the missing shape forces a fallback. That mirrors
+ * to a representable IrType are SKIPPED — `resolvePositionType` then
+ * falls through instead of substituting a same-spelled shape. That mirrors
  * the slice 2 / slice 3 behavior: best-effort acceptance with a clean
  * legacy fallback for unrepresentable shapes.
  */
 function buildIrClassShapes(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
-): Map<string, import("../ir/nodes.js").IrClassShape> {
-  const out = new Map<string, import("../ir/nodes.js").IrClassShape>();
-  // #3000-E: className → declaration, for parent-chain field re-derivation and
-  // parent-shape lookup on a subclass.
-  const classDeclByName = new Map<string, ts.ClassDeclaration>();
-  for (const stmt of sourceFile.statements) {
-    if (ts.isClassDeclaration(stmt) && stmt.name) classDeclByName.set(stmt.name.text, stmt);
-  }
-  for (const stmt of sourceFile.statements) {
-    if (!ts.isClassDeclaration(stmt) || !stmt.name) continue;
+  identityContext: IrPlanningIdentityContext,
+): IrClassShapeSidecar {
+  const out = new Map<IrClassId, IrClassShapeEntry>();
+  const lookup: IrClassShapeLookup = { identityContext, byClassId: out };
+  for (const { classId, legacyName: className, declaration: stmt } of collectIrClassShapeDeclarations(
+    sourceFile,
+    identityContext,
+  )) {
     // #3000-E: a single-level `extends` of a LOCAL user class projects (its own
     // shape carries the parent as `.parent`, driving `super(...)` / `super.method`
     // lowering). A class with `extends` of a builtin / externref-backed / not-yet-
@@ -1128,13 +1159,12 @@ function buildIrClassShapes(
     // predicate MIRRORS the selector's `hasParent && parentIsLocalClass` gate
     // (`src/ir/select.ts`) so a claimed subclass member always finds a shape here.
     let parentShape: import("../ir/nodes.js").IrClassShape | undefined;
-    const extendsName = extendsParentClassName(stmt);
-    if (extendsName !== null) {
-      const ps = out.get(extendsName);
-      if (!ps) continue; // parent isn't a local projected class (builtin, or declared later) → defer
-      parentShape = ps;
+    const parentClassId = resolveIrParentClassId(ctx.checker, stmt, identityContext);
+    if (parentClassId !== null) {
+      const parentEntry = parentClassId === undefined ? undefined : out.get(parentClassId);
+      if (!parentEntry) continue; // parent isn't this exact projected class (builtin, foreign, or declared later)
+      parentShape = parentEntry.shape;
     }
-    const className = stmt.name.text;
     if (!ctx.classSet.has(className)) continue;
     if (!ctx.structFields.has(className)) continue;
 
@@ -1151,7 +1181,7 @@ function buildIrClassShapes(
           break;
         }
         const tsType = ctx.checker.getTypeAtLocation(p);
-        const ir = tsTypeToClassPositionIr(ctx, tsType, out);
+        const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
         if (!ir) {
           ctorOk = false;
           break;
@@ -1189,7 +1219,7 @@ function buildIrClassShapes(
       else return; // computed / string-literal / numeric names → leave to ValType path
       if (astFieldIr.has(mangled)) return;
       const tsType = ctx.checker.getTypeAtLocation(tsNode);
-      const ir = tsTypeToClassPositionIr(ctx, tsType, out);
+      const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
       if (ir) astFieldIr.set(mangled, ir);
     };
     // #3000-E: the legacy `structFields` for a subclass is `[...parentFields,
@@ -1201,11 +1231,14 @@ function buildIrClassShapes(
     // rejecting the whole subclass. Numeric/boolean inherited fields survive the
     // ValType path regardless; this walk is what recovers inherited string fields.
     const chain: ts.ClassDeclaration[] = [stmt];
-    for (let cursor: string | null = extendsParentClassName(stmt); cursor !== null; ) {
-      const decl = classDeclByName.get(cursor);
-      if (!decl) break; // non-local ancestor (builtin) — its fields aren't struct slots here
+    const visitedClassIds = new Set<IrClassId>([classId]);
+    for (let cursor = parentClassId; cursor !== null && cursor !== undefined; ) {
+      if (visitedClassIds.has(cursor)) break;
+      const decl = identityContext.declarationByClassId.get(cursor);
+      if (!decl || !ts.isClassDeclaration(decl) || decl.getSourceFile() !== sourceFile) break;
+      visitedClassIds.add(cursor);
       chain.push(decl);
-      cursor = extendsParentClassName(decl);
+      cursor = resolveIrParentClassId(ctx.checker, decl, identityContext);
     }
     for (const decl of chain) {
       // Property declarations (`#name: string;`, `x: number;`) — legacy reads the
@@ -1271,7 +1304,7 @@ function buildIrClassShapes(
           break;
         }
         const tsType = ctx.checker.getTypeAtLocation(p);
-        const ir = tsTypeToClassPositionIr(ctx, tsType, out);
+        const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
         if (!ir) {
           methodsOk = false;
           break;
@@ -1285,7 +1318,7 @@ function buildIrClassShapes(
       if (sig) {
         const retTs = ctx.checker.getReturnTypeOfSignature(sig);
         if (!isVoidType(retTs)) {
-          const ir = tsTypeToClassPositionIr(ctx, retTs, out);
+          const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
           if (!ir) {
             methodsOk = false;
             break;
@@ -1315,14 +1348,14 @@ function buildIrClassShapes(
         if (!sig) continue;
         const retTs = ctx.checker.getReturnTypeOfSignature(sig);
         if (isVoidType(retTs)) continue; // void getter — degenerate, skip
-        const ir = tsTypeToClassPositionIr(ctx, retTs, out);
+        const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
         if (!ir) continue;
         methods.push({ name: memberName, params: [], returnType: ir, memberKind: "getter" });
       } else if (ts.isSetAccessorDeclaration(member) && !hasStaticModifier(member)) {
         if (member.parameters.length !== 1) continue;
         const p = member.parameters[0]!;
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) continue;
-        const ir = tsTypeToClassPositionIr(ctx, ctx.checker.getTypeAtLocation(p), out);
+        const ir = tsTypeToClassPositionIr(ctx, ctx.checker.getTypeAtLocation(p), lookup);
         if (!ir) continue;
         methods.push({ name: memberName, params: [ir], returnType: null, memberKind: "setter" });
       } else if (
@@ -1338,7 +1371,7 @@ function buildIrClassShapes(
             ok = false;
             break;
           }
-          const ir = tsTypeToClassPositionIr(ctx, ctx.checker.getTypeAtLocation(p), out);
+          const ir = tsTypeToClassPositionIr(ctx, ctx.checker.getTypeAtLocation(p), lookup);
           if (!ir) {
             ok = false;
             break;
@@ -1351,7 +1384,7 @@ function buildIrClassShapes(
         if (sig) {
           const retTs = ctx.checker.getReturnTypeOfSignature(sig);
           if (!isVoidType(retTs)) {
-            const ir = tsTypeToClassPositionIr(ctx, retTs, out);
+            const ir = tsTypeToClassPositionIr(ctx, retTs, lookup);
             if (!ir) continue;
             returnType = ir;
           }
@@ -1366,33 +1399,18 @@ function buildIrClassShapes(
       }
     }
 
-    out.set(className, {
+    const shape: import("../ir/nodes.js").IrClassShape = {
+      classId,
       className,
       fields,
       methods,
       constructorParams,
       // #3000-E: present only for a single-level subclass of a local user class.
       ...(parentShape ? { parent: parentShape } : {}),
-    });
+    };
+    out.set(classId, { classId, legacyName: className, declaration: stmt, shape });
   }
-  return out;
-}
-
-/**
- * #3000-E: the name of a class's `extends` parent when it is a bare identifier
- * (`class Dog extends Animal` → "Animal"). Returns null for no `extends` (flat /
- * `implements`-only) and for a non-identifier heritage expression (`extends
- * ns.Base`, `extends mixin(X)` — deferred). Mirrors `extendsParentName` in
- * `src/ir/select.ts` so the shape builder and selector agree on which subclasses
- * are IR-eligible.
- */
-function extendsParentClassName(stmt: ts.ClassDeclaration): string | null {
-  for (const h of stmt.heritageClauses ?? []) {
-    if (h.token !== ts.SyntaxKind.ExtendsKeyword) continue;
-    const first = h.types[0]?.expression;
-    if (first && ts.isIdentifier(first)) return first.text;
-  }
-  return null;
+  return createIrClassShapeSidecar(out, identityContext);
 }
 
 /**
@@ -1404,24 +1422,15 @@ function extendsParentClassName(stmt: ts.ClassDeclaration): string | null {
  * Recognises:
  *   - primitives (number → f64, boolean → i32, string)
  *   - object shapes via `objectIrTypeFromTsType`
- *   - other locally-declared classes (forward references resolve
- *     against the in-progress `out` map; cross-class self-references
- *     come back as the class's own shape after a single pass)
+ *   - already-projected classes through their checker declaration and exact
+ *     `IrClassId` (never through a symbol/display name)
  */
-function tsTypeToClassPositionIr(
-  ctx: CodegenContext,
-  t: ts.Type,
-  classShapes: ReadonlyMap<string, import("../ir/nodes.js").IrClassShape>,
-): IrType | null {
+function tsTypeToClassPositionIr(ctx: CodegenContext, t: ts.Type, classShapes: IrClassShapeLookup): IrType | null {
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
   if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
-  // Class type — resolved by symbol name.
-  const sym = t.getSymbol();
-  if (sym) {
-    const cs = classShapes.get(sym.name);
-    if (cs) return { kind: "class", shape: cs };
-  }
+  const entry = resolveIrClassShapeFromType(ctx.checker, t, classShapes);
+  if (entry) return { kind: "class", shape: entry.shape };
   if (t.flags & ts.TypeFlags.Object) {
     const ir = objectIrTypeFromTsType(ctx, t);
     if (ir) return ir;
@@ -1608,35 +1617,22 @@ export function formatIrPathFallbackDiagnostic(
 // ---------------------------------------------------------------------------
 // #2138 — IR-first compile-once inversion (flag-gated investigation)
 //
-// `planIrOverlay` is the IR *planning* phase extracted verbatim from the
-// `if (options?.experimentalIR)` overlay block in `generateModule`: it runs
-// `buildTypeMap` → `planIrCompilation` → `buildIrClassShapes` → the
-// overrideMap/safeSelection resolution (including the STRICT_IR_REASONS
-// promotion and the #2023 `new.target` coarse gate). Extraction exists so
-// the SAME code can run at two different pipeline positions:
-//
-//   - flag OFF (default): called AFTER `compileDeclarations`, exactly where
-//     the inline block sat — the pipeline is byte-identical to pre-#2138.
-//   - `JS2WASM_IR_FIRST=1` (+ experimentalIR): called BEFORE
-//     `compileDeclarations`, so the body pass can SKIP legacy emission for
-//     functions the IR will own — every claimed function stops being
-//     compiled twice.
-//
-// Why the reorder is flag-gated rather than unconditional (a deliberate
-// deviation from the issue's original Slice-1 spec, which assumed the hoist
-// was byte-identical): the planning block is NOT side-effect-free —
-//   (a) `resolvePositionType` calls `getOrRegisterVecType` /
-//       `typedArrayVecStorage`, which can first-register Wasm types; moving
-//       it above the body pass can permute type-section index assignment;
-//   (b) `buildIrClassShapes` reads `ctx.structFields`, which body
-//       compilation can mutate (dynamic field additions, #516).
-// Gating the ORDER on the flag makes acceptance criterion 1 (byte-identical
-// output without the flag) true by construction instead of by corpus diff.
+// `planIrOverlay` owns propagation → selection → class shapes → the override
+// and safe-selection projections. IR-first runs it before `compileDeclarations`
+// so claimed bodies can skip legacy emission; the opt-out runs it afterward.
+// The order remains gated because planning is not side-effect-free:
+// `resolvePositionType` can register Wasm types, while `buildIrClassShapes`
+// reads fields that body compilation can add (#516). Keeping both positions
+// preserves the opt-out pipeline's type-index and body-emission behavior.
 // ---------------------------------------------------------------------------
 
 interface IrOverlayPlan {
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+  readonly functionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
   readonly selection: import("../ir/select.js").IrSelection;
-  readonly classShapes: Map<string, import("../ir/nodes.js").IrClassShape>;
+  readonly classShapeSidecar: IrClassShapeSidecar;
+  readonly classShapes: ReadonlyMap<string, import("../ir/nodes.js").IrClassShape>;
+  readonly overrideMapByUnitId: ReadonlyMap<IrUnitId, { params: IrType[]; returnType: IrType | null }>;
   readonly overrideMap: Map<string, { params: IrType[]; returnType: IrType | null }>;
   readonly safeSelection: {
     funcs: Set<string>;
@@ -1649,32 +1645,61 @@ interface IrOverlayPlan {
   };
   /** Verbose histogram switch; outcome collection is independent of logging. */
   readonly logFallbacks: boolean;
-  /** #3519 — pre-integration terminal failures keyed by legacy synthetic name. */
-  readonly preparationFailures: Map<string, IrPreparationFailure>;
+  /** Pre-integration terminal failures retained through exact reconciliation. */
+  readonly preparationFailuresByUnitId: Map<IrUnitId, IrPreparationFailure>;
   readonly declByName: ReadonlyMap<string, ts.FunctionDeclaration>;
-  /** Checker-certified imported/ambient-host call sites, keyed by exact AST node. */
+  /** Checker-certified source-unit and ambient-host call sites, keyed by exact AST node. */
   readonly importedCalls: Map<ts.CallExpression, IrImportedCallLoweringPlan>;
-  /** Bare same-file function values admitted only at certified HOF positions. */
   readonly topLevelFunctionValues: Map<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   /** Exact ambient addEventListener void arrows admitted by B2/Calendar. */
   readonly hostVoidCallbacks: Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
-  /** Synthetic host-Date import names required by each certified owner. */
-  readonly hostDateImportsByOwner: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Synthetic host-Date ABI labels keyed by each exact certified terminal owner. */
+  readonly hostDateImportsByOwnerUnitId: ReadonlyMap<IrUnitId, IrHostDateSnapshotImportPlan>;
   /** Exact Promise-delay plans, keyed separately by each owned AST call. */
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
-  readonly importedFunctionResolver?: IrImportedFunctionResolver;
+  readonly importedFunctionResolver?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
 }
 
-function irSelectionContainsHostDateOwner(selection: IrSelection, ownerName: string): boolean {
-  return ownerName === MODULE_INIT_UNIT_NAME
-    ? selection.moduleInit?.reason === null && selection.moduleInit.stmtCount > 0
-    : selection.funcs.has(ownerName);
+function synchronizeIrSafeFunctionSelection(plan: IrOverlayPlan, selection: IrSelection): IrSelection {
+  const retainedUnitIds = new Set<IrUnitId>();
+  for (const legacyName of selection.funcs) {
+    retainedUnitIds.add(irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName));
+  }
+  return {
+    ...selection,
+    funcs: irOverlayIdentity.retainIrSafeFunctionUnitIds(plan.identityPlan, retainedUnitIds),
+  };
+}
+
+function applyIrFinalContextFunctionUnitIds(
+  plan: IrOverlayPlan,
+  selection: IrSelection,
+  retainedUnitIds: ReadonlySet<IrUnitId>,
+): IrSelection {
+  // The legacy final-context closure cleared class/module claims whenever it
+  // removed a function. Preserve that parity while crossing the name ABI once.
+  const blockedAnyFunction = retainedUnitIds.size < plan.identityPlan.safeFunctionUnitIds.size;
+  const retainedNames = irOverlayIdentity.retainIrSafeFunctionUnitIds(plan.identityPlan, retainedUnitIds);
+  return applyIrFinalContextFunctionRetention(selection, retainedNames, blockedAnyFunction);
+}
+
+function selectedHostDateModuleInitUnitId(plan: IrOverlayPlan, selection: IrSelection): IrUnitId | undefined {
+  if (selection.moduleInit?.reason !== null || selection.moduleInit.stmtCount === 0) return undefined;
+  const moduleInit = plan.identityPlan.identitySelection.moduleInit;
+  if (!moduleInit || moduleInit.reason !== null || moduleInit.stmtCount === 0) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "selected host-Date module init has no exact structural identity",
+    );
+  }
+  return moduleInit.unitId;
 }
 
 /**
  * Resolve predictable Date target/provider gaps before integration builds or
  * emits an owner. The backend capability query handles target exclusions; the
- * existing final-context helper proves the exact synthetic import occupants.
+ * structural final-context helper proves the exact synthetic import occupants.
  * Unknown registration throws deliberately escape this function and remain
  * Invariants at the outer preparation boundary.
  */
@@ -1684,11 +1709,12 @@ function prepareHostDateSnapshotPreflight(
   plan: IrOverlayPlan,
   selection: IrSelection,
 ): IrSelection {
-  const activeOwners = [...plan.hostDateImportsByOwner.keys()].filter((ownerName) =>
-    irSelectionContainsHostDateOwner(selection, ownerName),
+  if (plan.hostDateImportsByOwnerUnitId.size === 0) return selection;
+  const retainedModuleInitUnitId = selectedHostDateModuleInitUnitId(plan, selection);
+  const activePlans = [...plan.hostDateImportsByOwnerUnitId.values()].filter(
+    ({ ownerUnitId }) =>
+      plan.identityPlan.safeFunctionUnitIds.has(ownerUnitId) || ownerUnitId === retainedModuleInitUnitId,
   );
-  if (activeOwners.length === 0) return selection;
-
   const supported = supportsIrBackendTargetCapability(
     {
       backend: "wasmgc",
@@ -1697,209 +1723,49 @@ function prepareHostDateSnapshotPreflight(
     },
     "host-date-snapshot",
   );
-  if (!supported) {
-    for (const ownerName of activeOwners) {
-      plan.preparationFailures.set(ownerName, {
-        kind: "unsupported",
-        code: "late-preparation-unsupported",
-        stage: "resolve",
-        detail: "host Date snapshots are unavailable for the selected backend target/provider",
-      });
-    }
-    return closeIrBlockedComponent(sourceFile, selection, new Set(activeOwners));
+  const retention = prepareHostDateSnapshotLoweringByIdentity(
+    ctx,
+    sourceFile,
+    plan.hostDateImportsByOwnerUnitId,
+    plan.identityPlan.safeFunctionUnitIds,
+    retainedModuleInitUnitId,
+    plan.identityPlan.identityContext,
+    { supportsHostDateSnapshots: supported },
+  );
+  let retainedSelection = applyIrFinalContextFunctionUnitIds(plan, selection, retention.retainedFunctionUnitIds);
+  if (retainedModuleInitUnitId !== undefined && retention.retainedModuleInitUnitId === undefined) {
+    retainedSelection = { ...retainedSelection, moduleInit: undefined };
   }
 
-  const retained = prepareHostDateSnapshotLowering(ctx, sourceFile, plan.hostDateImportsByOwner, selection);
-  for (const ownerName of activeOwners) {
-    if (irSelectionContainsHostDateOwner(retained, ownerName)) continue;
-    plan.preparationFailures.set(ownerName, {
+  const finalModuleInitUnitId =
+    retainedSelection.moduleInit?.reason === null && retainedSelection.moduleInit.stmtCount > 0
+      ? retainedModuleInitUnitId
+      : undefined;
+  for (const { ownerUnitId, ownerName } of activePlans) {
+    if (plan.identityPlan.safeFunctionUnitIds.has(ownerUnitId) || ownerUnitId === finalModuleInitUnitId) continue;
+    recordIrOverlayPreparationFailure(plan, ownerName, {
       kind: "unsupported",
       code: "late-preparation-unsupported",
       stage: "resolve",
-      detail: "the exact host Date provider ABI is unavailable in the final module context",
+      detail: supported
+        ? "the exact host Date provider ABI is unavailable in the final module context"
+        : "host Date snapshots are unavailable for the selected backend target/provider",
     });
   }
-  return retained;
-}
-
-function ambientHostValType(type: IrType | null): ValType | null | undefined {
-  if (type === null) return null;
-  if (type.kind === "string") return { kind: "externref" };
-  if (type.kind !== "val") return undefined;
-  if (type.val.kind === "f64" || type.val.kind === "i32") return type.val;
-  return undefined;
-}
-
-function sameAmbientHostValType(left: ValType, right: ValType): boolean {
-  if (left.kind !== right.kind) return false;
-  if ((left.kind === "ref" || left.kind === "ref_null") && (right.kind === "ref" || right.kind === "ref_null")) {
-    return left.typeIdx === right.typeIdx;
-  }
-  return true;
-}
-
-function hasPreparedAmbientHostImport(ctx: CodegenContext, plan: IrImportedCallLoweringPlan): boolean {
-  const params = plan.params.map(ambientHostValType);
-  const result = ambientHostValType(plan.returnType);
-  if (params.some((param) => param === undefined) || result === undefined) return false;
-
-  const funcIdx = ctx.funcMap.get(plan.targetName);
-  if (funcIdx === undefined || funcIdx < 0 || funcIdx >= ctx.numImportFuncs) return false;
-  let importFuncIdx = 0;
-  for (const imported of ctx.mod.imports) {
-    if (imported.desc.kind !== "func") continue;
-    if (importFuncIdx++ !== funcIdx) continue;
-    if (imported.module !== "env" || imported.name !== plan.targetName) return false;
-    const type = ctx.mod.types[imported.desc.typeIdx];
-    const expectedParams = params as ValType[];
-    const expectedResults = result === null ? [] : [result];
-    return (
-      type?.kind === "func" &&
-      type.params.length === expectedParams.length &&
-      type.results.length === expectedResults.length &&
-      type.params.every((param, index) => sameAmbientHostValType(param, expectedParams[index]!)) &&
-      type.results.every((actual, index) => sameAmbientHostValType(actual, expectedResults[index]!))
-    );
-  }
-  return false;
-}
-
-/**
- * #3657 — prove that declaration collection materialised every certified
- * class-member ambient call as the exact env function import before lowering.
- */
-function prepareAmbientClassCallLowering(
-  ctx: CodegenContext,
-  plan: IrOverlayPlan,
-  selection: IrSelection,
-): IrSelection {
-  const classMembers = new Set(selection.classMembers ?? []);
-  if (classMembers.size === 0) return selection;
-  const blocked = new Set<string>();
-  for (const callPlan of plan.importedCalls.values()) {
-    if (
-      callPlan.source === "ambient-host" &&
-      classMembers.has(callPlan.ownerName) &&
-      !hasPreparedAmbientHostImport(ctx, callPlan)
-    ) {
-      blocked.add(callPlan.ownerName);
-    }
-  }
-  if (blocked.size === 0) return selection;
-  for (const ownerName of blocked) {
-    classMembers.delete(ownerName);
-    plan.preparationFailures.set(ownerName, {
-      kind: "unsupported",
-      code: "late-preparation-unsupported",
-      stage: "resolve",
-      detail: "the checker-certified ambient function is absent from the final env import manifest",
-    });
-  }
-  return { ...selection, classMembers };
-}
-
-interface ObservedIrUnit {
-  readonly key: string;
-  readonly sourceId: IrSourceId;
-  readonly unitId: IrUnitId;
-  readonly matchName: string;
-  readonly unitKind: IrObservedOutcome["unitKind"];
-  readonly displayName: string;
-  readonly ordinal: number;
-  readonly line: number;
-  readonly column: number;
-  readonly staticClassMember: boolean;
-  /** Whether the direct frontend owns a concrete executable body/initializer. */
-  readonly legacyBodyAvailable: boolean;
-  /** Census-level refusal for executable units the selector cannot represent. */
-  readonly directFailure?: IrPreparationFailure;
-}
-
-/** Build the exact legacy R0 terminal view from the structural R1 inventory. */
-function collectObservedIrUnits(
-  sourceFile: ts.SourceFile,
-  _selection?: IrSelection,
-  inventory = buildIrUnitInventory([sourceFile], { entrySource: sourceFile }),
-): ObservedIrUnit[] {
-  return terminalIrUnitsForSource(inventory, sourceFile).map((unit) => ({
-    key: unit.legacyKey,
-    sourceId: unit.sourceId,
-    unitId: unit.id,
-    matchName: unit.legacyMatchName,
-    unitKind: unit.observedKind,
-    displayName: unit.displayName,
-    ordinal: unit.legacyOrdinal,
-    line: unit.line,
-    column: unit.column,
-    staticClassMember: unit.staticClassMember,
-    legacyBodyAvailable: unit.legacyBodyAvailable,
-    ...(unit.directFailure ? { directFailure: unit.directFailure } : {}),
-  }));
+  return retainedSelection;
 }
 
 function recordWholeSourceFailure(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   failure: IrPreparationFailure,
-  inventory?: IrUnitInventory,
+  identityContext?: IrPlanningIdentityContext,
 ): void {
-  if (ctx.irOutcomes === undefined || ctx.irOutcomes.some((outcome) => outcome.file === sourceFile.fileName)) return;
+  if (!identityContext || ctx.irOutcomes === undefined) return;
+  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
+  if (ctx.irOutcomes.some((outcome) => outcome.sourceId === sourceId)) return;
   const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
-  for (const unit of collectObservedIrUnits(sourceFile, undefined, inventory)) {
-    ctx.irOutcomes.push(
-      observedFailure(
-        {
-          key: unit.key,
-          sourceId: unit.sourceId,
-          unitId: unit.unitId,
-          file: sourceFile.fileName,
-          unitKind: unit.unitKind,
-          displayName: unit.displayName,
-          ordinal: unit.ordinal,
-          line: unit.line,
-          column: unit.column,
-          backend: "wasmgc",
-          target,
-          legacyBodyEmitted: false,
-          irBodyEmitted: false,
-        },
-        failure,
-      ),
-    );
-  }
-}
-
-function selectionContainsUnit(
-  selection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">,
-  unit: ObservedIrUnit,
-): boolean {
-  if (unit.unitKind === "function") return selection.funcs.has(unit.matchName);
-  if (unit.unitKind === "class-member") return selection.classMembers?.has(unit.matchName) === true;
-  return selection.moduleInit?.stmtCount !== 0 && selection.moduleInit?.reason === null;
-}
-
-function observedFailure(
-  base: Omit<IrObservedOutcome, "kind" | "code" | "stage" | "detail" | "cause">,
-  failure: IrPreparationFailure,
-): IrObservedOutcome {
-  if (failure.kind === "unsupported") {
-    return {
-      ...base,
-      kind: "unsupported",
-      code: failure.code,
-      stage: failure.stage,
-      detail: failure.detail,
-      ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-    };
-  }
-  return {
-    ...base,
-    kind: "invariant",
-    code: failure.code,
-    stage: failure.stage,
-    detail: failure.detail,
-    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-  };
+  ctx.irOutcomes.push(...buildWholeSourceFailureOutcomes({ sourceFile, identityContext, failure, target }));
 }
 
 /** Reconcile raw selection, final preparation, integration, and patch exactly once. */
@@ -1909,358 +1775,42 @@ function recordObservedIrOutcomes(
   plan: IrOverlayPlan,
   preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">,
   report: IrIntegrationReport,
-  irSkipBodies?: ReadonlySet<string>,
-  inventory?: IrUnitInventory,
+  skippedFunctionUnitIds: ReadonlySet<IrUnitId>,
 ): void {
   if (ctx.irOutcomes === undefined) return;
-
-  const fallbackByName = new Map((plan.selection.fallbacks ?? []).map((fallback) => [fallback.name, fallback]));
-  const errorsByName = new Map<string, IrIntegrationError[]>();
-  for (const error of report.errors) {
-    const list = errorsByName.get(error.func);
-    if (list) list.push(error);
-    else errorsByName.set(error.func, [error]);
-  }
-  const compiledCounts = new Map<string, number>();
-  for (const name of report.compiled) compiledCounts.set(name, (compiledCounts.get(name) ?? 0) + 1);
-
   const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
-  const keys = new Set(ctx.irOutcomes.map((outcome) => outcome.key));
-  for (const unit of collectObservedIrUnits(sourceFile, plan.selection, inventory)) {
-    const legacyBodyEmitted =
-      unit.legacyBodyAvailable && !(unit.unitKind === "function" && irSkipBodies?.has(unit.matchName));
-    const base = {
-      key: unit.key,
-      sourceId: unit.sourceId,
-      unitId: unit.unitId,
-      file: sourceFile.fileName,
-      unitKind: unit.unitKind,
-      displayName: unit.displayName,
-      ordinal: unit.ordinal,
-      line: unit.line,
-      column: unit.column,
-      backend: "wasmgc" as const,
-      target,
-      legacyBodyEmitted,
-      irBodyEmitted: false,
-    };
-
-    let outcome: IrObservedOutcome;
-    if (keys.has(unit.key)) {
-      outcome = observedFailure(base, {
-        kind: "invariant",
-        code: "duplicate-unit-outcome",
-        stage: "patch",
-        detail: `duplicate terminal outcome key ${unit.key}`,
-      });
-    } else if (unit.directFailure) {
-      outcome = observedFailure(base, unit.directFailure);
-    } else if (!selectionContainsUnit(plan.selection, unit)) {
-      const fallback = fallbackByName.get(unit.matchName);
-      const reason = unit.unitKind === "module-init" ? plan.selection.moduleInit?.reason : fallback?.reason;
-      outcome = reason
-        ? observedFailure(base, {
-            kind: "unsupported",
-            code: reason,
-            stage: "select",
-            detail: fallback?.detail ?? `${unit.matchName} rejected by IR selection (${reason})`,
-          })
-        : observedFailure(base, {
-            kind: "invariant",
-            code: "selection-preparation-mismatch",
-            stage: "resolve",
-            detail: `${unit.matchName} was not selected and has no typed rejection`,
-          });
-    } else if (plan.preparationFailures.has(unit.matchName)) {
-      outcome = observedFailure(base, plan.preparationFailures.get(unit.matchName)!);
-    } else if (unit.staticClassMember) {
-      outcome = observedFailure(base, {
-        kind: "unsupported",
-        code: "static-class-member",
-        stage: "build",
-        detail: `${unit.matchName} remains compile-twice on the direct static-member path`,
-      });
-    } else if (!selectionContainsUnit(preparedSelection, unit)) {
-      outcome = observedFailure(base, {
-        kind: "unsupported",
-        code: "late-preparation-unsupported",
-        stage: "resolve",
-        detail: `${unit.matchName} failed final-context IR preparation`,
-      });
-    } else {
-      const errors = errorsByName.get(unit.matchName);
-      const error = errors?.shift();
-      if (error) {
-        outcome =
-          legacyBodyEmitted || error.outcome.kind === "invariant"
-            ? observedFailure(base, error.outcome)
-            : observedFailure(base, {
-                kind: "invariant",
-                code: "unpatched-slot",
-                stage: "patch",
-                detail: `${unit.matchName} was unsupported after its legacy slot was skipped: ${error.message}`,
-              });
-      } else if ((compiledCounts.get(unit.matchName) ?? 0) > 0) {
-        compiledCounts.set(unit.matchName, compiledCounts.get(unit.matchName)! - 1);
-        outcome = { ...base, kind: "emitted", stage: "patch", irBodyEmitted: true };
-      } else {
-        outcome = observedFailure(base, {
-          kind: "invariant",
-          code: legacyBodyEmitted ? "missing-terminal-outcome" : "unpatched-slot",
-          stage: "patch",
-          detail: `${unit.matchName} was prepared but integration neither patched it nor reported a failure`,
-        });
-      }
-    }
-
-    keys.add(unit.key);
-    ctx.irOutcomes.push(outcome);
-    if (outcome.kind === "invariant" && !report.errors.some((error) => error.func === unit.matchName)) {
-      reportErrorNoNode(ctx, `IR outcome invariant [${outcome.code}] for ${unit.matchName}: ${outcome.detail}`);
-    }
-  }
-}
-
-/**
- * A zero-result imported call is lowerable only where JavaScript discards its
- * value. Keep this check in the pre-claim planner: ordinary expression
- * lowering requires an SSA result and must never discover the missing value
- * after the legacy body has already been skipped.
- */
-function importedVoidCallIsDiscarded(call: ts.CallExpression, owner: ts.FunctionDeclaration): boolean {
-  let current: ts.Expression = call;
-  for (;;) {
-    const parent = current.parent;
-    if (ts.isParenthesizedExpression(parent) && parent.expression === current) {
-      current = parent;
-      continue;
-    }
-    // `void` always discards its operand, even when the resulting undefined
-    // value is itself consumed by an outer expression.
-    if (ts.isVoidExpression(parent) && parent.expression === current) return true;
-    // A conditional arm is discarded only when the conditional as a whole is
-    // discarded. Its condition is a value position and deliberately stops.
-    if (ts.isConditionalExpression(parent) && (parent.whenTrue === current || parent.whenFalse === current)) {
-      current = parent;
-      continue;
-    }
-    // Discard lowering evaluates comma operands in source order. Ascend to
-    // require the whole comma expression to reach a discarded context.
-    if (ts.isCommaListExpression(parent) && parent.elements.some((element) => element === current)) {
-      current = parent;
-      continue;
-    }
-    if (
-      ts.isBinaryExpression(parent) &&
-      parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
-      (parent.left === current || parent.right === current)
-    ) {
-      current = parent;
-      continue;
-    }
-    break;
-  }
-
-  const parent = current.parent;
-  if (ts.isExpressionStatement(parent) && parent.expression === current) return true;
-  return (
-    ts.isReturnStatement(parent) &&
-    parent.expression === current &&
-    effectiveIrReturnTypeNode(owner)?.kind === ts.SyntaxKind.VoidKeyword
-  );
-}
-
-/**
- * (#2138/#3143) Decide which claimed functions may have their LEGACY body
- * emission skipped under IR-first (the default since #3143).
- *
- * **ALLOWLIST, not denylist (#3143).** An early attempt gated OUT the shapes
- * from-ast cannot lower (a per-shape denylist). A `result.errors` scan of the
- * equivalence inline corpus proved that surface is BROAD — ~22 distinct
- * from-ast throw classes across core operations (string methods, class-member
- * resolution, call/ctor arity, type-mismatched arith, property assignment,
- * coercion, `new Date`, …). A denylist cannot enumerate them safely: a single
- * miss ships a skipped-slot HARD error (an equivalence regression), because a
- * skipped function whose IR build throws has no legacy body to demote to.
- *
- * So the decision is inverted: skip ONLY functions that are PROVABLY lowerable.
- * A function qualifies when ALL of:
- *   - it is not a `function*` on a standalone/WASI target (gate 2, #2951 —
- *     subsumed by the numeric allowlist anyway, kept explicit);
- *   - its SIGNATURE is lowerable: no default/optional/rest/destructuring
- *     params, and every param + the return type resolve (via `overrideMap`) to
- *     a numeric/boolean Wasm type (f64 / i32) or void — `signatureLowerable`;
- *   - its BODY is entirely the proven-lowerable numeric/boolean subset —
- *     `irFirstBodyIsProvenLowerable` (matched-type arithmetic/compare/logic,
- *     control flow, correctly-typed local mutation, exact-arity calls to other
- *     CLAIMED functions, returns; NO method calls / member access / `new` /
- *     literals-of-ref-type / closures / coercion).
- *
- * Safe by construction: a construct the allowlist does not recognise keeps the
- * function COMPILE-TWICE (correct — the legacy body ships, the IR overlay may
- * still overwrite it or demote to a warning), never a hard error. The subset
- * starts narrow and WIDENS as the IR gains real lowering for more kinds
- * (#2855/#2856); each widening unlocks more of the gated-G1 legacy deletion.
- * Class members are never skipped here (typeIdx parity contract with legacy
- * callers — see `integration.ts`).
- *
- * Every skipped function gets an `unreachable` placeholder body, so the skip is
- * a *body-emission* change, never an *index-layout* change; if the IR path
- * still fails on a skipped (allowlisted) function, `generateModule` promotes it
- * to a hard error — which the allowlist is designed to make impossible.
- */
-function computeIrFirstSkipSet(
-  plan: IrOverlayPlan,
-  _sourceFile: ts.SourceFile,
-  generatorsSkippable: boolean,
-): ReadonlySet<string> {
-  const skip = new Set<string>();
-  const funcs = plan.safeSelection.funcs;
-  if (funcs.size === 0) return skip;
-
-  // (#3143/#3203) ALLOWLIST skip — see `irFirstBodyIsProvenLowerable`. A claimed
-  // function's legacy body is skipped ONLY when its whole body is the
-  // proven-lowerable numeric/boolean subset AND its signature is lowerable.
-  // Everything else stays COMPILE-TWICE (safe: no skipped-slot hard error).
-  const isF64 = (t: IrType): boolean => asVal(t)?.kind === "f64";
-  const isI32 = (t: IrType): boolean => asVal(t)?.kind === "i32";
-
-  // `claimedArity`: name → parameter count for every claimed function with a
-  // PURE-`f64` signature (all params + return `f64`). In v1 the allowlist lowers
-  // inter-function calls in NUMBER context only, so a call target must be a
-  // number-signature callee — this keeps the call-result domain sound and also
-  // closes a latent hole in the f64-only allowlist (a call to a claimed
-  // non-f64-return callee was accepted as `number`). Bool-signature functions
-  // are never allowlist call targets.
-  const claimedArity = new Map<string, number>();
-  for (const n of funcs) {
-    const f = plan.declByName.get(n);
-    if (!f) continue;
-    const o = plan.overrideMap.get(n);
-    if (o && o.params.every(isF64) && o.returnType !== null && isF64(o.returnType)) {
-      claimedArity.set(n, f.parameters.length);
-    }
-  }
-
-  // (#3203) Resolve a position's value DOMAIN for the allowlist. `number` = f64.
-  // `bool` = an `i32` carrier WITH an explicit `boolean` AST annotation — the
-  // ONLY checker-free way to disambiguate a boolean from a native-int (`type
-  // i32 = number`), which also resolves to `i32`. Unannotated `i32` (inferred)
-  // and native-int stay compile-twice (native-int is a follow-up widen). Any
-  // other carrier (string/object/closure/extern/dynamic/ref) → null.
-  const positionDomain = (annot: ts.TypeNode | undefined, resolved: IrType): ValueDomain | null => {
-    if (isF64(resolved)) return "number";
-    if (isI32(resolved) && annot?.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
-    return null;
-  };
-  // Resolve the full signature domain, or null when the function is not
-  // skip-eligible. Rejects default/optional/rest/destructuring params (from-ast
-  // throws on those) up front.
-  const resolveSignatureDomains = (
-    fn: ts.FunctionDeclaration,
-    name: string,
-  ): { paramDomains: ValueDomain[]; returnDomain: ValueDomain | "void" } | null => {
-    for (const p of fn.parameters) {
-      if (p.questionToken || p.dotDotDotToken || p.initializer) return null;
-      if (!ts.isIdentifier(p.name)) return null;
-    }
-    const o = plan.overrideMap.get(name);
-    if (!o) return null; // no resolved signature — stay conservative
-    const paramDomains: ValueDomain[] = [];
-    for (let i = 0; i < o.params.length; i++) {
-      const d = positionDomain(fn.parameters[i]?.type, o.params[i]!);
-      if (d === null) return null;
-      paramDomains.push(d);
-    }
-    let returnDomain: ValueDomain | "void";
-    if (o.returnType === null) returnDomain = "void";
-    else {
-      const rd = positionDomain(fn.type, o.returnType);
-      if (rd === null) return null;
-      returnDomain = rd;
-    }
-    return { paramDomains, returnDomain };
-  };
-
-  for (const name of funcs) {
-    const fn = plan.declByName.get(name);
-    if (!fn) continue;
-    // gate 2 (#2951) — a claimed generator is skippable only when targeting a
-    // JS host; a `function*` body is never in the numeric allowlist anyway, so
-    // this is subsumed, but kept explicit for standalone/WASI clarity.
-    if (fn.asteriskToken && !generatorsSkippable) continue;
-    const sig = resolveSignatureDomains(fn, name); // numeric/boolean signature only
-    if (!sig) continue;
-    if (!irFirstBodyIsProvenLowerable(fn, claimedArity, sig.paramDomains, sig.returnDomain)) continue; // #3143/#3203
-    skip.add(name);
-  }
-
-  // (#3143) Signature-parity fixpoint: a skipped function is installed with its
-  // IR-resolved signature, so a LEGACY (non-skipped) caller — whose call-site
-  // arg coercion was resolved against the callee's LEGACY signature — mismatches
-  // it (the boxed-`any`→typed-param `f64.convert_i32_s` validation break). So
-  // keep a function skippable ONLY when EVERY caller is itself skipped. Iterate
-  // to a fixpoint (removing a function can un-skip its callees' other callers).
-  // `<module-init>` (top-level statement calls) is never in `skip`, so any
-  // function called at module scope is correctly excluded.
-  const callEdges = collectLocalCallEdges(_sourceFile);
-  const callers = new Map<string, Set<string>>(); // callee → callers
-  for (const [caller, callees] of callEdges) {
-    for (const callee of callees) {
-      let s = callers.get(callee);
-      if (!s) {
-        s = new Set<string>();
-        callers.set(callee, s);
-      }
-      s.add(caller);
-    }
-  }
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const name of skip) {
-      const cs = callers.get(name);
-      if (!cs) continue; // no internal callers (leaf / host-only) — safe to skip
-      for (const c of cs) {
-        if (!skip.has(c)) {
-          skip.delete(name);
-          changed = true;
-          break;
-        }
-      }
-    }
-  }
-
-  // Callback, Date, and Promise final-context proofs run only after legacy
-  // declaration/import collection. Keep every affected local component
-  // compile-twice so any late collision can still demote to its legacy body.
-  if (skip.size > 0) {
-    const potentiallyBlockedOwners = new Set([
-      ...[...plan.hostVoidCallbacks.values()].map((callback) => callback.ownerName),
-      ...plan.hostDateImportsByOwner.keys(),
-      ...[...plan.promiseDelays.constructions.values()].map((delay) => delay.ownerName),
-    ]);
-    const retained = closeIrBlockedComponent(_sourceFile, plan.safeSelection, potentiallyBlockedOwners);
-    for (const name of skip) {
-      if (!retained.funcs.has(name)) skip.delete(name);
-    }
-  }
-  return skip;
+  const reconciled = reconcileIrOverlayOutcomes({
+    sourceFile,
+    identityPlan: plan.identityPlan,
+    initialSelection: plan.selection,
+    preparedSelection,
+    preparationFailuresByUnitId: plan.preparationFailuresByUnitId,
+    skippedFunctionUnitIds,
+    report,
+    existingOutcomes: ctx.irOutcomes,
+    target,
+  });
+  ctx.irOutcomes.push(...reconciled.outcomes);
+  for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
 }
 
 function planIrOverlay(
   ctx: CodegenContext,
   ast: TypedAST,
+  identityContext: IrPlanningIdentityContext,
   options: {
     readonly resolveModuleBindings?: boolean;
-    readonly importedFunctions?: IrImportedFunctionResolver;
+    readonly importedFunctions?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
   } = {},
 ): IrOverlayPlan {
-  let typeMap;
+  const identityImportedFunctions = options.importedFunctions;
+  const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
+  let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
   try {
     if (process.env.JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW === "1") {
       throw new Error("injected TypeMap failure");
     }
-    typeMap = buildTypeMap(ast.sourceFile, ast.checker);
+    identityMaps = irOverlayIdentity.buildIrOverlayIdentityMaps(ast.sourceFile, ast.checker, identityContext);
   } catch (error) {
     throw new IrInvariantError(
       "type-map-failure",
@@ -2283,7 +1833,7 @@ function planIrOverlay(
   // forces collection.
   const logFallbacks = process.env.JS2WASM_LOG_IR_FALLBACKS === "1" || STRICT_IR_REASONS.size > 0;
   const collectFallbacks = ctx.irOutcomes !== undefined || logFallbacks;
-  const preparationFailures = new Map<string, IrPreparationFailure>();
+  const preparationFailuresByUnitId = new Map<IrUnitId, IrPreparationFailure>();
   // (#2856) Host-extern claiming: mode gate + checker-backed ambient-global
   // resolution. Selection runs BEFORE `collectDeclaredGlobals` /
   // `collectUsedExternImports` populate the ctx registries, so the selector
@@ -2307,16 +1857,22 @@ function planIrOverlay(
   const resolveModuleBinding =
     options.resolveModuleBindings === false
       ? undefined
-      : makeIrModuleBindingResolver(ast.checker, {
-          numberStorage: ctx.fast ? "i32" : "f64",
-          allowHostExterns: jsHostExterns && !ctx.nativeStrings,
-          allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
-        });
+      : makeIrModuleBindingResolver(
+          ast.checker,
+          {
+            numberStorage: ctx.fast ? "i32" : "f64",
+            allowHostExterns: jsHostExterns && !ctx.nativeStrings,
+            allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
+          },
+          identityContext,
+        );
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
+  const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveHostVoidCallback = jsHostExterns ? makeIrHostVoidCallbackResolver(ast.checker) : undefined;
-  const resolveAmbientClassCall = jsHostExterns ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
+  const resolveAmbientClassCall =
+    jsHostExterns && options.resolveModuleBindings !== false ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
   const resolveHostDateSnapshot = supportsHostDateSnapshots ? makeIrHostDateSnapshotResolver(ast.checker) : undefined;
   const resolvePromiseDelay =
     jsHostExterns && !ctx.fast && !ctx.nativeStrings && options.resolveModuleBindings !== false
@@ -2326,8 +1882,14 @@ function planIrOverlay(
   // it before claiming units, then derive checker-backed expression identity
   // from the exact same declarations/shapes so textual aliases and shadows
   // cannot drift between the two phases.
-  const classShapes = buildIrClassShapes(ctx, ast.sourceFile);
-  const resolveLocalClassExpression = makeIrLocalClassExpressionResolver(ast.checker, ast.sourceFile, classShapes);
+  const classShapeSidecar = buildIrClassShapes(ctx, ast.sourceFile, identityContext);
+  const classShapes = classShapeSidecar.legacyProjection;
+  const resolveLocalClassExpression = makeIrLocalClassExpressionResolver(
+    ast.checker,
+    ast.sourceFile,
+    classShapes,
+    identityContext,
+  );
   // (#3053 U2) The gc `__dyn_member_get` body is sound in every config EXCEPT
   // fast host-js-string (`fast && !standalone && !wasi`): there the carrier is
   // the gc `$AnyValue` but strings are host js-string externrefs, so the native
@@ -2336,8 +1898,9 @@ function planIrOverlay(
   // claim-then-demote). The carrier keying in `ensureDynMemberGet` matches
   // (`ctx.fast`), so every claimed config emits a valid, carrier-aligned body.
   const dynMemberReadBuildable = !(ctx.fast && !ctx.standalone && !ctx.wasi);
-  const selection = planIrCompilation(
+  const identityPlan = irOverlayIdentity.planIrOverlayByIdentity(
     ast.sourceFile,
+    identityContext,
     {
       experimentalIR: true,
       trackFallbacks: collectFallbacks,
@@ -2352,13 +1915,14 @@ function planIrOverlay(
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
+      isRegExpExpression,
       projectedClassShapes: classShapes,
       resolveLocalClassExpression,
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
       supportsHostStringArrayLiterals: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
-      ...(jsHostExterns && options.importedFunctions ? { importedFunctions: options.importedFunctions } : {}),
+      ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
       // (#1373b C-1) Async claim gate: IR claims an async fn IFF the ONE
       // async engine ($AsyncFrame drive / host-drive) declines it — the
       // legacy sync-pass-through population. Engine-activated functions keep
@@ -2366,8 +1930,16 @@ function planIrOverlay(
       supportsAsyncIr: ctx.supportsAsyncIr,
       asyncEngineClaims: (fn) => asyncEngineWouldActivate(ctx, fn),
     },
-    typeMap,
+    identityMaps,
   );
+  const functionClaimsByUnitId = buildIrExactFunctionClaimIndex(
+    ast.sourceFile,
+    identityContext,
+    identityPlan.functionClaims,
+  );
+  const recordPreparationFailure = (legacyName: string, failure: IrPreparationFailure): void =>
+    recordIrOverlayPreparationFailure({ identityPlan, preparationFailuresByUnitId }, legacyName, failure);
+  const selection = identityPlan.selectionProjection.selection;
   // #1530 — when a rejection reason is listed in STRICT_IR_REASONS,
   // promote every fallback with that reason to a hard compile error
   // instead of letting the legacy path silently catch it. The set
@@ -2384,7 +1956,12 @@ function planIrOverlay(
       }
     }
   }
-  const promiseDelayByOwner = collectIrPromiseDelayOwners(ast.sourceFile, selection.funcs, resolvePromiseDelay);
+  const promiseDelayByOwner = collectIrPromiseDelayOwners(
+    ast.sourceFile,
+    new Set(identityPlan.identitySelection.funcs.keys()),
+    resolvePromiseDelay,
+    identityContext,
+  );
   // Build per-function IR type overrides from the propagated TypeMap.
   //
   // For a claimed function, the selector must have resolved each
@@ -2403,15 +1980,10 @@ function planIrOverlay(
   // `compileIrPathFunctions` to `from-ast.ts` so the IR builder can be
   // constructed with `[]` results and the lowerer can accept bare
   // `return;` / fall-through tails.
+  const overrideMapByUnitId = new Map<IrUnitId, { params: IrType[]; returnType: IrType | null }>();
   const overrideMap = new Map<string, { params: IrType[]; returnType: IrType | null }>();
-  const declByName = new Map<string, ts.FunctionDeclaration>();
-  for (const stmt of ast.sourceFile.statements) {
-    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) declByName.set(stmt.name.text, stmt);
-  }
-  for (const name of selection.funcs) {
-    const fn = declByName.get(name);
-    if (!fn) continue;
-    const entry = typeMap.get(name);
+  const declByName = identityPlan.declarationByLegacyName;
+  for (const { unitId, legacyName: name, declaration, typeEntry: entry } of identityPlan.functionClaims) {
     try {
       // Slice 7a (#1169f) — generator functions return an externref
       // (the JS Generator-like object built by `__create_generator`)
@@ -2422,7 +1994,7 @@ function planIrOverlay(
       // signature. Bypass `resolvePositionType` for the return type
       // — `Generator<T>` doesn't resolve as `IrType.object` and
       // would otherwise drop the generator from `safeSelection`.
-      const isGenerator = !!fn.asteriskToken;
+      const isGenerator = !!declaration.asteriskToken;
       // (#1373b C-1) IR-claimed async fns (sync-pass-through model) register
       // the raw `T` unwrapped from the `Promise<T>` annotation — matching
       // the declaration pre-pass's `unwrapPromiseType` result type, so the
@@ -2430,26 +2002,29 @@ function planIrOverlay(
       // call-site contract stays intact). The selector only claims asyncs
       // with an explicit `Promise<T>` annotation, so the unwrap is non-null
       // for every claimed async fn.
-      const isAsyncFn = !isGenerator && hasAsyncModifier(fn);
-      const asyncUnwrapped = isAsyncFn ? unwrapPromiseTypeNode(fn.type) : null;
-      const effectiveReturnNode = isAsyncFn ? (asyncUnwrapped ?? undefined) : fn.type;
+      const isAsyncFn = !isGenerator && hasAsyncModifier(declaration);
+      const asyncUnwrapped = isAsyncFn ? unwrapPromiseTypeNode(declaration.type) : null;
+      const effectiveReturnNode = isAsyncFn ? (asyncUnwrapped ?? undefined) : declaration.type;
       // Slice 14 (#1228) — VoidKeyword return: bypass resolvePositionType
       // (it has no representation for void in IrType) and set returnType
       // to null. The lowerer treats null returnType as "no result".
       const isVoidReturn = !isGenerator && effectiveReturnNode?.kind === ts.SyntaxKind.VoidKeyword;
-      const returnType: IrType | null = promiseDelayByOwner.has(name)
+      const returnType: IrType | null = promiseDelayByOwner.has(unitId)
         ? ({ kind: "extern", className: "Promise" } as IrType)
         : isGenerator
           ? ({ kind: "val", val: { kind: "externref" } } as IrType)
           : isVoidReturn
             ? null
-            : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapes);
+            : resolvePositionType(effectiveReturnNode, entry?.returnType, ctx, classShapeSidecar);
       const params: IrType[] = [];
-      for (let i = 0; i < fn.parameters.length; i++) {
-        const p = fn.parameters[i]!;
-        params.push(resolvePositionType(effectiveIrParamTypeNode(p), entry?.params[i], ctx, classShapes));
+      for (let i = 0; i < declaration.parameters.length; i++) {
+        const p = declaration.parameters[i]!;
+        params.push(resolvePositionType(effectiveIrParamTypeNode(p), entry?.params[i], ctx, classShapeSidecar));
       }
-      overrideMap.set(name, { params, returnType });
+      const override = { params, returnType };
+      overrideMapByUnitId.set(unitId, override);
+      overrideMap.set(name, override);
+      identityPlan.safeFunctionUnitIds.add(unitId);
     } catch (e) {
       // Selector claimed a function whose types can't be resolved —
       // skip the IR path for this one. Fall through to legacy.
@@ -2472,7 +2047,7 @@ function planIrOverlay(
       // — not the raw `selection` — feeds `computeIrFirstSkipSet`: this
       // function keeps its legacy body under IR-first.
       const resolveMsg = e instanceof Error ? e.message : String(e);
-      preparationFailures.set(name, {
+      recordPreparationFailure(name, {
         kind: "unsupported",
         code: "type-resolution-unsupported",
         stage: "resolve",
@@ -2501,7 +2076,7 @@ function planIrOverlay(
     classMembers?: ReadonlySet<string>;
     moduleInit?: import("../ir/select.js").IrModuleInitAssessment;
   } = {
-    funcs: new Set<string>([...selection.funcs].filter((n) => overrideMap.has(n))),
+    funcs: irOverlayIdentity.projectIrSafeFunctionNames(identityPlan.safeFunctionUnitIds, identityPlan),
     classMembers: selection.classMembers,
     // (#3142 Slice 2) Forward the module-init claim. A resolve-time drop of
     // one of the unit's callees is self-limiting: the integration builds
@@ -2509,6 +2084,29 @@ function planIrOverlay(
     // throws at build time and the unit demotes to the legacy body.
     moduleInit: selection.moduleInit,
   };
+  // (#2928) The linked runtime-eval carrier is currently owned by the legacy
+  // WasmGC closure/object runtime. Its recursive cross-module types may be
+  // registered while module-init writes are compiled, after legacy function
+  // signatures but before the IR overlay is installed; mixing the two paths
+  // would violate IR/legacy type-index parity. Keep the whole runtime-eval unit
+  // on one backend until the typed IR owns this carrier explicitly.
+  if (sourceUsesRuntimeEvalBoundary(ast.sourceFile) || sourceProvidesRuntimeEvalBoundary(ast.sourceFile)) {
+    const failure: IrPreparationFailure = {
+      kind: "unsupported",
+      code: "late-preparation-unsupported",
+      stage: "resolve",
+      detail: "the linked runtime-eval callable carrier is still owned by the direct frontend",
+    };
+    for (const name of safeSelection.funcs) recordPreparationFailure(name, failure);
+    for (const name of safeSelection.classMembers ?? []) recordPreparationFailure(name, failure);
+    if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
+      recordPreparationFailure(MODULE_INIT_UNIT_NAME, failure);
+    }
+    safeSelection.funcs.clear();
+    identityPlan.safeFunctionUnitIds.clear();
+    safeSelection.classMembers = new Set();
+    safeSelection.moduleInit = undefined;
+  }
   // (#2023) The IR `new C(...)` lowering does not thread the new.target
   // class-id (that machinery lives only on the legacy path). When the
   // program uses `new.target`, route every function through legacy so the
@@ -2520,7 +2118,7 @@ function planIrOverlay(
   // either pipeline position, plan-before or plan-after the body pass.)
   if (ctx.usesNewTarget) {
     for (const name of safeSelection.funcs) {
-      preparationFailures.set(name, {
+      recordPreparationFailure(name, {
         kind: "unsupported",
         code: "new-target-threading",
         stage: "resolve",
@@ -2528,7 +2126,7 @@ function planIrOverlay(
       });
     }
     for (const name of safeSelection.classMembers ?? []) {
-      preparationFailures.set(name, {
+      recordPreparationFailure(name, {
         kind: "unsupported",
         code: "new-target-threading",
         stage: "resolve",
@@ -2536,7 +2134,7 @@ function planIrOverlay(
       });
     }
     if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
-      preparationFailures.set(MODULE_INIT_UNIT_NAME, {
+      recordPreparationFailure(MODULE_INIT_UNIT_NAME, {
         kind: "unsupported",
         code: "new-target-threading",
         stage: "resolve",
@@ -2544,180 +2142,31 @@ function planIrOverlay(
       });
     }
     safeSelection.funcs.clear();
+    identityPlan.safeFunctionUnitIds.clear();
     safeSelection.classMembers = new Set();
     // (#3142 Slice 2) The module-init unit routes through legacy too.
     safeSelection.moduleInit = undefined;
   }
-  const promiseDelays = buildIrPromiseDelayLoweringPlans(promiseDelayByOwner, safeSelection.funcs);
-  const importedCalls = new Map<ts.CallExpression, IrImportedCallLoweringPlan>();
-  const topLevelFunctionValues = new Map<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>();
+  const promiseDelays = buildIrPromiseDelayLoweringPlans(
+    promiseDelayByOwner,
+    identityPlan.safeFunctionUnitIds,
+    identityContext,
+  );
+  const { importedCalls, topLevelFunctionValues } = planIrImportedCalls({
+    ctx,
+    identityPlan,
+    preparationFailuresByUnitId,
+    ...(jsHostExterns && identityImportedFunctions ? { identityImportedFunctions, legacyImportedFunctions } : {}),
+    ...(resolveAmbientClassCall ? { resolveAmbientClassCall } : {}),
+    classShapeSidecar,
+    safeSelection,
+    resolvePositionType: (node, mapped, classShapes) => resolvePositionType(node, mapped, ctx, classShapes),
+  });
   const hostVoidCallbacks = new Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>();
-  const hostDateImportsByOwner = new Map<string, Set<string>>();
-  if (resolveAmbientClassCall && safeSelection.classMembers && safeSelection.classMembers.size > 0) {
-    const retainedClassMembers = new Set(safeSelection.classMembers);
-    for (const statement of ast.sourceFile.statements) {
-      if (!ts.isClassDeclaration(statement) || !statement.name) continue;
-      const className = statement.name.text;
-      for (const member of statement.members) {
-        if (
-          !ts.isMethodDeclaration(member) &&
-          !ts.isGetAccessorDeclaration(member) &&
-          !ts.isSetAccessorDeclaration(member) &&
-          !ts.isConstructorDeclaration(member)
-        ) {
-          continue;
-        }
-        if (!member.body) continue;
-        let ownerName: string | undefined;
-        if (ts.isConstructorDeclaration(member)) {
-          ownerName = `${className}_new`;
-        } else if (
-          ts.isIdentifier(member.name) ||
-          ts.isStringLiteral(member.name) ||
-          ts.isNumericLiteral(member.name)
-        ) {
-          const baseName = member.name.text;
-          ownerName = ts.isGetAccessorDeclaration(member)
-            ? `${className}_get_${baseName}`
-            : ts.isSetAccessorDeclaration(member)
-              ? `${className}_set_${baseName}`
-              : `${className}_${baseName}`;
-        }
-        if (!ownerName || !retainedClassMembers.has(ownerName)) continue;
-
-        let planningFailure: IrPreparationFailure | undefined;
-        const visit = (node: ts.Node): void => {
-          if (planningFailure) return;
-          if (node !== member && ts.isFunctionLike(node)) return;
-          if (ts.isCallExpression(node)) {
-            const certified = resolveAmbientClassCall(node);
-            if (certified) {
-              try {
-                const params = certified.declaration.parameters.map((parameter) =>
-                  resolvePositionType(effectiveIrParamTypeNode(parameter), undefined, ctx, classShapes),
-                );
-                const returnType = resolvePositionType(
-                  effectiveIrReturnTypeNode(certified.declaration),
-                  undefined,
-                  ctx,
-                  classShapes,
-                );
-                importedCalls.set(node, {
-                  source: "ambient-host",
-                  ownerName,
-                  targetName: certified.targetName,
-                  params,
-                  returnType,
-                  optionalParams: new Map(),
-                  needsArgc: false,
-                });
-              } catch (error) {
-                planningFailure = classifyIrFailure(error, "resolve");
-                return;
-              }
-            }
-          }
-          ts.forEachChild(node, visit);
-        };
-        visit(member.body);
-        if (planningFailure) {
-          preparationFailures.set(ownerName, planningFailure);
-          retainedClassMembers.delete(ownerName);
-          for (const [call, plan] of importedCalls) {
-            if (plan.ownerName === ownerName) importedCalls.delete(call);
-          }
-        }
-      }
-    }
-    safeSelection.classMembers = retainedClassMembers;
-  }
-  if (jsHostExterns && options.importedFunctions) {
-    for (const [ownerName, declaration] of declByName) {
-      if (!safeSelection.funcs.has(ownerName) || !declaration.body) continue;
-      let planningFailure: IrPreparationFailure | undefined;
-      const visit = (node: ts.Node): void => {
-        if (planningFailure) return;
-        if (node !== declaration && ts.isFunctionLike(node)) return;
-        if (ts.isCallExpression(node)) {
-          const certified = certifyImportedIrCall(node, options.importedFunctions);
-          if (certified) {
-            try {
-              if (
-                process.env.JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW === "1" ||
-                process.env.JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW === ownerName
-              ) {
-                throw new Error(`injected imported-call planning failure for ${ownerName}`);
-              }
-              const params = certified.target.declaration.parameters.map((parameter) =>
-                resolvePositionType(effectiveIrParamTypeNode(parameter), undefined, ctx, classShapes),
-              );
-              const returnNode = effectiveIrReturnTypeNode(certified.target.declaration);
-              const returnType =
-                returnNode?.kind === ts.SyntaxKind.VoidKeyword
-                  ? null
-                  : resolvePositionType(returnNode, undefined, ctx, classShapes);
-              if (returnType === null && !importedVoidCallIsDiscarded(node, declaration)) {
-                throw new IrUnsupportedError(
-                  "imported-call-planning-unsupported",
-                  "resolve",
-                  "void imported result is used in a value context",
-                );
-              }
-              if (returnType?.kind === "callable") {
-                throw new IrUnsupportedError(
-                  "imported-call-planning-unsupported",
-                  "resolve",
-                  "callable imported results are outside A+B1",
-                );
-              }
-              const optionalParams = new Map<number, IrImportedOptionalParamPlan>();
-              for (const optional of ctx.funcOptionalParams.get(certified.target.targetName) ?? []) {
-                optionalParams.set(optional.index, {
-                  ...(optional.constantDefault ? { constantDefault: optional.constantDefault } : {}),
-                  ...(optional.hasExpressionDefault ? { hasExpressionDefault: true } : {}),
-                });
-              }
-              importedCalls.set(node, {
-                source: "module-import",
-                ownerName,
-                targetName: certified.target.targetName,
-                params,
-                returnType,
-                optionalParams,
-                needsArgc:
-                  ctx.funcUsesArguments.has(certified.target.targetName) ||
-                  ctx.funcOptionalParams.has(certified.target.targetName),
-              });
-              for (const functionArgument of certified.functionArguments) {
-                topLevelFunctionValues.set(functionArgument.argument, {
-                  ownerName,
-                  targetName: functionArgument.target.targetName,
-                  signature: functionArgument.signature,
-                  trampolineName: `__fn_tramp_${functionArgument.target.targetName}_cached`,
-                  cacheGlobalName: `__fn_closure_${functionArgument.target.targetName}`,
-                });
-              }
-            } catch (error) {
-              planningFailure = classifyIrFailure(error, "resolve");
-              return;
-            }
-          }
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(declaration.body);
-      if (planningFailure) {
-        preparationFailures.set(ownerName, planningFailure);
-        safeSelection.funcs.delete(ownerName);
-        for (const [call, plan] of importedCalls) {
-          if (plan.ownerName === ownerName) importedCalls.delete(call);
-        }
-        for (const [identifier, plan] of topLevelFunctionValues) {
-          if (plan.ownerName === ownerName) topLevelFunctionValues.delete(identifier);
-        }
-      }
-    }
-  }
+  const hostDateImportsByOwnerUnitId = new Map<
+    IrUnitId,
+    { ownerUnitId: IrUnitId; ownerName: string; importNames: Set<string> }
+  >();
   if (resolveHostVoidCallback) {
     for (const [ownerName, declaration] of declByName) {
       if (!safeSelection.funcs.has(ownerName) || !declaration.body) continue;
@@ -2728,6 +2177,7 @@ function planIrOverlay(
           const certified = resolveHostVoidCallback(node);
           if (certified) {
             hostVoidCallbacks.set(certified.callback, {
+              ownerUnitId: irOverlayIdentity.requireIrOverlayFunctionUnitId(identityPlan, ownerName),
               ownerName,
               signature: { params: [], returnType: null },
               captureNames: certified.captureNames,
@@ -2742,18 +2192,27 @@ function planIrOverlay(
     }
   }
   if (resolveHostDateSnapshot) {
-    const collectHostDateImports = (ownerName: string, root: ts.Node): void => {
+    const collectHostDateImports = (ownerUnitId: IrUnitId, ownerName: string, root: ts.Node): void => {
       const visit = (node: ts.Node): void => {
         if (node !== root && ts.isFunctionLike(node)) return;
         if (ts.isNewExpression(node)) {
           const certified = resolveHostDateSnapshot(node);
           if (certified) {
-            let imports = hostDateImportsByOwner.get(ownerName);
-            if (!imports) hostDateImportsByOwner.set(ownerName, (imports = new Set()));
-            imports.add("Date_new");
+            let plan = hostDateImportsByOwnerUnitId.get(ownerUnitId);
+            if (!plan) {
+              plan = { ownerUnitId, ownerName, importNames: new Set() };
+              hostDateImportsByOwnerUnitId.set(ownerUnitId, plan);
+            } else if (plan.ownerName !== ownerName) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "resolve",
+                `host-Date owner ${ownerUnitId} has conflicting legacy labels ${plan.ownerName} / ${ownerName}`,
+              );
+            }
+            plan.importNames.add("Date_new");
             for (const call of certified.getterCalls) {
               const access = call.expression;
-              if (ts.isPropertyAccessExpression(access)) imports.add(`Date_${access.name.text}`);
+              if (ts.isPropertyAccessExpression(access)) plan.importNames.add(`Date_${access.name.text}`);
             }
           }
         }
@@ -2763,26 +2222,42 @@ function planIrOverlay(
     };
     for (const [ownerName, declaration] of declByName) {
       if (!safeSelection.funcs.has(ownerName) || !declaration.body) continue;
-      collectHostDateImports(ownerName, declaration.body);
+      collectHostDateImports(
+        irOverlayIdentity.requireIrOverlayFunctionUnitId(identityPlan, ownerName),
+        ownerName,
+        declaration.body,
+      );
     }
     if (safeSelection.moduleInit?.reason === null && safeSelection.moduleInit.stmtCount > 0) {
+      const moduleInit = identityPlan.identitySelection.moduleInit;
+      if (!moduleInit || moduleInit.reason !== null || moduleInit.stmtCount === 0) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          "host-Date module-init collection has no exact structural identity",
+        );
+      }
       for (const statement of collectModuleInitPopulation(ast.sourceFile)) {
-        collectHostDateImports(MODULE_INIT_UNIT_NAME, statement);
+        collectHostDateImports(moduleInit.unitId, moduleInit.legacyMatchName, statement);
       }
     }
   }
   return {
+    identityPlan,
+    functionClaimsByUnitId,
     selection,
+    classShapeSidecar,
     classShapes,
+    overrideMapByUnitId,
     overrideMap,
     safeSelection,
     logFallbacks,
-    preparationFailures,
+    preparationFailuresByUnitId,
     declByName,
     importedCalls,
     topLevelFunctionValues,
     hostVoidCallbacks,
-    hostDateImportsByOwner,
+    hostDateImportsByOwnerUnitId,
     promiseDelays,
     ...(options.importedFunctions ? { importedFunctionResolver: options.importedFunctions } : {}),
   };
@@ -2795,8 +2270,7 @@ function consumeIrOverlayReport(
   plan: IrOverlayPlan,
   preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">,
   sourceFile: ts.SourceFile,
-  irSkipBodies?: ReadonlySet<string>,
-  inventory?: IrUnitInventory,
+  skippedFunctionUnitIds: ReadonlySet<IrUnitId> = new Set(),
 ): void {
   const { selection, logFallbacks } = plan;
   // #3000 — aggregate genuine emission across every source-file overlay. A
@@ -2813,36 +2287,30 @@ function consumeIrOverlayReport(
       message: err.message,
     });
     const diag = formatIrPathFallbackDiagnostic(err, ctx);
-    // #2138 — only the single-source IR-first path can omit a legacy body. The
-    // multi-module overlay never passes a skip set and therefore always keeps
-    // the ordinary warning demotion available.
-    const skippedTrap = irSkipBodies !== undefined && irSkipBodies.has(err.func);
     ctx.errors.push({
-      message:
-        skippedTrap && diag.severity !== "error"
-          ? `Codegen error: ${diag.message} [IR-FIRST skipped-slot, #2138]`
-          : diag.message,
+      message: diag.message,
       line: 0,
       column: 0,
-      severity: skippedTrap ? "error" : diag.severity,
+      severity: diag.severity,
     });
   }
 
-  // #2138 — a skipped legacy slot must have been filled or have failed loud.
-  if (irSkipBodies !== undefined && irSkipBodies.size > 0) {
-    const compiledSet = new Set(report.compiled);
-    const erroredSet = new Set(report.errors.map((e) => e.func));
-    for (const name of irSkipBodies) {
-      if (!compiledSet.has(name) && !erroredSet.has(name)) {
-        reportErrorNoNode(
-          ctx,
-          `IR-first (#2138): legacy body for "${name}" was skipped but the IR path neither compiled it nor reported an error — the unreachable placeholder would ship. Selector/integration divergence; file an issue.`,
-        );
-      }
-    }
+  // #2138/#3520 — prove every skipped slot from exact terminal evidence. Raw
+  // name arrays (`compiled` / `errors.func`) are diagnostics, not safety proof.
+  for (const violation of auditIrSkippedFunctionSlots({
+    sourceFile,
+    identityPlan: plan.identityPlan,
+    preparedSelection,
+    skippedFunctionUnitIds,
+    report,
+  })) {
+    reportErrorNoNode(
+      ctx,
+      `IR-first (#2138): ${violation.failure.detail} [${violation.failure.code}; ${violation.unitId}]`,
+    );
   }
 
-  recordObservedIrOutcomes(ctx, sourceFile, plan, preparedSelection, report, irSkipBodies, inventory);
+  recordObservedIrOutcomes(ctx, sourceFile, plan, preparedSelection, report, skippedFunctionUnitIds);
 
   // #1169q — retain the existing selector-fallback log format, now once per
   // source file for a multi-module compilation.
@@ -3122,13 +2590,45 @@ interface MultiIrGraphSafety {
 
 function multiIrTargetHasExactRegistryEntry(
   ctx: CodegenContext,
-  targetName: string,
+  targetRef: IrFuncRef,
+  identityContext: IrPlanningIdentityContext,
   safety: MultiIrGraphSafety,
 ): boolean {
+  if (targetRef.binding.kind !== "unit") return false;
+  const targetUnitId = targetRef.binding.unitId;
+  const targetName = targetRef.name;
+  const target = identityContext.declarationByUnitId.get(targetUnitId);
+  const terminal = identityContext.terminalByUnitId.get(targetUnitId);
+  if (
+    !target ||
+    !ts.isFunctionDeclaration(target) ||
+    !target.body ||
+    identityContext.unitIdByDeclaration.get(target) !== targetUnitId ||
+    identityContext.unitByUnitId.get(targetUnitId) !== terminal ||
+    terminal?.observedKind !== "function"
+  ) {
+    return false;
+  }
   if (safety.occupiedFunctionNameCounts.get(targetName) !== 1) return false;
   if (safety.occupiedFunctionKeys.some((key) => key.startsWith(`${targetName}$`))) return false;
   const idx = ctx.funcMap.get(targetName);
   return idx !== undefined && idx >= ctx.numImportFuncs && definedFuncAt(ctx, idx)?.name === targetName;
+}
+
+function requireMultiIrOwnerClaim(
+  plan: IrOverlayPlan,
+  ownerUnitId: IrUnitId,
+  ownerName?: string,
+): IrExactFunctionClaim {
+  const claim = plan.functionClaimsByUnitId.get(ownerUnitId);
+  if (!claim || (ownerName !== undefined && claim.legacyName !== ownerName)) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      `multi-source IR owner ${ownerUnitId}${ownerName === undefined ? "" : ` / ${ownerName}`} has no exact function claim`,
+    );
+  }
+  return claim;
 }
 
 function makeMultiIrSafeSelection(
@@ -3137,25 +2637,29 @@ function makeMultiIrSafeSelection(
   sourceFile: ts.SourceFile,
   safety: MultiIrGraphSafety,
 ): IrSelection {
-  const funcs = new Set(plan.safeSelection.funcs);
-  const blocked = new Set<string>([...safety.collisions, MODULE_INIT_CALLER]);
-  for (const name of plan.selection.funcs) {
-    if (!plan.safeSelection.funcs.has(name)) blocked.add(name);
+  const retained = new Set(plan.identityPlan.safeFunctionUnitIds);
+  const blocked = new Set<IrUnitId>();
+  for (const unitId of plan.identityPlan.identitySelection.funcs.keys()) {
+    if (!retained.has(unitId)) blocked.add(unitId);
   }
+  const moduleInitUnitId = plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
+  if (moduleInitUnitId) blocked.add(moduleInitUnitId);
   const conservativeCrossFileCallers = ctx.standalone || ctx.wasi || ctx.strictNoHostImports;
 
   for (const callPlan of plan.importedCalls.values()) {
-    if (!multiIrTargetHasExactRegistryEntry(ctx, callPlan.targetName, safety)) blocked.add(callPlan.ownerName);
+    requireMultiIrOwnerClaim(plan, callPlan.ownerUnitId, callPlan.ownerName);
+    if (!multiIrTargetHasExactRegistryEntry(ctx, callPlan.target, plan.identityPlan.identityContext, safety)) {
+      blocked.add(callPlan.ownerUnitId);
+    }
   }
   for (const valuePlan of plan.topLevelFunctionValues.values()) {
-    if (!multiIrTargetHasExactRegistryEntry(ctx, valuePlan.targetName, safety)) blocked.add(valuePlan.ownerName);
-  }
-  for (const name of funcs) {
-    const declaration = plan.declByName.get(name);
-    if (!declaration) {
-      blocked.add(name);
-      continue;
+    requireMultiIrOwnerClaim(plan, valuePlan.ownerUnitId, valuePlan.ownerName);
+    if (!multiIrTargetHasExactRegistryEntry(ctx, valuePlan.target, plan.identityPlan.identityContext, safety)) {
+      blocked.add(valuePlan.ownerUnitId);
     }
+  }
+  for (const unitId of retained) {
+    const { legacyName: name, declaration } = requireMultiIrOwnerClaim(plan, unitId);
     const crossFileTarget = safety.crossFileFunctionNames.has(name);
     const hasCallableBoundary = crossFileTarget && functionHasCallableBoundary(ctx, declaration);
     const registeredIdx = ctx.funcMap.get(name);
@@ -3171,18 +2675,29 @@ function makeMultiIrSafeSelection(
       safety.occupiedFunctionKeys.some((key) => key.startsWith(`${name}$`)) ||
       (crossFileTarget && (conservativeCrossFileCallers || hasCallableBoundary))
     ) {
-      blocked.add(name);
+      blocked.add(unitId);
     }
   }
-  for (const name of blocked) funcs.delete(name);
+
+  // The legacy name graph attributed class/module/unowned calls to a blocked
+  // pseudo-module owner. Preserve that conservative routing with exact target
+  // IDs before closing the retained function component.
+  const localCalls = collectLocalCallEdgesByIdentity(sourceFile, plan.identityPlan.identityContext);
+  for (const target of localCalls.calleesFromUnownedCallers) blocked.add(target);
+  for (const [caller, targets] of localCalls.callees) {
+    const terminal = plan.identityPlan.identityContext.terminalByUnitId.get(caller);
+    if (terminal?.observedKind === "function" || terminal?.observedKind === "module-init") continue;
+    for (const target of targets) blocked.add(target);
+  }
 
   // A collision/dangerous removal re-opens the selector's graph-closure
   // invariant in both directions. Drop its whole selected weak component.
-  return closeIrBlockedComponent(
-    sourceFile,
-    { funcs, classMembers: new Set<string>(), moduleInit: undefined },
-    blocked,
-  );
+  const closed = closeIrBlockedComponentByIdentity(sourceFile, plan.identityPlan.identityContext, retained, blocked);
+  return {
+    funcs: irOverlayIdentity.retainIrSafeFunctionUnitIds(plan.identityPlan, closed),
+    classMembers: new Set<string>(),
+    moduleInit: undefined,
+  };
 }
 
 function importedMissingArgNeedsUndefined(type: IrType): boolean {
@@ -3210,15 +2725,41 @@ function prepareMultiIrImportedLowering(
   selection: IrSelection,
 ): IrSelection {
   if (plan.importedCalls.size === 0) return selection;
-  const blocked = new Set<string>();
+  const retained = new Set(plan.identityPlan.safeFunctionUnitIds);
+  const blocked = new Set<IrUnitId>();
   let requestedLateImport = false;
 
   for (const [call, callPlan] of plan.importedCalls) {
-    if (!selection.funcs.has(callPlan.ownerName)) continue;
-    if (callPlan.needsArgc) ensureArgcGlobal(ctx);
+    requireMultiIrOwnerClaim(plan, callPlan.ownerUnitId, callPlan.ownerName);
+    if (!retained.has(callPlan.ownerUnitId)) continue;
+    if (callPlan.needsArgc) {
+      if (!callPlan.argcGlobal || callPlan.argcGlobal.binding.kind !== "runtime") {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `argc-sensitive call plan for ${callPlan.ownerName} has no exact runtime binding`,
+        );
+      }
+      const argcGlobalIdx = ensureArgcGlobal(ctx);
+      const argcGlobal = ctx.mod.globals[localGlobalIdx(ctx, argcGlobalIdx)];
+      const entrySource = plan.identityPlan.identityContext.inventory.sources.find((source) => source.kind === "entry");
+      if (!argcGlobal || !entrySource) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `argc-sensitive call plan for ${callPlan.ownerName} has no exact allocator/source owner`,
+        );
+      }
+      planProgramAbiGlobal(ctx, {
+        ref: callPlan.argcGlobal,
+        anchor: { kind: "source", sourceId: entrySource.id },
+        roleOrdinal: PROGRAM_ABI_GLOBAL_ROLE.argc,
+        global: argcGlobal,
+      });
+    }
     for (let i = call.arguments.length; i < callPlan.params.length; i++) {
       if (!importedMissingArgNeedsUndefined(callPlan.params[i]!)) continue;
-      if (ensureGetUndefined(ctx) === undefined) blocked.add(callPlan.ownerName);
+      if (ensureGetUndefined(ctx) === undefined) blocked.add(callPlan.ownerUnitId);
       else requestedLateImport = true;
     }
   }
@@ -3228,25 +2769,93 @@ function prepareMultiIrImportedLowering(
   if (requestedLateImport) flushLateImportShifts(ctx, null);
 
   for (const valuePlan of plan.topLevelFunctionValues.values()) {
-    if (!selection.funcs.has(valuePlan.ownerName) || blocked.has(valuePlan.ownerName)) continue;
-    const funcIdx = ctx.funcMap.get(valuePlan.targetName);
+    requireMultiIrOwnerClaim(plan, valuePlan.ownerUnitId, valuePlan.ownerName);
+    if (!retained.has(valuePlan.ownerUnitId) || blocked.has(valuePlan.ownerUnitId)) continue;
+    if (valuePlan.target.binding.kind !== "unit") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `function-value cache target ${valuePlan.target.name} has no exact source-unit binding`,
+      );
+    }
+    const funcIdx = ctx.funcMap.get(valuePlan.target.name);
     if (
       funcIdx === undefined ||
       funcIdx < ctx.numImportFuncs ||
-      definedFuncAt(ctx, funcIdx)?.name !== valuePlan.targetName
+      definedFuncAt(ctx, funcIdx)?.name !== valuePlan.target.name
     ) {
-      blocked.add(valuePlan.ownerName);
+      blocked.add(valuePlan.ownerUnitId);
       continue;
     }
-    const singleton = ensureFuncClosureSingleton(ctx, valuePlan.targetName, funcIdx, false);
+    const singleton = ensureFuncClosureSingleton(ctx, valuePlan.target.name, funcIdx, false);
     const trampoline = singleton ? definedFuncAt(ctx, singleton.trampolineFuncIdx) : undefined;
     const cache = singleton ? ctx.mod.globals[localGlobalIdx(ctx, singleton.cacheGlobalIdx)] : undefined;
-    if (!singleton || trampoline?.name !== valuePlan.trampolineName || cache?.name !== valuePlan.cacheGlobalName) {
-      blocked.add(valuePlan.ownerName);
+    if (!trampoline || !cache || !planProgramAbiFunctionValue(ctx, valuePlan, trampoline, cache)) {
+      blocked.add(valuePlan.ownerUnitId);
     }
   }
 
-  return blocked.size === 0 ? selection : closeIrBlockedComponent(sourceFile, selection, blocked);
+  if (blocked.size === 0) return selection;
+  const closed = closeIrBlockedComponentByIdentity(sourceFile, plan.identityPlan.identityContext, retained, blocked);
+  return {
+    ...selection,
+    funcs: irOverlayIdentity.retainIrSafeFunctionUnitIds(plan.identityPlan, closed),
+    classMembers: new Set<string>(),
+    moduleInit: undefined,
+  };
+}
+
+function compileMultiIrOverlaySource(
+  ctx: CodegenContext,
+  multiAst: MultiTypedAST,
+  sourceFile: ts.SourceFile,
+  identityContext: IrPlanningIdentityContext,
+  safety: MultiIrGraphSafety,
+  hostImportedFunctions: irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined,
+): void {
+  const sourceAst: TypedAST = {
+    sourceFile,
+    checker: multiAst.checker,
+    program: multiAst.program,
+    diagnostics: multiAst.diagnostics,
+    syntacticDiagnostics: multiAst.syntacticDiagnostics,
+  };
+  const plan = planIrOverlay(ctx, sourceAst, identityContext, {
+    resolveModuleBindings: false,
+    ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
+  });
+  let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
+  safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
+  safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
+  safeSelection = applyIrFinalContextFunctionUnitIds(
+    plan,
+    safeSelection,
+    prepareHostVoidCallbackLoweringByIdentity(
+      ctx,
+      sourceFile,
+      plan.hostVoidCallbacks,
+      plan.identityPlan.safeFunctionUnitIds,
+      plan.identityPlan.identityContext,
+    ),
+  );
+  safeSelection = prepareHostDateSnapshotPreflight(ctx, sourceFile, plan, safeSelection);
+  safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
+  safeSelection = applyIrFinalContextFunctionUnitIds(
+    plan,
+    safeSelection,
+    preparePromiseDelayLoweringByIdentity(
+      ctx,
+      sourceFile,
+      plan.promiseDelays,
+      plan.identityPlan.safeFunctionUnitIds,
+      plan.identityPlan.identityContext,
+      plan.preparationFailuresByUnitId,
+    ),
+  );
+  const { overrideMap, classShapes } = plan;
+  const loweringPlans = irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, safeSelection);
+  const report = compileIrPathFunctions(ctx, sourceFile, safeSelection, overrideMap, classShapes, loweringPlans);
+  consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile);
 }
 
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
@@ -3256,6 +2865,64 @@ function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.Sourc
     sourceFile,
     ctx.oracle,
     ctx.inferModuleStrictArguments ?? true,
+  );
+}
+
+/** Pre-scan the small syntax surface that enables the linked runtime-eval ABI. */
+function sourceUsesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
+  // (#3437) `callUsesRuntimeEvalBoundary` can only answer true for a call whose
+  // callee is the identifier `Function` or `eval` — so if neither name occurs
+  // anywhere in the source text, no call can match and the full-file AST walk
+  // below is guaranteed to return false. Skipping it on that cheap substring
+  // test keeps this predicate off the harness compile-work budget for the
+  // overwhelming majority of files (a sound over-approximation: the text test
+  // is only allowed to skip when the identifiers are definitely absent).
+  const text = sourceFile.text;
+  if (!text.includes("Function") && !text.includes("eval")) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && callUsesRuntimeEvalBoundary(node)) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+function sourceProvidesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
+  return sourceFile.statements.some(
+    (stmt) =>
+      ts.isFunctionDeclaration(stmt) &&
+      (stmt.name?.text === "__runtime_new_function" || stmt.name?.text === "__runtime_indirect_eval"),
+  );
+}
+
+function callUsesRuntimeEvalBoundary(node: ts.CallExpression | ts.NewExpression): boolean {
+  let expr: ts.Expression = node.expression;
+  while (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isTypeAssertionExpression(expr)
+  ) {
+    expr = expr.expression;
+  }
+  // Direct eval remains on #2929 (constant direct eval is compiled away;
+  // dynamic direct eval is refused), so it does not enable this linked ABI.
+  if (ts.isIdentifier(expr) && expr.text === "eval") return false;
+  if (ts.isIdentifier(expr) && expr.text === "Function") {
+    // Literal-only Function construction is compiled away by #2924.
+    return node.arguments?.some((arg) => !ts.isStringLiteralLike(arg)) ?? false;
+  }
+  // `(0, eval)(...)` is indirect even when its source is a literal.
+  return (
+    ts.isBinaryExpression(expr) &&
+    expr.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+    ts.isIdentifier(expr.right) &&
+    expr.right.text === "eval"
   );
 }
 
@@ -3277,12 +2944,20 @@ export function generateModule(
   irFirstSkipped?: readonly string[];
   // #3519 — typed terminal unit ledger (opt-in).
   irOutcomes?: readonly IrObservedOutcome[];
+  // #3520 — finalized structural ABI when an IR identity inventory was requested.
+  programAbi?: PublishedProgramAbi;
 } {
   const mod = createEmptyModule();
-  const ctx = createCodegenContext(mod, ast.checker, options);
-  const irUnitInventory = options?.trackIrOutcomes
-    ? buildIrUnitInventory([ast.sourceFile], { ...inventoryOptions, entrySource: ast.sourceFile })
+  const irPlanningIdentityContext =
+    options?.experimentalIR || options?.trackIrOutcomes
+      ? buildIrPlanningIdentityContext(
+          buildIrUnitInventory([ast.sourceFile], { ...inventoryOptions, entrySource: ast.sourceFile }),
+        )
+      : undefined;
+  const programAbiSession = irPlanningIdentityContext
+    ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
+  const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession);
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
@@ -3299,6 +2974,14 @@ export function generateModule(
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !hasDeclareModifier(stmt)) {
       ctx.topLevelFunctionNames.add(stmt.name.text);
     }
+  }
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    (sourceUsesRuntimeEvalBoundary(ast.sourceFile) ||
+      ctx.topLevelFunctionNames.has("__runtime_new_function") ||
+      ctx.topLevelFunctionNames.has("__runtime_indirect_eval"))
+  ) {
+    ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   // (#2179) Pre-scan for `delete <member>` so `any`-receiver property reads can
   // be routed through the tombstone-aware `__extern_get` host helper instead of
@@ -3403,6 +3086,7 @@ export function generateModule(
     // target-independent). MUST run after the gate is built (above, line ~1081)
     // and after the subview / ObjVecArr reservations so the type-table prefix is
     // already stable.
+    collectDynamicObjectReturnCarrierTypes(ctx, ast.checker, ast.sourceFile);
     reserveFnctorStructTypes(ctx);
 
     // $AnyValue struct type is now registered lazily via ensureAnyValueType()
@@ -3592,6 +3276,7 @@ export function generateModule(
     // collectDeclarations so the inferred f64 return shows up directly in
     // the function's signature instead of being patched after the fact.
     ctx.numericReturnTypes = inferNumericReturnTypes(ctx, ast.sourceFile);
+    ctx.booleanPropertyNames = analyzeBooleanPropertyNames(ctx, [ast.sourceFile]);
 
     // #1677 — final reconcile of native-string helper indices before any USER
     // function is registered. Any imports added by the deferred-helper
@@ -3630,6 +3315,11 @@ export function generateModule(
     scanForArrayHoles(ctx, ast.sourceFile);
 
     collectDeclarations(ctx, ast.sourceFile);
+    // #2847: declaration collection has now materialized the initial struct
+    // field table. Brand proven boolean i32 slots before compiling bodies so
+    // direct/dynamic reads preserve JS boolean identity at their use sites.
+    // The finalize-time pass below remains necessary for late-grown fields.
+    recoverBooleanStructFieldBrands(ctx);
 
     // Shape inference: detect array-like variables and override their types
     applyShapeInference(ctx, ast.checker, ast.sourceFile);
@@ -3666,24 +3356,48 @@ export function generateModule(
     const irFirst =
       !!options?.experimentalIR && !options?.disableIrFirst && !explicitlyDisabledEnv(process.env.JS2WASM_IR_FIRST);
     let irPlan: IrOverlayPlan | null = null;
+    let requestedSkipProjection: ReturnType<typeof buildIrRequestedFunctionSkipProjection> | undefined;
+    let irSkippedFunctionUnitIds: ReadonlySet<IrUnitId> = new Set();
     let irSkipBodies: ReadonlySet<string> | undefined;
     if (irFirst) {
-      irPlan = planIrOverlay(ctx, ast);
+      irPlan = planIrOverlay(ctx, ast, irPlanningIdentityContext!);
       // (#2951) generators are skippable only for the JS-host path — the same
       // condition the selector uses for `jsHostExterns`. Standalone/WASI keep
       // generators on the compile-twice path (see gate 2 in computeIrFirstSkipSet).
       const generatorsSkippable = !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
-      irSkipBodies = computeIrFirstSkipSet(irPlan, ast.sourceFile, generatorsSkippable);
+      const requestedSkipUnitIds = computeIrFirstSkipUnitIds({
+        sourceFile: ast.sourceFile,
+        identityContext: irPlan.identityPlan.identityContext,
+        safeFunctionUnitIds: irPlan.identityPlan.safeFunctionUnitIds,
+        claimsByUnitId: irPlan.functionClaimsByUnitId,
+        overridesByUnitId: irPlan.overrideMapByUnitId,
+        potentiallyBlockedOwnerUnitIds: new Set([
+          ...[...irPlan.hostVoidCallbacks.values()].map((callback) => callback.ownerUnitId),
+          ...irPlan.hostDateImportsByOwnerUnitId.keys(),
+          ...[...irPlan.promiseDelays.constructions.values()].map((delay) => delay.ownerUnitId),
+        ]),
+        generatorsSkippable,
+      });
+      requestedSkipProjection = buildIrRequestedFunctionSkipProjection(
+        requestedSkipUnitIds,
+        irPlan.functionClaimsByUnitId,
+      );
+      irSkipBodies = new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName));
     }
 
     // Third pass: compile function bodies
     const actuallySkipped = compileDeclarations(ctx, ast.sourceFile, irSkipBodies);
     if (irFirst) {
-      irFirstSkipped = actuallySkipped ?? [];
-      // Reconcile against what declaration compilation actually skipped, not
-      // merely what the planner requested. The terminal ledger and skipped-slot
-      // trap must describe the body that really shipped.
-      irSkipBodies = new Set(irFirstSkipped);
+      if (!requestedSkipProjection) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          "IR-first declaration compilation has no exact requested-skip projection",
+        );
+      }
+      const correlated = correlateIrSkippedFunctionNames(requestedSkipProjection, actuallySkipped ?? []);
+      irFirstSkipped = correlated.legacyNames;
+      irSkippedFunctionUnitIds = correlated.unitIds;
     }
 
     // (#1602) Rebuild object-method-as-closure trampoline bodies against the
@@ -3712,25 +3426,43 @@ export function generateModule(
       // flag-off pipeline is order-identical. `planIrOverlay` holds the
       // planning code verbatim (typeMap → selection → STRICT_IR_REASONS →
       // classShapes → overrideMap → safeSelection → new.target gate).
-      const plan = irPlan ?? planIrOverlay(ctx, ast);
+      const plan = irPlan ?? planIrOverlay(ctx, ast, irPlanningIdentityContext!);
       const { classShapes, overrideMap } = plan;
-      let safeSelection = prepareAmbientClassCallLowering(ctx, plan, plan.safeSelection);
-      safeSelection = prepareHostVoidCallbackLowering(ctx, ast.sourceFile, plan.hostVoidCallbacks, safeSelection);
+      let safeSelection = applyIrFinalContextFunctionUnitIds(
+        plan,
+        prepareIrAmbientClassCallLowering(ctx, plan, plan.safeSelection),
+        prepareHostVoidCallbackLoweringByIdentity(
+          ctx,
+          ast.sourceFile,
+          plan.hostVoidCallbacks,
+          plan.identityPlan.safeFunctionUnitIds,
+          plan.identityPlan.identityContext,
+        ),
+      );
       safeSelection = prepareHostDateSnapshotPreflight(ctx, ast.sourceFile, plan, safeSelection);
-      safeSelection = preparePromiseDelayLowering(
+      safeSelection = synchronizeIrSafeFunctionSelection(plan, safeSelection);
+      safeSelection = applyIrFinalContextFunctionUnitIds(
+        plan,
+        safeSelection,
+        preparePromiseDelayLoweringByIdentity(
+          ctx,
+          ast.sourceFile,
+          plan.promiseDelays,
+          plan.identityPlan.safeFunctionUnitIds,
+          plan.identityPlan.identityContext,
+          plan.preparationFailuresByUnitId,
+        ),
+      );
+      const loweringPlans = irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, safeSelection);
+      const report = compileIrPathFunctions(
         ctx,
         ast.sourceFile,
-        plan.promiseDelays,
         safeSelection,
-        plan.preparationFailures,
+        overrideMap,
+        classShapes,
+        loweringPlans,
       );
-      const report = compileIrPathFunctions(ctx, ast.sourceFile, safeSelection, overrideMap, classShapes, {
-        importedCalls: plan.importedCalls,
-        topLevelFunctionValues: plan.topLevelFunctionValues,
-        hostVoidCallbacks: plan.hostVoidCallbacks,
-        promiseDelays: plan.promiseDelays,
-      });
-      consumeIrOverlayReport(ctx, report, plan, safeSelection, ast.sourceFile, irSkipBodies, irUnitInventory);
+      consumeIrOverlayReport(ctx, report, plan, safeSelection, ast.sourceFile, irSkippedFunctionUnitIds);
     }
 
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
@@ -3794,6 +3526,18 @@ export function generateModule(
       mod.exportSignatures = obj;
     }
 
+    // (#2928) Register the cross-module AOT-callable carrier only after legacy
+    // and IR bodies have settled their type slots. Prepending it during the
+    // syntax scan shifts the legacy type indices underneath IR-first's parity
+    // check for otherwise ordinary numeric AOT functions.
+    if (ctx.runtimeEvalCallableBoundaryEnabled) {
+      ensureRuntimeEvalAotCallableCarrierTypes(ctx);
+    }
+
+    // (#2847) Recover boolean brands after every late field has been discovered,
+    // but before the host getter signatures/boxing paths are finalized.
+    recoverBooleanStructFieldBrands(ctx);
+
     // (#2009) Resolve same-structural-shape field-name collisions BEFORE the
     // getter/setter/name-export emitters read the struct layout. Runs after ALL
     // function bodies are final (legacy + IR), so its struct.new patch covers
@@ -3812,6 +3556,8 @@ export function generateModule(
     // These allow JS host imports to read WasmGC struct fields that are
     // otherwise opaque to JS (V8 returns undefined for direct property access).
     emitStructFieldGetters(ctx);
+    emitStructFieldBooleanMarkers(ctx);
+    emitStructFieldPresenceGetters(ctx);
     emitStructFieldSetters(ctx);
 
     // Emit __vec_get / __vec_len exports for runtime iterator fallback on WasmGC arrays
@@ -3971,9 +3717,22 @@ export function generateModule(
       for (const info of ctx.closureInfoByTypeIdx.values()) {
         if (info.paramTypes.length > maxClosureArity) maxClosureArity = info.paramTypes.length;
       }
+      maxClosureArity = Math.max(maxClosureArity, maxReservedHostFnctorMethodArity(ctx));
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 6; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
     }
+
+    // Emit the declared-arity classifier before filling `__apply_closure`.
+    // The native bridge uses it to select a dispatcher wide enough for calls
+    // that omit optional trailing arguments, padding those missing formals with
+    // the canonical undefined carrier just like the host wrapper does.
+    emitClosureArityExport(ctx);
+
+    // (#3668) The host fnctor method call sites reserve stable private drivers
+    // before these public closure dispatchers exist. Fill them now over the
+    // complete closure-shape and declared-arity tables, keeping recursive
+    // parser descent in Wasm after the live host method lookup returns.
+    fillHostFnctorMethodDrivers(ctx);
 
     // (#1719 CPR read-drive) Fill the reserved `__drive_proto_iterator` driver
     // body now that `__call_fn_method_0` is registered. No-op when no read-drive
@@ -4060,6 +3819,13 @@ export function generateModule(
     // `this.lastTokEnd`) resolving to `__extern_get` → `undefined` (acorn 9th wall).
     fillMemberGetDispatch(ctx);
 
+    // Closed compiler structs are not `$Object` hash maps. Fill the native
+    // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
+    fillClosedStructHasOwnArms(ctx);
+    fillClosedStructOwnPropertyNamesArms(ctx);
+    fillClosedStructExternGetArms(ctx);
+    fillFnctorPrototypeDispatchArms(ctx);
+
     // (#1904) Fill the standalone native Array.isArray predicate after all
     // module-local array carriers have been registered.
     fillExternIsArray(ctx);
@@ -4100,9 +3866,8 @@ export function generateModule(
     // read prologues into `__extern_get_idx` / `__extern_get`. Runs AFTER the
     // vec fills above (needs every carrier + `__obj_index_of_key`) and BEFORE
     // `fillTaDynViewMopArms` below so the TypedArray dyn-view arm keeps the
-    // front slot (TA receivers must exit before the overlay consult).
-    // Standalone only (no-op otherwise).
-    fillVecOverlayHelpers(ctx);
+    // front slot (TA receivers must exit before the overlay consult). Standalone only.
+    fillObjVecReflectionHelpers(ctx);
 
     // (#3177) `$__ta_dyn_view` §10.4.5 MOP arms — AFTER every vec fill above
     // (each fill prepends at body[0]; last fill wins the front slot, and the
@@ -4153,11 +3918,9 @@ export function generateModule(
     // non-vec structs — JS cannot tell them apart without this probe).
     emitIsClosureExport(ctx);
 
-    // #2623 P-7 (B-1): emit __closure_arity(externref) -> i32 so the JS-side
-    // dynamic bridge can dispatch host→wasm method callbacks at the closure's
-    // REAL declared arity (exact `arguments.length` reflection) instead of the
-    // highest emitted __call_fn_method_N.
-    emitClosureArityExport(ctx);
+    // #2742: classify accessor-returned rest closures before the JS runtime
+    // exposes them through a dispatcher that cannot materialize their rest vec.
+    emitClosureHasRestExport(ctx);
 
     // #2794: emit __is_data_struct(externref) -> i32 — POSITIVE data-vs-closure
     // discriminator so `_wrapForHost` only bridges genuine closures and never
@@ -4236,7 +3999,7 @@ export function generateModule(
     markLeafStructsFinal(mod, ctx.wasi, callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]));
 
     // Dead import and type elimination pass
-    eliminateDeadImports(mod, ctx); // #1899 ctx → remap helper side-tables on import removal
+    eliminateDeadImportsAndPlanAbiCallables(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
     repairStructTypeMismatches(mod);
@@ -4251,6 +4014,7 @@ export function generateModule(
     // addImport/ensureLateImport after here is a producer bug and throws at
     // its own call site (see imports.ts / late-imports.ts).
     ctx.indexSpaceFrozen = true;
+    ctx.programAbiSession?.publish(mod);
 
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
@@ -4261,7 +4025,7 @@ export function generateModule(
     // Must run after all other passes since they can introduce invalid coercions.
     fixupExternConvertAny(ctx);
   } catch (e) {
-    recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irUnitInventory);
+    recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
   }
 
@@ -4278,6 +4042,7 @@ export function generateModule(
     irCompiledFuncs: ctx.irCompiledFuncs,
     irFirstSkipped,
     irOutcomes: ctx.irOutcomes,
+    programAbi: ctx.programAbiSession?.publication,
   };
 }
 
@@ -5800,16 +5565,24 @@ export function generateMultiModule(
   irCompiledFuncs?: readonly string[];
   // #3519 — typed terminal unit ledger (opt-in).
   irOutcomes?: readonly IrObservedOutcome[];
+  // #3520 — finalized structural ABI when an IR identity inventory was requested.
+  programAbi?: PublishedProgramAbi;
 } {
   const totalStarted = compileProfileNow();
   const mod = createEmptyModule();
-  const ctx = createCodegenContext(mod, multiAst.checker, options);
-  const irUnitInventory = options?.trackIrOutcomes
-    ? buildIrUnitInventory(multiAst.sourceFiles, {
-        entrySource: multiAst.entryFile,
-        checker: multiAst.checker,
-      })
+  const irPlanningIdentityContext =
+    options?.experimentalIR || options?.trackIrOutcomes
+      ? buildIrPlanningIdentityContext(
+          buildIrUnitInventory(multiAst.sourceFiles, {
+            entrySource: multiAst.entryFile,
+            checker: multiAst.checker,
+          }),
+        )
+      : undefined;
+  const programAbiSession = irPlanningIdentityContext
+    ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
+  const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession);
   // Multi-file compilation is linked through import/export module records.
   ctx.sourceIsModule = true;
   try {
@@ -5863,8 +5636,8 @@ export function generateMultiModule(
       }
     }
 
-    // Register built-in collection types as extern classes if not already collected from lib files
     registerBuiltinExternClasses(ctx);
+    if (options?.nodeBuiltins?.length) registerNodeBuiltinImports(ctx, options.nodeBuiltins);
 
     // #3654 — multi-file package graphs keep Node import declarations in the
     // TypeScript program, but their runtime bindings still belong to the JS
@@ -5933,6 +5706,7 @@ export function generateMultiModule(
       }
       ctx.numericReturnTypes = merged;
     }
+    ctx.booleanPropertyNames = analyzeBooleanPropertyNames(ctx, multiAst.sourceFiles);
 
     // #1677 — final reconcile before any user function is registered.
     reconcileNativeStrFinalizeShift(ctx);
@@ -5975,6 +5749,9 @@ export function generateMultiModule(
       const isEntry = sf === multiAst.entryFile;
       collectDeclarations(ctx, sf, isEntry);
     }
+    // #2847: make initial boolean brands visible while bodies are emitted;
+    // recover again at finalize for fields discovered during body compilation.
+    recoverBooleanStructFieldBrands(ctx);
 
     // Shape inference: detect array-like variables and override their types
     for (const sf of multiAst.sourceFiles) {
@@ -6064,7 +5841,7 @@ export function generateMultiModule(
       const hostImportedFunctions =
         ctx.standalone || ctx.wasi || ctx.strictNoHostImports
           ? undefined
-          : makeIrImportedFunctionResolver(multiAst.checker, multiAst.sourceFiles);
+          : irOverlayIdentity.makeIrOverlayImportedResolver(multiAst.checker, irPlanningIdentityContext!);
       const occupiedFunctionNameCounts = new Map<string, number>();
       for (const fn of ctx.mod.functions) {
         occupiedFunctionNameCounts.set(fn.name, (occupiedFunctionNameCounts.get(fn.name) ?? 0) + 1);
@@ -6077,36 +5854,14 @@ export function generateMultiModule(
         occupiedFunctionNameCounts,
       };
       for (const sourceFile of multiAst.sourceFiles) {
-        const sourceAst: TypedAST = {
-          sourceFile,
-          checker: multiAst.checker,
-          program: multiAst.program,
-          diagnostics: multiAst.diagnostics,
-          syntacticDiagnostics: multiAst.syntacticDiagnostics,
-        };
-        const plan = planIrOverlay(ctx, sourceAst, {
-          resolveModuleBindings: false,
-          ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
-        });
-        let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
-        safeSelection = prepareAmbientClassCallLowering(ctx, plan, safeSelection);
-        safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
-        safeSelection = prepareHostVoidCallbackLowering(ctx, sourceFile, plan.hostVoidCallbacks, safeSelection);
-        safeSelection = prepareHostDateSnapshotPreflight(ctx, sourceFile, plan, safeSelection);
-        safeSelection = preparePromiseDelayLowering(
+        compileMultiIrOverlaySource(
           ctx,
+          multiAst,
           sourceFile,
-          plan.promiseDelays,
-          safeSelection,
-          plan.preparationFailures,
+          irPlanningIdentityContext!,
+          safety,
+          hostImportedFunctions,
         );
-        const report = compileIrPathFunctions(ctx, sourceFile, safeSelection, plan.overrideMap, plan.classShapes, {
-          importedCalls: plan.importedCalls,
-          topLevelFunctionValues: plan.topLevelFunctionValues,
-          hostVoidCallbacks: plan.hostVoidCallbacks,
-          promiseDelays: plan.promiseDelays,
-        });
-        consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile, undefined, irUnitInventory);
       }
       // A+B1 may create callback singleton trampolines after the legacy
       // finalization pass. Rebuild those late declarations against the target's
@@ -6179,6 +5934,13 @@ export function generateMultiModule(
       mod.exportSignatures = obj;
     }
 
+    // (#2847) Whole-program conservative branding for multi-source modules.
+    recoverBooleanStructFieldBrands(ctx);
+
+    // Mirror single-source exact shape provenance before any closed-struct
+    // runtime finalizer consumes the complete multi-source type table.
+    resolveSameShapeFieldNameCollisions(ctx);
+
     // (#2831) Reserve the host-externref → wasm-vec materializers before the
     // `__sset_*` setters and deferred member dispatchers bake their value
     // coercions (mirrors the generateModule path).
@@ -6188,6 +5950,8 @@ export function generateMultiModule(
     // generateModule path — #1308 surfaced that multi-source projects
     // were missing these export emits).
     emitStructFieldGetters(ctx);
+    emitStructFieldBooleanMarkers(ctx);
+    emitStructFieldPresenceGetters(ctx);
     emitStructFieldSetters(ctx);
 
     // (#3468) Multi-source compilation can reserve the closure own-property
@@ -6226,13 +5990,11 @@ export function generateMultiModule(
     fillMemberSetDispatch(ctx);
     fillMemberGetDispatch(ctx);
 
-    // (#3371) Reflect.construct reserves the same host-free constructor
-    // classifier and native-view prototype overrides in project compilation as
-    // in the single-source pipeline. Fill only after every source has
-    // registered its closure and carrier types.
-    fillTaDynViewMopArms(ctx);
-    fillDataViewConstructProtoArm(ctx);
-    fillReflectIsConstructor(ctx);
+    // Mirror the single-source closed-struct own-property finalizer.
+    fillClosedStructHasOwnArms(ctx);
+    fillClosedStructOwnPropertyNamesArms(ctx);
+    fillClosedStructExternGetArms(ctx);
+    fillFnctorPrototypeDispatchArms(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
     // numeric reads through an externref (for example `globalThis.logs[i]`).
@@ -6242,7 +6004,15 @@ export function generateMultiModule(
     // fill, the backing vec contains the right values but every indexed read
     // silently returns the undefined sentinel.
     fillExternGetIdxVecArms(ctx);
-
+    // (#3666/#3251) Multi-source parity after every carrier/dynamic reader is complete.
+    fillObjVecReflectionHelpers(ctx);
+    // (#3371) Reflect.construct reserves the same host-free constructor
+    // classifier and native-view prototype overrides in project compilation as
+    // in the single-source pipeline. Keep native views after generic vec fills
+    // so they retain front precedence.
+    fillTaDynViewMopArms(ctx);
+    fillDataViewConstructProtoArm(ctx);
+    fillReflectIsConstructor(ctx);
     // Emit __vec_get / __vec_len exports for runtime iterator fallback.
     emitVecAccessExports(ctx);
 
@@ -6267,6 +6037,9 @@ export function generateMultiModule(
 
     // #1504: emit __is_closure for wrapExports discrimination.
     emitIsClosureExport(ctx);
+
+    // #2742: accessor-returned rest-closure discriminator (see primary path).
+    emitClosureHasRestExport(ctx);
 
     // #2794: POSITIVE data-vs-closure discriminator (see generateModule path).
     emitIsDataStructExport(ctx);
@@ -6344,7 +6117,7 @@ export function generateMultiModule(
     markLeafStructsFinal(mod, ctx.wasi, callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]));
 
     // Dead import and type elimination pass
-    eliminateDeadImports(mod, ctx); // #1899 ctx → remap helper side-tables on import removal
+    eliminateDeadImportsAndPlanAbiCallables(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
     repairStructTypeMismatches(mod);
@@ -6357,6 +6130,7 @@ export function generateMultiModule(
     // run; stackBalance / fixupExternConvertAny / emit add no imports. Any
     // addImport/ensureLateImport after here throws at the producer site.
     ctx.indexSpaceFrozen = true;
+    ctx.programAbiSession?.publish(mod);
 
     // Stack-balancing fixup: ensure all branches in if/try/block have matching stack states
     stackBalance(mod);
@@ -6386,7 +6160,7 @@ export function generateMultiModule(
     });
     const failure = classifyIrFailure(e, "build");
     for (const sourceFile of multiAst.sourceFiles) {
-      recordWholeSourceFailure(ctx, sourceFile, failure, irUnitInventory);
+      recordWholeSourceFailure(ctx, sourceFile, failure, irPlanningIdentityContext);
     }
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -6406,6 +6180,7 @@ export function generateMultiModule(
     irPostClaimErrors: ctx.irPostClaimErrors,
     irCompiledFuncs: ctx.irCompiledFuncs,
     irOutcomes: ctx.irOutcomes,
+    programAbi: ctx.programAbiSession?.publication,
   };
 }
 
@@ -7070,8 +6845,14 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // __extern_get/_safeGet. NOTE: resolving to the CTOR struct here instead
     // was tried and regressed (.tmp/dbg15.mts G4/G5) — the member-call
     // static/dynamic split keys off this type, so only the always-dynamic
-    // externref resolution is safe. JS-host mode only.
-    if (!ctx.standalone && !ctx.wasi) {
+    // externref resolution is safe. Standalone admits only fnctors approved by
+    // the escape gate: those have a reserved native `__fnctor_<name>` receiver
+    // arm plus a per-fnctor `$Object` prototype used by the native dynamic
+    // getter/method dispatcher. Other standalone fnctors keep their existing
+    // closed representation.
+    const approvedStandaloneFnctor =
+      ctx.standalone && sym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(sym.name) === true;
+    if ((!ctx.standalone && !ctx.wasi) || approvedStandaloneFnctor) {
       const fnDecl = sym?.valueDeclaration;
       const isFnCtorType =
         (sym?.name !== undefined && ctx.funcConstructorMap.has(sym.name)) ||
@@ -7169,6 +6950,18 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // this, `void | null` (e.g. binding `w` in `function f({w = counter()} = {w: null})`)
   // collapses to `void` → i32 and the destructured null is erased.
   if (tsType.isUnion()) {
+    // (#1769/#3666) Nullable primitive function results/params/fields need the
+    // same sentinel-preserving carrier already used by local preallocation.
+    // Resolving `number | null` to plain f64 erases a returned null to 0 before
+    // the caller can test it (Acorn's readInt/readHexChar error sentinel).
+    // Optional object fields (`number | undefined`, etc.) already have
+    // shape-specific absence handling. Widening those here changes their
+    // concrete struct layout and can make direct delete/read paths disagree.
+    // The Acorn boundary that needs a carrier at this general resolver is the
+    // explicit-null result family (`number | null`, `string | null`, ...).
+    if (isNullablePrimitiveType(tsType) && tsType.types.some((type) => type.flags & ts.TypeFlags.Null)) {
+      return { kind: "externref" };
+    }
     const nonNullish = tsType.types.filter(
       (t) => !(t.flags & ts.TypeFlags.Null) && !(t.flags & ts.TypeFlags.Undefined) && !(t.flags & ts.TypeFlags.Void),
     );

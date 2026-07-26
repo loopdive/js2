@@ -168,8 +168,22 @@ jobs:
           pid_tc=$!
           ( if grep -q '"lint"' package.json; then pnpm run lint > "$tmp_lint" 2>&1; fi ) &
           pid_lint=$!
-          wait $pid_tc; tc_rc=$?
-          wait $pid_lint; lint_rc=$?
+          # (#3677) This step runs under `bash -e`. A BARE `wait $pid` aborts the
+          # whole step the instant the awaited job exited non-zero, which killed
+          # this script at the wait itself — BEFORE the two `tail -50` dumps and
+          # before the explicit rc checks below. Two consequences, both real:
+          # every cheap-gate failure was diagnostic-free (the log ended at a bare
+          # "Process completed with exit code 1"), and a lint-only failure
+          # HARD-FAILED this required check, contradicting the "not blocking"
+          # warning at the end of this very script.
+          #
+          # `cmd || rc=$?` makes the wait a TESTED command, so `-e` does not fire
+          # while the real exit status is still captured. Deliberately NOT
+          # `set +e`: that would suppress errexit for the rest of the step, and a
+          # future edit that stops propagating `tc_rc` would silently turn this
+          # required gate into a decorative one. Keep the propagation explicit.
+          tc_rc=0; wait $pid_tc || tc_rc=$?
+          lint_rc=0; wait $pid_lint || lint_rc=$?
           echo "--- typecheck (last 50 lines) ---"; tail -50 "$tmp_tc"
           echo "--- lint (last 50 lines) ---"; tail -50 "$tmp_lint"
           if [ "$tc_rc" -ne 0 ]; then echo "::error::typecheck failed (rc=$tc_rc)"; exit "$tc_rc"; fi

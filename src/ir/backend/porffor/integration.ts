@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { LinearMemoryPlan } from "../../analysis/linear-memory-plan.js";
-import { forEachInstrDeep, type IrModule, type IrType } from "../../nodes.js";
+import type { IrUnitId } from "../../identity.js";
+import { forEachInstrDeep, type IrGlobalRef, type IrModule, type IrType } from "../../nodes.js";
 import { lowerIrFunctionBody } from "../../lower.js";
 import { verifyIrBackendLegality } from "../legality.js";
 import type { PorfforRendererInput } from "./compat.js";
@@ -10,14 +11,16 @@ import { PorfforEmitter } from "./sink.js";
 import { PorfforTypeConverter } from "./type-converter.js";
 
 export interface PorfforGlobalInput {
-  readonly name: string;
+  readonly ref: IrGlobalRef;
   readonly type: IrType;
 }
 
 export interface LowerIrModuleToPorfforOptions {
   readonly globals?: readonly PorfforGlobalInput[];
-  /** Renderer entry name. Null/omitted emits no C main, useful for embedding/tests. */
+  /** Public-label compatibility entry. Prefer `entryUnitId` for IR-owned entry selection. */
   readonly entry?: string | null;
+  /** Exact IR unit selected as the renderer entry. Null/omitted emits no C main. */
+  readonly entryUnitId?: IrUnitId | null;
   readonly prefs?: Readonly<Record<string, unknown>>;
   /** Target-neutral layout/allocation authority required by heap instructions. */
   readonly memoryPlan?: LinearMemoryPlan;
@@ -80,11 +83,13 @@ export function lowerIrModuleToPorffor(
 
   for (const global of options.globals ?? []) {
     const slots = types.convertType(global.type);
-    if (slots.length !== 1) throw new Error(`porffor backend requires one scalar slot for global '${global.name}'`);
-    assembler.declarePorfforGlobal(global.name, slots[0]!);
+    if (slots.length !== 1) {
+      throw new Error(`porffor backend requires one scalar slot for global '${global.ref.name}'`);
+    }
+    assembler.declareIrGlobal(global.ref, slots[0]!);
   }
 
-  const handles = new Map<string, number>();
+  const handles = new Map<IrUnitId, number>();
   for (const func of module.functions) {
     const errors = verifyIrBackendLegality(func, "porffor");
     if (errors.length > 0) {
@@ -92,11 +97,14 @@ export function lowerIrModuleToPorffor(
         `porffor backend legality failed for ${func.name}: ${errors.map((error) => error.message).join("; ")}`,
       );
     }
-    handles.set(func.name, assembler.declareIrFunction(func));
+    handles.set(func.unitId, assembler.declareIrFunction(func));
   }
 
   for (const func of module.functions) {
-    const handle = handles.get(func.name)!;
+    const handle = handles.get(func.unitId);
+    if (handle === undefined) {
+      throw new Error(`porffor assembler: IR function unit '${func.unitId}' lost its declared handle`);
+    }
     const signature = assembler.functionSymbol(handle);
     const emitter = new PorfforEmitter(assembler, signature.results);
     const lowered = lowerIrFunctionBody(func, assembler, emitter, types);
@@ -104,8 +112,17 @@ export function lowerIrModuleToPorffor(
     if (func.exported) assembler.exportFunc(func.name, handle);
   }
 
-  if (options.entry) {
-    const handle = assembler.lookupFunc(options.entry);
+  if (options.entry && options.entryUnitId) {
+    throw new Error("porffor assembler: entry and entryUnitId cannot both be supplied");
+  }
+  if (options.entryUnitId) {
+    const handle = assembler.lookupIrFunction(options.entryUnitId);
+    if (handle === undefined) {
+      throw new Error(`porffor assembler: entry function unit '${options.entryUnitId}' is not defined`);
+    }
+    assembler.setStart(handle);
+  } else if (options.entry) {
+    const handle = assembler.lookupUniqueIrFunctionByDisplayName(options.entry) ?? assembler.lookupFunc(options.entry);
     if (handle === undefined) throw new Error(`porffor assembler: entry function '${options.entry}' is not defined`);
     assembler.setStart(handle);
   }

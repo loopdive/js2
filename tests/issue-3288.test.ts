@@ -16,6 +16,9 @@ import {
   type IrInstr,
   type IrLowerResolver,
 } from "../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-3288");
 
 const F64 = irVal({ kind: "f64" });
 const I32 = irVal({ kind: "i32" });
@@ -37,7 +40,7 @@ function resolver(onIntern = (): void => {}): IrLowerResolver {
 function oneBlock(name: string, instrs: readonly IrInstr[], results = [F64]): IrFunction {
   const last = instrs.at(-1);
   return {
-    name,
+    ...irIdentities.next(name),
     params: [],
     resultTypes: results,
     blocks: [
@@ -60,7 +63,7 @@ function oneBlock(name: string, instrs: readonly IrInstr[], results = [F64]): Ir
 describe("#3288 P1 backend-neutral lowering metadata", () => {
   it("returns named Porffor slots without interning a Wasm function type", () => {
     const fn: IrFunction = {
-      name: "porfforSlots",
+      ...irIdentities.next("porfforSlots"),
       params: [
         { value: asValueId(0), type: F64, name: "left" },
         { value: asValueId(1), type: F64, name: "right" },
@@ -129,7 +132,7 @@ describe("#3288 P1 backend-neutral lowering metadata", () => {
     ["u64", U64, { kind: "i64", value: 1n }],
   ] as const)("preserves %s signedness when an SSA value is materialized as a local", (slot, type, value) => {
     const fn: IrFunction = {
-      name: `${slot}Local`,
+      ...irIdentities.next(`${slot}Local`),
       params: [{ value: asValueId(0), type: I32, name: "condition" }],
       resultTypes: [type],
       blocks: [

@@ -7,6 +7,7 @@ import type { IrClassShape } from "../src/ir/nodes.js";
 import { classifyIrFailure, evaluateIrOutcomePolicy } from "../src/ir/outcomes.js";
 import { planIrCompilation } from "../src/ir/select.js";
 import { ts } from "../src/ts-api.js";
+import { createTestIrClassId } from "./helpers/ir-identities.js";
 
 type DirectSelectionOptions = NonNullable<Parameters<typeof planIrCompilation>[1]>;
 
@@ -496,6 +497,7 @@ describe("#3529 selector preclaim capability parity", () => {
   it("requires an exact own class-member descriptor and kind", () => {
     const source = `class C { "m"(value: number): number { return value; } }`;
     const shape: IrClassShape = {
+      classId: createTestIrClassId("issue-3529-selector-preclaim/own-member"),
       className: "C",
       fields: [],
       methods: [],
@@ -525,12 +527,14 @@ describe("#3529 selector preclaim capability parity", () => {
     expect(directFallbackReason(source)).toBe("class-member-unsupported");
 
     const boxShape: IrClassShape = {
+      classId: createTestIrClassId("issue-3529-selector-preclaim/static-return-box"),
       className: "Box",
       fields: [],
       methods: [],
       constructorParams: [],
     };
     const factoryShape: IrClassShape = {
+      classId: createTestIrClassId("issue-3529-selector-preclaim/static-return-factory"),
       className: "Factory",
       fields: [],
       methods: [
@@ -563,12 +567,14 @@ describe("#3529 selector preclaim capability parity", () => {
     expect(directFallbackReason(source)).toBe("class-member-unsupported");
 
     const boxShape: IrClassShape = {
+      classId: createTestIrClassId("issue-3529-selector-preclaim/getter-return-box"),
       className: "Box",
       fields: [],
       methods: [],
       constructorParams: [],
     };
     const holderShape: IrClassShape = {
+      classId: createTestIrClassId("issue-3529-selector-preclaim/getter-return-holder"),
       className: "Holder",
       fields: [],
       methods: [
@@ -718,6 +724,7 @@ describe("#3529 selector preclaim capability parity", () => {
     expect(directFallbackReason(source)).toBe("class-projection-unsupported");
 
     const goodShape: IrClassShape = {
+      classId: createTestIrClassId("issue-3529-selector-preclaim/instanceof-good"),
       className: "Good",
       fields: [],
       methods: [],

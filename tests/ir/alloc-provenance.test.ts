@@ -24,13 +24,15 @@ import {
   type IrValueId,
 } from "../../src/ir/index.js";
 import { deadCode } from "../../src/ir/passes/dead-code.js";
+import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("ir/alloc-provenance");
 const F64: IrType = irVal({ kind: "f64" });
 
 describe("#1586 — alloc provenance", () => {
   it("the builder mints an AllocSiteId on string.const and the checker passes", () => {
     const reg = new AllocSiteRegistry();
-    const b = new IrFunctionBuilder("f", [{ kind: "string" }], false, reg);
+    const b = new IrFunctionBuilder(identities.next("f"), [{ kind: "string" }], false, reg);
     b.openBlock();
     const s = b.emitStringConst("hi");
     b.terminate({ kind: "return", values: [s] });
@@ -46,7 +48,7 @@ describe("#1586 — alloc provenance", () => {
 
   it("DCE retires the id of a dropped (dead) allocation; checker stays clean", () => {
     const reg = new AllocSiteRegistry();
-    const b = new IrFunctionBuilder("f", [F64], false, reg);
+    const b = new IrFunctionBuilder(identities.next("f"), [F64], false, reg);
     b.openBlock();
     // Dead string allocation — its result is never used.
     const dead = b.emitStringConst("dead");
@@ -70,7 +72,7 @@ describe("#1586 — alloc provenance", () => {
 
   it("checker flags a live alloc instr whose id was retired (discipline drift)", () => {
     const reg = new AllocSiteRegistry();
-    const b = new IrFunctionBuilder("f", [{ kind: "string" }], false, reg);
+    const b = new IrFunctionBuilder(identities.next("f"), [{ kind: "string" }], false, reg);
     b.openBlock();
     const s = b.emitStringConst("hi");
     b.terminate({ kind: "return", values: [s] });
@@ -90,7 +92,7 @@ describe("#1586 — alloc provenance", () => {
     process.env.IR_VERIFY_ALLOC = "1";
     try {
       const reg = new AllocSiteRegistry();
-      const b = new IrFunctionBuilder("f", [{ kind: "string" }], false, reg);
+      const b = new IrFunctionBuilder(identities.next("f"), [{ kind: "string" }], false, reg);
       b.openBlock();
       const s = b.emitStringConst("hi");
       b.terminate({ kind: "return", values: [s] });
@@ -118,7 +120,7 @@ describe("#1586 — alloc provenance", () => {
   it("checker flags an allocation instr missing its id entirely", () => {
     const reg = new AllocSiteRegistry();
     // Build WITHOUT a registry so the string.const carries no alloc id.
-    const b = new IrFunctionBuilder("f", [{ kind: "string" }]);
+    const b = new IrFunctionBuilder(identities.next("f"), [{ kind: "string" }]);
     b.openBlock();
     const s = b.emitStringConst("hi");
     b.terminate({ kind: "return", values: [s] });
@@ -130,7 +132,7 @@ describe("#1586 — alloc provenance", () => {
 
   it("checker flags a dangling id (unknown to the registry)", () => {
     const reg = new AllocSiteRegistry();
-    const b = new IrFunctionBuilder("f", [{ kind: "string" }], false, reg);
+    const b = new IrFunctionBuilder(identities.next("f"), [{ kind: "string" }], false, reg);
     b.openBlock();
     const s = b.emitStringConst("hi");
     b.terminate({ kind: "return", values: [s] });

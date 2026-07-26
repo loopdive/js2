@@ -1,6 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrBindingId, IrClassId, IrUnitId, IrUnitInventory } from "./identity.js";
+import {
+  createDerivedIrUnitId,
+  type IrBindingId,
+  type IrClassId,
+  type IrSourceId,
+  type IrSyntheticUnitRole,
+  type IrUnitId,
+  type IrUnitInventory,
+} from "./identity.js";
 
 export type ProgramAbiSlotPolicy = "required" | "alias" | "none";
 /** The three independent index spaces owned by ModuleAssembler. */
@@ -10,7 +18,21 @@ export type ProgramAbiLegacyNamespace = ProgramAbiSlotSpace | "export";
 
 export interface ProgramAbiCallableSignature {
   readonly params: readonly string[];
-  readonly result: string | null;
+  readonly results: readonly string[];
+}
+
+/**
+ * Explicit provenance for a pass-created executable unit that is not present
+ * in the source inventory. Display names and encoded-ID parsing are
+ * deliberately absent from this contract.
+ */
+export interface ProgramAbiDerivedUnitRecord {
+  readonly id: IrUnitId;
+  readonly parentId: IrUnitId;
+  readonly terminalOwnerId: IrUnitId | null;
+  readonly sourceId: IrSourceId;
+  readonly role: IrSyntheticUnitRole;
+  readonly ordinal: number;
 }
 
 export type ProgramAbiIntent =
@@ -19,6 +41,7 @@ export type ProgramAbiIntent =
       readonly origin: "source" | "import" | "runtime" | "support";
       readonly signature: ProgramAbiCallableSignature;
       readonly unitId?: IrUnitId;
+      readonly classId?: IrClassId;
     }
   | {
       readonly kind: "global";
@@ -50,6 +73,12 @@ type ProgramAbiAliasIntent = Exclude<ProgramAbiIntent, { readonly kind: "export"
 type ProgramAbiNonExportIntent = Exclude<ProgramAbiIntent, { readonly kind: "export" }>;
 type ProgramAbiExportIntent = Extract<ProgramAbiIntent, { readonly kind: "export" }>;
 
+interface ProgramAbiKnownUnitRecord {
+  readonly id: IrUnitId;
+  readonly sourceId: IrSourceId;
+  readonly terminalOwnerId: IrUnitId | null;
+}
+
 /** Numeric structural order supplied by the inventory/planning owner. */
 export interface ProgramAbiOrderKey {
   /** Dependency-first source order from {@link IrUnitInventory.sources}. */
@@ -64,6 +93,15 @@ interface ProgramAbiPlanBase<TIntent extends ProgramAbiIntent> {
   readonly order: ProgramAbiOrderKey;
   /** Diagnostic/legacy label only. Structural IDs remain the semantic key. */
   readonly displayName: string;
+  /**
+   * Canonical structural payload paired with this binding ID by IR references.
+   *
+   * The session treats this as an opaque, producer-owned key. It deliberately
+   * excludes compatibility labels and must include any payload that could
+   * otherwise lie beside a valid ID (for example an import module/field,
+   * runtime symbol, or class identity).
+   */
+  readonly structuralReferenceKey?: string;
   readonly intent: TIntent;
 }
 
@@ -101,9 +139,18 @@ export type ProgramAbiInvariantCode =
   | "duplicate-plan-order"
   | "invalid-slot-policy"
   | "missing-source-unit"
+  | "invalid-callable-provenance"
   | "unknown-inventory-unit"
   | "unknown-inventory-class"
   | "inventory-source-order-mismatch"
+  | "duplicate-derived-unit"
+  | "invalid-derived-unit"
+  | "unknown-derived-parent"
+  | "derived-unit-cycle"
+  | "unknown-derived-source"
+  | "derived-source-mismatch"
+  | "unknown-derived-terminal-owner"
+  | "derived-terminal-owner-mismatch"
   | "planning-sealed"
   | "planning-not-sealed"
   | "binding-complete"
@@ -126,7 +173,32 @@ export type ProgramAbiInvariantCode =
   | "unresolved-required-binding"
   | "missing-legacy-name"
   | "ambiguous-legacy-name"
-  | "no-internal-wasm-name";
+  | "no-internal-wasm-name"
+  | "duplicate-session-draft"
+  | "session-draft-mismatch"
+  | "invalid-draft-order"
+  | "duplicate-draft-order"
+  | "unknown-draft-source"
+  | "unknown-order-anchor"
+  | "ambiguous-order-anchor"
+  | "session-closed"
+  | "session-publish-once"
+  | "context-session-mismatch"
+  | "unknown-locator-binding"
+  | "missing-binding-reference"
+  | "invalid-binding-reference"
+  | "binding-reference-mismatch"
+  | "locator-not-required"
+  | "duplicate-slot-locator"
+  | "slot-locator-space-mismatch"
+  | "locator-remap-mismatch"
+  | "foreign-type-cell"
+  | "duplicate-type-cell"
+  | "foreign-type-object"
+  | "ambiguous-type-remap"
+  | "type-remap-mismatch"
+  | "missing-required-locator"
+  | "eliminated-required-locator";
 
 export class ProgramAbiInvariantError extends Error {
   constructor(
@@ -164,7 +236,10 @@ function intentLegacyNamespace(intent: ProgramAbiIntent): ProgramAbiLegacyNamesp
 
 function callableSignaturesEqual(a: ProgramAbiCallableSignature, b: ProgramAbiCallableSignature): boolean {
   return (
-    a.result === b.result && a.params.length === b.params.length && a.params.every((param, i) => param === b.params[i])
+    a.params.length === b.params.length &&
+    a.params.every((param, i) => param === b.params[i]) &&
+    a.results.length === b.results.length &&
+    a.results.every((result, i) => result === b.results[i])
   );
 }
 
@@ -175,7 +250,7 @@ function freezePlan(entry: ProgramAbiPlanEntry): ProgramAbiPlanEntry {
           ...entry.intent,
           signature: {
             params: Object.freeze([...entry.intent.signature.params]),
-            result: entry.intent.signature.result,
+            results: Object.freeze([...entry.intent.signature.results]),
           },
         }
       : { ...entry.intent };
@@ -202,11 +277,11 @@ function aliasContractsMatch(alias: ProgramAbiIntent, canonical: ProgramAbiInten
 }
 
 /**
- * Shadow identity/intention ledger for the eventual whole-program ABI.
+ * Structural identity/intention ledger for the whole-program ABI.
  *
- * R1a does not populate this from production codegen yet. It proves the
- * planning/final-index boundary and invariants without changing allocation or
- * routing. ModuleAssembler remains the sole owner of every Wasm index space.
+ * ProgramAbiSession owns the planning/final-index boundary without changing
+ * allocation or routing. ModuleAssembler remains the sole owner of every Wasm
+ * index space; production producer threading lands at the later cutover.
  */
 export class ProgramAbiMap {
   private readonly planned = new Map<IrBindingId, ProgramAbiPlanEntry>();
@@ -214,15 +289,21 @@ export class ProgramAbiMap {
   private readonly finalIndices = new Map<IrBindingId, ProgramAbiFinalIndex>();
   private readonly finalIndexOwners = new Map<string, IrBindingId>();
   private readonly sourceOrders = new Map<IrUnitInventory["sources"][number]["id"], number>();
-  private readonly units = new Map<IrUnitId, IrUnitInventory["allUnits"][number]>();
+  private readonly units = new Map<IrUnitId, ProgramAbiKnownUnitRecord>();
   private readonly classes = new Map<IrClassId, IrUnitInventory["classes"][number]>();
+  private readonly terminalUnits = new Set<IrUnitId>();
   private sealed = false;
   private complete = false;
 
-  constructor(readonly inventory: IrUnitInventory) {
+  constructor(
+    readonly inventory: IrUnitInventory,
+    derivedUnits: readonly ProgramAbiDerivedUnitRecord[] = [],
+  ) {
     for (const source of inventory.sources) this.sourceOrders.set(source.id, source.order);
     for (const unit of inventory.allUnits) this.units.set(unit.id, unit);
     for (const classRecord of inventory.classes) this.classes.set(classRecord.id, classRecord);
+    for (const unit of inventory.terminalUnits) this.terminalUnits.add(unit.id);
+    this.registerDerivedUnits(derivedUnits);
   }
 
   plan(entry: ProgramAbiPlanEntry): void {
@@ -240,6 +321,15 @@ export class ProgramAbiMap {
       throw new ProgramAbiInvariantError(
         "invalid-plan-order",
         `binding ${entry.id} has invalid structural order ${JSON.stringify(entry.order)}`,
+      );
+    }
+    if (
+      entry.structuralReferenceKey !== undefined &&
+      (typeof entry.structuralReferenceKey !== "string" || entry.structuralReferenceKey.length === 0)
+    ) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `binding ${entry.id} has an invalid structural reference key`,
       );
     }
     const structuralOrder = orderKey(entry.order);
@@ -461,15 +551,115 @@ export class ProgramAbiMap {
     return canonical.slotPolicy === "required" ? this.finalIndices.get(canonical.id) : undefined;
   }
 
-  private validateInventoryMembership(entry: ProgramAbiPlanEntry): void {
-    if (entry.intent.kind === "callable") {
-      if (entry.intent.origin === "source" && entry.intent.unitId === undefined) {
+  private registerDerivedUnits(records: readonly ProgramAbiDerivedUnitRecord[]): void {
+    const pending = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
+    for (const record of records) {
+      if (this.units.has(record.id) || pending.has(record.id)) {
         throw new ProgramAbiInvariantError(
-          "missing-source-unit",
-          `source callable binding ${entry.id} must identify its inventoried unit`,
+          "duplicate-derived-unit",
+          `derived unit ${record.id} was registered more than once`,
         );
       }
-      if (entry.intent.unitId !== undefined) {
+      if (!Number.isSafeInteger(record.ordinal) || record.ordinal < 0 || record.role.length === 0) {
+        throw new ProgramAbiInvariantError(
+          "invalid-derived-unit",
+          `derived unit ${record.id} has invalid role/ordinal provenance`,
+        );
+      }
+      const expectedId = createDerivedIrUnitId({
+        parentId: record.parentId,
+        role: record.role,
+        ordinal: record.ordinal,
+      });
+      if (record.id !== expectedId) {
+        throw new ProgramAbiInvariantError(
+          "invalid-derived-unit",
+          `derived unit ${record.id} does not match its explicit parent/role/ordinal provenance`,
+        );
+      }
+      if (!this.sourceOrders.has(record.sourceId)) {
+        throw new ProgramAbiInvariantError(
+          "unknown-derived-source",
+          `derived unit ${record.id} references source ${record.sourceId} outside this inventory`,
+        );
+      }
+      pending.set(record.id, Object.freeze({ ...record }));
+    }
+
+    const visiting = new Set<IrUnitId>();
+    const resolve = (id: IrUnitId, childId: IrUnitId): ProgramAbiKnownUnitRecord => {
+      const known = this.units.get(id);
+      if (known) return known;
+      const record = pending.get(id);
+      if (!record) {
+        throw new ProgramAbiInvariantError(
+          "unknown-derived-parent",
+          `derived unit ${childId} references unknown parent ${id}`,
+        );
+      }
+      if (visiting.has(id)) {
+        throw new ProgramAbiInvariantError("derived-unit-cycle", `derived unit parent cycle includes ${id}`);
+      }
+      visiting.add(id);
+      const parent = resolve(record.parentId, record.id);
+      if (record.sourceId !== parent.sourceId) {
+        throw new ProgramAbiInvariantError(
+          "derived-source-mismatch",
+          `derived unit ${record.id} source ${record.sourceId} disagrees with parent source ${parent.sourceId}`,
+        );
+      }
+      if (record.terminalOwnerId !== null && !this.terminalUnits.has(record.terminalOwnerId)) {
+        throw new ProgramAbiInvariantError(
+          "unknown-derived-terminal-owner",
+          `derived unit ${record.id} references non-terminal owner ${record.terminalOwnerId}`,
+        );
+      }
+      if (record.terminalOwnerId !== parent.terminalOwnerId) {
+        throw new ProgramAbiInvariantError(
+          "derived-terminal-owner-mismatch",
+          `derived unit ${record.id} terminal owner ${record.terminalOwnerId ?? "none"} disagrees with parent owner ${parent.terminalOwnerId ?? "none"}`,
+        );
+      }
+      visiting.delete(id);
+      this.units.set(record.id, record);
+      return record;
+    };
+
+    for (const record of records) resolve(record.id, record.id);
+  }
+
+  private validateInventoryMembership(entry: ProgramAbiPlanEntry): void {
+    if (entry.intent.kind === "callable") {
+      const hasUnit = entry.intent.unitId !== undefined;
+      const hasClass = entry.intent.classId !== undefined;
+      if (entry.intent.origin === "source") {
+        if (!hasUnit) {
+          throw new ProgramAbiInvariantError(
+            "missing-source-unit",
+            `source callable binding ${entry.id} must identify its inventoried unit`,
+          );
+        }
+        if (hasClass) {
+          throw new ProgramAbiInvariantError(
+            "invalid-callable-provenance",
+            `source callable binding ${entry.id} cannot identify class ${entry.intent.classId}`,
+          );
+        }
+      } else if (entry.intent.origin === "support") {
+        if (hasUnit === hasClass) {
+          throw new ProgramAbiInvariantError(
+            "invalid-callable-provenance",
+            `support callable binding ${entry.id} must identify exactly one unit or class owner`,
+          );
+        }
+      } else if (hasUnit || hasClass) {
+        throw new ProgramAbiInvariantError(
+          "invalid-callable-provenance",
+          `${entry.intent.origin} callable binding ${entry.id} cannot identify a source unit or class owner`,
+        );
+      }
+
+      if (hasUnit) {
         const unit = this.units.get(entry.intent.unitId);
         if (!unit) {
           throw new ProgramAbiInvariantError(
@@ -478,6 +668,16 @@ export class ProgramAbiMap {
           );
         }
         this.assertInventorySourceOrder(entry, unit.sourceId);
+      }
+      if (hasClass) {
+        const classRecord = this.classes.get(entry.intent.classId);
+        if (!classRecord) {
+          throw new ProgramAbiInvariantError(
+            "unknown-inventory-class",
+            `callable binding ${entry.id} references class ${entry.intent.classId} outside this inventory`,
+          );
+        }
+        this.assertInventorySourceOrder(entry, classRecord.sourceId);
       }
     }
 

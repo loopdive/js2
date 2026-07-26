@@ -51,7 +51,9 @@ import {
 } from "../src/ir/index.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { FuncTypeDef } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-2949-s5-0-emit-plumbing");
 const F64: IrType = irVal({ kind: "f64" });
 const I32: IrType = irVal({ kind: "i32" });
 const DYN: IrType = irDynamic();
@@ -164,7 +166,7 @@ function hostEnvFor(ctx: CodegenContext): Record<string, unknown> {
 
 describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes", () => {
   it("emitBox appends a box node with resultType == toType and registers typeOf", () => {
-    const b = new IrFunctionBuilder("box1", [DYN], true);
+    const b = new IrFunctionBuilder(identities.next("box1"), [DYN], true);
     const x = b.addParam("x", F64);
     b.openBlock();
     const d = b.emitBox(x, DYN);
@@ -177,7 +179,7 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
   });
 
   it("emitBox carries a refinement onto the box target (irDynamic(tag))", () => {
-    const b = new IrFunctionBuilder("boxRefined", [DYN], true);
+    const b = new IrFunctionBuilder(identities.next("boxRefined"), [DYN], true);
     const x = b.addParam("x", I32);
     b.openBlock();
     const refined = irDynamic(JsTag.Boolean);
@@ -198,7 +200,8 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
       [JsTag.Function, irVal({ kind: "externref" })],
     ];
     for (const [tag, expected] of cases) {
-      const b = new IrFunctionBuilder(`unbox_${JsTag[tag]}`, [expected], true);
+      const name = `unbox_${JsTag[tag]}`;
+      const b = new IrFunctionBuilder(identities.next(name), [expected], true);
       const x = b.addParam("x", F64);
       b.openBlock();
       const d = b.emitBox(x, DYN);
@@ -212,7 +215,8 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
 
   it("emitTagTest always yields an i32 node for ANY partition (incl. singletons)", () => {
     for (const tag of [JsTag.NumberF64, JsTag.String, JsTag.Object, JsTag.Null, JsTag.Undefined]) {
-      const b = new IrFunctionBuilder(`tagtest_${JsTag[tag]}`, [I32], true);
+      const name = `tagtest_${JsTag[tag]}`;
+      const b = new IrFunctionBuilder(identities.next(name), [I32], true);
       const x = b.addParam("x", F64);
       b.openBlock();
       const d = b.emitBox(x, DYN);
@@ -225,7 +229,7 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
   });
 
   it("emitBox rejects a re-box of an already-dynamic operand (verifier R1, at construction)", () => {
-    const b = new IrFunctionBuilder("rebox", [DYN], true);
+    const b = new IrFunctionBuilder(identities.next("rebox"), [DYN], true);
     const x = b.addParam("x", F64);
     b.openBlock();
     const d = b.emitBox(x, DYN);
@@ -233,7 +237,7 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
   });
 
   it("emitUnbox rejects a payload-less singleton partition (verifier R2, at construction)", () => {
-    const b = new IrFunctionBuilder("unboxSingleton", [I32], true);
+    const b = new IrFunctionBuilder(identities.next("unboxSingleton"), [I32], true);
     const x = b.addParam("x", F64);
     b.openBlock();
     const d = b.emitBox(x, DYN);
@@ -253,7 +257,7 @@ describe("#2949 S5.0 — builder emits verifier-clean box/unbox/tag.test nodes",
  * single function exercises ALL THREE builder methods and USES every value.
  */
 function boxTagUnboxF64(name: string, tag: JsTag): IrFunction {
-  const b = new IrFunctionBuilder(name, [F64], true);
+  const b = new IrFunctionBuilder(identities.next(name), [F64], true);
   const x = b.addParam("x", F64);
   b.openBlock();
   const d = b.emitBox(x, DYN);
@@ -267,7 +271,7 @@ function boxTagUnboxF64(name: string, tag: JsTag): IrFunction {
 
 /** `boxUnboxBool(x: i32): i32` — box i32 with a Boolean refinement, unbox Boolean. */
 function boxUnboxBool(name: string): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const x = b.addParam("x", I32);
   b.openBlock();
   const d = b.emitBox(x, irDynamic(JsTag.Boolean));
@@ -278,7 +282,7 @@ function boxUnboxBool(name: string): IrFunction {
 
 /** `boxUnboxI32(x: i32): i32` — box i32 (NumberI32), unbox NumberI32. */
 function boxUnboxI32(name: string): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const x = b.addParam("x", I32);
   b.openBlock();
   const d = b.emitBox(x, DYN);

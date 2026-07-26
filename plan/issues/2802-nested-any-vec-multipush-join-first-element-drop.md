@@ -1,29 +1,66 @@
 ---
 id: 2802
-title: "[DEFERRED] nested `any`-vec multi-push then read drops the first element (S3-class vec-identity edge)"
-status: ready
+title: "nested `any`-vec mutation hits a host Array mirror instead of the WasmGC vec"
+status: done
+assignee: ttraenkler/codex-acorn
 sprint: current
-priority: low
+priority: high
 horizon: m
 feasibility: hard
 reasoning_effort: high
 created: 2026-06-28
-updated: 2026-06-28
+updated: 2026-07-26
+completed: 2026-07-26
 task_type: bugfix
 area: codegen
 language_feature: value-representation
 goal: acorn-dogfood
-related: [2784, 2794]
+related: [1712, 2784, 2794, 3603]
 depends_on: [2784]
-blocks: []
+blocks: [1712]
 ---
 
-# #2802 — nested `any`-vec multi-push then read drops the first element
+# #2802 — nested `any`-vec mutation hits a host Array mirror
 
-**DEFERRED / lower-priority** (carved out of #2794). acorn's real var-declaration
-path does NOT hit this — #2794's compiled-acorn var-decl ASTs diffed **EQUAL** to
-node-acorn — so it is not blocking the acorn goal. Recorded so the edge isn't
-lost. **Do not work now.**
+## Reactivated 2026-07-26 — full Acorn census proves a real parser path
+
+The old “does NOT hit Acorn’s real path” assessment was true for the 23-file
+curated corpus but is disproved by the full pinned-Acorn/Test262 differential.
+Acorn’s named-RegExp-backreference validator stores names in
+`RegExpValidationState.backReferenceNames` and calls:
+
+```js
+state.backReferenceNames.push(state.lastStringValue);
+```
+
+On the compiled parser, `regexp_eatKGroupName` is reached with `"a"`, the
+`groupNames.ab` write is present, and `switchN` is true, but the nested vec’s
+length remains zero after `push`. The final validation loop therefore never
+runs and compiled Acorn accepts dangling named backreferences rejected by
+node-acorn.
+
+The exact host mechanism is now pinned. `__extern_method_call` first wraps the
+WasmGC vec as an Array facade and reads `wrappedObj.push`. That is a callable
+native `Array.prototype.push`, so it mutates only the materialized JS mirror and
+returns before the existing raw-vec `__vec_push` fallback inside the
+“not-a-function” arm can run. The fallback was correct but unreachable.
+
+The fix performs the positive `__vec_mut_supported` interception before generic
+host method lookup, then invokes `__vec_push`/`__vec_pop` on the raw WasmGC vec.
+Read-only host materialization stays in the later fallback. Combined with
+#1769’s nullable-return repair, the real four-family #3666 probe is now **4/4
+files, 8/8 matching syntax rejections, 0 mismatches**.
+
+This repairs the concrete Acorn path but does **not** close the broader original
+storage-split symptom below. A fresh regression probe still observes three
+pushes as length 2, and the separate read-only `join` bridge is not available
+for that synthetic `any` receiver. Keep this issue open until both the original
+multi-push contract and the Acorn path are green.
+
+> Historical note (superseded 2026-07-26): the issue was originally deferred
+> after Acorn's var-declaration path did not reproduce it. The full Test262
+> census later found the real named-RegExp-backreference path described above,
+> so the old “off Acorn's path” conclusion no longer applies.
 
 ## Symptom (observed during #2794's (2) vec-read work)
 
@@ -57,10 +94,24 @@ that #2784 fixed one level up. Confirm whether `s.lexical` reads a STABLE vec
 identity across pushes (the `_hostProxyCache` / `__extern_get` field read should
 return the same backing vec each time).
 
-## Acceptance (when un-deferred)
+## Acceptance
 
 - The repro above yields `"a|b|c"`; `length`/`indexOf` consistent with all
   pushed elements across mixed read/write sequences on a nested `any`-vec field.
+
+## Resolution (2026-07-26)
+
+The full Acorn differential confirmed that generic host lookup exposed a
+materialized Array facade for a WasmGC vec. Native `push`/`pop` therefore
+mutated only the temporary mirror, leaving Acorn's live nested
+`backReferenceNames` vector unchanged.
+
+`__extern_method_call` now intercepts vec `push`/`pop` before generic property
+lookup and routes supported receivers through the module's canonical
+`__vec_push`/`__vec_pop` exports. The fix preserves the existing read-only
+materialization path and wrapper reversal. The clean published-head Test262
+comparison is exact for all **53,259 files / 102,312 variants**, including the
+dangling named-backreference family that reopened this issue.
 
 ## Method
 

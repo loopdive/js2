@@ -63,7 +63,10 @@
 
 import { ts } from "../ts-api.js";
 import { lowerFunctionAstToIr, type IrFromAstResolver } from "../ir/from-ast.js";
+import { collectIrDirectCallLoweringPlans, type IrDirectCallTarget } from "../ir/ast-lowering-plans.js";
+import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import { irVal, type IrFunction, type IrType } from "../ir/nodes.js";
+import { createDerivedIrUnitId, createIrSourceId, type IrSyntheticUnitRole, type IrUnitId } from "../ir/identity.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureNativeCharCodeAtHelper, NATIVE_CHARCODEAT_FN } from "./char-code-at-helpers.js";
 import { ensureVecElemSet, VEC_ELEM_SET_PREFIX } from "./vec-elem-set.js";
@@ -78,6 +81,12 @@ import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 
 const F64: IrType = irVal({ kind: "f64" });
+
+function selfHostedCalleeRef(name: string) {
+  return name.startsWith(VEC_ELEM_SET_PREFIX) || name === NATIVE_CHARCODEAT_FN
+    ? irIntrinsicFuncRef(name)
+    : irRuntimeFuncRef(name);
+}
 
 /**
  * #3161 — a self-hosted builtin with an explicit typed signature. The
@@ -209,8 +218,108 @@ function makeNativeStringsBuildResolver(ctx: CodegenContext): IrFromAstResolver 
   };
 }
 
-/** Process-lifetime cache: memoKey → immutable, context-free IR. */
-const irCache = new Map<string, IrFunction>();
+type SelfHostedIrTemplate = Omit<IrFunction, "unitId">;
+
+interface SelfHostedIrCacheEntry {
+  readonly fingerprint: string;
+  readonly template: SelfHostedIrTemplate;
+}
+
+const SELF_HOSTED_SOURCE_ID = createIrSourceId({
+  kind: "synthetic",
+  order: 0,
+  sourceKey: "@compiler/stdlib-selfhost",
+});
+
+/** Stable non-source artifact ID for one self-hosted runtime-support role. */
+export function createSelfHostedIrUnitId(role: string): IrUnitId {
+  if (role.length === 0) throw new Error("stdlib-selfhost: artifact role must not be empty");
+  return createDerivedIrUnitId({
+    parentId: SELF_HOSTED_SOURCE_ID,
+    role: `stdlib-selfhost:${role}` as IrSyntheticUnitRole,
+    ordinal: 0,
+  });
+}
+
+function selfHostedTemplate(ir: IrFunction): SelfHostedIrTemplate {
+  const { unitId: _unitId, ...template } = ir;
+  return template;
+}
+
+function materializeSelfHostedIr(template: SelfHostedIrTemplate, unitId: IrUnitId): IrFunction {
+  return { unitId, ...template };
+}
+
+function irTypeContainsContextIndex(type: IrType, seen = new Set<object>()): boolean {
+  switch (type.kind) {
+    case "val":
+      return "typeIdx" in type.val;
+    case "object":
+      return type.shape.fields.some((field) => irTypeContainsContextIndex(field.type, seen));
+    case "closure":
+    case "callable":
+      return (
+        type.signature.params.some((param) => irTypeContainsContextIndex(param, seen)) ||
+        (type.signature.returnType !== null && irTypeContainsContextIndex(type.signature.returnType, seen))
+      );
+    case "class": {
+      if (seen.has(type.shape)) return false;
+      seen.add(type.shape);
+      return (
+        type.shape.fields.some((field) => irTypeContainsContextIndex(field.type, seen)) ||
+        type.shape.methods.some(
+          (method) =>
+            method.params.some((param) => irTypeContainsContextIndex(param, seen)) ||
+            (method.returnType !== null && irTypeContainsContextIndex(method.returnType, seen)),
+        ) ||
+        type.shape.constructorParams.some((param) => irTypeContainsContextIndex(param, seen)) ||
+        (type.shape.parent !== undefined &&
+          irTypeContainsContextIndex({ kind: "class", shape: type.shape.parent }, seen))
+      );
+    }
+    case "union":
+      return type.members.some((member) => irTypeContainsContextIndex(member, seen));
+    case "boxed":
+      return irTypeContainsContextIndex(type.inner, seen);
+    case "string":
+    case "extern":
+    case "dynamic":
+      return false;
+  }
+}
+
+function assertMemoEligible(def: SelfHostedFuncDef, fromAst: IrFromAstResolver | undefined): void {
+  if (fromAst !== undefined || def.dialect !== undefined) {
+    throw new Error(`stdlib-selfhost: ${def.name} sets memoKey but was built with a ctx-bound resolver`);
+  }
+  const signatures = [
+    ...def.paramTypes,
+    ...(def.returnType === null ? [] : [def.returnType]),
+    ...[...def.calleeTypes.values()].flatMap((signature) => [
+      ...signature.params,
+      ...(signature.returnType === null ? [] : [signature.returnType]),
+    ]),
+  ];
+  if (signatures.some((type) => irTypeContainsContextIndex(type))) {
+    throw new Error(`stdlib-selfhost: ${def.name} sets memoKey but carries a context-relative type index`);
+  }
+}
+
+function selfHostedFingerprint(def: SelfHostedFuncDef): string {
+  return JSON.stringify({
+    name: def.name,
+    source: def.source,
+    paramTypes: def.paramTypes,
+    returnType: def.returnType,
+    dialect: def.dialect ?? null,
+    callees: [...def.calleeTypes.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([name, signature]) => ({ name, params: signature.params, returnType: signature.returnType })),
+  });
+}
+
+/** Process-lifetime cache: memoKey → immutable, identity-free template. */
+const irCache = new Map<string, SelfHostedIrCacheEntry>();
 
 /**
  * #3161 — parse a typed self-hosted builtin's TS source and lower it to
@@ -227,16 +336,18 @@ const irCache = new Map<string, IrFunction>();
  * are unit-testable without constructing a CodegenContext (the build
  * stage is a pure function of the def).
  */
-export function buildSelfHostedIr(def: SelfHostedFuncDef, fromAst?: IrFromAstResolver): IrFunction {
+export function buildSelfHostedIr(def: SelfHostedFuncDef, unitId: IrUnitId, fromAst?: IrFromAstResolver): IrFunction {
+  let fingerprint: string | undefined;
   if (def.memoKey !== undefined) {
-    // Soundness guard: a caller-supplied build resolver is ctx-bound (its
-    // resolveString() bakes a typeIdx into slot ValTypes) — memoizing that IR
-    // would leak the typeIdx across contexts.
-    if (fromAst !== undefined) {
-      throw new Error(`stdlib-selfhost: ${def.name} sets memoKey but was built with a ctx-bound resolver`);
-    }
+    assertMemoEligible(def, fromAst);
+    fingerprint = selfHostedFingerprint(def);
     const cached = irCache.get(def.memoKey);
-    if (cached) return cached;
+    if (cached) {
+      if (cached.fingerprint !== fingerprint) {
+        throw new Error(`stdlib-selfhost: memoKey ${JSON.stringify(def.memoKey)} was reused for a different template`);
+      }
+      return materializeSelfHostedIr(cached.template, unitId);
+    }
   }
   const sourceFile = ts.createSourceFile(
     `stdlib/${def.name}.ts`,
@@ -258,9 +369,23 @@ export function buildSelfHostedIr(def: SelfHostedFuncDef, fromAst?: IrFromAstRes
   }
 
   const { main, lifted } = lowerFunctionAstToIr(fnDecl, {
+    ownerUnitId: unitId,
     funcName: def.name,
     exported: false,
     calleeTypes: def.calleeTypes,
+    directCalls: collectIrDirectCallLoweringPlans(
+      fnDecl,
+      unitId,
+      new Map<string, IrDirectCallTarget>(
+        [...def.calleeTypes].map(([name, signature]) => [
+          name,
+          {
+            target: selfHostedCalleeRef(name),
+            signature,
+          },
+        ]),
+      ),
+    ),
     paramTypeOverrides: def.paramTypes,
     returnTypeOverride: def.returnType,
     // (#3256) string-family dialect: the caller-supplied ctx-bound resolver
@@ -292,8 +417,9 @@ export function buildSelfHostedIr(def: SelfHostedFuncDef, fromAst?: IrFromAstRes
     throw new Error(`stdlib-selfhost: post-pass IR verify failed for ${def.name}: ${postErrors[0]!.message}`);
   }
 
-  if (def.memoKey !== undefined) irCache.set(def.memoKey, ir);
-  return ir;
+  const template = selfHostedTemplate(ir);
+  if (def.memoKey !== undefined) irCache.set(def.memoKey, { fingerprint: fingerprint!, template });
+  return materializeSelfHostedIr(template, unitId);
 }
 
 /**
@@ -346,7 +472,7 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
   // (#3256) native-strings defs build against the live ctx (string-slot
   // ValTypes need resolveString()); everything else stays resolver-less.
   const fromAst = def.dialect === "native-strings" ? makeNativeStringsBuildResolver(ctx) : undefined;
-  const ir = buildSelfHostedIr(def, fromAst);
+  const ir = buildSelfHostedIr(def, createSelfHostedIrUnitId(def.name), fromAst);
   const funcIdx = lowerAndRegister(ctx, def.name, ir);
   return funcIdx;
 }
@@ -386,6 +512,11 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
   };
   const resolver: IrLowerResolver = {
     resolveFunc(ref) {
+      if (ref.binding.kind === "unit") {
+        throw new Error(
+          `stdlib-selfhost: ${name} cannot resolve source unit ${ref.binding.unitId} / ${ref.name} through the runtime provider`,
+        );
+      }
       // (#3257 Tier-2) `__vec_elem_set_<vecTypeIdx>` — element-store helper
       // with full legacy grow semantics, materialized on demand (mirrors
       // integration.ts's arm: append-only defined function, never an import,
@@ -393,8 +524,8 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
       // ABI takes an i32 index — a TS-source caller must declare that exact
       // sig in calleeTypes and produce an i32 arg (e.g. a comparison result);
       // f64 index arithmetic needs an `__arri_*`-style f64-ABI wrapper.
-      if (ref.name.startsWith(VEC_ELEM_SET_PREFIX)) {
-        const vecTypeIdx = Number(ref.name.slice(VEC_ELEM_SET_PREFIX.length));
+      if (ref.binding.kind === "intrinsic" && ref.binding.symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
+        const vecTypeIdx = Number(ref.binding.symbol.slice(VEC_ELEM_SET_PREFIX.length));
         const helperIdx = Number.isInteger(vecTypeIdx) ? ensureVecElemSet(ctx, vecTypeIdx) : null;
         if (helperIdx === null) {
           throw new Error(`stdlib-selfhost: ${name} cannot materialize ${ref.name} (not a recognisable vec struct)`);
@@ -404,7 +535,7 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
       // (#3256) Guarded native charCodeAt — materialized on demand, same
       // append-only defined-function discipline as integration.ts's arm
       // (never an import, no existing funcIdx shifts; idempotent via funcMap).
-      if (ref.name === NATIVE_CHARCODEAT_FN) {
+      if (ref.binding.kind === "intrinsic" && ref.binding.symbol === NATIVE_CHARCODEAT_FN) {
         const helperIdx = ensureNativeCharCodeAtHelper(ctx);
         if (helperIdx === null) {
           throw new Error(
@@ -413,13 +544,19 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
         }
         return helperIdx;
       }
-      const idx = ctx.funcMap.get(ref.name);
+      const adapterName =
+        ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic"
+          ? ref.binding.symbol
+          : ref.binding.kind === "import"
+            ? ref.binding.field
+            : ref.name;
+      const idx = ctx.funcMap.get(adapterName);
       if (idx !== undefined) return idx;
       // (#3256 Tier-1) makeResolver's name-fallback: native-string kernels
       // (`__str_flatten`, `__str_substring`, …) live in `ctx.nativeStrHelpers`,
       // not `ctx.funcMap`; re-resolve by name against the post-shift function
       // table first, helpers map last (see resolveNativeStrHelper).
-      const helperIdx = resolveNativeStrHelper(ctx, ref.name);
+      const helperIdx = resolveNativeStrHelper(ctx, adapterName);
       if (helperIdx !== null) return helperIdx;
       throw new Error(
         `stdlib-selfhost: ${name} calls "${ref.name}" but it is not registered yet — ` +
@@ -430,14 +567,12 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
       throw new Error(`stdlib-selfhost: ${name} must not reference globals (got "${ref.name}")`);
     },
     resolveType(ref) {
-      // (#3256 Tier-1) named-type name-scan, mirroring makeResolver. No
-      // current stdlib source emits a symbolic type ref (the string struct
-      // flows through resolveString as a ValType), but Tier-2+ families will.
-      const idx = ctx.mod.types.findIndex((t) => "name" in t && (t as { name?: string }).name === ref.name);
-      if (idx < 0) {
-        throw new Error(`stdlib-selfhost: ${name} references unknown named type "${ref.name}"`);
-      }
-      return idx;
+      // No current stdlib source emits an explicit symbolic type ref. The
+      // string struct flows through resolveString as a ValType; future type
+      // producers must attach a ProgramAbiSession locator before widening.
+      throw new Error(
+        `stdlib-selfhost: ${name} cannot resolve symbolic type binding ${ref.binding.bindingId} (${ref.name})`,
+      );
     },
     internFuncType(type) {
       return addFuncType(ctx, type.params, type.results, type.name);

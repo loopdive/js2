@@ -5,11 +5,12 @@ status: in-progress
 assignee: ttraenkler/codex-r1
 claimed_by: codex-r1
 claimed_at: 2026-07-21T20:23:19Z
-branch: symphony/3520-r1-identity-abi
-pr: 3490
+branch: codex/3520-c11-import-callables
+pr: 3679
+last_merged_pr: 3677
 sprint: current
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-07-26
 priority: critical
 horizon: l
 complexity: L
@@ -28,10 +29,15 @@ required_by: [3521, 3525]
 related: [1983, 2138, 2930, 3142, 3143, 3518, 3529]
 origin: "#3518 R1 — replace display-name identity before preparation ownership changes"
 files:
+  - scripts/check-ir-fallbacks.ts
   - src/ir/identity.ts
+  - src/ir/planning-identity.ts
+  - src/ir/abi-bindings.ts
   - src/ir/program-abi.ts
   - src/ir/index.ts
+  - src/ir/contract.ts
   - src/ir/nodes.ts
+  - src/ir/callable-bindings.ts
   - src/ir/outcomes.ts
   - src/ir/builder.ts
   - src/ir/ast-lowering-plans.ts
@@ -43,6 +49,8 @@ files:
   - src/ir/type-evidence.ts
   - src/ir/select.ts
   - src/ir/integration.ts
+  - src/ir/integration-identity.ts
+  - src/ir/integration-report.ts
   - src/ir/lower.ts
   - src/ir/verify.ts
   - src/ir/verify-alloc.ts
@@ -66,7 +74,6 @@ files:
   - src/ir/passes/simplify-cfg.ts
   - src/ir/passes/tagged-union-types.ts
   - src/ir/passes/tagged-unions.ts
-  - src/index.ts
   - src/compiler.ts
   - src/compiler/ir-outcome-inventory.ts
   - src/compiler/validation.ts
@@ -77,12 +84,88 @@ files:
   - src/codegen/class-member-keys.ts
   - src/codegen/context/types.ts
   - src/codegen/context/create-context.ts
+  - src/codegen/dead-elimination.ts
+  - src/codegen/func-space.ts
+  - src/codegen/program-abi-import-planning.ts
+  - src/codegen/program-abi-planning.ts
+  - src/codegen/program-abi-signatures.ts
+  - src/codegen/program-abi-session.ts
   - src/codegen/ir-first-gate.ts
+  - src/codegen/ir-class-shapes.ts
+  - src/codegen/ir-overlay-identity.ts
   - src/codegen/ir-overlay-finalize.ts
+  - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/ir-overlay-safety.ts
   - src/codegen/index.ts
   - src/codegen/stdlib-selfhost.ts
+  - docs/ir/ir-contract.md
+  - docs/ir/ir-module.schema.json
+  - benchmarks/allocation-policy-proof.ts
+  - tests/helpers/ir-identities.ts
+  - tests/backend-contract.test.ts
+  - tests/issue-3520-function-artifact-identity.test.ts
+  - tests/issue-3520-lifted-program-abi.test.ts
+  - tests/issue-3520-monomorph-program-abi.test.ts
+  - tests/issue-3520-callable-binding.test.ts
+  - tests/issue-3520-global-type-binding.test.ts
+  - tests/issue-3520-callable-preregistration.test.ts
   - tests/issue-3520-ir-unit-identity.test.ts
   - tests/issue-3520-program-abi.test.ts
+  - tests/issue-3520-legacy-unit-projection.test.ts
+  - tests/issue-3520-propagation-identity.test.ts
+  - tests/issue-3520-context-integration.test.ts
+  - tests/issue-3520-imported-target-identity.test.ts
+  - tests/issue-3520-lowering-plan-identity.test.ts
+  - tests/issue-3520-overlay-selection-identity.test.ts
+  - tests/issue-3520-class-shape-identity.test.ts
+  - tests/issue-3520-fallback-gate-identity.test.ts
+  - tests/issue-3520-integration-population-identity.test.ts
+  - tests/issue-3520-integration-report-evidence.test.ts
+  - tests/issue-3520-integration-pass-identity.test.ts
+  - tests/issue-3520-linear-owner-identity.test.ts
+  - tests/issue-3520-module-binding-class-identity.test.ts
+  - tests/issue-3520-outcome-correlation-identity.test.ts
+  - tests/issue-3520-overlay-finalize-identity.test.ts
+  - tests/issue-3520-overlay-safety-identity.test.ts
+  - tests/issue-3520-promise-plan-identity.test.ts
+  - tests/issue-3520-selfhost-cache-identity.test.ts
+  - tests/issue-3520-monomorphize-identity.test.ts
+  - tests/issue-3520-program-abi-callable-planning.test.ts
+  - tests/issue-3520-program-abi-type-remap.test.ts
+  - tests/issue-3520-support-callable-abi.test.ts
+  - tests/issue-3520-class-support-callable-abi.test.ts
+  - tests/issue-3520-class-method-alias-abi.test.ts
+  - tests/issue-3520-program-abi-import-callable-planning.test.ts
+  - tests/issue-3520-imported-callable-abi.test.ts
+  - tests/issue-2856-calendar-residuals.test.ts
+  - tests/issue-1899-funcidx-authority.test.ts
+loc-budget-allow:
+  - src/codegen/context/types.ts
+  - src/ir/integration.ts
+  - src/ir/from-ast.ts
+  - src/ir/nodes.ts
+  - src/ir/verify.ts
+  - src/ir/backend/porffor/assembler.ts
+# R1 must resolve exact checker declarations to the one authoritative identity
+# inventory. TypeOracle deliberately does not expose ts.Symbol/ts.Type objects,
+# so these two structural joins remain reviewed raw-checker boundaries until
+# the oracle grows a declaration-identity API.
+oracle-ratchet-allow:
+  - src/codegen/index.ts
+  - src/codegen/ir-class-shapes.ts
+# This long-lived identity migration adds validation and sidecars at the exact
+# legacy/IR seams below without changing body ownership. Splitting those seams
+# inside the same already-wide change would obscure parity review; #3399 owns
+# their mechanical decomposition after this checkpoint lands.
+func-budget-allow:
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/codegen/index.ts::generateModule
+  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
+  - src/ir/integration.ts::makeResolver
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
+  - src/ir/backend/linear-integration.ts::compileLinearIrFunctions
+  - src/ir/type-evidence.ts::buildIrRecursiveTypeEvidence
 ---
 
 # #3520 — IR-only R1: source-qualified identity and whole-program ABI map
@@ -233,11 +316,15 @@ arrays, so it cannot claim that existing runtime collisions are fixed.
 
 - Replace source-unit string keys in `propagate.ts`, `type-evidence.ts`,
   `select.ts`, `ast-lowering-plans.ts`, imported/module-binding plans,
-  promise-delay ownership, IR-first call-graph closure, class-member keys, and
-  self-host selection with structural IDs.
-- Key recursion/SCC, escape/ownership, string-evidence, and linear-memory-plan
-  source ownership by identity. Property names, intrinsic names, and layout
-  field names remain labels and must not be mechanically converted.
+  promise-delay ownership, IR-first call-graph closure, outcome reconciliation,
+  and self-host selection with structural IDs. Keep `class-member-keys.ts` as
+  the legacy slot adapter until Commit 4.
+- Key source-level recursion/SCC evidence by identity and add a validated
+  source-owner ID only at the linear integration seam. Escape, ownership,
+  stack-allocation, encoding, and string-evidence analyses already key their
+  semantic facts by IR value/allocation IDs and do not need a source-name
+  migration. Property names, intrinsic names, layout field names, and the
+  generic linear-plan `ownerFunction` label remain strings in this commit.
 - Keep existing selection results, preparation order, and diagnostics stable;
   this commit changes lookup identity only.
 
@@ -268,10 +355,10 @@ arrays, so it cannot claim that existing runtime collisions are fixed.
 - Emit diagnostic tables sorted by canonical source/unit order, never JS `Map`
   accident or filesystem walk order.
 
-## R1a implementation status — PR #3490
+## R1a implementation status — PR #3490 (merged)
 
-This PR is a continuation slice and deliberately leaves the issue
-`in-progress`.
+PR #3490 merged to `main` at `9e813698d081417330476e64d495149508b24a76`.
+The issue remains `in-progress` on the R1b continuation branch.
 
 Implemented in the bounded landing:
 
@@ -327,14 +414,1177 @@ Intentionally deferred from this PR:
 Remaining numbered work:
 
 - **Commit 2:** thread `IrUnitId` from the validated declaration index through
-  selection, propagation, source planning, recursion/SCC, ownership/escape,
-  imported/module binding, promise-delay, class-key, and self-host plans.
+  selection, propagation, source planning, recursion/SCC evidence,
+  imported/module binding, promise-delay, self-host planning, the additive
+  linear source-owner join, and terminal outcomes. Keep class-member naming as
+  the legacy adapter; value/allocation-keyed ownership, escape, stack, encoding,
+  and string-evidence analyses do not need migration here.
 - **Commit 3:** put identities on IR functions/references, key inline and
   monomorphization edits structurally, derive IDs for pass-created units, and
   carry the same binding identities through verification/lowering/backends.
 - **Commit 4:** populate the whole-program ABI intentions, bind only
   ModuleAssembler-final indices, then route legacy maps/exports through the
   adapter and prove runtime collision behavior plus non-collision byte parity.
+
+## Commit 2 implementation plan — source planning by identity
+
+**Active R1b branch:** `symphony/3520-r1-planning-identity`
+
+### Root cause
+
+R1a created structural source/unit/class identities, but production planning
+still rebuilds independent name maps in each phase. `buildTypeMap`, recursive
+evidence, selection, IR-first closure, imported/Promise plans, and overlay
+reconciliation can therefore resolve the same declaration through different
+`Map<string, ...>` instances. Multi-source compilation makes the defect
+observable: the inventory distinguishes two declarations named `main`, while
+planning still collapses or conservatively rejects them by that label.
+
+The R1a terminal join is also only half-threaded. Outcome rows carry `unitId`,
+but `recordObservedIrOutcomes` immediately rejoins selection, failures, and
+integration events through `legacyMatchName`. Commit 2 must make the ID the
+join key before Commit 3 changes `IrFunction` and `IrFuncRef` themselves.
+
+### One per-program identity context
+
+**Files: `src/ir/identity.ts` and new internal
+`src/ir/planning-identity.ts`**
+
+`buildIrUnitInventory` remains the only inventory builder. Its scanner records
+the exact source, unit-declaration, and class-declaration objects while it
+constructs the returned `IrUnitInventory`; that scanner metadata is associated
+with that exact inventory object. `buildIrPlanningIdentityContext` consumes the
+already-built inventory and validates the scanner metadata. It must never call
+`buildIrUnitInventory`, clone/reconstruct an inventory, or recover a declaration
+through name, text, line, or span matching. A copied or independently rebuilt
+inventory is rejected with the typed `untracked-inventory` invariant.
+
+The new internal module owns the context/error/validation implementation and
+keeps the large identity scanner within the repository LOC budget. This split
+does not receive a LOC-budget allowance and does not change any baseline.
+
+```ts
+export interface IrPlanningIdentityContext {
+  readonly inventory: IrUnitInventory;
+  readonly sourceIdBySourceFile: ReadonlyMap<ts.SourceFile, IrSourceId>;
+  readonly sourceFileBySourceId: ReadonlyMap<IrSourceId, ts.SourceFile>;
+  readonly unitIdByDeclaration: ReadonlyMap<ts.Node, IrUnitId>;
+  readonly declarationByUnitId: ReadonlyMap<IrUnitId, ts.Node>;
+  readonly terminalByUnitId: ReadonlyMap<IrUnitId, IrTerminalUnitRecord>;
+  readonly classIdByDeclaration: ReadonlyMap<ts.ClassDeclaration | ts.ClassExpression, IrClassId>;
+  readonly declarationByClassId: ReadonlyMap<IrClassId, ts.ClassDeclaration | ts.ClassExpression>;
+  readonly moduleInitUnitIdBySourceId: ReadonlyMap<IrSourceId, IrUnitId>;
+  readonly moduleInitUnitIdBySourceFile: ReadonlyMap<ts.SourceFile, IrUnitId>;
+}
+
+export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPlanningIdentityContext;
+```
+
+Ordinary unit and class entries use their exact scanner-captured declaration
+object. Only two semantic anchors are explicit:
+
+- module init is source-owned and therefore appears in
+  `moduleInitUnitIdBySourceId` / `moduleInitUnitIdBySourceFile`, not in the
+  declaration maps; and
+- an implicit constructor is anchored to its owning class declaration or
+  expression. Unit and class maps are separate, so that class-like node may
+  validly map to both its constructor `IrUnitId` and its `IrClassId`.
+
+A field-initializer support unit retains its own scanner-captured declaration.
+There is no general exception that permits a consumer to search by span. Every
+forward/reverse pair, terminal owner, source object, and module-init anchor is
+validated; duplicate or missing entries are typed R0 invariants.
+
+Dependency order is a derived view, not a second identity index: iterate
+`context.inventory.sources` and resolve each record through
+`context.sourceFileBySourceId`. This preserves the inventory's SCC/canonical-
+key ordering for planning without changing the existing global R0 source loop
+or legacy body-emission order.
+
+The compiler builds the final complete inventory once, after all source
+rewrites/reparses, then immediately derives one context from that same object.
+Single- and multi-source overlays receive that context; no per-source overlay
+may rebuild inventory. Checker resolution must select an exact declaration and
+look it up in the context. Checker-free textual resolution remains conservative:
+only a unique eligible declaration in the existing domain may project to the
+legacy path; ambiguous or absent targets retain the current demotion.
+
+### Validated legacy projection retained by Commit 2
+
+Commit 2 does not yet make `IrFunction` or the codegen slot tables structural.
+It therefore retains a validated, one-to-one compatibility projection for each
+active source-planning population:
+
+```ts
+interface IrLegacyUnitProjection {
+  readonly unitId: IrUnitId;
+  readonly legacyName: string;
+}
+```
+
+Both directions are validated: an ID has exactly one legacy name and a legacy
+name identifies at most one active ID at the receiving API. A collision is
+demoted by the current typed collision/safety policy before a name-keyed call;
+it is never collapsed by first/last wins. The originating `unitId` remains on
+the selection, plan, skip/preparation record, and outcome evidence across that
+call, and a returned name is accepted only through the same projection.
+
+This compatibility projection remains required for the still-name-keyed
+`compileIrPathFunctions`, `IrTypeOverrideMap`, `from-ast` `calleeTypes`,
+`classShapes`, and integration interfaces until Commit 3 or 4 replaces those
+interfaces. Class resolution likewise carries `{ classId, legacyName }`; the
+local class-expression resolver returns that pair, while `classShapes` remains
+name-keyed. `class-member-keys.ts` and every existing static/instance/accessor
+collision guard remain active legacy adapters.
+
+### Ordered migration of planning consumers
+
+The dependency order is load-bearing:
+
+1. Land `IrPlanningIdentityContext` over the exact existing inventory and
+   export it only through the internal IR barrel.
+2. Key propagation and recursive source evidence by `IrUnitId`; derive
+   deterministic worklist/SCC order from the context.
+3. Make selection and source plans carry unit/class IDs for every executable
+   owner/target, without changing which units are selected.
+4. Build and validate the one-to-one legacy projection before invoking the
+   still-name-keyed compile, override, class-shape, from-AST, or integration
+   APIs. Preserve collision demotion.
+5. Carry the original ID through IR-first closure, preparation, integration
+   correlation, and terminal outcome reconciliation.
+6. Add source owner IDs only at the linear integration seam and tighten the
+   existing self-host cache eligibility/fingerprint behavior.
+
+Do not start Commit 3's `IrFunction`/`IrFuncRef` migration in this slice. In
+particular, do not reconstruct an owner from `IrFunction.name`.
+
+### Exact file and API changes
+
+| File / current API                                                                                                                            | Commit 2 contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/ir/identity.ts` — inventory scanner and `buildIrUnitInventory`                                                                           | Capture exact scanner metadata while building the one authoritative inventory. Expose only the narrow internal hand-off needed by `planning-identity.ts`; do not add a second scan, span join, inventory copy, LOC allowance, or baseline change.                                                                                                                                                                                                                                      |
+| `src/ir/planning-identity.ts` — new internal module                                                                                           | Own `IrPlanningIdentityContext`, its typed invariant error/codes, read-only map wrappers, and `buildIrPlanningIdentityContext(existingInventory)`. Validate that the exact tracked inventory and all forward/reverse source, declaration, terminal, class, and module-init joins agree. Module init uses its source anchor; implicit construction uses its class anchor.                                                                                                               |
+| `src/ir/index.ts`                                                                                                                             | Export the context and builder through this internal IR barrel. The root `src/index.ts` public package surface is unchanged.                                                                                                                                                                                                                                                                                                                                                           |
+| `src/ir/propagate.ts` — `TypeMap`, `buildTypeMap`, `buildCallGraph`, `collectFunctionDeclarations`                                            | Make source declaration, call, inbound, seed, worklist, and result keys `IrUnitId`. Resolve declarations through the supplied context. Parameter/local lexical scopes remain string-keyed. Preserve the current unique checker-free fallback and demote ambiguity.                                                                                                                                                                                                                     |
+| `src/ir/type-evidence.ts` — `RecursiveTypeEvidence`, `buildRecursiveTypeEvidence`, `recursiveComponents`                                      | Carry `{ unitId, displayName, declaration, symbol }`; key source calls, escapes, signatures, decisions, graph members, and Tarjan components by `IrUnitId`. Derive tie-breaking from context order; render the display label only after the decision. This is source-level recursive evidence, not a rewrite of value/allocation-keyed escape analysis.                                                                                                                                |
+| `src/ir/select.ts` — `IrFallback`, `IrSelection`, `IrModuleInitAssessment`, `planIrCompilation`                                               | Carry a required `unitId` on executable fallbacks, selected functions/members, local edges, and non-empty module-init assessment; carry `IrClassId` with class decisions. Keep display/member/property names as labels. Preserve selection, compile-twice, and every collision demotion.                                                                                                                                                                                               |
+| `src/codegen/index.ts` — `buildIrClassShapes` / `tsTypeToClassPositionIr`; `src/ir/module-bindings.ts` — `makeIrLocalClassExpressionResolver` | Resolve class declarations through `classIdByDeclaration`, but return `{ classId, legacyName }` from the local class-expression resolver. Keep `classShapes` and legacy `ctx.classSet` / `structFields` name-keyed behind a validated projection. Ambiguity retains the current demotion.                                                                                                                                                                                              |
+| `src/ir/imported-functions.ts` — `IrResolvedFunctionTarget`, `makeIrImportedFunctionResolver`                                                 | Change construction to `makeIrImportedFunctionResolver(checker, sourceFiles, identityContext)`. Return the exporting declaration's `targetUnitId` alongside its legacy target name. Symbol/declaration identity chooses the target; canonical-name counting cannot choose semantic identity. The name remains only for the validated `funcMap` / from-AST compatibility projection.                                                                                                    |
+| `src/ir/ast-lowering-plans.ts` — imported-call/function-value/host-callback plans                                                             | Add required `ownerUnitId` and source `targetUnitId`; retain explicitly named legacy target, trampoline, cache-global, and capture strings consumed by current lowering. Exact AST-site maps remain node-keyed.                                                                                                                                                                                                                                                                        |
+| `src/ir/module-bindings.ts` — `IrModuleBindingIdentity`, `makeIrModuleBindingResolver`                                                        | Keep the checker-resolved `VariableDeclaration` as binding identity until Commit 4. Every source use carries its `ownerUnitId` (or module-init ID), and class evidence carries `IrClassId`. Generated `__mod_*` names remain compatibility labels.                                                                                                                                                                                                                                     |
+| `src/ir/promise-delay-lowering.ts` — owner collection and plans                                                                               | Key owner certification/selection by `IrUnitId` and store it on every plan. Capture/lifted names remain strings. Derived identities for executor/timer functions wait for Commit 3.                                                                                                                                                                                                                                                                                                    |
+| `src/codegen/ir-first-gate.ts` — `collectLocalCallEdges`                                                                                      | Produce ID-keyed source edges and use the source's actual module-init ID internally. Before `compileIrPathFunctions`, validate and pass the one-to-one `{ unitId, legacyName }` projection; correlate its named result back through those exact pairs. Do not remove conservative collision demotion.                                                                                                                                                                                  |
+| `src/codegen/ir-overlay-finalize.ts` — blocked closure and preparation                                                                        | Carry IDs through blocked-component, Date/Promise/callback owner, and preparation state. Host/lifted slot names stay strings at the legacy boundary. Translate to a name only through the active projection and retain the ID on the structural state.                                                                                                                                                                                                                                 |
+| `src/codegen/index.ts` — `IrOverlayPlan`, `computeIrFirstSkipSet`, `planIrOverlay`, multi-source safety                                       | Keep structural selection/declaration/owner/blocked/skip state ID-addressed. Retain `IrTypeOverrideMap` as name-keyed and create its entries only from validated pairs. Multi-source collision scanners remain safety gates and demote the exact affected IDs. Never translate a skipped name through a global name map.                                                                                                                                                               |
+| `src/ir/from-ast.ts` and `src/ir/integration.ts` — `calleeTypes`, class shapes, compilation/integration report                                | Keep these interfaces name-keyed in Commit 2. Supply only validated projected names, retain each source ID in the calling plan/sidecar, and correlate each compiled/error result through the same pair. No named event can satisfy a different same-label ID. Their structural API migration belongs to Commit 3/4.                                                                                                                                                                    |
+| `src/codegen/index.ts` — `recordObservedIrOutcomes`                                                                                           | Reconcile selection, preparation, static/member policy, integration correlation, and patch evidence by the retained `unitId`; use `terminalByUnitId` for metadata/duplicate checks. Legacy keys, labels, histograms, and public compiled-name telemetry remain unchanged output.                                                                                                                                                                                                       |
+| `src/ir/backend/linear-integration.ts` — `compileLinearIrFunctions` source integration seam                                                   | Add/require `ownerUnitId` only on the source integration descriptor or a total validated sidecar used at this seam. Keep generic `LinearAllocationSitePlan.ownerFunction`, `planLinearMemory`, allocation/layout IDs, and stack operation schemas unchanged until Commit 3 gives `IrFunction` an ID. `encoding`, `escape`, `ownership`, `stack-alloc`, and `string-evidence` already use IR value/allocation IDs and need no Commit 2 source-name migration.                           |
+| `src/codegen/stdlib-selfhost.ts` — `memoKey`, `irCache`, `buildSelfHostedIr`                                                                  | Preserve `memoKey` as the context-free cache-eligibility guard and preserve the guard that excludes ctx-bound type/resolver (`typeIdx`) state. Compute a deterministic template fingerprint only after eligibility and only for an identity-free template; never cache a program-relative ID. A ctx/typeIdx-dependent build must never enter the cache. If that cannot be proved without widening the slice, defer the fingerprint change to Commit 3 rather than weakening the guard. |
+| `src/codegen/class-member-keys.ts`                                                                                                            | Leave the string-keyed module, relocation logic, and collision guards in place as the legacy compatibility adapter through Commit 4.                                                                                                                                                                                                                                                                                                                                                   |
+
+### String-versus-identity boundary
+
+After Commit 2, structural source-planning state uses `IrUnitId`/`IrClassId`
+for selection membership, caller/callee closure, recursive components, owner/
+target facts, blocked/skip decisions, and terminal joins. Strings remain valid
+for local/parameter/property/field names, import/export spellings, public names,
+intrinsics/helpers, concrete Wasm names, diagnostics, and current legacy slot
+interfaces.
+
+The validated `{ unitId, legacyName }` projection is deliberately still used as
+a semantic compatibility boundary for `compileIrPathFunctions`,
+`IrTypeOverrideMap`, `calleeTypes`, `classShapes`, and integration. The ID must
+remain alongside every projected name, and reverse correlation must use the
+same one-to-one projection. Thus Commit 2 removes independent name re-joins
+without claiming that all string-keyed compiler APIs have already disappeared.
+
+Commit 2 does not assign `IrBindingId` to module globals, put IDs on
+`IrFunction`/`IrFuncRef`, derive IDs for lifted/monomorphized functions, migrate
+generic linear-plan ownership, or bind ABI slots. Those remain Commit 3/4 work.
+
+### Outcome join and parity requirements
+
+The existing global R0 source loop remains unchanged. Within each source,
+`recordObservedIrOutcomes` consumes that source's terminal records in canonical
+inventory order and addresses structural state by `unitId`. It validates named
+integration evidence through the source's one-to-one projection rather than a
+global `legacyMatchName` map.
+
+For every terminal ID, apply and record exactly one branch in this stable
+precedence:
+
+1. an inventory-authored `directFailure`;
+2. the selector's typed rejection;
+3. a typed preparation failure;
+4. the explicit `static-class-member` compile-twice outcome;
+5. a typed late-preparation rejection;
+6. the explicit `module-init-legacy-coupling` integration outcome;
+7. another typed integration error; or
+8. successful, exactly-once patch evidence.
+
+Duplicate or absent terminal/evidence IDs, multiple compiled/error events for
+one projection, a same-label event owned by another ID, or leftover unconsumed
+integration evidence produces the existing typed invariant. Branch precedence
+must not silently mask duplicate evidence. R0 row count/order, fallback
+histograms, `displayName`, `key`, public compiled-name telemetry, the global
+source-loop order, and emitted binaries remain unchanged.
+
+### Anti-vacuity tests for Commit 2
+
+Extend `tests/issue-3520-ir-unit-identity.test.ts` and add focused planning
+fixtures only where required. Prove behavior through real consumers:
+
+1. Build an inventory once, derive `IrPlanningIdentityContext` from that exact
+   object, and prove its forward/reverse maps, source-derived dependency view,
+   source-owned module init, and class-anchored implicit constructor. A copied
+   or rebuilt inventory must fail as `untracked-inventory`; no span match is
+   accepted.
+2. Give two files declarations named `same` and classes named `C`; reverse
+   caller insertion order and prove distinct propagation/selection IDs with no
+   inventory rebuild. Where the receiving legacy API cannot represent both,
+   prove the existing collision demotion instead of a collapsed name entry.
+3. Create same-named recursive SCCs with different scalar evidence and prove
+   the worklist, Tarjan components, decisions, and diagnostics stay attached to
+   the correct IDs.
+4. Cover instance/static `m`, get/set `x`, repeated computed labels, nested
+   same-named classes, class expressions, and implicit constructors. Prove the
+   local resolver returns `{ classId, legacyName }`, class shapes remain behind
+   the validated projection, and current slot demotions/output do not change.
+5. Resolve default and renamed imports through checker declarations. Prove
+   `makeIrImportedFunctionResolver(..., identityContext)` returns the exporting
+   unit ID and that call/function-value plans retain owner/target IDs across the
+   named from-AST/integration boundary.
+6. Give same-named Promise/Date owners and `<module-init>` units in two files;
+   prove blocked/preparation/outcome state stays separate and named events only
+   correlate through their exact pairs.
+7. Exercise module binding from a function and module init. Prove structural
+   owner IDs coexist with exact binding declaration identity and that a same-
+   spelled shadowed local is not captured.
+8. Exercise the linear source integration seam with same-label source owners.
+   Prove its additive/sidecar `ownerUnitId` is total while generic allocation
+   plans still use their unchanged schema and value/allocation IDs.
+9. Prove the self-host `memoKey` eligibility and no-ctx-bound-type/resolver
+   guard remain active: eligible identity-free templates fingerprint safely,
+   while a ctx/typeIdx-dependent build never reads or writes the cache.
+10. Cover every outcome branch above, including inventory `directFailure`,
+    `static-class-member`, and `module-init-legacy-coupling`; reject same-label
+    cross-ID evidence and prove per-source canonical order without changing the
+    global source loop. Keep legacy rows/histograms and tracked/untracked output
+    byte-identical.
+
+Run the new tests with the R1a identity/ABI/outcome suites, #2138, linear,
+self-host, phase3c, equivalence, and cross-backend differential validation. Run
+#1983 and inline-small separately as control-matched known-failure matrices:
+their exact failures must match the pre-branch base and are not an expected
+green command. No local Test262 run or baseline refresh belongs to this commit.
+
+### Commit 2 risks and containment
+
+- **Inventory substitution:** rebuilding or copying an inventory loses its
+  scanner object joins. Build once, require exact object identity, and reject
+  untracked inventories.
+- **AST identity invalidation:** a transform after inventory construction makes
+  exact node maps stale. Finish rewrites first; reject unknown nodes without a
+  text/span fallback.
+- **Ambiguous checker edges:** aliases, overloads, merged declarations, and
+  reassignments may resolve to multiple/non-executable declarations. Accept one
+  indexed executable declaration or retain Unsupported/compile-twice behavior.
+- **Legacy projection collision:** structural planning cannot make the current
+  named compiler API represent two occupants. Preserve collision demotion,
+  validate both projection directions, and never use first/last wins.
+- **ID loss at return:** a name-only compiled/error result can be attached to
+  the wrong unit. Retain the ID sidecar through the call, consume each named
+  result once through the exact projection, and reject leftovers/duplicates.
+- **Linear scope creep:** `IrFunction` lacks a structural ID. Add owner identity
+  only at source integration; changing the generic plan would also require the
+  #3298/#3299/#3300/#3502 test families and
+  `scripts/benchmark-allocation-policies.mts`, so defer that schema change to
+  Commit 3.
+- **Self-host cache leakage:** a fingerprint cannot make ctx/type-index state
+  context-free. Preserve eligibility guards and defer caching when any resolver
+  state is bound to the active compilation.
+
+### Commit 2 implementation status
+
+Implemented on the active R1b continuation branch:
+
+- the exact inventory scanner now retains frozen source/unit/class declaration
+  metadata outside the serializable identity records;
+- `buildIrPlanningIdentityContext(existingInventory)` validates immutable
+  bidirectional source, unit, terminal, class, and source-owned module-init
+  mappings without rebuilding the inventory or joining by display/span;
+- `indexIrTerminalDeclarations` now consumes those exact record/node joins;
+  copied or independently rebuilt inventories are rejected; and
+- the planning implementation lives in `src/ir/planning-identity.ts` so
+  `identity.ts` remains below the 1,500-line subsystem limit without an
+  allowance or baseline change.
+
+Validation for this foundation is **30/30** identity tests, **10/10** ABI
+tests, and **96/96** across the expanded identity/outcome/multi-source/producer
+matrix. Typecheck, lint, formatting, diff, and LOC-budget checks pass. This is
+stage 1 of the ordered Commit 2 plan.
+
+Stage 2 now adds the structural propagation boundary:
+
+- `IrLegacyUnitProjection` validates an immutable one-to-one active
+  `{unitId, legacyName}` population and correlates returned named evidence
+  exactly once. Duplicate IDs/names, missing or mismatched pairs, foreign or
+  duplicate results, and deterministic leftovers are typed invariants.
+- `buildIrUnitTypeMap` keys declaration collection, calls, inbound sites,
+  seeds, worklists, and results by `IrUnitId`. Checker resolution joins only
+  exact indexed declarations; checker-free textual resolution is admitted
+  only for a unique active label.
+- `buildIrRecursiveTypeEvidence` keys SCC graphs, components, decisions,
+  signatures, anchors, owners, and targets by `IrUnitId`. Canonical work order
+  comes from the authoritative inventory.
+- The still-name-keyed selector/integration seam is served only through the
+  validated projection. Duplicate labels are conservatively omitted from that
+  compatibility population instead of choosing a first or last structural
+  owner.
+
+The focused Stage 2 suites pass **13/13**. The existing propagation/evidence
+consumer matrix passes **95 tests with 1 skipped**, including reversed-source
+numeric and string recursive SCCs that share a display name plus a third
+non-recursive peer. Typecheck, lint, formatting, diff, and LOC-budget checks
+pass.
+
+Stage 3 threads that context through the production entry seams:
+
+- single-source and multi-source WasmGC planning build one inventory/context
+  and retain that exact context from propagation through terminal outcomes;
+- tracking-only compilation preserves the pre-R1 binary/result behavior while
+  deriving its outcome population from the same authoritative inventory;
+- linear propagation and recursive evidence share one inventory/context rather
+  than independently rebuilding their source population; and
+- outcome collection requires the exact `SourceFile` object, resolves its
+  `IrSourceId`, filters terminal units by that ID, and deduplicates whole-source
+  failures by source ID. A cloned AST with the same filename is rejected with
+  the typed `source-record-mismatch` invariant.
+
+The Stage 3 checkpoint passes **86/86** focused identity, context, propagation,
+projection, outcome, multi-source, and linear tests. Typecheck, lint,
+formatting, diff, and LOC-budget checks pass. Selection, feature plans,
+IR-first closure, and final outcome correlation still need to retain IDs
+through their remaining legacy calls.
+
+Stage 4 adds the structural selector and a fail-closed legacy projection:
+
+- `planIrCompilationByIdentity` keys function/member claims, fallbacks,
+  recursive evidence, and local call edges by `IrUnitId`; class-member facts
+  also retain their exact `IrClassId`, while names remain compatibility labels;
+- exact terminal/class/module ownership is validated against the authoritative
+  context. Missing or mismatched joins raise typed planning invariants instead
+  of becoming name lookups, plain errors, or silent omissions;
+- the structural receiving population includes unnamed functions, anonymous
+  class members, and implicit-constructor terminals even when an existing
+  direct failure keeps them outside the claim set;
+- duplicate function/class labels and repeated class-shape descriptors never
+  choose first/last wins. The adapter omits ambiguous occupants and re-closes
+  their local-call component with the existing host-versus-standalone caller
+  policy before producing the still-name-keyed `IrSelection`; and
+- the structural selector reuses the production selector predicates and has a
+  direct unambiguous projection-parity test. This checkpoint is additive; the
+  production overlay has not switched to it yet.
+
+The Stage 4 selector suite passes **12/12**. The combined #3520, #3142,
+#3143, and #3529 selector/preclaim matrix passes **192/192**. Typecheck, lint,
+formatting, diff, and LOC-budget checks pass. The standalone #1169q control
+retains its pre-existing async fallback-expectation mismatch (**9/10**); no
+selector semantics changed. No local Test262 run or baseline refresh was
+performed.
+
+Stage 5 moves the production overlay onto that structural selector boundary and
+adds exact imported-target identity without changing the legacy lowering API:
+
+- production builds one `IrUnitTypeMap`, selects through
+  `planIrCompilationByIdentity`, and retains the exact selection, omitted IDs,
+  declaration/type rows, and safe `IrUnitId` population throughout override
+  preparation;
+- the still-name-keyed override, integration, and slot interfaces receive only
+  the validated unambiguous projection. Within-source duplicate labels are
+  omitted before preparation, and safe names are projected only from the
+  retained safe IDs;
+- every preparation-time removal keeps the structural safe-ID population and
+  its legacy projection synchronized. The old independent selector call,
+  independently projected TypeMap, and last-wins top-level declaration scan
+  are no longer used by the production overlay;
+- the imported-function resolver now has an additive structural form that
+  resolves checker-selected declarations to exact `targetUnitId` values.
+  Cross-source same-label targets remain distinct and are marked ambiguous
+  only at the final legacy compatibility projection; and
+- the existing two-argument imported resolver preserves its behavior, while
+  cloned, stale, duplicate, or out-of-population source objects fail with typed
+  planning invariants in the structural form.
+
+The combined Stage 5 matrix passes **265/265** across all #3520 identity,
+projection, context, selector, and overlay suites plus #3214 callable/imported
+callback coverage, #3142 module-init, #3143 IR-first, #3529 selector preclaim,
+and #2138 multi-module overlay. Typecheck, lint, formatting, diff, and
+LOC-budget checks pass. No local Test262 run or baseline refresh was performed.
+
+Stage 6 carries structural identity through the first exact lowering plans:
+
+- imported-call, top-level function-value, and host-callback plans now retain a
+  required `ownerUnitId`; imported/function-value plans also retain the exact
+  checker-selected `targetUnitId`;
+- multi-source production creates the exact imported resolver from the
+  authoritative planning context, gives selection only its explicit
+  ambiguity-rejecting legacy adapter, and correlates every named certification
+  back to the exact resolver at the same AST node before constructing a plan;
+- integration receives the validated owner-ID projection alongside the
+  remaining name-keyed plan maps and supplies the exact active owner to the
+  AST lowerer. Imported calls, function values, host callbacks, and their
+  nested lifted bodies reject missing or mismatched owner IDs before emitting
+  IR; and
+- target IDs remain side-by-side with the current symbolic backend names. This
+  stage does not claim that `IrFuncRef` or backend slot lookup is structural
+  yet; that is Commit 3 work.
+
+The expanded structural/overlay/feature matrix passes **269/269**. The
+fallback gate remains unchanged with zero unintended, post-claim, or
+module-level increases, and hybrid IR-only readiness remains **31 emitted / 6
+typed Unsupported / 0 Invariants** across 37 terminal units. Typecheck, lint,
+formatting, diff, and LOC-budget checks pass.
+
+Stage 7 completes Commit 2's source-planning identity migration:
+
+- Promise-delay plans, module-binding uses, local-class evidence, host-Date
+  snapshot plans, and the linear source seam retain exact owner/class IDs.
+  Name-keyed lowering and slot APIs are reached only through their validated
+  legacy projections;
+- blocked-component closure, IR-first skip selection, multi-source safety, and
+  terminal outcome correlation are ID-keyed. Named compiler results cannot
+  satisfy a foreign or same-labelled unit, and closure is computed over the
+  full safe function population before the requested skip subset is projected;
+- class shapes are indexed by `IrClassId` with exact checker-selected
+  declarations and parent identities. The remaining class-shape name map is a
+  checked compatibility view rather than semantic identity;
+- integration validates the exact selected function, class-member, compiler
+  support, and module-init AST populations. Finalization also proves that
+  callback, Promise, and Date sites remain reachable from their exact active
+  owners. Replaced, detached, or reordered AST populations fail with typed
+  planning invariants instead of matching by text or span;
+- integration reports distinguish terminal compiled owners from synthetic
+  artifacts and reconcile every logical error event with all public error
+  objects. Raw compiled/error labels are telemetry only and cannot prove
+  terminal success or patch safety;
+- the fallback gate now carries the graph-wide identity inventory, context,
+  unit types, and structural selection through its accounting, projecting to
+  labels only for the final stable histogram; and
+- new identity plumbing was extracted from `planIrOverlay` and
+  `generateMultiModule`. Both functions are smaller than the pre-Stage-7 HEAD,
+  so the checkpoint adds no new god-function size debt.
+
+The complete #3520 matrix passes **145/145** and the compatibility matrix
+passes **249/249**. Hybrid IR-only readiness remains **31 emitted / 6 typed
+Unsupported / 0 Invariants** across 37 terminal units. The fallback gate has
+zero unintended, post-claim, or module-level increases. Typecheck, formatting,
+diff, and LOC-budget checks pass; the six existing god-file baseline failures
+remain, while both functions touched by this stage shrink. No local Test262 run
+or baseline refresh was performed.
+
+Commit 2 is complete. `IrFunction`/`IrFuncRef`, pass edit tables, verification,
+and backend callable references remain the next Commit 3 boundary; whole-
+program ABI binding and the legacy slot adapter remain Commit 4.
+
+Stage 8 begins Commit 3 by making function-artifact identity total:
+
+- every `IrFunction` now carries its required `IrUnitId`; the builder accepts
+  the structural ID and compatibility label atomically, and WasmGC integration
+  rejects a selected function, class member, or module initializer that lacks
+  its exact prepared identity;
+- main functions retain their terminal owner ID. Lifted closures and nested
+  functions derive IDs from `{ parentId, "lifted-closure", ordinal }`, with
+  label and ID allocated from the same counter. Monomorphization clones derive
+  from the callee ID and canonical clone-plan ordinal rather than clone names;
+- the linear integration seam supplies the same owner IDs, and every other
+  production pass copy preserves `unitId`. Repeated benchmark construction now
+  uses explicit, stable artifact IDs rather than process-order counters;
+- the self-host cache stores an `Omit<IrFunction, "unitId">` template, checks
+  resolver/dialect/type-index eligibility before lookup, fingerprints the
+  template input, and rematerializes a fresh artifact with the caller's live
+  support ID; and
+- the frozen interchange contract is now v2.0. Serialized functions and
+  coverage rows both require `unitId`; `name` is documented as the temporary
+  compatibility/reference label while callable/global/type references remain
+  symbolic in this bounded sub-slice.
+
+The #3520/backend/phase3c matrix passes **168/168**; including the repeated-
+benchmark identity proof, the focused matrix has **174 passing** with one
+intentional skip. The compatibility matrix passes **233/233** and the cross-
+backend differential suite passes **29/29**. Full equivalence remains **1,608
+passing / 35 failing** against 36 known baseline failures: there are no new
+regressions and one baseline failure now passes; the baseline is intentionally
+unchanged. Hybrid IR-only readiness remains **31 emitted / 6 typed Unsupported
+/ 0 Invariants** across 37 terminal units, and the fallback gate has zero
+unintended, post-claim, or module-level increases. The separate six-file
+known-base matrix is **51 passing / 11 known failures** on this branch versus
+**50 passing / 12 failures** on exact control `7906aa8a80327c`: all 11 branch
+failures reproduce identically, while the required-identity fixture migration
+fixes one stale scaffold failure. Typecheck, lint, formatting, diff, and LOC-
+budget checks pass. No local Test262 run or baseline refresh was performed.
+
+Commit 3.1 is complete. Typed callable binding/reference migration, structural
+pass edit tables, and backend binding consumption remain the next Commit 3
+sub-slices; whole-program ABI binding and the legacy slot adapter remain Commit 4.
+
+Stage 9 completes the Commit 3.2 callable-binding checkpoint:
+
+- every `IrFuncRef` carries a required closed binding domain: exact source or
+  compiler unit, declared import, runtime symbol, intrinsic, or structurally
+  derived support binding. Factories validate and freeze those references;
+  the verifier rejects legacy name-only calls and lifted-function references,
+  including refs nested inside buffered control-flow instructions;
+- source direct calls are planned at their exact `CallExpression` sites and
+  carry the target `IrUnitId` plus signature. Imported calls, top-level
+  function values, closure trampolines, lifted functions, Promise support,
+  class dispatch, and monomorphized clone calls retain their structural target
+  or provider binding instead of reconstructing identity from a label;
+- WasmGC binds source-unit refs through an exact unit-to-slot table and never
+  falls back to a same-labelled runtime/helper slot. Linear Wasm and Porffor
+  bind source units by ID as well; runtime, intrinsic, and import dispatch use
+  their structural symbol or module field. The remaining compatibility label
+  use is confined to the temporary exact unit/support-to-legacy-slot adapter;
+- helper preregistration and string-encoding analysis classify by binding
+  domain and symbol. Source functions deliberately named like string,
+  dynamic-boxing, or undefined-check helpers do not register or resolve the
+  corresponding provider; and
+- the interchange contract is now v3.0. Schema and documentation require the
+  closed callable binding union while retaining `name` only as compatibility
+  and diagnostic metadata.
+
+The changed-file matrix passes **115/115** with two intentional skips. The
+binding-aware backend/self-host matrix passes **50/50** with one optional
+Porffor skip; the class inheritance/collision matrix passes **21/21**; and the
+linear/cross-backend regression matrix passes **35/35**, including all 29
+differential cases. Typecheck and diff checks pass, and the protected Test262
+log and equivalence baseline are unchanged. The LOC allowance records this
+checkpoint's required contract threading; extracting the remaining legacy
+adapter machinery is follow-up work rather than part of this paused slice.
+
+Commit 3.2 is ready for review. Structural inline/monomorphization edit maps,
+integration evidence maps, and the final Program ABI slot adapter remain for
+Commit 3.3 and Commit 4 before R1 can close.
+
+## Resume checkpoint
+
+- **Branch:** `symphony/3520-r1-planning-identity`
+- **Draft PR:** `#3496`
+- **Resume from:** the branch tip containing Stage 9 / Commit 3.2. The pushed
+  worktree is expected to be clean; no stash or local-only patch is required.
+- **First task:** replace the remaining source-function `byName` tables in
+  `src/ir/passes/inline-small.ts` and `src/ir/passes/monomorphize.ts` with
+  `IrUnitId`/callable-binding maps. Recursion detection, rewrite sites, clone
+  plans, and pass-output reconciliation must all use the same structural key.
+- **Then:** migrate integration verifier/error/pass bookkeeping to IDs, thread
+  support/import bindings through the backend ABI tables, and replace the
+  temporary exact-unit/support-to-legacy-label slot join with `ProgramAbiMap`
+  resolution. Only after those steps should R1 acceptance be reevaluated.
+- **Do not touch:** `benchmarks/results/test262-run.log` or
+  `scripts/equivalence-baseline.json`. No local Test262 run is required for
+  this checkpoint.
+- **Known unrelated control:** two #2956 L3 string/charCode fixtures remain
+  pre-existing failures; binding-affected linear cases and the 29-case
+  cross-backend suite pass.
+- **Not rerun after Stage 9:** the full equivalence gate and fallback/readiness
+  ratchets. Run them before declaring R1 complete; do not infer completion from
+  the focused matrices below.
+
+### 2026-07-25 resume state
+
+- Pulled `origin/main` to `6f3e4358033ab8`, then merged it into the continuation
+  branch at `30e3553f48b972`. Draft PR #3496 now has a current-main checkpoint.
+  The main checkout's existing Test262 log change and `.capc-worktree` link
+  were left untouched.
+- Reconciled current-main #3565 verifier demotions with #3520's grouped
+  terminal-evidence ledger. Public diagnostic order stays stable, while a
+  mixed verifier event selects a real invariant as its terminal
+  representative. Current-main #2952's new iterator-close call is also typed
+  as a runtime binding instead of reintroducing a name-only `IrFuncRef`.
+- Merge validation is green: **64/64** focused #2138/#3519/#3520/#3565/#680
+  tests, **71/71** #2952 control-flow tests, TypeScript with incremental output
+  disabled, scoped Biome lint, Prettier, and diff checks on the resolved files.
+- The pre-dispatch gate correctly reported the existing
+  `ttraenkler/codex-r1` claim and active #3518 dependency; this is the same R1
+  continuation, not a competing dispatch. Three isolated, pushed Symphony
+  worktrees were assigned disjoint Commit 3.3 lanes:
+  `symphony/3520-c33-inline`, `symphony/3520-c33-monomorphize`, and
+  `symphony/3520-c33-integration`.
+- Commit 3.3 also absorbed current-main #3551: its ABI-withdrawal cascade,
+  reference scan, and orphan-slot records now use exact callable/unit and
+  owner identities while preserving withdrawal and stubbing behavior.
+
+### Commit 3.3 completion
+
+- Integrated and pushed the three isolated lanes:
+  `5fb6df6272df26` keys inline-local resolution and recursion by `IrUnitId`;
+  `06e51c25e4873b` keys monomorphization grouping, clone provenance, growth,
+  and edit tables by identity; and `6cf2d2744ae4ee` keys integration artifact
+  ownership, failure/TU evidence, pass reconciliation, ABI withdrawal, and
+  orphan-slot ownership structurally.
+- Added exact duplicate-label/provider regressions for inline,
+  monomorphization, nested withdrawal, tagged-union attribution, and
+  synthetic-vs-terminal report classification. Runtime/import/intrinsic/
+  support lookalikes never become local unit edges.
+- Combined validation passes **209/209** across 32 focused #3520/#3529/#3551/
+  #3565/#3471/phase3c files. A strict-nullability rerun exposed and fixed an
+  impossible post-pass artifact dereference at `fa789b2cc4cbc6`; the focused
+  post-fix matrix passes **45/45**, TypeScript is green with incremental output
+  disabled, and scoped Biome, Prettier, diff, and LOC checks pass.
+- Commit 4 is active in three additional isolated, pushed worktrees:
+  `symphony/3520-c4-class-identity`,
+  `symphony/3520-c4-backend-identity`, and
+  `symphony/3520-c4-abi-session`. The cutover must publish one program-owned
+  ABI map after the index space freezes; a per-source map is not acceptable.
+
+### 2026-07-26 Commit 4 foundation checkpoint
+
+The Commit 4 foundation is integrated through `54f30f076f8dbb`, but R1
+acceptance remains partial and this issue stays `in-progress`. The integrated
+sequence is:
+
+- `100d13edd532d9` makes class shapes source-qualified, and
+  `e9674975ee622c` keys class integration caches and checks by exact
+  `IrClassId`;
+- `b88293dc401ebe` creates one compilation-owned `ProgramAbiSession` for each
+  single- or multi-source compilation that requests the IR identity inventory;
+- `cf88b88f6d2bc8` keys source-function backend tables by `IrUnitId`;
+- `8a574b16b2e6e4` binds the currently adapted globals through structural
+  `IrBindingId` references; and
+- `50816a88d826f5` plus `216f5ea9e1c370` harden the session lifecycle and make
+  every adapted global producer prove the same canonical payload and
+  structural order; and
+- `54f30f076f8dbb` removes the obsolete name-keyed local-call and
+  overlay-finalization cluster after every production caller moved to the
+  `IrUnitId`-keyed implementation.
+
+The foundation now validates these boundaries:
+
+- a single session owns the inventory, plan, allocator-object locators, and
+  publication for its exact `WasmModule`;
+- module, TDZ, argument-count, and function-value-cache globals are planned by
+  canonical binding payload rather than display name;
+- the runtime API supports exact defined-function/global locator replacement,
+  imported slot resolution after late index shifts, and explicit type-cell or
+  type-object remaps; and
+- publication is one-shot and occurs immediately after
+  `indexSpaceFrozen = true`, so final indices are resolved from the frozen
+  module layout.
+
+Validation at `216f5ea9e1c370` passes the strict TypeScript check; all #3520
+suites plus backend contract, linear integration, and cross-backend coverage
+(**34 files / 239 tests**); Prettier; scoped Biome lint with the two existing
+`index.ts` `any` warnings; the diff check; and the LOC-budget check. After the
+cleanup, the #3143, #3203, #2138, and complete #3520 matrix passes
+**249/249**, and `check:dead-exports` reports **15 known / 0 new**. Strict
+TypeScript, Prettier, scoped Biome, diff, and LOC checks remain green.
+
+This is not yet the whole-program ABI cutover described by Commit 4:
+
+- production `ProgramAbiSession` planning currently covers the adapted defined
+  globals only; callable signatures, callable/global imports, Wasm types,
+  classes/layouts, exports, aliases, support bindings, and derived-unit
+  provenance are not yet populated as production ABI entries;
+- source functions and classes carry structural identity through the IR and
+  pass tables, but concrete WasmGC, linear, and compatibility-slot resolution
+  still contains direct `funcMap`, `structMap`, module-array, and display-name
+  scans instead of routing exclusively through `LegacyAbiAdapter`;
+- function/global replacement and type remap APIs have focused lifecycle
+  coverage, but allocator replacement, dead-type elimination, and compaction
+  do not yet notify the production session; and
+- exports are still emitted directly by legacy codegen rather than represented
+  as explicit Program ABI aliases.
+
+Accordingly, the acceptance criteria below remain unchecked. This checkpoint
+does not enable IR-only mode by default and does not justify retiring any
+direct codegen path. Preparation ownership, compile-once migration, remaining
+runtime/async/linear adoption, fallback removal, and direct-handler deletion
+remain later R2-R10 work and are explicitly outside R1.
+
+### Final PR #3496 validation
+
+- The branch was merged forward through current-main runtime, call, literal,
+  interpreter, module-init, global-environment, and baseline-contract changes.
+  Main-owned semantics remain present, including the current #2726
+  global-environment delete guard.
+- The required CI guard suite exposed a missing structural-order anchor for
+  ambient and transformed-import classes that have no executable `IrUnit`.
+  `ProgramAbiStructuralOrder` now assigns those classes deterministic,
+  source-local tail anchors while preserving the existing source, unit, and
+  member-backed class anchors. Dedicated coverage includes multiple zero-unit
+  classes, mixed live/ambient populations, reversed source input, transformed
+  import wrappers, and the exact #2961/#3565 regressions; the final focused
+  post-merge matrix passes **44/44**.
+- Strict TypeScript, full Biome lint, Prettier, diff, LOC, function-budget,
+  oracle, dead-export, issue, and change-scoped quality gates pass. The
+  dead-export audit reports **15 known / 0 new** after deleting the obsolete
+  name-keyed overlay cluster.
+- The post-main regression matrix passes **397 tests in 43 files**, with 46
+  intentional Test262-harness skips. It covers every #3520 suite, #2138,
+  backend contract, linear integration, cross-backend differential coverage,
+  and the current-main #2928/#3615/#3623/#3637/#3638/edition fixtures.
+- `check:ir-fallbacks -- --verbose` reports no unintended, post-claim, or
+  module-level increase. Hybrid IR-only readiness remains **READY** across 37
+  terminal units: **31 emitted / 6 typed Unsupported / 0 Invariants**.
+- Full equivalence reports **1,608 passing / 35 known failures**, with no new
+  regression and one known baseline failure now passing. The equivalence
+  baseline remains unchanged.
+- No local Test262 corpus run was performed.
+  `benchmarks/results/test262-run.log` and
+  `scripts/equivalence-baseline.json` remain unchanged.
+
+### PR #3496 merge-group regression repair
+
+- Exact merge-group run `30183268819` at head
+  `83b55f7790096a93aa60c97c25cd14e22d30b1e3` failed the Test262 regression
+  and standalone guards against immutable baseline commit
+  `de3acdd66f5e9835108502b92e4648747e541a3d`. The host gate reported 63
+  stable non-timeout regressions and 31 improvements; 56 of those regressions
+  shared the structural-identity diagnostic repaired here. All 52 standalone
+  non-CT regressions shared the same diagnostic.
+- The field-evaluation support record and a function or arrow used as its
+  initializer both used the initializer expression as their declaration
+  anchor. This violated the planning context's intentional declaration/unit
+  bijection. Field evaluation is a property operation, while the nested
+  callable is a separate executable unit, so static and instance field units
+  now anchor to their `PropertyDeclaration`. An implicit constructor likewise
+  anchors to its class declaration rather than borrowing the first instance
+  initializer.
+- Moving the inventory anchor exposed a second stale assumption in IR-first
+  call-edge collection: property initializers still resolved their terminal
+  owner through the initializer expression. They now resolve the field unit
+  through the property declaration, then retain the initializer expression as
+  the body boundary. This preserves module-init ownership for static fields and
+  constructor ownership for instance fields without aliasing nested callable
+  units.
+- Both defects have red-before-fix invariant tests. The focused identity matrix
+  passes 39/39. Replaying the exact affected baseline-pass/candidate-regression
+  paths locally restores 56/56 host rows and 52/52 standalone rows to runtime
+  pass. A fresh-process standalone replay also passes 52/52 on both this branch
+  and current-main control `dde8800c95694231e76ca3a56512a4060dbf81ad`.
+  The baseline and allowlists are unchanged; rows outside this diagnosed
+  signature are not attributed to this repair.
+- After merging current main `c941712943f45994149480b60165b5e18afb9505`,
+  the complete #3520/#2138 matrix passes 212/212. Strict TypeScript, lint,
+  formatting, LOC, fallback, and hybrid IR-readiness gates pass, with 31
+  emitted / 6 typed Unsupported / 0 Invariants. The linear/cross-backend matrix
+  passes 43/43. Full equivalence reports 1,608 passing / 35 known failures,
+  zero new regressions, and one known baseline failure now passing; the
+  equivalence baseline remains unchanged.
+
+Minimum resume validation:
+
+```bash
+pnpm run typecheck
+pnpm run check:loc-budget
+pnpm exec vitest run tests/issue-3520*.test.ts tests/issue-2138-multi-module-ir-overlay.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+pnpm exec vitest run tests/linear-integration.test.ts tests/cross-backend-diff.test.ts tests/issue-3000-c.test.ts tests/issue-3000-e.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+pnpm run check:ir-only -- --policy=hybrid
+pnpm run check:ir-fallbacks -- --verbose
+node scripts/equivalence-gate.mjs
+```
+
+### 2026-07-26 production callable/imported-global continuation
+
+The first production ABI populations after PR #3496 are implemented on
+`codex/3520-c4-production-abi`:
+
+- every inventory-backed source/unit callable observed by WasmGC IR integration
+  now receives the canonical `callable/body` binding ID, a structural callable
+  reference key, a canonical signature intention, and an exact
+  `WasmFunction` locator;
+- migrated unit calls resolve through
+  `ProgramAbiSession.resolveCurrentIndex(...)`, so late function-import shifts
+  are resolved from the current allocator layout instead of a captured
+  `funcMap` index;
+- overlay replacement and orphan stubbing update the exact function locator in
+  the same mutation seam, so ABI publication follows the final function object;
+- host string-constant globals now plan exact imported-global intentions
+  anchored to the unique entry source, including deterministic literal order,
+  deduplication, late/interleaved imports, lone-surrogate field encoding, and
+  the valid empty import field; and
+- native-string builds retain the no-import sentinel path and publish no
+  string-constant ABI entries.
+
+The complete #3520 matrix plus #2138 multi-source coverage passes **216/216**
+across **35 files**. Strict TypeScript, LOC budget, Prettier, and diff checks
+pass. Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed
+Unsupported / 0 Invariants / 37 legacy bodies**, and the fallback ratchet
+reports no unintended, post-claim, or module-level increase. Full equivalence
+reports **1,608 passing / 35 known failures / 0 new regressions**, with one
+known baseline failure now passing; the baseline remains unchanged.
+The existing `ir-scaffold` host fixture still fails **1/7** because it does not
+provide the already-requested `env.__unbox_number` import; the identical
+failure reproduces on untouched PR #3496 head `c96312ba`.
+
+This remains a bounded R1 continuation, not the final ABI cutover. Derived
+lifted and monomorphized units remain explicitly unplanned because
+`LoweredFunctionResult` and the monomorphization sidecar do not yet preserve
+the complete `{ parentId, sourceId, terminalOwnerId, role, ordinal }`
+`ProgramAbiDerivedUnitRecord`. No display-label or encoded-ID inference is
+used. Imported/runtime/intrinsic/support callables, remaining imported globals,
+Wasm types and class layouts plus DCE remaps, exports and aliases, and
+production `LegacyAbiAdapter` replacement of the remaining `funcMap`,
+`structMap`, module-array, and display-name scans still remain before R1 can
+close.
+
+### 2026-07-26 lifted-callable provenance continuation
+
+The next stacked continuation on `codex/3520-c5-derived-provenance` moves
+successfully emitted lifted closures into the production Program ABI:
+
+- lifted allocation now preserves exact `{ id, parentId, role, ordinal }`
+  provenance beside `LoweredFunctionResult`; integration joins it to the
+  authoritative inventory's `sourceId` and terminal owner by ID, never by
+  output order, encoded ID, or display label;
+- accepted lifted functions register complete `ProgramAbiDerivedUnitRecord`
+  values only after lowering has produced the settled Wasm function and
+  signature. The owner body retains derived suborder zero and its owner-wide
+  lifted ordinals occupy one-based suborders;
+- the backend keeps an exact `IrUnitId -> WasmFunction` table and resolves the
+  current live or stable function handle from the allocator object. Synthetic
+  compatibility labels may therefore collide with source functions without
+  aliasing their slots or locators;
+- derived callable planning occurs after the placeholder is replaced, so the
+  ABI records the real lowered signature rather than placeholder type zero;
+  and
+- integration telemetry continues to classify terminal versus synthetic
+  artifacts from exact artifact/owner IDs. Equal public labels no longer
+  manufacture a false invariant.
+
+The production collision regression compiles one source owner, two lifted
+closures, and a top-level function deliberately named like the first lift. All
+four callables publish distinct final function slots while the legacy
+name-only adapter correctly rejects the ambiguous label. The complete #3520
+matrix plus #2138 passes **221/221** across **36 files**. Strict TypeScript,
+Prettier, scoped Biome lint, diff, and LOC checks pass. Hybrid readiness remains
+**READY** at **31 IR-emitted / 6 typed Unsupported / 0 Invariants / 37 legacy
+bodies**, and the fallback ratchet reports no unintended, post-claim, or
+module-level increase. The eight-shard equivalence gate passes with **1,608
+passing / 35 known failures / 0 new regressions**; one baseline failure now
+passes.
+
+This is still a bounded lifted-only slice. Monomorphization already creates
+exact clone IDs but its result sidecar drops the clone role and parent-local
+ordinal. More importantly, clone-local ordinals are not injective across
+different lifted parents after structural ordering collapses to the inventory
+ancestor. The next derived-unit slice must preserve full clone provenance and
+assign an explicit provenance-path (or equivalent owner-wide) ABI rank before
+monomorphized clones can leave the compatibility adapter. Provider/import/
+runtime/support callables, remaining imported globals, Wasm types and class
+layouts plus DCE remaps, exports and aliases, and the production
+`LegacyAbiAdapter` cutover remain after that.
+
+### 2026-07-26 monomorph-clone provenance continuation
+
+The next stacked continuation on `codex/3520-c6-monomorph-provenance` moves
+monomorphization clones through the same exact derived-unit Program ABI
+contract:
+
+- `monomorphize` now returns one immutable
+  `{ id, parentId, role: "monomorphization-clone", ordinal }` provenance record
+  for every clone, including clones whose parent is itself a lifted unit. The
+  legacy clone-origin sidecar remains temporarily for compatibility, and
+  integration rejects any disagreement between origins, provenance,
+  signatures, and output functions.
+- Integration composes each clone's `sourceId` and `terminalOwnerId` through
+  its exact parent record. It registers the complete derived graph
+  topologically before callable planning, so module/pass insertion order
+  cannot make a child appear to be an inventory root or erase a lifted parent.
+- `ProgramAbiStructuralOrder` assigns dense, deterministic per-root ranks from
+  complete role/ordinal provenance paths. Source bodies retain rank zero;
+  parents precede descendants; the same clone ordinal under two different
+  lifted parents cannot collide; and reverse registration/planning order
+  produces the same ABI order.
+- Ordering is sealed per inventory root rather than globally. A source that
+  has started planning rejects later descendants beneath that root, while a
+  distinct source may still register a child before its parent. Root-local
+  descendant traversal also prevents an unrelated incomplete provenance graph
+  from poisoning another source's ordering.
+
+The production integration-contract regression runs the real monomorphizer,
+then injects two contract-valid ordinal-zero clones beneath two real lifted
+closures sharing one source owner. The clones are deliberately placed before
+their parents and in reverse order; publication still recovers
+owner/lift/clone provenance order, exact binding IDs, distinct final function
+slots, exact function objects, and the distinguishing `f64` versus branded
+boolean parameter/result types. This seam is intentionally explicit:
+production source lowering currently normalizes direct-call tuples to one
+callee signature, so no natural source fixture reaches monomorphization with
+heterogeneous tuples. Pass-level tests continue to prove real clone discovery,
+call rewriting, and ordinals.
+
+The strengthened regression also exposed the next concrete R1 boundary.
+Callable intents containing capture-reference types retain their pre-DCE
+`typeIdx`, while the final located Wasm function correctly uses the compacted
+post-DCE index. Final identity, locator, and callable dispatch are correct, and
+no current consumer treats the stale signature metadata as authoritative.
+Program ABI type intentions plus DCE remap notification must nevertheless land
+before signatures or aliases can become authoritative; the regression binds
+all stable non-capture positions and documents the deferred ref-index check.
+
+The complete #3520 matrix plus #2138 passes **224/224** across **37 files**.
+Strict TypeScript, Prettier, scoped Biome lint, diff, and LOC checks pass.
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants / 37 legacy bodies**, and the fallback ratchet reports no
+unintended, post-claim, or module-level increase. The eight-shard equivalence
+gate passes with **1,608 passing / 35 known failures / 0 new regressions**; one
+baseline failure now passes, and the baseline remains unchanged.
+
+This remains a bounded R1 slice. Provider/import/runtime/support callables,
+remaining imported globals, Program ABI type intentions and DCE remaps, class
+layouts, exports and aliases, and the production `LegacyAbiAdapter` cutover
+still remain before R1 can close.
+
+### 2026-07-26 type-layout authority continuation
+
+The next stacked continuation on `codex/3520-c7-type-remap` makes the callable
+and global intentions already populated by production code authoritative
+through DCE type compaction:
+
+- callable and global planners retain immutable structured `ValType`
+  contracts beside the frozen public draft. The public canonical strings are
+  materialized only at publication, after all reported layout changes;
+- dead type elimination constructs the complete old-to-final type-index
+  vector, including explicit `null` entries for eliminated types, and reports
+  the exact before/after type arrays while the old layout is still installed;
+- `ProgramAbiSession` validates the complete layout before changing state,
+  remaps every callable/global reference and exact type cell together, and
+  rejects invalid, incomplete, ambiguous, or eliminated-reference layouts;
+- matching aliases inherit the remapped canonical contract. Aliases whose
+  original intent differs retain their own intent and continue through the
+  existing `ProgramAbiMap` mismatch checks; and
+- function/global locator replacements and final publication validate the
+  concrete allocator object against the tracked contract. A late replacement
+  can no longer make stale metadata look authoritative.
+
+The production regression compiles a real lifted closure and a contract-valid
+monomorph clone whose capture reference shifts during DCE. Both published
+signatures now exactly equal their final located Wasm function types, including
+the compacted capture index and their distinct `f64` versus branded-boolean
+parameters/results. Lower-level regressions cover callable, alias, global, and
+type-cell remapping plus transactional rejection of malformed layouts.
+
+The complete #3520 matrix plus #2138 passes **227/227** across **38 files**.
+Strict TypeScript, Prettier, scoped Biome lint, diff, LOC, function-budget,
+dead-export, and oracle-ratchet checks pass. Hybrid readiness remains **READY**
+at **31 IR-emitted / 6 typed Unsupported / 0 Invariants / 37 legacy bodies**,
+and the fallback ratchet reports no unintended, post-claim, or module-level
+increase. The eight-shard equivalence gate passes with **1,608 passing / 35
+known failures / 0 new regressions**; one baseline failure now passes, and the
+baseline remains unchanged.
+
+This closes the concrete stale capture-reference gap exposed by C6, but not all
+of R1. Provider/import/runtime/support callables, remaining imported globals,
+Program ABI type and class-shape intentions, exports and aliases, and production
+`LegacyAbiAdapter` replacement of the remaining `funcMap`, `structMap`,
+module-array, and display-name scans still remain before R1 can close.
+
+### 2026-07-26 function-value support-callable continuation
+
+The next stacked continuation on `codex/3520-c8-support-callable` moves the
+cached top-level function-value trampoline into the production Program ABI:
+
+- function-value preparation now validates and publishes the exact trampoline
+  and closure-cache allocator objects as one pair. The trampoline is a
+  unit-anchored `callable/support` entry; its existing companion cache remains
+  an exact `global/support` entry;
+- support-callable planning recomputes the opaque binding ID from the
+  authoritative unit anchor and semantic role, owns one exact required
+  `WasmFunction` locator, and registers the complete callable type contract.
+  The API deliberately supports only ordinal zero until structural ordering
+  has an explicit artifact-ordinal dimension;
+- the resolver consults a planned support binding by structural key before any
+  intrinsic, runtime, or compatibility-name fallback. Once planned, a support
+  reference cannot silently redirect through `funcMap`; and
+- the paired planning helper lives in `program-abi-planning.ts`, leaving the
+  already-large codegen driver seven lines smaller than the C7 branch.
+
+The production regression passes a deliberately nonexistent compatibility
+label through the real integration resolver and proves that it still reaches
+the exact trampoline slot. It then verifies that the published signature
+contains a reference type and exactly matches the final post-DCE function
+type. A source-name collision separately proves that a demoted owner publishes
+no nonexistent support entry. Planner regressions cover relabelling, a late
+function import, mismatched reference role and final signature, and duplicate
+allocator ownership.
+
+The complete #3520 matrix plus #2138 passes **232/232** across **39 files**.
+The related #3214 callable and imported-HOF matrix passes **60/60** across
+**3 files**.
+Strict TypeScript, Prettier, Biome lint, diff, LOC, function-budget,
+dead-export, and oracle-ratchet checks pass. Hybrid readiness remains **READY**
+at **31 IR-emitted / 6 typed Unsupported / 0 Invariants / 37 legacy bodies**,
+and the fallback ratchet reports no unintended, post-claim, or module-level
+increase. The eight-shard equivalence gate passes with **1,608 passing / 35
+known failures / 0 new regressions**; one baseline failure now passes, and the
+baseline remains unchanged.
+
+This is the first non-unit defined support callable with an authoritative
+production locator, not the end of R1. Non-externref class constructor/init
+callables are covered by C9; class-method adapters and externref/Promise-host
+helpers remain. Exact imported callable IDs and import locators, dual-mode
+runtime/intrinsic providers, remaining imported globals, Program ABI
+type/class-layout entries, exports and aliases, and the production
+`LegacyAbiAdapter` cutover still remain.
+
+### 2026-07-26 class constructor/support-callable continuation
+
+The next stacked continuation on `codex/3520-c9-class-support-callables`
+makes the non-externref WasmGC class constructor pair structurally
+authoritative in the production Program ABI:
+
+- `<Class>_new` now resolves to exactly one inventoried
+  `class-constructor` or `class-implicit-constructor` unit beneath the exact
+  `IrClassId`. The integration seam binds that unit to the allocator-owned
+  constructor slot; an omitted source constructor remains a source-unit
+  callable and never receives a fabricated support identity.
+- `<Class>_init` is now a class-owned `callable/support` entry anchored by the
+  exact `IrClassId` and semantic `class-constructor-init` role. It carries
+  class-local structural order, the exact defined-function locator, and a
+  callable contract that is checked again against the final post-DCE type.
+- Support-callable intent now requires exactly one inventoried owner: a unit
+  or a class, never both. Source callables reject class provenance;
+  import/runtime callables reject source provenance; foreign owners and wrong
+  source order fail with typed Program ABI invariants. Session draft equality
+  includes the class owner.
+- Compatibility-only integration builds and reuses the same exact planning
+  identity context for class-shape resolution. Missing or duplicate
+  constructor units, absent or mismatched allocator slots, and non-function
+  `_init` types fail closed instead of falling back through a display label.
+- A collision fixture relocates a compiler-owned `A_init` beside a user
+  function named `A_init`, proves distinct ABI IDs and final function slots,
+  verifies the published post-DCE signature against the located function, and
+  executes the IR `super(...)` path to `"Rex/4|Lab|99"`.
+
+The focused C9 matrix passes **21/21**. The complete #3520 matrix plus #2138
+passes **243/243 across 41 files**; the class/collision matrix passes
+**27/27**; and the linear/cross-backend/class matrix passes **43/43**. Strict
+TypeScript, Biome lint, Prettier, diff, LOC, function-budget, dead-export,
+oracle-ratchet, and issue-spec checks pass. Hybrid readiness remains **READY**
+at **31 IR-emitted / 6 typed Unsupported / 0 Invariants / 37 legacy bodies**,
+and the fallback ratchet reports no unintended, post-claim, or module-level
+increase. The eight-shard equivalence gate reports **1,608 passing / 35 known
+failures / 0 new regressions**; one baseline failure now passes and the
+baseline remains unchanged. No local Test262 corpus run or baseline refresh
+was performed.
+
+This is a bounded class-constructor ABI slice, not completion of class or R1
+ABI ownership. Externref-backed classes (including the JS-host Promise
+`*_new__onhost` path) have no WasmGC `_init` and remain excluded. Inherited
+ordinary instance-method adapters are covered by C10; inherited accessors,
+statics, and other synthetic helpers remain. Exact imported callables and
+import locators, dual-mode runtime/intrinsic providers, Program ABI
+type/class-layout entries, exports and remaining alias families, and production
+`LegacyAbiAdapter` replacement of the remaining `funcMap`, `structMap`,
+module-array, and display-name scans still remain before R1 can close.
+Preparation/body ownership, routing policy, and R2-R10 work are unchanged.
+
+### 2026-07-26 inherited instance-method alias continuation
+
+The next stacked continuation on `codex/3520-c10-class-method-aliases` moves
+projected local instance-method adapters into the production Program ABI:
+
+- an inherited child method is now an explicit class-owned support alias of
+  the exact ancestor source-method callable. The alias has its own structural
+  reference, provenance, deterministic inventory-derived order, and callable
+  contract, but owns no locator or independent function slot;
+- ancestor class shape, AST declaration, source unit, allocator handle,
+  `WasmFunction` object, and current Program ABI slot must all agree before the
+  alias can be planned. The legacy label is only a consistency assertion and
+  cannot select the canonical method;
+- structural resolution follows `aliasOf` through the canonical source
+  callable. A relocated child compatibility key therefore remains stable
+  across import insertion, type-layout remapping, and final DCE publication;
+  and
+- accessors, statics, externref-backed classes, unresolved projections, and
+  builds without a Program ABI session deliberately remain on the
+  compatibility seam until their member/provider identities are exact.
+
+The production regression covers an `A -> B -> C` hierarchy, a method
+overridden in `B`, a second method inherited transitively from `A`, and a user
+function that collides with `C_m`. It proves that `C.m` aliases the exact `B.m`
+source unit, `C.n` aliases the exact `A.n` source unit, neither child adapter
+allocates a function, both published post-DCE reference-bearing signatures
+match their canonical functions, the colliding user function owns a distinct
+slot, and the emitted program executes to the expected value. Planner
+regressions cover reversed discovery order, multiple derived ordinals,
+relabelling, late function imports, type remapping, structural-reference
+mismatch, and wrong owner/role/ordinal identities.
+
+The complete #3520 matrix plus #2138 passes **246/246 across 42 files**; the
+focused class/planner matrix passes **41/41**; and the
+linear/cross-backend/class matrix passes **43/43**. Strict TypeScript, Biome
+lint, Prettier, diff, LOC, function-budget, dead-export, and oracle-ratchet
+checks pass. Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed
+Unsupported / 0 Invariants / 37 legacy bodies**, and the fallback ratchet
+reports no unintended, post-claim, or module-level increase. The eight-shard
+equivalence gate reports **1,608 passing / 35 known failures / 0 new
+regressions**; one baseline failure now passes and the baseline remains
+unchanged. No local Test262 corpus run was performed.
+
+C10 completes the currently identified inherited ordinary instance-method
+projection, not the remaining class/provider surface or R1. Exact imported
+callable IDs and import locators, dual-mode runtime/intrinsic providers,
+inherited accessors, externref/Promise-host helpers, Program ABI
+type/class-layout entries, exports and remaining alias families, and the
+production `LegacyAbiAdapter` cutover still remain. R2 must then prepare the
+whole IR program before body emission; R3-R8 move function, class,
+module-initializer, multisource, runtime/async, and linear ownership to that
+program; R9 removes fallback policy; and R10 deletes the direct codegen path.
+
+### 2026-07-26 retained imported-callable continuation
+
+The next stacked continuation on `codex/3520-c11-import-callables` moves the
+module's retained function-import population into the production Program ABI:
+
+- before IR body lowering, every registered function import is validated and
+  cataloged by its exact module/field structural key and allocator `Import`
+  object. Import refs now resolve through that exact object and current import
+  position; a compatibility label cannot redirect the call through
+  `funcMap`;
+- pre-DCE cataloging deliberately creates no required ABI slots. After
+  dead-import and type elimination settles the final module, every retained
+  function import receives a deterministic entry-source-owned callable ID,
+  complete final signature contract, structural reference, and exact
+  `import-function` locator;
+- repeated module/field imports are real production allocator entries rather
+  than a theoretical error case. The most recently inserted retained object
+  owns the base structural ref used by current symbolic IR; every earlier
+  retained duplicate receives a separate allocator-occurrence key, ID,
+  signature, and final slot. This preserves existing module-index semantics
+  without consulting the compatibility map; and
+- single- and multi-module finalization invoke the same retained-import
+  planner immediately after DCE and before Program ABI publication.
+
+The production regression lowers a real `console.log(number)` import call,
+passes a deliberately false adapter label through the resolver probe, verifies
+the exact published `env.console_log_number` import object and post-DCE
+signature, and executes the emitted program. Planner regressions cover reverse
+registration order, equal fields from different modules, late import shifts,
+reference-bearing type remapping, runtime-immutable catalogs, dead
+preparation-only imports, allocator duplicates, malformed signatures, and
+missing entry provenance.
+
+The complete #3520 matrix plus #2138 passes **255/255 across 44 files**. The
+focused catalog/production/structural matrix passes **40/40**; the full #3214
+imported-HOF and host-callback matrix passes **60/60**; and the linear,
+cross-backend, and adjacent constructor matrix passes **43/43**. Strict
+TypeScript, lint, scoped Prettier, diff, LOC/function budget, dead-export,
+checker-oracle, issue-spec, and fallback gates pass.
+
+The hybrid readiness lane remains **31 IR-emitted / 6 typed Unsupported / 0
+Invariant across 37 terminal units**, with all 37 legacy bodies still emitted.
+The full equivalence gate reports **1,608 passing / 35 known failing / 0 new
+regressions** and one prior baseline failure now passing; the shared baseline
+was deliberately left unchanged. This continuation did not run a local
+Test262 shard.
+
+C11 closes retained raw function-import IDs and exact import-object locators,
+not semantic provider ownership or R1. Dual-mode runtime/intrinsic providers,
+inherited accessors, static and externref/Promise-host support helpers, Program
+ABI type/class-layout entries, exports and remaining alias families, and the
+production `LegacyAbiAdapter` cutover still remain before R2 can start.
 
 ### R1a validation evidence
 
@@ -482,8 +1732,10 @@ multi-file equivalence suite.
 
 ## Required completion evidence
 
+Expected-green Commit 2 and R1 gates:
+
 ```bash
-pnpm exec vitest run tests/issue-3520-ir-unit-identity.test.ts tests/issue-3520-program-abi.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-2138-multi-module-ir-overlay.test.ts tests/ir/inline-small.test.ts tests/ir/phase3c.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+pnpm exec vitest run tests/issue-3520-ir-unit-identity.test.ts tests/issue-3520-program-abi.test.ts tests/issue-2138-multi-module-ir-overlay.test.ts tests/ir/phase3c.test.ts tests/linear-integration.test.ts tests/issue-3161.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 pnpm run check:ir-only -- --policy=hybrid
 pnpm run check:ir-fallbacks -- --verbose
 pnpm run typecheck
@@ -492,6 +1744,19 @@ pnpm run format:check
 node scripts/equivalence-gate.mjs
 pnpm exec vitest run tests/cross-backend-diff.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 ```
+
+Known-base control matrix, run separately against both the branch and its exact
+pre-branch base:
+
+```bash
+pnpm exec vitest run tests/issue-1983-funcmap-collision.test.ts tests/ir/inline-small.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+```
+
+This control command is not expected green while the existing #1983 type-index
+and inline-small harness/expectation failures remain. Completion requires the
+exact test/failure set and diagnostics to match the pre-branch control, with no
+new failure. Do not combine it with the expected-green command or report the
+combined exit status as a green gate.
 
 The PR report must include the source/unit/class/binding denominators, a
 collision matrix, deterministic-order proof, old-vs-new telemetry diff, and

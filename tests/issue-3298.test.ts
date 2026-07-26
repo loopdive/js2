@@ -20,7 +20,9 @@ import {
 } from "../src/ir/index.js";
 import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
 import { computeClassLayout } from "../src/codegen-linear/layout.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-3298");
 const F64: IrType = irVal({ kind: "f64" });
 const LINEAR_PTR: IrType = irVal({ kind: "i32" });
 
@@ -32,7 +34,7 @@ function buildPlanningFixture() {
       { name: "value", type: F64 },
     ],
   };
-  const builder = new IrFunctionBuilder("planned", [F64], false, registry);
+  const builder = new IrFunctionBuilder(identities.next("planned"), [F64], false, registry);
   const n = builder.addParam("n", F64);
   builder.openBlock();
   const hello = builder.emitStringConst("hé");

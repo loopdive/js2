@@ -14,6 +14,7 @@ goal: maintainability
 related: [3431, 3433, 3450, 3461, 3462, 3470]
 created: 2026-07-25
 completed: 2026-07-25
+updated: 2026-07-26
 ---
 
 # Merge the two test262 lanes' compilation — MEASURED, recommend closing
@@ -54,6 +55,36 @@ The lever that _is_ real sits elsewhere and is already scoped: the assembled
 **harness prefix is ~72 % of host-lane compile cost** (independently reproduced
 here; matches #3433's "75–97 % of every compile"). That is #3450 / #3461 / #3462,
 parked on a stakeholder decision — roughly **5× larger** than the best case here.
+
+## 2026-07-26 follow-up: persistent language service
+
+#700 / PR #3650 changes one implementation fact below: the incremental compiler
+can now retain a versioned TypeScript Language Service, `Program`, checker, lib
+snapshots, and document registry across compilations. Identical input no longer
+requires intentionally rebuilding a fresh `Program` and checker on every call.
+
+That improvement does **not** change this issue's verdict:
+
+- host and standalone still hand different processed source to TypeScript in
+  87/90 measured files because the standalone-only pre-parse transforms remain;
+- the measured parse/program/bind share is still 1.94%, so sharing only the
+  unchanged front-end work has a ≤0.91% both-lane ceiling;
+- target-sensitive checker queries remain nested in generation, and IR/runtime
+  lowering is not target-neutral;
+- the CI target lanes still run concurrently and must keep independent failure
+  domains.
+
+The exact maintained shard-1/57 A/B performed for #700 also found that retaining
+the service past the old 100-test reset did not move aggregate compile time:
+summed `compile_ms` was 682,101 ms with the reset and 681,904 ms without it
+(0.03% lower, effectively identical). Wall time was noisy (reset-free mean 1.1%
+faster, with the paired ordering reversing), while all 836
+`file + strict + status` tuples were identical.
+
+The active follow-up is #3451: key and compile the repeated literal harness
+prefix separately, then link body-only objects after the linker can preserve the
+shared Test262 realm. Its 2026-07-26 corpus inventory found 64 strict-neutral
+harness sources, versus 82,628 potential harness-bearing variants per lane.
 
 ## Measurement
 
@@ -132,14 +163,14 @@ re-introduces the host-import registrations #3418 exists to remove — and
 standalone is a required gate with its own floor guard, #1897/#2097). Both are
 oracle-affecting changes far out of proportion to a ≤13 % compile saving.
 
-Even setting that aside, the 13.2 % ceiling additionally assumes a `ts.Program` /
-`ts.TypeChecker` shared across two lowerings. `IncrementalLanguageService.analyze`
-deliberately builds a **fresh Program and checker every call** (#973): structure
-reuse "carries forward internal symbol tables and type caches that leak stale type
-info between unrelated test compilations, causing ~400 false compile errors in the
-fork worker pool". Sharing a checker across two lowerings of the _same_ source is
-less dangerous than that, but it is the same mechanism that already produced a
-400-test false-failure incident.
+At measurement time, the 13.2% ceiling additionally assumed a `ts.Program` /
+`ts.TypeChecker` shared across two lowerings while
+`IncrementalLanguageService.analyze` built a fresh Program and checker every
+call (#973). #700 / PR #3650 has since replaced that behavior with versioned,
+persistent language-service state. As documented in the follow-up above, this
+removes the stale implementation objection but not the source-identity blocker:
+the two target snapshots still differ before TypeScript sees them, so one
+checked tree cannot represent both lanes.
 
 ### The blocker for design 3: the lanes already run concurrently
 

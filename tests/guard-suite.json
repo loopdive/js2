@@ -64,6 +64,11 @@
       "broken_by": "the $__vec_base common-supertype WasmGC refactor silently defeated #2047's leaf-exclusion — collectStandaloneArrayCarrierTypeIdxs matched the abstract $__vec_base via its __vec_* name prefix, so ref.test against it subsumed the byte-vec subtypes → Array.isArray(ArrayBuffer/Uint8Array)===true (regression >2026-07-04, another weeks-old invisible one outside required checks #3008); found+fixed by #3562"
     },
     {
+      "path": "tests/issue-1539-standalone-regex-replace.test.ts",
+      "guards": "standalone/WASI RegExp function replacers fail cleanly at compile time instead of losing their #1539 refusal to speculative rollback; supported standalone string-replacement and $-substitution behavior remains correct, and the default host target still accepts function replacers",
+      "broken_by": "#1919 transactional expression rollback treated the RegExp lowering's null refusal result as a speculative miss, erased its fatal diagnostic, and silently emitted a broken fallback binary; found by the #3565 bounded guard audit and fixed by #3567"
+    },
+    {
       "path": "tests/issue-3565.test.ts",
       "guards": "four DESIGNED demote-to-legacy sites compile (fall back to legacy) instead of hard-erroring — TypedArray element STORE (lowerElementStore), slice-12 element ACCESS on an extern receiver (lowerElementAccess), the verify.ts #1798 return-value gate, and compound-assign with a non-f64 RHS (the issue-2079 generator for-of `s += v` shape, runs =3) — AND a GENERIC invariant (block-id/type desync, injected build throw) STILL hard-fails (no masking of real invalid-Wasm)",
       "broken_by": "#3341/#3519 (PR #3249, 2026-07-17) made outcome.kind==='invariant' a hard compile error, silently promoting these 4 documented 'clean throw → legacy' demotes; #680 exempted only the generator+method-call cases, leaving these 4 hard for ~7 days (invisible outside required checks, #3008); found+fixed by #3565"

@@ -6,14 +6,12 @@
 //   1. The allowlist predicate accepts pure-numeric bodies and rejects anything
 //      outside the subset (strings, method calls, param mutation, TypedArray
 //      stores/construction, `??`, etc. — all stay COMPILE-TWICE, safe).
-//   2. `collectLocalCallEdges` maps callers→callees for the signature-parity
-//      fixpoint.
-//   3. End-to-end: programs with out-of-subset shapes (TypedArray stores, Map +
+//   2. End-to-end: programs with out-of-subset shapes (TypedArray stores, Map +
 //      boxing) compile with ZERO hard errors under the IR-first default and run
 //      correctly (parity with the escape-hatch legacy order).
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { collectLocalCallEdges, irFirstBodyIsProvenLowerable } from "../src/codegen/ir-first-gate.js";
+import { irFirstBodyIsProvenLowerable } from "../src/codegen/ir-first-gate.js";
 import { compile, type CompileResult } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
@@ -86,21 +84,6 @@ describe("#3143 — irFirstBodyIsProvenLowerable (ALLOWLIST) predicate", () => {
     ["try/throw statement", `function f(n: number): number { try { return n; } catch { return 0; } }`],
   ])("rejects (compile-twice): %s", (_label, src) => {
     expect(irFirstBodyIsProvenLowerable(fnDecl(src), ARITY)).toBe(false);
-  });
-});
-
-describe("#3143 — collectLocalCallEdges", () => {
-  it("maps each top-level function's callees, and module-init calls to the pseudo-node", () => {
-    const sf = ts.createSourceFile(
-      "t.ts",
-      `function a(){ return b() + c(); } function b(){ return 1; } function c(){ return b(); } a();`,
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    const edges = collectLocalCallEdges(sf);
-    expect([...(edges.get("a") ?? [])].sort()).toEqual(["b", "c"]);
-    expect([...(edges.get("c") ?? [])]).toEqual(["b"]);
-    expect([...(edges.get("<module-init>") ?? [])]).toEqual(["a"]);
   });
 });
 

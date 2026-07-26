@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // ---------------------------------------------------------------------------
-// The IR interchange contract — v1.0 surface (#3030-T1).
+// The IR interchange contract — v5.0 surface (#3030-T1/#3520).
 //
 // NORMATIVE artifacts (this module is their code-side anchor):
 //   - docs/ir/ir-contract.md          the contract: D1–D5, guarantees,
@@ -17,6 +17,8 @@
 // yet; it is the frozen surface those slices implement against.
 // ---------------------------------------------------------------------------
 
+import type { IrUnitId } from "./identity.js";
+
 /**
  * The IR interchange format version (#3030 D2).
  *
@@ -30,10 +32,10 @@
  * - The (T5) CI schema snapshot fails any PR that changes the serialized
  *   shape without bumping this constant.
  */
-export const IR_FORMAT_VERSION = "1.0";
+export const IR_FORMAT_VERSION = "5.0";
 
 /**
- * Which pipeline compiled a function's body (#3030 D3.7 — the honest
+ * Which pipeline compiled a function's body (#3030 D3.7 — the complete
  * coverage manifest). `"ir"` bodies are serialized under the full contract
  * guarantees; `"legacy"` bodies are compiled by the direct AST→Wasm path
  * (or contain a `raw.wasm` bridge, which embeds backend ops that D4 forbids
@@ -45,7 +47,8 @@ export type IrCarrier = "ir" | "legacy";
 
 /** One function's row in the module coverage manifest (#3030 D3.7). */
 export interface IrCoverageEntry {
-  /** Function name — unique within the module's function namespace. */
+  readonly unitId: IrUnitId;
+  /** Compatibility/debug label; structural references never use it as identity. */
   readonly name: string;
   readonly carrier: IrCarrier;
   readonly exported: boolean;

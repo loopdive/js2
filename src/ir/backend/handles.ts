@@ -22,6 +22,7 @@
 
 import type { Instr, ValType } from "../types.js";
 import type { JsTag } from "../js-tag.js";
+import type { IrFuncRef } from "../nodes.js";
 import type {
   LinearAllocationSitePlan,
   LinearRecordLayoutPlan,
@@ -186,28 +187,30 @@ export interface IrVecLowering {
  *                             (the legacy `__tag` prefix at field 0 is
  *                             accounted for here so the IR doesn't need to
  *                             reason about it).
- *   - `constructorFuncName`  legacy-registered name of the constructor
- *                             function (`<className>_new`); the resolver's
- *                             `resolveFunc` maps it to the funcIdx.
- *   - `methodFuncName(name)` legacy-registered name of an instance method
- *                             (`<className>_<methodName>`); the resolver's
- *                             `resolveFunc` maps it to the funcIdx.
+ *   - `constructorFunc`      binding-aware reference to the constructor
+ *                             function (`<className>_new` is only its
+ *                             compatibility label); the resolver maps the
+ *                             binding to the funcIdx.
+ *   - `methodFunc(name)`     binding-aware reference to an instance method;
+ *                             the compatibility label is commonly
+ *                             `<className>_<methodName>`.
  */
 export interface IrClassLowering {
   readonly structTypeIdx: number;
   fieldIdx(name: string): number;
-  readonly constructorFuncName: string;
-  methodFuncName(name: string): string;
+  readonly constructorFunc: IrFuncRef;
+  methodFunc(name: string): IrFuncRef;
   /**
-   * #3000-E: legacy-registered name of the constructor-init function
-   * (`<className>_init`) — signature `(...ctorParams, self) -> (ref $struct)`,
+   * #3000-E: binding-aware reference to the constructor-init function
+   * (`<className>_init` is its usual compatibility label) — signature
+   * `(...ctorParams, self) -> (ref $struct)`,
    * carrying field inits + the ctor body, operating on a caller-allocated
    * instance. A derived `super(...)` lowers to `call <parent>_init(args..., self)`.
-   * The resolver's `resolveFunc` maps it to the funcIdx. Present for every
+   * The resolver maps the typed reference to the funcIdx. Present for every
    * WasmGC-struct (non-externref-backed) class, which is exactly the set that
    * can appear as an IR-claimable subclass parent.
    */
-  readonly initFuncName: string;
+  readonly initFunc: IrFuncRef;
   /**
    * (#3144) The "instanceof-compatible" tag set for THIS class: its own
    * `__tag` discrimination constant plus every transitive descendant's —

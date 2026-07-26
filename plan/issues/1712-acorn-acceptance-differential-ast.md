@@ -1,12 +1,51 @@
 ---
 id: 1712
 title: "acceptance: compiled acorn parses a representative .js with AST structurally equal to node-acorn"
-status: in-progress
-assignee: ttraenkler/sendev-acorn
+status: done
+assignee: ttraenkler/codex-acorn
 created: 2026-05-29
-updated: 2026-07-23
+updated: 2026-07-26
+completed: 2026-07-26
 loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/property-access.ts
+  - src/codegen/declarations.ts
+  - src/codegen/index.ts
+  - src/codegen/type-coercion.ts
+  - src/codegen/expressions/assignment.ts
+  - src/ir/select.ts
+  - src/runtime.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/context/types.ts
+  - src/ir/integration.ts
   - src/codegen/property-access-dispatch.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
+  - src/runtime.ts::<anonymous>#77
+  - src/codegen/type-coercion.ts::coerceType
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/index.ts::generateModule
+  - src/ir/select.ts::isPhase1Expr
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
+  - src/codegen/index.ts::resolveWasmType
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/runtime.ts::resolveImport
+oracle-ratchet-allow:
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/fnctor-escape-gate.ts
+  - src/codegen/regexp-standalone.ts
+coercion-sites-allow:
+  - src/codegen/regexp-standalone.ts
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -18,8 +57,8 @@ sprint: current
 model: fable
 depends_on: [1710, 1711]
 es_edition: multi
-related: [1690, 1690b, 1584, 1058]
-pr: 1293
+related: [1690, 1690b, 1584, 1058, 2928, 3098, 3308, 3651]
+pr: 3646
 ---
 
 # #1712 — Acceptance milestone: compiled acorn parses a representative .js with a structurally-equal AST
@@ -168,13 +207,14 @@ index +1, but the detached then-buffer's `global.get`s stay stale. In acorn,
 on the neighbouring globals (one a `(ref null $array)`) → invalid Wasm.
 
 **Fix** (2 sites):
+
 1. `compileIfStatement` parks `thenInstrs` in `fctx.savedBodies` for the
    else-compilation window (savedBodies is walked by every late-import
    shifter), unparked LIFO before assembling the `if` instr.
 2. `fixupModuleGlobalIndices` (`src/codegen/registry/imports.ts`) now also
    walks `ctx.liveBodies` — parity with `addStringImports`/`addUnionImports`
    (#1384); the #779d destructuring branch buffers register there expecting
-   "every shift path" to walk them, but the *global*-index fixup never did.
+   "every shift path" to walk them, but the _global_-index fixup never did.
 
 Regression pin: `tests/issue-1712-ifelse-global-shift.test.ts` (verified red
 on unfixed tree by reverse-applying the fix, green with it).
@@ -204,6 +244,7 @@ pp$N.method = fn` aliasing is satisfied by the vivified object's identity.
 ### Blocker 2 progress — fnctor prototype bridge (WIP, branch issue-1712-proto-bridge)
 
 Implemented (this branch, stacked on issue-1712-acorn-acceptance / PR #1301):
+
 1. `__extern_get(closure, "prototype")` auto-vivifies an identity-stable JS
    object in the closure's sidecar (`_getOrVivifyFnPrototype`, runtime.ts) —
    wired in BOTH resolution regimes (intent `case "extern_get"` AND the
@@ -217,7 +258,7 @@ Implemented (this branch, stacked on issue-1712-acorn-acceptance / PR #1301):
    time, fixing the start-window wrap no-op. Arity-5 method export added.
 4. **`withImportObject` (#1667) now exposes `__setExports`** — previously the
    convenience importObject path NEVER wired exports, permanently disabling
-   closure wrapping/__sget_ on it. Harness updated to call it.
+   closure wrapping/\__sget_ on it. Harness updated to call it.
 5. Start-window `Object.defineProperties(proto, structDescs)` defers to a
    `pendingExportsDeferred` queue drained by `setExports`.
 
@@ -227,8 +268,9 @@ Implemented (this branch, stacked on issue-1712-acorn-acceptance / PR #1301):
 first time.
 
 Open items for the next session:
+
 - Probe C (`Object.defineProperties` accessors at module scope) still loses
-  the accessor: the executing __defineProperties handler did NOT take the
+  the accessor: the executing \_\_defineProperties handler did NOT take the
   deferral branch (dbg3 showed it running eagerly with zero keys). Verify
   which handler instance executes for intent vs name, and that callbackState
   there carries `deferToExports`.
@@ -251,9 +293,9 @@ Open items for the next session:
      delegating the legacy `emitClosureCallExport`/`...Export1` to the
      generic `emitClosureCallExportN` (arity ≤ N coverage + #820l argc
      plumbing + #1896 arg coercion for free).
-  Regression pin: `tests/issue-1712-capture-closure-dispatch.test.ts`.
-  The harness now also routes through `wrapExports` (#1504) so returned
-  node graphs marshal to plain JS for diffing (raw exports are opaque).
+     Regression pin: `tests/issue-1712-capture-closure-dispatch.test.ts`.
+     The harness now also routes through `wrapExports` (#1504) so returned
+     node graphs marshal to plain JS for diffing (raw exports are opaque).
 - NEW first triage target after the dispatch fix: all 5 fixtures moved
   null→**trap "dereferencing a null pointer"** inside compiled `parse`
   execution. ROOT-CAUSED (not yet fixed): **fnctor instances have TWO
@@ -306,7 +348,7 @@ fixed FOUR stacked root causes (regression pin:
 2. **Non-closure-shaped callee trapped** (`src/codegen/expressions/calls.ts`,
    `__callable_param_` dispatch ~8447): externref callee guard-cast against
    ONE wrapper-struct shape; non-null mismatch (acorn's `var hasOwn =
-   Object.hasOwn || fn` → host builtin in a JS var) fell into `struct.get`
+Object.hasOwn || fn` → host builtin in a JS var) fell into `struct.get`
    of null → "dereferencing a null pointer" inside `getOptions`. Fix: a
    host-callable fallback arm — `if (cast-null && raw-non-null)` route
    through `__call_function(callee, undefined, argsArray)` (JS-host only,
@@ -350,9 +392,9 @@ Fixes the `push is not a function` blocker (acorn `enterScope`:
 1. **No host-side vec mutation**: new Wasm-side exports in
    `_emitVecAccessExportsInner` (`src/codegen/index.ts`): `__is_vec`,
    `__vec_mut_supported`, `__vec_push`, `__vec_pop` — per-vec-type ref.test
-   dispatch, grow = compileArrayPush discipline (newCap = max((len+1)*2,4),
+   dispatch, grow = compileArrayPush discipline (newCap = max((len+1)\*2,4),
    array.new_default + array.copy + struct.set). Elem coverage: externref
-   always; f64/i32 when __box_number/__unbox_number imported; others return
+   always; f64/i32 when **box_number/**unbox_number imported; others return
    the -1/0 sentinel (runtime falls through to its fail-loud TypeError).
 2. **closureBridge wrapped DATA fields**: `_wrapForHost`'s get trap bridged
    ANY struct field into a callable (`closureBridge`, #1090) — acorn's
@@ -388,19 +430,19 @@ attempt called for, but resolved to EXTERNREF instead of the ctor struct):
 1. `resolveWasmType` (src/codegen/index.ts, before the named-struct arm):
    fnctor instance types resolve to EXTERNREF — the checker shape is never
    synthesized. Gated to instance shapes only (`getCallSignatures().length
-   === 0` keeps the function VALUE on its closure-wrapper resolution),
+=== 0` keeps the function VALUE on its closure-wrapper resolution),
    JS-host only. This makes fnctor instances flow dynamically end-to-end.
 2. `compileCallablePropertyCall` (calls-closures.ts): when the receiver is
    an fnctor instance, route the member call through
    `emitWrapperDynamicMethodCall` (host bridge) instead of the
    checker-shape field-read path (which trapped struct.get-on-null).
 3. `emitWrapperDynamicMethodCall` (calls.ts, exported now): grew args
-   support (__js_array_push packing, JS-host).
+   support (\_\_js_array_push packing, JS-host).
 4. Runtime `_wrapForHost.safeGetField`: a nullish `__sget_<name>` result is
    a MISS, not a hit — the per-shape dispatcher returns undefined for
    shapes that don't carry the field, which short-circuited the vivified-
    prototype fallback (every prototype method was unreachable whenever the
-   checker shape had synthesized a same-named __sget export).
+   checker shape had synthesized a same-named \_\_sget export).
 
 Verified: `.tmp/dbg16/25/26` (E4/M-series) green, G/H probes unchanged,
 tests/issue-1712-dynamic-dispatch.test.ts extended (8 green), targeted
@@ -461,7 +503,7 @@ called `_safeSet(obj, key, val, /*exports*/ undefined, callbackState, …)` —
 i.e. it passed `callbackState`, NOT the `exports` param. But `_safeSet`'s
 `__sset_<key>` struct-field writeback was gated on the `exports` PARAM only,
 so the writeback was SKIPPED and the value landed in the SIDECAR ONLY. A
-later *static* `struct.get` read — the compiled member-access path takes the
+later _static_ `struct.get` read — the compiled member-access path takes the
 guarded-cast struct branch whenever the receiver ref-tests as the struct type
 (every fnctor-instance method body reading `this.field`) — bypasses the
 sidecar and reads the raw WasmGC field, which still held its **initializer**
@@ -608,3 +650,169 @@ equal±quirks, 0 throws, 0 real gaps.
 
 `loc-budget-allow` note: +35 lines on property-access-dispatch.ts are the
 narrowed guard + the mechanism documentation comment.
+
+## Acceptance refresh 2026-07-26 — host ASTs correct; standalone artifact and bare-arrow follow-up
+
+The Acorn-owned branch now establishes two distinct parser contracts:
+
+1. **JS-host differential AST:** `tests/dogfood/acorn-corpus.mjs` reports
+   **23/23 exact structurally equal results**, including Acorn self-parse, with
+   **0 normalization quirks, 0 compiled throws, and 0 real divergences**.
+   `tests/issue-1712.test.ts` is active and asserts exact equality on
+   its 22-input CI corpus.
+2. **Host-free in-module parser:** `tests/dogfood/acorn-standalone-compile.mjs`
+   compiles Acorn plus a scalar AST consumer as one `target: "standalone"`
+   module, validates a **zero-import** artifact, calls
+   `parse(nativeString, { ecmaVersion: 2025, sourceType: "script" })`, and reads
+   `Program → ExpressionStatement → BinaryExpression` inside Wasm. This keeps
+   the parser/AST carrier native for #2928; it does not claim host marshalling
+   of the standalone AST.
+
+The refreshed host-free artifact is **1,704,853 bytes**, has **zero function
+imports**, and also executes scalar canaries for the other public parser
+entries:
+
+- `parseExpressionAt("xx 1 + 2 yy", 3, options)` returns the expected
+  `BinaryExpression` at `[3, 8]`;
+- `tokenizer("42", options)` returns the expected numeric token followed by
+  EOF.
+
+The preserved parser seam is:
+
+```text
+parse(nativeString, optionsObject) -> ESTree AST object
+```
+
+No new callable, rec-group, or export ABI was introduced. The implementation
+reuses the existing fnctor constructor and closure-call machinery, including
+the #3098 `new this(options, input)` argument-preserving path. This is compatible
+with the interpreter seam `emitProgram(ast) -> FuncMeta` followed by
+`interpEnter(...)`; E6 packaging and ordered-initializer ABI remain explicitly
+unfrozen.
+
+### Bare-arrow regression found during refresh
+
+Expanding the in-Wasm single-construct probe exposed a branch-only regression:
+all six bare-arrow forms threw at `=>`, reducing parity to **14/20**, while the
+13 larger scale fixtures remained green. Exact A/B showed the failure already
+present at Acorn publication commit `f80654c4455664ce1bd7b95bbe871f8e5fd5026c`,
+not introduced by the latest upstream merge.
+
+Follow-up **#3651** identifies the root cause: fnctor-shape analysis treated
+Acorn Parser fields assigned in both arms of a complete `if/else` as optional.
+The implemented definite-assignment reconciliation restores **20/20**
+single-construct parity and keeps the scale gate **13/13**. The #1712 branch
+is complete after the refreshed full corpus, standalone artifact, typecheck,
+and regression gates passed on the final upstream merge.
+
+## PR #3646 test results (2026-07-26)
+
+- Exact Acorn differential AST and zero-import standalone acceptance: **pass**.
+- Focused dynamic-dispatch/boolean-brand, RegExp/String, and object-runtime
+  reconciliation suites: **46 tests pass**.
+- Native Messaging real-Wasmtime scale matrix: **4 variants × 4 sizes pass**
+  at 1/64/128/256 MiB.
+- Typecheck, lint, format, IR fallback/IR-only, oracle, coercion, LOC/function,
+  adoption, dead-export, pushRaw, and guard-suite gates: **pass**.
+- Deterministic harness compile work: **121,637 → 111,490** calls after
+  consolidating the three new boolean-brand source scans; ceiling **112,803**
+  (current-main control **105,924**). No budget baseline was changed.
+
+## Standalone Function-body regression fixed 2026-07-26
+
+The interpreter integration widened the host-free acceptance input from
+`1 + 2` to the production `new Function` shape:
+
+```js
+parse("function f(a,b) { return a + b; }", {
+  ecmaVersion: 2025,
+  sourceType: "script",
+});
+```
+
+The published branch compiled and instantiated this parser with zero imports,
+but the call trapped through Acorn's `allowReturn → inFunction →
+currentVarScope` path. Two independent standalone defects caused the trap:
+
+1. Acorn installs the `inFunction` getter before assigning
+   `Parser.prototype.currentVarScope`. The getter therefore had no direct
+   method target when it was compiled. Pinned fnctor receivers now use the
+   existing closed-method dispatcher for this late prototype-method case; its
+   target is finalized after all prototype writes.
+2. `Object.defineProperties(Parser.prototype, prototypeAccessors)` installs 11
+   getters. Growing the open-object property table reinserted only each
+   entry's key, value, flags, and sequence number, silently dropping its
+   getter/setter callback slots. Rehashing now preserves both accessor halves.
+
+The focused standalone regressions separate the late-method case from the
+11-accessor table-growth case. The real pinned Acorn 8.16.0 artifact now:
+
+- compiles on the synced upstream base in **25,970 ms** to **1,711,629
+  bytes**;
+- validates and instantiates with **zero imports**;
+- passes `parse`, `parseExpressionAt`, and `tokenizer` scalar canaries; and
+- returns the expected `Program → FunctionDeclaration → ReturnStatement →
+BinaryExpression` shape for the exact production input above.
+
+The exported parser seam remains
+`parse(nativeString, optionsObject) → ESTree AST object`. No callable carrier,
+rec-group, runtime-eval envelope, or interpreter export changed.
+
+### Change-set budget accounting
+
+PR #3646 carries the complete Acorn acceptance stack rather than only this
+last regression fix. Its merge-base therefore includes the earlier native
+RegExp, fnctor reconstruction, field-presence, AST marshalling, and dynamic
+dispatch slices listed in this issue's history. The `loc-budget-allow` and
+`func-budget-allow` entries above enumerate that already-reviewed integration
+surface so the change-scoped quality gates assess the PR intentionally. This
+does not raise the repository baselines; post-merge ratchets still bank the
+new sizes.
+
+## Full Test262 parser differential 2026-07-26
+
+The acceptance surface now includes every Git-tracked Test262 JavaScript parser
+input, using pinned acorn 8.16.0 on both sides and comparing exact ESTree,
+including positions and Test262 script/module/strict variants. The completed
+pre-fix four-shard census covered **53,259 files / 102,312 variants** and reduced
+the remaining mismatches to two files / four variants after first closing the
+lexical early-error and arbitrary-width BigInt families.
+
+The lexical family covered **36 files / 72 variants** across invalid
+template/string escapes, truncated radix numerics, and dangling named RegExp
+backreferences. Two substrate defects explained it: nullable primitive function
+results erased Acorn's `readInt`/`readHexChar` null sentinel, while nested vec
+`push` mutated a materialized host Array mirror rather than Acorn's live
+`backReferenceNames` vector. The complete recorded 223-file replay eliminated
+every `compiled-accepted-oracle-rejected` residual from that family.
+
+The final two residuals were:
+
+- A generator-context vec mutation left `yield/regexp/` in the division lexical
+  goal because the host proxy write did not update the live Wasm vector.
+- One depth-32 nested-function program overflowed the alternating
+  Wasm→host→Wasm prototype-method bridge.
+
+Both residual files now replay exact (**2/2 files, 4/4 variants**). The required
+23-input corpus is **23/23 exact**, and the standalone parser remains a
+zero-import artifact with all four scalar canaries green. The clean integrated
+compiler revision `9768f821f79999845750bc80a929de607d728441` completes the
+full four-shard differential at **53,259/53,259 exact files** and
+**102,312/102,312 exact variants**: 92,649 variants produced structurally
+identical ESTree ASTs, 9,663 were rejected by both parsers, and zero files or
+variants mismatched. The run used pinned Acorn 8.16.0 and Test262 revision
+`63829c6d925e24a3f5f307b08754aaa1c412c6a6`. After the final upstream
+slot-widening merge, code revision
+`2cccb33288957f` emits the byte-identical 681,946-byte host artifact
+(`sha256:765c5cc3570ab3b5fb62942701e0969dbaeafdd49fe5a6e863c2410a9c523ee6`);
+the exhaustive result therefore transfers exactly, and the zero-import
+standalone canaries remain green.
+
+The vec mutation is now routed through the module's canonical mutation export.
+The recursive method path first resolves the live prototype property, returns
+from the host lookup, and only then invokes the compiled closure through a
+private Wasm driver. Under-applied calls receive the host's real `undefined`
+carrier while retaining the original `arguments.length`; genuine host
+overrides and calls wider than the supported fixed arities retain the generic
+host fallback. These are internal lowering/runtime repairs and do not change
+the public Acorn or interpreter ABI.

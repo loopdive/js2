@@ -52,6 +52,47 @@ export interface NativeHarnessAssembly {
   raw: boolean;
 }
 
+/**
+ * One literal source file contributing to the Test262 harness prefix. Keeping
+ * the ordered parts visible lets the linked-harness inventory derive stable
+ * content keys and attribute duplicate declarations without reimplementing the
+ * authoritative assembly order.
+ */
+export interface HarnessSourcePart {
+  name: string;
+  source: string;
+}
+
+/**
+ * (#3451) One body-only compilation unit for the future static-link path.
+ * `bodySource` deliberately contains no host binding shim: unresolved harness
+ * names must eventually become linker symbols, not `globalThis` host accesses.
+ */
+export interface LinkedHarnessVariant {
+  /** Strict directive (when needed) followed by the untouched test body. */
+  bodySource: string;
+  /** Untouched upstream test body. */
+  body: string;
+  /** Lines prepended to `body` inside `bodySource`. */
+  bodyLineOffset: number;
+  strict: boolean;
+}
+
+/**
+ * (#3451) Deterministic split used by the inventory and, after the linker grows
+ * the required shared-realm substrate, by the linked Test262 runner.
+ */
+export interface LinkedHarnessAssembly {
+  /** Strict-neutral, de-duplicated literal harness source compiled once. */
+  harnessPrefix: string;
+  /** Ordered, pre-dedupe inputs used to build `harnessPrefix`. */
+  harnessParts: HarnessSourcePart[];
+  primary: LinkedHarnessVariant;
+  strictRerun?: LinkedHarnessVariant;
+  async: boolean;
+  raw: boolean;
+}
+
 const PROJECT_ROOT = join(import.meta.dirname ?? ".", "..");
 const HARNESS_ROOT = join(PROJECT_ROOT, "test262", "harness");
 const RUNTIME_PATH = join(PROJECT_ROOT, "scripts", "test262-fyi-runtime.js");
@@ -126,14 +167,22 @@ function dedupeTopLevelFunctionDeclarations(prefix: string): string {
  * byte-identical to deduping includes alone since the directive line contains no
  * function declaration).
  */
+export function harnessSourceParts(meta: HarnessMeta, async: boolean): HarnessSourcePart[] {
+  const parts: HarnessSourcePart[] = [];
+  if (async) parts.push({ name: "doneprintHandle.js", source: harnessSource("doneprintHandle.js") });
+  for (const include of meta.includes ?? []) {
+    parts.push({ name: include, source: harnessSource(include) });
+  }
+  parts.push({ name: "__js2wasm_test262_runtime__.js", source: cachedSource(RUNTIME_PATH) });
+  parts.push({ name: "assert.js", source: harnessSource("assert.js") });
+  parts.push({ name: "sta.js", source: harnessSource("sta.js") });
+  return parts;
+}
+
 function assemblePrefixIncludes(meta: HarnessMeta, async: boolean): string {
-  let prefix = "";
-  if (async) prefix += harnessSource("doneprintHandle.js");
-  for (const include of meta.includes ?? []) prefix += harnessSource(include);
-  prefix += cachedSource(RUNTIME_PATH);
-  prefix += harnessSource("assert.js");
-  prefix += harnessSource("sta.js");
-  return prefix;
+  return harnessSourceParts(meta, async)
+    .map((part) => part.source)
+    .join("");
 }
 
 function assembleVariant(
@@ -310,6 +359,43 @@ export function assembleNativeHarness(source: string, meta: HarnessMeta): Native
   return {
     primary: assembleNativeVariant(source, meta, onlyStrict, raw, async),
     ...(strictRerun ? { strictRerun: assembleNativeVariant(source, meta, true, raw, async) } : {}),
+    async,
+    raw,
+  };
+}
+
+function assembleLinkedVariant(source: string, strict: boolean): LinkedHarnessVariant {
+  const directive = strict ? '"use strict";\n' : "";
+  return {
+    bodySource: directive + source,
+    body: source,
+    bodyLineOffset: lineCount(directive),
+    strict,
+  };
+}
+
+/**
+ * (#3451) Split the authoritative Test262 assembly at the future static-link
+ * boundary while preserving its variant rules exactly.
+ *
+ * The harness object is strict-neutral: strictness belongs to the beginning of
+ * the body compilation unit, so primary and strict-rerun variants reuse the
+ * same immutable harness object. Raw tests have no harness and bypass linking.
+ */
+export function assembleLinkedHarness(source: string, meta: HarnessMeta): LinkedHarnessAssembly {
+  const flags = new Set(meta.flags ?? []);
+  const raw = flags.has("raw");
+  const async = flags.has("async");
+  const onlyStrict = flags.has("onlyStrict");
+  const strictRerun = !raw && !flags.has("module") && !onlyStrict && !flags.has("noStrict");
+  const harnessParts = raw ? [] : harnessSourceParts(meta, async);
+  const harnessPrefix = raw ? "" : dedupeTopLevelFunctionDeclarations(harnessParts.map((part) => part.source).join(""));
+
+  return {
+    harnessPrefix,
+    harnessParts,
+    primary: assembleLinkedVariant(source, onlyStrict),
+    ...(strictRerun ? { strictRerun: assembleLinkedVariant(source, true) } : {}),
     async,
     raw,
   };

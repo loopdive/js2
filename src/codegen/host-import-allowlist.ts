@@ -37,6 +37,9 @@
 /** Modules other than `env` whose imports are not JS-host bindings and are always allowed. */
 export const ALWAYS_ALLOWED_IMPORT_MODULES: ReadonlySet<string> = new Set([
   "wasi_snapshot_preview1",
+  // #2928 / #2527 — core-Wasm runtime-eval provider linked in the same store.
+  // This namespace is satisfied by another Wasm instance, not a JavaScript host.
+  "js2wasm:runtime-eval",
   // #2631 / #2633 — `node:fs` fd-based readSync/writeSync. The module declares
   // WHAT host API it needs (`node:fs`), not HOW it's satisfied: the import is
   // bound at LINK time by our `node-fs.wat` shim (over WASI fd_read/fd_write), a

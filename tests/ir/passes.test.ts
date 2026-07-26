@@ -21,6 +21,9 @@ import { asBlockId, asValueId, irVal, verifyIrFunction, type IrFunction, type Ir
 import { constantFold } from "../../src/ir/passes/constant-fold.js";
 import { deadCode } from "../../src/ir/passes/dead-code.js";
 import { simplifyCFG } from "../../src/ir/passes/simplify-cfg.js";
+import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("ir/passes");
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -40,7 +43,7 @@ const BOOL = irVal({ kind: "i32" });
 describe("#1167a — constantFold (instruction folding)", () => {
   it("folds binary add(const 1, const 2) → const 3", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -74,7 +77,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 
   it("folds binary lt(const 3, const 5) → const true", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [BOOL],
       blocks: [
@@ -103,7 +106,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 
   it("folds unary f64.neg(const 5) → const -5", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -131,7 +134,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 
   it("propagates a fold chain in a single pass (1+2 then +3 → 6)", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -162,7 +165,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 
   it("returns same reference when nothing is foldable", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [{ value: id(0), type: F64, name: "n" }],
       resultTypes: [F64],
       blocks: [
@@ -184,7 +187,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
   it("does not fold raw.wasm (opaque side effects)", () => {
     // raw.wasm is the escape hatch; CF must never rewrite it.
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -220,7 +223,7 @@ describe("#1167a — constantFold (instruction folding)", () => {
 describe("#1167a — constantFold (terminator folding)", () => {
   it("folds br_if(const true, A, B) → br(A)", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -264,7 +267,7 @@ describe("#1167a — constantFold (terminator folding)", () => {
 
   it("folds br_if(const false, A, B) → br(B)", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -315,7 +318,7 @@ describe("#1167a — deadCode (blocks)", () => {
   it("removes a block with no predecessors and renumbers", () => {
     // blocks: 0 (br → 1), 1 (return), 2 (orphan, return) — after DCE, 2 is gone.
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -356,7 +359,7 @@ describe("#1167a — deadCode (blocks)", () => {
     // Remove block 1 (orphan), keep 0 and 2. 0's br_if must be rewritten
     // so the old target 2 becomes new target 1.
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -413,7 +416,7 @@ describe("#1167a — deadCode (blocks)", () => {
 describe("#1167a — deadCode (instructions)", () => {
   it("removes a pure instruction whose result is never used", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -442,7 +445,7 @@ describe("#1167a — deadCode (instructions)", () => {
 
   it("keeps raw.wasm even when it produces no used result", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -473,7 +476,7 @@ describe("#1167a — deadCode (instructions)", () => {
 
   it("returns same reference when nothing is removable", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -500,7 +503,7 @@ describe("#1167a — deadCode (instructions)", () => {
 describe("#1167a — simplifyCFG", () => {
   it("merges A (br → B) with B (only A as pred)", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -534,7 +537,7 @@ describe("#1167a — simplifyCFG", () => {
     // Block 0's br_if goes to both 1 and 2; block 1's br goes to 2.
     // 2 has 2 predecessors (0 and 1) → not mergeable.
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [
@@ -578,7 +581,7 @@ describe("#1167a — simplifyCFG", () => {
 
   it("returns same reference when nothing to simplify", () => {
     const fn: IrFunction = {
-      name: "f",
+      ...irIdentities.next("f"),
       params: [],
       resultTypes: [F64],
       blocks: [

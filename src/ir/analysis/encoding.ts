@@ -32,7 +32,14 @@
 // in the issue.
 
 import { ALLOC_NAMESPACES, type AllocSiteRegistry } from "../alloc-registry.js";
-import { forEachInstrDeep, type AllocSiteId, type IrFunction, type IrInstr, type IrValueId } from "../nodes.js";
+import {
+  forEachInstrDeep,
+  type AllocSiteId,
+  type IrFuncRef,
+  type IrFunction,
+  type IrInstr,
+  type IrValueId,
+} from "../nodes.js";
 import type { IrStringEncoding } from "../string-runtime.js";
 
 /**
@@ -149,7 +156,7 @@ function classifyInstr(
       // whose result preserves the receiver's encoding. Only fires when the
       // builder minted a string `alloc` id (i.e. resultType is string).
       if (instr.alloc !== undefined) {
-        record(instr.result, instr.alloc, classifyCall(instr.target.name, instr.args, enc));
+        record(instr.result, instr.alloc, classifyCall(instr.target, instr.args, enc));
       }
       return;
     case "extern.call":
@@ -204,7 +211,17 @@ function stripStringMethodPrefix(name: string): string | null {
 }
 
 /** Origin/propagation rule for a `call` instr that produces a string. */
-function classifyCall(name: string, args: readonly IrValueId[], enc: (v: IrValueId) => Encoding): Encoding {
+function classifyCall(target: IrFuncRef, args: readonly IrValueId[], enc: (v: IrValueId) => Encoding): Encoding {
+  const name =
+    target.binding.kind === "import"
+      ? target.binding.field
+      : target.binding.kind === "runtime" || target.binding.kind === "intrinsic"
+        ? target.binding.symbol
+        : null;
+  // A source unit or compiler-owned support artifact may deliberately share
+  // a compatibility label with a builtin. Identity wins over that label: only
+  // explicit provider bindings participate in builtin encoding rules.
+  if (name === null) return "wtf16";
   if (UTF8_ORIGIN_FUNCS.has(name)) return "utf8-guaranteed";
   const method = stripStringMethodPrefix(name);
   if (method !== null && ENCODING_PRESERVING_METHODS.has(method)) {

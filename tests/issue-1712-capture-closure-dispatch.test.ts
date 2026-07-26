@@ -72,8 +72,9 @@ describe("#1712 — fnctor-capturing closure dispatch through the host bridge", 
     );
     const io: any = result.importObject ?? {};
     let savedClosure: any = null;
-    const origSet = io.env.__extern_set;
-    io.env.__extern_set = (o: any, k: any, v: any) => {
+    const origSet = io.env.__extern_set_strict;
+    expect(origSet).toBeTypeOf("function");
+    io.env.__extern_set_strict = (o: any, k: any, v: any) => {
       if (k === "parse") savedClosure = v;
       return origSet(o, k, v);
     };
@@ -82,6 +83,7 @@ describe("#1712 — fnctor-capturing closure dispatch through the host bridge", 
     const raw: any = instance.exports;
     raw.parse("x");
     expect(savedClosure).not.toBeNull();
+    expect(typeof savedClosure).toBe("object");
     expect(raw.__is_closure(savedClosure)).toBe(1);
     // Both dispatchers must reach the capturing arity-0 closure.
     expect(raw.__call_fn_0(savedClosure)).toBe("function");

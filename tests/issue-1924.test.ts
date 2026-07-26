@@ -25,6 +25,9 @@ import {
   type IrInstr,
   type IrType,
 } from "../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-1924");
 
 const I32 = irVal({ kind: "i32" });
 const F64 = irVal({ kind: "f64" });
@@ -73,7 +76,7 @@ function block(
 
 function singleBlockFn(name: string, instrs: IrInstr[], returnValue: number, resultType: IrType): IrFunction {
   return {
-    name,
+    ...irIdentities.next(name),
     params: [],
     resultTypes: [resultType],
     blocks: [block(0, instrs, { kind: "return", values: [asValueId(returnValue)] })],
@@ -140,7 +143,7 @@ describe("#1924 — IR verifier instruction-level type rules", () => {
     // A binary whose lhs has no resolvable type (referencing a value with no
     // resultType in the map) must NOT be flagged — the rule is conservative.
     const fn: IrFunction = {
-      name: "unknownOperand",
+      ...irIdentities.next("unknownOperand"),
       params: [{ name: "p", value: asValueId(1), type: F64 }],
       resultTypes: [F64],
       blocks: [
@@ -174,7 +177,7 @@ describe("#1924 — IR verifier instruction-level type rules", () => {
   it("rejects a branch arg whose type mismatches the target block arg", () => {
     // b0: v1 = const f64; br b1(v1)   — but b1 expects an i32 block arg.
     const fn: IrFunction = {
-      name: "branchArgTypeBad",
+      ...irIdentities.next("branchArgTypeBad"),
       params: [],
       resultTypes: [I32],
       blocks: [
@@ -190,7 +193,7 @@ describe("#1924 — IR verifier instruction-level type rules", () => {
 
   it("accepts a branch arg whose type matches the target block arg", () => {
     const fn: IrFunction = {
-      name: "branchArgTypeOk",
+      ...irIdentities.next("branchArgTypeOk"),
       params: [],
       resultTypes: [I32],
       blocks: [
@@ -205,7 +208,7 @@ describe("#1924 — IR verifier instruction-level type rules", () => {
 
   it("rejects a slot.write index out of bounds", () => {
     const fn: IrFunction = {
-      name: "slotOob",
+      ...irIdentities.next("slotOob"),
       params: [],
       resultTypes: [],
       slots: [{ index: 0, name: "s0", type: { kind: "f64" } }],
@@ -228,7 +231,7 @@ describe("#1924 — IR verifier instruction-level type rules", () => {
 
   it("accepts a string.len whose resultType is f64", () => {
     const fn: IrFunction = {
-      name: "strLenOk",
+      ...irIdentities.next("strLenOk"),
       params: [{ name: "s", value: asValueId(1), type: STRING }],
       resultTypes: [F64],
       blocks: [

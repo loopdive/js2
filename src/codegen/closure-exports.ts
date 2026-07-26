@@ -121,6 +121,22 @@ function externToClosureParamRef(paramType: ValType): Instr[] {
   return ops;
 }
 
+/** Preserve the structural boolean brand when an i32 crosses the externref ABI. */
+function boxI32ClosureResult(
+  ctx: CodegenContext,
+  returnType: { kind: "i32"; boolean?: true },
+  boxNumberIdx: number | undefined,
+): Instr[] {
+  const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
+  if (returnType.boolean === true && boxBooleanIdx !== undefined) {
+    return [{ op: "call", funcIdx: boxBooleanIdx }];
+  }
+  if (boxNumberIdx !== undefined) {
+    return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx }];
+  }
+  return [{ op: "drop" }, { op: "ref.null.extern" }];
+}
+
 /**
  * Emit __call_fn_<arity> export (#1382): call an N-arg WasmGC closure from
  * JS. Takes (externref closure, externref arg0, ..., externref arg<arity-1>)
@@ -359,13 +375,7 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
           callBody.push({ op: "ref.null.extern" });
         }
       } else if (entry.returnType.kind === "i32") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "f64.convert_i32_s" });
-          callBody.push({ op: "call", funcIdx: boxNumberIdx });
-        } else {
-          callBody.push({ op: "drop" });
-          callBody.push({ op: "ref.null.extern" });
-        }
+        callBody.push(...boxI32ClosureResult(ctx, entry.returnType, boxNumberIdx));
       } else if (entry.returnType.kind === "i64") {
         if (boxNumberIdx !== undefined) {
           callBody.push({ op: "f64.convert_i64_s" });
@@ -613,10 +623,37 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     // emitClosureCallExportN). User args are at locals [2..arity+1]; formal i is
     // at local i+2, extras are args[closureArity..arity) at locals
     // [closureArity+2 .. arity+2).
-    const setupInstrs: Instr[] = [
-      { op: "i32.const", value: entry.closureArity },
-      { op: "global.set", index: argcGlobalIdx },
-    ];
+    const setupInstrs: Instr[] =
+      ctx.standalone || ctx.wasi
+        ? [
+            // `__apply_closure` presets the ACTUAL count before choosing a padded
+            // dispatcher. Preserve min(actual, formals); ordinary direct/host calls
+            // enter with the -1 sentinel and retain the historical formal count.
+            { op: "global.get", index: argcGlobalIdx },
+            { op: "i32.const", value: 0 },
+            { op: "i32.ge_s" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [
+                { op: "global.get", index: argcGlobalIdx },
+                { op: "i32.const", value: entry.closureArity },
+                { op: "i32.lt_s" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "i32" } },
+                  then: [{ op: "global.get", index: argcGlobalIdx }],
+                  else: [{ op: "i32.const", value: entry.closureArity }],
+                },
+              ],
+              else: [{ op: "i32.const", value: entry.closureArity }],
+            },
+            { op: "global.set", index: argcGlobalIdx },
+          ]
+        : [
+            { op: "i32.const", value: entry.closureArity },
+            { op: "global.set", index: argcGlobalIdx },
+          ];
     if (arity > entry.closureArity) {
       const extrasCount = arity - entry.closureArity;
       setupInstrs.push({ op: "i32.const", value: extrasCount });
@@ -659,13 +696,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           callBody.push({ op: "ref.null.extern" });
         }
       } else if (entry.returnType.kind === "i32") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "f64.convert_i32_s" });
-          callBody.push({ op: "call", funcIdx: boxNumberIdx });
-        } else {
-          callBody.push({ op: "drop" });
-          callBody.push({ op: "ref.null.extern" });
-        }
+        callBody.push(...boxI32ClosureResult(ctx, entry.returnType, boxNumberIdx));
       } else if (entry.returnType.kind === "i64") {
         if (boxNumberIdx !== undefined) {
           callBody.push({ op: "f64.convert_i64_s" });
@@ -986,6 +1017,57 @@ export function emitClosureArityExport(ctx: CodegenContext): void {
 
   mod.exports.push({
     name: "__closure_arity",
+    desc: { kind: "func", index: funcIdx },
+  });
+  // Native in-module callers (notably `__apply_closure`) need the same
+  // classifier the JS wrapper uses. Register the canonical function index so
+  // reserve-then-fill runtimes can call it without introducing another ABI.
+  ctx.funcMap.set("__closure_arity", funcIdx);
+}
+
+/**
+ * Emit `__closure_has_rest(externref) -> i32` for the narrow host-accessor
+ * bridge. A returned rest closure cannot be exposed through the generic
+ * host-call dispatcher: its single Wasm formal is the materialized rest vec,
+ * while V8 supplies the call's positional host arguments. Treating the first
+ * host argument as that vec causes an uncatchable concrete-struct `ref.cast`.
+ *
+ * The source-shape bit lives on `ClosureInfo`; captured rest closures retain a
+ * concrete subtype, while no-capture closures can reuse a signature-keyed
+ * wrapper. The latter means an identical vec-signature non-rest closure is
+ * conservatively left raw too. Modules without rest closures emit nothing.
+ */
+export function emitClosureHasRestExport(ctx: CodegenContext): void {
+  const restTypes = [...ctx.closureInfoByTypeIdx]
+    .filter(([, info]) => info.hasRestParam === true)
+    .map(([typeIdx]) => typeIdx);
+  if (restTypes.length === 0) return;
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$closure_has_rest_type");
+  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+  const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
+  for (const restType of new Set(restTypes)) {
+    body.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: restType },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      },
+    );
+  }
+  body.push({ op: "i32.const", value: 0 });
+
+  ctx.mod.functions.push({
+    name: "__closure_has_rest",
+    typeIdx,
+    locals: [{ name: "__any", type: { kind: "anyref" } }],
+    body,
+    exported: true,
+  } as WasmFunction);
+  ctx.mod.exports.push({
+    name: "__closure_has_rest",
     desc: { kind: "func", index: funcIdx },
   });
 }

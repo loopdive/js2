@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #3658 — keep checker-only project roots out of multi-module codegen.
+// #3672 — keep checker-only project roots out of multi-module codegen.
 
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -35,7 +35,7 @@ function write(path: string, source: string): void {
 }
 
 beforeAll(() => {
-  fixtureRoot = mkdtempSync(join(tmpdir(), "js2wasm-3658-"));
+  fixtureRoot = mkdtempSync(join(tmpdir(), "js2wasm-3672-"));
   write(
     join(fixtureRoot, "entry.js"),
     [
@@ -64,7 +64,7 @@ afterAll(() => {
   rmSync(fixtureRoot, { recursive: true, force: true });
 });
 
-describe("#3658 — project codegen reachability", () => {
+describe("#3672 — project codegen reachability", () => {
   it("keeps conditional branch globals shift-visible while compiling its sibling", async () => {
     const result = await compileMulti(
       {

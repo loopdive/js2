@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loopdive.github.io/js2wasm/ir/ir-module.schema.json",
-  "title": "js2wasm IR interchange module (v1.0)",
+  "title": "js2wasm IR interchange module (v5.0)",
   "description": "One serialized IR module (#3030 D1). Normative companion: docs/ir/ir-contract.md — the schema is the syntax gate; per-instruction operand/result typing is enforced by the IR verifier (the semantic conformance checker). Enum tables are append-only with frozen order (D2); any shape change requires an IR_FORMAT_VERSION bump.",
   "type": "object",
   "properties": {
@@ -153,6 +153,7 @@
     "classShape": {
       "type": "object",
       "properties": {
+        "classId": { "type": "string", "pattern": "^ir-class:v1:" },
         "className": { "type": "string" },
         "fields": {
           "type": "array",
@@ -178,19 +179,175 @@
         },
         "constructorParams": { "type": "array", "items": { "$ref": "#/$defs/irType" } }
       },
-      "required": ["className", "fields", "methods", "constructorParams"],
+      "required": ["classId", "className", "fields", "methods", "constructorParams"],
       "additionalProperties": false
+    },
+    "callableBinding": {
+      "description": "Closed structural identity for a direct callable target. Compatibility names do not participate in identity.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "unit" },
+            "unitId": { "type": "string", "pattern": "^ir-unit:v1:" }
+          },
+          "required": ["kind", "unitId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "import" },
+            "module": { "type": "string", "minLength": 1 },
+            "field": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind", "module", "field"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "runtime" },
+            "symbol": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind", "symbol"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "intrinsic" },
+            "symbol": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind", "symbol"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "support" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:" }
+          },
+          "required": ["kind", "bindingId"],
+          "additionalProperties": false
+        }
+      ]
     },
     "funcRef": {
       "type": "object",
-      "properties": { "kind": { "const": "func" }, "name": { "type": "string" } },
-      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "const": "func" },
+        "name": { "type": "string", "minLength": 1 },
+        "binding": { "$ref": "#/$defs/callableBinding" }
+      },
+      "required": ["kind", "name", "binding"],
       "additionalProperties": false
+    },
+    "globalBinding": {
+      "description": "Closed structural identity for a global target. Compatibility names do not participate in identity.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "source" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:global:" }
+          },
+          "required": ["kind", "bindingId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "import" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:global:" },
+            "module": { "type": "string", "minLength": 1 },
+            "field": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind", "bindingId", "module", "field"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "runtime" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:global:" },
+            "symbol": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind", "bindingId", "symbol"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "support" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:global:" }
+          },
+          "required": ["kind", "bindingId"],
+          "additionalProperties": false
+        }
+      ]
     },
     "globalRef": {
       "type": "object",
-      "properties": { "kind": { "const": "global" }, "name": { "type": "string" } },
-      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "const": "global" },
+        "name": { "type": "string", "minLength": 1 },
+        "binding": { "$ref": "#/$defs/globalBinding" }
+      },
+      "required": ["kind", "name", "binding"],
+      "additionalProperties": false
+    },
+    "typeBinding": {
+      "description": "Closed structural identity for a symbolic type target. Compatibility names do not participate in identity.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "source" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:type:" }
+          },
+          "required": ["kind", "bindingId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "class" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:class:" },
+            "classId": { "type": "string", "pattern": "^ir-class:v1:" }
+          },
+          "required": ["kind", "bindingId", "classId"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "runtime" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:type:" },
+            "symbol": { "type": "string", "minLength": 1 }
+          },
+          "required": ["kind", "bindingId", "symbol"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": { "const": "support" },
+            "bindingId": { "type": "string", "pattern": "^ir-binding:v1:type:" }
+          },
+          "required": ["kind", "bindingId"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "typeRef": {
+      "type": "object",
+      "properties": {
+        "kind": { "const": "type" },
+        "name": { "type": "string", "minLength": 1 },
+        "binding": { "$ref": "#/$defs/typeBinding" }
+      },
+      "required": ["kind", "name", "binding"],
       "additionalProperties": false
     },
     "const": {
@@ -455,6 +612,7 @@
     "function": {
       "type": "object",
       "properties": {
+        "unitId": { "type": "string", "pattern": "^ir-unit:v1:" },
         "name": { "type": "string" },
         "exported": { "type": "boolean" },
         "funcKind": { "enum": ["regular", "generator", "async"] },
@@ -476,18 +634,19 @@
         "valueCount": { "type": "integer", "minimum": 0 },
         "blocks": { "type": "array", "items": { "$ref": "#/$defs/block" }, "minItems": 1 }
       },
-      "required": ["name", "exported", "params", "resultTypes", "valueCount", "blocks"],
+      "required": ["unitId", "name", "exported", "params", "resultTypes", "valueCount", "blocks"],
       "additionalProperties": false
     },
     "coverageEntry": {
       "type": "object",
       "properties": {
+        "unitId": { "type": "string", "pattern": "^ir-unit:v1:" },
         "name": { "type": "string" },
         "carrier": { "enum": ["ir", "legacy"] },
         "exported": { "type": "boolean" },
         "reason": { "type": "string" }
       },
-      "required": ["name", "carrier", "exported"],
+      "required": ["unitId", "name", "carrier", "exported"],
       "additionalProperties": false
     }
   }

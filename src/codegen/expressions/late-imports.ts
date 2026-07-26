@@ -389,6 +389,7 @@ export function ensureLateImport(
   name: string,
   paramTypes: ValType[],
   resultTypes: ValType[],
+  module = "env",
 ): number | undefined {
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
@@ -530,7 +531,7 @@ export function ensureLateImport(
     ctx.pendingLateImportShift = { importsBefore: ctx.numImportFuncs };
   }
   const typeIdx = addFuncType(ctx, paramTypes, resultTypes);
-  addImport(ctx, "env", name, { kind: "func", typeIdx });
+  addImport(ctx, module, name, { kind: "func", typeIdx });
   return ctx.funcMap.get(name);
 }
 

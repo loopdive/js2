@@ -17,8 +17,12 @@
  * dynamic-eval path.
  */
 import { ts } from "../../ts-api.js";
-import type { ValType } from "../../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { emitVariadicStringConcat, nativeStringRepr } from "../builtin-scaffold.js";
+import { emitGlobalEnvironmentObject } from "../global-environment.js";
+import { ensureExnTag } from "../registry/imports.js";
 import { hoistFunctionDeclarations } from "../statements/nested-declarations.js";
 import { hoistLetConstWithTdz, hoistVarDeclarations } from "../index.js";
 import type { InnerResult } from "../shared.js";
@@ -1019,6 +1023,18 @@ export function tryStaticFunctionCtorCall(
   return { kind: "externref" };
 }
 
+/** Dynamic `Function(...)` call form (without `new`) for standalone. */
+export function tryStandaloneDynamicFunctionCtorValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (!ctx.standalone) return undefined;
+  const callee = unwrapParenExpr(expr.expression);
+  if (!ts.isIdentifier(callee) || !isGlobalFunctionIdentifier(callee, ctx.checker)) return undefined;
+  return emitStandaloneDynamicFunctionRuntime(ctx, fctx, expr.arguments);
+}
+
 /**
  * (#2960) DIAGNOSTIC message shared by every dynamic-code fall-through so the
  * standalone warning and the call-time throw name the same tracking goal.
@@ -1027,6 +1043,224 @@ const DYNAMIC_CODE_UNSUPPORTED_MSG =
   "dynamic code evaluation (eval / new Function with a non-constant body) is not " +
   "supported in --target standalone/wasi — no runtime-eval host is available " +
   "(tracking: runtime-eval goal, bytecode interpreter #2928)";
+
+/** Core-Wasm provider namespace owned by #2928/#2527. */
+export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
+
+/**
+ * Unwrap the provider's `[ok, value]` result vector. A provider-side throw uses
+ * that vector because Wasm exception tags are module instances, not
+ * structurally canonical values: throwing the provider's private tag directly
+ * cannot be caught by the user module. Re-throwing `value` through the caller's
+ * own tag restores ordinary AOT try/catch behavior. The vector is intentional:
+ * unlike a source-inferred plain object, the canonical externref vec carrier is
+ * structurally shared by both modules.
+ */
+function emitRuntimeEvalResultUnwrap(ctx: CodegenContext, fctx: FunctionContext): ValType {
+  const envelopeLocal = allocLocal(fctx, `__runtime_eval_result_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: envelopeLocal });
+
+  const externref: ValType = { kind: "externref" };
+  const getIdx = ensureLateImport(ctx, "__extern_get_idx", [externref, { kind: "f64" }], [externref]);
+  const truthyIdx = ensureLateImport(ctx, "__is_truthy", [externref], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  const liveGetIdx = ctx.funcMap.get("__extern_get_idx") ?? getIdx;
+  const liveTruthyIdx = ctx.funcMap.get("__is_truthy") ?? truthyIdx;
+  if (liveGetIdx === undefined || liveTruthyIdx === undefined) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return externref;
+  }
+
+  const getField = (index: 0 | 1): Instr[] => [
+    { op: "local.get", index: envelopeLocal },
+    { op: "f64.const", value: index },
+    { op: "call", funcIdx: liveGetIdx },
+  ];
+  const value = getField(1);
+  const thrown = [...getField(1), { op: "throw", tagIdx: ensureExnTag(ctx) } satisfies Instr];
+
+  fctx.body.push(...getField(0), { op: "call", funcIdx: liveTruthyIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: externref },
+    then: value,
+    else: thrown,
+  });
+  return externref;
+}
+
+/**
+ * Standalone indirect eval route. Direct eval remains on #2929 because it
+ * requires caller-scope reification; indirect eval is always global-scoped and
+ * can execute entirely inside the separately linked interpreter provider.
+ */
+export function emitStandaloneIndirectEvalRuntime(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (args.length === 0) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+
+  const sourceType = compileExpression(ctx, fctx, args[0]!);
+  if (sourceType && sourceType.kind !== "externref") {
+    coerceType(ctx, fctx, sourceType, { kind: "externref" });
+  }
+  for (let i = 1; i < args.length; i++) {
+    const extraType = compileExpression(ctx, fctx, args[i]!);
+    if (extraType !== null) fctx.body.push({ op: "drop" });
+  }
+  if (emitGlobalEnvironmentObject(ctx, fctx) === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  const evalIdx = ensureLateImport(
+    ctx,
+    "__runtime_indirect_eval",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    RUNTIME_EVAL_IMPORT_MODULE,
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (evalIdx === undefined) {
+    fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  const liveIdx = ctx.funcMap.get("__runtime_indirect_eval") ?? evalIdx;
+  fctx.body.push({ op: "call", funcIdx: liveIdx });
+  return emitRuntimeEvalResultUnwrap(ctx, fctx);
+}
+
+/**
+ * Standalone dynamic `new Function` route. The parser/interpreter lives in a
+ * separately compiled core-Wasm provider, so the user module keeps only one
+ * link-time import and no JavaScript host dependency.
+ */
+export function emitStandaloneDynamicFunctionRuntime(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  const repr = nativeStringRepr(ctx);
+  if (repr === undefined) return undefined;
+  if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
+
+  const liveParts: Instr[][] = [];
+  const compilePart = (arg: ts.Expression): Instr[] => {
+    const part: Instr[] = [];
+    ctx.liveBodies.add(part);
+    liveParts.push(part);
+    const savedBody = fctx.body;
+    fctx.body = part;
+    try {
+      let tsType: ts.Type;
+      try {
+        tsType = ctx.checker.getTypeAtLocation(arg);
+      } catch {
+        tsType = ctx.checker.getTypeAtLocation(arg.parent ?? arg);
+      }
+      const stringType = compileAndEmitToString(ctx, fctx, arg, tsType, "string");
+      if (stringType.kind !== "externref" && stringType.kind !== "ref" && stringType.kind !== "ref_null") {
+        coerceType(ctx, fctx, stringType, repr.resultType, "string");
+      }
+    } finally {
+      fctx.body = savedBody;
+    }
+    return part;
+  };
+
+  // §20.2.1.1.1: the final argument is the body; preceding arguments are
+  // ToString-coerced and comma-joined in source order.
+  const numParams = Math.max(0, args.length - 1);
+  const paramParts: Instr[][] = [];
+  for (let i = 0; i < numParams; i++) {
+    if (i > 0) paramParts.push(repr.literal(","));
+    paramParts.push(compilePart(args[i]!));
+  }
+  fctx.body.push(...(paramParts.length === 0 ? repr.literal("") : emitVariadicStringConcat(repr, paramParts)), {
+    op: "extern.convert_any",
+  });
+
+  if (args.length === 0) {
+    fctx.body.push(...repr.literal(""), { op: "extern.convert_any" });
+  } else {
+    fctx.body.push(...compilePart(args[args.length - 1]!), { op: "extern.convert_any" });
+  }
+  if (emitGlobalEnvironmentObject(ctx, fctx) === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  const newFnIdx = ensureLateImport(
+    ctx,
+    "__runtime_new_function",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+    RUNTIME_EVAL_IMPORT_MODULE,
+  );
+  flushLateImportShifts(ctx, fctx);
+  for (const part of liveParts) ctx.liveBodies.delete(part);
+  if (newFnIdx === undefined) {
+    fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+  const liveIdx = ctx.funcMap.get("__runtime_new_function") ?? newFnIdx;
+  fctx.body.push({ op: "call", funcIdx: liveIdx });
+  return emitRuntimeEvalResultUnwrap(ctx, fctx);
+}
+
+/**
+ * Register the exact eight-slot callable root used by `makeInterpClosure`.
+ * Core-Wasm canonicalizes structurally equal recursive types only when both
+ * modules contain the matching group; without this local seed the dynamic
+ * callable classifier treats the provider's returned closure as non-callable.
+ */
+export function ensureRuntimeEvalCallableCarrier(ctx: CodegenContext, fctx: FunctionContext): boolean {
+  if (ctx.runtimeEvalCallableSeeded) return true;
+  const fnName = `__runtime_eval_callable_seed_${ctx.mod.functions.length}`;
+  const synthSrc = `function ${fnName}(a0, a1, a2, a3, a4, a5, a6, a7) { ` + `return a0; }`;
+  const sf = ts.createSourceFile(
+    EVAL_SOURCE_FILENAME,
+    synthSrc,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.JS,
+  );
+  if (sf.statements.length !== 1 || !ts.isFunctionDeclaration(sf.statements[0]!)) return false;
+  const fnDecl = sf.statements[0] as ts.FunctionDeclaration;
+
+  const savedLocalMap = fctx.localMap;
+  const savedBoxed = fctx.boxedCaptures;
+  const savedFuncCount = ctx.mod.functions.length;
+  fctx.localMap = new Map();
+  fctx.boxedCaptures = undefined;
+  try {
+    hoistFunctionDeclarations(ctx, fctx, [fnDecl]);
+  } catch {
+    if (ctx.mod.functions.length > savedFuncCount) {
+      ctx.mod.functions.length = savedFuncCount;
+      const cutoff = ctx.numImportFuncs + savedFuncCount;
+      for (const [name, idx] of ctx.funcMap) {
+        if (idx >= cutoff) ctx.funcMap.delete(name);
+      }
+    }
+    return false;
+  } finally {
+    fctx.localMap = savedLocalMap;
+    fctx.boxedCaptures = savedBoxed;
+  }
+
+  const funcIdx = ctx.funcMap.get(fnName);
+  if (funcIdx === undefined) return false;
+  const closureRef = emitFuncRefAsClosure(ctx, fctx, fnName, funcIdx);
+  if (!closureRef) return false;
+  fctx.body.push({ op: "drop" });
+  ctx.runtimeEvalCallableSeeded = true;
+  return true;
+}
 
 /**
  * (#2960) Host-mode DYNAMIC `new Function(p0, …, pN, body)` — route to the

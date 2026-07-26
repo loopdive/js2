@@ -8,9 +8,16 @@ import { makeIrLocalClassExpressionResolver } from "../src/ir/module-bindings.js
 import type { IrClassShape } from "../src/ir/nodes.js";
 import { ts } from "../src/ts-api.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
+import { createTestIrClassId } from "./helpers/ir-identities.js";
 
 function projected(name: string): IrClassShape {
-  return { className: name, fields: [], methods: [], constructorParams: [] };
+  return {
+    classId: createTestIrClassId(`issue-3529-class-integration/${name}`),
+    className: name,
+    fields: [],
+    methods: [],
+    constructorParams: [],
+  };
 }
 
 function findNode<T extends ts.Node>(

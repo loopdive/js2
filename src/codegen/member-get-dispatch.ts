@@ -57,6 +57,7 @@ import {
 } from "./shared.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
+import { undefinedExternInstrs } from "./any-helpers.js";
 
 /** Mangle a property name into the reserved member-get dispatcher name. */
 function dispatcherName(propName: string): string {
@@ -577,12 +578,26 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
         : boxBoolIdx !== undefined
           ? [{ op: "call", funcIdx: boxBoolIdx }]
           : coercionInstrs(ctx, cand.fieldType, { kind: "externref" });
-      const readInstrs: Instr[] = [
+      const readValueInstrs: Instr[] = [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.cast", typeIdx: cand.structTypeIdx },
         { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
         ...box,
       ];
+      const readInstrs: Instr[] =
+        cand.presenceFieldIdx !== undefined && cand.presenceFieldIdx >= 0
+          ? [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.presenceFieldIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } },
+                then: readValueInstrs,
+                else: undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+              },
+            ]
+          : readValueInstrs;
       return [
         { op: "local.get", index: 1 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },

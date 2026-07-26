@@ -15,7 +15,7 @@ goal: npm-library-support
 sprint: 48
 depends_on: [1277, 1279]
 es_edition: n/a
-related: [1244, 1274, 1287, 1289, 1400, 3653, 3654, 3658]
+related: [1244, 1274, 1287, 1289, 1400, 3653, 3654, 3672]
 ---
 
 # #1282 — ESLint Tier 1 stress test
@@ -130,7 +130,7 @@ compiles.
 
 After #3654/#3655 restore the 146-file checker graph, the direct compile
 exceeds the Tier 1 child-process budget instead of returning the former
-resolver diagnostics. #3658 now restricts codegen to the 77 executable sources
+resolver diagnostics. #3672 now restricts codegen to the 77 executable sources
 reachable from the entry and profiles the remaining phases. Tier 1a stays
 explicitly skipped until the child emits a structured result; a timeout or
 abnormal exit is not an expected compiler diagnostic.

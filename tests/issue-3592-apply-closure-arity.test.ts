@@ -118,11 +118,11 @@ export function probeMsgLen() { return msgLen; }
     expect(Number((exports.probeQ as () => number)())).toBe(1);
   });
 
-  it("leaves arguments.length clamped to the formals (no synthetic extras)", async () => {
+  it("keeps arguments.length at the actual call-site count (no synthetic extras)", async () => {
     const setup = `function Host3() {}
-Host3.m = function (a, b, c) { if (arguments.length !== 3) { throw new Error("argc=" + arguments.length); } };`;
-    // #820l convention: __argc is the callee's formal count, so an
-    // under-applied call must report 3, never the highest dispatcher arity.
+Host3.m = function (a, b, c) { if (arguments.length !== 2) { throw new Error("argc=" + arguments.length); } };`;
+    // The dispatcher widens to the formal count only to select a compatible
+    // call bridge. `arguments.length` remains the actual source-level count.
     expect(await outcome(setup, `Host3.m(1, 2)`)).toBe(1);
   });
 });

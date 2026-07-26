@@ -76,6 +76,7 @@ import {
   type IrValueId,
 } from "../nodes.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
+import type { IrUnitId } from "../identity.js";
 import { forkAllocInInstr } from "./alloc-discipline.js";
 
 const MAX_CALLEE_INSTRS = 10;
@@ -86,15 +87,20 @@ const CALLER_SIZE_BUDGET_MULTIPLIER = 4;
  * Returns the same `IrModule` reference when no function changes.
  */
 export function inlineSmall(mod: IrModule, registry?: AllocSiteRegistry): IrModule {
-  const byName = new Map<string, IrFunction>();
-  for (const fn of mod.functions) byName.set(fn.name, fn);
+  const byUnitId = new Map<IrUnitId, IrFunction>();
+  for (const fn of mod.functions) {
+    if (byUnitId.has(fn.unitId)) {
+      throw new Error(`inlineSmall: duplicate IR function unit '${fn.unitId}'`);
+    }
+    byUnitId.set(fn.unitId, fn);
+  }
 
-  const recursiveSet = computeRecursiveSet(mod, byName);
+  const recursiveSet = computeRecursiveSet(mod, byUnitId);
 
   const newFunctions: IrFunction[] = [];
   let anyChanged = false;
   for (const fn of mod.functions) {
-    const inlined = inlineIntoFunction(fn, byName, recursiveSet, registry);
+    const inlined = inlineIntoFunction(fn, byUnitId, recursiveSet, registry);
     if (inlined !== fn) anyChanged = true;
     newFunctions.push(inlined);
   }
@@ -108,8 +114,8 @@ export function inlineSmall(mod: IrModule, registry?: AllocSiteRegistry): IrModu
 
 function inlineIntoFunction(
   caller: IrFunction,
-  byName: ReadonlyMap<string, IrFunction>,
-  recursiveSet: ReadonlySet<string>,
+  byUnitId: ReadonlyMap<IrUnitId, IrFunction>,
+  recursiveSet: ReadonlySet<IrUnitId>,
   registry?: AllocSiteRegistry,
 ): IrFunction {
   // Nested instruction buffers have their own def/use walk and can retain
@@ -171,7 +177,8 @@ function inlineIntoFunction(
         continue;
       }
 
-      const callee = byName.get(rewritten.target.name);
+      const binding = rewritten.target.binding;
+      const callee = binding.kind === "unit" ? byUnitId.get(binding.unitId) : undefined;
       if (!callee || !canInline(callee, recursiveSet)) {
         newInstrs.push(rewritten);
         continue;
@@ -265,9 +272,9 @@ function inlineIntoFunction(
 // Inlinability check
 // ---------------------------------------------------------------------------
 
-function canInline(callee: IrFunction, recursiveSet: ReadonlySet<string>): boolean {
+function canInline(callee: IrFunction, recursiveSet: ReadonlySet<IrUnitId>): boolean {
   if (callee.blocks.length !== 1) return false;
-  if (recursiveSet.has(callee.name)) return false;
+  if (recursiveSet.has(callee.unitId)) return false;
   const body = callee.blocks[0]!;
   if (body.instrs.length > MAX_CALLEE_INSTRS) return false;
   const term = body.terminator;
@@ -330,33 +337,38 @@ function canInline(callee: IrFunction, recursiveSet: ReadonlySet<string>): boole
 // ---------------------------------------------------------------------------
 
 /**
- * Return the set of function names that are part of any call cycle (including
- * direct self-recursion) within the IR module. Only edges to locally-visible
- * callees count — cross-module / host imports don't appear in the graph.
+ * Return the set of function identities that are part of any call cycle
+ * (including direct self-recursion) within the IR module. Only exact unit
+ * bindings to locally-visible callees count — imports and providers do not
+ * enter the graph even when their compatibility label matches a local unit.
  */
-function computeRecursiveSet(mod: IrModule, byName: ReadonlyMap<string, IrFunction>): Set<string> {
-  const edges = new Map<string, Set<string>>();
+function computeRecursiveSet(mod: IrModule, byUnitId: ReadonlyMap<IrUnitId, IrFunction>): Set<IrUnitId> {
+  const edges = new Map<IrUnitId, Set<IrUnitId>>();
   for (const fn of mod.functions) {
-    const set = new Set<string>();
+    const set = new Set<IrUnitId>();
     for (const block of fn.blocks) {
       for (const instr of block.instrs) {
-        if (instr.kind === "call" && byName.has(instr.target.name)) {
-          set.add(instr.target.name);
+        if (
+          instr.kind === "call" &&
+          instr.target.binding.kind === "unit" &&
+          byUnitId.has(instr.target.binding.unitId)
+        ) {
+          set.add(instr.target.binding.unitId);
         }
       }
     }
-    edges.set(fn.name, set);
+    edges.set(fn.unitId, set);
   }
-  const recursive = new Set<string>();
+  const recursive = new Set<IrUnitId>();
   for (const fn of mod.functions) {
-    if (reachesSelf(fn.name, edges)) recursive.add(fn.name);
+    if (reachesSelf(fn.unitId, edges)) recursive.add(fn.unitId);
   }
   return recursive;
 }
 
-function reachesSelf(start: string, edges: ReadonlyMap<string, ReadonlySet<string>>): boolean {
-  const visited = new Set<string>();
-  const stack: string[] = [];
+function reachesSelf(start: IrUnitId, edges: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>): boolean {
+  const visited = new Set<IrUnitId>();
+  const stack: IrUnitId[] = [];
   const seed = edges.get(start);
   if (seed) for (const n of seed) stack.push(n);
   while (stack.length > 0) {

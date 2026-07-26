@@ -138,6 +138,37 @@ export function emitVecAccessExports(ctx: CodegenContext): void {
   }
 }
 
+/** Mutation-capable vec carriers, keyed by physical backing-array shape. */
+function collectVecMutationEntries(
+  ctx: CodegenContext,
+  vecEntries: [string, number][],
+  unboxNumIdx: number | undefined,
+  boxNumIdx: number | undefined,
+): [string, number][] {
+  const byType = new Map<number, [string, number]>();
+  for (const [elemKey, vecTypeIdx] of vecEntries) {
+    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+    const arrDef = arrTypeIdx >= 0 ? ctx.mod.types[arrTypeIdx] : undefined;
+    // (#1712) A reference-keyed vec can still use an EXTERNREF backing array.
+    // This is how JS-mode arrays whose inferred element is a compiled struct
+    // stay heterogeneous at runtime. Treat the physical carrier as the source
+    // of truth for mutation, just as __vec_get already does (#2669).
+    const physicalExternref =
+      arrDef?.kind === "array" && (arrDef.element.kind === "externref" || arrDef.element.kind === "ref_extern");
+    const mutationKey = physicalExternref ? "externref" : elemKey;
+    const supported =
+      mutationKey === "externref" ||
+      ((mutationKey === "f64" || mutationKey === "i32") && unboxNumIdx !== undefined && boxNumIdx !== undefined) ||
+      // (#3311) native-string carrier (`string[]` standalone) — no numeric
+      // unbox; recover the `$AnyString` ref at the store.
+      nativeStrVecElemTypeIdx(ctx, vecTypeIdx) >= 0;
+    if (supported && !byType.has(vecTypeIdx)) {
+      byType.set(vecTypeIdx, [mutationKey, vecTypeIdx]);
+    }
+  }
+  return [...byType.values()];
+}
+
 function _emitVecAccessExportsInner(ctx: CodegenContext): void {
   const mod = ctx.mod;
   const vecEntries = Array.from(ctx.vecTypeMap.entries());
@@ -482,14 +513,7 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
   // through to its fail-loud TypeError instead of silently no-oping.
   const unboxNumIdx = ctx.funcMap.get("__unbox_number");
   const boxNumIdx2 = ctx.funcMap.get("__box_number");
-  const mutEntries = vecEntries.filter(([elemKey, vecTypeIdx]) => {
-    if (elemKey === "externref") return true;
-    if (elemKey === "f64" || elemKey === "i32") return unboxNumIdx !== undefined && boxNumIdx2 !== undefined;
-    // (#3311) native-string carrier (`string[]` standalone) — no numeric unbox,
-    // the value round-trips through `any.convert_extern` / `ref.cast $AnyString`.
-    if (nativeStrVecElemTypeIdx(ctx, vecTypeIdx) >= 0) return true;
-    return false;
-  });
+  const mutEntries = collectVecMutationEntries(ctx, vecEntries, unboxNumIdx, boxNumIdx2);
 
   // __is_vec(externref) -> i32 — POSITIVE vec discriminator over ALL
   // registered vec types. `__vec_len` cannot serve this role (its not-a-vec
@@ -812,15 +836,21 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
 
   // (#3116) __vec_set_elem / __vec_set_len — array-exotic [[DefineOwnProperty]]
   // write-back exports (values into the vec, attributes in the sidecar — see
-  // src/codegen/vec-define-writeback.ts for the full rationale). Gated on a
-  // defineProperty import being present so modules that never define
-  // properties stay byte-identical.
+  // src/codegen/vec-define-writeback.ts for the full rationale).
+  //
+  // (#1712) Dynamic `arr[index] = value` in JS-host mode also reaches the
+  // runtime as `__extern_set{_strict}` over an opaque vec. Emit the same
+  // element writer for that lane; otherwise the host accepts the write without
+  // touching the Wasm backing array. Modules with neither property-definition
+  // nor dynamic-set imports remain byte-identical.
   const wantsDefineWriteback =
     ctx.funcMap.has("__defineProperty_value") ||
     ctx.funcMap.has("__defineProperty_desc") ||
     ctx.funcMap.has("__defineProperty_accessor") ||
     ctx.funcMap.has("__defineProperties");
-  if (wantsDefineWriteback) {
+  const wantsDynamicWriteback =
+    !ctx.standalone && !ctx.wasi && (ctx.funcMap.has("__extern_set") || ctx.funcMap.has("__extern_set_strict"));
+  if (wantsDefineWriteback || wantsDynamicWriteback) {
     emitVecDefineWritebackExports(ctx, mutEntries, unboxNumIdx);
   }
 }

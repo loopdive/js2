@@ -18,6 +18,7 @@ import {
   type EmptyArrayInferenceResult,
 } from "../src/ir/array-element-inference.js";
 import { LINEAR_ARRAY_FORWARDING } from "../src/ir/analysis/linear-memory-plan.js";
+import { irIntrinsicFuncRef, irUnitFuncRef } from "../src/ir/callable-bindings.js";
 import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
 import { PorfforModuleAssembler } from "../src/ir/backend/porffor/assembler.js";
 import {
@@ -28,8 +29,9 @@ import {
 } from "../src/ir/backend/porffor/compat.js";
 import { lowerIrModuleToPorffor } from "../src/ir/backend/porffor/integration.js";
 import { loadOptionalPorffor } from "../src/ir/backend/porffor/loader.js";
-import { forEachInstrDeep, type IrInstr } from "../src/ir/nodes.js";
+import { asBlockId, forEachInstrDeep, type IrFunction, type IrInstr } from "../src/ir/nodes.js";
 import { ts } from "../src/ts-api.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const exactSourcePath = join(here, "../website/public/benchmarks/competitive/programs/array-sum.js");
@@ -40,6 +42,7 @@ const hasOptionalPorffor = existsSync(join(porfforRoot, "compiler/ir.js"));
 const nativeRequired = process.env.PORFFOR_NATIVE_REQUIRED === "1";
 const sanitizerEnabled = process.env.PORFFOR_NATIVE_SANITIZERS === "1";
 const cCompiler = findCCompiler();
+const porfforIdentities = createTestIrFunctionIdentityFactory("issue-3501-porffor-bindings");
 
 const vectorProbeSource = `
 /** @param {number} n @returns {number} */
@@ -258,9 +261,35 @@ describe("#3501 shared planned-vector backend operations", () => {
 
   it("rejects non-f64 vector helper suffixes instead of mapping them to the f64 runtime", () => {
     const assembler = new PorfforModuleAssembler();
-    expect(() => assembler.resolveFunc({ kind: "func", name: "__vec_elem_set_1" })).toThrow(
+    expect(() => assembler.resolveFunc(irIntrinsicFuncRef("__vec_elem_set_1"))).toThrow(
       "porffor assembler: unsupported non-f64 vector helper '__vec_elem_set_1' (expected type index 0)",
     );
+  });
+
+  it("does not treat a builtin-looking source unit as an intrinsic", () => {
+    const assembler = new PorfforModuleAssembler();
+    const identity = porfforIdentities.next("__vec_elem_set_1");
+    const func: IrFunction = {
+      ...identity,
+      params: [],
+      resultTypes: [],
+      blocks: [
+        {
+          id: asBlockId(0),
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [],
+          terminator: { kind: "return", values: [] },
+        },
+      ],
+      exported: false,
+      valueCount: 0,
+    };
+
+    const handle = assembler.declareIrFunction(func);
+
+    expect(assembler.resolveFunc(irUnitFuncRef(identity))).toBe(handle);
+    expect(() => assembler.resolveFunc(irIntrinsicFuncRef(identity.name))).toThrow(/unsupported non-f64 vector/);
   });
 
   it("demotes inferred array reads without an in-bounds proof", async () => {

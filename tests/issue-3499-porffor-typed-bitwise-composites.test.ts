@@ -35,7 +35,9 @@ import {
   type IrModule,
   type IrType,
 } from "../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-3499-porffor-typed-bitwise-composites");
 const here = dirname(fileURLToPath(import.meta.url));
 const porfforRoot = process.env.JS2WASM_PORFFOR_ROOT ?? join(here, "../vendor/Porffor");
 const fibPath = join(here, "../website/public/benchmarks/competitive/programs/fib.js");
@@ -59,7 +61,7 @@ function scalarFunction(
   rightType: IrType = F64,
   resultType: IrType = F64,
 ): IrFunction {
-  const builder = new IrFunctionBuilder(name, [resultType], true);
+  const builder = new IrFunctionBuilder(identities.next(name), [resultType], true);
   const left = builder.addParam("left", leftType);
   const right = builder.addParam("right", rightType);
   builder.openBlock();
@@ -69,7 +71,7 @@ function scalarFunction(
 }
 
 function narrowedChainFunction(): IrFunction {
-  const builder = new IrFunctionBuilder("narrowedChain", [I32], true);
+  const builder = new IrFunctionBuilder(identities.next("narrowedChain"), [I32], true);
   const left = builder.addParam("left", I32);
   const right = builder.addParam("right", I32);
   const shift = builder.addParam("shift", I32);
@@ -81,7 +83,7 @@ function narrowedChainFunction(): IrFunction {
 }
 
 function unsignedNarrowedChainFunction(): IrFunction {
-  const builder = new IrFunctionBuilder("unsignedNarrowedChain", [I32], true);
+  const builder = new IrFunctionBuilder(identities.next("unsignedNarrowedChain"), [I32], true);
   const value = builder.addParam("value", F64);
   const shift = builder.addParam("shift", I32);
   const mask = builder.addParam("mask", I32);

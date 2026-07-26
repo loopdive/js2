@@ -40,11 +40,114 @@ export function emitStructFieldGetters(ctx: CodegenContext): void {
   }
 }
 
+/**
+ * #2847 — emit per-property own-presence queries for conditionally initialized
+ * fields. `__shas_<name>(obj) -> i32` returns the hidden presence bit for a
+ * tracked shape, 1 for an ordinary always-present shape with that field, and 0
+ * for unrelated values. The host filters `__struct_field_names` through these
+ * queries, distinguishing an untouched default slot from explicit null/zero.
+ */
+export function emitStructFieldPresenceGetters(ctx: CodegenContext): void {
+  if (ctx.nativeStrings) return;
+  const trackedNames = new Set<string>();
+  for (const fields of ctx.structFields.values()) {
+    for (const field of fields) {
+      if (field?.presenceTracked) trackedNames.add(field.name);
+    }
+  }
+  if (trackedNames.size === 0) return;
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$shas_type");
+  for (const fieldName of trackedNames) {
+    const entries: { structTypeIdx: number; presenceFieldIdx?: number }[] = [];
+    for (const [structName, fields] of ctx.structFields) {
+      if (isSyntheticStructName(structName)) continue;
+      const structTypeIdx = ctx.structMap.get(structName);
+      if (structTypeIdx === undefined) continue;
+      const fieldIdx = fields.findIndex((field) => field?.name === fieldName);
+      if (fieldIdx < 0) continue;
+      const field = fields[fieldIdx]!;
+      const presenceFieldIdx = field.presenceTracked
+        ? fields.findIndex((candidate) => candidate?.name === `$has_${fieldName}`)
+        : -1;
+      entries.push({
+        structTypeIdx,
+        ...(presenceFieldIdx >= 0 ? { presenceFieldIdx } : {}),
+      });
+    }
+    if (entries.length === 0) continue;
+
+    let dispatch: Instr[] = [{ op: "i32.const", value: 0 }];
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i]!;
+      const then: Instr[] =
+        entry.presenceFieldIdx !== undefined
+          ? [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: entry.structTypeIdx },
+              { op: "struct.get", typeIdx: entry.structTypeIdx, fieldIdx: entry.presenceFieldIdx },
+            ]
+          : [{ op: "i32.const", value: 1 }];
+      dispatch = [
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: entry.structTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then,
+          else: dispatch,
+        },
+      ];
+    }
+
+    const funcName = `__shas_${fieldName}`;
+    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.mod.functions.push({
+      name: funcName,
+      typeIdx,
+      locals: [{ name: "__any", type: { kind: "anyref" } }],
+      body: [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }, ...dispatch],
+      exported: true,
+    } as WasmFunction);
+    ctx.mod.exports.push({ name: funcName, desc: { kind: "func", index: funcIdx } });
+  }
+}
+
+/**
+ * #2847 — export compiler-derived JS-boolean markers for host marshalling.
+ * The marker is emitted only when whole-program analysis proved every visible
+ * definition/write of the property boolean-producing. It covers both physical
+ * struct slots and dynamic sidecar properties, including values that crossed a
+ * generic closure bridge as boxed numeric 0/1.
+ */
+export function emitStructFieldBooleanMarkers(ctx: CodegenContext): void {
+  if (ctx.nativeStrings || ctx.booleanPropertyNames.size === 0) return;
+  const typeIdx = addFuncType(ctx, [], [{ kind: "i32" }], "$sbool_type");
+  for (const fieldName of [...ctx.booleanPropertyNames].sort()) {
+    const funcName = `__sbool_${fieldName}`;
+    const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
+    ctx.mod.functions.push({
+      name: funcName,
+      typeIdx,
+      locals: [],
+      body: [{ op: "i32.const", value: 1 }],
+      exported: true,
+    } as WasmFunction);
+    ctx.mod.exports.push({ name: funcName, desc: { kind: "func", index: funcIdx } });
+  }
+}
+
 function _emitStructFieldGettersInner(ctx: CodegenContext): void {
   const mod = ctx.mod;
 
   // Collect all (fieldName → [{structTypeIdx, fieldIdx, fieldType}]) mappings
-  const fieldMap = new Map<string, { typeIdx: number; fieldIdx: number; fieldType: ValType }[]>();
+  type GetterEntry = {
+    typeIdx: number;
+    fieldIdx: number;
+    fieldType: ValType;
+    jsBoolean: boolean;
+  };
+  const fieldMap = new Map<string, GetterEntry[]>();
 
   for (const [structName, fields] of ctx.structFields) {
     const typeIdx = ctx.structMap.get(structName);
@@ -64,7 +167,12 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
         entries = [];
         fieldMap.set(field.name, entries);
       }
-      entries.push({ typeIdx, fieldIdx: i, fieldType: field.type });
+      entries.push({
+        typeIdx,
+        fieldIdx: i,
+        fieldType: field.type,
+        jsBoolean: field.jsBoolean === true || (field.type.kind === "i32" && field.type.boolean === true),
+      });
     }
   }
 
@@ -91,8 +199,8 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
     const hasF64 = entries.some((e) => e.fieldType.kind === "f64");
     const hasI32 = entries.some((e) => e.fieldType.kind === "i32");
     const hasRef = entries.some((e) => e.fieldType.kind !== "f64" && e.fieldType.kind !== "i32");
-    const hasBool = entries.some((e) => e.fieldType.kind === "i32" && (e.fieldType as { boolean?: true }).boolean);
-    const allF64 = hasF64 && !hasI32 && !hasRef;
+    const hasBool = entries.some((e) => e.jsBoolean);
+    const allF64 = hasF64 && !hasI32 && !hasRef && !hasBool;
     const allI32 = hasI32 && !hasF64 && !hasRef && !hasBool;
     // f64-only / i32-only buckets return the raw value (no box call). Only a
     // mixed/boolean (extern-mode) bucket carrying a numeric or boolean field
@@ -148,8 +256,8 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
     // boolean, not the number 1). The raw-i32 returnMode returns a bare i32,
     // which the host reads back as a number — so an all-i32 bucket that
     // contains any boolean field is forced to externref/box mode instead.
-    const hasBool = entries.some((e) => e.fieldType.kind === "i32" && (e.fieldType as { boolean?: true }).boolean);
-    const allF64 = hasF64 && !hasI32 && !hasRef;
+    const hasBool = entries.some((e) => e.jsBoolean);
+    const allF64 = hasF64 && !hasI32 && !hasRef && !hasBool;
     const allI32 = hasI32 && !hasF64 && !hasRef && !hasBool;
 
     let getterTypeIdx: number;
@@ -570,7 +678,7 @@ function buildSetterStore(
  * original relative position at the end. No recorded order ⇒ `slotNames`
  * unchanged (plain literals, IR-fresh structs, named classes).
  */
-function orderNamesByInsertion(ctx: CodegenContext, structName: string, slotNames: string[]): string[] {
+export function orderNamesByInsertion(ctx: CodegenContext, structName: string, slotNames: string[]): string[] {
   const order = ctx.structInsertionOrder.get(structName);
   if (!order || order.length === 0) return slotNames;
   const slotSet = new Set(slotNames);
@@ -593,12 +701,11 @@ function orderNamesByInsertion(ctx: CodegenContext, structName: string, slotName
 }
 
 export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): void {
-  // Host enumeration is JS-only; standalone/WASI has no host name export.
-  if (ctx.nativeStrings) return;
-
   // Structural-shape key = field TYPES only (the thing WasmGC canonicalizes on),
-  // ignoring names and any pre-existing internal `$`/`__` fields. Group anon
-  // object-literal structs by it.
+  // ignoring names and any pre-existing internal `$`/`__` fields. The hidden
+  // identity is consumed both by host field-name exports and by standalone
+  // closed-struct runtime finalizers; ref.test alone cannot distinguish
+  // structurally equivalent anonymous structs.
   const typeKindKey = (t: ValType): string => {
     if (t.kind === "ref" || t.kind === "ref_null") return `${t.kind}:${(t as { typeIdx: number }).typeIdx}`;
     if (t.kind === "i32" && (t as { boolean?: true }).boolean) return "i32:bool";
@@ -891,7 +998,7 @@ interface SentinelArmConfig {
 
 /** Build nested if/else for struct field getter dispatch. */
 function buildNestedIfElse(
-  entries: { typeIdx: number; fieldIdx: number; fieldType: ValType }[],
+  entries: { typeIdx: number; fieldIdx: number; fieldType: ValType; jsBoolean: boolean }[],
   anyLocal: number,
   boxNumIdx: number | undefined,
   returnMode: "extern" | "f64" | "i32" = "extern",
@@ -942,7 +1049,7 @@ function buildNestedIfElse(
 
 /** Build the "then" branch that extracts a field from a cast struct. */
 function buildGetterExtract(
-  entry: { typeIdx: number; fieldIdx: number; fieldType: ValType },
+  entry: { typeIdx: number; fieldIdx: number; fieldType: ValType; jsBoolean: boolean },
   anyLocal: number,
   boxNumIdx: number | undefined,
   returnMode: "extern" | "f64" | "i32" = "extern",
@@ -1007,14 +1114,21 @@ function buildGetterExtract(
     }
   } else {
     // Return externref
-    if (ft.kind === "f64") {
+    if (entry.jsBoolean && boxBoolIdx !== undefined && ft.kind === "f64") {
+      // #2847: late shape inference chose an f64 carrier for an untyped
+      // boolean-only field. Convert 0/non-zero to i32 before boolean boxing;
+      // the struct storage ABI remains unchanged.
+      then.push({ op: "f64.const", value: 0 });
+      then.push({ op: "f64.ne" });
+      then.push({ op: "call", funcIdx: boxBoolIdx });
+    } else if (ft.kind === "f64") {
       if (boxNumIdx !== undefined) {
         then.push({ op: "call", funcIdx: boxNumIdx });
       } else {
         then.push({ op: "drop" });
         then.push({ op: "ref.null.extern" });
       }
-    } else if (ft.kind === "i32" && (ft as { boolean?: true }).boolean && boxBoolIdx !== undefined) {
+    } else if (ft.kind === "i32" && entry.jsBoolean && boxBoolIdx !== undefined) {
       // (#1788) Boolean-branded i32 field — box as a JS boolean (not a number)
       // so `typeof o.x === "boolean"` and `o.x === true` hold on a dynamic read.
       // The raw i32 is already on the stack; `__box_boolean(i32) -> externref`.

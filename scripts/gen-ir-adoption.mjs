@@ -241,6 +241,10 @@ const BUCKETS = {
     "unintended",
     "Date constructor identity, arity, and backend capability are represented in typed IR (#3518)",
   ],
+  "regexp-constructor-unsupported": [
+    "unintended",
+    "RegExp constructor identity, arity, and backend capability are represented in typed IR (#3529)",
+  ],
   "call-resolution-unsupported": [
     "unintended",
     "Every supported call target resolves through the source-qualified whole-program ABI map (#3520)",

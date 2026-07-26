@@ -51,16 +51,20 @@ interface Frame {
   caps: Int32Array;
 }
 
-/** Does code unit `c` fall in class at `classTable[offset]`? */
+/** Does code unit/code point `c` fall in class at `classTable[offset]`? */
 function classMatch(classTable: number[], offset: number, c: number, negated: boolean): boolean {
   const rangeCount = classTable[offset]!;
   let inside = false;
-  let p = offset + 1;
-  for (let i = 0; i < rangeCount; i++) {
+  let loIndex = 0;
+  let hiIndex = rangeCount - 1;
+  while (loIndex <= hiIndex) {
+    const mid = loIndex + ((hiIndex - loIndex) >> 1);
+    const p = offset + 1 + 2 * mid;
     const lo = classTable[p]!;
     const hi = classTable[p + 1]!;
-    p += 2;
-    if (c >= lo && c <= hi) {
+    if (c < lo) hiIndex = mid - 1;
+    else if (c > hi) loIndex = mid + 1;
+    else {
       inside = true;
       break;
     }
@@ -165,6 +169,56 @@ export function runAt(
       case ReOp.CLASS: {
         if (inBounds() && classMatch(classTable, a, unit(), b !== 0)) {
           sp += dir;
+          pc++;
+        } else failed = true;
+        break;
+      }
+      case ReOp.CPCLASS: {
+        if (!inBounds()) {
+          failed = true;
+          break;
+        }
+        let codePoint = unit();
+        let width = 1;
+        if (dir > 0 && codePoint >= 0xd800 && codePoint <= 0xdbff && sp + 1 < len) {
+          const trail = input.charCodeAt(sp + 1);
+          if (trail >= 0xdc00 && trail <= 0xdfff) {
+            codePoint = 0x10000 + ((codePoint - 0xd800) << 10) + (trail - 0xdc00);
+            width = 2;
+          }
+        } else if (
+          dir > 0 &&
+          codePoint >= 0xdc00 &&
+          codePoint <= 0xdfff &&
+          sp > 0 &&
+          input.charCodeAt(sp - 1) >= 0xd800 &&
+          input.charCodeAt(sp - 1) <= 0xdbff
+        ) {
+          // Search/sticky entry must not reinterpret the trail half of an
+          // existing pair as a lone surrogate.
+          failed = true;
+          break;
+        } else if (dir < 0 && codePoint >= 0xdc00 && codePoint <= 0xdfff && sp > 1) {
+          const lead = input.charCodeAt(sp - 2);
+          if (lead >= 0xd800 && lead <= 0xdbff) {
+            codePoint = 0x10000 + ((lead - 0xd800) << 10) + (codePoint - 0xdc00);
+            width = 2;
+          }
+        } else if (
+          dir < 0 &&
+          codePoint >= 0xd800 &&
+          codePoint <= 0xdbff &&
+          sp < len &&
+          input.charCodeAt(sp) >= 0xdc00 &&
+          input.charCodeAt(sp) <= 0xdfff
+        ) {
+          // Likewise, reverse lookbehind cannot enter a pair between its
+          // lead and trail halves and treat the lead as lone.
+          failed = true;
+          break;
+        }
+        if (classMatch(classTable, a, codePoint, b !== 0)) {
+          sp += dir * width;
           pc++;
         } else failed = true;
         break;

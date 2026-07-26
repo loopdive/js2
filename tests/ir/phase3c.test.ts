@@ -20,7 +20,9 @@ import { describe, expect, it } from "vitest";
 import {
   asBlockId,
   asValueId,
+  createDerivedIrUnitId,
   irDynamic,
+  irUnitFuncRef,
   irVal,
   lowerIrFunctionToWasm,
   verifyIrFunction,
@@ -34,6 +36,9 @@ import { monomorphize } from "../../src/ir/passes/monomorphize.js";
 import { runTaggedUnions, taggedUnions } from "../../src/ir/passes/tagged-unions.js";
 import { UnionStructRegistry } from "../../src/ir/passes/tagged-union-types.js";
 import type { StructTypeDef, ValType } from "../../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("ir/phase3c");
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -50,7 +55,7 @@ const I32 = irVal({ kind: "i32" });
 /** Build a simple identity callee whose body is empty (return param). */
 function makeIdentity(name: string, paramType = F64): IrFunction {
   return {
-    name,
+    ...irIdentities.next(name),
     params: [{ value: id(0), type: paramType, name: "x" }],
     resultTypes: [paramType],
     blocks: [
@@ -72,9 +77,13 @@ function makeIdentity(name: string, paramType = F64): IrFunction {
  * externref argument. The argument is the caller's own param (of `argType`),
  * so the call site's arg-type tuple depends on `argType`.
  */
-function makeCallerPassingParam(callerName: string, calleeName: string, argType = F64): IrFunction {
+function makeCallerPassingParam(
+  callerName: string,
+  callee: Pick<IrFunction, "unitId" | "name">,
+  argType = F64,
+): IrFunction {
   return {
-    name: callerName,
+    ...irIdentities.next(callerName),
     params: [{ value: id(0), type: argType, name: "n" }],
     resultTypes: [argType],
     blocks: [
@@ -85,7 +94,7 @@ function makeCallerPassingParam(callerName: string, calleeName: string, argType 
         instrs: [
           {
             kind: "call",
-            target: { kind: "func", name: calleeName },
+            target: irUnitFuncRef(callee),
             args: [id(0)],
             result: id(1),
             resultType: argType,
@@ -107,8 +116,8 @@ describe("#1167c — monomorphize (unit)", () => {
   it("clones a callee invoked with two distinct arg-type tuples", () => {
     // identity called from a f64 caller AND an externref caller — two tuples.
     const identity = makeIdentity("identity", F64);
-    const callerNum = makeCallerPassingParam("run_num", "identity", F64);
-    const callerStr = makeCallerPassingParam("run_str", "identity", EXTERNREF);
+    const callerNum = makeCallerPassingParam("run_num", identity, F64);
+    const callerStr = makeCallerPassingParam("run_str", identity, EXTERNREF);
 
     const result = monomorphize({ functions: [identity, callerNum, callerStr] });
     expect(result.module).not.toBe({ functions: [identity, callerNum, callerStr] });
@@ -121,8 +130,9 @@ describe("#1167c — monomorphize (unit)", () => {
     // externref) won the first-keeps-original slot — our canonical sort is
     // lexicographic over the ValType kind, so the winner depends on member
     // kind spelling; both the test and the impl must not hardcode that.
-    const cloneName = [...result.cloneSignatures.keys()][0]!;
-    expect(result.cloneOrigins.get(cloneName)).toBe("identity");
+    const [cloneUnitId, cloneSignature] = [...result.cloneSignatures.entries()][0]!;
+    const cloneName = cloneSignature.name;
+    expect(result.cloneOrigins.get(cloneUnitId)).toBe(identity.unitId);
     expect(cloneName.startsWith("identity$")).toBe(true);
 
     // One of the two callers now targets the clone, the other still hits
@@ -144,7 +154,7 @@ describe("#1167c — monomorphize (unit)", () => {
     // The clone's signature matches whichever caller sends its arg to the
     // clone. Because `identity` forwards its param verbatim, the call-site
     // arg type IS the clone's param type IS the clone's return type.
-    const sig = result.cloneSignatures.get(cloneName)!;
+    const sig = result.cloneSignatures.get(cloneUnitId)!;
     expect(sig.params).toHaveLength(1);
     const cloneCallerArgType = numCall.target.name === cloneName ? F64 : EXTERNREF;
     expect(sig.params[0]).toEqual(cloneCallerArgType);
@@ -153,14 +163,25 @@ describe("#1167c — monomorphize (unit)", () => {
     // The clone function exists in the module and verifies.
     const cloneFn = result.module.functions.find((f) => f.name === cloneName)!;
     expect(cloneFn).toBeDefined();
+    expect(cloneFn.unitId).toBe(cloneUnitId);
+    expect(cloneFn.unitId).toBe(
+      createDerivedIrUnitId({
+        parentId: identity.unitId,
+        role: "monomorphization-clone",
+        ordinal: 0,
+      }),
+    );
+    expect(cloneFn.unitId).not.toBe(identity.unitId);
+    const cloneCall = numCall.target.name === cloneName ? numCall : strCall;
+    expect(cloneCall.target.binding).toEqual({ kind: "unit", unitId: cloneFn.unitId });
     expect(verifyIrFunction(cloneFn)).toEqual([]);
   });
 
   it("leaves a callee with a single arg-type tuple untouched", () => {
     // Both callers invoke identity with f64 — no specialization needed.
     const identity = makeIdentity("identity", F64);
-    const callerA = makeCallerPassingParam("a", "identity", F64);
-    const callerB = makeCallerPassingParam("b", "identity", F64);
+    const callerA = makeCallerPassingParam("a", identity, F64);
+    const callerB = makeCallerPassingParam("b", identity, F64);
 
     const mod = { functions: [identity, callerA, callerB] };
     const result = monomorphize(mod);
@@ -171,8 +192,9 @@ describe("#1167c — monomorphize (unit)", () => {
 
   it("skips recursive callees", () => {
     // `rec` calls itself — computeRecursiveSet rejects it.
+    const recIdentity = irIdentities.next("rec");
     const rec: IrFunction = {
-      name: "rec",
+      ...recIdentity,
       params: [{ value: id(0), type: F64, name: "n" }],
       resultTypes: [F64],
       blocks: [
@@ -183,7 +205,7 @@ describe("#1167c — monomorphize (unit)", () => {
           instrs: [
             {
               kind: "call",
-              target: { kind: "func", name: "rec" },
+              target: irUnitFuncRef(recIdentity),
               args: [id(0)],
               result: id(1),
               resultType: F64,
@@ -196,8 +218,8 @@ describe("#1167c — monomorphize (unit)", () => {
       valueCount: 2,
     };
     // Two callers with distinct arg types: one f64, one externref.
-    const callerNum = makeCallerPassingParam("run_num", "rec", F64);
-    const callerStr = makeCallerPassingParam("run_str", "rec", EXTERNREF);
+    const callerNum = makeCallerPassingParam("run_num", rec, F64);
+    const callerStr = makeCallerPassingParam("run_str", rec, EXTERNREF);
 
     const result = monomorphize({ functions: [rec, callerNum, callerStr] });
     // Recursive → no clone despite distinct call tuples.
@@ -208,7 +230,7 @@ describe("#1167c — monomorphize (unit)", () => {
     // `double(n) = n + n` — `f64.add` consumes the param. Retyping to
     // externref would invalidate the operator. isMonomorphizable rejects.
     const doubler: IrFunction = {
-      name: "double",
+      ...irIdentities.next("double"),
       params: [{ value: id(0), type: F64, name: "n" }],
       resultTypes: [F64],
       blocks: [
@@ -232,8 +254,8 @@ describe("#1167c — monomorphize (unit)", () => {
       exported: false,
       valueCount: 2,
     };
-    const callerA = makeCallerPassingParam("run_a", "double", F64);
-    const callerB = makeCallerPassingParam("run_b", "double", EXTERNREF);
+    const callerA = makeCallerPassingParam("run_a", doubler, F64);
+    const callerB = makeCallerPassingParam("run_b", doubler, EXTERNREF);
 
     const result = monomorphize({ functions: [doubler, callerA, callerB] });
     expect(result.cloneSignatures.size).toBe(0);
@@ -246,7 +268,7 @@ describe("#1167c — monomorphize (unit)", () => {
     // Budget cap = 2.5 new instrs. Adding 3 clones (one per extra tuple) = 3
     // new instrs → 3 > 2.5 → pass abandons.
     const t: IrFunction = {
-      name: "t",
+      ...irIdentities.next("t"),
       params: [{ value: id(0), type: F64, name: "x" }],
       resultTypes: [F64],
       blocks: [
@@ -264,10 +286,10 @@ describe("#1167c — monomorphize (unit)", () => {
       valueCount: 2,
     };
     const callers: IrFunction[] = [
-      makeCallerPassingParam("c1", "t", F64),
-      makeCallerPassingParam("c2", "t", I32),
-      makeCallerPassingParam("c3", "t", EXTERNREF),
-      makeCallerPassingParam("c4", "t", irVal({ kind: "f32" })),
+      makeCallerPassingParam("c1", t, F64),
+      makeCallerPassingParam("c2", t, I32),
+      makeCallerPassingParam("c3", t, EXTERNREF),
+      makeCallerPassingParam("c4", t, irVal({ kind: "f32" })),
     ];
     const result = monomorphize({ functions: [t, ...callers] });
     // Guard fires → no clones.
@@ -284,7 +306,7 @@ describe("#1167c — monomorphize (unit)", () => {
     // so the denominator is large enough for 3 clones × 1 instr = 3 new
     // instrs to fit under the 1.5× cap.
     const callee = (name: string, bodyInstr: IrInstr): IrFunction => ({
-      name,
+      ...irIdentities.next(name),
       params: [{ value: id(0), type: F64, name: "x" }],
       resultTypes: [F64],
       blocks: [
@@ -309,7 +331,7 @@ describe("#1167c — monomorphize (unit)", () => {
     const pads: IrFunction[] = [];
     for (let i = 0; i < 10; i++) {
       pads.push({
-        name: `pad_${i}`,
+        ...irIdentities.next(`pad_${i}`),
         params: [],
         resultTypes: [F64],
         blocks: [
@@ -334,12 +356,12 @@ describe("#1167c — monomorphize (unit)", () => {
     }
 
     const callers = [
-      makeCallerPassingParam("a_num", "a", F64),
-      makeCallerPassingParam("a_str", "a", EXTERNREF),
-      makeCallerPassingParam("b_num", "b", F64),
-      makeCallerPassingParam("b_str", "b", EXTERNREF),
-      makeCallerPassingParam("c_num", "c", F64),
-      makeCallerPassingParam("c_str", "c", EXTERNREF),
+      makeCallerPassingParam("a_num", a, F64),
+      makeCallerPassingParam("a_str", a, EXTERNREF),
+      makeCallerPassingParam("b_num", b, F64),
+      makeCallerPassingParam("b_str", b, EXTERNREF),
+      makeCallerPassingParam("c_num", c, F64),
+      makeCallerPassingParam("c_str", c, EXTERNREF),
     ];
 
     const result = monomorphize({ functions: [a, b, c, ...pads, ...callers] });
@@ -364,7 +386,7 @@ describe("#1167c — taggedUnions (unit)", () => {
   it("accepts box-to-dynamic without consulting the tagged-union registry", () => {
     const dynamicType = irDynamic();
     const fn: IrFunction = {
-      name: "boxDynamic",
+      ...irIdentities.next("boxDynamic"),
       params: [{ value: id(0), type: F64, name: "value" }],
       resultTypes: [dynamicType],
       blocks: [
@@ -397,7 +419,7 @@ describe("#1167c — taggedUnions (unit)", () => {
 
   it("keeps the invariant backstop for box targets outside union or dynamic", () => {
     const fn: IrFunction = {
-      name: "boxInvalid",
+      ...irIdentities.next("boxInvalid"),
       params: [{ value: id(0), type: F64, name: "value" }],
       resultTypes: [F64],
       blocks: [
@@ -429,7 +451,7 @@ describe("#1167c — taggedUnions (unit)", () => {
     const paramId = asValueId(0);
     const testResult = asValueId(1);
     const fn: IrFunction = {
-      name: "discriminate",
+      ...irIdentities.next("discriminate"),
       params: [{ value: paramId, type: unionType, name: "v" }],
       resultTypes: [I32],
       blocks: [
@@ -500,7 +522,7 @@ describe("#1167c — taggedUnions (unit)", () => {
     const paramId = asValueId(0);
     const testResult = asValueId(1);
     const fn: IrFunction = {
-      name: "bad",
+      ...irIdentities.next("bad"),
       params: [{ value: paramId, type: unionType, name: "v" }],
       resultTypes: [I32],
       blocks: [

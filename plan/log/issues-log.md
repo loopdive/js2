@@ -535,6 +535,7 @@ sprint: 0
 | 3516 | 2026-07-21 | Release proxy dependency lockstep; v0.64.1 published and verified with js2wasm depending on @loopdive/js2@0.64.1 | Sprint 74 |
 | 3529 | 2026-07-21 | IR R0 typed-producer equivalence parity restored: 1,608 pass / 35 fail, one baseline-known improvement, zero new regressions, unchanged baseline; merge-queue boolean-boundary correction restored differential 99/104 | Sprint 74 |
 | 3519 | 2026-07-21 | IR R0 typed outcomes and honest gate: hybrid 5/5, 37 terminal, 31 IR, 6 Unsupported, 0 Invariants, 37 legacy | Sprint 74 |
+| 3652 | 2026-07-26 | Compact Unicode RegExp code-point classes recover the four remaining step-limited property rows without relaxing the ReDoS budget (462/469 current generated rows pass) | Current |
 
 > **IR retirement checkpoint:** #3518 remains in progress; #3520 is ready as
 > the next R1 slice. R2–R8 remain blocked on the dependency spine.

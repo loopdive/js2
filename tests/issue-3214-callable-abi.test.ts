@@ -14,16 +14,20 @@ import { compile, type CompileResult } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { verifyIrBackendLegality } from "../src/ir/backend/legality.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
+import { collectIrDirectCallLoweringPlans } from "../src/ir/ast-lowering-plans.js";
 import { IrFunctionBuilder } from "../src/ir/builder.js";
+import { irUnitFuncRef } from "../src/ir/callable-bindings.js";
 import { irTypeEquals, irVal, type IrClosureSignature, type IrType } from "../src/ir/nodes.js";
 import { lowerIrFunctionBody, wasmValueTypeConverter, type IrLowerResolver } from "../src/ir/lower.js";
 import { lowerFunctionAstToIr } from "../src/ir/from-ast.js";
 import { buildTypeMap } from "../src/ir/propagate.js";
 import { planIrCompilation } from "../src/ir/select.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 type CompileOptions = NonNullable<Parameters<typeof compile>[1]>;
 
 const F64: IrType = irVal({ kind: "f64" });
+const identities = createTestIrFunctionIdentityFactory("issue-3214-callable-abi");
 
 const ISSUE_2859_PROGRAM = `
 function apply(fn: () => number): number {
@@ -304,7 +308,7 @@ describe("#3214 B0 — canonical callable ABI", () => {
     expect(irTypeEquals(callable, { kind: "callable", signature: { params: [], returnType: F64 } })).toBe(true);
     expect(irTypeEquals(callable, closure)).toBe(false);
 
-    const callBuilder = new IrFunctionBuilder("linearCallableCall", [F64]);
+    const callBuilder = new IrFunctionBuilder(identities.next("linearCallableCall"), [F64]);
     const callee = callBuilder.addParam("fn", callable);
     callBuilder.openBlock();
     const called = callBuilder.emitClosureCall(callee, [], F64);
@@ -324,7 +328,7 @@ describe("#3214 B0 — canonical callable ABI", () => {
       ),
     ).toThrow(/linear backend legality failed/);
 
-    const packBuilder = new IrFunctionBuilder("linearCallablePack", [F64]);
+    const packBuilder = new IrFunctionBuilder(identities.next("linearCallablePack"), [F64]);
     const internal = packBuilder.addParam("internal", closure);
     packBuilder.openBlock();
     packBuilder.emitCallablePack(internal, signature);
@@ -344,7 +348,7 @@ describe("#3214 B0 — canonical callable ABI", () => {
     ).toThrow(/linear backend legality failed/);
 
     const mismatched: IrClosureSignature = { params: [F64], returnType: F64 };
-    const mismatchBuilder = new IrFunctionBuilder("exactPackOnly", []);
+    const mismatchBuilder = new IrFunctionBuilder(identities.next("exactPackOnly"), []);
     const value = mismatchBuilder.addParam("internal", closure);
     mismatchBuilder.openBlock();
     expect(() => mismatchBuilder.emitCallablePack(value, mismatched)).toThrow(/exact closure signature/);
@@ -539,11 +543,27 @@ describe("#3214 B0 — canonical callable ABI", () => {
     );
     const declaration = sourceFile.statements.find(ts.isFunctionDeclaration);
     expect(declaration).toBeDefined();
+    const ownerIdentity = identities.next("test");
+    const applyIdentity = identities.next("apply");
+    const directCalls = collectIrDirectCallLoweringPlans(
+      declaration!,
+      ownerIdentity.unitId,
+      new Map([
+        [
+          "apply",
+          {
+            target: irUnitFuncRef(applyIdentity),
+            signature: { params: [callable, F64], returnType: F64 },
+          },
+        ],
+      ]),
+    );
     const lowered = lowerFunctionAstToIr(declaration!, {
       exported: true,
+      ownerUnitId: ownerIdentity.unitId,
       paramTypeOverrides: [],
       returnTypeOverride: F64,
-      calleeTypes: new Map([["apply", { params: [callable, F64], returnType: F64 }]]),
+      directCalls,
     });
     const instrs = lowered.main.blocks.flatMap((block) => block.instrs);
     const closureNew = instrs.find((instr) => instr.kind === "closure.new");

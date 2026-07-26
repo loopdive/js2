@@ -819,6 +819,7 @@ export function registerClosureBindingInfo(
     returnType: closureReturnType,
     paramTypes: arrowParams,
     hasCaptures: structDef?.kind === "struct" && structDef.fields.length > 1,
+    hasRestParam: runtimeParameters(arrow).some((p) => p.dotDotDotToken !== undefined),
   };
 
   // Always register by struct type index (for valueOf coercion and anonymous closures)

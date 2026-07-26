@@ -14,7 +14,8 @@
 //   4. Branch arg arity: each `br`/`br_if` passes exactly as many args as the
 //      target block declares.
 //   5. Symbolic refs: the only references to functions/globals/types in
-//      instructions are IrFuncRef/IrGlobalRef/IrTypeRef (no raw indices).
+//      instructions are structurally-bound IrFuncRef/IrGlobalRef/IrTypeRef
+//      values (no raw indices or legacy name-only callable refs).
 //
 // On failure, returns a list of `IrVerifyError`s rather than throwing, so
 // callers can decide whether to bail or fall back to the legacy path.
@@ -174,9 +175,145 @@ export interface IrVerifyError {
   readonly demote?: boolean;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function callableReferenceProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "must be an IrFuncRef object";
+  if (value.kind !== "func") return 'must have kind "func"';
+  if (!nonEmptyString(value.name)) return "must carry a non-empty compatibility name";
+  if (!("binding" in value)) {
+    return "is missing required callable binding; legacy name-only refs are not valid IR";
+  }
+  if (!isRecord(value.binding)) return "has a malformed callable binding object";
+
+  const binding = value.binding;
+  switch (binding.kind) {
+    case "unit":
+      return nonEmptyString(binding.unitId) && binding.unitId.startsWith("ir-unit:v1:")
+        ? null
+        : "has a malformed unit callable binding";
+    case "import":
+      return nonEmptyString(binding.module) && nonEmptyString(binding.field)
+        ? null
+        : "has a malformed import callable binding";
+    case "runtime":
+      return nonEmptyString(binding.symbol) ? null : "has a malformed runtime callable binding";
+    case "intrinsic":
+      return nonEmptyString(binding.symbol) ? null : "has a malformed intrinsic callable binding";
+    case "support":
+      return nonEmptyString(binding.bindingId) && binding.bindingId.startsWith("ir-binding:v1:")
+        ? null
+        : "has a malformed support callable binding";
+    default:
+      return "has an unknown callable binding kind";
+  }
+}
+
+function structuralBindingId(value: unknown, domain: "global" | "type" | "class"): value is string {
+  return nonEmptyString(value) && value.startsWith(`ir-binding:v1:${domain}:`);
+}
+
+/** Validate a serialized/in-memory global ref without trusting its TypeScript type. */
+export function irGlobalReferenceProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "must be an IrGlobalRef object";
+  if (value.kind !== "global") return 'must have kind "global"';
+  if (!nonEmptyString(value.name)) return "must carry a non-empty compatibility name";
+  if (!("binding" in value)) {
+    return "is missing required global binding; legacy name-only refs are not valid IR";
+  }
+  if (!isRecord(value.binding)) return "has a malformed global binding object";
+  const binding = value.binding;
+  if (!structuralBindingId(binding.bindingId, "global")) return "has a malformed global-domain bindingId";
+  switch (binding.kind) {
+    case "source":
+    case "support":
+      return null;
+    case "import":
+      return nonEmptyString(binding.module) && nonEmptyString(binding.field)
+        ? null
+        : "has a malformed import global binding";
+    case "runtime":
+      return nonEmptyString(binding.symbol) ? null : "has a malformed runtime global binding";
+    default:
+      return "has an unknown global binding kind";
+  }
+}
+
+/** Validate a symbolic type ref before a backend adapter resolves it. */
+export function irTypeReferenceProblem(value: unknown): string | null {
+  if (!isRecord(value)) return "must be an IrTypeRef object";
+  if (value.kind !== "type") return 'must have kind "type"';
+  if (!nonEmptyString(value.name)) return "must carry a non-empty compatibility name";
+  if (!("binding" in value)) {
+    return "is missing required type binding; legacy name-only refs are not valid IR";
+  }
+  if (!isRecord(value.binding)) return "has a malformed type binding object";
+  const binding = value.binding;
+  const expectedDomain = binding.kind === "class" ? "class" : "type";
+  if (!structuralBindingId(binding.bindingId, expectedDomain)) {
+    return `has a malformed ${expectedDomain}-domain bindingId`;
+  }
+  switch (binding.kind) {
+    case "source":
+    case "support":
+      return null;
+    case "class":
+      return nonEmptyString(binding.classId) && binding.classId.startsWith("ir-class:v1:")
+        ? null
+        : "has a malformed class type binding";
+    case "runtime":
+      return nonEmptyString(binding.symbol) ? null : "has a malformed runtime type binding";
+    default:
+      return "has an unknown type binding kind";
+  }
+}
+
+/** Verify direct symbolic refs in every nested instruction buffer. */
+function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): void {
+  for (const block of func.blocks) {
+    for (const instr of block.instrs) {
+      forEachInstrDeep(instr, (nested) => {
+        let site: string;
+        let ref: unknown;
+        if (nested.kind === "call") {
+          site = "call target";
+          ref = nested.target;
+        } else if (nested.kind === "closure.new") {
+          site = "closure.new liftedFunc";
+          ref = nested.liftedFunc;
+        } else if (nested.kind === "global.get" || nested.kind === "global.set") {
+          const problem = irGlobalReferenceProblem(nested.target);
+          if (problem !== null) {
+            errors.push({
+              message: `${nested.kind} target ${problem}`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+          return;
+        } else {
+          return;
+        }
+        const problem = callableReferenceProblem(ref);
+        if (problem !== null) {
+          errors.push({ message: `${site} ${problem}`, func: func.name, block: block.id as number });
+        }
+      });
+    }
+  }
+}
+
 export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
   const defs = new Set<IrValueId>();
+
+  verifySymbolicReferences(func, errors);
 
   for (const p of func.params) {
     if (defs.has(p.value)) {

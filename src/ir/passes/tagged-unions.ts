@@ -59,8 +59,10 @@
 // error via this pass's `errors` output instead of crashing in lower.ts.
 
 import { type IrFunction, type IrInstr, type IrModule, type IrType, asVal } from "../nodes.js";
+import type { IrUnitId } from "../identity.js";
 
 export interface TaggedUnionsError {
+  readonly unitId: IrUnitId;
   readonly func: string;
   readonly block: number;
   readonly message: string;
@@ -116,6 +118,7 @@ function checkInstr(fn: IrFunction, blockId: number, instr: IrInstr, errors: Tag
     if (instr.toType.kind === "dynamic") return;
     if (instr.toType.kind !== "union") {
       errors.push({
+        unitId: fn.unitId,
         func: fn.name,
         block: blockId,
         message: `box target must be a union or dynamic IrType, got ${instr.toType.kind}`,
@@ -124,6 +127,7 @@ function checkInstr(fn: IrFunction, blockId: number, instr: IrInstr, errors: Tag
     }
     if (!isRegistrySupported(instr.toType)) {
       errors.push({
+        unitId: fn.unitId,
         func: fn.name,
         block: blockId,
         message: `box target union<${memberList(instr.toType)}> is not supported by the V1 tagged-union registry`,
@@ -139,6 +143,7 @@ function checkInstr(fn: IrFunction, blockId: number, instr: IrInstr, errors: Tag
     if (!operandType || operandType.kind !== "union") return;
     if (!isRegistrySupported(operandType)) {
       errors.push({
+        unitId: fn.unitId,
         func: fn.name,
         block: blockId,
         message: `${instr.kind} operand union<${memberList(operandType)}> is not supported by the V1 tagged-union registry`,

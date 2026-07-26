@@ -143,6 +143,7 @@ and Algorithms' top-level generic Map initializer are both IR-owned.
 | `error-constructor-unsupported`          | unintended | Error-family constructor identity, arity, and runtime intent are represented in typed IR (#3518)                                                      |
 | `typed-array-constructor-unsupported`    | unintended | TypedArray constructor identity, arity, and backend capability are represented in typed IR (#3518)                                                    |
 | `date-constructor-unsupported`           | unintended | Date constructor identity, arity, and backend capability are represented in typed IR (#3518)                                                          |
+| `regexp-constructor-unsupported`         | unintended | RegExp constructor identity, arity, and backend capability are represented in typed IR (#3529)                                                        |
 | `call-resolution-unsupported`            | unintended | Every supported call target resolves through the source-qualified whole-program ABI map (#3520)                                                       |
 | `call-arity-unsupported`                 | unintended | Typed IR models the supported JavaScript call-arity/default/rest semantics (#3518)                                                                    |
 | `constructor-resolution-unsupported`     | unintended | Every supported constructor target resolves through the source-qualified whole-program ABI map (#3520)                                                |

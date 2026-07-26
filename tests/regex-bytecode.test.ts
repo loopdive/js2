@@ -100,6 +100,18 @@ describe("#1539 capture groups", () => {
     expect(parsed.numCaptures).toBe(1);
     expect(parsed.groupNames.get("year")).toBe(1);
   });
+
+  it("canonicalizes Unicode escapes in group names and backreferences", () => {
+    const flags = parseFlags("u");
+    const parsed = parsePattern("(?<\\u{03C0}>a)", flags);
+    expect(parsed.groupNames.get("π")).toBe(1);
+    expect(parsed.groupNames.has("\\u{03C0}")).toBe(false);
+
+    const compiled = compilePattern("(?<\\u{03C0}>a)\\k<π>", flags);
+    const match = search(compiled.prog, compiled.classTable, compiled.nGroups, "aa", 0, false);
+    expect(match).not.toBeNull();
+    expect([match![0], match![1]]).toEqual([0, 2]);
+  });
 });
 
 describe("#1539 narrowed refusals (2d Slice B residue after #1911)", () => {

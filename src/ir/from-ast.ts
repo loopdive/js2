@@ -46,18 +46,33 @@ import { evaluateConstantCondition } from "../codegen/statements/control-flow.js
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "../codegen/statements/loop-analysis.js";
 import { IrFunctionBuilder } from "./builder.js";
+import { sameIrGlobalBinding } from "./abi-bindings.js";
+import {
+  irImportFuncRef,
+  irIntrinsicFuncRef,
+  irRuntimeFuncRef,
+  irUnitFuncRef,
+  sameIrCallableBinding,
+} from "./callable-bindings.js";
 import { collectOuterWrites } from "./closure-captures.js";
-import type {
-  IrHostVoidCallbackLoweringPlan,
-  IrImportedCallLoweringPlan,
-  IrImportedOptionalParamPlan,
-  IrTopLevelFunctionValueLoweringPlan,
+import {
+  requireMatchingModuleBindingOwner,
+  requireMatchingLoweringPlanOwner,
+  requireValidImportedCallTarget,
+  type IrDirectCallLoweringPlan,
+  type IrHostVoidCallbackLoweringPlan,
+  type IrImportedCallLoweringPlan,
+  type IrImportedOptionalParamPlan,
+  type IrTopLevelFunctionValueLoweringPlan,
+  type ModuleBindingGlobal,
 } from "./ast-lowering-plans.js";
 export type {
+  IrDirectCallLoweringPlan,
   IrHostVoidCallbackLoweringPlan,
   IrImportedCallLoweringPlan,
   IrImportedOptionalParamPlan,
   IrTopLevelFunctionValueLoweringPlan,
+  ModuleBindingGlobal,
 } from "./ast-lowering-plans.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { classifyLiteral, joinEncoding, type Encoding } from "./analysis/encoding.js";
@@ -76,6 +91,13 @@ import {
   stringIndexProvenBelow,
 } from "./capability.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
+import {
+  allocateLiftedFunctionArtifact,
+  type IrDerivedUnitProvenance,
+  type IrFunctionIdentity,
+  type IrLiftedFunctionArtifactIdentity,
+  type IrUnitId,
+} from "./identity.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { effectiveIrParamTypeNode, effectiveIrReturnTypeNode, IR_MATH_METHOD_TABLE } from "./select.js";
 import { JsTag } from "./js-tag.js"; // #2949 S5.2 — box-refinement tags for dynamic equality operands
@@ -99,6 +121,8 @@ import {
   type IrClosureSignature,
   type IrConst,
   type IrFunction,
+  type IrFuncRef,
+  type IrGlobalRef,
   type IrInstr,
   type IrLabelId,
   type IrObjectShape,
@@ -397,6 +421,8 @@ export interface IrFromAstResolver {
 
 export interface AstToIrOptions {
   readonly exported?: boolean;
+  /** Authoritative identity for the main artifact and exact feature-plan owner. */
+  readonly ownerUnitId: IrUnitId;
   /**
    * #1370 Phase B: explicit name for the lowered function. Required for
    * MethodDeclaration (where `.name` is `PropertyName`, not Identifier)
@@ -464,11 +490,11 @@ export interface AstToIrOptions {
    * for void; calls in statement position (`f();`) are fine.
    */
   readonly calleeTypes?: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>;
-  /** (#3214 A) Exact imported direct calls certified by the shared selector. */
+  /** Exact source direct-call plans keyed by the certified AST call node. */
+  readonly directCalls?: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
+  /** (#3214) Exact imported-call, function-value, and host-callback AST-site plans. */
   readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
-  /** (#3214 B1) Exact bare top-level function-value sites, keyed by AST node. */
   readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
-  /** (#3214 B2) Exact ambient-host void arrows, keyed by their AST node. */
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   /** (#2856) Exact Promise-delay construction/timer/resolve node plans. */
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
@@ -530,23 +556,6 @@ export interface AstToIrOptions {
 }
 
 /**
- * (#3142 Slice 2) One module-scope binding's legacy storage description.
- * Built by the integration layer from `ctx.moduleGlobals` / `ctx.mod.globals`.
- */
-export interface ModuleBindingGlobal {
-  /** The Wasm global's symbolic name (`__mod_<name>`), resolvable by the
-   *  lowerer's `resolveGlobal`. */
-  readonly globalName: string;
-  /** The `__tdz_<name>` flag global when legacy tracks a TDZ flag for this
-   *  binding, else null. The declaration lowering mirrors legacy
-   *  `emitTdzInit`: after the value write, set the flag to 1. */
-  readonly tdzGlobalName: string | null;
-  /** The binding's logical IR type. `extern<C>` is Wasm-identical to the
-   *  legacy externref global while retaining the checker-derived brand. */
-  readonly type: IrType;
-}
-
-/**
  * Slice 3 (#1169c): lowering an outer function may produce additional
  * lifted IR functions (one per nested function declaration / closure
  * expression). The integration layer treats these as synthesized
@@ -555,6 +564,8 @@ export interface ModuleBindingGlobal {
 export interface LoweredFunctionResult {
   readonly main: IrFunction;
   readonly lifted: readonly IrFunction[];
+  /** Exact allocation-side provenance for `lifted`, joined by ID rather than array position. */
+  readonly liftedUnitProvenance: readonly IrDerivedUnitProvenance[];
 }
 
 export function lowerFunctionAstToIr(
@@ -568,7 +579,7 @@ export function lowerFunctionAstToIr(
     // VOID method (setters carry no source-level return type).
     | ts.GetAccessorDeclaration
     | ts.SetAccessorDeclaration,
-  options: AstToIrOptions = {},
+  options: AstToIrOptions,
 ): LoweredFunctionResult {
   // #1370 Phase B: name resolution.
   //
@@ -678,7 +689,7 @@ export function lowerFunctionAstToIr(
 
   // Slice 14 (#1228) — void functions have zero result types; pass `[]`.
   const builder = new IrFunctionBuilder(
-    name,
+    { unitId: options.ownerUnitId, name },
     returnType === null ? [] : [returnType],
     options.exported ?? false,
     options.allocRegistry,
@@ -765,10 +776,27 @@ export function lowerFunctionAstToIr(
     builder.setFuncKind("async");
   }
   if (isGenerator) {
+    // (#3565 contract) The generator prologue below needs the HOST-ONLY import
+    // `env.__gen_create_buffer`. In host-free modes (standalone / wasi /
+    // strictNoHostImports) that import is deliberately never registered — the
+    // legacy path lowers generators to the native `__GenState` state machine
+    // instead (see tests/issue-680). Claiming such a function here would emit a
+    // reference to an import that does not exist in the module, which the exact
+    // import resolver reports as a HARD `unknown-function-ref` invariant at the
+    // `lower` stage — where `unsupported` is not expressible. So refuse at BUILD
+    // stage, which demotes the function to legacy as designed rather than
+    // failing the whole compile.
+    if (options.resolver?.jsHostExterns?.() === false) {
+      throw new IrUnsupportedError(
+        "imported-call-planning-unsupported",
+        "build",
+        `ir/from-ast: generator ${name} needs host-only env.__gen_create_buffer; host-free targets lower generators via the legacy native state machine`,
+      );
+    }
     builder.setFuncKind("generator");
     generatorBufferSlot = builder.declareSlot("__gen_buffer", { kind: "externref" });
     builder.setGeneratorBufferSlot(generatorBufferSlot);
-    const buf = builder.emitCall({ kind: "func", name: "__gen_create_buffer" }, [], irVal({ kind: "externref" }));
+    const buf = builder.emitCall(irImportFuncRef("env", "__gen_create_buffer"), [], irVal({ kind: "externref" }));
     if (buf === null) {
       throw new Error(`ir/from-ast: __gen_create_buffer call must produce a value (${name})`);
     }
@@ -784,6 +812,7 @@ export function lowerFunctionAstToIr(
   }
 
   const lifted: IrFunction[] = [];
+  const liftedUnitProvenance: IrDerivedUnitProvenance[] = [];
   const liftedCounter = { value: 0 };
   const ownedStringAppendSymbols = collectOwnedStringAppendSymbols(fn.body, options.checker);
   const emptyArrayInference = inferEmptyArrayElementTypes(
@@ -794,8 +823,10 @@ export function lowerFunctionAstToIr(
     builder,
     scope,
     funcName: name,
+    ownerUnitId: options.ownerUnitId,
     returnType,
     calleeTypes: options.calleeTypes,
+    directCalls: options.directCalls,
     importedCalls: options.importedCalls,
     topLevelFunctionValues: options.topLevelFunctionValues,
     hostVoidCallbacks: options.hostVoidCallbacks,
@@ -803,6 +834,7 @@ export function lowerFunctionAstToIr(
     classShapes: options.classShapes,
     resolver: options.resolver,
     lifted,
+    liftedUnitProvenance,
     liftedCounter,
     mutatedLets,
     ownedStringAppendSymbols,
@@ -867,7 +899,7 @@ export function lowerFunctionAstToIr(
       // selector rejects it), so no dead-code guard is needed.
     }
     builder.terminate({ kind: "return", values: [] });
-    return { main: builder.finish(), lifted };
+    return { main: builder.finish(), lifted, liftedUnitProvenance };
   }
 
   if (isCtor) {
@@ -889,12 +921,12 @@ export function lowerFunctionAstToIr(
       // loop) — the selector rejects it — so no dead-code guard is needed.
     }
     builder.terminate({ kind: "return", values: [thisV] });
-    return { main: builder.finish(), lifted };
+    return { main: builder.finish(), lifted, liftedUnitProvenance };
   }
 
   lowerStatementList(stmts, cx);
 
-  return { main: builder.finish(), lifted };
+  return { main: builder.finish(), lifted, liftedUnitProvenance };
 }
 
 /**
@@ -1417,13 +1449,13 @@ type ScopeBinding =
        * share the exact same storage. Slice 2 restricts `type` to f64/i32.
        */
       kind: "moduleGlobal";
-      globalName: string;
+      globalRef: IrGlobalRef;
       type: IrType;
       stringEncoding?: Encoding;
     }
   | {
       kind: "nestedFunc";
-      liftedName: string;
+      target: IrFuncRef;
       signature: IrClosureSignature;
       captures: readonly NestedCapture[];
     }
@@ -1473,10 +1505,12 @@ interface LowerCtx {
   readonly builder: IrFunctionBuilder;
   readonly scope: Map<string, ScopeBinding>;
   readonly funcName: string;
+  readonly ownerUnitId: IrUnitId;
   // Slice 14 (#1228) — `null` means the enclosing function is void.
   // `lowerTail` checks this to accept bare `return;` / fall-through tails.
   readonly returnType: IrType | null;
   readonly calleeTypes?: ReadonlyMap<string, { params: readonly IrType[]; returnType: IrType | null }>;
+  readonly directCalls?: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
   readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
@@ -1499,6 +1533,8 @@ interface LowerCtx {
   readonly resolver?: IrFromAstResolver;
   /** Slice 3 — output bin for lifted closures / nested funcs. */
   readonly lifted: IrFunction[];
+  /** Structural provenance emitted alongside each lifted function. */
+  readonly liftedUnitProvenance: IrDerivedUnitProvenance[];
   /** Slice 3 — mutable counter for synthesizing lifted-func names. */
   readonly liftedCounter: { value: number };
   /**
@@ -1662,7 +1698,7 @@ function sameScopeStorage(a: StringEncodingScopeBinding, b: ScopeBinding | undef
     case "local":
       return b.kind === "local" && b.value === a.value;
     case "moduleGlobal":
-      return b.kind === "moduleGlobal" && b.globalName === a.globalName;
+      return b.kind === "moduleGlobal" && sameIrGlobalBinding(b.globalRef.binding, a.globalRef.binding);
     case "slot":
       return b.kind === "slot" && b.slotIndex === a.slotIndex;
   }
@@ -1675,11 +1711,18 @@ function sameScopeStorage(a: StringEncodingScopeBinding, b: ScopeBinding | undef
  * `ensureFuncClosureSingleton`; IR owns only the lazy access sequence.
  */
 function lowerTopLevelFunctionValue(plan: IrTopLevelFunctionValueLoweringPlan, cx: LowerCtx): IrValueId {
-  const cache = { kind: "global" as const, name: plan.cacheGlobalName };
+  requireMatchingLoweringPlanOwner("top-level function value", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  if (plan.target.binding.kind !== "unit") {
+    throw new Error(`ir/from-ast: top-level function value target ${plan.target.name} is not an exact unit`);
+  }
+  if (plan.trampoline.binding.kind !== "support") {
+    throw new Error(`ir/from-ast: function-value trampoline ${plan.trampoline.name} is not compiler support`);
+  }
+  const cache = plan.cacheGlobal;
   const cached = cx.builder.emitGlobalGet(cache, irVal({ kind: "externref" }));
   const isNull = cx.builder.emitRefIsNull(cached);
   const thenBody = cx.builder.collectBodyInstrs(() => {
-    const closure = cx.builder.emitClosureNew({ kind: "func", name: plan.trampolineName }, plan.signature, [], []);
+    const closure = cx.builder.emitClosureNew(plan.trampoline, plan.signature, [], []);
     const external = cx.builder.emitCoerceToExternref(closure);
     cx.builder.emitGlobalSet(cache, external);
   });
@@ -2088,6 +2131,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // the IR closure binding below would keep it purely local to the init
     // body — the observable storage would never be written. Demote.
     const moduleBinding = cx.moduleBindings?.get(name);
+    if (moduleBinding) requireMatchingModuleBindingOwner(moduleBinding, cx.ownerUnitId, cx.funcName);
     if (moduleBinding && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
       throw new Error(
         `ir/from-ast: module-level closure binding '${name}' not in module-init Slice 2 scope (${cx.funcName})`,
@@ -2211,14 +2255,14 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
             `${describeIrType(moduleBinding.type)} in ${cx.funcName}`,
         );
       }
-      cx.builder.emitGlobalSet({ kind: "global", name: moduleBinding.globalName }, value);
-      if (moduleBinding.tdzGlobalName) {
+      cx.builder.emitGlobalSet(moduleBinding.globalRef, value);
+      if (moduleBinding.tdzGlobalRef) {
         const one = cx.builder.emitConst({ kind: "i32", value: 1 }, irVal({ kind: "i32" }));
-        cx.builder.emitGlobalSet({ kind: "global", name: moduleBinding.tdzGlobalName }, one);
+        cx.builder.emitGlobalSet(moduleBinding.tdzGlobalRef, one);
       }
       cx.scope.set(name, {
         kind: "moduleGlobal",
-        globalName: moduleBinding.globalName,
+        globalRef: moduleBinding.globalRef,
         type: moduleBinding.type,
         ...(stringEncoding ? { stringEncoding } : {}),
       });
@@ -2519,6 +2563,7 @@ function moduleStorageCompatible(actual: IrType, expected: IrType): boolean {
 
 /** Emit the legacy module-global TDZ check followed by the symbolic read. */
 function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlobal, cx: LowerCtx): IrValueId {
+  requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
   if (binding.type.kind === "extern") {
     assertNotDeferred(
       hostExternCapability(cx.resolver?.jsHostExterns?.() === true),
@@ -2526,8 +2571,8 @@ function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlob
       cx.funcName,
     );
   }
-  if (binding.tdzGlobalName) {
-    const tdz = cx.builder.emitGlobalGet({ kind: "global", name: binding.tdzGlobalName }, irVal({ kind: "i32" }));
+  if (binding.tdzGlobalRef) {
+    const tdz = cx.builder.emitGlobalGet(binding.tdzGlobalRef, irVal({ kind: "i32" }));
     const cond = cx.builder.emitUnary("i32.eqz", tdz, irVal({ kind: "i32" }));
     const thenBody = cx.builder.collectBodyInstrs(() => {
       const nullExt = cx.builder.emitConst(
@@ -2538,7 +2583,7 @@ function lowerResolvedModuleBindingRead(name: string, binding: ModuleBindingGlob
     });
     cx.builder.emitIfStmt({ cond, then: thenBody, else: [] });
   }
-  return cx.builder.emitGlobalGet({ kind: "global", name: binding.globalName }, binding.type);
+  return cx.builder.emitGlobalGet(binding.globalRef, binding.type);
 }
 
 function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
@@ -2679,7 +2724,7 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
           `host global "${expr.text}"`,
           cx.funcName,
         );
-        const r = cx.builder.emitCall({ kind: "func", name: hg.importName }, [], {
+        const r = cx.builder.emitCall(irImportFuncRef("env", hg.importName), [], {
           kind: "extern",
           className: hg.className,
         });
@@ -2710,7 +2755,7 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     // (#3142 Slice 2) Module-scope binding inside the `<module-init>` unit:
     // reads come from the legacy-allocated global (symbolic ref).
     if (p.kind === "moduleGlobal") {
-      return cx.builder.emitGlobalGet({ kind: "global", name: p.globalName }, p.type);
+      return cx.builder.emitGlobalGet(p.globalRef, p.type);
     }
     if (p.kind !== "local") {
       // Slice 3 (#1169c): nestedFunc bindings are name-only — they have
@@ -3519,7 +3564,7 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
  *     the demote is still trap-free.
  */
 function emitForwardingAwareLinearVecLen(recv: IrValueId, cx: LowerCtx): IrValueId {
-  const lenI32 = cx.builder.emitCall({ kind: "func", name: "__arr_len" }, [recv], irVal({ kind: "i32" }));
+  const lenI32 = cx.builder.emitCall(irIntrinsicFuncRef("__arr_len"), [recv], irVal({ kind: "i32" }));
   if (lenI32 === null) {
     throw new Error(`ir/from-ast: forwarding-aware vec length produced no value (${cx.funcName})`);
   }
@@ -3674,7 +3719,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   // The helper name embeds the vec STRUCT typeIdx; the lower-time resolver
   // intercepts the prefix and materializes the helper on demand (name-based
   // resolution — funcIdx-shift safe by construction).
-  cx.builder.emitCall({ kind: "func", name: `__vec_elem_set_${vec.vecStructTypeIdx}` }, [recv, idxI32, val], null);
+  cx.builder.emitCall(irIntrinsicFuncRef(`__vec_elem_set_${vec.vecStructTypeIdx}`), [recv, idxI32, val], null);
 }
 
 function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrValueId {
@@ -3768,7 +3813,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
         if (!isProvenInBoundsIr(expr, cx)) {
           throw new Error(`ir/from-ast: inferred linear vector read is not proven in bounds (${cx.funcName})`);
         }
-        const value = cx.builder.emitCall({ kind: "func", name: "__arr_get" }, [recv, idxI32], elemIr);
+        const value = cx.builder.emitCall(irIntrinsicFuncRef("__arr_get"), [recv, idxI32], elemIr);
         if (value === null) {
           throw new Error(`ir/from-ast: forwarding-aware vec read produced no value (${cx.funcName})`);
         }
@@ -3866,18 +3911,6 @@ function phase1PropertyName(name: ts.PropertyName): string | null {
 }
 
 /**
- * Lower a direct call to a locally-declared function. The callee's signature
- * comes from `calleeTypes` (seeded by the Phase-2 TypeMap via the caller).
- * If the callee isn't in the map, the selector's call-graph closure was
- * violated — we throw so the caller can fall back to the legacy path.
- *
- * Arg type mismatch is fatal too: the selector is supposed to keep the
- * whole strongly-connected component on the IR path only when the types
- * are consistent. If we land here with a mismatch, the TypeMap was stale
- * or the propagation pass converged on a dynamic type that the selector
- * ignored — both are bugs.
- */
-/**
  * #3000-E: the SSA value of the current `this` binding (the allocated instance
  * in a ctor, or the `__self` param in a method). Throws if `this` isn't bound —
  * `super` outside a class member never reaches here (the selector rejects it).
@@ -3947,7 +3980,7 @@ function importedMissingArgument(
     val?.kind === "externref" ||
     val?.kind === "ref_extern";
   if (hostExternCarrier) {
-    const undefinedValue = cx.builder.emitCall({ kind: "func", name: "__get_undefined" }, [], expected);
+    const undefinedValue = cx.builder.emitCall(irImportFuncRef("env", "__get_undefined"), [], expected);
     if (undefinedValue === null) {
       throw new Error(`ir/from-ast: __get_undefined unexpectedly returned void (${cx.funcName})`);
     }
@@ -3964,6 +3997,8 @@ function lowerImportedCall(
   cx: LowerCtx,
   statementPosition: boolean,
 ): IrValueId | null {
+  requireMatchingLoweringPlanOwner("imported call", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  requireValidImportedCallTarget(plan);
   if (expr.arguments.length > plan.params.length || expr.arguments.some(ts.isSpreadElement)) {
     throw new Error(`ir/from-ast: imported call shape diverged after certification (${cx.funcName})`);
   }
@@ -3984,7 +4019,7 @@ function lowerImportedCall(
       }
       if (!irTypeArgAssignable(actual, expected)) {
         throw new Error(
-          `ir/from-ast: arg ${i} of imported call to ${plan.targetName} is ${describeIrType(actual)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
+          `ir/from-ast: arg ${i} of imported call to ${plan.target.name} is ${describeIrType(actual)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
         );
       }
     } else {
@@ -3997,14 +4032,19 @@ function lowerImportedCall(
   // function, so mirror legacy ordering and publish this callee's argc only
   // after every argument value has been evaluated.
   if (plan.needsArgc) {
+    if (!plan.argcGlobal || plan.argcGlobal.binding.kind !== "runtime") {
+      throw new Error(`ir/from-ast: argc-sensitive call has no exact runtime global (${cx.funcName})`);
+    }
     const argc = cx.builder.emitConst({ kind: "i32", value: expr.arguments.length }, irVal({ kind: "i32" }));
-    cx.builder.emitGlobalSet({ kind: "global", name: "__argc" }, argc);
+    cx.builder.emitGlobalSet(plan.argcGlobal, argc);
+  } else if (plan.argcGlobal) {
+    throw new Error(`ir/from-ast: argc-insensitive call unexpectedly carries runtime global state (${cx.funcName})`);
   }
 
-  const result = cx.builder.emitCall({ kind: "func", name: plan.targetName }, args, plan.returnType);
+  const result = cx.builder.emitCall(plan.target, args, plan.returnType);
   if (result === null && !statementPosition) {
     unsupportedVoidCallExpression(
-      `ir/from-ast: imported call to ${plan.targetName} returned void used as expression in ${cx.funcName}`,
+      `ir/from-ast: imported call to ${plan.target.name} returned void used as expression in ${cx.funcName}`,
     );
   }
   return result;
@@ -4014,6 +4054,7 @@ function makePromiseDelayLoweringHost(cx: LowerCtx): IrPromiseDelayLoweringHost 
   return {
     builder: cx.builder,
     funcName: cx.funcName,
+    ownerUnitId: cx.ownerUnitId,
     lowerExpr: (expr, expected) => lowerExpr(expr, cx, expected),
     lowerClosure: (expr, signature, captures, exact) =>
       lowerClosureExpressionWithSignature(expr, signature, captures, cx, exact),
@@ -4101,10 +4142,12 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const imported = cx.importedCalls?.get(expr);
   if (imported) return lowerImportedCall(expr, imported, cx, statementPosition);
 
-  const calleeSig = cx.calleeTypes?.get(calleeName);
-  if (!calleeSig) {
-    throw new Error(`ir/from-ast: call to unknown function "${calleeName}" in ${cx.funcName}`);
+  const direct = cx.directCalls?.get(expr);
+  if (!direct) {
+    throw new Error(`ir/from-ast: direct call to "${calleeName}" has no exact AST-site plan in ${cx.funcName}`);
   }
+  requireMatchingLoweringPlanOwner("direct call", direct.ownerUnitId, cx.ownerUnitId, cx.funcName);
+  const calleeSig = direct.signature;
   // Slice 8a (#1169g): spread args with statically-known sources
   // (ArrayLiteralExpression with no nested spread). Expand at compile
   // time to one IR arg per literal element. The pre-expansion arity
@@ -4140,7 +4183,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     }
     args.push(argVal);
   }
-  const result = cx.builder.emitCall({ kind: "func", name: calleeName }, args, calleeSig.returnType);
+  const result = cx.builder.emitCall(direct.target, args, calleeSig.returnType);
   if (result === null) {
     // (#2856 C4) `quicksort(arr, lo, p - 1);` — a void direct call in
     // STATEMENT position is legal (the recursion driver shape). Expression
@@ -4183,7 +4226,7 @@ function irTypeArgAssignable(actual: IrType, expected: IrType): boolean {
   // single-level local subclasses whose parent projected — the sound set.
   if (actual.kind === "class" && expected.kind === "class") {
     for (let s = actual.shape.parent; s; s = s.parent) {
-      if (s.className === expected.shape.className) return true;
+      if (s.classId === expected.shape.classId) return true;
     }
   }
   return false;
@@ -4275,7 +4318,7 @@ function lowerClosureCall(
 function lowerNestedFuncCall(
   binding: {
     kind: "nestedFunc";
-    liftedName: string;
+    target: IrFuncRef;
     signature: IrClosureSignature;
     captures: readonly NestedCapture[];
   },
@@ -4330,7 +4373,10 @@ function lowerNestedFuncCall(
     }
     args.push(argVal);
   }
-  const r = cx.builder.emitCall({ kind: "func", name: binding.liftedName }, args, binding.signature.returnType);
+  if (binding.target.binding.kind !== "unit") {
+    throw new Error(`ir/from-ast: nested function target ${binding.target.name} is not an exact lifted unit`);
+  }
+  const r = cx.builder.emitCall(binding.target, args, binding.signature.returnType);
   if (r === null) {
     unsupportedVoidCallExpression(`ir/from-ast: nested call returned void in ${cx.funcName}`);
   }
@@ -4525,7 +4571,7 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
     got.kind === "f64" &&
     cx.resolver?.hasHostNumberBox?.() === true
   ) {
-    const boxed = cx.builder.emitCall({ kind: "func", name: "__box_number" }, [value], irVal({ kind: "externref" }));
+    const boxed = cx.builder.emitCall(irImportFuncRef("env", "__box_number"), [value], irVal({ kind: "externref" }));
     if (boxed === null) {
       throw new Error(`ir/from-ast: __box_number produced no result in ${cx.funcName}`);
     }
@@ -4542,7 +4588,7 @@ function coerceToExpectedExtern(value: IrValueId, expected: ValType, cx: LowerCt
     got.boolean === true &&
     cx.resolver?.hasHostBooleanBox?.() === true
   ) {
-    const boxed = cx.builder.emitCall({ kind: "func", name: "__box_boolean" }, [value], irVal({ kind: "externref" }));
+    const boxed = cx.builder.emitCall(irImportFuncRef("env", "__box_boolean"), [value], irVal({ kind: "externref" }));
     if (boxed === null) {
       throw new Error(`ir/from-ast: __box_boolean produced no result in ${cx.funcName}`);
     }
@@ -4691,7 +4737,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       variant === "number" ? { kind: "f64" } : variant === "bool" ? { kind: "i32" } : { kind: "externref" };
     const argVal = lowerExpr(argExpr, cx, irVal(expected));
     const coerced = coerceToExpectedExtern(argVal, expected, cx, `arg of console.${methodName}`);
-    cx.builder.emitCall({ kind: "func", name: importName }, [coerced], null);
+    cx.builder.emitCall(irImportFuncRef("env", importName), [coerced], null);
     return null;
   }
 
@@ -4728,7 +4774,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         return arg;
       });
       if ("op" in plan) return cx.builder.emitUnary(plan.op, args[0]!, irVal({ kind: "f64" }));
-      const result = cx.builder.emitCall({ kind: "func", name: plan.helper }, args, irVal({ kind: "f64" }));
+      const result = cx.builder.emitCall(irRuntimeFuncRef(plan.helper), args, irVal({ kind: "f64" }));
       if (result === null)
         throw new Error(`ir/from-ast: Math.${methodName} helper produced no result (${cx.funcName})`);
       return result;
@@ -4805,7 +4851,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     recvType.val.kind === "f64" &&
     cx.resolver?.hasHostNumberToString?.() === true
   ) {
-    const r = cx.builder.emitCall({ kind: "func", name: "number_toString" }, [recv], { kind: "string" });
+    const r = cx.builder.emitCall(irImportFuncRef("env", "number_toString"), [recv], { kind: "string" });
     if (r === null) {
       throw new Error(`ir/from-ast: number_toString produced no result in ${cx.funcName}`);
     }
@@ -4829,7 +4875,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       throw new Error(`ir/from-ast: number.toFixed digits not a bounded integer literal (${cx.funcName})`);
     }
     const digitValue = cx.builder.emitConst({ kind: "f64", value: digits }, irVal({ kind: "f64" }));
-    const r = cx.builder.emitCall({ kind: "func", name: "number_toFixed" }, [recv, digitValue], { kind: "string" });
+    const r = cx.builder.emitCall(irImportFuncRef("env", "number_toFixed"), [recv, digitValue], { kind: "string" });
     if (r === null) throw new Error(`ir/from-ast: number_toFixed produced no result in ${cx.funcName}`);
     return r;
   }
@@ -4902,7 +4948,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         const packed = cx.builder.emitCallablePack(closure, hostCallbackPlan.signature);
         const sentinel = cx.builder.emitConst({ kind: "i32", value: -1 }, irVal({ kind: "i32" }));
         const wrapped = cx.builder.emitCall(
-          { kind: "func", name: "__make_callback" },
+          irImportFuncRef("env", "__make_callback"),
           [sentinel, packed],
           irVal({ kind: "externref" }),
         );
@@ -4997,11 +5043,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         } else {
           val = coerceToExpectedExtern(valRaw, elem, cx, `value of .push`);
         }
-        cx.builder.emitCall(
-          { kind: "func", name: `__vec_elem_set_${vec.vecStructTypeIdx}` },
-          [recv, lenI32, val],
-          null,
-        );
+        cx.builder.emitCall(irIntrinsicFuncRef(`__vec_elem_set_${vec.vecStructTypeIdx}`), [recv, lenI32, val], null);
         if (statementPosition) return null;
         // Expression position: JS `push` returns the NEW length = old + 1.
         const one = cx.builder.emitConst({ kind: "f64", value: 1 }, irVal({ kind: "f64" }));
@@ -5124,7 +5166,7 @@ function emitStringRelational(
   foldOp: "i32.lt_s" | "i32.gt_s" | "i32.le_s" | "i32.ge_s",
   cx: LowerCtx,
 ): IrValueId {
-  const sign = cx.builder.emitCall({ kind: "func", name: IR_STRING_COMPARE_FN }, [lhs, rhs], irVal({ kind: "i32" }));
+  const sign = cx.builder.emitCall(irIntrinsicFuncRef(IR_STRING_COMPARE_FN), [lhs, rhs], irVal({ kind: "i32" }));
   if (sign === null) {
     throw new Error(`ir/from-ast: string compare produced void result (${cx.funcName})`);
   }
@@ -5381,7 +5423,7 @@ function lowerStringMethodCall(
     }
   }
 
-  const r = cx.builder.emitCall({ kind: "func", name: funcName }, loweredArgs, sig.result);
+  const r = cx.builder.emitCall(irIntrinsicFuncRef(funcName), loweredArgs, sig.result);
   if (r === null) {
     throw new Error(`ir/from-ast: String.${methodName} produced void result (${cx.funcName})`);
   }
@@ -5688,7 +5730,7 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx): IrValueId {
     const actualT = cx.builder.typeOf(value);
     const actualV = asVal(actualT);
     if (actualV && actualV.kind === "externref" && cx.resolver?.hasHostNumberBox?.() === true) {
-      const unboxed = cx.builder.emitCall({ kind: "func", name: "__unbox_number" }, [value], irVal({ kind: "f64" }));
+      const unboxed = cx.builder.emitCall(irImportFuncRef("env", "__unbox_number"), [value], irVal({ kind: "f64" }));
       if (unboxed === null) {
         throw new Error(`ir/from-ast: __unbox_number produced no result in ${cx.funcName}`);
       }
@@ -6829,12 +6871,14 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   if (!binding) {
     const readable = cx.resolver?.resolveModuleBinding?.(id);
     if (readable) {
+      requireMatchingModuleBindingOwner(readable, cx.ownerUnitId, cx.funcName);
       const writable = cx.resolver?.resolveModuleBinding?.(id, rhs);
       if (!writable) {
         throw new Error(
           `ir/from-ast: assignment to readonly or representation-incompatible module binding "${id.text}" in ${cx.funcName}`,
         );
       }
+      requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
       const newValue = lowerExpr(rhs, cx, writable.type);
       const newType = cx.builder.typeOf(newValue);
       if (!moduleStorageCompatible(newType, writable.type)) {
@@ -6842,7 +6886,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
           `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(writable.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
         );
       }
-      cx.builder.emitGlobalSet({ kind: "global", name: writable.globalName }, newValue);
+      cx.builder.emitGlobalSet(writable.globalRef, newValue);
       return;
     }
     throw new Error(`ir/from-ast: assignment to undeclared identifier "${id.text}" in ${cx.funcName}`);
@@ -6856,7 +6900,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
         `ir/from-ast: assignment to module binding "${id.text}" (${describeIrType(binding.type)}) got ${describeIrType(newType)} in ${cx.funcName}`,
       );
     }
-    cx.builder.emitGlobalSet({ kind: "global", name: binding.globalName }, newValue);
+    cx.builder.emitGlobalSet(binding.globalRef, newValue);
     cx.scope.set(id.text, { ...binding, stringEncoding: inferStringEncoding(rhs, cx) });
     return;
   }
@@ -6904,7 +6948,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   if (compoundOp === ts.SyntaxKind.PlusEqualsToken && logicalType.kind === "string") {
     const lhs =
       binding.kind === "moduleGlobal"
-        ? cx.builder.emitGlobalGet({ kind: "global", name: binding.globalName }, logicalType)
+        ? cx.builder.emitGlobalGet(binding.globalRef, logicalType)
         : cx.builder.emitSlotReadAs(binding.slotIndex, logicalType);
     const rhsValue = lowerExpr(rhs, cx, logicalType);
     const rhsType = cx.builder.typeOf(rhsValue);
@@ -6928,7 +6972,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     const concatMode = symbol && cx.ownedStringAppendSymbols.has(symbol) ? "owned-append" : "immutable";
     const result = cx.builder.emitStringConcat(lhs, rhsValue, proof.resultEncoding, concatMode);
     if (binding.kind === "moduleGlobal") {
-      cx.builder.emitGlobalSet({ kind: "global", name: binding.globalName }, result);
+      cx.builder.emitGlobalSet(binding.globalRef, result);
     } else {
       cx.builder.emitSlotWrite(binding.slotIndex, result);
     }
@@ -6946,7 +6990,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   // RHS, apply the binop, write back.
   const lhs =
     binding.kind === "moduleGlobal"
-      ? cx.builder.emitGlobalGet({ kind: "global", name: binding.globalName }, binding.type)
+      ? cx.builder.emitGlobalGet(binding.globalRef, binding.type)
       : cx.builder.emitSlotRead(binding.slotIndex);
   const rhsValue = lowerExpr(rhs, cx, binding.type);
   const rhsType = cx.builder.typeOf(rhsValue);
@@ -6984,7 +7028,7 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
   }
   const result = cx.builder.emitBinary(binop, lhs, rhsValue, irVal({ kind: "f64" }));
   if (binding.kind === "moduleGlobal") {
-    cx.builder.emitGlobalSet({ kind: "global", name: binding.globalName }, result);
+    cx.builder.emitGlobalSet(binding.globalRef, result);
     return;
   }
   cx.builder.emitSlotWrite(binding.slotIndex, result);
@@ -7021,7 +7065,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   }
   const lhs =
     binding.kind === "moduleGlobal"
-      ? cx.builder.emitGlobalGet({ kind: "global", name: binding.globalName }, binding.type)
+      ? cx.builder.emitGlobalGet(binding.globalRef, binding.type)
       : cx.builder.emitSlotRead(binding.slotIndex);
   const isAdd = op === ts.SyntaxKind.PlusPlusToken;
   const oneIr: IrType = irVal({ kind: "f64" });
@@ -7029,7 +7073,7 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
   const binop: IrBinop = isAdd ? "f64.add" : "f64.sub";
   const result = cx.builder.emitBinary(binop, lhs, one, oneIr);
   if (binding.kind === "moduleGlobal") {
-    cx.builder.emitGlobalSet({ kind: "global", name: binding.globalName }, result);
+    cx.builder.emitGlobalSet(binding.globalRef, result);
     return;
   }
   cx.builder.emitSlotWrite(binding.slotIndex, result);
@@ -7772,7 +7816,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // its `emitSafeI32Rem` i32 fast mode (trap-free rem semantics).
     case ts.SyntaxKind.PercentToken: {
       requireF64(isF64, "%", cx.funcName);
-      const fmodResult = cx.builder.emitCall({ kind: "func", name: FMOD_FN }, [lhs, rhs], irVal({ kind: "f64" }));
+      const fmodResult = cx.builder.emitCall(irIntrinsicFuncRef(FMOD_FN), [lhs, rhs], irVal({ kind: "f64" }));
       if (fmodResult === null) {
         // Unreachable: a non-null resultType always yields a value id.
         throw new Error(`ir/from-ast: internal — __fmod call produced no value in ${cx.funcName}`);
@@ -8108,7 +8152,7 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     t.kind === "callable" ||
     (t.kind === "string" && cx.resolver?.stringIsExternref?.() === true);
   if (externrefShaped) {
-    const flag = cx.builder.emitCall({ kind: "func", name: "__extern_is_undefined" }, [v], irVal({ kind: "i32" }));
+    const flag = cx.builder.emitCall(irImportFuncRef("env", "__extern_is_undefined"), [v], irVal({ kind: "i32" }));
     if (flag === null) {
       throw new Error(`ir/from-ast: __extern_is_undefined produced no result in ${cx.funcName}`);
     }
@@ -8416,7 +8460,7 @@ function tryLowerDynamicArithmetic(
   const rf = relOperandToF64(rhs, rt, cx);
   if (rf === null) return null;
   if (binop === null) {
-    const fmodResult = cx.builder.emitCall({ kind: "func", name: FMOD_FN }, [lf, rf], irVal({ kind: "f64" }));
+    const fmodResult = cx.builder.emitCall(irIntrinsicFuncRef(FMOD_FN), [lf, rf], irVal({ kind: "f64" }));
     if (fmodResult === null) {
       // Unreachable: a non-null resultType always yields a value id.
       throw new Error(`ir/from-ast: internal — dynamic __fmod call produced no value in ${cx.funcName}`);
@@ -8429,6 +8473,15 @@ function tryLowerDynamicArithmetic(
 // ---------------------------------------------------------------------------
 // Closure / nested-function lowering (#1169c — IR Phase 4 Slice 3)
 // ---------------------------------------------------------------------------
+
+function recordLiftedUnitProvenance(identity: IrLiftedFunctionArtifactIdentity, cx: LowerCtx): void {
+  cx.liftedUnitProvenance.push({
+    id: identity.unitId,
+    parentId: identity.parentId,
+    role: identity.role,
+    ordinal: identity.ordinal,
+  });
+}
 
 /**
  * Lower an arrow function or function expression as an IR closure
@@ -8479,6 +8532,7 @@ function lowerHostVoidCallbackExpression(
   plan: IrHostVoidCallbackLoweringPlan,
   cx: LowerCtx,
 ): IrValueId {
+  requireMatchingLoweringPlanOwner("host void callback", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
   if (
     !ts.isBlock(expr.body) ||
     expr.parameters.length !== 0 ||
@@ -8510,8 +8564,20 @@ function lowerClosureExpressionWithSignature(
     }
   }
 
-  const liftedName = exactClosureLiftedName(cx.funcName, cx.liftedCounter.value, exact?.expectedLiftedName);
-  cx.liftedCounter.value++;
+  const liftedIdentity = allocateLiftedFunctionArtifact(cx, (ordinal) =>
+    exactClosureLiftedName(cx.funcName, ordinal, exact?.expectedLiftedName),
+  );
+  recordLiftedUnitProvenance(liftedIdentity, cx);
+  const liftedTarget = irUnitFuncRef(liftedIdentity);
+  if (
+    exact?.expectedLiftedTarget &&
+    (!sameIrCallableBinding(liftedTarget.binding, exact.expectedLiftedTarget.binding) ||
+      liftedTarget.name !== exact.expectedLiftedTarget.name)
+  ) {
+    throw new Error(
+      `ir/from-ast: exact lifted target ${liftedTarget.name} does not match planned ${exact.expectedLiftedTarget.name} (${cx.funcName})`,
+    );
+  }
 
   // Materialize capture args. Mutable captures need a refcell; if the
   // outer doesn't already have one (a sibling closure may have built
@@ -8559,7 +8625,7 @@ function lowerClosureExpressionWithSignature(
   // Lift body. The lifted function takes (__self: IrType.closure,
   // ...sig.params) and reads captures via `closure.cap`.
   const lifted = liftClosureBody(
-    liftedName,
+    liftedIdentity,
     expr,
     signature,
     captures,
@@ -8569,7 +8635,7 @@ function lowerClosureExpressionWithSignature(
   );
   cx.lifted.push(lifted);
 
-  return cx.builder.emitClosureNew({ kind: "func", name: liftedName }, signature, captureFieldTypes, captureArgs);
+  return cx.builder.emitClosureNew(liftedTarget, signature, captureFieldTypes, captureArgs);
 }
 
 /**
@@ -8596,13 +8662,17 @@ function lowerNestedFunctionDeclaration(fn: ts.FunctionDeclaration, cx: LowerCtx
   const signature: IrClosureSignature = { params, returnType };
 
   const captures = analyseCaptures(fn, cx);
-  const liftedName = `${cx.funcName}__nested_${innerName}_${cx.liftedCounter.value++}`;
+  const liftedIdentity = allocateLiftedFunctionArtifact(
+    cx,
+    (ordinal) => `${cx.funcName}__nested_${innerName}_${ordinal}`,
+  );
+  recordLiftedUnitProvenance(liftedIdentity, cx);
 
-  const lifted = liftNestedFunction(liftedName, fn, signature, captures, cx);
+  const lifted = liftNestedFunction(liftedIdentity, fn, signature, captures, cx);
   cx.lifted.push(lifted);
 
   // Add to the OUTER scope.
-  cx.scope.set(innerName, { kind: "nestedFunc", liftedName, signature, captures });
+  cx.scope.set(innerName, { kind: "nestedFunc", target: irUnitFuncRef(liftedIdentity), signature, captures });
 }
 
 /**
@@ -8612,16 +8682,17 @@ function lowerNestedFunctionDeclaration(fn: ts.FunctionDeclaration, cx: LowerCtx
  * dereferences them via refcell.get on read.
  */
 function liftNestedFunction(
-  liftedName: string,
+  liftedIdentity: IrFunctionIdentity,
   fn: ts.FunctionDeclaration,
   signature: IrClosureSignature,
   captures: readonly NestedCapture[],
   cx: LowerCtx,
 ): IrFunction {
+  const liftedName = liftedIdentity.name;
   if (signature.returnType === null) {
     throw new Error(`ir/from-ast: void nested function signatures are outside slice 3 (${liftedName})`);
   }
-  const builder = new IrFunctionBuilder(liftedName, [signature.returnType], false, cx.allocRegistry);
+  const builder = new IrFunctionBuilder(liftedIdentity, [signature.returnType], false, cx.allocRegistry);
   const scope = new Map<string, ScopeBinding>();
 
   // Prepend capture params before the user's params.
@@ -8646,8 +8717,10 @@ function liftNestedFunction(
     builder,
     scope,
     funcName: liftedName,
+    ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
     calleeTypes: cx.calleeTypes,
+    directCalls: cx.directCalls,
     importedCalls: cx.importedCalls,
     topLevelFunctionValues: cx.topLevelFunctionValues,
     hostVoidCallbacks: cx.hostVoidCallbacks,
@@ -8655,6 +8728,7 @@ function liftNestedFunction(
     classShapes: cx.classShapes,
     resolver: cx.resolver,
     lifted: cx.lifted,
+    liftedUnitProvenance: cx.liftedUnitProvenance,
     liftedCounter: cx.liftedCounter,
     // Slice 6 part 2 (#1181) — nested-function bodies have their own
     // mutated-let scope (collected per-body when slice 6 extends to
@@ -8692,7 +8766,7 @@ function innerName(fn: ts.FunctionDeclaration): string {
  * lowerer can emit the correct `ref.cast` on closure.cap.
  */
 function liftClosureBody(
-  liftedName: string,
+  liftedIdentity: IrFunctionIdentity,
   expr: ts.ArrowFunction | ts.FunctionExpression,
   signature: IrClosureSignature,
   captures: readonly NestedCapture[],
@@ -8700,8 +8774,9 @@ function liftClosureBody(
   cx: LowerCtx,
   allowConciseVoidBody = false,
 ): IrFunction {
+  const liftedName = liftedIdentity.name;
   const builder = new IrFunctionBuilder(
-    liftedName,
+    liftedIdentity,
     signature.returnType === null ? [] : [signature.returnType],
     false,
     cx.allocRegistry,
@@ -8734,8 +8809,10 @@ function liftClosureBody(
     builder,
     scope,
     funcName: liftedName,
+    ownerUnitId: cx.ownerUnitId,
     returnType: signature.returnType,
     calleeTypes: cx.calleeTypes,
+    directCalls: cx.directCalls,
     importedCalls: cx.importedCalls,
     topLevelFunctionValues: cx.topLevelFunctionValues,
     hostVoidCallbacks: cx.hostVoidCallbacks,
@@ -8743,6 +8820,7 @@ function liftClosureBody(
     classShapes: cx.classShapes,
     resolver: cx.resolver,
     lifted: cx.lifted,
+    liftedUnitProvenance: cx.liftedUnitProvenance,
     liftedCounter: cx.liftedCounter,
     // Slice 6 part 2 (#1181) — closure-body mutated lets are scanned
     // per closure (block bodies) or empty (concise expression bodies,

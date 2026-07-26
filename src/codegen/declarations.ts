@@ -100,6 +100,7 @@ export {
 } from "./declarations/import-collector.js";
 export {
   applyShapeInference,
+  collectDynamicObjectReturnCarrierTypes,
   collectEmptyObjectWidening,
   collectGrowableObjectLiterals,
 } from "./declarations/object-shape-widening.js";
@@ -202,6 +203,113 @@ function restBindingOverridesToExternref(p: ts.ParameterDeclaration): boolean {
   return false;
 }
 
+const dynamicObjectParamsByFunction = new WeakMap<ts.FunctionDeclaration, ReadonlySet<string>>();
+
+/**
+ * An implicit-any parameter used as the receiver of a computed property access
+ * may be intentionally polymorphic. Specialising it from one call-site object
+ * shape would insert a nominal struct cast at the function boundary, while the
+ * body uses a runtime key and must accept every object carrier. Acorn's
+ * `getOptions(opts)` is the canonical case (`opts[opt]`).
+ *
+ * Call-site inference may still prove an indexed vec/array carrier. Those
+ * carriers must stay concrete: Native Messaging's untyped `buf[start + i]`
+ * parameters are Uint8Arrays, and widening them to externref routes numeric
+ * byte writes through the open-object string-key hash path.
+ */
+function implicitAnyParamNeedsDynamicObjectCarrier(
+  param: ts.ParameterDeclaration,
+  stmt: ts.FunctionDeclaration,
+): boolean {
+  if (param.type || !ts.isIdentifier(param.name) || !stmt.body) return false;
+  const cached = dynamicObjectParamsByFunction.get(stmt);
+  if (cached) return cached.has(param.name.text);
+
+  const parameterNames = new Set<string>();
+  for (const candidate of stmt.parameters) {
+    if (ts.isIdentifier(candidate.name)) parameterNames.add(candidate.name.text);
+  }
+  const dynamicParams = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      node !== stmt &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isAccessor(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (
+      ts.isElementAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      parameterNames.has(node.expression.text)
+    ) {
+      dynamicParams.add(node.expression.text);
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(stmt.body, visit);
+  dynamicObjectParamsByFunction.set(stmt, dynamicParams);
+  return dynamicParams.has(param.name.text);
+}
+
+const dynamicObjectReturnByFunction = new WeakMap<ts.FunctionDeclaration, boolean>();
+
+/**
+ * Detect a function that returns an empty object populated/read through computed
+ * keys. Its representation is the native open `$Object`, so an inferred closed
+ * anonymous return type would cast the value to null at the return boundary.
+ */
+function functionReturnsDynamicObjectCarrier(stmt: ts.FunctionDeclaration): boolean {
+  if (!stmt.body) return false;
+  const cached = dynamicObjectReturnByFunction.get(stmt);
+  if (cached !== undefined) return cached;
+  const emptyObjectVars = new Set<string>();
+  const dynamicVars = new Set<string>();
+  const returnedVars = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      node !== stmt &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isAccessor(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      node.initializer.properties.length === 0
+    ) {
+      emptyObjectVars.add(node.name.text);
+    }
+    if (ts.isElementAccessExpression(node) && ts.isIdentifier(node.expression)) {
+      dynamicVars.add(node.expression.text);
+    }
+    if (ts.isReturnStatement(node) && node.expression && ts.isIdentifier(node.expression)) {
+      returnedVars.add(node.expression.text);
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(stmt.body, visit);
+  for (const name of returnedVars) {
+    if (emptyObjectVars.has(name) && dynamicVars.has(name)) {
+      dynamicObjectReturnByFunction.set(stmt, true);
+      return true;
+    }
+  }
+  dynamicObjectReturnByFunction.set(stmt, false);
+  return false;
+}
+
 /**
  * (#3268) Lower a single non-rest function parameter to its Wasm ValType.
  * Consolidates the four byte-identical per-parameter lowering blocks
@@ -237,10 +345,31 @@ function lowerParamType(
     (wasmType.kind === "externref" ||
       (wasmType.kind === "ref_null" && ctx.anyValueTypeIdx >= 0 && wasmType.typeIdx === ctx.anyValueTypeIdx))
   ) {
+    const needsDynamicObjectCarrier = implicitAnyParamNeedsDynamicObjectCarrier(param, stmt);
     // (#3471) Call-site inference first; body-usage fallback ONLY for a
     // genuinely-uncalled function (see inferImplicitAnyParamType).
     const inferred = inferImplicitAnyParamType(ctx, funcName, index, sourceFile, stmt);
-    if (inferred) wasmType = inferred;
+    if (inferred) {
+      const inferredTypeIdx = inferred.kind === "ref" || inferred.kind === "ref_null" ? inferred.typeIdx : undefined;
+      const inferredStructName =
+        inferredTypeIdx === undefined ? undefined : ctx.typeIdxToStructName.get(inferredTypeIdx);
+      const inferredIndexedCarrier =
+        inferredStructName?.startsWith("__vec_") || inferredStructName?.startsWith("__arr_");
+      // A call-site object literal is only one observed shape of an untyped JS
+      // parameter. In standalone, specialising that parameter to the literal's
+      // nominal `__anon_*` struct breaks forwarding chains (`parse(input,
+      // options) -> Parser.parse -> new Parser`) as soon as another boundary
+      // expects the dynamic carrier. Keep anonymous object arguments externref;
+      // numeric, string, vec, and declared nominal inference remain unchanged.
+      // A computed-access parameter likewise stays dynamic unless inference
+      // proved the indexed vec/array family rather than one incidental object.
+      if (
+        !(needsDynamicObjectCarrier && !inferredIndexedCarrier) &&
+        !(ctx.standalone && inferredStructName?.startsWith("__anon_"))
+      ) {
+        wasmType = inferred;
+      }
+    }
   }
   return wasmType;
 }
@@ -352,6 +481,7 @@ function registerBodylessFunctionDeclaration(
 
   const retType = ctx.checker.getReturnTypeOfSignature(sig);
   const unwrappedRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
+  if (functionReturnsDynamicObjectCarrier(stmt)) ctx.objectHashConsumerTypes.add(unwrappedRetType);
   if (!isGenerator && !isVoidType(unwrappedRetType)) ensureStructForType(ctx, unwrappedRetType);
   for (const p of stmt.parameters) {
     ensureStructForType(ctx, ctx.checker.getTypeAtLocation(p));
@@ -401,7 +531,9 @@ function registerBodylessFunctionDeclaration(
     if (inferredNumericRet && isImplicitAnyReturn && allParamsNumeric) {
       results = [inferredNumericRet];
     } else {
-      results = isVoidType(rUnwrapped) ? [] : [resolveWasmType(ctx, rUnwrapped)];
+      results = isVoidType(rUnwrapped)
+        ? []
+        : [functionReturnsDynamicObjectCarrier(stmt) ? { kind: "externref" } : resolveWasmType(ctx, rUnwrapped)];
     }
   }
 
@@ -471,9 +603,18 @@ function defaultReturnInstrs(returnType: ValType | undefined): Instr[] {
   }
 }
 
-export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFile, isEntryFile = true): void {
-  function getAssignmentRootIdentifier(expr: ts.Expression): string | undefined {
-    let current: ts.Expression = expr;
+function getAssignmentRootIdentifier(expr: ts.Expression): string | undefined {
+  let current: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+    current = current.expression;
     while (
       ts.isParenthesizedExpression(current) ||
       ts.isAsExpression(current) ||
@@ -482,20 +623,29 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     ) {
       current = current.expression;
     }
-    while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-      current = current.expression;
-      while (
-        ts.isParenthesizedExpression(current) ||
-        ts.isAsExpression(current) ||
-        ts.isNonNullExpression(current) ||
-        ts.isTypeAssertionExpression(current)
-      ) {
-        current = current.expression;
-      }
-    }
-    return ts.isIdentifier(current) ? current.text : undefined;
   }
+  return ts.isIdentifier(current) ? current.text : undefined;
+}
 
+function isTopLevelFunctionPropertyReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  let current = receiver;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  if (ts.isIdentifier(current)) return ctx.topLevelFunctionNames.has(current.text);
+  if (!ts.isPropertyAccessExpression(current) && !ts.isElementAccessExpression(current)) return false;
+  const rootName = getAssignmentRootIdentifier(current);
+  return (
+    rootName !== undefined && ctx.topLevelFunctionNames.has(rootName) && ctx.oracle.signatureOf(current) !== undefined
+  );
+}
+
+export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFile, isEntryFile = true): void {
   // First: collect enum declarations (so enum values are available)
   collectEnumDeclarations(ctx, sourceFile);
 
@@ -782,6 +932,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const retType = ctx.checker.getReturnTypeOfSignature(sig);
       // For async functions, unwrap Promise<T> to get T for struct registration
       const unwrappedRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
+      if (functionReturnsDynamicObjectCarrier(stmt)) ctx.objectHashConsumerTypes.add(unwrappedRetType);
       if (!isGenerator && !isVoidType(unwrappedRetType)) ensureStructForType(ctx, unwrappedRetType);
       for (const p of stmt.parameters) {
         const pt = ctx.checker.getTypeAtLocation(p);
@@ -842,7 +993,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         if (inferredNumericRet && isImplicitAnyReturn && allParamsNumeric) {
           results = [inferredNumericRet];
         } else {
-          results = isVoidType(rUnwrapped) ? [] : [resolveWasmType(ctx, rUnwrapped)];
+          results = isVoidType(rUnwrapped)
+            ? []
+            : [functionReturnsDynamicObjectCarrier(stmt) ? { kind: "externref" } : resolveWasmType(ctx, rUnwrapped)];
         }
       }
 
@@ -1675,10 +1828,18 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // inside a function body — only the top-level collection dropped it —
         // and the #3468 closure-own-property side table makes the ordinary
         // `__extern_set` write-arm store it on the function value. Keep it in
-        // `__module_init` so that arm runs. Scoped exactly like the #2671 host
-        // arm: DIRECT bare-identifier receiver only (`F.prototype.m = …` chains
-        // stay excluded — non-identifier receiver); `.prototype` is already kept
-        // by the #2660 S2 arm above. Host/GC is untouched (that lane uses the
+        // `__module_init` so that arm runs. The original F1 gate covered a
+        // DIRECT bare-identifier receiver. (#3666) It must also retain a nested
+        // receiver that the checker proves is itself callable:
+        //
+        //   assert.deepEqual._compare = (function () { ... })();
+        //
+        // `assert` is the top-level function root and `assert.deepEqual` is a
+        // function-valued own property. Dropping that second-level write leaves
+        // `_compare` undefined, so the real Test262 deepEqual body is never
+        // invoked. The callable-type gate deliberately excludes
+        // `F.prototype.m` and ordinary object-valued chains; `.prototype` stays
+        // owned by #2660. Host/GC is untouched (that lane uses the
         // `!ctx.standalone` arm below), so it stays byte-identical.
         if (
           ctx.standalone &&
@@ -1691,16 +1852,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // avoid shadowing the builtin.
           !STANDALONE_FN_STATIC_KEEP_EXCLUDED.has(expr.left.name.text)
         ) {
-          let sReceiver: ts.Expression = expr.left.expression;
-          while (
-            ts.isParenthesizedExpression(sReceiver) ||
-            ts.isAsExpression(sReceiver) ||
-            ts.isNonNullExpression(sReceiver) ||
-            ts.isTypeAssertionExpression(sReceiver)
-          ) {
-            sReceiver = sReceiver.expression;
-          }
-          if (ts.isIdentifier(sReceiver) && ctx.topLevelFunctionNames.has(sReceiver.text)) {
+          if (isTopLevelFunctionPropertyReceiver(ctx, expr.left.expression)) {
             ctx.moduleInitStatements.push(stmt);
             continue;
           }

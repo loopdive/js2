@@ -372,7 +372,12 @@ function loadCorpus(name) {
 const SINGLE_CONSTRUCT_INPUTS = [
   "x;",
   "x + y;",
+  "a => a;",
+  "(a) => a;",
+  "(a, b) => a + b;",
   "(a, b, c) => a + b + c;",
+  "(a, b, c = 0) => a + b + c;",
+  "async (a, b) => a + b;",
   "(a, b, c);",
   "`hi ${x} bye`;",
   "f(a, b);",
@@ -482,7 +487,22 @@ export async function runProbe({ quiet = false } = {}) {
     try {
       return { ok: true, value: exp[name](src, isModule ? 1 : 0) };
     } catch (e) {
-      return { ok: false, error: e?.message ?? String(e) };
+      let payload;
+      if (typeof WebAssembly !== "undefined" && e instanceof WebAssembly.Exception) {
+        try {
+          const tag = exp.__exn_tag ?? exp.__tag;
+          if (tag) payload = e.getArg(tag, 0);
+        } catch {}
+      }
+      const payloadName =
+        payload != null && (typeof payload === "object" || typeof payload === "function") ? payload.name : undefined;
+      const payloadMessage =
+        payload != null && (typeof payload === "object" || typeof payload === "function") ? payload.message : undefined;
+      const error =
+        typeof payloadName === "string"
+          ? `${payloadName}${payloadMessage ? `: ${String(payloadMessage)}` : ""}`
+          : (e?.message ?? String(e));
+      return { ok: false, error };
     }
   };
 
@@ -517,7 +537,13 @@ export async function runProbe({ quiet = false } = {}) {
   for (const src of SINGLE_CONSTRUCT_INPUTS) {
     const truth = jsGenericCount(oracle.parse(src, { ecmaVersion: 2025 }));
     const w = callWasm("probeNodeCount", src, false);
-    parity.push({ input: src, nodeAcorn: truth, inWasm: w.ok ? w.value : null, match: w.ok && w.value === truth });
+    parity.push({
+      input: src,
+      nodeAcorn: truth,
+      inWasm: w.ok ? w.value : null,
+      match: w.ok && w.value === truth,
+      ...(w.ok ? {} : { error: w.error }),
+    });
   }
   const parityMatches = parity.filter((p) => p.match).length;
 

@@ -23,7 +23,9 @@ import {
   type IrType,
   type IrValueId,
 } from "../../src/ir/index.js";
+import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("ir/ownership-analysis");
 const F64: IrType = irVal({ kind: "f64" });
 
 const OBJ_SHAPE: IrObjectShape = { fields: [{ name: "x", type: F64 }] };
@@ -35,7 +37,7 @@ function buildFn(
   opts: { params?: number; resultTypes?: readonly IrType[] } = {},
 ) {
   const reg = new AllocSiteRegistry();
-  const b = new IrFunctionBuilder("f", opts.resultTypes ?? [], false, reg);
+  const b = new IrFunctionBuilder(identities.next("f"), opts.resultTypes ?? [], false, reg);
   for (let i = 0; i < (opts.params ?? 0); i++) b.addParam(`p${i}`, OBJ_TYPE);
   b.openBlock();
   const ret = emit(b);
@@ -167,7 +169,7 @@ describe("#1587 — analysis on IR fragments", () => {
     // noesc: br exit
     // exit: return
     const reg = new AllocSiteRegistry();
-    const b = new IrFunctionBuilder("f", [], false, reg);
+    const b = new IrFunctionBuilder(identities.next("f"), [], false, reg);
     const c = b.addParam("c", irVal({ kind: "i32" }));
     const esc = b.reserveBlockId();
     const noesc = b.reserveBlockId();
@@ -206,7 +208,7 @@ describe("#1587 — analysis on IR fragments", () => {
     // loop: o = {x:1}; sink(o); br_if c -> loop / exit
     // exit: return
     const reg = new AllocSiteRegistry();
-    const b = new IrFunctionBuilder("f", [], false, reg);
+    const b = new IrFunctionBuilder(identities.next("f"), [], false, reg);
     const c = b.addParam("c", irVal({ kind: "i32" }));
     const loop = b.reserveBlockId();
     const exit = b.reserveBlockId();

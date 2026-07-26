@@ -70,6 +70,11 @@ export enum ReOp {
    *  group span `[2*lo, 2*hi+1]`. Backtrack-aware via the usual caps snapshot
    *  (CLEAR mutates `caps`, which SPLIT snapshots). #1960. */
   CLEAR = 14,
+  /** `[CPCLASS, classIdx, negated]` — consume one Unicode code point (one
+   *  UTF-16 unit for BMP/lone surrogates, two for a valid surrogate pair) and
+   *  match it against the class-table entry. Appended for bytecode stability.
+   *  #3652. */
+  CPCLASS = 15,
 }
 
 /** Slots per instruction in the flat program array. */

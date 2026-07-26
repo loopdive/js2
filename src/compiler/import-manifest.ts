@@ -112,6 +112,7 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (name === "__box_bigint") return { type: "box", targetType: "bigint" };
   if (name === "__to_bigint") return { type: "unbox", targetType: "bigint" };
   if (name === "__bigint_ctor") return { type: "builtin", name: "__bigint_ctor" };
+  if (name === "__bigint_ctor_ref") return { type: "builtin", name: "__bigint_ctor_ref" };
   if (name === "__is_truthy") return { type: "truthy_check" };
   if (name === "__typeof") return { type: "builtin", name: "__typeof" };
 
@@ -123,6 +124,11 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
 
   // Extern get/set
   if (name === "__extern_get") return { type: "extern_get" };
+  if (name === "__extern_get_raw_callable") return { type: "extern_get", rawCallable: true };
+  if (name.startsWith("__extern_call_raw_callable_")) {
+    const arity = Number.parseInt(name.slice("__extern_call_raw_callable_".length), 10);
+    return { type: "extern_call_raw_callable", arity };
+  }
   if (name === "__extern_set") return { type: "extern_set" };
   if (name === "__extern_set_strict") return { type: "extern_set_strict" }; // (#2017) strict [[Set]]
 

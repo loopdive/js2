@@ -289,18 +289,20 @@ function nativeProtoGlobalName(brand: number): string {
 }
 
 /**
- * Emit a lazy-initialized `$NativeProto` object read for a *builtin* brand. On
+ * Build a lazy-initialized `$NativeProto` object read for a *builtin* brand. On
  * first access, builds the struct (brand, isClass=0, ctor=null, parent=null,
  * memberCsv=<native string>, name=<native string>), boxes it via
  * `extern.convert_any`, and stashes it in a module global; subsequent reads
  * return the same externref (reference identity for `RegExp.prototype ===
  * RegExp.prototype`). Pure Wasm — NO host import (the contrast with
- * `emitLazyProtoGet`, which calls `__register_prototype`). Leaves an externref
- * on the stack. Returns `false` if the brand has no registered glue.
+ * `emitLazyProtoGet`, which calls `__register_prototype`). The returned
+ * instruction list leaves an externref on the stack. Returns `null` if the
+ * brand has no registered glue. Keeping the builder separate lets finalize-time
+ * metadata arms embed the same identity-stable singleton read.
  */
-export function emitLazyNativeProtoGet(ctx: CodegenContext, fctx: FunctionContext, brand: number): boolean {
+export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number): Instr[] | null {
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
-  if (!glue) return false;
+  if (!glue) return null;
   const structTypeIdx = registerNativeProtoType(ctx);
 
   // One mutable null-init externref global per builtin proto.
@@ -337,10 +339,18 @@ export function emitLazyNativeProtoGet(ctx: CodegenContext, fctx: FunctionContex
   initBody.push({ op: "extern.convert_any" });
   initBody.push({ op: "global.set", index: globalIdx });
 
-  fctx.body.push({ op: "global.get", index: globalIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: initBody, else: [] });
-  fctx.body.push({ op: "global.get", index: globalIdx });
+  return [
+    { op: "global.get", index: globalIdx },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: initBody, else: [] },
+    { op: "global.get", index: globalIdx },
+  ];
+}
+
+export function emitLazyNativeProtoGet(ctx: CodegenContext, fctx: FunctionContext, brand: number): boolean {
+  const instrs = buildLazyNativeProtoGetInstrs(ctx, brand);
+  if (!instrs) return false;
+  fctx.body.push(...instrs);
   return true;
 }
 

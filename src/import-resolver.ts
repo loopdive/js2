@@ -160,7 +160,7 @@ const NODE_BUILTIN_CLASS_TYPED_STUBS: Record<string, Record<string, string>> = {
 };
 
 /** (#1794) Lookup: is `name` a known node-builtin class export of `moduleName`? */
-function nodeBuiltinClassStub(moduleName: string, name: string): string | null {
+export function nodeBuiltinClassStub(moduleName: string, name: string): string | null {
   const members = NODE_BUILTIN_CLASS_TYPED_STUBS[moduleName]?.[name];
   if (!members) return null;
   return (
@@ -896,10 +896,10 @@ function buildTimerShim(used: Set<string>, definedNames: Set<string>): string {
     const hostName = hostFor[name]!;
     if (name === "clearTimeout" || name === "clearInterval") {
       lines.push(`declare function ${hostName}(h: any): void;`);
-      lines.push(`function ${name}(h: any): void { ${hostName}(h); }`);
+      lines.push(`function ${name}(h: number): void { ${hostName}(h); }`);
     } else {
       lines.push(`declare function ${hostName}(cb: any, ms: any): any;`);
-      lines.push(`function ${name}(cb: any, ms: any): any { return ${hostName}(cb, ms); }`);
+      lines.push(`function ${name}(cb: () => void, ms: number): number { return ${hostName}(cb, ms); }`);
     }
   }
   if (lines.length === 0) return "";

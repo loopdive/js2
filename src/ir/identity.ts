@@ -22,9 +22,35 @@ export type IrBindingId = string & { readonly [irBindingIdBrand]: "IrBindingId" 
 export type IrLexicalOwnerId = IrUnitId | IrClassId;
 export type IrSourceKind = "entry" | "source" | "library" | "synthetic";
 
+/** Structural function identity plus its temporary compatibility/reference label. */
+export interface IrFunctionIdentity {
+  readonly unitId: IrUnitId;
+  readonly name: string;
+}
+
+export interface IrLiftedFunctionArtifactIdentity extends IrFunctionIdentity {
+  readonly parentId: IrUnitId;
+  readonly role: "lifted-closure";
+  readonly ordinal: number;
+}
+
+export interface IrLiftedFunctionArtifactOwner {
+  readonly ownerUnitId: IrUnitId;
+  readonly liftedCounter: { value: number };
+}
+
+/** Exact producer-side provenance for one pass-created executable unit. */
+export interface IrDerivedUnitProvenance {
+  readonly id: IrUnitId;
+  readonly parentId: IrUnitId;
+  readonly role: IrSyntheticUnitRole;
+  readonly ordinal: number;
+}
+
 /** Closed role families for compiler/pass-created executable units. */
 export type IrSyntheticUnitRole =
   | `compiler-unit:${CompilerSourceProducer}:${string}`
+  | `stdlib-selfhost:${string}`
   | "lifted-closure"
   | "monomorphization-clone";
 /** Compiler-created class roles live in a namespace separate from source classes. */
@@ -224,6 +250,21 @@ export function createIrUnitId(input: CreateIrUnitIdInput): IrUnitId {
 /** Derive a unit identity from semantic compiler role, never a display label. */
 export function createDerivedIrUnitId(input: CreateDerivedIrUnitIdInput): IrUnitId {
   return `ir-unit:v1:derived:${identityComponent(input.parentId)}:${identityComponent(input.role)}:${canonicalNumber(input.ordinal, "derived unit ordinal")}` as IrUnitId;
+}
+
+/** Allocate a lifted artifact's label and structural identity from one ordinal. */
+export function allocateLiftedFunctionArtifact(
+  owner: IrLiftedFunctionArtifactOwner,
+  displayNameForOrdinal: (ordinal: number) => string,
+): IrLiftedFunctionArtifactIdentity {
+  const ordinal = owner.liftedCounter.value++;
+  return {
+    unitId: createDerivedIrUnitId({ parentId: owner.ownerUnitId, role: "lifted-closure", ordinal }),
+    name: displayNameForOrdinal(ordinal),
+    parentId: owner.ownerUnitId,
+    role: "lifted-closure",
+    ordinal,
+  };
 }
 
 export function createIrClassId(input: CreateIrClassIdInput): IrClassId {
@@ -527,10 +568,38 @@ const compilerUnitRole = (origin: CompilerSourceOrigin): IrSyntheticUnitRole =>
 const compilerClassRole = (origin: CompilerSourceOrigin): IrSyntheticClassRole =>
   `compiler-class:${origin.producer}:${origin.role}`;
 
+/** @internal Exact AST records retained outside serializable identity values. */
+export interface IrInventoryScannerMetadata {
+  readonly sources: readonly {
+    readonly sourceFile: ts.SourceFile;
+    readonly record: IrSourceRecord;
+  }[];
+  readonly units: readonly {
+    readonly sourceFile: ts.SourceFile;
+    readonly declaration: ts.Node;
+    readonly record: IrUnitRecord;
+  }[];
+  readonly classes: readonly {
+    readonly sourceFile: ts.SourceFile;
+    readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
+    readonly record: IrClassRecord;
+  }[];
+}
+
+/** AST nodes stay outside the serializable identity records. */
+const scannerMetadataByInventory = new WeakMap<IrUnitInventory, IrInventoryScannerMetadata>();
+
+/** @internal Planning must consume metadata for this exact inventory object. */
+export function getIrInventoryScannerMetadata(inventory: IrUnitInventory): IrInventoryScannerMetadata | undefined {
+  return scannerMetadataByInventory.get(inventory);
+}
+
 class SourceInventoryBuilder {
   readonly classes: IrClassRecord[] = [];
   readonly allUnits: IrUnitRecord[] = [];
   readonly terminalUnits: IrTerminalUnitRecord[] = [];
+  readonly unitDeclarations: IrInventoryScannerMetadata["units"][number][] = [];
+  readonly classDeclarations: IrInventoryScannerMetadata["classes"][number][] = [];
 
   private readonly unitOrdinals = new Map<string, number>();
   private readonly classOrdinals = new Map<string, number>();
@@ -743,6 +812,7 @@ class SourceInventoryBuilder {
       ...this.position(node),
     });
     this.classes.push(record);
+    this.classDeclarations.push({ sourceFile: this.sourceFile, declaration: node, record });
     return record;
   }
 
@@ -794,6 +864,9 @@ class SourceInventoryBuilder {
     });
     this.allUnits.push(record);
     this.terminalUnits.push(record);
+    if (record.kind !== "module-init") {
+      this.unitDeclarations.push({ sourceFile: this.sourceFile, declaration: node, record });
+    }
     return record;
   }
 
@@ -834,6 +907,7 @@ class SourceInventoryBuilder {
         : { ...base, terminalOwnerId },
     );
     this.allUnits.push(record);
+    this.unitDeclarations.push({ sourceFile: this.sourceFile, declaration: node, record });
     return record;
   }
 
@@ -931,7 +1005,7 @@ class SourceInventoryBuilder {
               "class-static-field-initializer",
               classRecord.id,
               terminalOwnerId,
-              member.initializer!,
+              member,
               `${displayName}.${memberBaseName(member.name)}`,
               memberSyntheticRole,
             );
@@ -989,7 +1063,7 @@ class SourceInventoryBuilder {
         ? this.addTerminalUnit(
             "class-implicit-constructor",
             classRecord.id,
-            firstInstanceInitializer,
+            node,
             `${displayName}_new`,
             "class-member",
             false,
@@ -1006,7 +1080,7 @@ class SourceInventoryBuilder {
             "class-implicit-constructor",
             classRecord.id,
             inheritedTerminalOwnerId,
-            firstInstanceInitializer,
+            node,
             `${displayName}_new`,
             compilerOrigin ? compilerUnitRole(compilerOrigin) : undefined,
           );
@@ -1028,7 +1102,7 @@ class SourceInventoryBuilder {
         "class-instance-field-initializer",
         classRecord.id,
         instanceTerminalOwner,
-        field.initializer!,
+        field,
         `${displayName}.${memberBaseName(field.name)}`,
         fieldCompilerOrigin ? compilerUnitRole(fieldCompilerOrigin) : undefined,
       );
@@ -1144,19 +1218,34 @@ export function buildIrUnitInventory(
   const classes: IrClassRecord[] = [];
   const allUnits: IrUnitRecord[] = [];
   const terminalUnits: IrTerminalUnitRecord[] = [];
+  const scannedUnits: IrInventoryScannerMetadata["units"][number][] = [];
+  const scannedClasses: IrInventoryScannerMetadata["classes"][number][] = [];
   for (let index = 0; index < keyed.length; index++) {
     const builder = new SourceInventoryBuilder(keyed[index]!.sourceFile, sources[index]!, options);
     builder.build();
     classes.push(...builder.classes);
     allUnits.push(...builder.allUnits);
     terminalUnits.push(...builder.terminalUnits);
+    scannedUnits.push(...builder.unitDeclarations);
+    scannedClasses.push(...builder.classDeclarations);
   }
-  return Object.freeze({
+  const inventory: IrUnitInventory = Object.freeze({
     sources: Object.freeze(sources),
     classes: Object.freeze(classes),
     allUnits: Object.freeze(allUnits),
     terminalUnits: Object.freeze(terminalUnits),
   });
+  scannerMetadataByInventory.set(
+    inventory,
+    Object.freeze({
+      sources: Object.freeze(
+        keyed.map(({ sourceFile }, index) => Object.freeze({ sourceFile, record: sources[index]! })),
+      ),
+      units: Object.freeze(scannedUnits.map((entry) => Object.freeze(entry))),
+      classes: Object.freeze(scannedClasses.map((entry) => Object.freeze(entry))),
+    }),
+  );
+  return inventory;
 }
 
 /** Exact source join used by codegen; original filenames remain observational. */
@@ -1177,19 +1266,20 @@ export function indexIrTerminalDeclarations(
   sourceFile: ts.SourceFile,
   inventory: IrUnitInventory,
 ): ReadonlyMap<ts.Node, IrUnitId> {
-  const terminals = terminalIrUnitsForSource(inventory, sourceFile);
-  if (terminals.length === 0) return new Map();
-  const candidates: ts.Node[] = [];
-  for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.body) candidates.push(statement);
-    if (ts.isClassDeclaration(statement)) candidates.push(...statement.members);
+  const scanned = getIrInventoryScannerMetadata(inventory);
+  if (!scanned) throw new Error("terminal declaration index requires the exact built IR inventory");
+  const scannedSource = scanned.sources.find((entry) => entry.sourceFile === sourceFile);
+  if (!scannedSource || scannedSource.record.originalFileName !== sourceFile.fileName) {
+    throw new Error(`source ${sourceFile.fileName} does not match the exact built IR inventory`);
   }
-  const bySpan = new Map<string, ts.Node[]>();
-  for (const node of candidates) {
-    const key = `${node.getStart(sourceFile)}:${node.end}`;
-    const matches = bySpan.get(key);
-    if (matches) matches.push(node);
-    else bySpan.set(key, [node]);
+  const terminals = inventory.terminalUnits.filter((unit) => unit.sourceId === scannedSource.record.id);
+  if (terminals.length === 0) return new Map();
+  const declarationByRecord = new Map<IrUnitRecord, ts.Node>();
+  for (const entry of scanned.units) {
+    if (declarationByRecord.has(entry.record)) {
+      throw new Error(`unit ${entry.record.id} maps to multiple exact AST declarations`);
+    }
+    declarationByRecord.set(entry.record, entry.declaration);
   }
   const result = new Map<ts.Node, IrUnitId>();
   for (const terminal of terminals) {
@@ -1198,16 +1288,13 @@ export function indexIrTerminalDeclarations(
       result.set(sourceFile, terminal.id);
       continue;
     }
-    const matches = bySpan.get(`${terminal.declarationStart}:${terminal.declarationEnd}`) ?? [];
-    if (matches.length !== 1) {
-      throw new Error(
-        `terminal identity ${terminal.id} has ${matches.length} AST declaration matches in ${sourceFile.fileName}`,
-      );
+    const declaration = declarationByRecord.get(terminal);
+    if (!declaration || declaration.getSourceFile() !== sourceFile) {
+      throw new Error(`terminal identity ${terminal.id} has no exact AST declaration match in ${sourceFile.fileName}`);
     }
-    const node = matches[0]!;
-    if (result.has(node))
+    if (result.has(declaration))
       throw new Error(`AST declaration maps to multiple terminal identities in ${sourceFile.fileName}`);
-    result.set(node, terminal.id);
+    result.set(declaration, terminal.id);
   }
   if (result.size !== terminals.length) {
     throw new Error(

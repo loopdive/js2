@@ -169,7 +169,11 @@ export function emitVecDefineWritebackExports(
         },
       ];
     }
-    body.push(...current);
+    // Every dispatch arm returns, but the nested empty-block `if` shape does
+    // not communicate that fact to the stack-balance verifier. Make the
+    // impossible fallthrough explicit instead of letting the safety net append
+    // a lossy default result.
+    body.push(...current, { op: "unreachable" });
     mod.functions.push({
       name: "__vec_set_elem",
       typeIdx: setElemTypeIdx,
@@ -261,7 +265,9 @@ export function emitVecDefineWritebackExports(
         },
       ];
     }
-    body.push(...current);
+    // See __vec_set_elem above: all arms return and this marks the impossible
+    // fallthrough explicitly for the stack-balance verifier.
+    body.push(...current, { op: "unreachable" });
     mod.functions.push({
       name: "__vec_set_len",
       typeIdx: setLenTypeIdx,

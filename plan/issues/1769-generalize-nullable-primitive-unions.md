@@ -3,7 +3,7 @@ id: 1769
 title: "generalize nullable primitive union lowering and narrowing"
 status: done
 created: 2026-06-01
-updated: 2026-06-02
+updated: 2026-07-26
 completed: 2026-06-02
 priority: medium
 feasibility: hard
@@ -17,6 +17,7 @@ es_edition: n/a
 related: [389, 1765]
 origin: "Follow-up to narrow #1765 nullable number typed-array byte-write fix"
 ---
+
 # #1769 - generalize nullable primitive union lowering and narrowing
 
 ## Problem
@@ -159,3 +160,22 @@ Codex reviewed the dirty branch state on 2026-06-02 and reran the scoped
 validation above, including the 7-case #1769 issue suite, adjacent
 #1765/null-narrowing/union-narrowing regression files, and `tsc --noEmit`. All
 commands passed; no additional code changes were needed after review.
+
+## Follow-up completion 2026-07-26 — function return carriers
+
+The full compiled-Acorn/Test262 differential (#1712/#3666) found one missed
+position from the original generalized acceptance: `resolveWasmType` still
+collapsed a nullable primitive **function return** to its inner scalar even
+though local/global allocation preserved the externref sentinel.
+
+Acorn's untyped `readInt`/`readHexChar` return `number | null`. A failed read
+returned `null` inside the callee, but its Wasm signature was `f64`, so the
+boundary turned the sentinel into numeric zero before the caller's
+`value == null` test. That made invalid radix and character escapes parse as
+valid input.
+
+Nullable primitive unions now resolve to the same externref carrier at general
+type/signature boundaries as at local allocation. A JS-inference regression in
+`tests/issue-1769.test.ts` checks both the null and numeric return arms. The real
+pinned Acorn gate confirms invalid template, radix, and string escapes now
+produce the same syntax rejections as node-acorn.

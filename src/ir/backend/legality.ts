@@ -15,7 +15,7 @@ import type { ValType } from "../types.js";
 export type IrBackendKind = "wasmgc" | "linear" | "bytecode" | "porffor";
 
 /** Source/target features whose availability is known before IR construction. */
-export type IrBackendTargetCapability = "host-date-snapshot";
+export type IrBackendTargetCapability = "host-date-snapshot" | "host-regexp-constructor";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -42,6 +42,8 @@ export function supportsIrBackendTargetCapability(
 ): boolean {
   switch (capability) {
     case "host-date-snapshot":
+      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+    case "host-regexp-constructor":
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
   }
 }

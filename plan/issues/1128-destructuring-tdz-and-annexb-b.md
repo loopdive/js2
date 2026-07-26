@@ -351,3 +351,31 @@ Targeted test262 runs (compile + run):
   nested-pattern handler doesn't expand default initializers. This is a
   pre-existing limitation, not specific to TDZ.
 - Part B (AnnexB B.3.3 function-in-block) is not implemented here.
+
+## ⚠️ ADJUDICATION 2026-07-26 (opus-loop-e, task #24) — LABEL OVERSTATES WHAT LANDED
+
+**Verdict: partial slice. Left `done`, with a pointer — not reopened.**
+
+This issue is `done` (sprint 45) claiming "≥211 tests", while
+`annexB/language/{global,function}-code` still carry **204 failures of 312 tests** (65 %).
+
+Mitigating, and the reason this is NOT the serious case: **the work was re-filed,
+not lost.** #2200 and #2552 are live successors, and #2552 in particular has
+fully landed on main (verified 2026-07-26: `annexBNameObservedOutsideBlock`,
+`annexBNameReassignedInBlock`, `annexBSameNameVarInScope`, `annexBOuterBindings`
+and the bare-read interception in `expressions/identifiers.ts` are all present).
+So the label overstates scope; it does not conceal missing work.
+
+**What actually remains is a DIFFERENT mechanism from this issue** (measured
+2026-07-26, see #2552 for the full breakdown): **96 of the 204** are Annex B
+**B.3.3.1 step ii** — the "would replacing the FunctionDeclaration with a `var`
+produce an Early Error?" exclusion, which is unimplemented. A further **24** are a
+separate `missing_builtin: null is not a function [in __module_init()]` cluster in
+`global-code`/`existing-global*`, and ~84 are a 19-signature tail. So "204
+failures, one mechanism" is wrong — the mechanism is 96/204 (47 %).
+
+**Disposition:** leave `done`; the remainder is tracked by #2552, which carries
+the step-ii analysis, three measured negative implementation attempts, and the
+finding that any fix must be cross-context (the existing Annex B tables are
+function-context-local while `ctx.funcMap` is module-global). Do not treat this
+issue as evidence B.3.3 is implemented.

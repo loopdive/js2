@@ -27,7 +27,9 @@ import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
 import { lowerIrModuleToPorffor } from "../src/ir/backend/porffor/integration.js";
 import { forEachInstrDeep, irVal, type IrInstr, type IrType } from "../src/ir/nodes.js";
 import { IR_STRING_RUNTIME, utf16CharAt, utf16CharCodeAt } from "../src/ir/string-runtime.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-3502-string-contract");
 const STRING: IrType = { kind: "string" };
 const F64: IrType = irVal({ kind: "f64" });
 const I32: IrType = irVal({ kind: "i32" });
@@ -160,7 +162,7 @@ describe("#3502 backend-neutral string contract", () => {
 
   it("binds only proven ASCII work to the established LinearMemoryPlan layout", () => {
     const registry = new AllocSiteRegistry();
-    const builder = new IrFunctionBuilder("strings", [F64], true, registry);
+    const builder = new IrFunctionBuilder(identities.next("strings"), [F64], true, registry);
     builder.openBlock();
     const left = builder.emitStringConst("A");
     const right = builder.emitStringConst("B");

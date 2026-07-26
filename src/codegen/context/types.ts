@@ -9,7 +9,8 @@
 import { ts } from "../../ts-api.js";
 import type { TypeOracle } from "../../checker/oracle.js";
 import type { UsageInference } from "../../checker/usage-inference.js";
-import type { FieldDef, Instr, LocalDef, SourcePos, ValType, WasmModule } from "../../ir/types.js";
+import type { IrUnitId } from "../../ir/identity.js";
+import type { FieldDef, Instr, LocalDef, SourcePos, ValType, WasmFunction, WasmModule } from "../../ir/types.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
@@ -257,6 +258,8 @@ export interface ClosureInfo {
   paramTypes: ValType[];
   /** True only for source closures with one or more captured lexical bindings. */
   hasCaptures?: boolean;
+  /** True when the source closure has a `...rest` parameter. */
+  hasRestParam?: boolean;
 }
 
 /** Metadata for a generator lowered to an in-module WasmGC state machine (#680). */
@@ -1002,9 +1005,9 @@ export interface FunctionContext {
   thisStructName?: string;
 }
 
-/** Context shared across all codegen. */
 export interface CodegenContext {
   mod: WasmModule;
+  programAbiSession?: import("../program-abi-session.js").ProgramAbiSession;
   checker: ts.TypeChecker;
   /** True when the single-file input is an ECMAScript Module goal. Script-goal
    * module init uses the host global object for top-level `this`; module goal
@@ -1037,6 +1040,8 @@ export interface CodegenContext {
    * `.name` values are identical.
    */
   functionDeclKeys: Map<ts.FunctionDeclaration, string>;
+  /** Exact IR artifact identity to its allocator-owned defined-function object. */
+  irUnitFuncMap: Map<IrUnitId, WasmFunction>;
   /** Map from struct/interface name to type index */
   structMap: Map<string, number>;
   /** Reverse map from type index to struct/interface name (O(1) reverse lookup) */
@@ -1711,6 +1716,25 @@ export interface CodegenContext {
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /**
+   * #2928 — true once the module has materialized the canonical eight-slot
+   * callable carrier used by the separately linked interpreter runtime.
+   */
+  runtimeEvalCallableSeeded?: boolean;
+  /**
+   * #2928 — this unit consumes or provides the linked runtime-eval ABI.
+   * Callable writes to its native global object use the cross-module carrier.
+   */
+  runtimeEvalCallableBoundaryEnabled?: boolean;
+  /**
+   * #2928 — structurally canonical `(code,target)` carrier shared by caller
+   * and provider without changing the ordinary closure hierarchy.
+   */
+  runtimeEvalAotCallableCarrier?: {
+    structTypeIdx: number;
+    funcTypeIdx: number;
+    trampolineFuncIdx?: number;
+  };
+  /**
    * (#2640) When set, `compileArrowAsClosure` widens any callback parameter
    * whose resolved type is a typed WasmGC vec/array (`__vec_*`/`__arr_*`/
    * `$__vec_base`) to `externref`. Set transiently by
@@ -1850,6 +1874,12 @@ export interface CodegenContext {
    * recursive numeric kernel pattern is detected.
    */
   numericReturnTypes?: Map<string, ValType>;
+  /**
+   * #2847: property names whose complete source definition/write set is
+   * boolean-producing. Used to preserve JS boolean identity through untyped
+   * numeric carriers and sidecar writes; computed conservatively per module.
+   */
+  booleanPropertyNames: Set<string>;
   /** Set of function names that are async (for .d.ts generation) */
   asyncFunctions: Set<string>;
   /** Set of function names that are generators (function*) */
@@ -2437,6 +2467,8 @@ export interface CodegenContext {
    * pre-existing codegen byte-identical; its matching gap is filed separately).
    */
   objectHashConsumerTypes: Set<ts.Type>;
+  /** Functions proven to return an open `$Object` populated via computed keys. */
+  dynamicObjectReturnFunctions: Set<string>;
   /**
    * (#2837) Variable names initialized by a NON-EMPTY object literal that later
    * receives an OUT-OF-SHAPE property write (a direct `V.k=` with `k` not in the
@@ -2737,7 +2769,8 @@ export interface CodegenContext {
   /** (#2896) Struct-type index → static `{name, length}` metadata for builtin
    *  function-closure values under `--target standalone`. Each (builtin, member)
    *  closure gets a UNIQUE wrapper-struct SUBTYPE (fields `[funcref func,
-   *  (mut i32) bfnstate]`, supertype = its signature wrapper struct), so the
+   *  (mut i32) bfnstate, i32 bfnid]`, supertype = its signature wrapper
+   *  struct), so the
    *  reflective runtime natives (`__getOwnPropertyDescriptor` / `__extern_get` /
    *  `__hasOwnProperty` / `__getOwnPropertyNames` / `__delete_property`) can
    *  `ref.test` the value at RUNTIME and answer its spec `name`/`length` own

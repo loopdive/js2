@@ -214,7 +214,37 @@ export const Builtin = {
   MakeClosure: 2, //    %MakeClosure%    — (funcMeta) → interpreted closure value
   GlobalThis: 3, //     %GlobalThis%     — the frame's global object (ThisExpression in global scope)
   TypeofName: 4, //     %TypeofName%     — (name) → typeof of a possibly-undeclared identifier
+  Error: 5, //          %Error%          — construct the corresponding native error value
+  TypeError: 6, //      %TypeError%
+  RangeError: 7, //     %RangeError%
+  SyntaxError: 8, //    %SyntaxError%
+  ReferenceError: 9, // %ReferenceError%
+  Number: 10, //        %Number%         — global numeric coercion
+  MathMax: 11, //       %Math.max%       — common host-free Math surface
+  MathMin: 12, //       %Math.min%
+  MathAbs: 13, //       %Math.abs%
+  MathFloor: 14, //     %Math.floor%
+  MathCeil: 15, //      %Math.ceil%
+  MathRound: 16, //     %Math.round%
 } as const;
 
 /** Names for the disassembler's builtin-id rendering, indexed by builtin id. */
-export const BUILTIN_NAMES: string[] = ["ObjectLiteral", "ArrayLiteral", "MakeClosure", "GlobalThis", "TypeofName"];
+export const BUILTIN_NAMES: string[] = [
+  "ObjectLiteral",
+  "ArrayLiteral",
+  "MakeClosure",
+  "GlobalThis",
+  "TypeofName",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "Number",
+  "Math.max",
+  "Math.min",
+  "Math.abs",
+  "Math.floor",
+  "Math.ceil",
+  "Math.round",
+];

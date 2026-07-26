@@ -34,7 +34,7 @@ import {
 } from "./bytecode.js";
 import { parsePattern, type ParsedRegex, type ReNode } from "./parse.js";
 import { foldCharUnitsLegacy, foldClassRangesLegacy, unitsToRanges } from "./casefold.js";
-import { cpRangesToNode, dotCpRanges } from "./unicode.js";
+import { dotCpRanges } from "./unicode.js";
 
 /** Bounded repetition expansion guard — `{n,m}` with large m is rewritten to
  *  repeated atoms, so cap the expansion to keep programs small. */
@@ -137,9 +137,21 @@ class Emitter {
 
   /** Add a class to the class table, return its start offset. */
   private addClass(ranges: Array<[number, number]>): number {
+    // Binary-search membership requires sorted, disjoint ranges. Legacy
+    // source-order classes and case-fold augmentation need not arrive sorted,
+    // so canonicalise once at compile time. #3652.
+    const sorted = ranges
+      .map(([lo, hi]) => [lo, hi] as [number, number])
+      .sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+    const normalized: Array<[number, number]> = [];
+    for (const [lo, hi] of sorted) {
+      const last = normalized[normalized.length - 1];
+      if (last !== undefined && lo <= last[1] + 1) last[1] = Math.max(last[1], hi);
+      else normalized.push([lo, hi]);
+    }
     const offset = this.classTable.length;
-    this.classTable.push(ranges.length);
-    for (const [lo, hi] of ranges) {
+    this.classTable.push(normalized.length);
+    for (const [lo, hi] of normalized) {
       this.classTable.push(lo, hi);
     }
     return offset;
@@ -176,9 +188,9 @@ class Emitter {
         this.emit(ReOp.ANY, this.dotAll ? 1 : 0);
         return;
       case "udot":
-        // u/v-mode `.` — one CODE POINT. Desugared here (not at parse) so the
-        // modifier-scoped dotAll state applies. #1911 Slice B.
-        this.compileNode(cpRangesToNode(dotCpRanges(this.dotAll)));
+        // u/v-mode `.` — one CODE POINT. Resolve the modifier-scoped dotAll
+        // set here, then keep it compact for CPCLASS. #3652.
+        this.emit(ReOp.CPCLASS, this.addClass(dotCpRanges(this.dotAll)), 0);
         return;
       case "class": {
         // Non-Unicode `i` uses full legacy (§22.2.2.9.3) case folding; u/v mode
@@ -190,6 +202,11 @@ class Emitter {
         }
         const offset = this.addClass(ranges);
         this.emit(ReOp.CLASS, offset, node.negated ? 1 : 0);
+        return;
+      }
+      case "cpclass": {
+        const offset = this.addClass(node.ranges);
+        this.emit(ReOp.CPCLASS, offset, node.negated ? 1 : 0);
         return;
       }
       case "bol":
@@ -422,6 +439,7 @@ export function canMatchEmpty(node: ReNode): boolean {
     case "any":
     case "udot":
     case "class":
+    case "cpclass":
     case "backref":
       // backref to an unset group matches empty, but a set group may consume;
       // treat as consuming — the guard is only skipped when DEFINITELY non-empty.
@@ -481,8 +499,8 @@ export function captureSpan(node: ReNode): [number, number] | null {
       case "repeat":
         visit(n.node);
         return;
-      // lookaround: separate sub-program — do not descend. char/any/udot/class/
-      // bol/eol/wordBoundary/backref define no groups.
+      // lookaround: separate sub-program — do not descend.
+      // char/any/udot/class/cpclass/bol/eol/wordBoundary/backref define no groups.
       default:
         return;
     }
@@ -554,8 +572,9 @@ export function reverseNode(node: ReNode): ReNode {
     case "modGroup":
       return { kind: "modGroup", add: node.add, remove: node.remove, node: reverseNode(node.node) };
     default:
-      // char / any / class / bol / eol / wordBoundary / backref / lookaround —
-      // single units or position assertions; nothing to reverse internally.
+      // char / any / udot / class / cpclass / bol / eol / wordBoundary /
+      // backref / lookaround — single atoms or position assertions; nothing
+      // to reverse internally.
       return node;
   }
 }

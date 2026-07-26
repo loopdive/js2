@@ -5,13 +5,17 @@ import ts from "typescript";
 
 import { analyzeSource } from "../src/checker/index.js";
 import { compile, type IrObservedOutcome } from "../src/index.js";
+import { collectIrDirectCallLoweringPlans } from "../src/ir/ast-lowering-plans.js";
+import { irUnitFuncRef } from "../src/ir/callable-bindings.js";
 import { lowerFunctionAstToIr, type IrFromAstResolver } from "../src/ir/from-ast.js";
 import type { IrClassShape, IrType } from "../src/ir/nodes.js";
 import { classifyIrFailure, evaluateIrOutcomePolicy, type IrUnsupportedCode } from "../src/ir/outcomes.js";
 import { instantiateWithRuntime } from "./equivalence/helpers.js";
+import { createTestIrClassId, createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 const F64: IrType = { kind: "val", val: { kind: "f64" } };
 const EXTERNREF: IrType = { kind: "val", val: { kind: "externref" } };
+const irIdentities = createTestIrFunctionIdentityFactory("issue-3529-dataflow-outcomes");
 
 function terminalFor(result: Awaited<ReturnType<typeof compile>>, displayName = "test"): IrObservedOutcome {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -45,7 +49,10 @@ function directDeclaration(source: string): ts.FunctionDeclaration {
 }
 
 function lowerDirect(source: string): void {
-  lowerFunctionAstToIr(directDeclaration(source), { exported: true });
+  lowerFunctionAstToIr(directDeclaration(source), {
+    ownerUnitId: irIdentities.next("test").unitId,
+    exported: true,
+  });
 }
 
 function expectLowerInvariant(
@@ -59,10 +66,27 @@ function expectLowerInvariant(
       ts.isFunctionDeclaration(statement) && statement.name?.text === "test",
   );
   expect(declaration).toBeDefined();
+  const ownerIdentity = irIdentities.next("test");
+  const directCalls = collectIrDirectCallLoweringPlans(
+    declaration!,
+    ownerIdentity.unitId,
+    new Map(
+      [...calleeTypes].map(([calleeName, signature]) => [
+        calleeName,
+        { target: irUnitFuncRef(irIdentities.next(`callee:${calleeName}`)), signature },
+      ]),
+    ),
+  );
 
   let thrown: unknown;
   try {
-    lowerFunctionAstToIr(declaration!, { exported: true, checker: ast.checker, calleeTypes, resolver });
+    lowerFunctionAstToIr(declaration!, {
+      ownerUnitId: ownerIdentity.unitId,
+      exported: true,
+      checker: ast.checker,
+      directCalls,
+      resolver,
+    });
   } catch (error) {
     thrown = error;
   }
@@ -254,6 +278,7 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
 
   it("constructs an exact local class named Date before consulting the ambient extern registry", () => {
     const dateShape: IrClassShape = {
+      classId: createTestIrClassId("issue-3529-dataflow-outcomes/date"),
       className: "Date",
       fields: [],
       methods: [],
@@ -277,6 +302,7 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
         export function test(): Date { return new Date(); }
       `),
       {
+        ownerUnitId: irIdentities.next("test").unitId,
         exported: true,
         returnTypeOverride: { kind: "class", shape: dateShape },
         classShapes: new Map([["Date", dateShape]]),
@@ -288,7 +314,11 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
     expect(instructionKinds).toContain("class.new");
     expect(instructionKinds).not.toContain("extern.new");
 
-    const localShape: IrClassShape = { ...dateShape, className: "Local" };
+    const localShape: IrClassShape = {
+      ...dateShape,
+      classId: createTestIrClassId("issue-3529-dataflow-outcomes/local"),
+      className: "Local",
+    };
     expect(() =>
       lowerFunctionAstToIr(
         directDeclaration(`
@@ -297,6 +327,7 @@ describe("#3529 P2 — typed dataflow outcomes", () => {
           export function test(): Local { return new Date(); }
         `),
         {
+          ownerUnitId: irIdentities.next("test").unitId,
           exported: true,
           returnTypeOverride: { kind: "class", shape: localShape },
           classShapes: new Map([["Local", localShape]]),

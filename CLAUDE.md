@@ -109,11 +109,23 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 ## Test262
 
 - test262.test.ts has no assertions — all vitest tests pass; conformance is tracked via report
-- Skip filters (#3626 — VERIFY BEFORE TRUSTING THIS LINE): `eval` and `with` are **NOT** skipped —
-  those tests run and are counted against conformance (measured 2026-07-25: 826 eval-dependent /
-  512 failures, 171 `with` / 148 failures in the ES5 bucket alone). `top-level-await` IS feature-skipped
-  in `tests/test262-runner.ts`. The remaining historical entries (Proxy, SharedArrayBuffer, Temporal,
-  WeakRef, FinalizationRegistry, dynamic `import()`) were NOT re-verified and must not be assumed skipped.
+- Skip filters — **verified against `tests/test262-runner.ts` on 2026-07-26 (#24); this is now the
+  complete list, not a historical one.** `shouldSkip` skips exactly:
+  - `_FIXTURE.js` helper files
+  - `HANGING_TESTS` (an explicit per-path set — compiler hangs)
+  - `language/import/import-defer/` (proposal, no harness)
+  - the 18-file `eval-script-code-host-resolves-module-code` family (#1696)
+  - anything `classifyTestScope` calls a **proposal**, unless `TEST262_INCLUDE_PROPOSALS=1`
+  - two **feature** skips only: `top-level-await` and `IsHTMLDDA`
+
+  **Everything else RUNS and is counted against conformance.** In particular `eval` and `with` are
+  **NOT** skipped (measured 2026-07-25: 826 eval-dependent / 512 failures, 171 `with` / 148 failures
+  in the ES5 bucket alone). The old list also named **Proxy, SharedArrayBuffer, Temporal, WeakRef,
+  FinalizationRegistry and dynamic `import()`** — **none of those are skipped either.** Temporal is
+  the easy proof: the baseline carries Temporal entries with `status:"fail"` and error
+  `Temporal is not defined`, which only appears if the tests ran. A stale "these are skipped" claim is
+  how a real multi-hundred-test gap stays invisible, so treat this list as load-bearing and re-verify
+  it in the runner before editing.
 - Many previously-skipped features now supported: TypedArray, DataView, ArrayBuffer, delete, async, generators, for-of
 - Issues #618-#634 cover current failure patterns (from 2026-03-19 error analysis)
 - parseInt import: `(externref, f64) -> f64` with NaN sentinel for missing radix
@@ -304,7 +316,7 @@ End of sprint: 8. **Tech lead** runs full test262 → records results 9. **Tech 
 - Batch doc/plan commits on main AFTER all pending agent merges, not between them (doc commits force agents to re-merge main)
 - Complete post-merge issue cleanup (set `status: done` in sprint dir issue file, update dep graph) after each merge
 - **Tag sprints**: `git tag sprint-N/begin` when starting a sprint, `git tag sprint/N` when it finishes. Sprint stats (duration, commits, issues) are auto-generated from tags during `build:pages`. Sprint tagging creates ONLY `sprint/N` (+ `sprint-N/begin`) tags — **never `vX.Y.Z` version tags**. Version tags are cut EXCLUSIVELY via `node scripts/release.mjs <x.y.z>` (lockstep `package.json` bump + reviewed release PR + tag-on-merge), never auto-tagged per sprint (44 legacy bare `v0.*` tags from the old convention caused publish-version drift — loopdive/js2#389).
-- **Prefer the dedicated PR-queue shepherd (below) over hand-shepherding the queue from the lead loop.** Hand-shepherding ad-hoc from the lead loop strands PRs and consumes lead attention; staff a standing shepherd so the lead only steps in on escalations. Since #2786 the **primary enqueuer is the server-side `auto-enqueue.yml` workflow** (its `workflow_run`-on-completion trigger, grace 0, enqueues every just-green PR within ~one workflow-startup). The lead/shepherd sweep is now a **backstop** alongside the ~30-min cron — it catches the rare stray the responsive workflow run misses (e.g. a PR the queue dropped on main-advance, or a green PR somehow not picked up). Still worth running every loop as belt-and-suspenders: sweep `gh pr list -R loopdive/js2wasm --state open` and **one-shot enqueue every CLEAN, non-`hold`, non-draft PR not already in the queue** (GraphQL `enqueuePullRequest`, **user PAT**, NEVER re-enqueue — loop hazard, see `project_merge_queue_requeue_cancels_run`). **Held (`hold` label) or CI-failing / `BEHIND` / `DIRTY` PRs → add a high-priority `[CI-FIX]` task at the TOP of the TaskList** for the next dev to rebase/fix the gate failure (with full PR context). The authoring agent no longer enqueues (#2786) — the workflow does; the lead/shepherd sweep only mops up strays.
+- **Prefer the dedicated PR-queue shepherd (below) over hand-shepherding the queue from the lead loop.** Hand-shepherding ad-hoc from the lead loop strands PRs and consumes lead attention; staff a standing shepherd so the lead only steps in on escalations. Since #2786 the **primary enqueuer is the server-side `auto-enqueue.yml` workflow** (its `workflow_run`-on-completion trigger, grace 0, enqueues every just-green PR within ~one workflow-startup). The lead/shepherd sweep is now a **backstop** alongside the ~30-min cron — it catches the rare stray the responsive workflow run misses (e.g. a PR the queue dropped on main-advance, or a green PR somehow not picked up). Still worth running every loop as belt-and-suspenders: sweep `gh pr list -R loopdive/js2 --state open` and **one-shot enqueue every CLEAN, non-`hold`, non-draft PR not already in the queue** (GraphQL `enqueuePullRequest`, **user PAT**, NEVER re-enqueue — loop hazard, see `project_merge_queue_requeue_cancels_run`). **Held (`hold` label) or CI-failing / `BEHIND` / `DIRTY` PRs → add a high-priority `[CI-FIX]` task at the TOP of the TaskList** for the next dev to rebase/fix the gate failure (with full PR context). The authoring agent no longer enqueues (#2786) — the workflow does; the lead/shepherd sweep only mops up strays.
 
 ### PR-queue shepherd (standing role)
 
@@ -312,7 +324,7 @@ The merge queue needs a **dedicated owner**, not ad-hoc attention from the lead 
 
 The shepherd owns the queue end-to-end:
 
-- **Sweep** `gh pr list -R loopdive/js2wasm --state open` every loop.
+- **Sweep** `gh pr list -R loopdive/js2 --state open` every loop.
 - **One-shot enqueue** every CLEAN, non-`hold`, non-draft PR not already in the queue, via the GraphQL `enqueuePullRequest` mutation with the **user PAT** (NOT `GITHUB_TOKEN`, which suppresses the `merge_group` event; NOT `gh pr merge --auto`, which silently no-ops on an already-green `CLEAN` PR). Verify the PR appears in the queue. **NEVER re-enqueue** — a single one-shot enqueue per PR; re-enqueue loops cancel in-flight `merge_group` runs (see `project_merge_queue_requeue_cancels_run`).
 - **Check every open PR's checks every sweep, not just enqueue candidates (#3121 gap).** A dev correctly goes quiet in CI-wait per its own protocol; if CI resolves (pass OR fail) while it's idle, nothing wakes it back up — a fire-and-forget background watcher inside a dev's own turn does not reliably survive that dev's session going idle. Don't treat "not CLEAN" as "not my problem": `BEHIND`/`BLOCKED` with no failing check is legitimately "wait for auto-refresh," but any PR with a `FAILURE`-conclusion required check is a real finding. If it's not your own PR, diagnose (fetch the job log, name the specific gate + file) and message the owning dev directly with the fix — don't fix it in their branch yourself, and don't just skip it either. This was caught manually by the tech lead on 2026-07-16 after #3114/#3115/#3118 sat failing, unnoticed, for a while.
 - **Monitor `merge_group` results** and handle parks/ejections per the auto-park rules below.
@@ -392,7 +404,7 @@ layer on top — GitHub branch protection is the hard block.
    - Compiler source conflicts (`src/**/*.ts`) → create a priority `[CONFLICT]` TaskList item; assign to `senior-developer` (Opus); do NOT resolve inline
 2. **Dev runs scoped local checks** — issue-targeted compile/run checks for confidence
 3. **Dev pushes the branch to the `fork` remote and opens a PR against `main`** — PRs MUST target the **upstream** repo (`loopdive/js2`), never the fork (`ttraenkler/js2`). **Push the branch with `git push fork <branch>` FIRST**, then **always pass `-R loopdive/js2 --head ttraenkler:<branch>` to `gh pr create`** — the container's gh 2.23 ignores the pinned default (`remote.upstream.gh-resolved=base`) for `pr create` and silently opens the PR on the fork (verified 2026-06-11: fork PRs #6/#7 both had to be closed as misrouted). After creating, verify the PR URL starts with `github.com/loopdive/`. Note the pre-push integrity gate chokes on the fork/upstream divergence — `git push --no-verify` is sanctioned (CI runs the real gate).
-   - **Push to `fork`, not `origin` — this is load-bearing, not cosmetic (#3343-era, 2026-07-17).** `origin` is **upstream** (`loopdive/js2wasm`) and `push.default=current`, so a plain `git push` puts the branch on **upstream**. `gh pr create --head ttraenkler:<branch>` then fails with "No commits between" (the branch isn't on the fork), and the tempting workaround — dropping the `ttraenkler:` prefix — opens an upstream-head PR. That is how a **duplicate PR** survives: **two lanes run concurrently** (this checkout + a fork-origin lane), and when the same branch NAME exists in two different head repos, GitHub **cannot** apply its normal same-head+base rejection. Both PRs coexist and the work is done twice. Pushing to `fork` restores that free rejection. Do NOT rely on `claim-issue.mjs` to prevent this — it returns **exit 0 to both lanes** (they share the `ttraenkler/senior-dev` slug); the lock is advisory. Before starting an issue, also run `git log origin/main --grep="#<id>"` to check it isn't already merged. A PR that goes **DIRTY on files it itself touched** is a duplicate-merge smell, not an ordinary conflict.
+   - **Push to `fork`, not `origin` — this is load-bearing, not cosmetic (#3343-era, 2026-07-17).** `origin` is **upstream** (`loopdive/js2`) and `push.default=current`, so a plain `git push` puts the branch on **upstream**. `gh pr create --head ttraenkler:<branch>` then fails with "No commits between" (the branch isn't on the fork), and the tempting workaround — dropping the `ttraenkler:` prefix — opens an upstream-head PR. That is how a **duplicate PR** survives: **two lanes run concurrently** (this checkout + a fork-origin lane), and when the same branch NAME exists in two different head repos, GitHub **cannot** apply its normal same-head+base rejection. Both PRs coexist and the work is done twice. Pushing to `fork` restores that free rejection. Do NOT rely on `claim-issue.mjs` to prevent this — it returns **exit 0 to both lanes** (they share the `ttraenkler/senior-dev` slug); the lock is advisory. Before starting an issue, also run `git log origin/main --grep="#<id>"` to check it isn't already merged. A PR that goes **DIRTY on files it itself touched** is a duplicate-merge smell, not an ordinary conflict.
 4. **Dev blocks on CI** — polls `gh pr checks <N>` every 30s for ~2 min wall time, in-context (Sonnet idle is nearly free). Use `gh run watch <run-id>` or a `while ! done; do sleep 30; done` loop with a max timeout (~10 min before noting unusual wait, ~20 min before escalating).
 5. **On CI completion**:
    - **All required checks green** → run `/dev-self-merge`; if MERGE, mark the task completed and **stand down** (proceed to step 8). The dev does NOT enqueue — the server-side `auto-enqueue.yml` workflow enqueues on CI-completion (grace 0, #2786). NEVER enqueue or re-enqueue from a dev
@@ -421,7 +433,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 3. Update `plan/issues/backlog/backlog.md` if the issue was listed there
 
 <!-- AUTO:conformance-start -->
-**test262 conformance**: 30,390 / 43,098 (70.5 %)
+**test262 conformance**: 29,568 / 43,097 (68.6 %)
 <!-- AUTO:conformance-end -->
 
 ### Sprint History

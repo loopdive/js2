@@ -105,8 +105,8 @@ const INITIAL_STACK_CAP = 64;
 /**
  * Emit `__regex_class_match(classTable, offset, c, negated) -> i32`.
  *
- * Walks the run-length range table for one class and returns 1/0. Mirrors
- * `classMatch` in vm.ts.
+ * Binary-searches the sorted run-length range table for one class and returns
+ * 1/0. Mirrors `classMatch` in vm.ts.
  */
 function emitClassMatch(ctx: CodegenContext): number {
   const existing = ctx.nativeRegexHelpers.get("__regex_class_match");
@@ -118,33 +118,29 @@ function emitClassMatch(ctx: CodegenContext): number {
   ctx.nativeRegexHelpers.set("__regex_class_match", funcIdx);
 
   // params: table(0), offset(1), c(2), negated(3)
-  // locals: rangeCount(4), p(5), i(6), inside(7), lo(8), hi(9)
+  // locals: mid(4), loIndex(5), hiIndex(6), inside(7), lo(8), hi(9)
   const TABLE = 0,
     OFFSET = 1,
     C = 2,
     NEG = 3;
-  const RANGE_COUNT = 4,
-    P = 5,
-    I = 6,
+  const MID = 4,
+    LO_INDEX = 5,
+    HI_INDEX = 6,
     INSIDE = 7,
     LO = 8,
     HI = 9;
   const body: Instr[] = [
-    // rangeCount = table[offset]
+    // loIndex = 0; hiIndex = table[offset] - 1; inside = 0
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: LO_INDEX },
     { op: "local.get", index: TABLE },
     { op: "local.get", index: OFFSET },
     { op: "array.get", typeIdx: i32Arr },
-    { op: "local.set", index: RANGE_COUNT },
-    // p = offset + 1
-    { op: "local.get", index: OFFSET },
     { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "local.set", index: P },
-    // inside = 0; i = 0
+    { op: "i32.sub" },
+    { op: "local.set", index: HI_INDEX },
     { op: "i32.const", value: 0 },
     { op: "local.set", index: INSIDE },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: I },
     {
       op: "block",
       blockType: { kind: "empty" },
@@ -153,48 +149,78 @@ function emitClassMatch(ctx: CodegenContext): number {
           op: "loop",
           blockType: { kind: "empty" },
           body: [
-            // if i >= rangeCount: break
-            { op: "local.get", index: I },
-            { op: "local.get", index: RANGE_COUNT },
-            { op: "i32.ge_s" },
+            // if loIndex > hiIndex: break
+            { op: "local.get", index: LO_INDEX },
+            { op: "local.get", index: HI_INDEX },
+            { op: "i32.gt_s" },
             { op: "br_if", depth: 1 },
-            // lo = table[p]; hi = table[p+1]
+            // mid = loIndex + ((hiIndex - loIndex) >> 1)
+            { op: "local.get", index: LO_INDEX },
+            { op: "local.get", index: HI_INDEX },
+            { op: "local.get", index: LO_INDEX },
+            { op: "i32.sub" },
+            { op: "i32.const", value: 1 },
+            { op: "i32.shr_u" },
+            { op: "i32.add" },
+            { op: "local.set", index: MID },
+            // lo/hi = table[offset + 1 + 2*mid + {0,1}]
             { op: "local.get", index: TABLE },
-            { op: "local.get", index: P },
+            { op: "local.get", index: OFFSET },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.get", index: MID },
+            { op: "i32.const", value: 2 },
+            { op: "i32.mul" },
+            { op: "i32.add" },
             { op: "array.get", typeIdx: i32Arr },
             { op: "local.set", index: LO },
             { op: "local.get", index: TABLE },
-            { op: "local.get", index: P },
+            { op: "local.get", index: OFFSET },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.get", index: MID },
+            { op: "i32.const", value: 2 },
+            { op: "i32.mul" },
+            { op: "i32.add" },
             { op: "i32.const", value: 1 },
             { op: "i32.add" },
             { op: "array.get", typeIdx: i32Arr },
             { op: "local.set", index: HI },
-            // if c >= lo && c <= hi: inside=1; break
+            // c < lo => hiIndex = mid - 1
             { op: "local.get", index: C },
             { op: "local.get", index: LO },
-            { op: "i32.ge_s" },
-            { op: "local.get", index: C },
-            { op: "local.get", index: HI },
-            { op: "i32.le_s" },
-            { op: "i32.and" },
+            { op: "i32.lt_s" },
             {
               op: "if",
               blockType: { kind: "empty" },
               then: [
+                { op: "local.get", index: MID },
                 { op: "i32.const", value: 1 },
-                { op: "local.set", index: INSIDE },
-                { op: "br", depth: 2 },
+                { op: "i32.sub" },
+                { op: "local.set", index: HI_INDEX },
+              ],
+              else: [
+                // c > hi => loIndex = mid + 1; otherwise found.
+                { op: "local.get", index: C },
+                { op: "local.get", index: HI },
+                { op: "i32.gt_s" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: MID },
+                    { op: "i32.const", value: 1 },
+                    { op: "i32.add" },
+                    { op: "local.set", index: LO_INDEX },
+                  ],
+                  else: [
+                    { op: "i32.const", value: 1 },
+                    { op: "local.set", index: INSIDE },
+                    { op: "br", depth: 3 },
+                  ],
+                },
               ],
             },
-            // p += 2; i++
-            { op: "local.get", index: P },
-            { op: "i32.const", value: 2 },
-            { op: "i32.add" },
-            { op: "local.set", index: P },
-            { op: "local.get", index: I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: I },
             { op: "br", depth: 0 },
           ],
         },
@@ -214,9 +240,9 @@ function emitClassMatch(ctx: CodegenContext): number {
     name: "__regex_class_match",
     typeIdx,
     locals: [
-      { name: "rangeCount", type: { kind: "i32" } },
-      { name: "p", type: { kind: "i32" } },
-      { name: "i", type: { kind: "i32" } },
+      { name: "mid", type: { kind: "i32" } },
+      { name: "loIndex", type: { kind: "i32" } },
+      { name: "hiIndex", type: { kind: "i32" } },
       { name: "inside", type: { kind: "i32" } },
       { name: "lo", type: { kind: "i32" } },
       { name: "hi", type: { kind: "i32" } },
@@ -492,89 +518,99 @@ export function ensureRegexRun(ctx: CodegenContext): number {
             then: classArm(),
             else: [
               { op: "local.get", index: OP },
-              { op: "i32.const", value: ReOp.SPLIT },
+              { op: "i32.const", value: ReOp.CPCLASS },
               { op: "i32.eq" },
               {
                 op: "if",
                 blockType: { kind: "empty" },
-                then: splitArm(),
+                then: cpClassArm(),
                 else: [
                   { op: "local.get", index: OP },
-                  { op: "i32.const", value: ReOp.JMP },
+                  { op: "i32.const", value: ReOp.SPLIT },
                   { op: "i32.eq" },
                   {
                     op: "if",
                     blockType: { kind: "empty" },
-                    then: [
-                      { op: "local.get", index: A },
-                      { op: "local.set", index: PC },
-                    ],
+                    then: splitArm(),
                     else: [
                       { op: "local.get", index: OP },
-                      { op: "i32.const", value: ReOp.SAVE },
+                      { op: "i32.const", value: ReOp.JMP },
                       { op: "i32.eq" },
                       {
                         op: "if",
                         blockType: { kind: "empty" },
-                        then: saveArm(),
+                        then: [
+                          { op: "local.get", index: A },
+                          { op: "local.set", index: PC },
+                        ],
                         else: [
                           { op: "local.get", index: OP },
-                          { op: "i32.const", value: ReOp.BOL },
+                          { op: "i32.const", value: ReOp.SAVE },
                           { op: "i32.eq" },
                           {
                             op: "if",
                             blockType: { kind: "empty" },
-                            then: anchorArm(/*eol*/ false),
+                            then: saveArm(),
                             else: [
                               { op: "local.get", index: OP },
-                              { op: "i32.const", value: ReOp.EOL },
+                              { op: "i32.const", value: ReOp.BOL },
                               { op: "i32.eq" },
                               {
                                 op: "if",
                                 blockType: { kind: "empty" },
-                                then: anchorArm(/*eol*/ true),
+                                then: anchorArm(/*eol*/ false),
                                 else: [
                                   { op: "local.get", index: OP },
-                                  { op: "i32.const", value: ReOp.WBOUND },
+                                  { op: "i32.const", value: ReOp.EOL },
                                   { op: "i32.eq" },
                                   {
                                     op: "if",
                                     blockType: { kind: "empty" },
-                                    then: wboundArm(),
+                                    then: anchorArm(/*eol*/ true),
                                     else: [
                                       { op: "local.get", index: OP },
-                                      { op: "i32.const", value: ReOp.BACKREF },
+                                      { op: "i32.const", value: ReOp.WBOUND },
                                       { op: "i32.eq" },
                                       {
                                         op: "if",
                                         blockType: { kind: "empty" },
-                                        then: backrefArm(),
+                                        then: wboundArm(),
                                         else: [
                                           { op: "local.get", index: OP },
-                                          { op: "i32.const", value: ReOp.LOOKAROUND },
+                                          { op: "i32.const", value: ReOp.BACKREF },
                                           { op: "i32.eq" },
                                           {
                                             op: "if",
                                             blockType: { kind: "empty" },
-                                            then: lookaroundArm(),
+                                            then: backrefArm(),
                                             else: [
                                               { op: "local.get", index: OP },
-                                              { op: "i32.const", value: ReOp.PROGRESS },
+                                              { op: "i32.const", value: ReOp.LOOKAROUND },
                                               { op: "i32.eq" },
                                               {
                                                 op: "if",
                                                 blockType: { kind: "empty" },
-                                                then: progressArm(),
+                                                then: lookaroundArm(),
                                                 else: [
                                                   { op: "local.get", index: OP },
-                                                  { op: "i32.const", value: ReOp.CLEAR },
+                                                  { op: "i32.const", value: ReOp.PROGRESS },
                                                   { op: "i32.eq" },
                                                   {
                                                     op: "if",
                                                     blockType: { kind: "empty" },
-                                                    then: clearArm(),
-                                                    // op == MATCH (the only remaining op): return 1
-                                                    else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                                    then: progressArm(),
+                                                    else: [
+                                                      { op: "local.get", index: OP },
+                                                      { op: "i32.const", value: ReOp.CLEAR },
+                                                      { op: "i32.eq" },
+                                                      {
+                                                        op: "if",
+                                                        blockType: { kind: "empty" },
+                                                        then: clearArm(),
+                                                        // op == MATCH (the only remaining op): return 1
+                                                        else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                                      },
+                                                    ],
                                                   },
                                                 ],
                                               },
@@ -645,6 +681,175 @@ export function ensureRegexRun(ctx: CodegenContext): number {
         op: "if",
         blockType: { kind: "empty" },
         then: advance1(),
+        else: [
+          { op: "i32.const", value: 1 },
+          { op: "local.set", index: FAILED },
+        ],
+      },
+    ];
+  }
+
+  function cpClassArm(): Instr[] {
+    const inRange = (local: number, lo: number, hi: number): Instr[] => [
+      { op: "local.get", index: local },
+      { op: "i32.const", value: lo },
+      { op: "i32.ge_s" },
+      { op: "local.get", index: local },
+      { op: "i32.const", value: hi },
+      { op: "i32.le_s" },
+      { op: "i32.and" },
+    ];
+    const combineSurrogates = (lead: number, trail: number): Instr[] => [
+      { op: "local.get", index: lead },
+      { op: "i32.const", value: 0xd800 },
+      { op: "i32.sub" },
+      { op: "i32.const", value: 10 },
+      { op: "i32.shl" },
+      { op: "local.get", index: trail },
+      { op: "i32.const", value: 0xdc00 },
+      { op: "i32.sub" },
+      { op: "i32.add" },
+      { op: "i32.const", value: 0x10000 },
+      { op: "i32.add" },
+      { op: "local.set", index: TMPI },
+      { op: "i32.const", value: 2 },
+      { op: "local.set", index: BLEN },
+    ];
+    const loadAtSpOffset = (offset: number): Instr[] => [
+      { op: "local.get", index: SDATA },
+      { op: "local.get", index: SOFF },
+      { op: "local.get", index: SP },
+      { op: "i32.add" },
+      { op: "i32.const", value: Math.abs(offset) },
+      { op: offset < 0 ? "i32.sub" : "i32.add" },
+      { op: "array.get_u", typeIdx: strDataIdx },
+      { op: "local.set", index: C1 },
+    ];
+
+    return [
+      // TMPI = current code unit/code point; BLEN = consumed UTF-16 width.
+      { op: "local.get", index: CH },
+      { op: "local.set", index: TMPI },
+      { op: "i32.const", value: 1 },
+      { op: "local.set", index: BLEN },
+      // Forward combines lead+trail at [sp,sp+1]; reverse lookbehind combines
+      // lead+trail ending at sp from [sp-2,sp-1]. Lone surrogates stay width 1.
+      { op: "local.get", index: DIR },
+      { op: "i32.const", value: 0 },
+      { op: "i32.gt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...inRange(CH, 0xd800, 0xdbff),
+          { op: "local.get", index: SP },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.get", index: SLEN },
+          { op: "i32.lt_s" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...loadAtSpOffset(1),
+              ...inRange(C1, 0xdc00, 0xdfff),
+              { op: "if", blockType: { kind: "empty" }, then: combineSurrogates(CH, C1) },
+            ],
+          },
+          // A forward entry at the trail half of an existing pair is not a
+          // standalone code-point boundary.
+          ...inRange(CH, 0xdc00, 0xdfff),
+          { op: "local.get", index: SP },
+          { op: "i32.const", value: 0 },
+          { op: "i32.gt_s" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...loadAtSpOffset(-1),
+              ...inRange(C1, 0xd800, 0xdbff),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: 0 },
+                  { op: "local.set", index: INB },
+                ],
+              },
+            ],
+          },
+        ],
+        else: [
+          ...inRange(CH, 0xdc00, 0xdfff),
+          { op: "local.get", index: SP },
+          { op: "i32.const", value: 1 },
+          { op: "i32.gt_s" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...loadAtSpOffset(-2),
+              ...inRange(C1, 0xd800, 0xdbff),
+              { op: "if", blockType: { kind: "empty" }, then: combineSurrogates(C1, CH) },
+            ],
+          },
+          // A reverse entry at the lead half of an existing pair is likewise
+          // not a standalone code-point boundary.
+          ...inRange(CH, 0xd800, 0xdbff),
+          { op: "local.get", index: SP },
+          { op: "local.get", index: SLEN },
+          { op: "i32.lt_s" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...loadAtSpOffset(0),
+              ...inRange(C1, 0xdc00, 0xdfff),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "i32.const", value: 0 },
+                  { op: "local.set", index: INB },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      // matched = inb && class_match(ctab, a, codePoint, b)
+      { op: "local.get", index: INB },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: CTAB },
+          { op: "local.get", index: A },
+          { op: "local.get", index: TMPI },
+          { op: "local.get", index: B },
+          { op: "call", funcIdx: classMatchIdx },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: SP },
+          { op: "local.get", index: DIR },
+          { op: "local.get", index: BLEN },
+          { op: "i32.mul" },
+          { op: "i32.add" },
+          { op: "local.set", index: SP },
+          { op: "local.get", index: PC },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.set", index: PC },
+        ],
         else: [
           { op: "i32.const", value: 1 },
           { op: "local.set", index: FAILED },

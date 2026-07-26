@@ -30,6 +30,9 @@ import { planIrCompilation } from "../src/ir/select.js";
 import { verifyIrFunction } from "../src/ir/verify.js";
 import { IrFunctionBuilder } from "../src/ir/builder.js";
 import { irVal, type IrType } from "../src/ir/nodes.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const identities = createTestIrFunctionIdentityFactory("issue-2952-slice2");
 
 async function runIr(src: string): Promise<unknown> {
   const r = await compile(src, { fileName: "test.ts", experimentalIR: true });
@@ -371,7 +374,7 @@ describe("#2952 slice 2 — verifier rules (A-design)", () => {
   const f64: IrType = irVal({ kind: "f64" });
 
   it("rejects br.label with no enclosing loop binding the label", () => {
-    const b = new IrFunctionBuilder("bad", [f64], false);
+    const b = new IrFunctionBuilder(identities.next("bad"), [f64], false);
     b.openBlock();
     b.emitBrLabel(b.freshLoopLabel(), "break");
     const v = b.emitConst({ kind: "f64", value: 0 }, f64);
@@ -384,7 +387,7 @@ describe("#2952 slice 2 — verifier rules (A-design)", () => {
   it("accepts br.label bound by the enclosing loop and rejects a mid-buffer one", () => {
     // while (cond) { break; }  — built directly against the builder.
     const build = (trailingDead: boolean) => {
-      const b = new IrFunctionBuilder("f", [f64], false);
+      const b = new IrFunctionBuilder(identities.next("f"), [f64], false);
       b.openBlock();
       const label = b.freshLoopLabel();
       let condV: import("../src/ir/nodes.js").IrValueId | null = null;

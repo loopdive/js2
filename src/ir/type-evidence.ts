@@ -6,7 +6,21 @@
 // treating that optimism alone as an ABI proof for a recursive cycle.
 
 import { forEachChild, ts } from "../ts-api.js";
-import type { LatticeType, TypeMap, TypeMapEntry } from "./propagate.js";
+import { buildIrUnitInventory, type IrUnitId } from "./identity.js";
+import {
+  buildIrPlanningIdentityContext,
+  IrPlanningIdentityInvariantError,
+  type IrPlanningIdentityContext,
+} from "./planning-identity.js";
+import {
+  buildConservativePropagationLegacyProjection,
+  projectIrUnitTypeMapToLegacy,
+  projectLegacyTypeMapToIrUnitsConservatively,
+  type IrUnitTypeMap,
+  type LatticeType,
+  type TypeMap,
+  type TypeMapEntry,
+} from "./propagate.js";
 
 export type RecursiveTypeEvidenceReason =
   | "ambiguous"
@@ -37,17 +51,32 @@ export interface RecursiveTypeEvidence {
   readonly checkerTypeOverrides: ReadonlyMap<ts.Node, ts.Type>;
 }
 
+export interface IrRecursiveTypeEvidenceDecision {
+  readonly accepted: boolean;
+  readonly component: readonly IrUnitId[];
+  readonly reason?: RecursiveTypeEvidenceReason;
+  readonly detail?: string;
+}
+
+/** Structural recursive evidence. All source-owner facts are unit identities. */
+export interface IrRecursiveTypeEvidence {
+  readonly typeMap: IrUnitTypeMap;
+  readonly decisions: ReadonlyMap<IrUnitId, IrRecursiveTypeEvidenceDecision>;
+  readonly checkerTypeOverrides: ReadonlyMap<ts.Node, ts.Type>;
+}
+
 type EvidenceKind = "f64" | "bool" | "string";
 
 interface FunctionInfo {
-  readonly name: string;
-  readonly decl: ts.FunctionDeclaration;
+  readonly unitId: IrUnitId;
+  readonly displayName: string;
+  readonly declaration: ts.FunctionDeclaration;
   readonly symbol: ts.Symbol | undefined;
 }
 
 interface DirectCallSite {
-  readonly target: string;
-  readonly owner: string | null;
+  readonly target: IrUnitId;
+  readonly owner: IrUnitId | null;
   readonly nested: boolean;
   readonly call: ts.CallExpression;
 }
@@ -76,30 +105,29 @@ interface CandidateSignature {
  * Rejection is component-wide. This is load-bearing: selecting only part of
  * an SCC would let the IR and direct linear paths disagree about call ABIs.
  */
-export function buildRecursiveTypeEvidence(
-  sourceFile: ts.SourceFile,
+export function buildIrRecursiveTypeEvidence(
+  sourceFiles: readonly ts.SourceFile[],
   checker: ts.TypeChecker,
-  propagated: TypeMap,
-): RecursiveTypeEvidence {
-  const infos = collectTopLevelFunctions(sourceFile, checker);
+  propagated: IrUnitTypeMap,
+  identityContext: IrPlanningIdentityContext,
+): IrRecursiveTypeEvidence {
+  const infos = collectTopLevelFunctions(sourceFiles, checker, identityContext);
   if (infos.size === 0) return { typeMap: new Map(), decisions: new Map(), checkerTypeOverrides: new Map() };
 
-  const symbolNames = new Map<ts.Symbol, string>();
-  for (const info of infos.values()) {
-    if (info.symbol) symbolNames.set(info.symbol, info.name);
-  }
+  const resolveSymbol = makeEvidenceSymbolResolver(infos, checker, identityContext);
+  const unitIdByDeclaration = new Map([...infos].map(([unitId, info]) => [info.declaration, unitId] as const));
 
   const calls: DirectCallSite[] = [];
-  const escapes = new Set<string>();
-  const graph = new Map<string, Set<string>>();
-  for (const name of infos.keys()) graph.set(name, new Set());
+  const escapes = new Set<IrUnitId>();
+  const graph = new Map<IrUnitId, Set<IrUnitId>>();
+  for (const unitId of infos.keys()) graph.set(unitId, new Set());
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const symbol = checker.getSymbolAtLocation(node.expression);
-      const target = symbol ? symbolNames.get(symbol) : undefined;
+      const target = symbol ? resolveSymbol(symbol) : undefined;
       if (target) {
-        const context = enclosingTopLevelFunction(node, sourceFile, infos);
+        const context = enclosingTopLevelFunction(node, unitIdByDeclaration);
         calls.push({ target, owner: context.owner, nested: context.nested, call: node });
         if (context.owner) graph.get(context.owner)?.add(target);
       }
@@ -107,18 +135,18 @@ export function buildRecursiveTypeEvidence(
 
     if (ts.isIdentifier(node)) {
       const symbol = checker.getSymbolAtLocation(node);
-      const target = symbol ? symbolNames.get(symbol) : undefined;
-      if (target && !isDeclarationName(node, infos.get(target)!.decl) && !isDirectCallCallee(node)) {
+      const target = symbol ? resolveSymbol(symbol) : undefined;
+      if (target && !isDeclarationName(node, infos.get(target)!.declaration) && !isDirectCallCallee(node)) {
         escapes.add(target);
       }
     }
     forEachChild(node, visit);
   };
-  visit(sourceFile);
+  for (const sourceFile of sourceFiles) visit(sourceFile);
 
   const components = recursiveComponents(graph, infos);
-  const certified = new Map<string, TypeMapEntry>();
-  const decisions = new Map<string, RecursiveTypeEvidenceDecision>();
+  const certified = new Map<IrUnitId, TypeMapEntry>();
+  const decisions = new Map<IrUnitId, IrRecursiveTypeEvidenceDecision>();
   const checkerTypeOverrides = new Map<ts.Node, ts.Type>();
   let canonicalTypes: ReadonlyMap<EvidenceKind, ts.Type> | undefined;
 
@@ -126,16 +154,16 @@ export function buildRecursiveTypeEvidence(
     // Fully declared SCCs already have an authoritative ABI and retain the
     // selector's established behavior. This pass certifies only cycles that
     // need propagated evidence for at least one signature position.
-    if (component.every((name) => hasCompleteSupportedDeclaration(infos.get(name)!.decl))) continue;
+    if (component.every((name) => hasCompleteSupportedDeclaration(infos.get(name)!.declaration))) continue;
     // A declared non-scalar position (array/object/void/union/etc.) belongs to
     // the selector's existing type/shape gates, not this scalar evidence pass.
     // Keep its established fallback bucket. `any` and callable positions are
     // retained below because they require explicit conservative diagnostics.
-    if (component.some((name) => hasUnsupportedDeclaredPosition(infos.get(name)!.decl))) continue;
+    if (component.some((name) => hasUnsupportedDeclaredPosition(infos.get(name)!.declaration))) continue;
 
     const componentSet = new Set(component);
     const reject = (reason: RecursiveTypeEvidenceReason): void => {
-      const decision: RecursiveTypeEvidenceDecision = {
+      const decision: IrRecursiveTypeEvidenceDecision = {
         accepted: false,
         component,
         reason,
@@ -147,15 +175,18 @@ export function buildRecursiveTypeEvidence(
     let structuralReason: RecursiveTypeEvidenceReason | null = null;
     for (const name of component) {
       const info = infos.get(name)!;
-      if (hasExplicitAny(info.decl)) {
+      if (hasExplicitAny(info.declaration)) {
         structuralReason = "any-based";
         break;
       }
-      if (hasHigherOrderSignatureOrCall(info.decl, checker)) {
+      if (hasHigherOrderSignatureOrCall(info.declaration, checker)) {
         structuralReason = "higher-order";
         break;
       }
-      if (escapes.has(name) || info.decl.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+      if (
+        escapes.has(name) ||
+        info.declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ) {
         structuralReason = "escaping";
         break;
       }
@@ -173,11 +204,11 @@ export function buildRecursiveTypeEvidence(
       continue;
     }
 
-    const signatures = new Map<string, CandidateSignature>();
+    const signatures = new Map<IrUnitId, CandidateSignature>();
     let signatureReason: RecursiveTypeEvidenceReason | null = null;
     for (const name of component) {
       const entry = propagated.get(name);
-      if (!entry || entry.params.length !== infos.get(name)!.decl.parameters.length) {
+      if (!entry || entry.params.length !== infos.get(name)!.declaration.parameters.length) {
         signatureReason = "ambiguous";
         break;
       }
@@ -251,16 +282,16 @@ export function buildRecursiveTypeEvidence(
 
     const paramSymbols = collectComponentParamSymbols(component, infos, checker);
     const locals = collectStableLocalInitializers(component, infos, checker);
-    const paramAnchors = new Map<string, boolean[]>();
-    const returnAnchors = new Map<string, boolean>();
+    const paramAnchors = new Map<IrUnitId, boolean[]>();
+    const returnAnchors = new Map<IrUnitId, boolean>();
     for (const name of component) {
       const info = infos.get(name)!;
       const signature = signatures.get(name)!;
       paramAnchors.set(
         name,
-        info.decl.parameters.map((param, index) => declarationKind(param, checker) === signature.params[index]),
+        info.declaration.parameters.map((param, index) => declarationKind(param, checker) === signature.params[index]),
       );
-      returnAnchors.set(name, declarationReturnKind(info.decl, checker) === signature.returnType);
+      returnAnchors.set(name, declarationReturnKind(info.declaration, checker) === signature.returnType);
     }
 
     const infer = (expression: ts.Expression): ExpressionEvidence =>
@@ -268,7 +299,7 @@ export function buildRecursiveTypeEvidence(
         expression,
         checker,
         componentSet,
-        symbolNames,
+        resolveSymbol,
         paramSymbols,
         locals,
         signatures,
@@ -323,8 +354,8 @@ export function buildRecursiveTypeEvidence(
       continue;
     }
 
-    const returns = new Map<string, readonly ts.ReturnStatement[]>();
-    for (const name of component) returns.set(name, collectReturns(infos.get(name)!.decl));
+    const returns = new Map<IrUnitId, readonly ts.ReturnStatement[]>();
+    for (const name of component) returns.set(name, collectReturns(infos.get(name)!.declaration));
 
     // Return evidence is another monotone fixed point. A base return (fib's
     // `return n`) anchors the SCC; recursive returns become anchored only in a
@@ -381,13 +412,13 @@ export function buildRecursiveTypeEvidence(
       continue;
     }
 
-    const decision: RecursiveTypeEvidenceDecision = { accepted: true, component };
-    const acceptedCanonicalTypes = (canonicalTypes ??= collectCanonicalCheckerTypes(sourceFile, checker));
+    const decision: IrRecursiveTypeEvidenceDecision = { accepted: true, component };
+    const acceptedCanonicalTypes = (canonicalTypes ??= collectCanonicalCheckerTypes(sourceFiles, checker));
     for (const name of component) {
       certified.set(name, propagated.get(name)!);
       decisions.set(name, decision);
       collectExpressionTypeOverrides(
-        infos.get(name)!.decl,
+        infos.get(name)!.declaration,
         checker,
         infer,
         acceptedCanonicalTypes,
@@ -404,8 +435,69 @@ export function buildRecursiveTypeEvidence(
   return { typeMap: certified, decisions, checkerTypeOverrides };
 }
 
-function collectCanonicalCheckerTypes(
+/**
+ * Temporary one-to-one projection for the still-name-keyed selector seam.
+ * The evidence algorithm itself runs only on structural IDs.
+ */
+export function buildLegacyProjectedRecursiveTypeEvidence(
   sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  propagated: TypeMap,
+  identityContext: IrPlanningIdentityContext,
+): RecursiveTypeEvidence {
+  const sourceFiles = [sourceFile];
+  const structural = buildIrRecursiveTypeEvidence(
+    sourceFiles,
+    checker,
+    projectLegacyTypeMapToIrUnitsConservatively(sourceFiles, propagated, identityContext),
+    identityContext,
+  );
+  const projection = buildConservativePropagationLegacyProjection(sourceFiles, identityContext);
+  const decisions = new Map<string, RecursiveTypeEvidenceDecision>();
+  for (const [unitId, decision] of structural.decisions) {
+    const pair = projection.getByUnitId(unitId);
+    if (!pair) continue;
+    const component = decision.component.map((member) => projection.getByUnitId(member)?.legacyName);
+    if (component.some((member) => member === undefined)) continue;
+    decisions.set(pair.legacyName, { ...decision, component: component as string[] });
+  }
+  return {
+    typeMap: projectIrUnitTypeMapToLegacy(sourceFiles, structural.typeMap, identityContext),
+    decisions,
+    checkerTypeOverrides: structural.checkerTypeOverrides,
+  };
+}
+
+/**
+ * @deprecated Local single-source compatibility overload. Production
+ * multi-source planning must pass its authoritative context or call
+ * `buildIrRecursiveTypeEvidence` directly.
+ */
+export function buildRecursiveTypeEvidence(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  propagated: TypeMap,
+): RecursiveTypeEvidence;
+export function buildRecursiveTypeEvidence(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  propagated: TypeMap,
+  identityContext: IrPlanningIdentityContext,
+): RecursiveTypeEvidence;
+export function buildRecursiveTypeEvidence(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  propagated: TypeMap,
+  identityContext?: IrPlanningIdentityContext,
+): RecursiveTypeEvidence {
+  const context =
+    identityContext ??
+    buildIrPlanningIdentityContext(buildIrUnitInventory([sourceFile], { entrySource: sourceFile, checker }));
+  return buildLegacyProjectedRecursiveTypeEvidence(sourceFile, checker, propagated, context);
+}
+
+function collectCanonicalCheckerTypes(
+  sourceFiles: readonly ts.SourceFile[],
   checker: ts.TypeChecker,
 ): ReadonlyMap<EvidenceKind, ts.Type> {
   const types = new Map<EvidenceKind, ts.Type>();
@@ -426,7 +518,7 @@ function collectCanonicalCheckerTypes(
     }
     forEachChild(node, visit);
   };
-  visit(sourceFile);
+  for (const sourceFile of sourceFiles) visit(sourceFile);
   return types;
 }
 
@@ -449,37 +541,91 @@ function collectExpressionTypeOverrides(
   visit(declaration.body!);
 }
 
-function collectTopLevelFunctions(sourceFile: ts.SourceFile, checker: ts.TypeChecker): Map<string, FunctionInfo> {
-  const infos = new Map<string, FunctionInfo>();
-  const duplicates = new Set<string>();
-  for (const statement of sourceFile.statements) {
-    if (!ts.isFunctionDeclaration(statement) || !statement.name || !statement.body) continue;
-    const name = statement.name.text;
-    if (duplicates.has(name)) continue;
-    if (infos.has(name)) {
-      infos.delete(name); // overload/duplicate declarations are not certifiable
-      duplicates.add(name);
+function collectTopLevelFunctions(
+  sourceFiles: readonly ts.SourceFile[],
+  checker: ts.TypeChecker,
+  identityContext: IrPlanningIdentityContext,
+): Map<IrUnitId, FunctionInfo> {
+  const selectedSources = new Set<ts.SourceFile>();
+  for (const sourceFile of sourceFiles) {
+    if (!identityContext.sourceIdBySourceFile.has(sourceFile)) {
+      throw new IrPlanningIdentityInvariantError(
+        "source-record-mismatch",
+        `recursive type-evidence source ${sourceFile.fileName} is not part of the supplied planning identity context`,
+      );
+    }
+    selectedSources.add(sourceFile);
+  }
+
+  const infos = new Map<IrUnitId, FunctionInfo>();
+  for (const unit of identityContext.inventory.allUnits) {
+    const declaration = identityContext.declarationByUnitId.get(unit.id);
+    if (
+      !declaration ||
+      !ts.isFunctionDeclaration(declaration) ||
+      !declaration.name ||
+      !declaration.body ||
+      !ts.isSourceFile(declaration.parent) ||
+      !selectedSources.has(declaration.parent)
+    ) {
       continue;
     }
-    infos.set(name, { name, decl: statement, symbol: checker.getSymbolAtLocation(statement.name) });
+    infos.set(unit.id, {
+      unitId: unit.id,
+      displayName: declaration.name.text,
+      declaration,
+      symbol: checker.getSymbolAtLocation(declaration.name),
+    });
   }
   return infos;
 }
 
 function enclosingTopLevelFunction(
   node: ts.Node,
-  sourceFile: ts.SourceFile,
-  infos: ReadonlyMap<string, FunctionInfo>,
-): { owner: string | null; nested: boolean } {
-  for (let current = node.parent; current && current !== sourceFile; current = current.parent) {
+  unitIdByDeclaration: ReadonlyMap<ts.FunctionDeclaration, IrUnitId>,
+): { owner: IrUnitId | null; nested: boolean } {
+  for (let current = node.parent; current && !ts.isSourceFile(current); current = current.parent) {
     if (!isFunctionBoundary(current)) continue;
-    if (ts.isFunctionDeclaration(current) && current.parent === sourceFile && current.name) {
-      const info = infos.get(current.name.text);
-      if (info?.decl === current) return { owner: info.name, nested: false };
+    if (ts.isFunctionDeclaration(current) && ts.isSourceFile(current.parent)) {
+      const owner = unitIdByDeclaration.get(current);
+      if (owner) return { owner, nested: false };
     }
     return { owner: null, nested: true };
   }
   return { owner: null, nested: false };
+}
+
+function makeEvidenceSymbolResolver(
+  infos: ReadonlyMap<IrUnitId, FunctionInfo>,
+  checker: ts.TypeChecker,
+  identityContext: IrPlanningIdentityContext,
+): (symbol: ts.Symbol) => IrUnitId | undefined {
+  const eligible = new Set(infos.keys());
+  const cache = new Map<ts.Symbol, IrUnitId | null>();
+  return (input) => {
+    const cached = cache.get(input);
+    if (cached !== undefined) return cached ?? undefined;
+
+    let symbol = input;
+    if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+      try {
+        symbol = checker.getAliasedSymbol(symbol);
+      } catch {
+        cache.set(input, null);
+        return undefined;
+      }
+    }
+    const declarations = new Set<ts.Declaration>(symbol.declarations ?? []);
+    if (symbol.valueDeclaration) declarations.add(symbol.valueDeclaration);
+    const matches = new Set<IrUnitId>();
+    for (const declaration of declarations) {
+      const unitId = identityContext.unitIdByDeclaration.get(declaration);
+      if (unitId && eligible.has(unitId)) matches.add(unitId);
+    }
+    const resolved = matches.size === 1 ? matches.values().next().value : undefined;
+    cache.set(input, resolved ?? null);
+    return resolved;
+  };
 }
 
 function isFunctionBoundary(node: ts.Node): boolean {
@@ -503,48 +649,49 @@ function isDirectCallCallee(node: ts.Identifier): boolean {
 }
 
 function recursiveComponents(
-  graph: ReadonlyMap<string, ReadonlySet<string>>,
-  infos: ReadonlyMap<string, FunctionInfo>,
-): readonly (readonly string[])[] {
+  graph: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>,
+  infos: ReadonlyMap<IrUnitId, FunctionInfo>,
+): readonly (readonly IrUnitId[])[] {
   let nextIndex = 0;
-  const indices = new Map<string, number>();
-  const low = new Map<string, number>();
-  const stack: string[] = [];
-  const onStack = new Set<string>();
-  const components: string[][] = [];
+  const indices = new Map<IrUnitId, number>();
+  const low = new Map<IrUnitId, number>();
+  const stack: IrUnitId[] = [];
+  const onStack = new Set<IrUnitId>();
+  const components: IrUnitId[][] = [];
+  const order = new Map([...infos.keys()].map((unitId, index) => [unitId, index] as const));
 
-  const strongConnect = (name: string): void => {
-    indices.set(name, nextIndex);
-    low.set(name, nextIndex);
+  const strongConnect = (unitId: IrUnitId): void => {
+    indices.set(unitId, nextIndex);
+    low.set(unitId, nextIndex);
     nextIndex++;
-    stack.push(name);
-    onStack.add(name);
+    stack.push(unitId);
+    onStack.add(unitId);
 
-    for (const callee of graph.get(name) ?? []) {
+    for (const callee of graph.get(unitId) ?? []) {
       if (!indices.has(callee)) {
         strongConnect(callee);
-        low.set(name, Math.min(low.get(name)!, low.get(callee)!));
+        low.set(unitId, Math.min(low.get(unitId)!, low.get(callee)!));
       } else if (onStack.has(callee)) {
-        low.set(name, Math.min(low.get(name)!, indices.get(callee)!));
+        low.set(unitId, Math.min(low.get(unitId)!, indices.get(callee)!));
       }
     }
 
-    if (low.get(name) !== indices.get(name)) return;
-    const component: string[] = [];
+    if (low.get(unitId) !== indices.get(unitId)) return;
+    const component: IrUnitId[] = [];
     for (;;) {
       const member = stack.pop()!;
       onStack.delete(member);
       component.push(member);
-      if (member === name) break;
+      if (member === unitId) break;
     }
-    component.sort((a, b) => infos.get(a)!.decl.pos - infos.get(b)!.decl.pos);
+    component.sort((a, b) => order.get(a)! - order.get(b)!);
     if (component.length > 1 || graph.get(component[0]!)?.has(component[0]!)) components.push(component);
   };
 
-  for (const name of infos.keys()) {
-    if (!indices.has(name)) strongConnect(name);
+  for (const unitId of infos.keys()) {
+    if (!indices.has(unitId)) strongConnect(unitId);
   }
-  components.sort((a, b) => infos.get(a[0]!)!.decl.pos - infos.get(b[0]!)!.decl.pos);
+  components.sort((a, b) => order.get(a[0]!)! - order.get(b[0]!)!);
   return components;
 }
 
@@ -669,32 +816,32 @@ function declarationReturnKind(declaration: ts.FunctionDeclaration, checker: ts.
 }
 
 function collectComponentParamSymbols(
-  component: readonly string[],
-  infos: ReadonlyMap<string, FunctionInfo>,
+  component: readonly IrUnitId[],
+  infos: ReadonlyMap<IrUnitId, FunctionInfo>,
   checker: ts.TypeChecker,
-): Map<ts.Symbol, { readonly owner: string; readonly index: number }> {
-  const symbols = new Map<ts.Symbol, { owner: string; index: number }>();
-  for (const name of component) {
-    const declaration = infos.get(name)!.decl;
+): Map<ts.Symbol, { readonly owner: IrUnitId; readonly index: number }> {
+  const symbols = new Map<ts.Symbol, { owner: IrUnitId; index: number }>();
+  for (const unitId of component) {
+    const declaration = infos.get(unitId)!.declaration;
     for (let index = 0; index < declaration.parameters.length; index++) {
       const param = declaration.parameters[index]!;
       if (!ts.isIdentifier(param.name)) continue;
       const symbol = checker.getSymbolAtLocation(param.name);
-      if (symbol) symbols.set(symbol, { owner: name, index });
+      if (symbol) symbols.set(symbol, { owner: unitId, index });
     }
   }
   return symbols;
 }
 
 function collectStableLocalInitializers(
-  component: readonly string[],
-  infos: ReadonlyMap<string, FunctionInfo>,
+  component: readonly IrUnitId[],
+  infos: ReadonlyMap<IrUnitId, FunctionInfo>,
   checker: ts.TypeChecker,
 ): ReadonlyMap<ts.Symbol, ts.Expression> {
   const initializers = new Map<ts.Symbol, ts.Expression>();
   const mutated = new Set<ts.Symbol>();
-  for (const name of component) {
-    const declaration = infos.get(name)!.decl;
+  for (const unitId of component) {
+    const declaration = infos.get(unitId)!.declaration;
     const visit = (node: ts.Node): void => {
       if (node !== declaration.body && isFunctionBoundary(node)) return;
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
@@ -727,13 +874,13 @@ function collectStableLocalInitializers(
 function inferExpressionEvidence(
   expression: ts.Expression,
   checker: ts.TypeChecker,
-  component: ReadonlySet<string>,
-  symbolNames: ReadonlyMap<ts.Symbol, string>,
-  paramSymbols: ReadonlyMap<ts.Symbol, { readonly owner: string; readonly index: number }>,
+  component: ReadonlySet<IrUnitId>,
+  resolveSymbol: (symbol: ts.Symbol) => IrUnitId | undefined,
+  paramSymbols: ReadonlyMap<ts.Symbol, { readonly owner: IrUnitId; readonly index: number }>,
   localInitializers: ReadonlyMap<ts.Symbol, ts.Expression>,
-  signatures: ReadonlyMap<string, CandidateSignature>,
-  paramAnchors: ReadonlyMap<string, readonly boolean[]>,
-  returnAnchors: ReadonlyMap<string, boolean>,
+  signatures: ReadonlyMap<IrUnitId, CandidateSignature>,
+  paramAnchors: ReadonlyMap<IrUnitId, readonly boolean[]>,
+  returnAnchors: ReadonlyMap<IrUnitId, boolean>,
   visitingLocals: ReadonlySet<ts.Symbol> = new Set(),
 ): ExpressionEvidence {
   let kind = checkerKindAt(expression, checker);
@@ -747,7 +894,7 @@ function inferExpressionEvidence(
     }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
       const symbol = checker.getSymbolAtLocation(node.expression);
-      const target = symbol ? symbolNames.get(symbol) : undefined;
+      const target = symbol ? resolveSymbol(symbol) : undefined;
       if (target && component.has(target) && !returnAnchors.get(target)) anchored = false;
     }
     if (ts.isIdentifier(node)) {
@@ -763,7 +910,7 @@ function inferExpressionEvidence(
             initializer,
             checker,
             component,
-            symbolNames,
+            resolveSymbol,
             paramSymbols,
             localInitializers,
             signatures,
@@ -786,7 +933,7 @@ function inferExpressionEvidence(
         nested,
         checker,
         component,
-        symbolNames,
+        resolveSymbol,
         paramSymbols,
         localInitializers,
         signatures,
@@ -814,7 +961,7 @@ function inferExpressionEvidence(
       }
     } else if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
       const symbol = checker.getSymbolAtLocation(expression.expression);
-      const target = symbol ? symbolNames.get(symbol) : undefined;
+      const target = symbol ? resolveSymbol(symbol) : undefined;
       if (target && component.has(target)) kind = signatures.get(target)?.returnType ?? null;
     } else if (ts.isPrefixUnaryExpression(expression)) {
       const operand = nestedKind(expression.operand);

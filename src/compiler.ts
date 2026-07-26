@@ -5,6 +5,7 @@ import {
   analyzeMultiSource,
   analyzeSource,
   IncrementalLanguageService,
+  IncrementalProjectLanguageService,
   type TypedAST,
   type MultiTypedAST,
   type ProjectModuleResolutions,
@@ -36,12 +37,14 @@ import { WasmEncoder } from "./emit/encoder.js";
 import { generateSourceMap } from "./emit/sourcemap.js";
 import { emitWat } from "./emit/wat.js";
 import { applyDefineSubstitutions, applyDefineSubstitutionsWithMap } from "./compiler/define-substitution.js";
+import { collectGraphNodeBuiltinImports } from "./compiler/node-builtin-import-collector.js";
 import { rewriteCjsRequire, rewriteCjsRequireWithMap } from "./cjs-rewrite.js";
 import { collectNodeBuiltinImports, preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
-import { elideWithIrIds, makeIrInventoryOptions, type IrInventoryOptions } from "./compiler/ir-outcome-inventory.js";
+import * as irIds from "./compiler/ir-outcome-inventory.js";
+import { buildLinearOptions } from "./compiler/linear-options.js";
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
@@ -818,7 +821,7 @@ interface PipelineInput {
   errors: CompileError[];
   /** Resolved codegen option bundle (see buildCodegenOptions). */
   codegenOptions: CodegenOptions;
-  irInventoryOptions?: IrInventoryOptions;
+  irInventoryOptions?: irIds.IrInventoryOptions;
   /** For source-map sourcesContent: original-name → original text. */
   sourcesContent: Map<string, string>;
   /** Anchor file for pushSourceAnchoredDiagnostic on codegen/emit throws. */
@@ -998,10 +1001,7 @@ function runPipeline(input: PipelineInput): CompileResult {
     if (useLinear) {
       mod = multiAst
         ? generateLinearMultiModule(multiAst, { exposeArenaReset: options.allocator === "arena-reset" })
-        : generateLinearModule(entryAst, {
-            exposeArenaReset: options.allocator === "arena-reset",
-            allocationPolicy: options.allocator === "analysis-stack" ? "analysis-stack-arena-v1" : "arena-v1",
-          });
+        : generateLinearModule(entryAst, buildLinearOptions(options, input.irInventoryOptions));
       // Fail the compile on unsupported linear-backend constructs instead of
       // emitting a structurally invalid binary (#1868).
       if (collectLinearCodegenErrors(mod, errors)) {
@@ -1355,7 +1355,7 @@ export function compileSourceSync(
   let isJsMode = options.allowJs === true || (options.fileName?.endsWith(".js") ?? false);
   const defaultFileName = options.fileName ?? (isJsMode ? "input.js" : "input.ts");
   const effectiveFileName = options.moduleName ?? defaultFileName;
-  let irInventory = options.trackIrOutcomes ? makeIrInventoryOptions(positionMap) : undefined;
+  let irInventory = irIds.maybe(positionMap, options.trackIrOutcomes || options.target === "linear");
   // #2645/#2736 — `--target node`/`deno` (formerly `--platform node`) implies
   // node-style emulation so the ambient surface and the importable `node:<mod>`
   // capability gate share one target model. This EFFECTIVE flag drives the
@@ -1376,7 +1376,7 @@ export function compileSourceSync(
   // whitespace blanking needs no PositionMap; syntax errors leave source intact.
   if (options.target === "standalone" || options.target === "wasi") {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
-    const elision = elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
+    const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
     processedSource = elision.source;
     irInventory = elision.inventoryOptions;
   }
@@ -1563,6 +1563,7 @@ export async function compileMultiSource(
   files: Record<string, string>,
   entryFile: string,
   options: CompileOptions = {},
+  projectService?: IncrementalProjectLanguageService,
   projectResolutions?: ProjectModuleResolutions,
 ): Promise<CompileResult> {
   const totalStarted = compileProfileNow();
@@ -1585,19 +1586,20 @@ export async function compileMultiSource(
     sourceBytes: Object.values(processedFiles).reduce((total, source) => total + source.length, 0),
   });
 
+  const analyzeOptions = {
+    allowJs: options.allowJs,
+    skipSemanticDiagnostics: options.skipSemanticDiagnostics,
+    // #2528 — propagate the ambient-platform selection into multi-file analysis.
+    ...(options.platform ? { platform: options.platform } : {}),
+  };
   const checkerStarted = compileProfileNow();
-  const multiAst = analyzeMultiSource(
-    processedFiles,
-    entryFile,
-    undefined,
-    {
-      allowJs: options.allowJs,
-      skipSemanticDiagnostics: options.skipSemanticDiagnostics,
-      // #2528 — propagate the ambient-platform selection into multi-file analysis.
-      ...(options.platform ? { platform: options.platform } : {}),
-    },
-    projectResolutions,
-  );
+  let multiAst: MultiTypedAST;
+  if (projectService && projectResolutions === undefined) {
+    projectService.updateProject(processedFiles, entryFile);
+    multiAst = projectService.analyze(analyzeOptions);
+  } else {
+    multiAst = analyzeMultiSource(processedFiles, entryFile, undefined, analyzeOptions, projectResolutions);
+  }
   recordCompileProfile("multi.checker", checkerStarted, {
     checkerFiles: Object.keys(processedFiles).length,
     codegenFiles: multiAst.sourceFiles.length,
@@ -1686,19 +1688,12 @@ export async function compileMultiSource(
   const wasiNodeFsFuncs = new Set<string>();
   const wasiRawImports = new Set<string>();
   const wasiMemAccessors = new Set<string>();
-  const nodeBuiltins = [];
-  const seenNodeBuiltins = new Set<string>();
+  const nodeBuiltins = collectGraphNodeBuiltinImports(Object.values(processedFiles));
   for (const content of Object.values(processedFiles)) {
     for (const name of detectNodeFsImports(content)) wasiNodeFsFuncs.add(name);
     const { rawWasi, memAccessors } = detectRawWasiImports(content);
     for (const name of rawWasi) wasiRawImports.add(name);
     for (const name of memAccessors) wasiMemAccessors.add(name);
-    for (const builtin of collectNodeBuiltinImports(content)) {
-      const key = `${builtin.localName}\0${builtin.moduleName}\0${builtin.namedBindings?.join("\0") ?? ""}`;
-      if (seenNodeBuiltins.has(key)) continue;
-      seenNodeBuiltins.add(key);
-      nodeBuiltins.push(builtin);
-    }
   }
   const pipelineStarted = compileProfileNow();
   const pipelineResult = runPipeline({

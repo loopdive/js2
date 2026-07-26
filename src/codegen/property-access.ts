@@ -47,7 +47,7 @@ import {
   noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
-import { ensureAnyFromExternHelper, undefinedSingletonActive } from "./any-helpers.js";
+import { ensureAnyFromExternHelper, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { emitSymbolDescLoad } from "./symbol-native.js";
 import {
@@ -1137,8 +1137,20 @@ export function findAlternateStructsForField(
   ctx: CodegenContext,
   propName: string,
   excludeTypeIdx: number,
-): { structTypeIdx: number; fieldIdx: number; fieldType: ValType; mutable: boolean }[] {
-  const result: { structTypeIdx: number; fieldIdx: number; fieldType: ValType; mutable: boolean }[] = [];
+): {
+  structTypeIdx: number;
+  fieldIdx: number;
+  fieldType: ValType;
+  mutable: boolean;
+  presenceFieldIdx?: number;
+}[] {
+  const result: {
+    structTypeIdx: number;
+    fieldIdx: number;
+    fieldType: ValType;
+    mutable: boolean;
+    presenceFieldIdx?: number;
+  }[] = [];
   for (const [typeName, fields] of ctx.structFields) {
     const sIdx = ctx.structMap.get(typeName);
     if (sIdx === undefined || sIdx === excludeTypeIdx) continue;
@@ -1149,6 +1161,9 @@ export function findAlternateStructsForField(
         fieldIdx: fIdx,
         fieldType: fields[fIdx]!.type,
         mutable: fields[fIdx]!.mutable,
+        ...(fields[fIdx]!.presenceTracked
+          ? { presenceFieldIdx: fields.findIndex((field) => field.name === `$has_${propName}`) }
+          : {}),
       });
     }
   }
@@ -1168,6 +1183,22 @@ export function emitNullGuardedStructGet(
   // For result type in the if block, normalize ref to ref_null so the null branch is valid
   const resultType: ValType =
     fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: (fieldType as any).typeIdx } : fieldType;
+  let primaryPresenceFieldIdx: number | undefined;
+  if (propName) {
+    for (const [structName, fields] of ctx.structFields) {
+      if (ctx.structMap.get(structName) !== typeIdx) continue;
+      const field = fields[fieldIdx];
+      if (field?.presenceTracked) {
+        const idx = fields.findIndex((candidate) => candidate.name === `$has_${propName}`);
+        if (idx >= 0) primaryPresenceFieldIdx = idx;
+      }
+      break;
+    }
+  }
+  const absentValueInstrs = (): Instr[] =>
+    resultType.kind === "externref"
+      ? (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }])
+      : defaultValueInstrs(resultType);
 
   // When propName is provided, the object may be a valid GC struct of a
   // DIFFERENT type (after emitGuardedRefCast returned ref.null for a type
@@ -1179,7 +1210,11 @@ export function emitNullGuardedStructGet(
     // Optimization: when objType is already the exact target struct type (ref_null typeIdx),
     // the Wasm type system guarantees the runtime value is typeIdx or null — no multi-struct
     // dispatch needed.  Use a simple null-check + direct struct.get, skipping ref.test + ref.cast.
-    if (objType.kind === "ref_null" && (objType as { typeIdx: number }).typeIdx === typeIdx) {
+    if (
+      objType.kind === "ref_null" &&
+      (objType as { typeIdx: number }).typeIdx === typeIdx &&
+      (!ctx.standalone || (fctx as any).__lastGuardedCastBackup === undefined)
+    ) {
       const tmp = allocLocal(fctx, `__ng_${fctx.locals.length}`, objType);
       fctx.body.push({ op: "local.tee", index: tmp });
       fctx.body.push({ op: "ref.is_null" });
@@ -1187,10 +1222,25 @@ export function emitNullGuardedStructGet(
         op: "if",
         blockType: { kind: "val" as const, type: resultType },
         then: typeErrorThrowInstrs(ctx),
-        else: [
-          { op: "local.get", index: tmp },
-          { op: "struct.get", typeIdx, fieldIdx },
-        ],
+        else:
+          primaryPresenceFieldIdx !== undefined
+            ? [
+                { op: "local.get", index: tmp },
+                { op: "struct.get", typeIdx, fieldIdx: primaryPresenceFieldIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: resultType },
+                  then: [
+                    { op: "local.get", index: tmp },
+                    { op: "struct.get", typeIdx, fieldIdx },
+                  ],
+                  else: absentValueInstrs(),
+                },
+              ]
+            : [
+                { op: "local.get", index: tmp },
+                { op: "struct.get", typeIdx, fieldIdx },
+              ],
       });
       return;
     }
@@ -1208,6 +1258,12 @@ export function emitNullGuardedStructGet(
       if (altIdx < alternates.length) {
         const alt = alternates[altIdx]!;
         const altCoerce = coercionInstrs(ctx, alt.fieldType, resultType, fctx);
+        const altRead: Instr[] = [
+          { op: "local.get", index: srcLocal },
+          { op: "ref.cast", typeIdx: alt.structTypeIdx },
+          { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.fieldIdx },
+          ...altCoerce,
+        ];
         return [
           { op: "local.get", index: srcLocal },
           { op: "ref.test", typeIdx: alt.structTypeIdx },
@@ -1215,10 +1271,19 @@ export function emitNullGuardedStructGet(
             op: "if",
             blockType: { kind: "empty" },
             then: [
-              { op: "local.get", index: srcLocal },
-              { op: "ref.cast", typeIdx: alt.structTypeIdx },
-              { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.fieldIdx },
-              ...altCoerce,
+              ...(alt.presenceFieldIdx !== undefined && alt.presenceFieldIdx >= 0
+                ? ([
+                    { op: "local.get", index: srcLocal },
+                    { op: "ref.cast", typeIdx: alt.structTypeIdx },
+                    { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.presenceFieldIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "val", type: resultType },
+                      then: altRead,
+                      else: absentValueInstrs(),
+                    },
+                  ] satisfies Instr[])
+                : altRead),
               { op: "local.set", index: resultLocal },
             ],
             else: buildFallback(srcLocal, altIdx + 1),
@@ -1267,7 +1332,7 @@ export function emitNullGuardedStructGet(
       blockType: { kind: "empty" },
       then:
         backupLocal !== undefined
-          ? [
+          ? ([
               // Value is null — could be wrong struct type or genuinely null.
               // Check the backup anyref to distinguish.
               { op: "local.get", index: backupLocal },
@@ -1285,16 +1350,34 @@ export function emitNullGuardedStructGet(
                     op: "if",
                     blockType: { kind: "empty" },
                     then: [
-                      { op: "local.get", index: backupLocal },
-                      { op: "ref.cast", typeIdx },
-                      { op: "struct.get", typeIdx, fieldIdx },
+                      ...(primaryPresenceFieldIdx !== undefined
+                        ? ([
+                            { op: "local.get", index: backupLocal },
+                            { op: "ref.cast", typeIdx },
+                            { op: "struct.get", typeIdx, fieldIdx: primaryPresenceFieldIdx },
+                            {
+                              op: "if",
+                              blockType: { kind: "val", type: resultType },
+                              then: [
+                                { op: "local.get", index: backupLocal },
+                                { op: "ref.cast", typeIdx },
+                                { op: "struct.get", typeIdx, fieldIdx },
+                              ],
+                              else: absentValueInstrs(),
+                            },
+                          ] satisfies Instr[])
+                        : ([
+                            { op: "local.get", index: backupLocal },
+                            { op: "ref.cast", typeIdx },
+                            { op: "struct.get", typeIdx, fieldIdx },
+                          ] satisfies Instr[])),
                       { op: "local.set", index: resultLocal },
                     ],
                     else: buildFallback(backupLocal, 0),
                   },
                 ],
               },
-            ]
+            ] satisfies Instr[])
           : typeErrorThrowInstrs(ctx),
       else: [],
     });
@@ -1307,9 +1390,27 @@ export function emitNullGuardedStructGet(
       op: "if",
       blockType: { kind: "empty" },
       then: [
-        { op: "local.get", index: tmpAny },
-        { op: "ref.cast", typeIdx },
-        { op: "struct.get", typeIdx, fieldIdx },
+        ...(primaryPresenceFieldIdx !== undefined
+          ? ([
+              { op: "local.get", index: tmpAny },
+              { op: "ref.cast", typeIdx },
+              { op: "struct.get", typeIdx, fieldIdx: primaryPresenceFieldIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: resultType },
+                then: [
+                  { op: "local.get", index: tmpAny },
+                  { op: "ref.cast", typeIdx },
+                  { op: "struct.get", typeIdx, fieldIdx },
+                ],
+                else: absentValueInstrs(),
+              },
+            ] satisfies Instr[])
+          : ([
+              { op: "local.get", index: tmpAny },
+              { op: "ref.cast", typeIdx },
+              { op: "struct.get", typeIdx, fieldIdx },
+            ] satisfies Instr[])),
         { op: "local.set", index: resultLocal },
       ],
       else: buildFallback(tmpAny, 0),
@@ -1526,6 +1627,21 @@ export function emitExternrefToStructGet(
   // For result type, normalize ref to ref_null so the null branch is valid
   const resultType: ValType =
     fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: (fieldType as any).typeIdx } : fieldType;
+  let primaryPresenceFieldIdx: number | undefined;
+  if (propName) {
+    for (const [structName, fields] of ctx.structFields) {
+      if (ctx.structMap.get(structName) !== structTypeIdx) continue;
+      if (fields[fieldIdx]?.presenceTracked) {
+        const idx = fields.findIndex((candidate) => candidate.name === `$has_${propName}`);
+        if (idx >= 0) primaryPresenceFieldIdx = idx;
+      }
+      break;
+    }
+  }
+  const absentValueInstrs = (): Instr[] =>
+    resultType.kind === "externref"
+      ? (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }])
+      : defaultValueInstrs(resultType);
 
   // Convert externref -> anyref for struct type testing
   fctx.body.push({ op: "any.convert_extern" });
@@ -1626,6 +1742,12 @@ export function emitExternrefToStructGet(
     if (altIdx < alternates.length) {
       const alt = alternates[altIdx]!;
       const altCoerce = coercionInstrs(ctx, alt.fieldType, resultType, fctx);
+      const altRead: Instr[] = [
+        { op: "local.get", index: tmpAny },
+        { op: "ref.cast", typeIdx: alt.structTypeIdx },
+        { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.fieldIdx },
+        ...altCoerce,
+      ];
       return [
         { op: "local.get", index: tmpAny },
         { op: "ref.test", typeIdx: alt.structTypeIdx },
@@ -1633,10 +1755,19 @@ export function emitExternrefToStructGet(
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            { op: "local.get", index: tmpAny },
-            { op: "ref.cast", typeIdx: alt.structTypeIdx },
-            { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.fieldIdx },
-            ...altCoerce,
+            ...(alt.presenceFieldIdx !== undefined && alt.presenceFieldIdx >= 0
+              ? ([
+                  { op: "local.get", index: tmpAny },
+                  { op: "ref.cast", typeIdx: alt.structTypeIdx },
+                  { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.presenceFieldIdx },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: resultType },
+                    then: altRead,
+                    else: absentValueInstrs(),
+                  },
+                ] satisfies Instr[])
+              : altRead),
             { op: "local.set", index: resultLocal },
           ],
           else: buildFallbackChain(altIdx + 1),
@@ -1674,9 +1805,27 @@ export function emitExternrefToStructGet(
     op: "if",
     blockType: { kind: "empty" },
     then: [
-      { op: "local.get", index: tmpAny },
-      { op: "ref.cast", typeIdx: structTypeIdx },
-      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+      ...(primaryPresenceFieldIdx !== undefined
+        ? ([
+            { op: "local.get", index: tmpAny },
+            { op: "ref.cast", typeIdx: structTypeIdx },
+            { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: primaryPresenceFieldIdx },
+            {
+              op: "if",
+              blockType: { kind: "val", type: resultType },
+              then: [
+                { op: "local.get", index: tmpAny },
+                { op: "ref.cast", typeIdx: structTypeIdx },
+                { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+              ],
+              else: absentValueInstrs(),
+            },
+          ] satisfies Instr[])
+        : ([
+            { op: "local.get", index: tmpAny },
+            { op: "ref.cast", typeIdx: structTypeIdx },
+            { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+          ] satisfies Instr[])),
       { op: "local.set", index: resultLocal },
     ],
     else: buildFallbackChain(0),
@@ -2110,6 +2259,7 @@ export function tryEmitPinnedStructMemberGet(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
   propName: string,
+  pinnedStructName?: string,
 ): ValType | undefined {
   // Reserved accessors have dedicated lowerings (array length, proto walk,
   // constructor identity) — never reroute them.
@@ -2126,6 +2276,23 @@ export function tryEmitPinnedStructMemberGet(
   // the dispatch-on-call path); `__get_member_<name>` would box it as a value.
   const accessType = ctx.checker.getTypeAtLocation(expr);
   if (accessType.getCallSignatures && accessType.getCallSignatures().length > 0) return undefined;
+  // Standalone's member dispatcher crosses the uniform externref boundary, but
+  // an own field on the pinned fnctor still has an exact native representation.
+  // Recover it after the call so downstream native-string/number/struct
+  // operations do not lose their static carrier (Acorn's `this.input` feeding
+  // RegExp.exec is the canonical case). Prototype/accessor misses have no own
+  // field entry and deliberately stay externref.
+  const pinnedFieldType =
+    ctx.standalone && pinnedStructName !== undefined
+      ? ctx.structFields.get(pinnedStructName)?.find((field) => field.name === propName)?.type
+      : undefined;
+  const finishPinnedRead = (): ValType => {
+    if (pinnedFieldType !== undefined) {
+      coerceType(ctx, fctx, { kind: "externref" }, pinnedFieldType);
+      return pinnedFieldType;
+    }
+    return { kind: "externref" };
+  };
 
   // Commit: compile the receiver to an externref exactly once, leaving it ON THE
   // WASM STACK across the dispatcher reservation. The receiver is compiled FIRST
@@ -2166,11 +2333,11 @@ export function tryEmitPinnedStructMemberGet(
     addStringConstantGlobal(ctx, propName);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
     fctx.body.push({ op: "call", funcIdx: getIdx });
-    return { kind: "externref" };
+    return finishPinnedRead();
   }
   // Receiver is on the stack; the dispatcher takes (recv) → call directly.
   fctx.body.push({ op: "call", funcIdx: getDispIdx });
-  return { kind: "externref" };
+  return finishPinnedRead();
 }
 
 export function tryEmitDeleteAwareDynamicGet(
@@ -4567,7 +4734,7 @@ export function compileElementAccessBody(
           return typeDef.fields[fieldIdx]!.type;
         }
       }
-      // (#2582) Non-literal NUMERIC key on a struct whose fields are
+      // (#2582/#1712) Non-literal NUMERIC key on a struct whose fields are
       // numeric-named (an object literal `{ 9: …, 10: … }` read via
       // `obj[ecmaVersion]` with a runtime key) → emit a static key-switch of
       // `struct.get` per numeric field instead of the dynamic `__extern_get`.
@@ -4589,8 +4756,26 @@ export function compileElementAccessBody(
           .map((f: { name?: string; type: ValType }, idx: number) => ({ f, idx }))
           .filter(
             ({ f }: { f: { name?: string; type: ValType } }) =>
-              f.name !== undefined && /^(?:0|[1-9][0-9]*)$/.test(f.name) && f.type.kind === "externref",
+              f.name !== undefined && /^(?:0|[1-9][0-9]*)$/.test(f.name),
           );
+        const firstFieldType = numericFields[0]?.f.type;
+        const uniformReferenceFieldType =
+          firstFieldType !== undefined &&
+          (firstFieldType.kind === "externref" ||
+            firstFieldType.kind === "ref" ||
+            firstFieldType.kind === "ref_null") &&
+          numericFields.every(({ f }) => {
+            if (f.type.kind !== firstFieldType.kind) return false;
+            if (f.type.kind === "ref" || f.type.kind === "ref_null") {
+              return (
+                (firstFieldType.kind === "ref" || firstFieldType.kind === "ref_null") &&
+                f.type.typeIdx === firstFieldType.typeIdx
+              );
+            }
+            return true;
+          })
+            ? firstFieldType
+            : undefined;
         const keyType = ctx.checker.getTypeAtLocation(expr.argumentExpression);
         // The key is switch-eligible when it is (or could be) a number: a
         // genuine number/number-literal, OR an `any`/`unknown` key (acorn's
@@ -4606,10 +4791,16 @@ export function compileElementAccessBody(
           (keyType.flags & (ts.TypeFlags.String | ts.TypeFlags.StringLiteral)) !== 0 &&
           (keyType.flags & NUMERIC_KEY_FLAGS) === 0;
         const keySwitchEligible = (keyType.flags & PERMISSIVE_KEY_FLAGS) !== 0 && !keyIsStringy;
-        // Only take the static key-switch when EVERY field is a numeric-named
-        // externref slot (a plain numeric-keyed object literal). A mixed shape
-        // falls through to the dynamic `__extern_get` path unchanged.
-        if (numericFields.length > 0 && numericFields.length === typeDef.fields.length && keySwitchEligible) {
+        // Only take the static key-switch when EVERY field is numeric-named and
+        // every value has one uniform reference representation. JS-host object
+        // literals use externref; standalone Acorn's string-valued tables use
+        // `ref $AnyString`. A mixed shape falls through unchanged.
+        if (
+          numericFields.length > 0 &&
+          numericFields.length === typeDef.fields.length &&
+          uniformReferenceFieldType !== undefined &&
+          keySwitchEligible
+        ) {
           // Receiver struct ref is already on the stack — stash it so each
           // switch arm can re-read the same field.
           const recvLocal = allocLocal(fctx, `__numkey_recv_${fctx.locals.length}`, {
@@ -4623,13 +4814,20 @@ export function compileElementAccessBody(
           fctx.body.push({ op: "local.set", index: keyLocal });
           // Build a nested if/else chain from the innermost (default) outward:
           //   if key==N0 then struct.get F0 else if key==N1 then … else null
-          let chain: Instr[] = [{ op: "ref.null.extern" }];
+          const resultType: ValType =
+            uniformReferenceFieldType.kind === "ref"
+              ? { kind: "ref_null", typeIdx: uniformReferenceFieldType.typeIdx }
+              : uniformReferenceFieldType;
+          let chain: Instr[] =
+            resultType.kind === "externref"
+              ? [{ op: "ref.null.extern" }]
+              : [{ op: "ref.null", typeIdx: resultType.typeIdx }];
           for (let i = numericFields.length - 1; i >= 0; i--) {
             const { f, idx } = numericFields[i]!;
             const fieldNum = Number(f.name);
-            // Field is a numeric-named externref slot (guaranteed by the filter
-            // above), so a bare `struct.get` already yields externref — the
-            // unified result type of a dynamic-key read. No coercion needed.
+            // Every arm reads the same reference representation. A non-null
+            // field is a subtype of the nullable result used for the missing-
+            // key default.
             const thenArm: Instr[] = [
               { op: "local.get", index: recvLocal },
               { op: "struct.get", typeIdx, fieldIdx: idx },
@@ -4640,14 +4838,14 @@ export function compileElementAccessBody(
               { op: "f64.eq" },
               {
                 op: "if",
-                blockType: { kind: "val", type: { kind: "externref" } },
+                blockType: { kind: "val", type: resultType },
                 then: thenArm,
                 else: chain,
               },
             ];
           }
           for (const instr of chain) fctx.body.push(instr);
-          return { kind: "externref" };
+          return resultType;
         }
       }
       // Non-vec, non-tuple struct: fallback to externref conversion + __extern_get

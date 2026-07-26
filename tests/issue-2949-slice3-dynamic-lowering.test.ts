@@ -60,6 +60,9 @@ import {
 } from "../src/ir/index.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { FuncTypeDef, Instr, ValType } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-2949-slice3-dynamic-lowering");
 
 function id(n: number): IrValueId {
   return asValueId(n);
@@ -79,7 +82,7 @@ function fn(
   valueCount: number,
 ): IrFunction {
   return {
-    name,
+    ...irIdentities.next(name),
     params: params.map((p, i) => ({ value: id(i), type: p.type, name: p.name })),
     resultTypes,
     blocks: [

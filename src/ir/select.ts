@@ -69,6 +69,9 @@ export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 import { binaryOpCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import type {
   IrDeclaredPrimitiveExpressionFamily,
+  IrLegacyLocalClassExpressionResolver,
+  IrLegacyModuleBindingResolver,
+  IrLocalClassExpressionResolver,
   IrModuleBindingResolver,
   IrPrimitiveExpressionFamily,
 } from "./module-bindings.js";
@@ -115,6 +118,7 @@ export type IrFallbackReason =
   | "error-constructor-unsupported"
   | "typed-array-constructor-unsupported"
   | "date-constructor-unsupported"
+  | "regexp-constructor-unsupported"
   | "call-resolution-unsupported"
   | "call-arity-unsupported"
   | "constructor-resolution-unsupported"
@@ -361,7 +365,7 @@ export interface IrSelectionOptions {
    * Passing `writeValue` additionally proves mutability and supported
    * write-side representation before the selector claims the function.
    */
-  readonly resolveModuleBinding?: IrModuleBindingResolver;
+  readonly resolveModuleBinding?: IrModuleBindingResolver | IrLegacyModuleBindingResolver;
   /** (#2856) True iff the compile targets a JS host (NOT standalone / wasi /
    *  strictNoHostImports). Gates the host-extern capability. */
   readonly jsHostExterns?: boolean;
@@ -387,6 +391,12 @@ export interface IrSelectionOptions {
    */
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
   /**
+   * Checker-backed proof that an expression has the ambient lib `RegExp`
+   * type. Host-free targets use it to defer `.test`/`.exec` to native
+   * standalone codegen instead of selecting the host-extern IR ABI.
+   */
+  readonly isRegExpExpression?: (expr: ts.Expression) => boolean;
+  /**
    * Checker-only ambient identity proof used by Math call selection when a
    * backend deliberately does not install the module-binding capability.
    * Absent means unproven: bare selector callers stay shadow-safe.
@@ -394,6 +404,8 @@ export interface IrSelectionOptions {
   readonly isAmbientBinding?: (node: ts.Identifier) => boolean;
   /** True only when the active backend can resolve `Math_<method>` helpers. */
   readonly supportsSymbolicMathHelpers?: boolean;
+  /** Backend owns a no-radix f64 → abstract-string formatter. */
+  readonly supportsNumberToString?: boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
    * literal-string `String.replace(search, replacement)` slice. Backends
@@ -424,13 +436,10 @@ export interface IrSelectionOptions {
    * default (undefined ⇒ true) is correct for the default-host fallback path.
    */
   readonly dynMemberReadBuildable?: boolean;
-  /**
-   * (#3214 A+B1) Realm-wide, checker-backed imported-function resolution.
-   * Present only for host/component multi-file compilation.  Bare selector
-   * callers and standalone/WASI intentionally omit it, preserving the
-   * pre-slice conservative boundary.
-   */
+  /** (#3214 A+B1) Checker-backed imports; omitted by host-free and bare selector callers. */
   readonly importedFunctions?: IrImportedFunctionResolver;
+  /** (#3657) Checker-certified class-member calls to same-file primitive host stubs. */
+  readonly ambientClassCalls?: IrAmbientClassCallResolver;
   /**
    * (#3657) Checker-certified direct calls from class members to same-file
    * primitive `declare function` host stubs. Omitted outside JS-host mode.
@@ -460,14 +469,14 @@ export interface IrSelectionOptions {
    * results; bare selector callers omit it and use the conservative syntax
    * proofs below.
    */
-  readonly resolveLocalClassExpression?: (expression: ts.Expression) => string | undefined;
+  readonly resolveLocalClassExpression?: IrLocalClassExpressionResolver | IrLegacyLocalClassExpressionResolver;
   /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
    * An explicit false prevents an ambient Date snapshot from being claimed
    * even if its checker shape is otherwise exact.
    */
-  readonly supportsBackendCapability?: (capability: "host-date-snapshot") => boolean;
+  readonly supportsBackendCapability?: (capability: "host-date-snapshot" | "host-regexp-constructor") => boolean;
   /**
    * (#2856 async-delay slice) Exact checker-certified
    * `new Promise<number>((resolve) => { setTimeout(...); })` construction.
@@ -1018,7 +1027,7 @@ export function planIrCompilation(
  * from MethodDeclaration / ConstructorDeclaration (class-owned, with
  * extra method-specific guards).
  */
-type IrClaimableSubject =
+export type IrClaimableSubject =
   | ts.FunctionDeclaration
   | ts.MethodDeclaration
   | ts.ConstructorDeclaration
@@ -1073,38 +1082,19 @@ let currentFnIsAsync = false;
 // `moduleGlobal` bindings; ordinary functions intentionally keep those wider
 // module writes on legacy until their coercion semantics are modeled.
 let currentSubjectIsModuleInit = false;
-// (#1373b C-1) The options of the CURRENT `planIrCompilation` run, so
-// `whyNotIrClaimable` (whose signature is shared by many recursion helpers)
-// can consult the async gate without threading a param through every
-// `isPhase1*` helper — same module-state pattern as
-// `currentHostGlobalResolver` / `currentDynScanDecls`. `undefined` outside a
-// selector run (async fns then keep their fallback bucket).
+// Current-run state shared by the deep isPhase1* recursion. The structural
+// selector configures the same predicates through the narrow hooks below.
 let currentSelectionOptions: IrSelectionOptions | undefined;
-// #3529 P1 — syntax declarations and per-subject binding evidence used to
-// mirror builder-side class/call projection before claim. Checker callbacks
-// still decide ambient/primitive identity; names alone never identify a
-// builtin. The selector is intentionally non-reentrant, like the existing
-// module-binding and dynamic-scan state above.
 let currentLocalClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration> = new Map();
 let currentClaimClassName: string | null = null;
 let currentClassBindings = new Map<string, string>();
 let currentCallableArities = new Map<string, number>();
 let currentCallableReturnClasses = new Map<string, string>();
 let currentNestedFunctionNames: ReadonlySet<string> = new Set();
-// Direct lexical value declarations that are visible for name resolution even
-// before their initializer runs. The selector walks statements in source
-// order, so this separate TDZ set prevents an earlier `new C()` / `f()` from
-// falling through to a same-text top-level declaration. Statement-list scopes
-// are stacked independently so a binding in a nested block does not shadow a
-// use outside that block.
+// TDZ-visible lexical values prevent an earlier use from falling through to a
+// same-text top-level declaration; statement-list scopes remain independent.
 let currentLexicalValueBindingNames: ReadonlySet<string> = new Set();
-// (#1373b C-1) Names of the top-level ASYNC (non-generator) function
-// declarations of the current run. A claimed body may reference these ONLY as
-// the immediate operand of an `await`: legacy classifies any other call-site
-// use as a THENABLE consumer and wraps the raw result in `Promise.resolve`
-// (#1796 `classifyAsyncConsumer` — no cast, no await ⇒ thenable), a wrap the
-// IR does not emit. Claiming such a shape would change observable behavior,
-// so the call arm rejects it (parity-first; the shape stays legacy).
+// Async names are accepted only as the immediate operand of await (#1796).
 let currentAsyncDeclNames: ReadonlySet<string> = new Set();
 
 /**
@@ -1121,39 +1111,36 @@ let currentAsyncDeclNames: ReadonlySet<string> = new Set();
  */
 let forInitLeakedNames = new Set<string>();
 
-/**
- * (#2856) Host-extern resolution for the CURRENT `planIrCompilation` run.
- * Set (and cleared) at the selector entry from `IrSelectionOptions` —
- * module-level for the same reason as `currentHostGlobalResolver`: the
- * `isPhase1*` predicates are a deep recursion whose signatures are shared
- * with every in-flight selector slice, and threading a param through all of
- * them would conflict with each of those PRs for zero behavioural gain.
- * `null` = host-extern claiming disabled (no callback, or a host-free mode —
- * see `hostExternCapability` in capability.ts).
- */
+// Current-run checker resolvers. A null host resolver means host-free/deferred.
 let currentHostGlobalResolver: ((node: ts.Identifier) => string | undefined) | null = null;
-
-/**
- * (#2856 Capability C) Checker-backed module binding resolver for the current
- * selector run. The returned VariableDeclaration identity is shared with the
- * builder-side resolver; names are never used to decide ownership.
- */
-let currentModuleBindingResolver: IrModuleBindingResolver | null = null;
+let currentModuleBindingResolver: IrModuleBindingResolver | IrLegacyModuleBindingResolver | null = null;
 // C3's Map.get result is deliberately carried as externref until a strict
 // undefined check proves the value branch. Keep the local names visible to
 // consumer guards so truthiness/logical/nullish uses reject before claim.
 let currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
 let currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
 
-/**
- * (#3053 U2) Whether the gc `__dyn_member_get` body is sound in the CURRENT
- * `planIrCompilation` run's compile config (see `IrSelectionOptions.
- * dynMemberReadBuildable`). Set at selector entry, read by
- * `dynamicUsesAreMoveOnly`'s member/element-access arms. Defaults to `true`
- * (the sound default-host / fallback path). Module-scope, mirroring
- * `currentModuleBindingResolver` — `planIrCompilation` is not reentrant.
- */
+// #3053 U2 current-run capability for dynamic member reads; sound-default true.
 let currentDynMemberReadBuildable = true;
+
+/** @internal Configure the shared predicates for an exact structural selector run. */
+export function configureIrStructuralSelectorPredicates(
+  options: IrSelectionOptions | undefined,
+  localClassDeclarations: ReadonlyMap<string, ts.ClassDeclaration>,
+  functionDeclarations: ReadonlyMap<string, ts.FunctionDeclaration>,
+  asyncDeclarationNames: ReadonlySet<string>,
+): void {
+  currentSelectionOptions = options;
+  currentLocalClassDeclarations = localClassDeclarations;
+  currentDynScanDecls = functionDeclarations;
+  currentAsyncDeclNames = asyncDeclarationNames;
+  currentHostGlobalResolver =
+    options?.resolveHostGlobal && hostExternCapability(options.jsHostExterns === true) !== "defer"
+      ? options.resolveHostGlobal
+      : null;
+  currentModuleBindingResolver = options?.resolveModuleBinding ?? null;
+  currentDynMemberReadBuildable = options?.dynMemberReadBuildable ?? true;
+}
 
 /** Collect direct identifier mutations in one function body. */
 function collectDirectMutationNames(body: ts.Block): ReadonlySet<string> {
@@ -1483,6 +1470,21 @@ function whyNotIrClaimable(
   return null;
 }
 
+/** @internal Exact-subject entry used by the structural selector orchestration. */
+export function assessIrStructuralSelectorSubject(
+  subject: IrClaimableSubject,
+  typeMap: TypeMap | undefined,
+  localClasses: ReadonlySet<string>,
+  isMethod = false,
+): { readonly reason: IrFallbackReason | null; readonly detail?: string } {
+  const reason = whyNotIrClaimable(subject, typeMap, localClasses, isMethod);
+  const detail =
+    reason === "body-shape-rejected" && SHAPE_DIAG_ON
+      ? (takeShapeRejectDetail() ?? "unattributed-arm:helper-internal")
+      : undefined;
+  return detail === undefined ? { reason } : { reason, detail };
+}
+
 function isIrClaimable(
   fn: IrClaimableSubject,
   typeMap: TypeMap | undefined,
@@ -1572,8 +1574,8 @@ export function effectiveIrReturnTypeNode(
  *
  * Out-of-surface shapes (→ null, so the selector keeps the honest
  * `param-type-not-resolvable` rejection): non-primitive param/return types,
- * void returns (`emitClosureCall` is value-producing), rest/optional/default
- * params, type parameters.
+ * rest/optional/default params, and type parameters. Void returns are a
+ * canonical zero-result closure signature; value-position calls still reject.
  */
 export function irClosureSignatureFromFunctionTypeNode(node: ts.FunctionTypeNode): IrClosureSignature | null {
   if (node.typeParameters && node.typeParameters.length > 0) return null;
@@ -1591,8 +1593,8 @@ export function irClosureSignatureFromFunctionTypeNode(node: ts.FunctionTypeNode
     if (!ir) return null;
     params.push(ir);
   }
-  const returnType = prim(node.type);
-  if (!returnType) return null;
+  const returnType = node.type.kind === ts.SyntaxKind.VoidKeyword ? null : prim(node.type);
+  if (returnType === null && node.type.kind !== ts.SyntaxKind.VoidKeyword) return null;
   return { params, returnType };
 }
 
@@ -3843,7 +3845,7 @@ function unwrapPhase1Parens(expr: ts.Expression): ts.Expression {
 }
 
 /** Resolve an exact checker-owned module binding, independent of representation. */
-function moduleBinding(expr: ts.Expression): ReturnType<IrModuleBindingResolver> {
+function moduleBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const candidate = unwrapPhase1Parens(expr);
   if (!ts.isIdentifier(candidate)) return undefined;
   return currentModuleBindingResolver?.(candidate);
@@ -3867,7 +3869,7 @@ function isUnshadowedUndefinedIdentifier(expr: ts.Expression, scope: ReadonlySet
 }
 
 /** Resolve an exact module identifier whose shared legacy slot is externref-shaped. */
-function moduleExternBinding(expr: ts.Expression): ReturnType<IrModuleBindingResolver> {
+function moduleExternBinding(expr: ts.Expression): ReturnType<IrLegacyModuleBindingResolver> {
   const binding = moduleBinding(expr);
   return binding?.valueKind.kind === "extern" ? binding : undefined;
 }
@@ -4226,7 +4228,7 @@ function isExactModuleMapGenericInitializer(expr: ts.NewExpression): boolean {
  * f64 even though provenance scanning still sees the module arguments.
  */
 function isExactF64ScalarToStringCall(expr: ts.CallExpression): boolean {
-  if (currentModuleBindingResolver?.supportsHostNumberToString !== true) return false;
+  if (!selectorSupportsNumberToString()) return false;
   if (expr.questionDotToken || expr.arguments.length !== 0) return false;
   const callee = unwrapPhase1Parens(expr.expression);
   if (!ts.isPropertyAccessExpression(callee) || callee.questionDotToken || callee.name.text !== "toString") {
@@ -4389,6 +4391,13 @@ function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
 
 function selectorSupportsMathPlan(plan: IrMathMethodPlan): boolean {
   return "op" in plan || currentSelectionOptions?.supportsSymbolicMathHelpers === true;
+}
+
+function selectorSupportsNumberToString(): boolean {
+  return (
+    currentSelectionOptions?.supportsNumberToString === true ||
+    currentModuleBindingResolver?.supportsHostNumberToString === true
+  );
 }
 
 function isBoundedToFixedCall(expr: ts.CallExpression): boolean {
@@ -4651,7 +4660,7 @@ interface ClassMethodProjection {
   readonly returnClassName?: string;
 }
 
-function classElementIsStatic(member: ts.ClassElement): boolean {
+export function classElementIsStatic(member: ts.ClassElement): boolean {
   return (
     ts.canHaveModifiers(member) &&
     (ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false)
@@ -4982,7 +4991,7 @@ function classAccessorMayProject(
 }
 
 /** Mirror the builder's declaration-order class-shape dependency. */
-function localClassHasKnownProjectionGap(className: string): boolean {
+export function localClassHasKnownProjectionGap(className: string): boolean {
   const exactShapes = currentSelectionOptions?.projectedClassShapes;
   if (exactShapes) return !exactShapes.has(className);
   return localClassHasSyntaxProjectionGap(className, new Set());
@@ -5055,7 +5064,8 @@ function localClassValueIsUnshadowed(name: string, scope: ReadonlySet<string>): 
 
 function localClassNameForExpression(expression: ts.Expression, scope: ReadonlySet<string>): string | null {
   const candidate = unwrapProjectionExpression(expression);
-  const checkerClassName = currentSelectionOptions?.resolveLocalClassExpression?.(candidate);
+  const checkerClass = currentSelectionOptions?.resolveLocalClassExpression?.(candidate);
+  const checkerClassName = typeof checkerClass === "string" ? checkerClass : checkerClass?.legacyName;
   if (checkerClassName !== undefined && currentLocalClassDeclarations.has(checkerClassName)) {
     return checkerClassName;
   }
@@ -5555,6 +5565,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // `methodName`. If not, the function falls back to legacy.
     if (ts.isPropertyAccessExpression(expr.expression)) {
       if (!ts.isIdentifier(expr.expression.name)) return false;
+      if (
+        (expr.expression.name.text === "test" || expr.expression.name.text === "exec") &&
+        currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
+        currentSelectionOptions.supportsBackendCapability?.("host-regexp-constructor") === false
+      ) {
+        return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
+      }
       // (#1371) Whitelist `Math.<unary>(arg)` for a small set of f64-mapped
       // ops. The receiver `Math` is a host global, never in scope, so the
       // generic receiver check below would reject these. Recognise the shape
@@ -5631,7 +5648,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         expr.expression.name.text === "toString" &&
         expr.arguments.length === 0 &&
         isNumberReceiver &&
-        currentModuleBindingResolver?.supportsHostNumberToString === true
+        selectorSupportsNumberToString()
       ) {
         if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
         return true;
@@ -5755,26 +5772,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       return true;
     }
     if (!ts.isIdentifier(expr.expression)) return false;
-    // (#1373b C-1) A local ASYNC callee is claimable ONLY as the immediate
-    // operand of an `await` (handled inline in the await arm above, which
-    // never recurses here for that shape). Every other use — `return f();`,
-    // `const p = f();`, an argument position — is a THENABLE consumer under
-    // the legacy #1796 call-site contract (wrapped in `Promise.resolve`),
-    // which the IR does not emit. Reject to keep claimed-vs-legacy behavior
-    // identical; the fn stays on the legacy path.
+    // (#1373b C-1) Only the await arm above admits local async callees; every
+    // other use remains a legacy thenable consumer.
     if (currentAsyncDeclNames.has(expr.expression.text) && !scope.has(expr.expression.text)) {
       return shapeNo("expr-async-callee-not-awaited", expr);
     }
-    // (#3657) Same-file user `declare function` stubs are already registered
-    // as env imports by the legacy declaration pass. Admit only the exact
-    // class-member call nodes certified by the shared checker resolver.
-    const ambientClassCall = currentSelectionOptions?.ambientClassCalls?.(expr);
-    if (ambientClassCall) {
-      for (const arg of expr.arguments) {
-        if (!isPhase1Expr(arg, scope, localClasses)) return false;
-      }
-      return true;
-    }
+    if (currentSelectionOptions?.ambientClassCalls?.(expr))
+      return expr.arguments.every((arg) => isPhase1Expr(arg, scope, localClasses));
     // (#3214 A+B1) A checker-certified imported direct call is a stable
     // in-module funcMap target, not an external call.  Bare top-level function
     // identifiers are accepted ONLY at the exact FunctionTypeNode argument
@@ -5856,6 +5860,17 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     const ctorName = expr.expression.text;
     const isLocalClass = localClassValueIsUnshadowed(ctorName, scope) && localClasses.has(ctorName);
     const isAmbientConstructor = !isLocalClass && selectorSeesAmbientBinding(expr.expression);
+    // The IR slice lowers RegExp construction through the host `RegExp_new`
+    // extern-class ABI. Host-free targets own RegExp in legacy native codegen,
+    // including its runtime pattern compiler, so defer the whole function
+    // before from-ast can type-check native strings against externref params.
+    if (
+      ctorName === "RegExp" &&
+      isAmbientConstructor &&
+      currentSelectionOptions?.supportsBackendCapability?.("host-regexp-constructor") === false
+    ) {
+      return capabilityNo("regexp-constructor-unsupported", "expr-new-regexp-target", expr);
+    }
     if (!isLocalClass && isKnownExternClass(ctorName) && !isAmbientConstructor) {
       return capabilityNo("constructor-resolution-unsupported", "expr-new-extern-identity", expr.expression);
     }
@@ -6199,7 +6214,7 @@ function phase1PropertyName(name: ts.PropertyName): string | null {
  * Returns null for computed names (`[expr]() {}`) and private identifiers
  * (`#priv() {}`) — Phase A can't form a stable funcMap key for either.
  */
-function phase1MemberName(name: ts.PropertyName): string | null {
+export function phase1MemberName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name)) return name.text;
   if (ts.isStringLiteral(name)) return name.text;
   if (ts.isNumericLiteral(name)) return name.text;
@@ -6216,7 +6231,7 @@ function phase1MemberName(name: ts.PropertyName): string | null {
  * the Phase E slice's job), while a plain static method is claimable even under
  * `extends`.
  */
-function referencesSuper(node: ts.Node): boolean {
+export function referencesSuper(node: ts.Node): boolean {
   let found = false;
   const visit = (n: ts.Node): void => {
     if (found) return;
@@ -6237,7 +6252,7 @@ function referencesSuper(node: ts.Node): boolean {
  * `extends mixin(Base)` — deferred). The caller cross-checks the name against
  * `localClasses` to confirm the parent is an IR-projectable user class.
  */
-function extendsParentName(stmt: ts.ClassDeclaration): string | null {
+export function extendsParentName(stmt: ts.ClassDeclaration): string | null {
   for (const h of stmt.heritageClauses ?? []) {
     if (h.token !== ts.SyntaxKind.ExtendsKeyword) continue;
     const first = h.types[0]?.expression;
@@ -6292,7 +6307,7 @@ function isPhase1BinaryOp(op: ts.SyntaxKind): boolean {
  *
  * (The helpers below are exported for Slice 2's integration.)
  */
-function assessModuleInit(
+export function assessModuleInit(
   sourceFile: ts.SourceFile,
   claimedFuncs: ReadonlySet<string>,
   declByName: ReadonlyMap<string, ts.FunctionDeclaration>,
@@ -6351,7 +6366,7 @@ function assessModuleInit(
   return { stmtCount: population.length, reason: null };
 }
 
-function buildLocalCallGraph(
+export function buildLocalCallGraph(
   decls: ReadonlyMap<string, ts.FunctionDeclaration>,
   localClasses: ReadonlySet<string>,
 ): {

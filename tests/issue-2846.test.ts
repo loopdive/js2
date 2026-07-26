@@ -111,4 +111,25 @@ describe("#2846 BigInt values round-trip exact (no f64 precision loss)", () => {
     // The brand surviving the function return means typeof reads "bigint".
     expect(Boolean(ex.isBig())).toBe(true);
   });
+
+  it("keeps arbitrary-width BigInt exact across a nullable function return", async () => {
+    const huge = "340282366920938463463374607431768211456";
+    const ex = (await compileAndInstantiate(`
+      function stringToBigInt(s: string) {
+        if (s.length === 0) return null;
+        return BigInt(s);
+      }
+
+      export function value(): any {
+        return stringToBigInt("${huge}");
+      }
+
+      export function missing(): any {
+        return stringToBigInt("");
+      }
+    `)) as { value(): unknown; missing(): unknown };
+
+    expect(ex.value()).toBe(BigInt(huge));
+    expect(ex.missing()).toBeNull();
+  });
 });

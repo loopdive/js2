@@ -16,6 +16,9 @@ import {
   type IrUnionLowering,
 } from "../src/ir/index.js";
 import type { Instr, ValType } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-2953-unions-boxing");
 
 const F64 = irVal({ kind: "f64" });
 const I32 = irVal({ kind: "i32" });
@@ -49,7 +52,7 @@ function lowerSingleInstr(
 ): Instr[] {
   const result = asValueId(1);
   const fn: IrFunction = {
-    name: "unionOp",
+    ...irIdentities.next("unionOp"),
     params: [{ value: asValueId(0), type: paramType, name: "value" }],
     resultTypes: [resultType],
     blocks: [

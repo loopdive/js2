@@ -69,6 +69,14 @@ export function definedFuncAt(ctx: CodegenContext, funcIdx: FuncHandle): WasmFun
   return pos >= 0 ? ctx.mod.functions[pos] : undefined;
 }
 
+/** Current handle for one exact allocator-owned defined-function object. */
+export function definedFuncHandleOf(ctx: CodegenContext, func: WasmFunction): FuncHandle | undefined {
+  const position = ctx.mod.functions.indexOf(func);
+  if (position < 0) return undefined;
+  const stableOrdinal = ctx.mod.funcOrdinalToPosition.indexOf(position);
+  return stableOrdinal < 0 ? ctx.numImportFuncs + position : STABLE_FUNC_BASE + stableOrdinal;
+}
+
 /**
  * Replace the defined-function record for an absolute function handle
  * (patch-in-place, e.g. the IR integration swapping a legacy-compiled body

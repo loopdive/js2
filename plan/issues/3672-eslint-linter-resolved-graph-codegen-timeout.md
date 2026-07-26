@@ -1,7 +1,7 @@
 ---
-id: 3658
+id: 3672
 title: "ESLint linter.js: keep checker-only roots out of bounded codegen"
-status: in_progress
+status: in-progress
 created: 2026-07-26
 updated: 2026-07-26
 priority: critical
@@ -17,7 +17,7 @@ es_edition: n/a
 related: [824, 1282, 1400, 1573, 1942, 3654, 3655, 3656, 3657]
 ---
 
-# #3658 — Bound full codegen for the resolved ESLint Linter graph
+# #3672 — Bound full codegen for the resolved ESLint Linter graph
 
 ## Problem
 
@@ -149,7 +149,7 @@ Verified before handover:
 
 ```text
 109 passed, 3 skipped across the focused 10-file regression set
-23 passed across #2930, #2931, and #3658 identity/live-binding tests
+23 passed across #2930, #2931, and #3672 identity/live-binding tests
 pnpm run typecheck: passed
 pnpm run check:ir-fallbacks: passed
 ```

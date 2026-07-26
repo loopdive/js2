@@ -849,9 +849,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // __extern_get_idx. Preserve that contract for method values.
       returnType = { kind: "externref" };
       break;
+    case "Object.getOwnPropertyNames":
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     case "Object.getOwnPropertyDescriptor":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
       returnType = { kind: "externref" };
+      break;
+    case "Object.hasOwn":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "i32" };
       break;
     // (#2933) Namespace static-method VALUE reads for the fixed-arity `Reflect.*`
     // methods that the standalone CALL path already backs with a simple
@@ -1031,6 +1039,11 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       if (returnType && !valTypesMatch({ kind: "externref" }, returnType)) {
         coerceType(ctx, closureFctx, { kind: "externref" }, returnType);
       }
+    } else if (key === "Object.getOwnPropertyNames") {
+      const namesIdx = ensureLateImport(ctx, "__getOwnPropertyNames", [{ kind: "externref" }], [{ kind: "externref" }]);
+      if (namesIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "call", funcIdx: namesIdx });
     } else if (key === "Object.getOwnPropertyDescriptor") {
       const gopdIdx = ensureLateImport(
         ctx,
@@ -1042,6 +1055,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "local.get", index: 1 });
       closureFctx.body.push({ op: "local.get", index: 2 });
       closureFctx.body.push({ op: "call", funcIdx: gopdIdx });
+    } else if (key === "Object.hasOwn") {
+      const hasOwnIdx = ensureLateImport(
+        ctx,
+        "__object_hasOwn",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32" }],
+      );
+      if (hasOwnIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: hasOwnIdx });
     } else if (key === "Reflect.get") {
       // (#2933) Same native the 2-arg standalone `Reflect.get(target, key)` call
       // path uses (calls.ts). The value closure is fixed 2-arg — the optional

@@ -89,7 +89,7 @@ export type IrPreparationFailure =
       readonly code: IrUnsupportedCode;
       // (#3565) "verify" added: the #1798 return-value gate is a DESIGNED
       // demote-to-legacy that legitimately produces an `unsupported` outcome at
-      // the verify stage (see verify.ts / integration.ts verifyIntegrationFailure).
+      // the verify stage (see verify.ts / integration-report.ts).
       readonly stage: "select" | "resolve" | "build" | "verify";
       readonly detail: string;
       readonly cause?: unknown;

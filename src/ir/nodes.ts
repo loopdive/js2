@@ -14,6 +14,7 @@
 // Phase 2 & 3 widen the Instr and Terminator sets.
 
 import type { ValType } from "./types.js";
+import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./identity.js";
 // #2949 slice 1 — the canonical JS-type tag enum, from the dependency-free
 // leaf `ir/js-tag.ts` (#3113 moved it below the IR layer so IR core files
 // consume it without the IR→codegen import inversion). Type-only:
@@ -29,26 +30,56 @@ import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 // pipeline embeds raw funcIdx / globalIdx integers in emitted instructions,
 // so any late import addition must re-walk every body via
 // `shiftLateImportIndices` to rewrite those integers. The IR instead emits
-// a symbolic `IrFuncRef { name }`; lowering resolves it to a concrete index
-// AFTER all imports are finalized, making the shift pass a no-op on the
-// IR path.
+// a symbolic `IrFuncRef` with a structural callable binding; lowering resolves
+// it to a concrete index AFTER all imports are finalized, making the shift
+// pass a no-op on the IR path. `name` remains only a compatibility/debug label.
+
+/** Closed structural identity for every direct-callable IR target. */
+export type IrCallableBinding =
+  | { readonly kind: "unit"; readonly unitId: IrUnitId }
+  | { readonly kind: "import"; readonly module: string; readonly field: string }
+  | { readonly kind: "runtime"; readonly symbol: string }
+  | { readonly kind: "intrinsic"; readonly symbol: string }
+  | { readonly kind: "support"; readonly bindingId: IrBindingId };
 
 export interface IrFuncRef {
   readonly kind: "func";
-  /** Unique function name (same namespace as `ctx.funcMap`). */
+  /** Compatibility/debug label; never the semantic lookup key. */
   readonly name: string;
+  readonly binding: IrCallableBinding;
 }
+
+/** Closed structural identity for every IR global target. */
+export type IrGlobalBinding =
+  | { readonly kind: "source"; readonly bindingId: IrBindingId }
+  | {
+      readonly kind: "import";
+      readonly bindingId: IrBindingId;
+      readonly module: string;
+      readonly field: string;
+    }
+  | { readonly kind: "runtime"; readonly bindingId: IrBindingId; readonly symbol: string }
+  | { readonly kind: "support"; readonly bindingId: IrBindingId };
 
 export interface IrGlobalRef {
   readonly kind: "global";
-  /** Unique global name (same namespace as `ctx.globalMap` or similar). */
+  /** Compatibility/debug label; never the semantic lookup key. */
   readonly name: string;
+  readonly binding: IrGlobalBinding;
 }
+
+/** Closed structural identity for every symbolic IR type target. */
+export type IrTypeBinding =
+  | { readonly kind: "source"; readonly bindingId: IrBindingId }
+  | { readonly kind: "class"; readonly bindingId: IrBindingId; readonly classId: IrClassId }
+  | { readonly kind: "runtime"; readonly bindingId: IrBindingId; readonly symbol: string }
+  | { readonly kind: "support"; readonly bindingId: IrBindingId };
 
 export interface IrTypeRef {
   readonly kind: "type";
-  /** Unique WasmGC type name (same namespace as `ctx.typeNames`). */
+  /** Compatibility/debug label; never the semantic lookup key. */
   readonly name: string;
+  readonly binding: IrTypeBinding;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +216,8 @@ export interface IrClassMethodDescriptor {
  * type-check `new`/field-access/method-call expressions on instances of
  * this class without consulting the lowering resolver.
  *
- *   - `className`        unique discriminator (one class per name per unit)
+ *   - `classId`          source-qualified semantic identity
+ *   - `className`        compatibility/debug label
  *   - `fields`           user fields in canonical order (alphabetical)
  *                        — the lowerer maps each field `name` to a Wasm
  *                        struct field index via `resolveClass`, which knows
@@ -195,12 +227,14 @@ export interface IrClassMethodDescriptor {
  *                        not listed.
  *   - `constructorParams` user-visible param list for `new C(...)`.
  *
- * Class methods themselves are NOT IR-claimable in slice 4 — they remain
- * on the legacy class-bodies path. The IR only references them by name
- * (`<className>_<methodName>`) at call-site lowering, where the resolver
- * maps the name to the legacy-allocated funcIdx.
+ * Class methods themselves are NOT IR-claimable in slice 4 — they remain on
+ * the legacy class-bodies path. The call site carries the class descriptor and
+ * member key; the resolver returns a typed callable reference for the selected
+ * legacy-allocated slot.
  */
 export interface IrClassShape {
+  readonly classId: IrClassId;
+  /** Compatibility/debug label; never the semantic identity. */
   readonly className: string;
   readonly fields: readonly IrClassFieldDescriptor[];
   readonly methods: readonly IrClassMethodDescriptor[];
@@ -213,7 +247,7 @@ export interface IrClassShape {
    * parent's method slot). Absent (undefined) for flat / root classes and for
    * subclasses of a builtin/externref-backed parent (which stay on legacy).
    * `classShapeEquals` deliberately does NOT compare `parent` — a shape is
-   * identified by `className` alone (see the doc there).
+   * identified by its required `classId` (see the doc there).
    */
   readonly parent?: IrClassShape;
 }
@@ -419,16 +453,12 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
 }
 
 /**
- * Slice 4 (#1169d): structural equality for class shapes. `className` is
- * the discriminator — every class is unique within a compilation unit, so
- * two `IrClassShape` values with the same `className` represent the same
- * class. We don't recurse into `fields` / `methods` / `constructorParams`
- * because they're a deterministic projection of `className` (one
- * declaration per class per unit). Cross-unit class types are out of
- * slice 4 scope.
+ * Nominal equality for source class shapes. `classId` is source-qualified,
+ * so same-labelled declarations remain distinct across source and lexical
+ * owners. Shape payload and `className` are projections/diagnostics only.
  */
 export function classShapeEquals(a: IrClassShape, b: IrClassShape): boolean {
-  return a.className === b.className;
+  return a.classId === b.classId;
 }
 
 /**
@@ -1155,8 +1185,8 @@ export interface IrInstrObjectSet extends IrInstrBase {
 // ---------------------------------------------------------------------------
 
 /**
- * Materialize a closure value. `liftedFunc` names the lifted top-level
- * function (registered in the IR module as a synthesized BuiltFn).
+ * Materialize a closure value. `liftedFunc` structurally identifies the lifted
+ * top-level function (registered in the IR module as a synthesized BuiltFn).
  * `signature` is the caller-visible signature (used to look up its allocation
  * wrapper + exact funcref type). `captures` populates an optional
  * captured subtype's fields parallel to `captureFieldTypes`; an empty capture
@@ -1432,9 +1462,9 @@ export interface IrInstrClassInstanceOf extends IrInstrBase {
  * (#3144) Static method call `C.m(args)` on a locally-declared user class.
  * No receiver: legacy compiles a static method WITHOUT a `self` param
  * (`class-bodies.ts` — `methodParams = isStatic ? [] : [self]`), so the
- * lowering emits args then `call $<className>_<methodName>` (resolved via
- * `IrClassLowering.methodFuncName`, i.e. the collision-relocated funcMap
- * key). `shape` is the class named at the call site; an inherited static
+ * lowering emits args then a call resolved via `IrClassLowering.methodFunc`.
+ * Its typed binding selects the slot; its name remains the compatibility key
+ * for the current backend adapter. `shape` is the class named at the call site; an inherited static
  * resolves through the same key thanks to legacy's inherited-member key
  * propagation. Result type: the descriptor's `returnType` (null → void).
  */
@@ -2593,8 +2623,7 @@ export interface IrParam {
   readonly name: string;
 }
 
-export interface IrFunction {
-  readonly name: string;
+export interface IrFunction extends IrFunctionIdentity {
   readonly params: readonly IrParam[];
   readonly resultTypes: readonly IrType[];
   /** Entry block is always `blocks[0]`. */

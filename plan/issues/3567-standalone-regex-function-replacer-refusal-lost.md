@@ -1,9 +1,10 @@
 ---
 id: 3567
 title: "standalone: regex function-replacer refusal silently LOST — compiles a broken binary instead of refusing (#1539 guard red)"
-status: ready
+status: in-review
 sprint: current
 created: 2026-07-24
+updated: 2026-07-26
 priority: medium
 horizon: m
 feasibility: medium
@@ -14,6 +15,17 @@ es_edition: es2015
 goal: standalone-gap
 related: [1539, 1474, 2868, 3008]
 origin: "2026-07-24 bounded standalone-test audit (dev-opus / #3565 lane): tests/issue-1539-standalone-regex-replace.test.ts silently red on main — outside required checks (#3008)."
+loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+func-budget-allow:
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+files:
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - tests/issue-1539-standalone-regex-replace.test.ts
+  - tests/guard-suite.json
 ---
 
 # #3567 — standalone regex function-replacer refusal silently defeated
@@ -65,3 +77,63 @@ guard-audit lane; filed for tracking.
 `tests/issue-1539-standalone-regex-replace.test.ts` already detects this
 post-merge but is unenforced. Cannot fold into the required suite (#3552) while
 red. Fold once the refusal is restored (green).
+
+## Implementation Summary
+
+- **What was done:** restored the narrowed compile-time refusal for RegExp
+  function/non-string replacers on the standalone and WASI targets. Both
+  `String.prototype.replace`/`replaceAll` and direct
+  `RegExp[Symbol.replace]` calls now fail with a source-located `#1539`
+  diagnostic instead of emitting a broken fallback binary.
+- **Root cause:** `emitStandaloneRegExpReplaceCore` reported the intended
+  diagnostic and returned `null`. The `#1919` transactional expression wrapper
+  treats `null` as a speculative lowering miss, rolls the transaction back
+  (including `ctx.errors`), and substitutes a default value. Returning a typed
+  `unreachable` result commits the fatal diagnostic while keeping the dead body
+  well typed.
+- **Supported behavior:** literal/string-expression RegExp replacements,
+  including `$` substitutions, keep their existing standalone lowering. The
+  WASI preflight only claims unsupported replacers; supported WASI dispatch is
+  unchanged. Default host-mode function replacers continue to compile and run.
+- **Guard enforcement:** added
+  `tests/issue-1539-standalone-regex-replace.test.ts` to
+  `tests/guard-suite.json`, closing the #3008 hole that allowed this guard to
+  stay red on main.
+- **LOC contract:** the issue explicitly allows the measured 42-line
+  standalone lowering and 14-line WASI dispatch growth. Both additions are
+  required to preserve the fatal diagnostic across the distinct transaction
+  and direct-symbol call paths described above; no project-wide baseline was
+  relaxed. The corresponding `compileTailDispatch` function allowance is
+  limited to the same 14-line WASI preflight. It must run inside the existing
+  tail dispatcher before the unsupported direct-symbol call can enter fallback
+  lowering, so extracting it would obscure rather than isolate that ordering
+  invariant.
+- **What did not work:** committing the diagnostic only inside the shared
+  RegExp replacement core did not cover WASI's direct `Symbol.replace` form,
+  because that dispatcher did not enter the standalone helper. A narrow WASI
+  preflight at the symbol-call dispatch boundary now claims only the unsupported
+  replacement shape.
+- **Files changed:** `src/codegen/regexp-standalone.ts`,
+  `src/codegen/string-ops.ts`,
+  `src/codegen/expressions/call-tail-dispatch.ts`,
+  `tests/issue-1539-standalone-regex-replace.test.ts`, and
+  `tests/guard-suite.json`.
+
+## Test Results
+
+- Reproduction on fetched `origin/main` (`932e042a20d45c`): existing
+  `issue-1539` guard was **16 passed / 1 failed**; standalone compilation
+  succeeded with no errors and calling the exported function threw
+  `type incompatibility when transforming from/to JS`. WASI failed later on
+  unrelated host-string imports rather than emitting the RegExp refusal.
+- Fixed focused guard:
+  `pnpm exec vitest run tests/issue-1539-standalone-regex-replace.test.ts
+--reporter=verbose` — **23 passed / 0 failed**.
+- Adjacent standalone refusal and host behavior:
+  `tests/issue-1474-standalone-regex-refuse.test.ts`,
+  `tests/issue-1439.test.ts`, and `tests/issue-1329-b3.test.ts` —
+  **27 passed / 0 failed**.
+- Required guard suite: `pnpm run test:guard` —
+  **182 passed / 4 skipped / 0 failed** across 14 files.
+- `pnpm run typecheck` — passed.
+- Prettier check for all touched files — passed.

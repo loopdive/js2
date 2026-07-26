@@ -208,16 +208,21 @@ describe("#2856 Calendar residual lowering", () => {
     expect(dateImportNames(result)).toEqual([]);
   });
 
-  it("rejects a shadowed Date constructor before claim", async () => {
+  it("keeps a shadowed Date constructor on local-class IR without installing the host-Date ABI", async () => {
     const result = await tracked(`
       class Date { getDate(): number { return 9; } }
       export function snap(): number { const d = new Date(); return d.getDate(); }
     `);
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
-    expect(result.irCompiledFuncs ?? []).not.toContain("snap");
+    expect(result.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["snap", "Date_getDate"]));
     expect(result.irPostClaimErrors ?? []).toEqual([]);
     expect(dateImportNames(result)).toEqual([]);
+
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    expect((instance.exports.snap as () => number)()).toBe(9);
   });
 
   it.each(["standalone", "wasi"] as const)("keeps Date snapshots host-free in %s", async (target) => {

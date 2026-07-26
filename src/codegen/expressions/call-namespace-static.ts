@@ -49,10 +49,11 @@ import {
   tryEmitJsonParseLiteral,
   tryEmitJsonStringifyStatic,
 } from "../json-standalone.js";
+import { compileObjectLiteralAsExternref } from "../literals.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-ops.js";
-import { ensureObjectRuntime } from "../object-runtime.js";
+import { ensureObjectRuntime, ensureObjVecBuilders } from "../object-runtime.js";
 import {
   emitStandalonePromiseCombinator,
   emitStandalonePromiseCombinatorRuntime,
@@ -100,6 +101,92 @@ function unwrapReflectConstructExpr(value: ts.Expression): ts.Expression {
     current = current.expression;
   }
   return current;
+}
+
+/**
+ * Materialize a syntactic array literal as the existing standalone `$ObjVec`
+ * carrier consumed by the native JSON codec. Ordinary array lowering chooses a
+ * closed typed vec from the literal's first element; that is the right general
+ * representation, but `__json_stringify_value` deliberately consumes the
+ * universal `$ObjVec` graph used by JSON.parse/object-runtime. Keep this
+ * normalization local to JSON.stringify rather than adding another array
+ * representation or teaching the codec every typed-vec element ABI.
+ */
+function emitJsonArrayLiteralAsObjVec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  literal: ts.ArrayLiteralExpression,
+): void {
+  const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
+  const vecLocal = allocLocal(fctx, `__json_vec_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "call", funcIdx: newIdx }, { op: "local.set", index: vecLocal });
+
+  for (const element of literal.elements) {
+    fctx.body.push({ op: "local.get", index: vecLocal });
+    if (ts.isOmittedExpression(element)) {
+      // Array holes stringify as null. A null externref is the codec's
+      // undefined/hole carrier for an array element.
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (ts.isArrayLiteralExpression(element) && !element.elements.some(ts.isSpreadElement)) {
+      emitJsonArrayLiteralAsObjVec(ctx, fctx, element);
+    } else if (ts.isObjectLiteralExpression(element) && isPlainJsonCodecObjectLiteral(element)) {
+      ensureObjectRuntime(ctx);
+      const elementType = compileObjectLiteralAsExternref(ctx, fctx, element);
+      if (elementType === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (elementType.kind !== "externref") {
+        coerceType(ctx, fctx, elementType, { kind: "externref" });
+      }
+    } else {
+      const elementType = compileExpression(ctx, fctx, element, { kind: "externref" });
+      if (elementType === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (elementType.kind !== "externref") {
+        coerceType(ctx, fctx, elementType, { kind: "externref" });
+      }
+    }
+    fctx.body.push({ op: "call", funcIdx: pushIdx });
+  }
+
+  fctx.body.push({ op: "local.get", index: vecLocal });
+}
+
+function isPlainJsonCodecObjectLiteral(literal: ts.ObjectLiteralExpression): boolean {
+  return literal.properties.every((property) => {
+    if (ts.isShorthandPropertyAssignment(property)) return true;
+    if (!ts.isPropertyAssignment(property)) return false;
+    return (
+      ts.isIdentifier(property.name) ||
+      ts.isStringLiteral(property.name) ||
+      ts.isNoSubstitutionTemplateLiteral(property.name) ||
+      ts.isNumericLiteral(property.name)
+    );
+  });
+}
+
+/**
+ * Normalize the bounded JSON.stringify value shapes into the existing codec's
+ * `anyref` ABI. This keeps literal-carrier selection out of the namespace
+ * dispatcher and gives compact/replacer routes one identical conversion path.
+ */
+function emitJsonCodecValueAsAnyref(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): boolean {
+  const unwrapped = unwrapReflectConstructExpr(value);
+  let valueType: ValType | null = { kind: "externref" };
+  if (ts.isArrayLiteralExpression(unwrapped) && !unwrapped.elements.some(ts.isSpreadElement)) {
+    emitJsonArrayLiteralAsObjVec(ctx, fctx, unwrapped);
+  } else if (ts.isObjectLiteralExpression(unwrapped) && isPlainJsonCodecObjectLiteral(unwrapped)) {
+    ensureObjectRuntime(ctx);
+    valueType = compileObjectLiteralAsExternref(ctx, fctx, unwrapped);
+  } else {
+    valueType = compileExpression(ctx, fctx, value, { kind: "anyref" });
+  }
+  if (valueType === null) return false;
+  if (valueType.kind === "externref" || valueType.kind === "ref_extern") {
+    fctx.body.push({ op: "any.convert_extern" });
+  } else if (valueType.kind !== "anyref") {
+    coerceType(ctx, fctx, valueType, { kind: "anyref" });
+  }
+  return true;
 }
 
 function isOrdinaryFunctionLike(node: ts.Node | undefined): boolean {
@@ -273,17 +360,32 @@ export function compileNamespaceStaticCall(
         fctx.body.push({ op: "call", funcIdx: forIdx });
         return { kind: "i32" };
       }
+      // (#3676) JS-host mode: return the module's CANONICAL i32 symbol id, not a
+      // raw host Symbol. A symbol VALUE is an i32 id everywhere else in the
+      // compiler — `mapTsTypeToWasm` maps `symbol` → i32 and the sibling
+      // producer `compileSymbolCall` (`Symbol()`) returns an unbranded
+      // `{ kind: "i32" }`. `Symbol.for` was the outlier returning `externref`,
+      // so a `symbol`-typed slot (module global, local, param) received an
+      // externref and `coerceType` bridged it with `__unbox_number` — literally
+      // `Number(Symbol())`, a guaranteed TypeError (§7.1.4) at `__module_init`.
+      // That is why React 19, whose very first statement is twelve chained
+      // `Symbol.for(...)` initializers, emitted a valid module that could not be
+      // instantiated. Returning i32 here puts `Symbol.for` on exactly the same,
+      // already-exercised footing as `Symbol()`: no new representation is
+      // introduced, an inconsistent one is removed. `__symbol_for_id` registers
+      // the id in the same per-instance cache `__box_symbol` reads, so identity
+      // survives a round trip through the host in both directions.
       const keyType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (keyType && keyType.kind !== "externref") coerceType(ctx, fctx, keyType, { kind: "externref" });
-      const funcIdx = ensureLateImport(ctx, "__symbol_for", [{ kind: "externref" }], [{ kind: "externref" }]);
+      const funcIdx = ensureLateImport(ctx, "__symbol_for_id", [{ kind: "externref" }], [{ kind: "i32" }]);
       flushLateImportShifts(ctx, fctx);
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
-        return { kind: "externref" };
+        return { kind: "i32" };
       }
       fctx.body.push({ op: "drop" });
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
+      fctx.body.push({ op: "i32.const", value: 0 });
+      return { kind: "i32" };
     }
     if (symMethod === "keyFor" && expr.arguments.length >= 1) {
       // (#2163) No-JS-host mode: the symbol is an i32 id; the native registry
@@ -295,6 +397,27 @@ export function compileNamespaceStaticCall(
         if (symType && symType.kind !== "i32") coerceType(ctx, fctx, symType, { kind: "i32" });
         fctx.body.push({ op: "call", funcIdx: keyForIdx });
         return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+      }
+      // (#3676) JS-host mode: when the argument is STATICALLY a symbol it is an
+      // i32 id (see the `Symbol.for` note above and `compileSymbolCall`), so
+      // resolve it through the id-keyed host helper. Coercing an i32 to
+      // `externref` here would box it with `__box_number` — the unbranded-i32
+      // hazard #2792 describes — and hand `Symbol.keyFor` a Number. Mirrors the
+      // identical static-type gate #3085 added for `String(sym)`.
+      // A non-symbol / `any` argument keeps the original externref path, where
+      // the host `Symbol.keyFor` produces the spec TypeError itself.
+      if (ctx.oracle.staticJsTypeOf(expr.arguments[0]!) === "symbol") {
+        const symIdType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "i32" });
+        if (symIdType && symIdType.kind !== "i32") coerceType(ctx, fctx, symIdType, { kind: "i32" });
+        const keyForIdIdx = ensureLateImport(ctx, "__symbol_keyFor_id", [{ kind: "i32" }], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (keyForIdIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: keyForIdIdx });
+          return { kind: "externref" };
+        }
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
       }
       const symType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
       if (symType && symType.kind !== "externref") coerceType(ctx, fctx, symType, { kind: "externref" });
@@ -1690,6 +1813,11 @@ export function compileNamespaceStaticCall(
             // index type with only integer / `length` own keys looks array-like.
             (arg0Type.getNumberIndexType() !== undefined &&
               arg0Type.getProperties().every((p) => /^\d+$/.test(p.name) || p.name === "length"));
+          const valueExpression = unwrapReflectConstructExpr(expr.arguments[0]!);
+          const arrayLiteralForCodec =
+            ts.isArrayLiteralExpression(valueExpression) && !valueExpression.elements.some(ts.isSpreadElement)
+              ? valueExpression
+              : undefined;
           // (#2166 PR-B) Resolve a static `space` argument to the §25.5.2
           // indent unit ("gap"). `undefined` space → compact (gap ""). A
           // *dynamic* space arg stays unresolved → keep the refusal below
@@ -1700,16 +1828,8 @@ export function compileNamespaceStaticCall(
             const staticSpace = staticSpaceValue(ctx, spaceArg);
             gap = staticSpace === undefined ? undefined : jsonGapFromStaticSpace(staticSpace);
           }
-          if (replacerNullish && gap !== undefined && !isArrayLike) {
-            const argResult = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "anyref" });
-            if (argResult === null) return null;
-            // Bring the value to anyref so the codec can ref.test-discriminate
-            // it. Externref-typed object/array values widen via any.convert_extern.
-            if (argResult.kind === "externref" || argResult.kind === "ref_extern") {
-              fctx.body.push({ op: "any.convert_extern" });
-            } else if (argResult.kind !== "anyref") {
-              coerceType(ctx, fctx, argResult, { kind: "anyref" });
-            }
+          if (replacerNullish && gap !== undefined && (!isArrayLike || arrayLiteralForCodec !== undefined)) {
+            if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!)) return null;
             emitJsonStringifyValue(ctx);
             flushLateImportShifts(ctx, fctx);
             if (gap === "") {
@@ -1730,7 +1850,12 @@ export function compileNamespaceStaticCall(
           // replacer is a key allowlist. Both route to the dynamic codec via
           // __json_stringify_root_replacer. The value must be a plain object
           // graph (PR-A scope — not array-like); a dynamic space still refuses.
-          if (!replacerNullish && gap !== undefined && !isArrayLike && replacerArg !== undefined) {
+          if (
+            !replacerNullish &&
+            gap !== undefined &&
+            (!isArrayLike || arrayLiteralForCodec !== undefined) &&
+            replacerArg !== undefined
+          ) {
             const replacerCallable =
               ts.isArrowFunction(replacerArg) ||
               ts.isFunctionExpression(replacerArg) ||
@@ -1738,13 +1863,7 @@ export function compileNamespaceStaticCall(
             const isArrayLiteral = ts.isArrayLiteralExpression(replacerArg);
             if (replacerCallable || isArrayLiteral) {
               // value → anyref
-              const argResult = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "anyref" });
-              if (argResult === null) return null;
-              if (argResult.kind === "externref" || argResult.kind === "ref_extern") {
-                fctx.body.push({ op: "any.convert_extern" });
-              } else if (argResult.kind !== "anyref") {
-                coerceType(ctx, fctx, argResult, { kind: "anyref" });
-              }
+              if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!)) return null;
               // gap (or null for compact)
               if (gap === "") {
                 fctx.body.push({ op: "ref.null", typeIdx: ctx.anyStrTypeIdx });

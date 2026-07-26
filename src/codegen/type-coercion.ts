@@ -1283,7 +1283,28 @@ function emitVecToVecBody(
   const dstRefIdx =
     dstKind === "ref" || dstKind === "ref_null" ? (dstVec.elemType as { typeIdx: number }).typeIdx : undefined;
   const needsCoerce = srcKind !== dstKind || srcRefIdx !== dstRefIdx;
-  if (needsCoerce) {
+  // (#2161/#2106) RegExp match vectors use a nullable native-string slot for
+  // unmatched captures. When that slot crosses the compareArray-style `any[]`
+  // boundary, preserve its JS meaning: the singleton regime represents
+  // `undefined` as a tag-1 externref, not as a null externref.
+  const undefinedInstrs =
+    srcKind === "ref_null" && srcRefIdx === ctx.anyStrTypeIdx && dstKind === "externref"
+      ? undefinedExternInstrs(ctx)
+      : undefined;
+  if (undefinedInstrs) {
+    const elemLocal = allocTempLocal(fctx, readElemType);
+    fctx.body.push(
+      { op: "local.tee", index: elemLocal },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: undefinedInstrs,
+        else: [{ op: "local.get", index: elemLocal }, { op: "extern.convert_any" }],
+      },
+    );
+    releaseTempLocal(fctx, elemLocal);
+  } else if (needsCoerce) {
     coerceType(ctx, fctx, readElemType, dstVec.elemType);
   }
   // Write to destination
@@ -1851,6 +1872,46 @@ export function coerceType(
       } else {
         elseBranch = [{ op: "ref.null", typeIdx: toIdx }];
       }
+    }
+
+    // (#2608 / #3098) A native string crossing an open property/call boundary
+    // may be carried by `$AnyValue` tag 5. Recover only an actual native-string
+    // payload. Generic ToString here would corrupt null/undefined sentinels and
+    // silently stringify unrelated objects at every typed-string boundary.
+    if (
+      (ctx.standalone || ctx.wasi) &&
+      ctx.nativeStrings &&
+      toIdx === ctx.anyStrTypeIdx &&
+      ctx.anyStrTypeIdx >= 0 &&
+      ctx.anyValueTypeIdx >= 0
+    ) {
+      const anyValueTypeIdx = ctx.anyValueTypeIdx;
+      const priorElse = elseBranch;
+      const loadAnyValueStringPayload = (): Instr[] => [
+        { op: "local.get", index: tmpAnyLocal },
+        { op: "ref.cast", typeIdx: anyValueTypeIdx },
+        { op: "struct.get", typeIdx: anyValueTypeIdx, fieldIdx: 4 },
+        { op: "any.convert_extern" },
+      ];
+      elseBranch = [
+        { op: "local.get", index: tmpAnyLocal },
+        { op: "ref.test", typeIdx: anyValueTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
+          then: [
+            ...loadAnyValueStringPayload(),
+            { op: "ref.test", typeIdx: toIdx },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "ref_null", typeIdx: toIdx } },
+              then: [...loadAnyValueStringPayload(), { op: "ref.cast_null", typeIdx: toIdx }],
+              else: [{ op: "ref.null", typeIdx: toIdx }],
+            },
+          ],
+          else: priorElse,
+        },
+      ];
     }
 
     const resultType: ValType = { kind: "ref_null", typeIdx: toIdx };

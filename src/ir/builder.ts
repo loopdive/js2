@@ -80,7 +80,7 @@ export class IrFunctionBuilder {
   private nextLabelId = 0;
 
   constructor(
-    private readonly name: string,
+    private readonly id: Pick<IrFunction, "unitId" | "name">,
     private readonly resultTypes: readonly IrType[],
     private readonly exported = false,
     // #1586: module-global allocation-site registry. Optional so test builders
@@ -102,7 +102,7 @@ export class IrFunctionBuilder {
 
   addParam(name: string, type: IrType): IrValueId {
     if (this.current !== null) {
-      throw new Error(`IrFunctionBuilder: params must be declared before the first block (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: params must be declared before the first block (func ${this.id.name})`);
     }
     const value = this.allocator.fresh();
     this.valueTypes.set(value, type);
@@ -114,7 +114,7 @@ export class IrFunctionBuilder {
 
   openBlock(blockArgTypes: readonly IrType[] = []): IrBlockId {
     if (this.current !== null) {
-      throw new Error(`IrFunctionBuilder: previous block not terminated (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: previous block not terminated (func ${this.id.name})`);
     }
     const id = asBlockId(this.nextBlockId++);
     this.current = this.makeOpen(id, blockArgTypes);
@@ -137,10 +137,10 @@ export class IrFunctionBuilder {
    */
   openReservedBlock(id: IrBlockId, blockArgTypes: readonly IrType[] = []): void {
     if (this.current !== null) {
-      throw new Error(`IrFunctionBuilder: previous block not terminated (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: previous block not terminated (func ${this.id.name})`);
     }
     if (!this.reserved.has(id)) {
-      throw new Error(`IrFunctionBuilder: block ${id as number} was not reserved (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: block ${id as number} was not reserved (func ${this.id.name})`);
     }
     this.reserved.delete(id);
     this.current = this.makeOpen(id, blockArgTypes);
@@ -390,7 +390,7 @@ export class IrFunctionBuilder {
   emitBox(value: IrValueId, toType: IrType): IrValueId {
     if (this.typeOf(value).kind === "dynamic") {
       throw new Error(
-        `IrFunctionBuilder: emitBox operand ${value} is already dynamic — re-boxing a dynamic value is invalid (#2949 R1) (func ${this.name})`,
+        `IrFunctionBuilder: emitBox operand ${value} is already dynamic — re-boxing a dynamic value is invalid (#2949 R1) (func ${this.id.name})`,
       );
     }
     const result = this.allocator.fresh();
@@ -423,7 +423,7 @@ export class IrFunctionBuilder {
     const payload = jsTagUnboxKind(jsTag);
     if (payload === null) {
       throw new Error(
-        `IrFunctionBuilder: emitUnbox with payload-less JsTag ${JsTag[jsTag]} is invalid — use emitTagTest (#2949 R2) (func ${this.name})`,
+        `IrFunctionBuilder: emitUnbox with payload-less JsTag ${JsTag[jsTag]} is invalid — use emitTagTest (#2949 R2) (func ${this.id.name})`,
       );
     }
     const payloadVal: ValType =
@@ -469,7 +469,7 @@ export class IrFunctionBuilder {
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(
-        `IrFunctionBuilder: emitDynTruthy operand ${value} is not dynamic — general truthiness applies only to the boxed-any carrier (#2949 S5.1) (func ${this.name})`,
+        `IrFunctionBuilder: emitDynTruthy operand ${value} is not dynamic — general truthiness applies only to the boxed-any carrier (#2949 S5.1) (func ${this.id.name})`,
       );
     }
     const resultType = irVal({ kind: "i32" });
@@ -497,7 +497,7 @@ export class IrFunctionBuilder {
   emitDynToNumber(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(
-        `IrFunctionBuilder: emitDynToNumber operand ${value} is not dynamic — carrier ToNumber applies only to the boxed-any carrier (#2949 S5.3) (func ${this.name})`,
+        `IrFunctionBuilder: emitDynToNumber operand ${value} is not dynamic — carrier ToNumber applies only to the boxed-any carrier (#2949 S5.3) (func ${this.id.name})`,
       );
     }
     const resultType = irVal({ kind: "f64" });
@@ -530,7 +530,7 @@ export class IrFunctionBuilder {
     ] as const) {
       if (this.typeOf(v).kind !== "dynamic") {
         throw new Error(
-          `IrFunctionBuilder: emitDynEq ${label} operand ${v} is not dynamic — carrier equality applies only to boxed-any operands; box concrete operands first (#2949 S5.2) (func ${this.name})`,
+          `IrFunctionBuilder: emitDynEq ${label} operand ${v} is not dynamic — carrier equality applies only to boxed-any operands; box concrete operands first (#2949 S5.2) (func ${this.id.name})`,
         );
       }
     }
@@ -569,7 +569,7 @@ export class IrFunctionBuilder {
     ] as const) {
       if (this.typeOf(v).kind !== "dynamic") {
         throw new Error(
-          `IrFunctionBuilder: emitDynMemberGet ${label} operand ${v} is not dynamic — the dynamic member read applies only to boxed-any carriers; box the receiver/key first (#3053 U1 / #2949 S5.4) (func ${this.name})`,
+          `IrFunctionBuilder: emitDynMemberGet ${label} operand ${v} is not dynamic — the dynamic member read applies only to boxed-any carriers; box the receiver/key first (#3053 U1 / #2949 S5.4) (func ${this.id.name})`,
         );
       }
     }
@@ -592,7 +592,7 @@ export class IrFunctionBuilder {
   emitObjectNew(shape: IrObjectShape, values: readonly IrValueId[]): IrValueId {
     if (values.length !== shape.fields.length) {
       throw new Error(
-        `IrFunctionBuilder: object.new value count ${values.length} != shape field count ${shape.fields.length} (func ${this.name})`,
+        `IrFunctionBuilder: object.new value count ${values.length} != shape field count ${shape.fields.length} (func ${this.id.name})`,
       );
     }
     const result = this.allocator.fresh();
@@ -657,7 +657,7 @@ export class IrFunctionBuilder {
   ): IrValueId {
     if (captureFieldTypes.length !== captures.length) {
       throw new Error(
-        `IrFunctionBuilder: closure.new captureFieldTypes count ${captureFieldTypes.length} != captures count ${captures.length} (func ${this.name})`,
+        `IrFunctionBuilder: closure.new captureFieldTypes count ${captureFieldTypes.length} != captures count ${captures.length} (func ${this.id.name})`,
       );
     }
     const result = this.allocator.fresh();
@@ -786,7 +786,7 @@ export class IrFunctionBuilder {
   emitClassNew(shape: IrClassShape, args: readonly IrValueId[]): IrValueId {
     if (args.length !== shape.constructorParams.length) {
       throw new Error(
-        `IrFunctionBuilder: class.new arg count ${args.length} != constructor arity ${shape.constructorParams.length} (func ${this.name}, class ${shape.className})`,
+        `IrFunctionBuilder: class.new arg count ${args.length} != constructor arity ${shape.constructorParams.length} (func ${this.id.name}, class ${shape.className})`,
       );
     }
     const result = this.allocator.fresh();
@@ -1101,7 +1101,7 @@ export class IrFunctionBuilder {
   typeOf(value: IrValueId): IrType {
     const t = this.valueTypes.get(value);
     if (t === undefined) {
-      throw new Error(`IrFunctionBuilder: unknown value ${value} in func ${this.name}`);
+      throw new Error(`IrFunctionBuilder: unknown value ${value} in func ${this.id.name}`);
     }
     return t;
   }
@@ -1111,21 +1111,21 @@ export class IrFunctionBuilder {
     readonly captureFieldTypes: readonly IrType[];
   }): IrFunction {
     if (this.current !== null) {
-      throw new Error(`IrFunctionBuilder: finish() while block ${this.current.id} still open (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: finish() while block ${this.current.id} still open (func ${this.id.name})`);
     }
     if (this.reserved.size > 0) {
       const ids = [...this.reserved].map((b) => b as number).join(",");
-      throw new Error(`IrFunctionBuilder: reserved block(s) [${ids}] never opened (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: reserved block(s) [${ids}] never opened (func ${this.id.name})`);
     }
     if (this.finished.length === 0) {
-      throw new Error(`IrFunctionBuilder: function ${this.name} has no blocks`);
+      throw new Error(`IrFunctionBuilder: function ${this.id.name} has no blocks`);
     }
     // Blocks may have been pushed out-of-order (a forward-referenced block is
     // opened after blocks allocated during its predecessor's lowering). The
     // verifier and the lowerer both expect `blocks[i].id === i`.
     const sorted = [...this.finished].sort((a, b) => (a.id as number) - (b.id as number));
     return {
-      name: this.name,
+      ...this.id,
       params: this.params,
       resultTypes: [...this.resultTypes],
       blocks: sorted,
@@ -1147,7 +1147,7 @@ export class IrFunctionBuilder {
    */
   setFuncKind(kind: "regular" | "generator" | "async"): void {
     if (kind !== "regular" && this.funcKind !== "regular" && this.funcKind !== kind) {
-      throw new Error(`IrFunctionBuilder: setFuncKind conflict in ${this.name} (was ${this.funcKind}, now ${kind})`);
+      throw new Error(`IrFunctionBuilder: setFuncKind conflict in ${this.id.name} (was ${this.funcKind}, now ${kind})`);
     }
     this.funcKind = kind;
   }
@@ -1161,7 +1161,7 @@ export class IrFunctionBuilder {
    */
   setGeneratorBufferSlot(slotIndex: number): void {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: setGeneratorBufferSlot requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: setGeneratorBufferSlot requires funcKind=generator (${this.id.name})`);
     }
     this.generatorBufferSlot = slotIndex;
   }
@@ -1186,7 +1186,7 @@ export class IrFunctionBuilder {
    */
   emitAwait(operand: IrValueId): IrValueId {
     if (this.funcKind !== "async") {
-      throw new Error(`IrFunctionBuilder: emitAwait requires funcKind=async (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitAwait requires funcKind=async (${this.id.name})`);
     }
     const resultType: IrType = { kind: "val", val: { kind: "externref" } };
     const result = this.allocator.fresh();
@@ -1198,7 +1198,7 @@ export class IrFunctionBuilder {
   /** Emit a `gen.push` instr — push a yielded value onto the buffer. */
   emitGenPush(value: IrValueId): void {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: emitGenPush requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenPush requires funcKind=generator (${this.id.name})`);
     }
     this.pushInstr({ kind: "gen.push", value, result: null, resultType: null });
   }
@@ -1211,10 +1211,10 @@ export class IrFunctionBuilder {
    */
   emitGenEpilogue(): IrValueId {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: emitGenEpilogue requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenEpilogue requires funcKind=generator (${this.id.name})`);
     }
     if (this.generatorBufferSlot === undefined) {
-      throw new Error(`IrFunctionBuilder: emitGenEpilogue requires setGeneratorBufferSlot first (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenEpilogue requires setGeneratorBufferSlot first (${this.id.name})`);
     }
     const result = this.allocator.fresh();
     const resultType: IrType = irVal({ kind: "externref" });
@@ -1234,7 +1234,7 @@ export class IrFunctionBuilder {
    */
   emitGenYieldStar(inner: IrValueId): void {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: emitGenYieldStar requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenYieldStar requires funcKind=generator (${this.id.name})`);
     }
     this.pushInstr({ kind: "gen.yieldStar", inner, result: null, resultType: null });
   }
@@ -1251,17 +1251,17 @@ export class IrFunctionBuilder {
    */
   emitGenSetReturn(value: IrValueId): void {
     if (this.funcKind !== "generator") {
-      throw new Error(`IrFunctionBuilder: emitGenSetReturn requires funcKind=generator (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenSetReturn requires funcKind=generator (${this.id.name})`);
     }
     if (this.generatorBufferSlot === undefined) {
-      throw new Error(`IrFunctionBuilder: emitGenSetReturn requires setGeneratorBufferSlot first (${this.name})`);
+      throw new Error(`IrFunctionBuilder: emitGenSetReturn requires setGeneratorBufferSlot first (${this.id.name})`);
     }
     this.pushInstr({ kind: "gen.setReturn", value, result: null, resultType: null });
   }
 
   private requireBlock(): OpenBlock {
     if (this.current === null) {
-      throw new Error(`IrFunctionBuilder: no open block (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: no open block (func ${this.id.name})`);
     }
     return this.current;
   }
@@ -1298,7 +1298,7 @@ export class IrFunctionBuilder {
   emitSlotRead(slotIndex: number): IrValueId {
     const slot = this.slotDefs[slotIndex];
     if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.id.name})`);
     }
     const result = this.allocator.fresh();
     const resultType = irVal(slot.type);
@@ -1323,7 +1323,7 @@ export class IrFunctionBuilder {
   emitSlotReadAs(slotIndex: number, asType: IrType): IrValueId {
     const slot = this.slotDefs[slotIndex];
     if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: slot.read with unknown index ${slotIndex} (func ${this.id.name})`);
     }
     const result = this.allocator.fresh();
     this.valueTypes.set(result, asType);
@@ -1335,7 +1335,7 @@ export class IrFunctionBuilder {
   emitSlotWrite(slotIndex: number, value: IrValueId): void {
     const slot = this.slotDefs[slotIndex];
     if (!slot) {
-      throw new Error(`IrFunctionBuilder: slot.write with unknown index ${slotIndex} (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: slot.write with unknown index ${slotIndex} (func ${this.id.name})`);
     }
     this.pushInstr({ kind: "slot.write", slotIndex, value, result: null, resultType: null });
   }
@@ -1465,7 +1465,7 @@ export class IrFunctionBuilder {
   emitCallablePack(value: IrValueId, signature: IrClosureSignature): IrValueId {
     const valueType = this.typeOf(value);
     if (valueType.kind !== "closure" || !closureSignatureEquals(valueType.signature, signature)) {
-      throw new Error(`IrFunctionBuilder: callable pack requires an exact closure signature (func ${this.name})`);
+      throw new Error(`IrFunctionBuilder: callable pack requires an exact closure signature (func ${this.id.name})`);
     }
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "callable", signature };

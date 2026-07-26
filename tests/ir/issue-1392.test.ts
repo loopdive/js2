@@ -28,7 +28,9 @@ import {
   type IrValueId,
 } from "../../src/ir/index.js";
 import { constantFold } from "../../src/ir/passes/constant-fold.js";
+import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("ir/issue-1392");
 const I32 = irVal({ kind: "i32" });
 const F64 = irVal({ kind: "f64" });
 const EXTERNREF = irVal({ kind: "externref" });
@@ -59,7 +61,7 @@ describe("#1392 — IR null-safe access primitives", () => {
     it("verifies a function that emits unary('ref.is_null', externrefParam)", () => {
       // function f(x: externref): i32 { return ref.is_null(x); }
       const fn: IrFunction = {
-        name: "f",
+        ...identities.next("f"),
         params: [{ value: id(0), type: EXTERNREF, name: "x" }],
         resultTypes: [I32],
         blocks: [
@@ -80,7 +82,7 @@ describe("#1392 — IR null-safe access primitives", () => {
 
     it("lowers to a Wasm ref.is_null op", () => {
       const fn: IrFunction = {
-        name: "f",
+        ...identities.next("f"),
         params: [{ value: id(0), type: EXTERNREF, name: "x" }],
         resultTypes: [I32],
         blocks: [
@@ -107,7 +109,7 @@ describe("#1392 — IR null-safe access primitives", () => {
     it("constant-fold leaves ref.is_null untouched (non-foldable)", () => {
       // We don't track ref-typed constants, so the fold must be a no-op.
       const fn: IrFunction = {
-        name: "f",
+        ...identities.next("f"),
         params: [{ value: id(0), type: EXTERNREF, name: "x" }],
         resultTypes: [I32],
         blocks: [
@@ -130,7 +132,7 @@ describe("#1392 — IR null-safe access primitives", () => {
 
   describe("IrInstrIf value-producing if/else", () => {
     it("builds and verifies a simple if(cond) { 1 } else { 0 } via the builder", () => {
-      const builder = new IrFunctionBuilder("f", [F64]);
+      const builder = new IrFunctionBuilder(identities.next("f"), [F64]);
       const cond = builder.addParam("cond", I32);
       builder.openBlock();
 
@@ -160,7 +162,7 @@ describe("#1392 — IR null-safe access primitives", () => {
     });
 
     it("lowers to a Wasm if/else block with the right result type", () => {
-      const builder = new IrFunctionBuilder("f", [F64]);
+      const builder = new IrFunctionBuilder(identities.next("f"), [F64]);
       const cond = builder.addParam("cond", I32);
       builder.openBlock();
 
@@ -198,7 +200,7 @@ describe("#1392 — IR null-safe access primitives", () => {
     it("supports nested collectBodyInstrs (required for chained ?.b?.c)", () => {
       // Nested arms: outer if -> inner if -> const. Verifies that the
       // builder's bodyBuffer save/restore allows nested arm collection.
-      const builder = new IrFunctionBuilder("f", [F64]);
+      const builder = new IrFunctionBuilder(identities.next("f"), [F64]);
       const cond = builder.addParam("cond", I32);
       builder.openBlock();
 
@@ -252,7 +254,7 @@ describe("#1392 — IR null-safe access primitives", () => {
 
   describe("emitRefIsNull builder method", () => {
     it("emits unary('ref.is_null', val) returning an i32 IrValueId", () => {
-      const builder = new IrFunctionBuilder("f", [I32]);
+      const builder = new IrFunctionBuilder(identities.next("f"), [I32]);
       const x = builder.addParam("x", EXTERNREF);
       builder.openBlock();
       const isNull = builder.emitRefIsNull(x);

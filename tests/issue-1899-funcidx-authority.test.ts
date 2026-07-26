@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { compile } from "../src/index.js";
 import { eliminateDeadImports } from "../src/codegen/dead-elimination.js";
 import type { WasmModule } from "../src/ir/types.js";
@@ -148,6 +148,97 @@ describe("#1899 dead-elim remaps ctx helper side-tables in lockstep", () => {
     const after1 = ctx.funcMap.get("__cal");
     eliminateDeadImports(mod, ctx as never); // no dead imports left → fR empty
     expect(ctx.funcMap.get("__cal")).toBe(after1);
+  });
+
+  it("reports the exact complete type layout before removing a middle type", () => {
+    const previousTypes: WasmModule["types"] = [
+      {
+        kind: "func",
+        params: [{ kind: "ref", typeIdx: 2 }],
+        results: [],
+      },
+      { kind: "struct", name: "dead-middle", fields: [] },
+      { kind: "struct", name: "live-capture", fields: [] },
+    ];
+    const mod: WasmModule = {
+      types: previousTypes,
+      imports: [],
+      functions: [{ name: "live", typeIdx: 0, locals: [], body: [], exported: true }],
+      exports: [{ name: "live", desc: { kind: "func", index: 0 } }],
+      globals: [],
+      elements: [],
+      tags: [],
+      declaredFuncRefs: [],
+      memories: [],
+      datas: [],
+      startFuncIdx: undefined,
+    } as unknown as WasmModule;
+    const applyTypeLayoutRemap = vi.fn(
+      (layout: {
+        previousTypes: readonly unknown[];
+        nextTypes: readonly unknown[];
+        targetsByOldIndex: readonly (number | null)[];
+      }) => {
+        expect(mod.types).toBe(previousTypes);
+        expect(layout.previousTypes).toBe(previousTypes);
+        expect(layout.nextTypes).not.toBe(previousTypes);
+      },
+    );
+    const ctx = {
+      ...fakeCtx(mod),
+      programAbiSession: { applyTypeLayoutRemap },
+    };
+
+    eliminateDeadImports(mod, ctx as never);
+
+    expect(applyTypeLayoutRemap).toHaveBeenCalledTimes(1);
+    const layout = applyTypeLayoutRemap.mock.calls[0]![0];
+    expect(layout.previousTypes).toBe(previousTypes);
+    expect(layout.nextTypes).toBe(mod.types);
+    expect(layout.targetsByOldIndex).toEqual([0, null, 1]);
+    expect(mod.types).toHaveLength(2);
+    expect(mod.types[0]).toMatchObject({
+      kind: "func",
+      params: [{ kind: "ref", typeIdx: 1 }],
+    });
+    expect(mod.types[1]).toMatchObject({ kind: "struct", name: "live-capture" });
+  });
+
+  it("leaves the whole module unchanged when ABI type-layout validation rejects", () => {
+    const previousTypes: WasmModule["types"] = [
+      { kind: "func", params: [], results: [] },
+      { kind: "struct", name: "dead-type", fields: [] },
+    ];
+    const previousImports = [mkFuncImport("dead", 0)];
+    const mod: WasmModule = {
+      types: previousTypes,
+      imports: previousImports,
+      functions: [{ name: "live", typeIdx: 0, locals: [], body: [], exported: true }],
+      exports: [{ name: "live", desc: { kind: "func", index: 1 } }],
+      globals: [],
+      elements: [],
+      tags: [],
+      declaredFuncRefs: [],
+      memories: [],
+      datas: [],
+      startFuncIdx: undefined,
+    } as unknown as WasmModule;
+    const snapshot = structuredClone(mod);
+    const rejection = new Error("reject ABI type layout");
+    const ctx = {
+      ...fakeCtx(mod),
+      programAbiSession: {
+        applyTypeLayoutRemap: vi.fn(() => {
+          throw rejection;
+        }),
+      },
+    };
+
+    expect(() => eliminateDeadImports(mod, ctx as never)).toThrow(rejection);
+    expect(mod).toEqual(snapshot);
+    expect(mod.types).toBe(previousTypes);
+    expect(mod.imports).toBe(previousImports);
+    expect(ctx.programAbiSession.applyTypeLayoutRemap).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -32,6 +32,7 @@ benchmarks/results/*.txt
 # but it must never be re-committed to this repo.
 benchmarks/results/test262-current.jsonl
 benchmarks/results/test262-results.jsonl
+benchmarks/results/test262-run.log
 .pnpm-store/
 .claude/settings.local.json
 .claude/max-load

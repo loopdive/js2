@@ -12,12 +12,15 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3
 import { ts } from "../ts-api.js";
 import { emitCachedFuncClosureAccess } from "./closures.js";
 import { pushBuiltinCtorOwnPropSeed } from "./builtin-ctor-own-props.js";
+import { BUILTIN_STATIC_METHOD_ARITY, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
+import { ensureStandaloneBuiltinStaticMethodClosure } from "./builtin-value-read.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
+import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 const SUPPORTED_STATIC_PROPS: ReadonlyMap<string, readonly string[]> = new Map([
   ["Array", ["isArray"]],
@@ -279,6 +282,11 @@ export function emitBuiltinStaticMethodValue(
   builtinName: string,
   propName: string,
 ): ValType | null {
+  const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, propName);
+  if (closure) {
+    fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+    return closure.type;
+  }
   const funcIdx = ensureBuiltinStaticFunc(ctx, builtinName, propName);
   if (funcIdx === undefined) return null;
   return emitCachedFuncClosureAccess(ctx, fctx, hiddenName(builtinName, propName), funcIdx);
@@ -291,17 +299,79 @@ function coerceTopToExternref(fctx: FunctionContext, valueType: ValType | null):
   }
 }
 
+/**
+ * Install the runtime-visible own properties of the JSON namespace carrier.
+ *
+ * Direct `JSON.parse` / `JSON.stringify` reads have dedicated compiler paths,
+ * but test262's descriptor helpers pass `JSON` through an `any`-typed
+ * parameter. That loses the syntactic namespace identity and reaches the
+ * native `$Object` MOP, where the carrier used to be empty. Seed the same
+ * identity-stable builtin-function singletons used by direct VALUE reads so
+ * dynamic gOPD/hasOwn/property access observe genuine own method properties.
+ *
+ * This deliberately does NOT add the methods to `SUPPORTED_STATIC_PROPS`:
+ * doing so would reroute direct calls through the older Array/Object-only
+ * `emitBuiltinStaticMethodValue` path. The carrier seed is a separate runtime
+ * reflection surface.
+ */
+function pushJsonNamespaceOwnPropSeed(ctx: CodegenContext, fctx: FunctionContext, objLocal: number): void {
+  if (!ctx.standalone && !ctx.wasi) return;
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineIdx === undefined) return;
+
+  // §17 builtin methods: { writable:true, enumerable:false,
+  // configurable:true }.
+  const METHOD_FLAGS = 0x01 | 0x04;
+  for (const prop of ["parse", "stringify", "rawJSON", "isRawJSON"] as const) {
+    const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, "JSON", prop);
+    if (!closure) continue;
+    fctx.body.push({ op: "local.get", index: objLocal });
+    addStringConstantGlobal(ctx, prop);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, prop));
+    fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "f64.const", value: METHOD_FLAGS });
+    fctx.body.push({ op: "call", funcIdx: defineIdx });
+    fctx.body.push({ op: "drop" });
+  }
+
+  // §25.5.3 JSON[@@toStringTag] = "JSON":
+  // { writable:false, enumerable:false, configurable:true }.
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (boxSymbolIdx === undefined) return;
+  fctx.body.push({ op: "local.get", index: objLocal });
+  fctx.body.push({ op: "i32.const", value: 4 }); // Symbol.toStringTag
+  fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+  addStringConstantGlobal(ctx, "JSON");
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, "JSON"));
+  fctx.body.push({ op: "f64.const", value: 0x04 });
+  fctx.body.push({ op: "call", funcIdx: defineIdx });
+  fctx.body.push({ op: "drop" });
+}
+
 export function emitBuiltinNamespaceObject(
   ctx: CodegenContext,
   fctx: FunctionContext,
   builtinName: string,
 ): ValType | null {
-  const props = SUPPORTED_STATIC_PROPS.get(builtinName);
-  if (!props) return null;
+  const baselineProps = SUPPORTED_STATIC_PROPS.get(builtinName);
+  if (!baselineProps) return null;
+  // A namespace carrier is materialized only when the namespace is used as a
+  // value. At that demand point, source its complete function-valued own
+  // surface from the same canonical registry that drives static value
+  // metadata/closure materialization. This lets runtime reflection through
+  // stored/uncurried helpers observe the same ownership as direct access.
+  const props = Array.from(
+    new Set([
+      ...baselineProps,
+      ...(builtinName === "JSON" ? [] : Object.keys(BUILTIN_STATIC_METHOD_ARITY[builtinName] ?? {})),
+    ]),
+  );
 
   ensureObjectRuntime(ctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object")!;
-  const setIdx = ctx.funcMap.get("__extern_set")!;
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value")!;
 
   let globalIdx = ctx.builtinObjectGlobals.get(builtinName);
   if (globalIdx === undefined) {
@@ -337,7 +407,15 @@ export function emitBuiltinNamespaceObject(
       fctx.body.push(...stringConstantExternrefInstrs(ctx, prop));
       const valueType = emitBuiltinStaticMethodValue(ctx, fctx, builtinName, prop);
       coerceTopToExternref(fctx, valueType);
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      // Builtin static methods are writable, non-enumerable, configurable.
+      // Host descriptor encoding: value bits 0b101 + all three specified bits
+      // + hasValue = 0xBD.
+      fctx.body.push({ op: "f64.const", value: 0xbd });
+      fctx.body.push({ op: "call", funcIdx: defineValueIdx });
+      fctx.body.push({ op: "drop" });
+    }
+    if (builtinName === "JSON") {
+      pushJsonNamespaceOwnPropSeed(ctx, fctx, objLocal);
     }
     // (#2984 ctor-carrier own props) The Error-family / `Array` / `Object`
     // carriers are CONSTRUCTOR objects, so they also own `length`/`name`/

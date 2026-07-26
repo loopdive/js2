@@ -147,6 +147,71 @@ signature. There is no single mega-fix in ES5.
 | A4 "Expected a SyntaxError…"                                       | 5         |                                        |
 | **uncovered / diffuse**                                            | **1,223** | 411 buckets                            |
 
+### 2.1b The "1,223 diffuse" figure is partly an artifact of the GROUPING FUNCTION (#23, 2026-07-26)
+
+**"1,223 diffuse across 411 buckets with no repeating signature" is a claim about
+`error_signature`, not about the population.** If the normalisation retains
+test-specific data (values, property names, indices), genuinely-shared mechanisms
+scatter into singletons and read as irreducible. That is measurable, so it was
+measured: the **same** failures, re-grouped at five normalisation strengths.
+
+| normalisation                  | groups | singletons | in clusters | cluster coverage |
+| ------------------------------ | -----: | ---------: | ----------: | ---------------: |
+| L0 raw                         |    850 |    **632** |       1,334 |           67.9 % |
+| L1 strip location              |    850 |        632 |       1,334 |           67.9 % |
+| L2 + strip quoted values       |    702 |        522 |       1,444 |           73.4 % |
+| L3 + strip numbers/identifiers |    646 |        474 |       1,492 |           75.9 % |
+| L4 first clause only           |    499 |    **319** |       1,647 |       **83.8 %** |
+
+**Singletons halve (632 → 319) and cluster coverage rises 67.9 % → 83.8 % purely
+from coarser grouping** — no new data, same failures. So a substantial share of
+the "irreducible residue" is shared-mechanism work that the census's
+normalisation scattered.
+
+**"No single mega-fix in ES5" may still hold, but "1,223 diffuse" overstates the
+irreducible residue.** This sharpens §2.1 rather than contradicting it: signature
+counts are a floor, **and the floor itself moves with normalisation strength.**
+
+> **CAVEAT — L4 is one END of a range, not the right answer.** Past some
+> strength, grouping stops revealing mechanisms and starts inventing them. The
+> L4 cluster `Expected SameValue(«V», «V») to be true` × 69 is
+> **over-normalised by construction**: L4 erases the very values that
+> distinguish those failures, so it is a routing label, not a mechanism. Read
+> the table as a range (L0 floor → L4 ceiling), exactly as §2.1 says to read
+> signatures-vs-paths. Do not quote L4 alone.
+
+**Cross-validation.** At L4 the top clusters land on independently-derived
+census families, which is the evidence that the method is sound:
+
+| L4 cluster                                              | n   | census family                     |
+| ------------------------------------------------------- | --- | --------------------------------- |
+| `Expected a TypeError to be thrown…`                    | 140 | **A3 = 139**                      |
+| `An initialized binding is not created… ReferenceError` | 96  | **A5 Annex B B.3.3 = 96** (exact) |
+| `accessed !== true`                                     | 38  | **B1 = 38** (exact)               |
+| `null is not a function [in __module_init()]`           | 35  | C2 (145), partial                 |
+| `obj[X] descriptor should not be enumerable`            | 82  | **none** — see below              |
+
+The 82 has no census counterpart because it is **#3603 S1's own host
+de-inflation** landing in the ES5 population (157 of that PR's 1,066 regressions
+are ES5-classified, 2.3 % of the ES5 passing set, concentrated in
+`Object/defineProperty` and `Object/defineProperties` — the two largest clusters
+below, both heavy `verifyProperty` users). Numbers here therefore post-date
+#3603; the census's own figures pre-date it.
+
+> **⚠ POPULATION TRAP — do not repeat this mistake.** A first pass classified
+> ES5 membership using only the edition classifier's rules 1 and 4 (`es5id:`
+> frontmatter, `annexB/` path) and ran on **2,631** rows. That is the WRONG
+> population: the census **partitions eval- and with-dependent tests OUT** of its
+> reachable set (§1). The correct population is **1,966** (484 eval-dependent +
+> 181 with-dependent were contaminating it). The contaminated run produced a
+> spurious top cluster — `assert is not defined` × 184, ALL of them in
+> `annexB/language/eval-code` — which looked like the largest lever in ES5 and
+> was not part of the diffuse set at all. **Apply the §1 eval/with partition
+> before grouping**, or the biggest apparent finding will be an excluded bucket.
+
+Probe: `.tmp/3603/es5-regroup.mjs` (method; re-derive counts against a
+current baseline before quoting).
+
 Path clusters, for routing only (**these are not shared-mechanism claims**):
 
 | path bucket (routing label)                 | fail | of tests in bucket  |
@@ -191,6 +256,67 @@ large share of A3 (139) — in strict mode a rejected `[[Set]]` must throw
 Confirmed floor: **73 tests**. Ceiling if the whole descriptor path cluster is
 one mechanism: **564**. The honest estimate needs a post-fix re-run; do not
 quote 564 as a flip count.
+
+### 2.2.1 ⚠️ CORRECTION (2026-07-26, opus-loop-e) — §2.2 IS REFUTED. DO NOT USE IT.
+
+**The "confirmed floor of 73" is WITHDRAWN. Both §2.2 "probe-confirmed" rows are
+artifacts.** Re-measured on HEAD against the baseline jsonl + V8 controls while
+implementing #739 S2. Do not re-derive the old numbers from the table above.
+
+**A2 ("delete of non-configurable succeeds", 22) — the defect does not exist.**
+HEAD is already spec-correct:
+`defineProperty(o,'x',{value:1,configurable:false}); try{delete o.x}catch(e){e.name}`
+→ **"threw TypeError"**, matching a V8 control. The §2.2 probe recorded
+`'x' in o` → `false`; but the `delete` **throws**, so `'x' in o` never evaluated
+and the recorded `false` is a **swallowed-exception artifact — the probe measured
+nothing and reported a defect.** This is the `propertyHelper`/`verifyProperty`
+vacuity class (#3468/#3592/#3434) landing on the census written to map that very
+area. Corroboration that no mechanism is there: corpus-wide, `configurable`
+failure signatures total **~16, all singletons**. A real mechanism leaves a
+population behind; this one left none.
+
+**A1 ("write to non-writable silently succeeds", 51) — real defect, but the
+DIRECTION is inverted.** Corpus-wide, 18 signatures mention `writable` (~59
+failures):
+
+| direction                                        | count | note                                                             |
+| ------------------------------------------------ | ----- | ---------------------------------------------------------------- |
+| "Expected obj[X] **to be writable, but was not**" | 34    | properties **over**-restricted — the dominant real defect        |
+| "Expected obj[name] **NOT to be writable, but was**" | 10 | the §2.2 direction — all in `{using,await-using}/fn-name-*`, i.e. explicit resource management, **not ES5 descriptors** |
+
+So the ES5-scoped count in the claimed direction is **≤10, not 51**, and the
+dominant defect points the opposite way. The §2.2 probe used an *inline-literal*
+descriptor; with a *variable* descriptor HEAD already throws the correct
+TypeError (#739 S1 pinning works). One unvaried axis (descriptor shape) was read
+as a general claim.
+
+**The descriptor bucket is NOT one mechanism** — which retires the "ceiling 564"
+framing and confirms §2.1's own warning: `built-ins/Object/defineProperty` is
+**276 failures across 102 distinct signatures**, largest **17 (6 % of the
+bucket)**.
+
+**What IS probe-confirmed** (clean A/B, only the initializer varies):
+
+```
+const d = {};           d.value = 1;  Object.defineProperty(d,'configurable',{get})  → getter FIRES  ✓
+const d = { value: 1 };               Object.defineProperty(d,'configurable',{get})  → getter SILENT ✗
+```
+
+Root cause: #739 S1's representation pin lives in `collectEmptyObjectWidening`,
+which only reaches **empty-`{}`** vars. A **non-empty** literal that later
+receives a runtime-store-routed define stays a widened struct, the accessor
+lands in the `_wasmPropDescs` sidecar, and ToPropertyDescriptor's struct-field
+reader never invokes the getter — although §6.2.5.5 requires a full `[[Get]]`
+per descriptor field. Same two-store bug as #739, but on the **descriptor**
+object rather than the receiver. Population: family B1 `accessed !== true` = 38
+ES5-scoped / 61 corpus-wide — **a floor, not a forecast.**
+
+**Method note for whoever measures here next:** if an assertion can throw before
+the value you are reading is evaluated, you are measuring the throw, not the
+value. Always run a negative control that MUST report failure — several probes
+in this investigation silently returned `0` from `String(boolean)` or reported
+"invalid wasm" from an unrelated `typeof e` construct, and only the control
+caught them.
 
 ### 2.3 Mechanical vs hard
 
@@ -308,7 +434,7 @@ census issue): #671, #739, #2200, #2552, #2666, #2668, #2726, #2737, #2742,
 #2747, #3230, #3420, #3434, #3475, #3540.
 
 `goal:` is single-valued (`sync-goal-issue-tables.mjs` matches the goal file
-name exactly), so a retag *moves* an issue rather than adding a second home.
+name exactly), so a retag _moves_ an issue rather than adding a second home.
 Deliberate exclusions:
 
 - **Standalone-lane ES5 work stays under the standalone goals** — #2036, #2042,

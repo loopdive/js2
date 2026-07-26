@@ -1,8 +1,9 @@
 ---
 id: 739
 title: "Object.defineProperty correctness — host-lane store-unification (representation pinning) + defineProperties two-phase apply"
-status: ready
-assignee: fable-739
+status: done
+completed: 2026-07-26
+assignee: ttraenkler/opus-loop-e
 created: 2026-03-22
 updated: 2026-07-18
 priority: high
@@ -364,6 +365,144 @@ Targets (gate each slice on its own diff):
 - **Do NOT repeat the #3230 traps**: no read-only or write-only rerouting; no
   `__extern_get` fallback layering. Pinning removes the second store instead
   of bridging it.
+
+## S2 outcome (2026-07-26, opus-loop-e) — descriptor-object pinning
+
+**S2 as landed is NOT the "defineProperties two-phase apply" originally planned
+above.** Re-measurement redirected it; both changes are in
+`src/codegen/declarations/object-shape-widening.ts` (host-gated).
+
+### What was actually broken
+
+S1 pinned runtime-store-define **receivers**, but its pre-pass
+(`collectEmptyObjectWidening`) only reaches vars initialized with an **empty
+`{}`** literal. A **non-empty** literal that later receives a
+runtime-store-routed define stayed a widened closed struct, so an accessor
+landed in the `_wasmPropDescs` sidecar while the struct-field reader read the
+struct — and the getter never fired, though §6.2.5.5 requires a full `[[Get]]`
+per descriptor field. **Same two-store defect as #739, on the DESCRIPTOR object
+instead of the receiver.**
+
+### The two changes
+
+1. **`collectGrowableObjectLiterals`** — mark a non-empty literal `grows` when it
+   receives a runtime-store-routed define (reusing
+   `definePropertyRoutesToRuntimeStore`). Marking `grows`, rather than adding a
+   separate pre-arm like the standalone `markStandaloneAccessorDefineTargets`
+   block, is deliberate: it keeps **every** existing #1897/#2837 consumer-safety
+   poison in force (arithmetic field reads, concrete-struct-typed positions,
+   `delete V.k`, `V[expr]`, `for…in V`).
+2. **`Object.<mop>(…)` carve-out** from the concrete-struct-consumer poison, via
+   the existing #2992 S6 `isObjectMopCallArg` helper, so both arms agree. TS
+   types `defineProperty`'s 3rd argument as `PropertyDescriptor`, which has named
+   own props, so `typeRequiresStruct` was poisoning **every** descriptor object —
+   precisely the vars this pass must route to `$Object`. The **map** form
+   (`PropertyDescriptorMap`) was already safe (pure string-index dictionary),
+   which is why acorn's `prototypeAccessors` stayed marked.
+
+### Measured (varied-axis A/B, on merge base `58991cc19`)
+
+16-case matrix varying descriptor **construction** (empty / non-empty / nested /
+`Object.create` / fn-returned), which descriptor **field** carries the accessor
+(configurable / enumerable / writable / value), the receiver **key kind**, and
+`defineProperties`; plus 4 struct-path guards and a negative control:
+
+| arm | result |
+| --- | --- |
+| merge base | **6 / 16** |
+| with fix | **13 / 16** |
+
+**7 real flips**; all 4 guards pass in **both** arms (no struct-path regression);
+the negative control reports failure in both, proving the harness can fail.
+`tests/issue-739-s2-descriptor-pin.test.ts` (15 cases) is **15/15 with the fix
+and 7-failed/8-passed on the merge base** — the 8 that pass there are exactly the
+2 controls + 4 guards + 2 documented residuals, by construction.
+
+### test262 flip count: **0 of 36** — measured, not projected
+
+**This fix flips ZERO test262 tests on the B1 surface. Do not credit it with the
+census's B1 figure (38 ES5-scoped / 61 corpus-wide).** That number was always a
+floor; measured, the recovery here is 0.
+
+Population: every baseline-failing test with signature `accessed !== true` under
+`built-ins/Object/{defineProperty,defineProperties,create}` — **n = 36**. Run with
+the fix: `pass=0 fail=36 other=0`.
+
+**Why** — and it is the unvaried-axis trap one level out. The B1 descriptors are
+**constructed instances**, not object literals:
+
+```js
+var proto = { enumerable: false };
+var ConstructFun = function () {};
+ConstructFun.prototype = proto;
+var child = new ConstructFun();               // <-- NOT an object literal
+Object.defineProperty(child, "enumerable", { get: function () { return true; } });
+Object.defineProperty(obj, "property", child);
+```
+
+`collectGrowableObjectLiterals` requires
+`ts.isObjectLiteralExpression(decl.initializer)`, so a `new`-constructed
+descriptor is outside this pass entirely — as it is outside S1's
+`collectEmptyObjectWidening`. My 16-case matrix varied descriptor *literal*
+construction (empty / non-empty / nested / `Object.create` / fn-returned) but
+never varied **`new`**, which is the shape the real population actually uses.
+
+**So the honest standing of this change is: a correct, regression-free spec fix
+with 7 proven behavioural flips and 0 test262 flips.** It closes a real §6.2.5.5
+violation and guards it, but it is not the B1 lever.
+
+#### The B1 population is NOT one descriptor shape — measured, so do not extend blindly
+
+Before attempting a `new`-constructed extension, the 36 files were classified **by
+reading the corpus** rather than by enumerating axes anyone could think of. The
+descriptor object is constructed **at least seven different ways**:
+
+| descriptor construction | n |
+| --- | ---: |
+| `new ConstructFun()` — constructed instance | 16 |
+| the **global object** (`descObj` is the global) | ~9 |
+| inline inside the `defineProperties` map | 4 |
+| array literal | 2 |
+| object literal | 2 |
+| function object | 2 |
+| `arguments` object | 1 |
+
+**A perfect `new`-constructed pin would therefore cap at 16 / 36 (44 %)**, with the
+remaining 20 spread over six further shapes — several of which (global object,
+`arguments` object, function object) are not var-initializer shapes at all and can
+never be reached by a declaration-site pre-pass.
+
+**Conclusion: the declaration-site pinning strategy is the wrong lever for B1.**
+Each new shape needs its own pre-pass arm, and the population is long-tailed. The
+correct fix is at the **`ToPropertyDescriptor` reader** — make the descriptor
+field read a genuine `[[Get]]` regardless of how the descriptor object is
+represented — not another initializer-shape arm. That is a substantially larger,
+reader-side slice and should be scoped as its own issue.
+
+**Method note (the reason this table exists):** the axis that mattered was
+invisible from the fix side and obvious from the corpus side. **Derive the matrix
+from the failing population, not from the axes you can think of.** Reading ten
+real failing files first would have shown `new ConstructFun()` immediately — and
+would also have shown that `new` is only 44 % of it.
+
+### Documented residuals (asserted in the test file, not fixed here)
+
+- **Descriptor returned from a function** (`const d = mk()`) — the name-based
+  pre-pass cannot see it. Same class as the aliased/parameter-receiver limitation
+  already documented for S1.
+- **`defineProperties` map MEMBER descriptor** — the nested member is not the
+  marked var. This is the remaining piece of the ORIGINAL S2 plan (two-phase
+  apply) and is the natural next slice.
+
+### Method note
+
+⚠️ This is the `propertyHelper`/`verifyProperty` vacuity area (#3468/#3592/#3434).
+Every assertion checks an **observable getter invocation** via a mutated flag,
+never merely "no throw". While investigating this issue the swallowed-exception /
+no-op failure mode fired **three times** — including once where a candidate fix
+produced byte-identical results to the merge base. **Always run the with-fix and
+reverted arms and diff them.** See #3626 §2.2.1 for the full account and for the
+refutation of that section's original "confirmed floor of 73".
 
 ## Superseded plan
 

@@ -386,6 +386,7 @@ type EnsureLateImportFn = (
   name: string,
   paramTypes: ValType[],
   resultTypes: ValType[],
+  module?: string,
 ) => number | undefined;
 
 type FlushLateImportShiftsFn = (ctx: CodegenContext, fctx: FunctionContext | null) => void;
@@ -413,8 +414,9 @@ export function ensureLateImport(
   name: string,
   paramTypes: ValType[],
   resultTypes: ValType[],
+  module?: string,
 ): number | undefined {
-  return _ensureLateImport(ctx, name, paramTypes, resultTypes);
+  return _ensureLateImport(ctx, name, paramTypes, resultTypes, module);
 }
 
 export function flushLateImportShifts(ctx: CodegenContext, fctx: FunctionContext | null): void {

@@ -237,7 +237,14 @@ import {
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileOptionalCallExpression } from "./calls-optional.js";
-import { isFunctionCtorImmediateCall, tryStaticEvalInline, tryStaticFunctionCtorCall } from "./eval-inline.js";
+import {
+  emitStandaloneIndirectEvalRuntime,
+  ensureRuntimeEvalCallableCarrier,
+  isFunctionCtorImmediateCall,
+  tryStandaloneDynamicFunctionCtorValue,
+  tryStaticEvalInline,
+  tryStaticFunctionCtorCall,
+} from "./eval-inline.js";
 import { compileExternMethodCall, compileSpreadCallArgs, emitLazyProtoGet } from "./extern.js";
 import {
   compileStandaloneRegExpConstructor,
@@ -2304,32 +2311,6 @@ export function compileFunctionBind(
  * single-assignment `const`/`let`/`var = fn.bind(...)` form is recognised; this
  * matches the bulk of the test262 bound-function-invocation corpus.
  */
-export function calleeIsBoundFunctionVar(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ts.isIdentifier(expr)) return false;
-  const sym = ctx.checker.getSymbolAtLocation(expr);
-  const decl = sym?.valueDeclaration;
-  if (!decl || !ts.isVariableDeclaration(decl) || !decl.initializer) return false;
-  const init = decl.initializer;
-  if (!ts.isCallExpression(init)) return false;
-  const callee = init.expression;
-  if (!ts.isPropertyAccessExpression(callee)) return false;
-  // Direct `<receiver>.bind(...)`.
-  if (callee.name.text === "bind") return true;
-  // Indirect `Function.prototype.bind.call(fn, ...)`.
-  if (
-    callee.name.text === "call" &&
-    ts.isPropertyAccessExpression(callee.expression) &&
-    callee.expression.name.text === "bind" &&
-    ts.isPropertyAccessExpression(callee.expression.expression) &&
-    callee.expression.expression.name.text === "prototype" &&
-    ts.isIdentifier(callee.expression.expression.expression) &&
-    callee.expression.expression.expression.text === "Function"
-  ) {
-    return true;
-  }
-  return false;
-}
-
 /**
  * (#1712 / #1941) Static gate for the host-callable dispatch fallback.
  *
@@ -3559,6 +3540,59 @@ export function classInstanceHasField(
   return !!fields && fields.some((f) => f.name === fieldName);
 }
 
+function buildDynamicApplyFallback(
+  fctx: FunctionContext,
+  fallback: { applyIdx: number; vecNewIdx: number; vecPushIdx: number },
+  argLocals: readonly number[],
+  anyLocal: number,
+  undefinedIdx: number | undefined,
+  undefinedSingletonPad: readonly Instr[] | undefined,
+): Instr[] {
+  const argsLocal = allocLocal(fctx, `__dyn_apply_args_${fctx.locals.length}`, { kind: "externref" });
+  const body: Instr[] = [
+    { op: "call", funcIdx: fallback.vecNewIdx },
+    { op: "local.set", index: argsLocal },
+  ];
+  for (const argLocal of argLocals) {
+    body.push({ op: "local.get", index: argsLocal });
+    body.push({ op: "local.get", index: argLocal });
+    body.push({ op: "call", funcIdx: fallback.vecPushIdx });
+  }
+  body.push({ op: "local.get", index: anyLocal });
+  body.push({ op: "extern.convert_any" });
+  pushDynamicUndefinedExternref(body, undefinedIdx, undefinedSingletonPad);
+  body.push({ op: "local.get", index: argsLocal });
+  body.push({ op: "call", funcIdx: fallback.applyIdx });
+  return body;
+}
+
+function pushDynamicUndefinedExternref(
+  body: Instr[],
+  undefinedIdx: number | undefined,
+  singleton: readonly Instr[] | undefined,
+): void {
+  if (undefinedIdx !== undefined) {
+    body.push({ op: "call", funcIdx: undefinedIdx });
+  } else if (singleton !== undefined) {
+    for (const ins of singleton) body.push({ ...ins });
+  } else {
+    body.push({ op: "ref.null.extern" });
+  }
+}
+
+function reserveDynamicApplyFallback(ctx: CodegenContext): {
+  applyIdx: number;
+  vecNewIdx: number;
+  vecPushIdx: number;
+} {
+  const vecBuilders = ensureObjVecBuilders(ctx);
+  return {
+    applyIdx: reserveApplyClosure(ctx),
+    vecNewIdx: vecBuilders.newIdx,
+    vecPushIdx: vecBuilders.pushIdx,
+  };
+}
+
 export function tryEmitInlineDynamicCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3679,7 +3713,8 @@ export function tryEmitInlineDynamicCall(
   // (byte-inert otherwise). Standalone/WASI lane; the host lane's callee is a
   // real host constructor whose [[Call]] already throws.
   const wantTaCtorArm = (ctx.standalone === true || ctx.wasi === true) && ctx.taCtorTypeIdx >= 0;
-  if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm) return null;
+  const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;
+  if (allCandidates.length === 0 && !wantProxyArm && !wantBoundArm && !wantTaCtorArm && !wantApplyFallback) return null;
 
   // Dedupe by funcTypeIdx — concrete subtypes share funcTypeIdx with their
   // base wrapper; one dispatch arm per unique funcref type is enough.
@@ -3736,7 +3771,7 @@ export function tryEmitInlineDynamicCall(
   // null externref alike).
   const maxFormals = candidates.reduce((m, c) => Math.max(m, c.info.paramTypes.length), 0);
   const needsUndefinedPad = maxFormals > arity;
-  const needsUndefined = needsUndefinedPad || wantProxyArm;
+  const needsUndefined = needsUndefinedPad || wantProxyArm || wantApplyFallback;
   const undefinedIdx = needsUndefined ? ensureGetUndefined(ctx) : undefined;
   const undefinedSingletonPad = needsUndefined && undefinedIdx === undefined ? undefinedExternInstrs(ctx) : undefined;
   // (#2611) Flush the deferred late-import shift NOW — every other late-import
@@ -3768,20 +3803,6 @@ export function tryEmitInlineDynamicCall(
   const unboxNumberIdx = ctx.funcMap.get(UNBOX_NUMBER);
   if (boxNumberIdx === undefined || unboxNumberIdx === undefined) return null;
 
-  const pushUndefinedExternref = (body: Instr[]): void => {
-    if (undefinedIdx !== undefined) {
-      body.push({ op: "call", funcIdx: undefinedIdx });
-    } else if (undefinedSingletonPad !== undefined) {
-      // FRESH Instr objects per use — the singleton sequence lands in multiple
-      // dispatch arms, and a shared Instr aliased into two branches gets
-      // double-remapped by finalize index walks (the
-      // `reference_shared_instr_object_dce_double_remap` class).
-      for (const ins of undefinedSingletonPad) body.push({ ...ins });
-    } else {
-      body.push({ op: "ref.null.extern" });
-    }
-  };
-
   // (#3031) Materialize the Proxy [[Call]] pieces while the gate is live. The
   // object/proxy runtime registers DEFINED functions only (no import → no index
   // shift), so this is safe after the flush + captures above.
@@ -3809,6 +3830,7 @@ export function tryEmitInlineDynamicCall(
       vecPushIdx: vecBuilders.pushIdx,
     };
   }
+  const applyFallback = wantApplyFallback ? reserveDynamicApplyFallback(ctx) : undefined;
   // (#2933) Variadic builtin value-closure arm pieces. Set at Math.max/Math.min
   // value-read time (all of its types + the closure func are then already
   // registered — DEFINED funcs only, no import, no index shift). One lifted
@@ -3832,6 +3854,7 @@ export function tryEmitInlineDynamicCall(
     candidates.length === 0 &&
     proxyArm === undefined &&
     boundArm === undefined &&
+    applyFallback === undefined &&
     variadicArm === undefined &&
     !wantTaCtorArm
   )
@@ -3864,6 +3887,11 @@ export function tryEmitInlineDynamicCall(
   // Build dispatch chain (innermost = default, outermost = first).
   // Default: ref.null.extern (matches existing fallback semantics).
   let dispatch: Instr[] = [{ op: "ref.null.extern" }];
+
+  // Finalize-time default; exact inline arms remain preferred.
+  if (applyFallback !== undefined) {
+    dispatch = buildDynamicApplyFallback(fctx, applyFallback, argLocals, anyLocal, undefinedIdx, undefinedSingletonPad);
+  }
 
   // (#3335) HOST-lane default arm: dispatch through `__call_function` instead
   // of silently producing `undefined`. A dynamic callee that is NOT a wasm
@@ -3997,7 +4025,7 @@ export function tryEmitInlineDynamicCall(
         } else if (pType.kind === "i32") {
           callBody.push({ op: "i32.const", value: 0 });
         } else if (pType.kind === "externref") {
-          pushUndefinedExternref(callBody);
+          pushDynamicUndefinedExternref(callBody, undefinedIdx, undefinedSingletonPad);
         } else if (pType.kind === "ref" || pType.kind === "ref_null") {
           callBody.push({ op: "ref.null", typeIdx: (pType as { typeIdx: number }).typeIdx });
         }
@@ -4096,7 +4124,7 @@ export function tryEmitInlineDynamicCall(
     }
     armBody.push({ op: "local.get", index: anyLocal });
     armBody.push({ op: "extern.convert_any" });
-    pushUndefinedExternref(armBody); // thisArgument = undefined
+    pushDynamicUndefinedExternref(armBody, undefinedIdx, undefinedSingletonPad); // thisArgument = undefined
     armBody.push({ op: "local.get", index: vecLocal });
     armBody.push({ op: "call", funcIdx: proxyArm.dispatchIdx });
     dispatch = [
@@ -5556,6 +5584,38 @@ function canDeferStandaloneDynamicImport(fctx: FunctionContext): boolean {
   return fctx.deferredDynamicImportTrap === true;
 }
 
+/**
+ * #2928 — interpreter-owned external-call intrinsic. The source helper keeps
+ * ordinary Node execution on Function#apply; the self-compiled provider lowers
+ * it directly to the native closure bridge so a foreign callable carrier does
+ * not need to expose `.apply` through the provider's object-property runtime.
+ */
+function tryRuntimeEvalApplyCallableIntrinsic(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  if (
+    (!ctx.standalone && !ctx.wasi) ||
+    ctx.runtimeEvalCallableBoundaryEnabled !== true ||
+    !ts.isIdentifier(expr.expression) ||
+    expr.expression.text !== "__runtime_eval_apply_callable" ||
+    expr.arguments.length !== 3
+  ) {
+    return undefined;
+  }
+
+  const externref: ValType = { kind: "externref" };
+  for (const arg of expr.arguments) {
+    const type = compileExpression(ctx, fctx, arg, externref);
+    if (type && type.kind !== "externref") coerceType(ctx, fctx, type, externref);
+  }
+  ensureObjectRuntime(ctx);
+  const applyIdx = reserveApplyClosure(ctx);
+  fctx.body.push({ op: "call", funcIdx: applyIdx });
+  return externref;
+}
+
 function compileCallExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -5573,6 +5633,11 @@ function compileCallExpression(
   // route to the short-circuiting path.
   if (ts.isOptionalChain(expr) && ts.isPropertyAccessExpression(expr.expression)) {
     return compileOptionalCallExpression(ctx, fctx, expr);
+  }
+
+  {
+    const r = tryRuntimeEvalApplyCallableIntrinsic(ctx, fctx, expr);
+    if (r !== undefined) return r;
   }
 
   // (#1732/#2180) Calling a built-in non-constructor namespace (Math, JSON,
@@ -5608,6 +5673,19 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
+  // #2928 — dynamic standalone Function(...) value form, plus the immediate
+  // `new Function(...)(args)` / `Function(...)(args)` form. Seed the canonical
+  // runtime callable before the dynamic-dispatch candidate scan.
+  const immediateFunctionCtor = isFunctionCtorImmediateCall(expr, ctx.checker);
+  {
+    const r = tryStandaloneDynamicFunctionCtorValue(ctx, fctx, expr);
+    if (r !== undefined) return r;
+    if (ctx.standalone && immediateFunctionCtor && ensureRuntimeEvalCallableCarrier(ctx, fctx)) {
+      const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      if (dyn !== null) return dyn;
+    }
+  }
+
   // (#2960) DYNAMIC immediate-call `new Function(<non-const>)(args)` /
   // `Function(<non-const>)(args)` in JS-host mode. The constant compile-away
   // above declined (non-constant args), so the callee compiles to the
@@ -5615,7 +5693,7 @@ function compileCallExpression(
   // plain host-function externref returns undefined (the general any-callee
   // host-function limitation), so route the call through the `__call_function`
   // host helper (the same packer bound functions use).
-  if (!noJsHost(ctx) && !ctx.nativeStrings && isFunctionCtorImmediateCall(expr, ctx.checker)) {
+  if (!noJsHost(ctx) && !ctx.nativeStrings && immediateFunctionCtor) {
     const r = emitBoundFunctionCall(ctx, fctx, expr);
     if (r !== null) return r;
   }
@@ -5725,13 +5803,16 @@ function compileCallExpression(
       if (rewritten !== undefined) return rewritten;
       const inlined = tryStaticEvalInline(ctx, fctx, expr, evalKind === "direct");
       if (inlined !== undefined) return inlined;
-      // (#2960) No-JS-host (standalone / wasi): the `__extern_eval` host import
-      // is unsatisfiable and previously leaked into the binary, trapping only at
-      // instantiation with zero compile-time signal. Instead emit a
-      // source-located WARNING and, for the dynamic case, a CATCHABLE throw at
-      // the eval call site (a program that never reaches this eval keeps
-      // working). The static-constant path (tryStaticEvalInline above) already
-      // splices inline and returned; only genuine dynamic eval reaches here.
+      // #2928 — indirect eval is global-scoped, so standalone can route it to
+      // the linked interpreter without caller-scope reification. Direct eval
+      // still needs #2929 and retains #2960's catchable failure.
+      if (evalKind === "indirect") {
+        const runtimeEval = emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
+        if (runtimeEval !== undefined) return runtimeEval;
+      }
+      // (#2960) No-JS-host direct eval (and WASI until its linker grows the
+      // provider): refuse the unsatisfiable `__extern_eval` import with a
+      // source-located warning and a catchable call-site throw.
       if (noJsHost(ctx)) {
         reportError(
           ctx,
@@ -7275,7 +7356,7 @@ function compileCallExpression(
   // compileIdentifierCall; an `undefined` result means the callee is not one
   // of these identifier cases, so dispatch continues below (IIFE / super / …).
   {
-    const __idResult = compileIdentifierCall(ctx, fctx, expr);
+    const __idResult = compileIdentifierCall(ctx, fctx, expr, expectedType);
     if (__idResult !== undefined) return __idResult;
   }
 

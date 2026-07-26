@@ -166,6 +166,7 @@ import {
   tryEmitPinnedStructMemberGet,
   typeErrorThrowInstrs,
 } from "./property-access.js";
+import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -569,7 +570,7 @@ export function tryPinnedAndDeleteAwareDynamicGet(
         : undefined;
     const pinned = pinnedThis ?? resolveReceiverStruct(ctx, fctx, expr.expression);
     if (pinned !== undefined) {
-      const routed = tryEmitPinnedStructMemberGet(ctx, fctx, expr, propName);
+      const routed = tryEmitPinnedStructMemberGet(ctx, fctx, expr, propName, pinned);
       if (routed !== undefined) return routed;
     }
   }
@@ -1666,10 +1667,28 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     // `f64.const`, Number.MAX_SAFE_INTEGER → `f64.const`, Symbol.iterator →
     // `i32.const`), this shortcut would pre-empt that native lowering and turn a
     // compilable program into a hard refusal. Skip it for those (builtin, prop)
-    // pairs so control reaches the constant emitter. gc/host is unaffected
-    // (`__get_builtin` is a real host import there and the early shortcut +
-    // the later constant handler are observationally identical for these reads).
-    const deferToNativeConstant = ctx.standalone && hasNativeBuiltinConstantHandler(builtinName, propName);
+    // pairs so control reaches the constant emitter.
+    //
+    // (#3676) The trailing "gc/host is unaffected … observationally identical"
+    // claim that used to sit here was WRONG for `Symbol.<wellKnown>`, and it is
+    // the reason a module-scope `var S = Symbol.iterator` could not instantiate
+    // under the default JS-host target. The two lowerings are NOT
+    // interchangeable: the `__get_builtin`/`__extern_get` shortcut yields an
+    // `externref` (a real host Symbol) while the downstream constant emitter
+    // yields `i32.const <id>`. The compiler's canonical symbol VALUE
+    // representation is the i32 id — `mapTsTypeToWasm` maps `symbol` → i32 and
+    // `compileSymbolCall` returns an unbranded i32 counter — so the externref
+    // gets coerced into the i32 slot through `__unbox_number`, i.e. literally
+    // `Number(Symbol.iterator)`, which throws TypeError §7.1.4 at
+    // `__module_init`. Fold well-known symbol reads to their i32 id in BOTH
+    // modes so producer and slot agree. Identity across the host boundary is
+    // preserved because `__box_symbol` pre-seeds ids 1..14 with the genuine
+    // well-known symbols. Scoped to `Symbol.<wellKnown>` only — the Math/Number
+    // f64 constants and `<Ctor>.length`/`.name` keep their standalone-only
+    // defer, so host-mode bytes for those are unchanged.
+    const deferToWellKnownSymbolId = builtinName === "Symbol" && getWellKnownSymbolId(propName) !== undefined;
+    const deferToNativeConstant =
+      deferToWellKnownSymbolId || (ctx.standalone && hasNativeBuiltinConstantHandler(builtinName, propName));
     if (ctx.standalone && BUILTIN_CTOR_NAMES.has(builtinName) && !isShadowed && !deferToNativeConstant) {
       // (#2175 S1) `<Builtin>.prototype` as a value → the native `$NativeProto`
       // object (host-free), for builtins with a registered brand. This is the
@@ -3206,47 +3225,17 @@ export function finalizeStructAndDynamicMemberGet(
     const structTypeIdx = ctx.structMap.get(typeName);
     const fields = ctx.structFields.get(typeName);
     if (structTypeIdx !== undefined && fields) {
-      const fieldIdx = fields.findIndex((f) => f.name === propName);
-      if (fieldIdx !== -1) {
-        const objResult = compileExpression(ctx, fctx, expr.expression);
-        const fieldType = fields[fieldIdx]!.type;
-        // Null-guard: if the object ref could be null (ref_null), prevent trap
-        // Skip null guard when expression is provably non-null (#800)
-        const exprNonNull = isProvablyNonNull(expr.expression, ctx.checker);
-        if (objResult && objResult.kind === "ref_null") {
-          // Always use multi-struct dispatch (even when provably non-null) to avoid
-          // illegal cast traps when runtime struct type differs from compile-time type (#778).
-          emitNullGuardedStructGet(ctx, fctx, objResult, fieldType, structTypeIdx, fieldIdx, propName);
-          if (fieldType.kind === "ref") {
-            return { kind: "ref_null", typeIdx: (fieldType as any).typeIdx };
-          }
-          return fieldType;
-        } else if (objResult && objResult.kind === "externref") {
-          // The expression returned externref but we need a struct ref for struct.get.
-          // Cast externref → anyref → (ref null $StructType), with __extern_get fallback.
-          emitExternrefToStructGet(ctx, fctx, fieldType, structTypeIdx, fieldIdx, propName, true /* throwOnNull */);
-          if (fieldType.kind === "ref") {
-            return { kind: "ref_null", typeIdx: (fieldType as any).typeIdx };
-          }
-          return fieldType;
-        } else if (objResult && objResult.kind === "ref") {
-          // Always use multi-struct dispatch to avoid illegal cast traps (#778).
-          // Even for provably-non-null, runtime struct type may differ from compile-time type.
-          const nullableObj: ValType = { kind: "ref_null", typeIdx: (objResult as any).typeIdx ?? structTypeIdx };
-          emitNullGuardedStructGet(ctx, fctx, nullableObj, fieldType, structTypeIdx, fieldIdx, propName);
-          if (fieldType.kind === "ref") {
-            return { kind: "ref_null", typeIdx: (fieldType as any).typeIdx };
-          }
-          return fieldType;
-        } else {
-          fctx.body.push({
-            op: "struct.get",
-            typeIdx: structTypeIdx,
-            fieldIdx,
-          });
-        }
-        return fieldType;
-      }
+      const exactField = tryEmitExactStructFieldGet(
+        ctx,
+        fctx,
+        expr,
+        propName,
+        objType,
+        typeName,
+        structTypeIdx,
+        fields,
+      );
+      if (exactField !== undefined) return exactField;
 
       // ── Prototype chain walk (#799b) ──────────────────────────────
       // Field not found on this struct at compile time. Walk the __proto__
@@ -3539,6 +3528,22 @@ export function finalizeStructAndDynamicMemberGet(
           then: typeErrorThrowInstrs(ctx, expr),
           else: [],
         });
+        // An interface / object-type receiver is only a structural contract.
+        // When its runtime value is externref, let the canonical dynamic
+        // provider discriminate exact closed shapes by their `$shape` stamps.
+        // The generic inline candidate chain below uses brand-blind `ref.test`
+        // and can read the same slot from a different, structurally
+        // canonicalised descriptor literal.
+        const structuralResult = tryEmitStructuralContractReadFromLocal(
+          ctx,
+          fctx,
+          expr,
+          propName,
+          objType,
+          typeName,
+          objTmp,
+        );
+        if (structuralResult !== undefined) return structuralResult;
         // Multi-struct dispatch: the externref may actually be a WasmGC struct
         // (converted via extern.convert_any).  JS __extern_get cannot read GC
         // struct fields, so try struct.get first for all struct types that

@@ -198,11 +198,11 @@ export function legalityFor(backend: IrBackendKind): BackendLegality {
 //       `__gen_eager_mode` class). The branded handle types (#2710 slice 1)
 //       make positional arithmetic on a handle a compile error once flipped
 //       to real brands.
-//   A6  Name → handle lookup is the assembler's; the namespaces (func /
-//       global / type) are exactly the namespaces the IR's symbolic refs
-//       (`IrFuncRef`/`IrGlobalRef`/`IrTypeRef`, #3030 D3.2) resolve against.
-//       One owner: today's `ctx.funcMap` / `moduleGlobals` / `typeNames`
-//       become views over the assembler.
+//   A6  Structural binding → handle lookup is the assembler's. IR refs
+//       (`IrFuncRef`/`IrGlobalRef`/`IrTypeRef`, #3030 D3.2) resolve by their
+//       closed binding payloads; compatibility names are diagnostics/public
+//       labels only. Today's `ctx.funcMap` / `moduleGlobals` / `typeNames`
+//       become explicit legacy views over that one authority.
 //   A7  Dead-code elimination marks handles dead; `finalize` skips dead
 //       handles when assigning indices. Nothing ever renumbers instructions
 //       (DCE's remove-and-renumber remap is subsumed — #2710 slice 4d).
@@ -235,7 +235,7 @@ export interface ModuleAssembler<FuncDefT = WasmFunction, GlobalDefT = GlobalDef
    * functions, A6).
    */
   importFunc(module: string, field: string, typeHandle: TypeHandle, name: string): FuncHandle;
-  /** Name → handle (A6). The `ctx.funcMap` successor. */
+  /** Explicit legacy-name adapter; structural IrFuncRef resolution must not call this. */
   lookupFunc(name: string): FuncHandle | undefined;
 
   // ---- global index space -------------------------------------------------
@@ -249,7 +249,7 @@ export interface ModuleAssembler<FuncDefT = WasmFunction, GlobalDefT = GlobalDef
    * `fixupModuleGlobalIndices` + its ~25 cached-field chases (#2710 4a).
    */
   importGlobal(module: string, field: string, type: ValType, mutable: boolean, name: string): GlobalHandle;
-  /** Name → handle (A6). */
+  /** Explicit legacy-name adapter; structural IrGlobalRef resolution must not call this. */
   lookupGlobal(name: string): GlobalHandle | undefined;
 
   // ---- type index space ---------------------------------------------------
@@ -257,11 +257,10 @@ export interface ModuleAssembler<FuncDefT = WasmFunction, GlobalDefT = GlobalDef
    * Intern a type definition, returning the handle of the structurally
    * canonical entry (dedup is the assembler's — one entry per distinct
    * definition; layout-handle memoization stays with the LayoutResolver).
-   * `name` (optional) additionally registers the handle in the type
-   * namespace for `lookupType`/`IrTypeRef` resolution (A6).
+   * `name` (optional) additionally registers a compatibility handle label.
    */
   internType(def: TypeDefT, name?: string): TypeHandle;
-  /** Name → handle (A6). The `ctx.typeNames` successor. */
+  /** Explicit legacy-name adapter; structural IrTypeRef resolution must not call this. */
   lookupType(name: string): TypeHandle | undefined;
 
   // ---- module records -------------------------------------------------------

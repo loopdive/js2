@@ -13,6 +13,10 @@ export function makeIrInventoryOptions(positionMap: PositionMap): IrInventoryOpt
   };
 }
 
+export function maybe(positionMap: PositionMap, enabled: boolean): IrInventoryOptions | undefined {
+  return enabled ? makeIrInventoryOptions(positionMap) : undefined;
+}
+
 /**
  * Preserve pre-elision structural ordinals for retained support units while
  * keeping the final inventory limited to nodes that remain in the target AST.

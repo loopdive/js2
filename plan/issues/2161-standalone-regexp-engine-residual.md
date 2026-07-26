@@ -5,7 +5,7 @@ status: blocked
 assignee: ttraenkler/fable-2161
 sprint: Backlog
 created: 2026-06-15
-updated: 2026-07-04
+updated: 2026-07-26
 blocked_on: [2175]
 reconcile_note: "RECONCILED 2026-06-23 — all 4 sliced sub-issues merged (#2588/#2589 PR#1914, #2590 #1908, #2591 #1907). 2026-06-25 (sdev-async-sm): Slice 9 landed one MORE bounded substrate-independent win the prior reconcile missed — const-foldable new RegExp() patterns (concat / const-bound literal / §22.2.3.1 regex-literal copy-ctor) now compile to the native engine instead of runtime-trapping (see Slice 9). Remaining residual = RegExp.prototype reflection (gated on #2175) + dynamic/any-typed receivers + truly-runtime ctor patterns (need a runtime regex compiler — future architect-spec, NOT bounded). Umbrella stays blocked on #2175 for the reflection bucket."
 priority: high
@@ -671,3 +671,21 @@ in-flight / #2600 gc-mode reds) — my change adds **zero** new failures. tsc cl
 
 **#2161 stays open (blocked on #2175)** for F6 reflection; F7 dynamic-receiver
 architecture and the B5 annexB-escape point-fix are the remaining pickups.
+
+## Acorn branch residual remeasurement (2026-07-26, codex-acorn)
+
+The broad targeted battery was rerun as an exact local-vs-local comparison
+while refreshing the standalone Acorn artifact:
+
+- Acorn branch: **243/244**;
+- exact upstream control at
+  `932e042a20d45ce5172f3926a62ad03e9df53fb4`: **242/244**;
+- the one branch failure, `match result passed to any[] param element-copies`,
+  also fails on the upstream control (`91` returned, `1` expected);
+- the Acorn branch fixes the control's other reassigned-pattern failure.
+
+Therefore the remaining match-array result is **base-reproducing**, not an
+Acorn-branch regression and not a blocker for the parser/interpreter boundary.
+This note does not change #2161 ownership or its `blocked` status: the existing
+assignee retains the RegExp residual, while the Acorn branch only records the
+measured compatibility boundary.

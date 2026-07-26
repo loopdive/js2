@@ -41,7 +41,9 @@ import type {
   LinearMemoryPlan,
   LinearRuntimeOperation,
 } from "../src/ir/analysis/linear-memory-plan.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-3299");
 const here = dirname(fileURLToPath(import.meta.url));
 const porfforRoot = process.env.JS2WASM_PORFFOR_ROOT ?? join(here, "../vendor/Porffor");
 const hasOptionalPorffor = existsSync(join(porfforRoot, "compiler/ir.js"));
@@ -58,7 +60,7 @@ const SHAPE: IrObjectShape = {
 function proofFixture(): { module: IrModule; plan: LinearMemoryPlan } {
   const allocations = new AllocSiteRegistry();
 
-  const object = new IrFunctionBuilder("objectProof", [F64], true, allocations);
+  const object = new IrFunctionBuilder(identities.next("objectProof"), [F64], true, allocations);
   object.openBlock();
   const four = object.emitConst({ kind: "f64", value: 4 }, F64);
   const five = object.emitConst({ kind: "f64", value: 5 }, F64);
@@ -81,7 +83,7 @@ function proofFixture(): { module: IrModule; plan: LinearMemoryPlan } {
   const objectResult = object.emitBinary("f64.add", mutationScore, identityScore, F64);
   object.terminate({ kind: "return", values: [objectResult] });
 
-  const vector = new IrFunctionBuilder("vectorProof", [F64], true, allocations);
+  const vector = new IrFunctionBuilder(identities.next("vectorProof"), [F64], true, allocations);
   const index = vector.addParam("index", I32);
   vector.openBlock();
   const values = [4, 5, 6].map((value) => vector.emitConst({ kind: "f64", value }, F64));

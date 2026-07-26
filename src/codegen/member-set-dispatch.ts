@@ -186,6 +186,14 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
         ...coerce,
         { op: "struct.set", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
       ];
+      if (cand.presenceFieldIdx !== undefined && cand.presenceFieldIdx >= 0) {
+        setFieldInstrs.push(
+          { op: "local.get", index: 2 },
+          { op: "ref.cast", typeIdx: cand.structTypeIdx },
+          { op: "i32.const", value: 1 },
+          { op: "struct.set", typeIdx: cand.structTypeIdx, fieldIdx: cand.presenceFieldIdx },
+        );
+      }
       return [
         { op: "local.get", index: 2 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },

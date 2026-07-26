@@ -353,6 +353,19 @@ function classifyUse(
     return "dynamic";
   }
 
+  // `table[key] = inst` / `table.name = inst` — storing the instance in an
+  // object property lets later reads recover it through the dynamic object
+  // carrier. Treat that as an escape so the allocation and the table value use
+  // one representation instead of sibling nominal WasmGC shapes.
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === idNode &&
+    (ts.isPropertyAccessExpression(parent.left) || ts.isElementAccessExpression(parent.left))
+  ) {
+    return "dynamic";
+  }
+
   // `someMethod.call(inst, …)` / `.apply(inst, …)` — `inst` is the receiver arg
   // of a reflective generic-method call → array-like dynamic use.
   if (ts.isCallExpression(parent) && parent.arguments.length > 0 && parent.arguments[0] === idNode) {
@@ -614,34 +627,117 @@ function buildReceiverStructMap(
   const map = new Map<ts.Expression, string>();
   const memo = new Map<ts.FunctionLikeDeclaration, string | undefined>();
   const protoIndex = buildProtoMethodIndex(sourceFile);
-  const visit = (node: ts.Node): void => {
+  const structBySymbol = new Map<ts.Symbol, string>();
+  const declarations: ts.VariableDeclaration[] = [];
+  const assignments: ts.BinaryExpression[] = [];
+  const calls: ts.CallExpression[] = [];
+
+  const indexFlowSites = (node: ts.Node): void => {
     if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
-      const init = unwrapExpr(node.initializer);
-      let struct: string | undefined;
-      if (ts.isCallExpression(init)) {
-        const callee = resolveCalleeFunction(checker, init, protoIndex);
-        struct = callee ? inferReturnStruct(checker, callee, RETURN_INFER_MAX_DEPTH, memo, protoIndex) : undefined;
-      } else if (ts.isNewExpression(init)) {
-        // #2681/#2686 — `var p:any = new this()` in a fnctor static method: pin
-        // `p`'s uses to the owner fnctor struct (read-dispatch case (2)).
-        let ctorSym = resolveFnctorSymbol(checker, init.expression);
-        if (!ctorSym && init.expression.kind === ts.SyntaxKind.ThisKeyword) {
-          ctorSym = resolveEnclosingFnctorOwner(checker, init)?.sym;
-        }
-        struct = ctorSym ? `__fnctor_${ctorSym.name}` : undefined;
+      declarations.push(node);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left)
+    ) {
+      assignments.push(node);
+    }
+    if (ts.isCallExpression(node)) calls.push(node);
+    forEachChild(node, indexFlowSites);
+  };
+  indexFlowSites(sourceFile);
+
+  const inferExprStruct = (expression: ts.Expression): string | undefined => {
+    const expr = unwrapExpr(expression);
+    if (ts.isIdentifier(expr)) {
+      const sym = checker.getSymbolAtLocation(expr);
+      return sym ? structBySymbol.get(sym) : undefined;
+    }
+    if (ts.isCallExpression(expr)) {
+      const callee = resolveCalleeFunction(checker, expr, protoIndex);
+      return callee ? inferReturnStruct(checker, callee, RETURN_INFER_MAX_DEPTH, memo, protoIndex) : undefined;
+    }
+    if (ts.isNewExpression(expr)) {
+      // #2681/#2686 — `var p:any = new this()` in a fnctor static method: pin
+      // `p`'s uses to the owner fnctor struct (read-dispatch case (2)).
+      let ctorSym = resolveFnctorSymbol(checker, expr.expression);
+      if (!ctorSym && expr.expression.kind === ts.SyntaxKind.ThisKeyword) {
+        ctorSym = resolveEnclosingFnctorOwner(checker, expr)?.sym;
       }
-      if (struct) {
-        const bindSym = checker.getSymbolAtLocation(node.name);
-        const uses = bindSym ? (usesBySymbol.get(bindSym) ?? []) : [];
-        for (const use of uses) {
-          if (use === node.name) continue; // the declaration name itself
-          map.set(use, struct);
-        }
+      return ctorSym ? `__fnctor_${ctorSym.name}` : undefined;
+    }
+    // Acorn creates the Program node with
+    // `options.program || this.startNode()`. The left side is either absent or
+    // an API-supplied object with the same Program contract; pinning the known
+    // constructor arm is safe because the member dispatcher retains its
+    // generic `$Object` fallback for the supplied-object case.
+    if (
+      ts.isBinaryExpression(expr) &&
+      (expr.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        expr.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+    ) {
+      const left = inferExprStruct(expr.left);
+      const right = inferExprStruct(expr.right);
+      return left === right ? left : (left ?? right);
+    }
+    if (ts.isConditionalExpression(expr)) {
+      const yes = inferExprStruct(expr.whenTrue);
+      const no = inferExprStruct(expr.whenFalse);
+      return yes === no ? yes : (yes ?? no);
+    }
+    return undefined;
+  };
+
+  const ambiguousSymbols = new Set<ts.Symbol>();
+  const bind = (id: ts.Identifier, struct: string | undefined): boolean => {
+    if (!struct) return false;
+    const sym = checker.getSymbolAtLocation(id);
+    if (!sym || ambiguousSymbols.has(sym)) return false;
+    const current = structBySymbol.get(sym);
+    if (current !== undefined) {
+      if (current === struct) return false;
+      // A parameter/local fed by more than one constructor shape cannot safely
+      // grow fields on either concrete struct. Invalidate the first pin rather
+      // than silently routing every later write to whichever call was visited
+      // first (order-dependent cross-shape corruption).
+      structBySymbol.delete(sym);
+      ambiguousSymbols.add(sym);
+      return true;
+    }
+    structBySymbol.set(sym, struct);
+    return true;
+  };
+
+  // Propagate constructor identity through locals, assignments, and call
+  // parameters to a fixed point. This carries `startNode() -> node ->
+  // parseTopLevel(node)` and the equivalent ESTree builder chains without
+  // guessing from variable names.
+  let changed = true;
+  let rounds = 0;
+  while (changed && rounds++ < RETURN_INFER_MAX_DEPTH * 4) {
+    changed = false;
+    for (const decl of declarations) {
+      changed = bind(decl.name as ts.Identifier, inferExprStruct(decl.initializer!)) || changed;
+    }
+    for (const assignment of assignments) {
+      changed = bind(assignment.left as ts.Identifier, inferExprStruct(assignment.right)) || changed;
+    }
+    for (const call of calls) {
+      const callee = resolveCalleeFunction(checker, call, protoIndex);
+      if (!callee) continue;
+      const count = Math.min(call.arguments.length, callee.parameters.length);
+      for (let i = 0; i < count; i++) {
+        const param = callee.parameters[i];
+        if (!param || !ts.isIdentifier(param.name)) continue;
+        changed = bind(param.name, inferExprStruct(call.arguments[i]!)) || changed;
       }
     }
-    forEachChild(node, visit);
-  };
-  visit(sourceFile);
+  }
+
+  for (const [sym, struct] of structBySymbol) {
+    for (const use of usesBySymbol.get(sym) ?? []) map.set(use, struct);
+  }
   return map;
 }
 
@@ -785,6 +881,16 @@ export function analyzeFnctorEscapeGate(checker: ts.TypeChecker, sourceFile: ts.
       } else if (ts.isElementAccessExpression(parent) && parent.expression === inner) {
         sawDynamic = true;
       } else if (
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        parent.right === inner &&
+        (ts.isPropertyAccessExpression(parent.left) || ts.isElementAccessExpression(parent.left))
+      ) {
+        // `return table[key] = new F()` is Acorn's keyword-token factory shape.
+        // The constructed value escapes through an open object table, so keep
+        // its carrier dynamic across both the assignment result and later read.
+        sawDynamic = true;
+      } else if (
         ts.isCallExpression(parent) &&
         parent.arguments.length > 0 &&
         parent.arguments[0] === inner &&
@@ -868,65 +974,212 @@ export function deriveFnctorFields(
   if (!body) return [];
 
   const fields: FieldDef[] = [];
+  const onlyConditional = new Map<string, boolean>();
 
   // Record one `this.<field>` slot from an assignment whose LHS is `this.<field>`.
   // `valueExpr` is the value being assigned to THAT field (for type inference) —
   // for a chained `this.a = this.b = expr`, the value flowing into `this.a` is the
   // whole `this.b = expr` sub-assignment (whose result type === expr's type).
-  function recordThisField(lhs: ts.PropertyAccessExpression, valueExpr: ts.Expression): void {
+  function recordThisField(lhs: ts.PropertyAccessExpression, valueExpr: ts.Expression, conditional: boolean): void {
     const fieldName = lhs.name.text;
-    if (fields.some((f) => f.name === fieldName)) return;
+    const existing = fields.find((f) => f.name === fieldName);
+    if (existing) {
+      if (!conditional) onlyConditional.set(fieldName, false);
+      return;
+    }
     // Prefer the RHS type — when `this` is `any`, the LHS type is also `any`
     // (externref), but the RHS has concrete type info (e.g., number → f64).
     const lhsType = ctx.checker.getTypeAtLocation(lhs);
     const rhsType = ctx.checker.getTypeAtLocation(valueExpr);
     const lhsWasm = resolveWasmType(ctx, lhsType);
     const rhsWasm = resolveWasmType(ctx, rhsType);
-    const fieldType = lhsWasm.kind === "externref" ? rhsWasm : lhsWasm;
+    let carrierExpr = valueExpr;
+    while (ts.isBinaryExpression(carrierExpr) && carrierExpr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      carrierExpr = carrierExpr.right;
+    }
+    const carrierType = ctx.checker.getTypeAtLocation(carrierExpr);
+    const carrierWasm = resolveWasmType(ctx, carrierType);
+    const carrierIsDynamicObjectCall =
+      ts.isCallExpression(carrierExpr) &&
+      ts.isIdentifier(carrierExpr.expression) &&
+      ctx.dynamicObjectReturnFunctions.has(carrierExpr.expression.text);
+    // A computed-key-populated empty object is deliberately represented by the
+    // open `$Object` externref carrier. The checker's evolved `this.options`
+    // LHS can still look like a closed anonymous shape; preferring it would
+    // cast `getOptions(options)` to null at the constructor assignment. The
+    // early carrier scan records the RHS return type before fnctor reservation,
+    // so let that proven dynamic representation override the nominal LHS.
+    const fieldType = carrierIsDynamicObjectCall
+      ? ({ kind: "externref" } as const)
+      : ctx.objectHashConsumerTypes.has(rhsType) || ctx.objectHashConsumerTypes.has(carrierType)
+        ? carrierWasm
+        : lhsWasm.kind === "externref"
+          ? rhsWasm
+          : lhsWasm;
     fields.push({ name: fieldName, type: fieldType, mutable: true });
+    onlyConditional.set(fieldName, conditional);
   }
   // Walk an assignment EXPRESSION, collecting EVERY `this.<field>` LHS in a
   // (possibly CHAINED) assignment — `this.start = this.end = this.pos`, etc.
-  function collectAssignmentChain(expr: ts.Expression): void {
+  function collectAssignmentChain(expr: ts.Expression, conditional: boolean): void {
     if (
       ts.isBinaryExpression(expr) &&
       expr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       ts.isPropertyAccessExpression(expr.left) &&
       expr.left.expression.kind === ts.SyntaxKind.ThisKeyword
     ) {
-      recordThisField(expr.left, expr.right);
+      recordThisField(expr.left, expr.right, conditional);
       // The RHS may itself be `this.<field> = …` (chained) — recurse to collect it.
-      collectAssignmentChain(expr.right);
+      collectAssignmentChain(expr.right, conditional);
     }
   }
-  function collectThisAssignments(stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[]): void {
+  function collectAssignmentNames(expr: ts.Expression, names: Set<string>): void {
+    if (
+      ts.isBinaryExpression(expr) &&
+      expr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(expr.left) &&
+      expr.left.expression.kind === ts.SyntaxKind.ThisKeyword
+    ) {
+      names.add(expr.left.name.text);
+      collectAssignmentNames(expr.right, names);
+    }
+  }
+  function guaranteedAssignmentsInClosedStatement(stmt: ts.Statement): Set<string> | undefined {
+    if (ts.isExpressionStatement(stmt)) {
+      const names = new Set<string>();
+      collectAssignmentNames(stmt.expression, names);
+      return names;
+    }
+    if (ts.isEmptyStatement(stmt)) return new Set();
+    if (ts.isBlock(stmt)) {
+      const names = new Set<string>();
+      for (const child of stmt.statements) {
+        const childNames = guaranteedAssignmentsInClosedStatement(child);
+        if (childNames === undefined) return undefined;
+        for (const name of childNames) names.add(name);
+      }
+      return names;
+    }
+    if (ts.isIfStatement(stmt) && stmt.elseStatement) {
+      const thenNames = guaranteedAssignmentsInClosedStatement(stmt.thenStatement);
+      const elseNames = guaranteedAssignmentsInClosedStatement(stmt.elseStatement);
+      if (thenNames === undefined || elseNames === undefined) return undefined;
+      return new Set([...thenNames].filter((name) => elseNames.has(name)));
+    }
+    return undefined;
+  }
+  function containsConstructorReturn(stmt: ts.Statement): boolean {
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      if (node !== stmt && ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node)) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(stmt);
+    return found;
+  }
+  function guaranteedAssignmentsInStatements(stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[]): Set<string> {
+    const names = new Set<string>();
     for (const stmt of stmts) {
-      if (ts.isExpressionStatement(stmt) && ts.isBinaryExpression(stmt.expression)) {
-        collectAssignmentChain(stmt.expression);
+      const statementNames = guaranteedAssignmentsInClosedStatement(stmt);
+      if (statementNames !== undefined) {
+        for (const name of statementNames) names.add(name);
       }
-      // Recurse into if/else blocks
-      if (ts.isIfStatement(stmt)) {
-        if (ts.isBlock(stmt.thenStatement)) {
-          collectThisAssignments(stmt.thenStatement.statements);
-        }
-        if (stmt.elseStatement && ts.isBlock(stmt.elseStatement)) {
-          collectThisAssignments(stmt.elseStatement.statements);
-        }
-      }
-      // Recurse into for/while/do blocks
-      if (
-        (ts.isForStatement(stmt) ||
-          ts.isForInStatement(stmt) ||
-          ts.isForOfStatement(stmt) ||
-          ts.isWhileStatement(stmt) ||
-          ts.isDoStatement(stmt)) &&
-        ts.isBlock(stmt.statement)
-      ) {
-        collectThisAssignments(stmt.statement.statements);
-      }
+      // A constructor return can leave every later write unexecuted on one
+      // successful construction path. Stop the proof at the first statement
+      // that contains one; thrown/non-terminating paths produce no instance.
+      if (containsConstructorReturn(stmt)) break;
+    }
+    return names;
+  }
+  function collectStatement(stmt: ts.Statement, conditional: boolean): void {
+    if (ts.isExpressionStatement(stmt) && ts.isBinaryExpression(stmt.expression)) {
+      collectAssignmentChain(stmt.expression, conditional);
+    }
+    if (ts.isBlock(stmt)) {
+      collectThisAssignments(stmt.statements, conditional);
+      return;
+    }
+    if (ts.isIfStatement(stmt)) {
+      collectStatement(stmt.thenStatement, true);
+      if (stmt.elseStatement) collectStatement(stmt.elseStatement, true);
+      return;
+    }
+    if (
+      ts.isForStatement(stmt) ||
+      ts.isForInStatement(stmt) ||
+      ts.isForOfStatement(stmt) ||
+      ts.isWhileStatement(stmt) ||
+      ts.isDoStatement(stmt)
+    ) {
+      collectStatement(stmt.statement, true);
+    }
+  }
+  function collectThisAssignments(
+    stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
+    conditional = false,
+  ): void {
+    for (const stmt of stmts) {
+      collectStatement(stmt, conditional);
     }
   }
   collectThisAssignments(body.statements);
+  // Assignments in both arms of a complete `if/else` are definite even though
+  // each individual arm is syntactically conditional. Do not allocate a
+  // presence bit for those fields: every successfully constructed instance has
+  // the slot. Acorn's Parser initializes `pos`, `lineStart`, and `curLine` this
+  // way; treating `pos` as optional made lifted parser-method reads observe
+  // `undefined` and reject otherwise-valid bare arrow functions.
+  for (const name of guaranteedAssignmentsInStatements(body.statements)) {
+    if (onlyConditional.has(name)) onlyConditional.set(name, false);
+  }
+
+  // Parser-style data constructors often establish only a small base shape in
+  // the constructor and add variant fields later through builder methods. Acorn
+  // is the canonical case: `new Node(...)` creates type/start/end, while flows
+  // such as `startNode() -> node -> parseTopLevel(node)` later assign `body`,
+  // `expression`, `left`, and the rest of the ESTree variant payload.
+  //
+  // The receiver-flow analysis above has already propagated those bindings and
+  // parameters to a concrete `__fnctor_<Name>` candidate. Reserve every named
+  // field assigned through that proven flow as an externref slot. The dynamic
+  // carrier is deliberate: a field name such as `value` is heterogeneous across
+  // ESTree variants. Every flow-grown field is presence-tracked because an
+  // individual instance may never receive it.
+  let flowStructName: string | undefined;
+  for (const [name, decl] of ctx.fnctorEscapeGate?.ctorDeclByName ?? []) {
+    if (decl === funcDecl) {
+      flowStructName = `__fnctor_${name}`;
+      break;
+    }
+  }
+  // Host mode already has its fnctor sidecar for expando properties. Reserving
+  // duplicate native slots there would shadow the sidecar during marshalling
+  // while their presence bits remain unset. This native shape growth is the
+  // host-free standalone replacement only.
+  if (ctx.standalone && flowStructName) {
+    for (const [receiver, structName] of ctx.fnctorEscapeGate?.receiverStruct ?? []) {
+      if (structName !== flowStructName) continue;
+      const access = receiver.parent;
+      if (!ts.isPropertyAccessExpression(access) || access.expression !== receiver) continue;
+      const assignment = access.parent;
+      if (
+        !ts.isBinaryExpression(assignment) ||
+        assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+        assignment.left !== access
+      ) {
+        continue;
+      }
+      const fieldName = access.name.text;
+      if (fields.some((field) => field.name === fieldName)) continue;
+      fields.push({ name: fieldName, type: { kind: "externref" }, mutable: true });
+      onlyConditional.set(fieldName, true);
+    }
+  }
 
   // Widen non-null ref fields to ref_null so struct.new can use ref.null defaults.
   // (Kept INSIDE the derivation so the reserved field set matches exactly what the
@@ -938,6 +1191,16 @@ export function deriveFnctorFields(
         typeIdx: (field.type as { typeIdx: number }).typeIdx,
       };
     }
+  }
+
+  // A fixed WasmGC slot exists on every instance, so its default value alone
+  // cannot tell "never assigned" from "explicitly assigned null/zero". Append
+  // one hidden i32 presence slot for each conditional-only source property.
+  // Hidden fields come last, preserving the source-field indices/order.
+  const tracked = fields.filter((field) => onlyConditional.get(field.name) === true);
+  for (const field of tracked) {
+    field.presenceTracked = true;
+    fields.push({ name: `$has_${field.name}`, type: { kind: "i32" }, mutable: true });
   }
 
   return fields;

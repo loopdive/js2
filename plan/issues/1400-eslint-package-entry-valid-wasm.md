@@ -13,7 +13,7 @@ area: compiler, resolver, codegen
 language_feature: commonjs, package-exports, classes
 goal: npm-library-support
 sprint: current
-depends_on: [3653, 3654, 3655, 3656, 3658]
+depends_on: [3653, 3654, 3655, 3656, 3672]
 es_edition: n/a
 related: [1044, 1075, 1277, 1279, 1282, 1287, 1289, 1573, 1575, 2690, 2691, 2693, 2700, 3657]
 ---
@@ -65,7 +65,7 @@ Current dependency order:
 3. #3655 adds static CommonJS JSON loading for `../../package.json`.
 4. #3656 fixes the independently reproduced IR failure in real
    `eslint/lib/shared/flags.js`.
-5. #3658 keeps the 146-file checker graph intact while restricting codegen to
+5. #3672 keeps the 146-file checker graph intact while restricting codegen to
    the 77 executable sources reachable from the direct Linter entry, then
    measures the remaining phases against the integration budget.
 6. Re-measure compile and Wasm validation. #2690 remains the known

@@ -330,6 +330,11 @@ export class LinearMemoryPlan {
     return layout?.kind === "record" ? layout : undefined;
   }
 
+  layoutForClassShape(shape: IrClassShape): LinearRecordLayoutPlan | undefined {
+    const layout = this.layout(linearClassLayoutId(shape));
+    return layout?.kind === "record" ? layout : undefined;
+  }
+
   layoutForRefCell(inner: IrType): LinearRecordLayoutPlan | undefined {
     const layout = this.layout(linearRefCellLayoutId(inner));
     return layout?.kind === "record" ? layout : undefined;
@@ -616,6 +621,10 @@ export function linearObjectLayoutId(shape: IrObjectShape): string {
   return `record:object:${shape.fields.map((field) => `${JSON.stringify(field.name)}=${linearIrTypeKey(field.type)}`).join(";")}`;
 }
 
+export function linearClassLayoutId(shape: IrClassShape): string {
+  return `record:class:${JSON.stringify(shape.classId)}`;
+}
+
 export function linearRefCellLayoutId(inner: IrType): string {
   return `record:refcell:${linearIrTypeKey(inner)}`;
 }
@@ -793,9 +802,7 @@ function recordLayoutForObject(shape: IrObjectShape): LinearRecordLayoutPlan {
 
 function recordLayoutForClass(shape: IrClassShape): LinearRecordLayoutPlan {
   return planLinearRecordLayout(
-    `record:class:${JSON.stringify(shape.className)}:${shape.fields
-      .map((field) => `${JSON.stringify(field.name)}=${linearIrTypeKey(field.type)}`)
-      .join(";")}`,
+    linearClassLayoutId(shape),
     shape.fields.map((field) => ({ name: field.name, storage: linearStorageForIrType(field.type) })),
   );
 }
@@ -908,10 +915,10 @@ function collectGlobalStorage(
   let id: string | undefined;
   let type: IrType | undefined;
   if (instr.kind === "global.get" && instr.resultType) {
-    id = instr.target.name;
+    id = instr.target.binding.bindingId;
     type = instr.resultType;
   } else if (instr.kind === "global.set") {
-    id = instr.target.name;
+    id = instr.target.binding.bindingId;
     type = valueTypes.get(instr.value);
   }
   if (!id || !type) return;
@@ -942,9 +949,7 @@ function linearIrTypeKey(type: IrType): string {
     case "object":
       return `object:${shapeKey(type.shape)}`;
     case "class":
-      return `class:${JSON.stringify(type.shape.className)}:${type.shape.fields
-        .map((field) => `${JSON.stringify(field.name)}=${linearIrTypeKey(field.type)}`)
-        .join(";")}`;
+      return `class:${JSON.stringify(type.shape.classId)}`;
     case "closure":
       return `closure:(${type.signature.params.map(linearIrTypeKey).join(",")})->${type.signature.returnType === null ? "void" : linearIrTypeKey(type.signature.returnType)}`;
     case "callable":

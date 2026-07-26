@@ -189,13 +189,13 @@ interface OverlayCarrier {
 function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
   const seen = new Set<number>();
   const out: OverlayCarrier[] = [];
-  for (const vecTypeIdx of ctx.vecTypeMap.values()) {
-    if (seen.has(vecTypeIdx)) continue;
+  const addCarrier = (vecTypeIdx: number): void => {
+    if (seen.has(vecTypeIdx)) return;
     seen.add(vecTypeIdx);
     const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-    if (arrTypeIdx < 0) continue;
+    if (arrTypeIdx < 0) return;
     const arrDef = ctx.mod.types[arrTypeIdx];
-    if (!arrDef || arrDef.kind !== "array") continue;
+    if (!arrDef || arrDef.kind !== "array") return;
     const elemType = arrDef.element as ValType;
     if (elemType.kind === "f64") {
       out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "f64" });
@@ -207,6 +207,23 @@ function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
         out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "anystr" });
       }
     }
+  };
+  for (const vecTypeIdx of ctx.vecTypeMap.values()) {
+    addCarrier(vecTypeIdx);
+  }
+  // `$ObjVec` is the growable externref-array carrier used by Object
+  // enumeration and RegExp `d`-flag indices. It deliberately lives outside
+  // `vecTypeMap`, but is still a genuine Array and therefore participates in
+  // the same dense-index and named-property descriptor overlay.
+  const objVec = ctx.objectRuntimeTypes;
+  if (objVec) addCarrier(objVec.objVecTypeIdx);
+  // RegExp exec results are an extended native-string vec subtype rather than
+  // a direct `vecTypeMap` entry. Include that exact exotic so its spec own
+  // properties (`index`, `input`, `groups`, `indices`) can be materialised in
+  // the overlay without broadening the carrier whitelist to arbitrary structs.
+  const regexpMatchVecTypeIdx = ctx.structMap.get("__regexp_match_vec");
+  if (regexpMatchVecTypeIdx !== undefined) {
+    addCarrier(regexpMatchVecTypeIdx);
   }
   out.sort((a, b) => a.vecTypeIdx - b.vecTypeIdx);
   return out;
@@ -491,6 +508,35 @@ function ensureOverlayCore(ctx: CodegenContext, objectTypeIdx: number, newPlainO
   return { stateTypeIdx, stateGlobalIdx, lookupIdx, ensureIdx: ctx.funcMap.get(ENSURE_NAME)! };
 }
 
+function fillVecHasOwnHelpers(ctx: CodegenContext, vecBaseIdx: number): void {
+  const vecGopdIdx = ctx.funcMap.get(GOPD_NAME);
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (vecGopdIdx === undefined || isUndefinedIdx === undefined) return;
+  // These predicates are independent natives, not wrappers around gOPD.
+  // Consult the overlay so implicit indices and companion properties are own.
+  for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
+    const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
+    if (!fn) continue;
+    fn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: vecBaseIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: vecGopdIdx },
+          { op: "call", funcIdx: isUndefinedIdx },
+          { op: "i32.eqz" },
+          { op: "return" },
+        ],
+      },
+    );
+  }
+}
+
 /**
  * Finalize fill for the #3251 overlay: real bodies for the reserved
  * `__vec_dp_value` / `__vec_dp_accessor` / `__vec_gopd`, plus the overlay
@@ -505,7 +551,6 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   const { objectTypeIdx, propEntryTypeIdx } = types;
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   if (anyStrTypeIdx < 0) return;
-
   // Required deps — resolved by NAME so late-import shifts can never desync.
   const objFindIdx = ctx.funcMap.get("__obj_find");
   const dpValueIdx = ctx.funcMap.get("__defineProperty_value");
@@ -1109,6 +1154,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
       ];
     }
   }
+  fillVecHasOwnHelpers(ctx, vecBaseIdx);
 
   // ── Overlay read prologue: __extern_get_idx ──────────────────────────────
   // Splice-front, append-locals (#2190/#3183 fill discipline). Gated on the

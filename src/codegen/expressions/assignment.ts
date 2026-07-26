@@ -106,6 +106,7 @@ import {
 } from "../with-scope.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { moduleGlobalAtIdentifier } from "../function-identity.js";
+import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -3339,7 +3340,15 @@ function tryEmitPinnedStructMemberSet(
 
   // Evaluate the value, coerce/box to externref.
   const valResult = compileExpression(ctx, fctx, value);
-  if (valResult && valResult.kind !== "externref") {
+  if (valResult && ctx.booleanPropertyNames.has(propName)) {
+    // #2847: a dynamic method bridge may already have boxed an untyped
+    // boolean-returning closure as numeric externref 0/1. The whole-program
+    // property analysis proves this write is boolean, so normalize through
+    // ToBoolean and re-box with the boolean brand before it reaches the
+    // member-set dispatcher/sidecar.
+    ensureI32Condition(fctx, valResult, ctx);
+    coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
+  } else if (valResult && valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
   } else if (!valResult) {
     fctx.body.push({ op: "ref.null.extern" });
@@ -3635,7 +3644,9 @@ function compilePropertyAssignment(
   // host/GC versus standalone/WASI.
   if (ts.isIdentifier(target.expression) && target.expression.text === "globalThis") {
     const propName = ts.isPrivateIdentifier(target.name) ? `__priv_${target.name.text.slice(1)}` : target.name.text;
-    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName);
+    const wrapRuntimeEvalCallable =
+      ctx.runtimeEvalCallableBoundaryEnabled === true && isStaticallyCallableExpression(ctx, value);
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, false, wrapRuntimeEvalCallable);
   }
 
   // Handle externref property set
@@ -3895,6 +3906,9 @@ function compilePropertyAssignment(
 
   const fieldIdx = fields.findIndex((f) => f.name === fieldName);
   if (fieldIdx === -1) return null;
+  const presenceFieldIdx = fields[fieldIdx]!.presenceTracked
+    ? fields.findIndex((field) => field.name === `$has_${fieldName}`)
+    : -1;
 
   const structSelfType: ValType = { kind: "ref_null", typeIdx: structTypeIdx };
   const structObjResult = compileExpression(ctx, fctx, target.expression, structSelfType);
@@ -3929,8 +3943,27 @@ function compilePropertyAssignment(
         { op: "local.get", index: tmpRecv },
         { op: "local.get", index: tmpVal },
         { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
+        ...(presenceFieldIdx >= 0
+          ? ([
+              { op: "local.get", index: tmpRecv },
+              { op: "i32.const", value: 1 },
+              { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: presenceFieldIdx },
+            ] as Instr[])
+          : []),
       ],
     });
+  } else if (presenceFieldIdx >= 0) {
+    // Preserve the receiver as well as the RHS so the hidden presence slot can
+    // be marked after the real field write.
+    fctx.body.push({ op: "local.set", index: tmpVal });
+    const tmpRecv = allocLocal(fctx, `__prop_recv_${fctx.locals.length}`, structSelfType);
+    fctx.body.push({ op: "local.set", index: tmpRecv });
+    fctx.body.push({ op: "local.get", index: tmpRecv });
+    fctx.body.push({ op: "local.get", index: tmpVal });
+    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
+    fctx.body.push({ op: "local.get", index: tmpRecv });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: presenceFieldIdx });
   } else {
     fctx.body.push({ op: "local.tee", index: tmpVal });
     fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
@@ -3938,6 +3971,19 @@ function compilePropertyAssignment(
   fctx.body.push({ op: "local.get", index: tmpVal });
 
   return valType;
+}
+
+/** Conservative proof used only for the linked runtime-eval global seam. */
+function isStaticallyCallableExpression(ctx: CodegenContext, value: ts.Expression): boolean {
+  const expr = skipTransparentExpressions(value);
+  if (
+    ts.isFunctionExpression(expr) ||
+    ts.isArrowFunction(expr) ||
+    (ts.isIdentifier(expr) && (ctx.funcMap.has(expr.text) || ctx.topLevelFunctionNames.has(expr.text)))
+  ) {
+    return true;
+  }
+  return ctx.oracle.signatureOf(expr) !== undefined;
 }
 
 /**
@@ -3953,6 +3999,7 @@ function compilePropertyAssignmentExternSet(
   value: ts.Expression,
   propName: string,
   forceRuntimeSet = false,
+  wrapRuntimeEvalCallable = false,
 ): InnerResult {
   // Compile object expression and convert to externref
   const objResult = compileExpression(ctx, fctx, target.expression);
@@ -3974,8 +4021,21 @@ function compilePropertyAssignmentExternSet(
   // Compile value as externref and save
   const valResult = compileExpression(ctx, fctx, value);
   if (!valResult) return null;
-  if (valResult.kind !== "externref") {
+  if (ctx.booleanPropertyNames.has(propName)) {
+    ensureI32Condition(fctx, valResult, ctx);
+    coerceType(ctx, fctx, { kind: "i32", boolean: true }, { kind: "externref" });
+  } else if (valResult.kind !== "externref") {
     coerceType(ctx, fctx, valResult, { kind: "externref" });
+  }
+  let assignmentResultLocal: number | undefined;
+  if (wrapRuntimeEvalCallable) {
+    // PutValue returns the ORIGINAL RHS, not the internal adapter stored on the
+    // realm object. Preserve identity for `(globalThis.f = f) === f`.
+    assignmentResultLocal = allocLocal(fctx, `__runtime_eval_aot_rhs_${fctx.locals.length}`, {
+      kind: "externref",
+    });
+    fctx.body.push({ op: "local.tee", index: assignmentResultLocal });
+    emitRuntimeEvalAotCallableAdapter(ctx, fctx);
   }
   const valLocal = allocLocal(fctx, `__paset_val_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: valLocal });
@@ -4022,7 +4082,7 @@ function compilePropertyAssignmentExternSet(
   }
 
   // Return the assigned value
-  fctx.body.push({ op: "local.get", index: valLocal });
+  fctx.body.push({ op: "local.get", index: assignmentResultLocal ?? valLocal });
   return { kind: "externref" };
 }
 

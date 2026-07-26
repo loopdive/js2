@@ -89,7 +89,6 @@ function buildOriginalHarnessSandbox(consoleProxy) {
 
 let compileCount = 0;
 const GC_INTERVAL = 25;
-const RECREATE_INTERVAL = 100;
 const WORKER_RECYCLE_INTERVAL = Math.max(0, parseInt(process.env.TEST262_WORKER_RECYCLE_INTERVAL || "0", 10) || 0);
 let runtimeIntrinsicCanarySnapshot = null;
 
@@ -97,7 +96,6 @@ let incrementalCompiler = null;
 function createFreshCompiler() {
   try {
     incrementalCompiler = createIncrementalCompiler({
-      fileName: "test.ts",
       sourceMap: true,
       sourceMapUrl: "test.wasm.map",
       emitWat: false,
@@ -108,6 +106,16 @@ function createFreshCompiler() {
   }
 }
 createFreshCompiler();
+
+function compileSingleSource(source, options) {
+  return incrementalCompiler ? incrementalCompiler.compile(source, options) : compile(source, options);
+}
+
+function compileMultipleSources(files, entryFile, options) {
+  return incrementalCompiler?.compileMulti
+    ? incrementalCompiler.compileMulti(files, entryFile, options)
+    : compileMulti(files, entryFile, options);
+}
 
 // Suppress unhandled Promise rejections from async tests
 process.on("unhandledRejection", () => {});
@@ -1078,7 +1086,6 @@ async function doCompile(
   if (preCleanup.recycle) {
     throw makeWorkerRecycleError(`worker built-ins poisoned before compile: ${preCleanup.reason}`);
   }
-  const compileFn = incrementalCompiler ? incrementalCompiler.compile : compile;
   // (#3049 C1 / #3123) Host lane (no target) defers top-level init:
   // `__module_init` is exported instead of wired to the wasm `(start)`
   // section, and the exec path below calls it right after `setExports` so
@@ -1123,7 +1130,7 @@ async function doCompile(
     // fixture sources beside it. Like the project runner's #2932 path, the
     // graph deliberately omits deferTopLevelInit: compileMulti synthesizes
     // one init schedule for the entire graph, including circular exports.
-    return compileMulti({ ...fixtureFiles, [entryFile]: source }, entryFile, {
+    return compileMultipleSources({ ...fixtureFiles, [entryFile]: source }, entryFile, {
       // #3506 — every virtual root is a real pinned `.js` file. With
       // `allowJs:false`, TypeScript excludes the graph before syntax checking
       // and codegen crashes at `undefined.kind`. Retain the literal JavaScript
@@ -1146,7 +1153,12 @@ async function doCompile(
     });
   }
   if (originalHarness) {
-    return compile(source, {
+    // The authoritative sharded-CI and test262.fyi lanes both compile literal
+    // JavaScript harness assemblies. Keep those single-file builds on the same
+    // persistent Language Service as the synthetic TypeScript lane; passing the
+    // JS filename and allowJs mode here preserves ScriptKind while successive
+    // harness/body edits can reuse TypeScript's Program and checker state.
+    return compileSingleSource(source, {
       allowJs: true,
       fileName: "test.js",
       sourceMap: true,
@@ -1158,18 +1170,16 @@ async function doCompile(
       ...deferOpt,
     });
   }
-  return incrementalCompiler
-    ? compileFn(source, { sourceMapUrl: sourceMapUrl || "test.wasm.map", target, inferModuleStrictArguments, ...deferOpt })
-    : (await compile(source, {
-              fileName: "test.ts",
-              sourceMap: true,
-              sourceMapUrl: sourceMapUrl || "test.wasm.map",
-              emitWat: false,
-              skipSemanticDiagnostics: true,
-              target,
-              inferModuleStrictArguments,
-              ...deferOpt,
-            }));
+  return compileSingleSource(source, {
+    fileName: "test.ts",
+    sourceMap: true,
+    sourceMapUrl: sourceMapUrl || "test.wasm.map",
+    emitWat: false,
+    skipSemanticDiagnostics: true,
+    target,
+    inferModuleStrictArguments,
+    ...deferOpt,
+  });
 }
 
 /**
@@ -1487,6 +1497,12 @@ process.on("message", async (msg) => {
   } catch (err) {
     // Thrown exception may have poisoned the incremental compiler's internal
     // state.  Recreate immediately so subsequent compilations don't cascade-fail.
+    try {
+      incrementalCompiler?.dispose?.();
+    } catch (_disposeError) {
+      // A poisoned service may also reject disposal; replacement still gives
+      // the next test a clean Language Service.
+    }
     incrementalCompiler = null;
     createFreshCompiler();
     if (err instanceof WebAssembly.Exception) {
@@ -2117,18 +2133,14 @@ function postCompileCleanup() {
     return cleanup;
   }
 
-  if (compileCount % RECREATE_INTERVAL === 0) {
-    try {
-      incrementalCompiler?.dispose?.();
-    } catch (_e) {
-      // dispose() may fail if the service is already in a bad state
-    }
-    incrementalCompiler = null;
-    const heapMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-    console.error(`[unified-worker] RECREATE at compile ${compileCount}, heap=${heapMB}MB`);
-    if (typeof globalThis.gc === "function") globalThis.gc();
-    createFreshCompiler();
-  } else if (compileCount % GC_INTERVAL === 0 && typeof globalThis.gc === "function") {
+  // #700 — no fixed compiler recreation interval. The versioned Language
+  // Services retain only the current single-file snapshot/project graph, and
+  // TypeScript releases removed documents from the shared registry as the
+  // Program changes. Recreating every 100 tests forced a cold frontend build
+  // without repairing process-wide prototype/codegen state. Thrown compiler
+  // failures still replace the service immediately in the doCompile catch
+  // above; contamination and optional memory policies recycle the whole worker.
+  if (compileCount % GC_INTERVAL === 0 && typeof globalThis.gc === "function") {
     globalThis.gc();
   }
 

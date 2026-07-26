@@ -28,6 +28,7 @@ import { defaultValueInstrs, emitGuardedFuncRefCast, emitGuardedRefCast, pushDef
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import {
+  emitFnctorSubclassDynamicMethodCall,
   emitClosureCallArgcExtras,
   emitResetArgcExtras,
   emitWrapperDynamicMethodCall,
@@ -773,12 +774,13 @@ export function compileCallablePropertyCall(
   // two shapes have no subtype relation) — the cast nulls out and the
   // `struct.get` traps "dereferencing a null pointer" (acorn:
   // `new this(options, input).parse()` in the static `Parser.parse`). Route
-  // the call through the dynamic host bridge instead, which resolves the
-  // method on the closure's vivified prototype (__register_fnctor_instance
-  // + _fnctorProtoLookup). JS-host mode only; the funcConstructorMap check
-  // covers already-compiled fnctors and the declaration check covers
-  // compile-order races (member call compiled before the first `new`).
-  if (!ctx.standalone && !ctx.wasi && !ts.isPrivateIdentifier(propAccess.name)) {
+  // the call through dynamic dispatch instead. JS-host resolves the closure's
+  // vivified prototype; approved standalone fnctors resolve through their
+  // native per-fnctor `$Object` prototype and invoke with `__apply_closure`.
+  // The funcConstructorMap check covers already-compiled fnctors and the
+  // declaration check covers compile-order races (member call compiled before
+  // the first `new`).
+  if (!ctx.wasi && !ts.isPrivateIdentifier(propAccess.name)) {
     const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
     const recvSym = recvTsType?.symbol;
     const decl = recvSym?.valueDeclaration;
@@ -789,9 +791,18 @@ export function compileCallablePropertyCall(
         (ts.isFunctionDeclaration(decl) ||
           ts.isFunctionExpression(decl) ||
           (ts.isVariableDeclaration(decl) && !!decl.initializer && ts.isFunctionExpression(decl.initializer))));
-    if (isFnCtorInstance) {
-      const dyn = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
-      if (dyn !== null) return dyn;
+    const approvedStandaloneFnctor =
+      ctx.standalone &&
+      (ctx.fnctorEscapeGate?.approvedNames.has(className) === true ||
+        (recvSym?.name !== undefined && ctx.fnctorEscapeGate?.approvedNames.has(recvSym.name) === true));
+    if (isFnCtorInstance && (!ctx.standalone || approvedStandaloneFnctor)) {
+      if (ctx.standalone) {
+        const dyn = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
+        if (dyn !== undefined) return dyn;
+      } else {
+        const dyn = emitWrapperDynamicMethodCall(ctx, fctx, propAccess.expression, methodName, expr);
+        if (dyn !== null) return dyn;
+      }
     }
   }
 

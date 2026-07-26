@@ -62,7 +62,9 @@ import {
 } from "../src/ir/index.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import type { FuncTypeDef } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
+const identities = createTestIrFunctionIdentityFactory("issue-2949-s5-3-relational");
 const F64: IrType = irVal({ kind: "f64" });
 const I32: IrType = irVal({ kind: "i32" });
 const DYN: IrType = irDynamic();
@@ -191,7 +193,7 @@ const RELOP: Record<string, IrBinop> = {
  * compare against the CONCRETE f64 `b`. Exercises `dyn(number) <rel> concrete`.
  */
 function gcRelBoxNum(name: string, op: keyof typeof RELOP): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", F64);
   const c = b.addParam("c", F64);
   b.openBlock();
@@ -208,7 +210,7 @@ function gcRelBoxNum(name: string, op: keyof typeof RELOP): IrFunction {
  * boolean-partition ToNumber arm.
  */
 function gcRelBoxBool(name: string, op: keyof typeof RELOP): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", I32);
   const c = b.addParam("c", F64);
   b.openBlock();
@@ -224,7 +226,7 @@ function gcRelBoxBool(name: string, op: keyof typeof RELOP): IrFunction {
  * compare. Exercises `dyn <rel> dyn` (both carriers).
  */
 function gcRelDynDyn(name: string, op: keyof typeof RELOP): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", F64);
   const c = b.addParam("c", F64);
   b.openBlock();
@@ -243,7 +245,7 @@ function gcRelDynDyn(name: string, op: keyof typeof RELOP): IrFunction {
  * Exercises `dyn(<any JS value>) <rel> numericLiteral`.
  */
 function hostRelDynConc(name: string, op: keyof typeof RELOP): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", DYN);
   const c = b.addParam("c", F64);
   b.openBlock();
@@ -255,7 +257,7 @@ function hostRelDynConc(name: string, op: keyof typeof RELOP): IrFunction {
 
 /** host: `f(a: dynamic, b: dynamic): i32` — ToNumber BOTH, compare. */
 function hostRelDynDyn(name: string, op: keyof typeof RELOP): IrFunction {
-  const b = new IrFunctionBuilder(name, [I32], true);
+  const b = new IrFunctionBuilder(identities.next(name), [I32], true);
   const a = b.addParam("a", DYN);
   const c = b.addParam("c", DYN);
   b.openBlock();
@@ -272,7 +274,7 @@ function hostRelDynDyn(name: string, op: keyof typeof RELOP): IrFunction {
 
 describe("#2949 S5.3 — emitDynToNumber emits a verifier-clean f64 dyn.to_number node", () => {
   it("appends a dyn.to_number node with f64 result and registers typeOf", () => {
-    const b = new IrFunctionBuilder("tn1", [F64], true);
+    const b = new IrFunctionBuilder(identities.next("tn1"), [F64], true);
     const x = b.addParam("x", DYN);
     b.openBlock();
     const r = b.emitDynToNumber(x);
@@ -285,14 +287,14 @@ describe("#2949 S5.3 — emitDynToNumber emits a verifier-clean f64 dyn.to_numbe
   });
 
   it("rejects a non-dynamic operand at construction (carrier ToNumber only)", () => {
-    const b = new IrFunctionBuilder("tnBad", [F64], true);
+    const b = new IrFunctionBuilder(identities.next("tnBad"), [F64], true);
     const c = b.addParam("c", F64);
     b.openBlock();
     expect(() => b.emitDynToNumber(c)).toThrow(/operand .* is not dynamic/);
   });
 
   it("a dyn.to_number fed a concrete operand fails the verifier (defense in depth)", () => {
-    const b = new IrFunctionBuilder("tnVerify", [F64], true);
+    const b = new IrFunctionBuilder(identities.next("tnVerify"), [F64], true);
     const c = b.addParam("c", F64);
     b.openBlock();
     b.terminate({ kind: "return", values: [c] });

@@ -14,9 +14,16 @@ import { ENV_GLOBAL, EnvRec, type FuncMeta, type JSValue } from "./types.js";
 
 export { Op, Builtin, OP_INFO, OP_COUNT } from "./opcodes.js";
 export { Encoder } from "./encoder.js";
-export { emitProgram, UnsupportedNodeError } from "./emitter.js";
+export { emitFunction, emitProgram, UnsupportedNodeError } from "./emitter.js";
 export { disassemble, decodeInstr } from "./disasm.js";
-export { interpEnter, makeInterpClosure, isInterpClosure, InterpInternalError } from "./loop.js";
+export { interpEnter, makeInterpClosure, isInterpClosure, InterpInternalError, type InterpCallable } from "./loop.js";
+export {
+  compileDynamicFunctionMeta,
+  createDynamicFunction,
+  dynamicFunctionSource,
+  executeIndirectEval,
+  type DynamicParser,
+} from "./dynamic-function.js";
 export { FuncMeta, Frame, EnvRec, type JSValue } from "./types.js";
 
 /** Build a global environment record whose backing is `globalObject`. */

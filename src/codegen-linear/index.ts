@@ -1,15 +1,17 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
+import type { BuildIrUnitInventoryOptions } from "../ir/identity.js";
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
 import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
-import { compileLinearIrFunctions, linearIrEnabled } from "../ir/backend/linear-integration.js";
-import { materializeLinearIrHelper } from "../ir/backend/linear-integration.js";
+import * as linearIr from "../ir/backend/linear-integration.js";
 import type { CollectionKind, FinallyEntry, LinearContext, LinearFuncContext } from "./context.js";
 import { addLocal } from "./context.js";
 import type { ClassLayout } from "./layout.js";
 import { computeClassLayout } from "./layout.js";
+import * as linearCoercion from "./coercion-engine.js";
+import * as numberFormat from "./number-format.js";
 import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
 import {
   addArrayRuntime,
@@ -92,6 +94,7 @@ export interface LinearOptions {
   exposeArenaReset?: boolean;
   /** Shared IR allocation policy. Direct-backend fallbacks remain arena-backed. */
   allocationPolicy?: LinearAllocatorPolicyId;
+  irInventoryOptions?: BuildIrUnitInventoryOptions;
 }
 
 /**
@@ -101,9 +104,9 @@ export interface LinearOptions {
 export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): WasmModule {
   const mod = createEmptyModule();
   const allocationPolicy = linearAllocatorPolicy(opts.allocationPolicy ?? "arena-v1");
+  const dataSegmentBase = numberFormat.addRuntime(mod, ast, opts.exposeArenaReset, DATA_SEGMENT_BASE);
 
   // Add memory and runtime functions first
-  addRuntime(mod, { exposeArenaReset: opts.exposeArenaReset });
   if (allocationPolicy.id === "analysis-stack-arena-v1") addLinearStackArenaRuntime(mod);
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
@@ -116,7 +119,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   // #2956 L2: construction needs one value-first indexed store helper.
   // Register it only for the overlay so the explicit `=0` escape hatch stays
   // byte-identical to the pre-IR direct backend.
-  if (linearIrEnabled()) {
+  if (linearIr.linearIrEnabled()) {
     addLinearIrVecRuntime(mod);
     // The UTF-16 decoder is sizeable and only the charCodeAt plan needs it.
     // Register before user-slot assignment when the source can request it.
@@ -141,7 +144,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     errors: [],
     classLayouts: new Map(),
     stringLiterals: new Map(),
-    dataSegmentOffset: DATA_SEGMENT_BASE,
+    dataSegmentOffset: dataSegmentBase,
     lambdaCounter: 0,
     tableEntries: [],
     closureEnvGlobalIdx,
@@ -170,8 +173,8 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     const className = classDecl.name!.text;
     const layout = ctx.classLayouts.get(className)!;
 
-    // Constructor
-    allFuncEntries.push({ kind: "ctor", node: classDecl, name: layout.ctorFuncName, className });
+    const ctorDecl = classDecl.members.find(ts.isConstructorDeclaration);
+    allFuncEntries.push({ kind: "ctor", node: ctorDecl ?? classDecl, name: layout.ctorFuncName, className });
 
     // Methods
     for (const member of classDecl.members) {
@@ -200,12 +203,15 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     }
   }
 
-  // Assign function indices for all entries
   const runtimeFuncCount = ctx.mod.functions.length;
+  const linearIrLegacySlots = [];
+  const isIrTerminal = linearIr.terminalPredicate(ast.sourceFile, ast.checker, opts.irInventoryOptions);
   for (let i = 0; i < allFuncEntries.length; i++) {
     const entry = allFuncEntries[i];
     const funcIdx = ctx.numImportFuncs + runtimeFuncCount + i;
     ctx.funcMap.set(entry.name, funcIdx);
+    if (isIrTerminal(entry.node))
+      linearIrLegacySlots.push({ declaration: entry.node, legacyName: entry.name, funcIdx });
   }
 
   // ── Collect module-level variable declarations as wasm globals ──
@@ -217,19 +223,18 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   }
 
   // ── #2956: IR overlay for selector-claimed top-level functions ──
-  // Default-on since L4; JS2WASM_LINEAR_IR=0 restores the byte-identical
-  // direct path. Runs
-  // AFTER slot pre-assignment + module-global collection so the linear IR
-  // resolver's name-based lookups (funcMap / moduleGlobals) are complete,
-  // and BEFORE the funcDecls loop so an IR-lowered body lands at exactly
-  // its pre-assigned slot position. Anything the gate demotes compiles via
-  // the direct path below, unchanged.
-  const linearIr = linearIrEnabled() ? compileLinearIrFunctions(ctx, ast.sourceFile, allocationPolicy) : undefined;
+  // Default-on since L4. Run after exact slot registration and module-global
+  // collection, but before top-level body insertion. Demotions retain the
+  // direct path and JS2WASM_LINEAR_IR=0 remains the escape hatch.
+  const linearIrResult = linearIr.linearIrEnabled()
+    ? linearIr.compileLinearIr(ctx, ast.sourceFile, allocationPolicy, linearIrLegacySlots, opts.irInventoryOptions)
+    : undefined;
 
   // ── Compile top-level function declarations ──
   for (const decl of funcDecls) {
-    const irFunc = linearIr?.funcs.get(decl.name!.text);
-    if (irFunc) {
+    const irArtifact = linearIrResult?.compiledArtifactFor(decl);
+    if (irArtifact) {
+      const { func: irFunc, legacySlot } = irArtifact;
       // Insert the IR-lowered body at this decl's slot position (push order
       // must match the forward-registered funcMap indices). Mirror
       // compileFunction's export record.
@@ -237,7 +242,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
       if (irFunc.exported) {
         ctx.mod.exports.push({
           name: irFunc.name,
-          desc: { kind: "func", index: ctx.funcMap.get(irFunc.name)! },
+          desc: { kind: "func", index: legacySlot.funcIdx },
         });
       }
       continue;
@@ -247,25 +252,18 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   // Aggregate/ref-cell helpers follow every user slot, keeping funcMap stable
   // while IR lowering discovers object shapes lazily.
-  for (const helper of linearIr?.helpers ?? []) {
+  for (const helper of linearIrResult?.helpers ?? []) {
     const actualFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
     if (actualFuncIdx !== helper.funcIdx) {
       throw new Error(
         `linear-ir: deferred helper slot mismatch for '${helper.name}' (expected ${helper.funcIdx}, got ${actualFuncIdx})`,
       );
     }
-    ctx.mod.functions.push(materializeLinearIrHelper(ctx, helper));
+    ctx.mod.functions.push(linearIr.materializeLinearIrHelper(ctx, helper));
   }
 
   // ── Emit data segments for string literals ──
-  if (ctx.stringLiterals.size > 0) {
-    const totalSize = ctx.dataSegmentOffset - DATA_SEGMENT_BASE;
-    const bytes = new Uint8Array(totalSize);
-    for (const literal of ctx.stringLiterals.values()) {
-      bytes.set(literal.bytes, literal.offset - DATA_SEGMENT_BASE);
-    }
-    mod.dataSegments.push({ offset: DATA_SEGMENT_BASE, bytes });
-  }
+  numberFormat.emitLinearStringData(ctx, dataSegmentBase);
 
   emitClosureTable(ctx);
 
@@ -3519,8 +3517,11 @@ function compileMethodCall(ctx: LinearContext, fctx: LinearFuncContext, expr: ts
     fctx.body.push({ op: "f64.convert_i32_s" });
     return;
   } else if (methodName === "toString") {
-    // x.toString(...) — for numbers, just compile x (it's already a value)
+    // Exact no-radix Number::toString uses the host-free Ryū runtime.
     compileExpression(ctx, fctx, propAccess.expression);
+    if (expr.arguments.length === 0 && inferExprType(ctx, fctx, propAccess.expression).kind === "f64") {
+      linearCoercion.emitNumberToStringCall(ctx, fctx);
+    }
     return;
   } else {
     // Check if it's a class method call
@@ -5008,12 +5009,10 @@ function compileTemplateExpression(ctx: LinearContext, fctx: LinearFuncContext, 
       // Already a string pointer (i32), just compile
       compileExpression(ctx, fctx, span.expression);
     } else {
-      // It's an f64 number — need to convert to string
-      // For now, use __str_from_i32 if available, otherwise just truncate and convert
-      const strFromI32Idx = ctx.funcMap.get("__str_from_i32");
-      if (strFromI32Idx !== undefined) {
-        compileExprToI32(ctx, fctx, span.expression);
-        fctx.body.push({ op: "call", funcIdx: strFromI32Idx });
+      // It's an f64 number — use the exact host-free Ryū formatter.
+      if (linearCoercion.hasNumberToString(ctx)) {
+        compileExpression(ctx, fctx, span.expression);
+        linearCoercion.emitNumberToStringCall(ctx, fctx);
       } else {
         // Fallback: compile as empty string (shouldn't normally happen)
         compileStringLiteral(ctx, fctx, "");

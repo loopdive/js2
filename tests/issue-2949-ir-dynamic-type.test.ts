@@ -24,6 +24,9 @@ import {
 import { JsTag, jsTagUnboxKind } from "../src/ir/js-tag.js";
 import { JsTag as JsTagReexport } from "../src/codegen/value-tags.js";
 import type { FuncTypeDef, ValType } from "../src/ir/types.js";
+import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+
+const irIdentities = createTestIrFunctionIdentityFactory("issue-2949-ir-dynamic-type");
 
 function id(n: number): IrValueId {
   return asValueId(n);
@@ -43,7 +46,7 @@ function fn(
   valueCount: number,
 ): IrFunction {
   return {
-    name,
+    ...irIdentities.next(name),
     params: params.map((p, i) => ({ value: id(i), type: p.type, name: p.name })),
     resultTypes,
     blocks: [

@@ -15,20 +15,22 @@
  * For each distinct builtin function we materialize, register a UNIQUE struct
  * subtype of its signature wrapper:
  *
- *   `$__builtinfn_<n> { funcref func; (mut i32) bfnstate }  <: $__fn_wrap_<sig>`
+ *   `$__builtinfn_<n> {
+ *      funcref func;
+ *      (mut i32) bfnstate;
+ *      i32 bfnid;
+ *    } <: $__fn_wrap_<sig>`
  *
  * - Being a SUBTYPE of the signature wrapper keeps every existing call path
  *   working untouched (static closure calls, reflective `.call`, any-typed
  *   callback dispatch — they cast to the sig wrapper / root, and a subtype
  *   passes).
  * - The metadata itself ({name, length}) is statically known per (builtin,
- *   member), so it is NOT stored in fields — it lives in
- *   `ctx.builtinFnMetaByTypeIdx` keyed by the meta type index. The reflective
- *   runtime natives discriminate the receiver with `ref.test <metaType>` arms
- *   (type indices are rec-group/dead-elim stable — no funcidx hazard) that are
- *   SPLICED IN AT FINALIZE by `fillBuiltinFnMeta` (object-runtime.ts), after
- *   every meta type is known — same reserve/fill discipline as
- *   `fillExternIsArray` / `fillExternGetIdxVecArms`.
+ *   member), so it lives in `ctx.builtinFnMetaByTypeIdx` keyed by the meta type
+ *   index. WasmGC structurally canonicalizes the otherwise-identical meta
+ *   subtypes, so `ref.test <metaType>` is not an identity discriminator. The
+ *   immutable `bfnid` field anchors each instance to its exact metadata entry;
+ *   reflective natives require both the family `ref.test` and matching id.
  * - `bfnstate` is the one piece of per-INSTANCE state: a deleted-bits mask
  *   (bit 0 = `name` deleted, bit 1 = `length` deleted). `verifyProperty`'s
  *   `isConfigurable` arm `delete`s the property and then requires
@@ -254,6 +256,9 @@ export function ensureBuiltinFnMetaType(
       { name: "func", type: { kind: "funcref" as const }, mutable: false },
       // Deleted-bits mask: bit 0 = "name" deleted, bit 1 = "length" deleted.
       { name: "bfnstate", type: { kind: "i32" as const }, mutable: true },
+      // Stable per-module metadata identity. Structurally-equivalent meta
+      // subtypes cannot be distinguished by ref.test alone.
+      { name: "bfnid", type: { kind: "i32" as const }, mutable: false },
     ],
     superTypeIdx: baseStructTypeIdx,
   });
@@ -268,8 +273,9 @@ export function ensureBuiltinFnMetaType(
 /**
  * The instruction sequence that materializes a builtin closure VALUE from a
  * factory result. A meta-typed closure struct has the extra `(mut i32)
- * bfnstate` field, so its `struct.new` needs one more operand than the plain
- * 2-op `ref.func` + `struct.new` sequence; non-meta types keep the old shape.
+ * bfnstate` + `bfnid` fields, so its `struct.new` needs two more operands than
+ * the plain `ref.func` + `struct.new` sequence; non-meta types keep the old
+ * shape.
  */
 export function pushBuiltinFnClosureValueInstrs(
   ctx: CodegenContext,
@@ -277,7 +283,9 @@ export function pushBuiltinFnClosureValueInstrs(
 ): Instr[] {
   const isMeta = ctx.builtinFnMetaByTypeIdx?.has(closure.type.typeIdx) ?? false;
   const instrs: Instr[] = [{ op: "ref.func", funcIdx: closure.funcIdx }];
-  if (isMeta) instrs.push({ op: "i32.const", value: 0 });
+  if (isMeta) {
+    instrs.push({ op: "i32.const", value: 0 }, { op: "i32.const", value: closure.type.typeIdx });
+  }
   instrs.push({ op: "struct.new", typeIdx: closure.type.typeIdx });
   return instrs;
 }
