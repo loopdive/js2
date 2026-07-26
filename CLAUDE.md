@@ -109,11 +109,23 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 ## Test262
 
 - test262.test.ts has no assertions — all vitest tests pass; conformance is tracked via report
-- Skip filters (#3626 — VERIFY BEFORE TRUSTING THIS LINE): `eval` and `with` are **NOT** skipped —
-  those tests run and are counted against conformance (measured 2026-07-25: 826 eval-dependent /
-  512 failures, 171 `with` / 148 failures in the ES5 bucket alone). `top-level-await` IS feature-skipped
-  in `tests/test262-runner.ts`. The remaining historical entries (Proxy, SharedArrayBuffer, Temporal,
-  WeakRef, FinalizationRegistry, dynamic `import()`) were NOT re-verified and must not be assumed skipped.
+- Skip filters — **verified against `tests/test262-runner.ts` on 2026-07-26 (#24); this is now the
+  complete list, not a historical one.** `shouldSkip` skips exactly:
+  - `_FIXTURE.js` helper files
+  - `HANGING_TESTS` (an explicit per-path set — compiler hangs)
+  - `language/import/import-defer/` (proposal, no harness)
+  - the 18-file `eval-script-code-host-resolves-module-code` family (#1696)
+  - anything `classifyTestScope` calls a **proposal**, unless `TEST262_INCLUDE_PROPOSALS=1`
+  - two **feature** skips only: `top-level-await` and `IsHTMLDDA`
+
+  **Everything else RUNS and is counted against conformance.** In particular `eval` and `with` are
+  **NOT** skipped (measured 2026-07-25: 826 eval-dependent / 512 failures, 171 `with` / 148 failures
+  in the ES5 bucket alone). The old list also named **Proxy, SharedArrayBuffer, Temporal, WeakRef,
+  FinalizationRegistry and dynamic `import()`** — **none of those are skipped either.** Temporal is
+  the easy proof: the baseline carries Temporal entries with `status:"fail"` and error
+  `Temporal is not defined`, which only appears if the tests ran. A stale "these are skipped" claim is
+  how a real multi-hundred-test gap stays invisible, so treat this list as load-bearing and re-verify
+  it in the runner before editing.
 - Many previously-skipped features now supported: TypedArray, DataView, ArrayBuffer, delete, async, generators, for-of
 - Issues #618-#634 cover current failure patterns (from 2026-03-19 error analysis)
 - parseInt import: `(externref, f64) -> f64` with NaN sentinel for missing radix

@@ -1,7 +1,7 @@
 {
   "statusLine": {
     "type": "command",
-    "command": ".claude/statusline-command.sh",
+    "command": ".claude/statusline-cached.sh",
     "refreshInterval": 30
   },
   "env": {
@@ -11,7 +11,9 @@
   },
   "permissions": {
     "defaultMode": "bypassPermissions",
-    "allow": ["Bash(*)"]
+    "allow": [
+      "Bash(*)"
+    ]
   },
   "hooks": {
     "TeammateIdle": [

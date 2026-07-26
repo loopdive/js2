@@ -616,3 +616,37 @@ churn during the migration.
 ## Residual (as of #2199, PO reconcile 2026-06-28)
 
 NOT done — sliced. Slice A (host mode) landed (an auto-park merge_group diagnosis, #2547, trimmed its scope). Slices B (accessor descriptors) + C (Array-exotic length/index, ArraySetLength) remain; the ~788-fail ES5 cluster is not closed. Stays in-progress.
+
+## ⚠️ RE-SCOPE 2026-07-26 (opus-loop-e, task #24) — PART OF THE RATIONALE IS VOID
+
+**A different failure mode from the other false-label cases: the *status* here is
+fine, the *reason* is partly wrong.** This issue is not falsely `done` — it is
+live work justified in part by a defect that does not exist.
+
+This issue inherits the ES5 census #3626 §2.2 framing, including the
+**A2 "delete of non-configurable succeeds" (22 tests)** row. **That defect does
+not exist.** Re-measured on HEAD (see #3626 §2.2.1, landed via PR #3657):
+
+- `defineProperty(o,"x",{value:1,configurable:false}); try { delete o.x } catch(e){ e.name }`
+  → **"threw TypeError"**, matching a V8 control. Spec-correct today.
+- The census probe read `"x" in o` **after** a `delete` that throws, so that
+  expression never evaluated — the recorded `false` is a swallowed-exception
+  artifact. It measured the throw, not the value.
+- Corroboration: no 22-test cluster exists corpus-wide. `configurable`-mentioning
+  failure signatures total **~16, all singletons**.
+
+The **A1** row is also inverted: the dominant direction is properties being
+**over-restricted** (34 "expected to be writable, but was not") rather than
+under-enforced (~10, all `using`/`await-using`, not ES5). And the
+`defineProperty` bucket is **276 failures across 102 distinct signatures**
+(largest 17, 6 %) — not one mechanism, so the "ceiling 564" framing is withdrawn.
+
+**Remaining valid scope: the array/vec residual only.** Re-scope accordingly and
+do not carry the A2 delete-non-configurable justification forward.
+
+**Caveat on the A1 number, so it is not misused:** that ~10 was measured against
+the cached baseline jsonl, which **predates the #3603 de-inflation**. The
+post-de-inflation regression set contains a much larger `writable`/`configurable`
+wrongly-TRUE population (#3653, 202 + 134), which the pre-de-inflation baseline
+could not see. The two are measured on different trees and do **not** contradict —
+do not cite the ~10 against #3653.
