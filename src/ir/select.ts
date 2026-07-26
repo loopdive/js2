@@ -441,11 +441,6 @@ export interface IrSelectionOptions {
   /** (#3657) Checker-certified class-member calls to same-file primitive host stubs. */
   readonly ambientClassCalls?: IrAmbientClassCallResolver;
   /**
-   * (#3657) Checker-certified direct calls from class members to same-file
-   * primitive `declare function` host stubs. Omitted outside JS-host mode.
-   */
-  readonly ambientClassCalls?: IrAmbientClassCallResolver;
-  /**
    * (#3214 B2) Checker-certified direct ambient `addEventListener` callback
    * sites. Omitted in host-free modes and bare selector callers so arrows do
    * not widen accidentally outside the production/gate shared proof.
