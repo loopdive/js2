@@ -62,6 +62,15 @@ function wrapped(body: string): string {
 }
 
 describe("#1669 object-method trampoline externref coercion (regressed by #1602)", () => {
+  it("coerces a cached host-backed method receiver to its final externref ABI", async () => {
+    await compileValid(`
+      export function test(): number {
+        const set = Map.prototype.set;
+        return typeof set === "function" ? 1 : 0;
+      }
+    `);
+  });
+
   it("sibling non-generator default-param methods read as values (name-length-dflt shape)", async () => {
     // Sibling literals with default params in different positions structurally
     // dedupe; the per-call-site trampoline's wrapper param types ([externref,

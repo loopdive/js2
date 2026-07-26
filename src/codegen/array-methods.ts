@@ -61,7 +61,13 @@ import { emitNativeNumberFormat } from "./number-format-native.js";
 import { ensureNativeArrayHof } from "./hof-native.js";
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
-import { coerceType, coercionInstrs, defaultValueInstrs, emitGuardedRefCast } from "./type-coercion.js";
+import {
+  buildVecFromExternMaterializer,
+  coerceType,
+  coercionInstrs,
+  defaultValueInstrs,
+  emitGuardedRefCast,
+} from "./type-coercion.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -3042,7 +3048,10 @@ function compileArrayPush(
       fctx.body.push({ op: "i32.const", value: i });
       fctx.body.push({ op: "i32.add" });
     }
-    compileExpression(ctx, fctx, callExpr.arguments[i]!, elemType);
+    const argType = compileExpression(ctx, fctx, callExpr.arguments[i]!, elemType);
+    if (argType && !valTypesMatch(argType, elemType)) {
+      coerceType(ctx, fctx, argType, elemType);
+    }
     fctx.body.push({ op: "array.set", typeIdx: arrTypeIdx });
   }
 
@@ -4910,7 +4919,33 @@ function setupArrayLoop(
     ensureGetUndefined(ctx);
     flushLateImportShifts(ctx, fctx);
   }
-  compileExpression(ctx, fctx, propAccess.expression);
+  const receiverExpr = propAccess.expression;
+  const hostArrayProducer =
+    ts.isCallExpression(receiverExpr) &&
+    ts.isPropertyAccessExpression(receiverExpr.expression) &&
+    ts.isIdentifier(receiverExpr.expression.expression) &&
+    receiverExpr.expression.expression.text === "Object" &&
+    new Set(["keys", "values", "entries", "getOwnPropertyNames", "getOwnPropertySymbols"]).has(
+      receiverExpr.expression.name.text,
+    );
+  const receiverType = compileExpression(
+    ctx,
+    fctx,
+    receiverExpr,
+    hostArrayProducer ? { kind: "externref" } : undefined,
+  );
+  if (hostArrayProducer || receiverType?.kind === "externref" || receiverType?.kind === "ref_extern") {
+    // Host array producers are typed by TypeScript as ordinary arrays, so
+    // method resolution selects this native vec HOF even though the runtime
+    // result is a JS Array externref. A direct ref.cast traps. The canonical
+    // materializer preserves an already-native vec and copies host/cross-rep
+    // arrays into the requested vec representation.
+    const materializerName = buildVecFromExternMaterializer(ctx, vecTypeIdx);
+    const materializerIdx = materializerName ? ctx.funcMap.get(materializerName) : undefined;
+    if (materializerIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: materializerIdx });
+    }
+  }
 
   const vecTmp = allocLocal(fctx, `__arr_${tag}_vec_${fctx.locals.length}`, {
     kind: "ref_null",
@@ -4970,6 +5005,13 @@ function buildClosureCallInstrs(
   const { closureInfo, closureTypeIdx, closureTmp } = setup;
   if (!closureInfo || closureTypeIdx === undefined || closureTmp === undefined) return [];
   const numParams = closureInfo.paramTypes.length;
+  const SPEC_ARITY = 3;
+  const missingParamTypes = closureInfo.paramTypes.slice(SPEC_ARITY);
+  const needsExternUndefined = missingParamTypes.some(
+    (type) => type.kind === "externref" || type.kind === "ref_extern",
+  );
+  const undefinedIdx = needsExternUndefined ? ensureGetUndefined(ctx) : undefined;
+  if (needsExternUndefined) flushLateImportShifts(ctx, fctx);
   const elemCoerce = closureInfo.paramTypes[0] ? coercionInstrs(ctx, elemType, closureInfo.paramTypes[0], fctx) : [];
 
   // #820l — array-method callbacks are invoked at spec arity 3
@@ -4979,8 +5021,17 @@ function buildClosureCallInstrs(
   // module-level __argc + __extras_argv globals consumed by
   // emitArgumentsVecBody. Convention from #1053: argc = numFormals
   // (slots filled by direct params); extras vec holds slots beyond.
-  const SPEC_ARITY = 3;
   const argsPlumbing = emitArrayCallbackArgsPlumbing(ctx, fctx, SPEC_ARITY, numParams, vecTypeIdx, arrTypeIdx, loop);
+  const missingParamInstrs = missingParamTypes.flatMap((type): Instr[] => {
+    if (type.kind === "externref" || type.kind === "ref_extern") {
+      if (undefinedIdx !== undefined) return [{ op: "call", funcIdx: undefinedIdx }];
+      return undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })) ?? [{ op: "ref.null.extern" }];
+    }
+    if (type.kind === "ref") {
+      return [{ op: "ref.null", typeIdx: type.typeIdx }, { op: "ref.as_non_null" }];
+    }
+    return defaultValueInstrs(type);
+  });
 
   // #2152 — install thisArg as the callback's `this` for the duration of the
   // call_ref. The callback body (funcexpr / named-decl that references `this`)
@@ -5051,6 +5102,10 @@ function buildClosureCallInstrs(
           ),
         ] satisfies Instr[])
       : []),
+    // Array HOFs invoke callbacks with exactly (value, index, array). A
+    // callback may declare more formals; those trailing parameters receive
+    // JavaScript `undefined` and still occupy Wasm call_ref slots.
+    ...missingParamInstrs,
     { op: "local.get", index: closureTmp },
     { op: "struct.get", typeIdx: closureTypeIdx, fieldIdx: 0 },
     ...guardedFuncRefCastInstrs(fctx, closureInfo.funcTypeIdx),
@@ -5087,8 +5142,9 @@ function emitArrayCallbackArgsPlumbing(
   // argc = numParams (the receive-side fills slots [0, numParams) from
   // direct param locals; extras start at offset numParams). The total
   // arguments.length is then argc + extrasLen = specArity.
+  const directArgCount = Math.min(numParams, specArity);
   const instrs: Instr[] = [
-    { op: "i32.const", value: numParams },
+    { op: "i32.const", value: directArgCount },
     { op: "global.set", index: argcGlobalIdx },
   ];
 

@@ -32,6 +32,11 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
+import {
+  functionDeclarationKeyAtIdentifier,
+  functionKeyAtIdentifier,
+  moduleGlobalAtIdentifier,
+} from "../function-identity.js";
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
@@ -891,34 +896,34 @@ export function compileIdentifierCall(
 
   // Regular function call
   if (ts.isIdentifier(expr.expression)) {
-    const funcName = expr.expression.text;
+    const sourceName = expr.expression.text;
+    const functionDeclKey = functionDeclarationKeyAtIdentifier(ctx, expr.expression);
+    const funcName = functionDeclKey ?? functionKeyAtIdentifier(ctx, expr.expression);
+    // An imported mutable value (notably the synthetic default export of a
+    // CommonJS module) must be called through its declaration-owned global.
+    // The process-wide name maps can contain an unrelated function/closure
+    // with the same spelling from another module. Letting those maps win here
+    // bypasses the imported value entirely and can even prepend that unrelated
+    // closure's captures.
+    // A checker-resolved FunctionDeclaration is never the same binding as a
+    // bare-name module global from another source. In large minified graphs,
+    // allowing the legacy module-global fallback to compete here routed
+    // esquery's nested `h()`/`y()` helpers through unrelated numeric globals,
+    // then stored those f64 values in callable-ref temporaries (invalid Wasm).
+    const lexicalModuleGlobal =
+      functionDeclKey === undefined ? moduleGlobalAtIdentifier(ctx, expr.expression) : undefined;
 
-    // (#1301) Param/local that shadows an outer function with nested captures:
-    // the funcMap path emits a direct call AND prepends the outer's nested
-    // captures using `cap.outerLocalIdx` indices. Inside a lifted closure
-    // body those indices map to unrelated locals in the lifted fctx, which
-    // produces struct.new validation errors:
-    //   "struct.new[0] expected type f64, found local.get of type anyref".
-    //
-    // Narrow trigger: only redirect when ALL of:
-    //   1. The current fctx has a local/param with this name (real shadow)
-    //   2. The funcMap entry has nestedFuncCaptures (the broken path)
-    //   3. The local has a callable TS type (actually used as a callable)
-    //
-    // Other shadow cases stay on the funcMap path — direct calls that don't
-    // emit cap-prepend logic are already correct, even if a coincidental
-    // local with the same name exists in the current scope.
-    let isLocallyShadowed = false;
-    if (fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
-      const localCalleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
-      const localCallSigs = localCalleeTsType?.getCallSignatures?.();
-      if (localCallSigs && localCallSigs.length > 0) {
-        isLocallyShadowed = true;
-      }
-    }
+    // A parameter/local binding always wins over the process-wide funcMap
+    // namespace unless the checker resolves this exact identifier to the
+    // registered FunctionDeclaration. The previous nested-capture-only guard
+    // still direct-called an unrelated top-level function for untyped callback
+    // params in minified bundles (`function a(e) { e() }` alongside
+    // `function e() { ... }`). That changed program behavior and, in esquery,
+    // routed its CommonJS factory callback into Babel's array-copy helper.
+    const isLocallyShadowed = fctx.localMap.has(sourceName) && functionDeclKey === undefined;
 
     // Check if this is a closure call
-    let closureInfo = isLocallyShadowed ? undefined : ctx.closureMap.get(funcName);
+    let closureInfo = isLocallyShadowed || lexicalModuleGlobal !== undefined ? undefined : ctx.closureMap.get(funcName);
 
     if (!closureInfo) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
@@ -934,14 +939,14 @@ export function compileIdentifierCall(
     // local `const funcIdx` would hold the pre-shift value.
     // (#1301) Skip funcMap when locally shadowed; the local-callable fallback
     // below handles dispatch via call_ref through the param/local.
-    let funcIdx = isLocallyShadowed ? undefined : ctx.funcMap.get(funcName);
+    let funcIdx = isLocallyShadowed || lexicalModuleGlobal !== undefined ? undefined : ctx.funcMap.get(funcName);
     if (funcIdx === undefined) {
       // Before giving up, check if this identifier is a local/param with callable TS type
       // (e.g. function parameter `fn: (x: number) => number` stored as externref).
       // If so, create or find a matching closure wrapper type and dispatch via call_ref.
       // Only attempt this for actual locals/params — not for unknown imported functions.
       const calleeLocalIdx = fctx.localMap.get(funcName);
-      const calleeModGlobal = calleeLocalIdx === undefined ? ctx.moduleGlobals.get(funcName) : undefined;
+      const calleeModGlobal = calleeLocalIdx === undefined ? lexicalModuleGlobal : undefined;
       const calleeCapturedGlobal =
         calleeLocalIdx === undefined && calleeModGlobal === undefined ? ctx.capturedGlobals.get(funcName) : undefined;
       const isKnownVariable =
@@ -1006,10 +1011,16 @@ export function compileIdentifierCall(
           // chance to throw. Force `externref` for binding-pattern params so the
           // call site agrees with the compiled callee.
           const paramDecl = sig.parameters[i]!.valueDeclaration;
+          // JSDoc function types can synthesize Parameter nodes without a
+          // concrete binding name. TypeScript's is*BindingPattern helpers read
+          // node.kind unconditionally, so treat that checker-only declaration
+          // as an ordinary parameter instead of passing undefined into them.
+          const paramName = (paramDecl as { name?: ts.BindingName } | undefined)?.name;
           if (
             paramDecl &&
             ts.isParameter(paramDecl) &&
-            (ts.isObjectBindingPattern(paramDecl.name) || ts.isArrayBindingPattern(paramDecl.name))
+            paramName &&
+            (ts.isObjectBindingPattern(paramName) || ts.isArrayBindingPattern(paramName))
           ) {
             sigParamWasmTypes.push({ kind: "externref" });
             continue;
@@ -1738,6 +1749,42 @@ export function compileIdentifierCall(
     // Prepend captured values for nested functions with captures
     const nestedCaptures = ctx.nestedFuncCaptures.get(funcName);
     if (nestedCaptures) {
+      const captureLocalIndex = (name: string, declaringIndex: number, expectedValueType?: ValType): number => {
+        const localCount = fctx.params.length + fctx.locals.length;
+        const mappedIndex = fctx.localMap.get(name);
+        // Host callbacks have their own frame by construction. Their capture
+        // prologue has already re-materialized every transitive environment
+        // value under its lexical name, so a declaration-frame numeric slot is
+        // never meaningful here—even when it happens to be in range and have
+        // the same broad type. AJV's `_compileAsync` callback exposed the
+        // same-typed collision: outer `meta` slot 2 aliased callback
+        // `schemaObj` slot 2, producing 8 instead of 9 after the emit crash was
+        // fixed.
+        if (fctx.name.startsWith("__cb_") && mappedIndex !== undefined) {
+          return mappedIndex;
+        }
+        if (declaringIndex < 0 || declaringIndex >= localCount) {
+          return mappedIndex ?? declaringIndex;
+        }
+        // A transitive lifted caller can have enough locals that the declaring
+        // frame's numeric slot is accidentally in range but denotes a different
+        // value. Prefer the current frame's name binding only when the types
+        // prove that substitution: this keeps the historical owner-frame path
+        // while preventing a coincidental in-range stale capture index.
+        if (mappedIndex !== undefined && expectedValueType) {
+          const declaringType = getLocalType(fctx, declaringIndex);
+          const mappedType = getLocalType(fctx, mappedIndex);
+          if (
+            declaringType &&
+            mappedType &&
+            !valTypesMatch(declaringType, expectedValueType) &&
+            valTypesMatch(mappedType, expectedValueType)
+          ) {
+            return mappedIndex;
+          }
+        }
+        return declaringIndex;
+      };
       // #1177: Get param types early so we can coerce captures to expected types.
       // Re-fetch funcIdx in case a prior compileExpression triggered a late-import
       // shift (which updated funcMap but not our local `funcIdx`).
@@ -1859,7 +1906,10 @@ export function compileIdentifierCall(
             // throwing inside an async fn body. Reverted; the canonical TDZ-
             // through-closure case is fixed via the call-site TDZ check below
             // and Stage 3 C.1 in compileArrowAsClosure.)
-            fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+            fctx.body.push({
+              op: "local.get",
+              index: captureLocalIndex(cap.name, cap.outerLocalIdx, cap.valType),
+            });
             fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
             // Also box the outer local so subsequent reads/writes go through the ref cell
             const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
@@ -1899,11 +1949,12 @@ export function compileIdentifierCall(
           // (#1177: TDZ check moved above the mutable/non-mutable branch.
           // Stage 1 localMap-first lookup reverted — see comment in mutable
           // branch above.)
-          fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
-          // Coerce capture value to expected param type if they differ
           const expectedCapType = captureParamTypes?.[capIdx];
+          const currentCaptureLocalIdx = captureLocalIndex(cap.name, cap.outerLocalIdx, cap.valType ?? expectedCapType);
+          fctx.body.push({ op: "local.get", index: currentCaptureLocalIdx });
+          // Coerce capture value to expected param type if they differ
           if (expectedCapType) {
-            const actualType = getLocalType(fctx, cap.outerLocalIdx);
+            const actualType = getLocalType(fctx, currentCaptureLocalIdx);
             if (actualType && !valTypesMatch(actualType, expectedCapType)) {
               coerceType(ctx, fctx, actualType, expectedCapType);
             }

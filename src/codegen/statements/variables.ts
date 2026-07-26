@@ -34,6 +34,7 @@ import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
+import { moduleGlobalForDeclaration } from "../function-identity.js";
 
 function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
@@ -855,7 +856,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // the local, so `hasLocalShadow` gates them already).
       const declIsLexical = (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
       const bindsModuleGlobal = !declIsLexical || ts.isSourceFile(stmt.parent);
-      const modGlobalIdx = hasLocalShadow || !bindsModuleGlobal ? undefined : ctx.moduleGlobals.get(name);
+      const modGlobalIdx =
+        hasLocalShadow || !bindsModuleGlobal ? undefined : moduleGlobalForDeclaration(ctx, decl, name);
       if (modGlobalIdx !== undefined) {
         // (#3534 step 2, option a) NEVER retro-narrow the pre-declared
         // `$__mod_<name>` global. It is declared `externref` before the closure
@@ -998,7 +1000,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
           const objType = actualType ?? { kind: "externref" as const };
           // Store to module global if available, otherwise local.
           // #1690b: a function-local shadow takes precedence over the global.
-          const modGlobal = hasLocalShadow ? undefined : ctx.moduleGlobals.get(name);
+          const modGlobal = hasLocalShadow ? undefined : moduleGlobalForDeclaration(ctx, decl, name);
           if (modGlobal !== undefined) {
             fctx.body.push({ op: "global.set", index: modGlobal });
             emitTdzInit(ctx, fctx, name);
@@ -1023,7 +1025,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // Check if this is a module-level global (already registered).
     // #1690b: a function-local shadow (inner `var`/`let`/`const` of the same
     // name) must bind to the local, so suppress the module-global store here.
-    const moduleGlobalIdx = hasLocalShadow ? undefined : ctx.moduleGlobals.get(name);
+    const moduleGlobalIdx = hasLocalShadow ? undefined : moduleGlobalForDeclaration(ctx, decl, name);
     if (moduleGlobalIdx !== undefined) {
       // Shape-inferred array-like: compile {} as empty vec struct
       const shapeInfo = ctx.shapeMap.get(name);
@@ -1044,7 +1046,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
         compileExpression(ctx, fctx, decl.initializer, wasmType);
         // Re-read index: compileExpression may shift globals via addStringConstantGlobal
-        const moduleGlobalIdxPost = ctx.moduleGlobals.get(name)!;
+        const moduleGlobalIdxPost = moduleGlobalForDeclaration(ctx, decl, name)!;
         fctx.body.push({ op: "global.set", index: moduleGlobalIdxPost });
       } else {
         // No initializer: `let x;` at module level — in JS, uninitialized

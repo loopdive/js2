@@ -15,7 +15,7 @@
  * lazily mid-expression baked an unresolved `-1` heap-type ref (#2043).
  */
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { compile, compileMulti } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 async function runTest(src: string, exportName = "test"): Promise<unknown> {
@@ -49,6 +49,36 @@ function make(K: any, a: number[]): any { return new K(...a); }
 export function test(): number { const p = make(P, [4, 5]); return p.x + p.y; }
 `;
     expect(await runTest(src)).toBe(9);
+  });
+
+  it("reserves the runtime argv type once for a multi-module graph", async () => {
+    const r = await compileMulti(
+      {
+        "./class.ts": `
+          export class P {
+            x: number;
+            y: number;
+            constructor(a: number, b: number) { this.x = a; this.y = b; }
+          }
+        `,
+        "./entry.ts": `
+          import { P } from "./class";
+          function make(K: any, args: number[]): any { return new K(...args); }
+          export function test(): number {
+            const p = make(P, [4, 5]);
+            return p.x + p.y;
+          }
+        `,
+      },
+      "./entry.ts",
+    );
+    expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
+    if (!r.success) return;
+
+    const imports = buildImports(r.imports, undefined, r.stringPool);
+    const { instance } = await WebAssembly.instantiate(r.binary, imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    expect((instance.exports.test as () => number)()).toBe(9);
   });
 
   it("works through a method call on the constructed instance", async () => {

@@ -261,6 +261,23 @@ describe("#1169d — slice 4 functions reach the IR path without errors", () => 
       expect(irFallbacks(r)).toEqual([]);
     });
   }
+
+  it("falls back cleanly for a recursive structural object type", async () => {
+    const r = await compile(
+      `
+        interface Chain {
+          value: number;
+          next: Chain;
+        }
+        export function read(chain: Chain): number {
+          return chain.value;
+        }
+      `,
+      { experimentalIR: true },
+    );
+    expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(r.errors.some((error) => error.message.includes("Maximum call stack size exceeded"))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -110,6 +110,7 @@ import type {
   OptionalParamInfo,
 } from "./context/types.js";
 import type { NodeBuiltinImport } from "../import-resolver.js";
+import { moduleGlobalForSymbol } from "./function-identity.js";
 import { eliminateDeadImports } from "./dead-elimination.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
@@ -1022,28 +1023,42 @@ function atomToFieldIr(a: import("../ir/propagate.js").LatticeAtom): IrType | nu
  * Field names are sorted into canonical (ascending) order to match
  * the `IrObjectShape` invariant.
  */
-function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type): IrType | null {
+function objectIrTypeFromTsType(
+  ctx: CodegenContext,
+  tsType: ts.Type,
+  activeTypes: Set<ts.Type> = new Set(),
+): IrType | null {
   if (!(tsType.flags & ts.TypeFlags.Object)) return null;
   if (tsType.getCallSignatures().length > 0) return null; // callable
   if (isExternalDeclaredClass(tsType, ctx.checker)) return null;
   if (isTupleType(tsType)) return null;
+  // Recursive structural aliases are valid TypeScript, but the current IR
+  // object shape is a finite tree. Reject a cycle (or a pathological generic
+  // expansion) to the legacy path instead of recursively expanding it until
+  // the compiler stack overflows.
+  if (activeTypes.has(tsType) || activeTypes.size >= 32) return null;
 
   const props = tsType.getProperties();
   if (props.length === 0) return null; // empty object — defer to a future slice
 
+  activeTypes.add(tsType);
   const fields: { name: string; type: IrType }[] = [];
-  for (const prop of props) {
-    const decl = prop.valueDeclaration;
-    if (
-      decl &&
-      (ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl))
-    ) {
-      return null;
+  try {
+    for (const prop of props) {
+      const decl = prop.valueDeclaration;
+      if (
+        decl &&
+        (ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl))
+      ) {
+        return null;
+      }
+      const propType = ctx.checker.getTypeOfSymbol(prop);
+      const fieldIr = tsTypeToFieldIr(ctx, propType, activeTypes);
+      if (!fieldIr) return null;
+      fields.push({ name: prop.name, type: fieldIr });
     }
-    const propType = ctx.checker.getTypeOfSymbol(prop);
-    const fieldIr = tsTypeToFieldIr(ctx, propType);
-    if (!fieldIr) return null;
-    fields.push({ name: prop.name, type: fieldIr });
+  } finally {
+    activeTypes.delete(tsType);
   }
   fields.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return { kind: "object", shape: { fields } };
@@ -1055,11 +1070,11 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type): IrType | 
  * which causes `objectIrTypeFromTsType` to bail and the function to
  * fall back to legacy.
  */
-function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type): IrType | null {
+function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type, activeTypes: Set<ts.Type>): IrType | null {
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
   if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
-  if (t.flags & ts.TypeFlags.Object) return objectIrTypeFromTsType(ctx, t);
+  if (t.flags & ts.TypeFlags.Object) return objectIrTypeFromTsType(ctx, t, activeTypes);
   return null;
 }
 
@@ -5545,7 +5560,7 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
  * and this is a no-op there.
  */
 function registerReassignedFunctionGlobals(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
-  const reassigned = new Set<string>();
+  const reassigned = new Set<ts.FunctionDeclaration>();
   const scan = (node: ts.Node): void => {
     // Simple / compound assignment (`fn = …`, `fn += …`, …) whose LHS is a
     // bare identifier resolving to a function declaration.
@@ -5563,7 +5578,7 @@ function registerReassignedFunctionGlobals(ctx: CodegenContext, sourceFiles: rea
       }
       const decl = sym?.valueDeclaration ?? sym?.declarations?.[0];
       if (decl && ts.isFunctionDeclaration(decl) && decl.name) {
-        reassigned.add(decl.name.text);
+        reassigned.add(decl);
       }
     }
     ts.forEachChild(node, scan);
@@ -5572,7 +5587,8 @@ function registerReassignedFunctionGlobals(ctx: CodegenContext, sourceFiles: rea
   if (reassigned.size === 0) return;
 
   const set = (ctx.liveFuncBindingGlobals ??= new Set<string>());
-  for (const name of reassigned) {
+  for (const declaration of reassigned) {
+    const name = declaration.name!.text;
     const funcIdx = ctx.funcMap.get(name);
     // Only defined user functions (not host imports) have an in-module body.
     if (funcIdx === undefined || funcIdx < ctx.numImportFuncs) continue;
@@ -5585,6 +5601,7 @@ function registerReassignedFunctionGlobals(ctx: CodegenContext, sourceFiles: rea
       init: [{ op: "ref.null.extern" }],
     });
     ctx.moduleGlobals.set(name, globalIdx);
+    ctx.moduleGlobalDeclarations.set(declaration, globalIdx);
     set.add(name);
   }
 }
@@ -5604,18 +5621,17 @@ function registerReassignedFunctionGlobals(ctx: CodegenContext, sourceFiles: rea
  * This pass runs AFTER `collectDeclarations` (targets are registered) and BEFORE
  * function bodies compile (which reference the local names). For each import
  * binding it follows the checker alias to the target declaration's name and
- * copies the resolution entries onto the local name. Purely additive: it writes
- * ONLY local-name keys that are currently absent, so every already-resolving
- * name stays byte-identical.
+ * copies the resolution entries onto the local name. Module-global aliases are
+ * additionally keyed by their checker symbol: a realm-wide same-named binding
+ * must not hide the import that is lexically visible in this source file.
  */
-function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
-  const aliasOneBinding = (localId: ts.Identifier): void => {
+function registerImportBindingAliases(
+  ctx: CodegenContext,
+  sourceFiles: readonly ts.SourceFile[],
+  program: ts.Program,
+): void {
+  const aliasOneBinding = (localId: ts.Identifier, moduleSpecifier: ts.Expression, importedName: string): void => {
     const localName = localId.text;
-    // Already resolvable under the local name (e.g. `import { add }` where the
-    // local name equals the export) — nothing to alias.
-    if (ctx.funcMap.has(localName) || ctx.moduleGlobals.has(localName) || ctx.closureMap.has(localName)) {
-      return;
-    }
     let sym: ts.Symbol | undefined;
     try {
       sym = ctx.checker.getSymbolAtLocation(localId);
@@ -5623,22 +5639,76 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       return;
     }
     if (!sym) return;
-    let target: ts.Symbol | undefined = sym;
-    if (sym.flags & ts.SymbolFlags.Alias) {
+    let target: ts.Symbol | undefined;
+    let targetSourceFile: ts.SourceFile | undefined;
+    // Resolve through the module's export table first. Default imports from
+    // synthetic `export default exports` CommonJS shims are frequently typed
+    // as `any`; asking the checker to alias the local identifier directly can
+    // then yield an arbitrary contextual property symbol (for example
+    // `length`) instead of the export declaration.
+    try {
+      let moduleSymbol = ctx.checker.getSymbolAtLocation(moduleSpecifier);
+      if (moduleSymbol && moduleSymbol.flags & ts.SymbolFlags.Alias) {
+        moduleSymbol = ctx.checker.getAliasedSymbol(moduleSymbol);
+      }
+      const moduleDeclaration = moduleSymbol?.valueDeclaration ?? moduleSymbol?.declarations?.[0];
+      targetSourceFile = moduleDeclaration && ts.isSourceFile(moduleDeclaration) ? moduleDeclaration : undefined;
+      const exported = moduleSymbol
+        ? ctx.checker.getExportsOfModule(moduleSymbol).find((candidate) => candidate.getName() === importedName)
+        : undefined;
+      if (exported) {
+        target = exported.flags & ts.SymbolFlags.Alias ? ctx.checker.getAliasedSymbol(exported) : exported;
+      }
+    } catch {
+      // Fall back to the local import symbol below.
+    }
+    target ??= sym;
+    if (target.flags & ts.SymbolFlags.Alias) {
       try {
-        target = ctx.checker.getAliasedSymbol(sym);
+        target = ctx.checker.getAliasedSymbol(target);
       } catch {
         return;
       }
     }
     if (!target) return;
-    const decl = target.valueDeclaration ?? target.declarations?.[0];
+    if (!targetSourceFile) {
+      const targetParent = (target as ts.Symbol & { parent?: ts.Symbol }).parent;
+      const parentDeclaration = targetParent?.valueDeclaration ?? targetParent?.declarations?.[0];
+      if (parentDeclaration && ts.isSourceFile(parentDeclaration)) targetSourceFile = parentDeclaration;
+    }
+    if (!targetSourceFile && ts.isStringLiteral(moduleSpecifier)) {
+      const resolved = (
+        program as unknown as {
+          getResolvedModule?: (
+            sourceFile: ts.SourceFile,
+            moduleName: string,
+            mode?: unknown,
+          ) => { resolvedModule?: { resolvedFileName?: string } } | undefined;
+        }
+      ).getResolvedModule?.(localId.getSourceFile(), moduleSpecifier.text);
+      const resolvedFileName = resolved?.resolvedModule?.resolvedFileName;
+      if (resolvedFileName) targetSourceFile = program.getSourceFile(resolvedFileName);
+    }
+    let decl = target.valueDeclaration ?? target.declarations?.[0];
+    if (!decl && importedName === "default" && targetSourceFile) {
+      decl = targetSourceFile.statements.find(
+        (stmt): stmt is ts.ExportAssignment => ts.isExportAssignment(stmt) && !stmt.isExportEquals,
+      );
+    }
     if (!decl) return;
     // The name the target was registered under in funcMap/moduleGlobals/closureMap.
     let targetName: string | undefined;
+    let targetBindingSymbol = target;
     const declName = (decl as { name?: ts.Node }).name;
     if (declName && ts.isIdentifier(declName)) {
       targetName = declName.text;
+    } else if (ts.isExportAssignment(decl) && ts.isIdentifier(decl.expression)) {
+      // Synthetic CommonJS wrappers end with
+      // `export default __cjs_default_export`. The module's `default` export
+      // symbol is owned by this ExportAssignment, while the runtime value is
+      // the identifier's module-global binding.
+      targetName = decl.expression.text;
+      targetBindingSymbol = ctx.checker.getSymbolAtLocation(decl.expression) ?? target;
     } else if (
       (ts.isFunctionDeclaration(decl) || ts.isClassDeclaration(decl)) &&
       ts.canHaveModifiers(decl) &&
@@ -5649,23 +5719,45 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       targetName = "default";
     }
     if (!targetName || targetName === localName) return;
+    const exactModGlobal = moduleGlobalForSymbol(ctx, targetBindingSymbol);
     // Copy each resolution entry keyed by the target name onto the local name.
     // Every write is guarded so a genuine same-named binding is never clobbered.
-    const fnIdx = ctx.funcMap.get(targetName);
-    if (fnIdx !== undefined && !ctx.funcMap.has(localName)) ctx.funcMap.set(localName, fnIdx);
-    const closure = ctx.closureMap.get(targetName);
-    if (closure !== undefined && !ctx.closureMap.has(localName)) ctx.closureMap.set(localName, closure);
-    const modGlobal = ctx.moduleGlobals.get(targetName);
-    if (modGlobal !== undefined && !ctx.moduleGlobals.has(localName)) ctx.moduleGlobals.set(localName, modGlobal);
-    const optParams = ctx.funcOptionalParams.get(targetName);
-    if (optParams !== undefined && !ctx.funcOptionalParams.has(localName)) {
-      ctx.funcOptionalParams.set(localName, optParams);
+    // A declaration-owned module global is a live runtime value (notably a
+    // mutable CommonJS default export). Do not also copy a flat same-named
+    // function/closure entry from another module: that would bypass the global
+    // and call the wrong closure body/captures.
+    if (exactModGlobal === undefined) {
+      const fnIdx = ctx.funcMap.get(targetName);
+      if (fnIdx !== undefined && !ctx.funcMap.has(localName)) ctx.funcMap.set(localName, fnIdx);
+      const closure = ctx.closureMap.get(targetName);
+      if (closure !== undefined && !ctx.closureMap.has(localName)) ctx.closureMap.set(localName, closure);
     }
-    const nested = ctx.nestedFuncCaptures.get(targetName);
-    if (nested !== undefined && !ctx.nestedFuncCaptures.has(localName)) ctx.nestedFuncCaptures.set(localName, nested);
+    const modGlobal = exactModGlobal ?? ctx.moduleGlobals.get(targetName);
+    if (modGlobal !== undefined) {
+      // Preserve the local import's lexical identity even when another module
+      // already registered the same source spelling in the flat name map.
+      //
+      // The symbol-indexed override is only needed for the synthetic default
+      // export produced by the bare-CommonJS `exports` rewrite. JSON modules
+      // and declaration-shaped packages can expose checker aliases whose
+      // valueDeclaration is an arbitrary property declaration; treating those
+      // as module globals can accidentally bind e.g. `ruleReplacements` to a
+      // string-constant global named after that property.
+      if (exactModGlobal !== undefined) ctx.importBindingGlobals.set(sym, exactModGlobal);
+      if (!ctx.moduleGlobals.has(localName)) ctx.moduleGlobals.set(localName, modGlobal);
+    }
+    if (exactModGlobal === undefined) {
+      const optParams = ctx.funcOptionalParams.get(targetName);
+      if (optParams !== undefined && !ctx.funcOptionalParams.has(localName)) {
+        ctx.funcOptionalParams.set(localName, optParams);
+      }
+      const nested = ctx.nestedFuncCaptures.get(targetName);
+      if (nested !== undefined && !ctx.nestedFuncCaptures.has(localName)) ctx.nestedFuncCaptures.set(localName, nested);
+    }
     // (#2931) If the target is a reassigned function backed by a live-binding
     // global, propagate membership so the aliased local name reads through the
-    // (copied) module global too.
+    // exact declaration-owned/import-binding global too. This is independent
+    // of whether exactModGlobal was available.
     if (ctx.liveFuncBindingGlobals?.has(targetName)) ctx.liveFuncBindingGlobals.add(localName);
   };
 
@@ -5675,11 +5767,13 @@ function registerImportBindingAliases(ctx: CodegenContext, sourceFiles: readonly
       const clause = stmt.importClause;
       if (!clause) continue;
       // Default import: `import val from './m'`.
-      if (clause.name) aliasOneBinding(clause.name);
+      if (clause.name) aliasOneBinding(clause.name, stmt.moduleSpecifier, "default");
       // Named imports: `import { a, b as c } from './m'`.
       const nb = clause.namedBindings;
       if (nb && ts.isNamedImports(nb)) {
-        for (const el of nb.elements) aliasOneBinding(el.name);
+        for (const el of nb.elements) {
+          aliasOneBinding(el.name, stmt.moduleSpecifier, (el.propertyName ?? el.name).text);
+        }
       }
       // Namespace import (`import * as ns`) resolves to a module object, not a
       // single function/global binding — nothing to alias here.
@@ -5720,6 +5814,13 @@ export function generateMultiModule(
   ctx.sourceIsModule = true;
   try {
     const externsStarted = compileProfileNow();
+    // (#2026 #53) The single-source path reserves this stable array type when
+    // its source contains a class. In a module graph, the dynamic `new
+    // K(...args)` site and the class declaration can live in different files,
+    // so apply the same gate realm-wide before any other type is registered.
+    if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf))) {
+      reserveObjVecArrType(ctx);
+    }
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
       registerWasiImports(ctx, multiAst.entryFile);
@@ -5897,7 +5998,7 @@ export function generateMultiModule(
     // imports whose LOCAL name differs from the imported target's declaration name)
     // so their reads and calls resolve to the target instead of the graceful-null
     // default. Runs after collectDeclarations (targets registered), before bodies.
-    registerImportBindingAliases(ctx, multiAst.sourceFiles);
+    registerImportBindingAliases(ctx, multiAst.sourceFiles, multiAst.program);
     recordCompileProfile("codegen.declarations", declarationsStarted, {
       functions: mod.functions.length,
       globals: mod.globals.length,
@@ -5906,8 +6007,37 @@ export function generateMultiModule(
 
     // Phase 3: Compile all function bodies
     const bodiesStarted = compileProfileNow();
+    let compileSharedModuleInit = true;
     for (const sf of multiAst.sourceFiles) {
-      compileDeclarations(ctx, sf);
+      const sourceBodiesStarted = compileProfileNow();
+      const sourceFunctionsBefore = mod.functions.length;
+      const sourceErrorsBefore = ctx.errors.length;
+      const sourceCompilesSharedModuleInit = compileSharedModuleInit;
+      recordCompileProfile("codegen.source-bodies.begin", sourceBodiesStarted, {
+        file: sf.fileName,
+        sourceBytes: sf.text.length,
+        functions: sourceFunctionsBefore,
+        errors: sourceErrorsBefore,
+        sharedModuleInit: sourceCompilesSharedModuleInit,
+      });
+      // compileDeclarations operates on one source at a time, but module init
+      // is shared by the whole graph: the declaration prepass above has already
+      // collected every source's top-level statements in dependency order.
+      // Compiling that shared body once per source duplicated every closure and
+      // helper it registered (ESLint grew by 257 functions per file). The first
+      // pass still sees the complete graph and seeds closureMap before any later
+      // source body needs it.
+      compileDeclarations(ctx, sf, undefined, compileSharedModuleInit);
+      compileSharedModuleInit = false;
+      recordCompileProfile("codegen.source-bodies", sourceBodiesStarted, {
+        file: sf.fileName,
+        sourceBytes: sf.text.length,
+        functions: mod.functions.length,
+        functionsAdded: mod.functions.length - sourceFunctionsBefore,
+        errors: ctx.errors.length,
+        errorsAdded: ctx.errors.length - sourceErrorsBefore,
+        sharedModuleInit: sourceCompilesSharedModuleInit,
+      });
     }
 
     // (#1602) Rebuild method-closure trampolines against final method sigs.
@@ -6249,6 +6379,11 @@ export function generateMultiModule(
       types: mod.types.length,
     });
   } catch (e) {
+    const failureProfileStarted = compileProfileNow();
+    recordCompileProfile("codegen.failure", failureProfileStarted, {
+      message: e instanceof Error ? e.message : String(e),
+      stack: e instanceof Error ? e.stack : undefined,
+    });
     const failure = classifyIrFailure(e, "build");
     for (const sourceFile of multiAst.sourceFiles) {
       recordWholeSourceFailure(ctx, sourceFile, failure, irUnitInventory);

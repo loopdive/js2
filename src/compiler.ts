@@ -1320,7 +1320,7 @@ export function compileSourceSync(
   // import statements get the same declare-stub treatment as user-written imports,
   // and before `detectNodeFsImports` so `const fs = require('node:fs')` is picked
   // up as a node:fs import for WASI mode.
-  const cjsResult = rewriteCjsRequireWithMap(iterStaticsSource);
+  const cjsResult = rewriteCjsRequireWithMap(iterStaticsSource, { platform: options.platform });
   const cjsRewritten = cjsResult.source;
 
   // Step 0b: Pre-process imports (replace import * as X with declare namespace)
@@ -1577,7 +1577,9 @@ export async function compileMultiSource(
   // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` (#1279) across
   // every input file. This runs before TypeScript's analyzer so the require() calls
   // are seen as proper module imports during cross-file resolution.
-  const processedFiles = Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)]));
+  const processedFiles = Object.fromEntries(
+    Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v, { platform: options?.platform })]),
+  );
   recordCompileProfile("multi.preprocess", preprocessStarted, {
     checkerFiles: Object.keys(processedFiles).length,
     sourceBytes: Object.values(processedFiles).reduce((total, source) => total + source.length, 0),

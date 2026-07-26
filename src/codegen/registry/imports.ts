@@ -360,6 +360,16 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
     }
   }
   shiftMap(ctx.moduleGlobals);
+  for (const [declaration, idx] of ctx.moduleGlobalDeclarations) {
+    if (idx >= threshold) {
+      ctx.moduleGlobalDeclarations.set(declaration, idx + delta);
+    }
+  }
+  for (const [symbol, idx] of ctx.importBindingGlobals) {
+    if (idx >= threshold) {
+      ctx.importBindingGlobals.set(symbol, idx + delta);
+    }
+  }
   shiftMap(ctx.capturedGlobals);
   // (#3039) `capturedBoxGlobals` values are objects, not bare indices — shift
   // each entry's `globalIdx` in place like `protoOverrides` below. The

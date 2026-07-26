@@ -89,6 +89,7 @@ import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js
 import { compileExpression, compileStatement } from "./shared.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { functionDeclarationKey, reserveFunctionDeclarationKey } from "./function-identity.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
@@ -319,13 +320,15 @@ function registerBodylessFunctionDeclaration(
 ): WasmFunction | undefined {
   if (!stmt.name || !stmt.body || hasDeclareModifier(stmt)) return undefined;
   const name = stmt.name.text;
+  const funcKey = reserveFunctionDeclarationKey(ctx, stmt, name);
   const sig = ctx.checker.getSignatureFromDeclaration(stmt);
   if (!sig) return undefined;
 
   ctx.functionNameMap.set(name, name);
+  ctx.functionNameMap.set(funcKey, name);
   try {
     const sourceText = stmt.getText(sourceFile);
-    if (sourceText) ctx.funcSourceText.set(name, sourceText);
+    if (sourceText) ctx.funcSourceText.set(funcKey, sourceText);
   } catch {
     // Synthetic nodes lacking source positions: keep the normal placeholder.
   }
@@ -333,18 +336,18 @@ function registerBodylessFunctionDeclaration(
   const isGeneric = stmt.typeParameters && stmt.typeParameters.length > 0;
   const resolved = isGeneric ? resolveGenericCallSiteTypes(ctx, name, sourceFile) : null;
   if (resolved) {
-    ctx.genericResolved.set(name, resolved);
+    ctx.genericResolved.set(funcKey, resolved);
   }
 
   const isAsync = hasAsyncModifier(stmt);
   const isGenerator = isGeneratorFunction(stmt);
   if (isAsync && !isGenerator) {
-    ctx.asyncFunctions.add(name);
+    ctx.asyncFunctions.add(funcKey);
   }
   if (isGenerator) {
-    ctx.generatorFunctions.add(name);
+    ctx.generatorFunctions.add(funcKey);
     const retType = ctx.checker.getReturnTypeOfSignature(sig);
-    ctx.generatorYieldType.set(name, unwrapGeneratorYieldType(retType, ctx));
+    ctx.generatorYieldType.set(funcKey, unwrapGeneratorYieldType(retType, ctx));
   }
 
   const retType = ctx.checker.getReturnTypeOfSignature(sig);
@@ -362,7 +365,7 @@ function registerBodylessFunctionDeclaration(
       const param = stmt.parameters[i]!;
       params.push(lowerParamType(ctx, param, name, i, stmt, sourceFile));
     }
-    const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
+    const nativeGenerator = registerNativeGenerator(ctx, stmt, funcKey, params);
     results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }];
   } else if (resolved) {
     params = resolved.params;
@@ -381,7 +384,7 @@ function registerBodylessFunctionDeclaration(
         const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
         const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
         params.push({ kind: "ref_null", typeIdx: vecTypeIdx });
-        ctx.funcRestParams.set(name, {
+        ctx.funcRestParams.set(funcKey, {
           restIndex: i,
           elemType,
           arrayTypeIdx: arrTypeIdx,
@@ -418,25 +421,25 @@ function registerBodylessFunctionDeclaration(
     }
   }
   if (optionalParams.length > 0) {
-    ctx.funcOptionalParams.set(name, optionalParams);
+    ctx.funcOptionalParams.set(funcKey, optionalParams);
   }
   if (bodyUsesArguments(stmt.body)) {
-    ctx.funcUsesArguments.add(name);
+    ctx.funcUsesArguments.add(funcKey);
   }
 
-  const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
+  const typeIdx = addFuncType(ctx, params, results, `${funcKey}_type`);
   const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   const func: WasmFunction = {
-    name,
+    name: funcKey,
     typeIdx,
     locals: [],
     body: [],
     exported: false,
   };
-  ctx.funcMap.set(name, funcIdx);
+  ctx.funcMap.set(funcKey, funcIdx);
   ctx.mod.functions.push(func);
   if (!ctx.preRegisteredBodyless) ctx.preRegisteredBodyless = new Set();
-  ctx.preRegisteredBodyless.add(name);
+  ctx.preRegisteredBodyless.add(funcKey);
   return func;
 }
 
@@ -728,8 +731,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
 
       // Anonymous `export default function() {}` gets the synthetic name "default"
       const name = stmt.name ? stmt.name.text : "default";
+      const funcKey = reserveFunctionDeclarationKey(ctx, stmt, name);
       // Register the function's .name value for ES-spec compliance
       ctx.functionNameMap.set(name, name);
+      ctx.functionNameMap.set(funcKey, name);
       // (#1983) Record the top-level user-function name so class-member funcMap
       // keys (`${className}_${member}`) that would collide with it can relocate.
       // Only real `function` declarations participate — class names are tracked
@@ -742,7 +747,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // function expressions fall back to the placeholder.
       try {
         const sourceText = stmt.getText(sourceFile);
-        if (sourceText) ctx.funcSourceText.set(name, sourceText);
+        if (sourceText) ctx.funcSourceText.set(funcKey, sourceText);
       } catch {
         // Synthetic nodes lacking source positions — skip silently.
       }
@@ -753,7 +758,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const isGeneric = stmt.typeParameters && stmt.typeParameters.length > 0;
       const resolved = isGeneric ? resolveGenericCallSiteTypes(ctx, name, sourceFile) : null;
       if (resolved) {
-        ctx.genericResolved.set(name, resolved);
+        ctx.genericResolved.set(funcKey, resolved);
       }
 
       // Track async functions — unwrap Promise<T> for Wasm return type
@@ -761,16 +766,16 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       const isAsync = hasAsyncModifier(stmt);
       const isGenerator = isGeneratorFunction(stmt);
       if (isAsync && !isGenerator) {
-        ctx.asyncFunctions.add(name);
+        ctx.asyncFunctions.add(funcKey);
       }
 
       // Track generator functions (function*)
       if (isGenerator) {
-        ctx.generatorFunctions.add(name);
+        ctx.generatorFunctions.add(funcKey);
         // Determine yield element type from Generator<T> return annotation
         const retType = ctx.checker.getReturnTypeOfSignature(sig);
         const yieldType = unwrapGeneratorYieldType(retType, ctx);
-        ctx.generatorYieldType.set(name, yieldType);
+        ctx.generatorYieldType.set(funcKey, yieldType);
       }
 
       // Ensure anonymous types in signature are registered as structs
@@ -793,7 +798,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           const param = stmt.parameters[i]!;
           params.push(lowerParamType(ctx, param, name, i, stmt, sourceFile));
         }
-        const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
+        const nativeGenerator = registerNativeGenerator(ctx, stmt, funcKey, params);
         results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }]; // JS-host fallback returns a Generator object
       } else if (resolved) {
         // Use call-site resolved types for generic functions
@@ -815,7 +820,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemType);
             const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
             params.push({ kind: "ref_null", typeIdx: vecTypeIdx });
-            ctx.funcRestParams.set(name, {
+            ctx.funcRestParams.set(funcKey, {
               restIndex: i,
               elemType,
               arrayTypeIdx: arrTypeIdx,
@@ -861,25 +866,25 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
 
       if (optionalParams.length > 0) {
-        ctx.funcOptionalParams.set(name, optionalParams);
+        ctx.funcOptionalParams.set(funcKey, optionalParams);
       }
 
       // Track functions that read `arguments` (#1053) so callers can
       // populate the __extras_argv global with runtime args beyond the
       // formal param count.
       if (stmt.body && bodyUsesArguments(stmt.body)) {
-        ctx.funcUsesArguments.add(name);
+        ctx.funcUsesArguments.add(funcKey);
       }
 
-      const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
+      const typeIdx = addFuncType(ctx, params, results, `${funcKey}_type`);
       const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-      ctx.funcMap.set(name, funcIdx);
+      ctx.funcMap.set(funcKey, funcIdx);
 
       // Create placeholder function to be filled in second pass
       // Only export as Wasm exports if this is the entry file
       const isExported = isEntryFile && hasExportModifier(stmt);
       const func: WasmFunction = {
-        name,
+        name: funcKey,
         typeIdx,
         locals: [],
         body: [],
@@ -1161,7 +1166,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
 
   // Fourth: collect module-level variable declarations as wasm globals
   /** Register a single module-level global variable with the given name and wasm type. */
-  function registerModuleGlobal(name: string, wasmType: ValType): void {
+  function registerModuleGlobal(name: string, wasmType: ValType, declaration?: ts.Declaration): void {
     // Skip if shadowed by a *user* function — but NOT by a wasm:js-string
     // builtin import (#2669). `addStringImports` registers `concat`, `length`,
     // `equals`, `substring`, `charCodeAt` into `ctx.funcMap` (and mirrors them
@@ -1200,7 +1205,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // generalises — every import-slot collision now correctly yields the global.
     const fnIdx = ctx.funcMap.get(name);
     if (fnIdx !== undefined && fnIdx >= ctx.numImportFuncs) return; // shadowed by a real user-defined function
-    if (ctx.moduleGlobals.has(name)) return; // skip if already registered
+    if (declaration && ctx.moduleGlobalDeclarations.has(declaration)) return;
+    if (!declaration && ctx.moduleGlobals.has(name)) return; // skip if already registered
     if (ctx.classSet.has(name)) return; // skip class expression variables
 
     // Build null/zero initializer for the global
@@ -1230,13 +1236,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         : wasmType;
 
     const globalIdx = nextModuleGlobalIdx(ctx);
+    const bareNameTaken = ctx.moduleGlobals.has(name);
     ctx.mod.globals.push({
-      name: `__mod_${name}`,
+      name: bareNameTaken ? `__mod_${name}_${ctx.moduleGlobalDeclarations.size}` : `__mod_${name}`,
       type: globalType,
       mutable: true,
       init,
     });
-    ctx.moduleGlobals.set(name, globalIdx);
+    if (!bareNameTaken) ctx.moduleGlobals.set(name, globalIdx);
+    if (declaration) ctx.moduleGlobalDeclarations.set(declaration, globalIdx);
   }
 
   /** Register binding names from destructuring patterns as module globals. */
@@ -1246,7 +1254,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (ts.isIdentifier(element.name)) {
         const elemType = ctx.checker.getTypeAtLocation(element);
         const wasmType = resolveWasmType(ctx, elemType);
-        registerModuleGlobal(element.name.text, wasmType);
+        registerModuleGlobal(element.name.text, wasmType, element);
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         registerBindingNames(element.name);
       }
@@ -1392,7 +1400,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (ts.isIdentifier(decl.name)) {
         const varType = moduleVarDeclType(decl);
         const wasmType = moduleGlobalWasmType(decl, varType);
-        registerModuleGlobal(decl.name.text, wasmType);
+        registerModuleGlobal(decl.name.text, wasmType, decl);
       } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
         registerBindingNames(decl.name);
       }
@@ -1475,7 +1483,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // externref global (+ externrefAccessorVars tag); otherwise fall back
           // to the standalone-regexp / inferred type. See moduleGlobalWasmType.
           const wasmType = moduleGlobalWasmType(decl, varType);
-          registerModuleGlobal(decl.name.text, wasmType);
+          registerModuleGlobal(decl.name.text, wasmType, decl);
           if (isLetOrConst) {
             ctx.tdzLetConstNames.add(decl.name.text);
           }
@@ -1871,6 +1879,7 @@ export function compileDeclarations(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   skipBodies?: ReadonlySet<string>,
+  compileSharedModuleInit = true,
 ): string[] | undefined {
   const skippedNames: string[] | undefined = skipBodies ? [] : undefined;
   // Build a map from function name → index within ctx.mod.functions
@@ -1911,7 +1920,7 @@ export function compileDeclarations(
 
     for (const sibling of stmts) {
       if (!ts.isFunctionDeclaration(sibling) || !sibling.name || !sibling.body) continue;
-      if (hasDeclareModifier(sibling) || ctx.funcMap.has(sibling.name.text)) continue;
+      if (hasDeclareModifier(sibling) || ctx.functionDeclKeys.has(sibling)) continue;
       if (functionDeclarationCapturesEnclosingLocal(ctx, sibling)) continue;
       registerBodylessFunctionDeclaration(ctx, sibling, sourceFile);
     }
@@ -2252,8 +2261,8 @@ export function compileDeclarations(
   // closure in __module_init even when the program has no other init statements,
   // so a read before the reassignment still yields the function.
   const hasLiveFuncSeeds = (ctx.liveFuncBindingGlobals?.size ?? 0) > 0;
-  const hasModuleInits = ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds;
-  const hasStaticInits = ctx.staticInitExprs.length > 0;
+  const hasModuleInits = compileSharedModuleInit && (ctx.moduleInitStatements.length > 0 || hasLiveFuncSeeds);
+  const hasStaticInits = compileSharedModuleInit && ctx.staticInitExprs.length > 0;
   let compiledInitFctx: FunctionContext | null = null;
 
   // (#2965) The module-init body is compiled TWICE (the second pass, below,
@@ -2393,8 +2402,9 @@ export function compileDeclarations(
     if (ts.isFunctionDeclaration(stmt) && (stmt.name || hasExportModifier(stmt)) && !hasDeclareModifier(stmt)) {
       if (stmt.name && stmt.body && lastFnWithBody.get(stmt.name.text) !== stmt) continue;
       const fnName = stmt.name ? stmt.name.text : "default";
+      const funcKey = functionDeclarationKey(ctx, stmt, fnName);
       if (stmt.body) {
-        const idx = funcByName.get(fnName);
+        const idx = funcByName.get(funcKey);
         if (idx !== undefined) {
           const func = ctx.mod.functions[idx]!;
           // (#2138) IR-first: skip legacy body emission — the IR overlay owns
@@ -2405,12 +2415,12 @@ export function compileDeclarations(
           // (see the function doc comment).
           if (skipBodies?.has(fnName)) {
             func.body = [{ op: "unreachable" }];
-            skippedNames!.push(fnName);
+            skippedNames!.push(funcKey);
             continue;
           }
           try {
             compileFunctionBody(ctx, stmt, func);
-            registerInlinableFunction(ctx, fnName, func);
+            registerInlinableFunction(ctx, funcKey, func);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             reportError(ctx, stmt, `Internal error compiling function '${fnName}': ${msg}`);
@@ -2557,12 +2567,10 @@ export function compileDeclarations(
       exported: exportModuleInit,
     });
     if (exportModuleInit) {
-      // (#3505) compileMulti calls compileDeclarations once per source file
-      // against one accumulating context. Each pass emits a progressively
-      // more complete graph initializer, so only the newest export may remain:
-      // it contains every dependency seen so far in resolver order. Keeping
-      // the earlier exports gave the final Wasm duplicate `__module_init`
-      // names; selecting an earlier one instead would drop later modules.
+      // (#3505) Keep this defensive replacement for callers that deliberately
+      // recompile a shared initializer. generateMultiModule now emits the
+      // already-complete dependency-ordered graph initializer once, after its
+      // declaration prepass has collected every source.
       ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
       ctx.mod.exports.push({
         name: "__module_init",

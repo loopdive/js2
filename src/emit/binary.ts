@@ -520,9 +520,7 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     // Write the code section: id byte + length + data
     // The absolute offset of the code section payload within the final binary:
     // current enc.length + 1 (section id byte) + sizeof(u32(codeSectionData.length))
-    const sectionIdPos = enc.length;
     enc.byte(SECTION.code);
-    const lengthBefore = enc.length;
     enc.u32(codeSectionData.length);
     const codeSectionPayloadStart = enc.length;
     enc.bytes(codeSectionData);
@@ -633,7 +631,6 @@ function encodeFunctionWithSourceMap(
       entry.instrOffset = _bodyStartInSection + u32PrefixSize + entry.instrOffset;
     }
   }
-
   enc.u32(bodyBytes.length);
   enc.bytes(bodyBytes);
 }

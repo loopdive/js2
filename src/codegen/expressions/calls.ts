@@ -7858,7 +7858,8 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
     if (ownParamNames.has(name)) continue;
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
-    if (ctx.funcMap.has(name)) continue;
+    // A resolved outer local wins over the process-wide funcMap namespace.
+    // Function declarations are not represented by local slots here.
     const type =
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type

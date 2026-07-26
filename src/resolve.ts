@@ -36,6 +36,7 @@ export class ModuleResolver {
   private resolvedImports = new Map<string, Map<string, string>>();
   private staticJsonSources = new Map<string, string>();
   private diagnostics: ModuleResolutionDiagnostic[] = [];
+  private platform: CompileOptions["platform"];
 
   /**
    * Create a resolver rooted at a directory.
@@ -49,6 +50,7 @@ export class ModuleResolver {
   ) {
     this.externals = new Set(options?.externals ?? []);
     this.extensions = options?.resolve?.extensions ?? [".ts", ".tsx", ".d.ts"];
+    this.platform = options?.platform;
 
     // Build compiler options for TS resolver
     const moduleDirs = options?.resolve?.modules ?? ["node_modules"];
@@ -203,6 +205,21 @@ export class ModuleResolver {
           resolved = this.host.realpath?.(implPath) ?? implPath;
         }
       }
+
+      // Static CommonJS requires are rewritten into imports before graph
+      // compilation, so a package's published ESM implementation is the
+      // executable body that matches js2wasm's module model. Prefer `module`
+      // over `main` for a bare package root when both are available. Without
+      // this, esquery resolves to its UMD `main`, whose browser fallback reads
+      // `self` because js2wasm deliberately does not synthesize CommonJS
+      // `module`/`exports` host globals. Packages without a `module` field keep
+      // the standard TypeScript/Node resolution unchanged.
+      if (pkgName && specifier === pkgName) {
+        const implementation = this.findImplementationBody(pkgName, specifier, resolutionContainingFile);
+        if (implementation) {
+          resolved = this.host.realpath?.(implementation) ?? implementation;
+        }
+      }
     }
 
     this.resolveCache.set(cacheKey, resolved);
@@ -283,6 +300,11 @@ export class ModuleResolver {
   /** Return source-qualified resolver failures collected during graph expansion. */
   getDiagnostics(): readonly ModuleResolutionDiagnostic[] {
     return this.diagnostics;
+  }
+
+  /** Host platform used when selecting statically-known CommonJS branches. */
+  getPlatform(): CompileOptions["platform"] {
+    return this.platform;
   }
 
   /**
@@ -504,7 +526,7 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` so the
     // dependency-walk below picks up CommonJS modules' transitive deps the same
     // way it picks up ESM ones (#1279).
-    content = rewriteCjsRequire(content);
+    content = rewriteCjsRequire(content, { platform: resolver.getPlatform() });
 
     // Parse to find import specifiers
     const sf = ts.createSourceFile(

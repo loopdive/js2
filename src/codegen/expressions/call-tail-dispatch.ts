@@ -24,7 +24,13 @@ import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import { rollbackSpeculative } from "../context/speculative.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
-import { getArrTypeIdxFromVec, getOrRegisterVecType, hoistLetConstWithTdz, resolveWasmType } from "../index.js";
+import {
+  getArrTypeIdxFromVec,
+  getOrRegisterVecType,
+  hoistLetConstWithTdz,
+  hoistVarDeclarations,
+  resolveWasmType,
+} from "../index.js";
 import { objectLiteralTakesStandaloneAnyObjectPath, resolveComputedKeyExpression } from "../literals.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { tryCompileStandaloneRegExpSymbolCall } from "../regexp-standalone.js";
@@ -65,6 +71,129 @@ import {
   tryEmitInlineDynamicCall,
   usesArguments,
 } from "./calls.js";
+
+interface IifeBindingSnapshot {
+  names: Set<string>;
+  localMap: Map<string, number | undefined>;
+  tdzFlagLocals: Map<string, number | undefined>;
+  boxedCaptures: Map<string, { refCellTypeIdx: number; valType: ValType } | undefined>;
+  boxedTdzFlags: Map<string, { refCellTypeIdx: number; localIdx: number } | undefined>;
+  constBindings: Set<string>;
+  readOnlyBindings: Set<string>;
+  annexBOuterBindings: Set<string>;
+}
+
+function collectBindingNames(name: ts.BindingName, out: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    out.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (!ts.isOmittedExpression(element)) collectBindingNames(element.name, out);
+  }
+}
+
+/**
+ * Inline IIFEs share the enclosing Wasm frame, but they do not share its
+ * JavaScript binding environment. Record every binding owned by the IIFE so
+ * its name-to-slot registrations can be restored when inline compilation
+ * finishes. The locals themselves stay allocated because emitted instructions
+ * still address them by index.
+ */
+function collectIifeBindingNames(callee: ts.FunctionExpression | ts.ArrowFunction): Set<string> {
+  const names = new Set<string>();
+  for (const param of callee.parameters) collectBindingNames(param.name, names);
+  if (ts.isFunctionExpression(callee)) {
+    names.add("arguments");
+    if (callee.name) names.add(callee.name.text);
+  }
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) && node !== callee) {
+      if (ts.isFunctionDeclaration(node) && node.name) names.add(node.name.text);
+      return;
+    }
+    if (ts.isVariableDeclaration(node)) {
+      collectBindingNames(node.name, names);
+    } else if (ts.isClassDeclaration(node) && node.name) {
+      names.add(node.name.text);
+      return;
+    } else if (ts.isCatchClause(node) && node.variableDeclaration) {
+      collectBindingNames(node.variableDeclaration.name, names);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(callee.body);
+  return names;
+}
+
+function snapshotIifeBindings(fctx: FunctionContext, names: Set<string>): IifeBindingSnapshot {
+  const localMap = new Map<string, number | undefined>();
+  const tdzFlagLocals = new Map<string, number | undefined>();
+  const boxedCaptures = new Map<string, { refCellTypeIdx: number; valType: ValType } | undefined>();
+  const boxedTdzFlags = new Map<string, { refCellTypeIdx: number; localIdx: number } | undefined>();
+  for (const name of names) {
+    localMap.set(name, fctx.localMap.get(name));
+    tdzFlagLocals.set(name, fctx.tdzFlagLocals?.get(name));
+    boxedCaptures.set(name, fctx.boxedCaptures?.get(name));
+    boxedTdzFlags.set(name, fctx.boxedTdzFlags?.get(name));
+  }
+  return {
+    names,
+    localMap,
+    tdzFlagLocals,
+    boxedCaptures,
+    boxedTdzFlags,
+    constBindings: new Set(Array.from(names).filter((name) => fctx.constBindings?.has(name))),
+    readOnlyBindings: new Set(Array.from(names).filter((name) => fctx.readOnlyBindings?.has(name))),
+    annexBOuterBindings: new Set(Array.from(names).filter((name) => fctx.annexBOuterBindings?.has(name))),
+  };
+}
+
+function restoreIifeBindings(fctx: FunctionContext, snapshot: IifeBindingSnapshot): void {
+  for (const name of snapshot.names) {
+    const localIdx = snapshot.localMap.get(name);
+    if (localIdx === undefined) fctx.localMap.delete(name);
+    else fctx.localMap.set(name, localIdx);
+
+    const tdzIdx = snapshot.tdzFlagLocals.get(name);
+    if (tdzIdx === undefined) fctx.tdzFlagLocals?.delete(name);
+    else {
+      (fctx.tdzFlagLocals ??= new Map()).set(name, tdzIdx);
+    }
+
+    const boxed = snapshot.boxedCaptures.get(name);
+    if (boxed === undefined) fctx.boxedCaptures?.delete(name);
+    else {
+      (fctx.boxedCaptures ??= new Map()).set(name, boxed);
+    }
+
+    const boxedTdz = snapshot.boxedTdzFlags.get(name);
+    if (boxedTdz === undefined) fctx.boxedTdzFlags?.delete(name);
+    else {
+      (fctx.boxedTdzFlags ??= new Map()).set(name, boxedTdz);
+    }
+
+    if (snapshot.constBindings.has(name)) (fctx.constBindings ??= new Set()).add(name);
+    else fctx.constBindings?.delete(name);
+    if (snapshot.readOnlyBindings.has(name)) (fctx.readOnlyBindings ??= new Set()).add(name);
+    else fctx.readOnlyBindings?.delete(name);
+    if (snapshot.annexBOuterBindings.has(name)) (fctx.annexBOuterBindings ??= new Set()).add(name);
+    else fctx.annexBOuterBindings?.delete(name);
+  }
+}
+
+function enterIifeBindings(fctx: FunctionContext, snapshot: IifeBindingSnapshot): void {
+  for (const name of snapshot.names) {
+    fctx.localMap.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+    fctx.boxedCaptures?.delete(name);
+    fctx.boxedTdzFlags?.delete(name);
+    fctx.constBindings?.delete(name);
+    fctx.readOnlyBindings?.delete(name);
+    fctx.annexBOuterBindings?.delete(name);
+  }
+}
 
 /**
  * (#742 slice 5) Tail dispatch of compileCallExpression — extracted verbatim.
@@ -150,43 +279,54 @@ export function compileTailDispatch(
           // outside the IIFE (`p2 = (function(){ return () => p2; })()`)
           // misses the write and captures a stale by-value copy.
           (fctx.inlinedIifeNodes ??= new Set()).add(callee);
-          // Allocate locals for parameters and compile arguments
-          const paramLocals: number[] = [];
-          const allArgLocals: { idx: number; type: ValType }[] = [];
+          // Evaluate every argument in the CALLER binding environment before
+          // installing any IIFE parameter/local names. Allocating param 0
+          // immediately used to make arg 1 accidentally resolve through that
+          // new local when both used the same source name.
+          const evaluatedParamArgs: { idx: number; type: ValType }[] = [];
           for (let i = 0; i < params.length; i++) {
-            const param = params[i]!;
-            const paramName = ts.isIdentifier(param.name) ? param.name.text : `__iife_p${i}`;
-            const argType = compileExpression(ctx, fctx, args[i]!);
-            const localType = argType ?? { kind: "f64" as const };
-            const idx = allocLocal(fctx, paramName, localType);
+            const t = compileExpression(ctx, fctx, args[i]!);
+            const localType = t ?? { kind: "f64" as const };
+            if (t === null) fctx.body.push({ op: "f64.const", value: 0 });
+            const idx = allocLocal(fctx, `__iife_arg_${fctx.locals.length}`, localType);
             fctx.body.push({ op: "local.set", index: idx });
-            paramLocals.push(idx);
-            if (iifeNeedsArguments) {
-              allArgLocals.push({ idx, type: localType });
-            }
+            evaluatedParamArgs.push({ idx, type: localType });
           }
-          // Extra arguments beyond declared params
+
+          const allArgLocals: { idx: number; type: ValType }[] = iifeNeedsArguments ? [...evaluatedParamArgs] : [];
+          // Extra arguments beyond declared params are also evaluated before
+          // entering the IIFE's binding environment.
           if (iifeNeedsArguments) {
-            // Store extra args in locals for the arguments object
             for (let i = params.length; i < args.length; i++) {
               const t = compileExpression(ctx, fctx, args[i]!);
               const localType = t ?? { kind: "f64" as const };
-              if (t === null) {
-                // No value produced — push a default
-                fctx.body.push({ op: "f64.const", value: 0 });
-              }
-              const idx = allocLocal(fctx, `__iife_extra_${i}`, localType as ValType);
+              if (t === null) fctx.body.push({ op: "f64.const", value: 0 });
+              const idx = allocLocal(fctx, `__iife_extra_${i}_${fctx.locals.length}`, localType);
               fctx.body.push({ op: "local.set", index: idx });
-              allArgLocals.push({ idx, type: localType as ValType });
+              allArgLocals.push({ idx, type: localType });
             }
           } else {
-            // Drop extra arguments (evaluate for side effects)
             for (let i = params.length; i < args.length; i++) {
               const t = compileExpression(ctx, fctx, args[i]!);
-              if (t) {
-                fctx.body.push({ op: "drop" });
-              }
+              if (t) fctx.body.push({ op: "drop" });
             }
+          }
+
+          const iifeBindings = snapshotIifeBindings(fctx, collectIifeBindingNames(callee));
+          enterIifeBindings(fctx, iifeBindings);
+
+          // Allocate locals for parameters after argument evaluation, then
+          // initialize them from the caller-scope temporaries.
+          const paramLocals: number[] = [];
+          for (let i = 0; i < params.length; i++) {
+            const param = params[i]!;
+            const paramName = ts.isIdentifier(param.name) ? param.name.text : `__iife_p${i}`;
+            const evaluated = evaluatedParamArgs[i]!;
+            const localType = evaluated.type;
+            const idx = allocLocal(fctx, paramName, localType);
+            fctx.body.push({ op: "local.get", index: evaluated.idx });
+            fctx.body.push({ op: "local.set", index: idx });
+            paramLocals.push(idx);
           }
 
           // Set up `arguments` vec for the IIFE if needed
@@ -258,6 +398,7 @@ export function compileTailDispatch(
             );
             const result = compileExpression(ctx, fctx, callee.body);
             fctx.deferredDynamicImportTrap = savedDeferredDynamicImportTrap;
+            restoreIifeBindings(fctx, iifeBindings);
             return result;
           }
 
@@ -333,6 +474,11 @@ export function compileTailDispatch(
             const savedReturnType = fctx.returnType;
             fctx.returnType = iifeWasmRetType;
 
+            // An inlined IIFE shares the enclosing Wasm frame but owns a
+            // distinct function environment. Materialize its `var` bindings
+            // before compiling the body so they shadow same-named module
+            // globals exactly as they do in an ordinary function body.
+            hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
             // Hoist let/const with TDZ flags so accesses before init throw (#790)
             hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
             // Hoist function declarations so they're available before textual position
@@ -388,6 +534,7 @@ export function compileTailDispatch(
               body: blockBody,
             });
             fctx.body.push({ op: "local.get", index: retLocal });
+            restoreIifeBindings(fctx, iifeBindings);
             return iifeWasmRetType;
           } else {
             // Void IIFE — wrap the body in a block so that `return` inside
@@ -409,6 +556,9 @@ export function compileTailDispatch(
             const savedReturnType = fctx.returnType;
             fctx.returnType = null;
 
+            // See the returning-IIFE arm above: `var` belongs to the IIFE's
+            // function environment even though its body is inlined.
+            hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
             // Hoist let/const with TDZ flags so accesses before init throw (#790)
             hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
             // Hoist function declarations so they're available before textual position
@@ -465,6 +615,7 @@ export function compileTailDispatch(
               blockType: { kind: "empty" },
               body: blockBody,
             });
+            restoreIifeBindings(fctx, iifeBindings);
             return VOID_RESULT;
           }
         }

@@ -33,9 +33,13 @@ describe("issue-1279: CJS require() static module graph", () => {
       expect(out).toContain(`import x from "./x";`);
     });
 
-    it("preserves `let`/`var` require() — only `const` is rewritten", () => {
-      expect(rewriteCjsRequire(`let y = require("y");`)).toContain(`require("y")`);
-      expect(rewriteCjsRequire(`var y = require("y");`)).toContain(`require("y")`);
+    it("links `let`/`var` require() through a synthetic import while preserving mutability", () => {
+      expect(rewriteCjsRequire(`let y = require("y");`)).toBe(
+        'import __cjs_require_0_0 from "y";\nlet y = __cjs_require_0_0;',
+      );
+      expect(rewriteCjsRequire(`var y = require("y");`)).toBe(
+        'import __cjs_require_0_0 from "y";\nvar y = __cjs_require_0_0;',
+      );
     });
 
     it("preserves rest patterns and default initializers (not expressible as ESM imports)", () => {

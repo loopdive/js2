@@ -49,6 +49,7 @@ import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "../custom-iterable.js";
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
+import { moduleGlobalForDeclaration } from "../function-identity.js";
 
 /**
  * (#1719 S1) Gate predicate for the array object-value representation track.
@@ -308,7 +309,7 @@ export function syncDestructuredLocalsToGlobals(
         // the central "destructure complete" callsite — and is a
         // no-op for non-let/const bindings, which have no TDZ flag.
         emitLocalTdzInit(fctx, name);
-        const moduleGlobalIdx = isModuleLevel ? ctx.moduleGlobals.get(name) : undefined;
+        const moduleGlobalIdx = isModuleLevel ? moduleGlobalForDeclaration(ctx, element, name) : undefined;
         const localIdx = fctx.localMap.get(name);
         if (moduleGlobalIdx !== undefined && localIdx !== undefined) {
           const localType = getLocalType(fctx, localIdx);

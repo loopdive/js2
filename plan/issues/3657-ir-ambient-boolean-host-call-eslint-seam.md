@@ -1,7 +1,7 @@
 ---
 id: 3657
 title: "IR: ambient boolean host call rejected in ESLint Linter class method"
-status: ready
+status: review
 created: 2026-07-26
 updated: 2026-07-26
 priority: critical
@@ -11,7 +11,7 @@ task_type: bugfix
 area: ir, host-interop
 language_feature: ambient-functions
 goal: npm-library-support
-sprint: 76
+sprint: current
 es_edition: ES2015
 related: [1371, 2693, 2781, 3325, 3518, 3653]
 ---

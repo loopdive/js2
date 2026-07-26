@@ -89,4 +89,19 @@ describe("Issue #646: residual undefined .kind crashes", { timeout: 30000 }, () 
       }
     `);
   });
+
+  it("accepts unnamed synthetic parameters from JSDoc callback signatures", async () => {
+    await compileWithoutKindCrash(`
+      /**
+       * @param {function(string): boolean} f
+       * @returns {function(string): boolean}
+       */
+      function negate(f) {
+        return token => !f(token);
+      }
+      export function test(): boolean {
+        return negate(value => value === "yes")("no");
+      }
+    `);
+  });
 });

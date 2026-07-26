@@ -53,6 +53,18 @@ describe("#2105 boolean-brand rollout — join (JS host)", () => {
   it("does not regress string[] join", async () => {
     expect(await js(`export function test(): string { const arr = ["a", "b"]; return arr.join(","); }`)).toBe("a,b");
   });
+
+  it("keeps cloned join branches stable when sibling TDZ locals are compacted", async () => {
+    expect(
+      await js(`
+        export function test(): string {
+          { let n: number; n = 1; }
+          { let n: number; n = 2; }
+          return ["a", "b"].join(",");
+        }
+      `),
+    ).toBe("a,b");
+  });
 });
 
 describe("#2105 boolean-brand rollout — join (standalone, no JS host)", () => {

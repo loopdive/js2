@@ -1,7 +1,7 @@
 ---
 id: 3656
 title: "IR: dynamic destructured parameter blocks ESLint getInactivityReasonMessage"
-status: ready
+status: review
 created: 2026-07-26
 updated: 2026-07-26
 priority: critical
@@ -11,7 +11,7 @@ task_type: bugfix
 area: ir, codegen
 language_feature: object-destructuring
 goal: npm-library-support
-sprint: 76
+sprint: current
 required_by: [1400, 2691]
 es_edition: ES2015
 related: [1169c, 1400, 2691, 3518, 3654]

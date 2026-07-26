@@ -300,12 +300,12 @@ export function planClosureCaptures(
       }
     }
     if (localIdx === undefined) continue;
-    // #2669: skip names bound to a *user* function (a function reference, not a
-    // captured variable) — but NOT a wasm:js-string builtin import
-    // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
-    // must not block capture of a same-named outer local (e.g. the test262
-    // `let length = "outer"` dstr template). Discriminate by index.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    // A resolved outer local wins over the process-wide funcMap namespace.
+    // In particular, bundled dependencies commonly reuse short names such as
+    // `g` for both a local capture and an unrelated top-level function. The old
+    // bare-name funcMap check dropped the local capture and the lifted body then
+    // read the function value instead, producing an invalid Wasm operand type.
+    // Real function declarations do not occupy a local slot here.
     // Skip if the name is the arrow's own parameter (including destructuring bindings)
     if (isOwnParamName(arrow, name)) continue;
     // Skip if the name is a named function expression's own name (self-reference)

@@ -12,6 +12,7 @@
  *   4. Registers delegates in shared.ts (registerCompileExpression, etc.)
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { compileProfileNow, recordCompileProfile } from "../compile-profile.js";
 import { isBooleanType, isPromiseType, mapTsTypeToWasm } from "../checker/type-mapper.js";
 import {
   classifyAsyncConsumer,
@@ -863,6 +864,13 @@ function compileExpressionBody(
   } catch (e) {
     rollbackSpeculative(ctx, fctx, snap);
     const msg = e instanceof Error ? e.message : String(e);
+    const errorProfileStarted = compileProfileNow();
+    recordCompileProfile("codegen.expression-error", errorProfileStarted, {
+      function: fctx.name,
+      syntaxKind: ts.SyntaxKind[expr.kind],
+      expression: expr.getText().slice(0, 240),
+      stack: e instanceof Error ? e.stack : undefined,
+    });
     reportErrorNoNode(ctx, `Internal error compiling expression: ${msg}`);
     const fallbackType = expectedType ?? { kind: "f64" as const };
     pushDefaultValue(fctx, fallbackType, ctx);

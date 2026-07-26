@@ -7,6 +7,14 @@ updated: 2026-07-21
 
 # Current budget window — FOCUS: complete the IR-only migration
 
+> **Stakeholder priority injection (2026-07-26) — ESLint Tier 1.** Complete
+> #1400's first real `Linter.verify()` proof in the WasmGC JS-host lane under
+> Node. Node builtins must pass through to the real Node host; standalone/WASI
+> shims are not part of this gate. The critical path is #3654–#3658, with
+> #3654–#3657 in review and #3658/#1400 actively owned until the real graph
+> compiles, validates, instantiates, and returns the expected result. This work
+> is priority work in the live rolling window.
+
 > **Stakeholder directive (2026-07-21).** Drive the IR migration through an
 > IR-only default and retire direct codegen. This supersedes the June 30
 > ordering for new pulls. Standalone correctness remains a protected parallel

@@ -1030,6 +1030,13 @@ export interface CodegenContext {
   useUsageInfer: boolean;
   /** Map from function name to its absolute index (imports + locals) */
   funcMap: Map<string, number>;
+  /**
+   * Declaration-aware keys for functions. Multi-file programs and independent
+   * nested scopes can contain many helpers with the same source name; those
+   * functions need distinct funcMap identities even though their JavaScript
+   * `.name` values are identical.
+   */
+  functionDeclKeys: Map<ts.FunctionDeclaration, string>;
   /** Map from struct/interface name to type index */
   structMap: Map<string, number>;
   /** Reverse map from type index to struct/interface name (O(1) reverse lookup) */
@@ -1961,6 +1968,15 @@ export interface CodegenContext {
   preRegisteredBodyless?: Set<string>;
   /** Map from module-level variable name → global index in mod.globals */
   moduleGlobals: Map<string, number>;
+  /** Collision-free module-global slots keyed by their source declaration. */
+  moduleGlobalDeclarations: Map<ts.Declaration, number>;
+  /**
+   * Module-global targets for ESM import bindings, keyed by the local alias
+   * symbol. Multi-file graphs can contain unrelated same-named top-level
+   * bindings, so imported identifiers must not rely exclusively on the
+   * realm-wide bare-name map.
+   */
+  importBindingGlobals: Map<ts.Symbol, number>;
   /** Script `var` names whose global-object properties are non-configurable. */
   globalObjectVarBindings?: Set<string>;
   /** Sloppy unresolvable assignment targets discovered before body compilation. */

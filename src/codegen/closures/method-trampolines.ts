@@ -25,6 +25,7 @@ import {
   ensureLateImport as ensureLateImportShared,
   flushLateImportShifts as flushLateImportShiftsShared,
 } from "../shared.js";
+import { valTypesMatch } from "../shared.js";
 import {
   getFuncSignature,
   getOrCreateConstructibleFuncRefWrapperTypes,
@@ -418,6 +419,18 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       // scan only when it wasn't recorded.
       const usesThis = t.methodUsesThis ?? methodBodyReadsThis(ctx, t.methodFuncIdx);
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
+      const wrapperThis: ValType = { kind: "ref_null", typeIdx: t.objStructTypeIdx };
+      const methodThis = sig.params[0]!;
+      if (!valTypesMatch(wrapperThis, methodThis)) {
+        // Host-backed prototype methods (for example Map.prototype.set in the
+        // Node-host lane) expose an externref receiver ABI even though the
+        // cached closure was discovered through a statically-shaped object.
+        // Reconcile the receiver just like the forwarded user parameters;
+        // otherwise the trampoline feeds `(ref null $Shape)` to an externref
+        // call parameter and makes the whole module invalid.
+        tFctx.body = newBody;
+        newBody.push(...coercionInstrs(ctx, wrapperThis, methodThis, tFctx));
+      }
     }
     for (let i = 0; i < methodUserParams.length; i++) {
       newBody.push({ op: "local.get", index: i + 1 });

@@ -3188,6 +3188,7 @@ export function compileReceiverMethodCall(
         // Reserve the helper AFTER the imports settle — its funcIdx is now final.
         // (Its body is filled in the finalize vec-export pass.)
         const vecOpIdx = reserveVecMethodHelper(ctx, methodName === "push" ? "push" : "pop");
+        const vecOpName = methodName === "push" ? "__vec_push" : "__vec_pop";
         if (
           vecOpIdx !== undefined &&
           mcIdx !== undefined &&
@@ -3232,14 +3233,24 @@ export function compileReceiverMethodCall(
           if (methodName === "push") {
             fctx.body.push({ op: "local.get", index: recvLocal });
             fctx.body.push({ op: "local.get", index: argLocal! });
-            fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> i32 new length
+            // Operand compilation above may register a late import (for
+            // example while constructing/coercing the pushed value), which
+            // shifts this defined helper after it was reserved. Resolve it by
+            // name at the emission point instead of baking the stale
+            // reservation index.
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(vecOpName) ?? vecOpIdx }); // -> i32 new length
             fctx.body.push({ op: "f64.convert_i32_s" });
             fctx.body.push({ op: "call", funcIdx: boxNumIdx! }); // -> externref
           } else {
             fctx.body.push({ op: "local.get", index: recvLocal });
-            fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> externref
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(vecOpName) ?? vecOpIdx }); // -> externref
           }
           const thenInstrs = fctx.body.splice(thenStart);
+          // Keep the detached native arm visible to the late-import shifter
+          // while the host fallback arm is built. Without this, an import
+          // registered in the fallback leaves the native helper call one slot
+          // stale and can turn `__vec_push` into the preceding void setter.
+          fctx.savedBodies.push(thenInstrs);
           // ELSE (host bridge) — build the args array, then __extern_method_call.
           const elseStart = fctx.body.length;
           fctx.body.push({ op: "call", funcIdx: arrNewIdx });
@@ -3255,6 +3266,7 @@ export function compileReceiverMethodCall(
           fctx.body.push({ op: "local.get", index: argsLocal });
           fctx.body.push({ op: "call", funcIdx: mcIdx });
           const elseInstrs = fctx.body.splice(elseStart);
+          fctx.savedBodies.pop();
           fctx.body.push({
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } as ValType },

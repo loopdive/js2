@@ -1,7 +1,7 @@
 ---
 id: 1400
 title: "npm: compile ESLint package entry to valid Wasm"
-status: blocked
+status: in-progress
 created: 2026-05-11
 updated: 2026-07-26
 completed: 2026-05-20
@@ -12,7 +12,7 @@ task_type: feature
 area: compiler, resolver, codegen
 language_feature: commonjs, package-exports, classes
 goal: npm-library-support
-sprint: 76
+sprint: current
 depends_on: [3653, 3654, 3655, 3656, 3658]
 es_edition: n/a
 related: [1044, 1075, 1277, 1279, 1282, 1287, 1289, 1573, 1575, 2690, 2691, 2693, 2700, 3657]

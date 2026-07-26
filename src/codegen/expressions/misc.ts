@@ -7,7 +7,7 @@ import { ts } from "../../ts-api.js";
 import { isStringType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import type { TypeFact } from "../../checker/oracle.js";
-import { pushBody } from "../context/bodies.js";
+import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -53,6 +53,12 @@ function compileConditionalExpression(
   }
   let thenInstrs = fctx.body;
 
+  // Keep the completed true branch visible to late import/global fixups while
+  // compiling the false branch. Merely assigning `fctx.body = []` detached it
+  // from every body registry, so a string-global import created by the false
+  // branch shifted `__argc`/`__extras_argv` without repairing closure-call
+  // setup instructions already emitted in the true branch.
+  fctx.savedBodies.push(thenInstrs);
   fctx.body = [];
   const elseResultType = compileExpression(ctx, fctx, expr.whenFalse);
   if (!elseResultType) {
@@ -60,6 +66,8 @@ function compileConditionalExpression(
   }
   let elseInstrs = fctx.body;
 
+  // Both branch buffers remain registered until the final `if` owns them.
+  fctx.savedBodies.push(elseInstrs);
   fctx.body = savedBody;
 
   const thenType: ValType = thenResultType ?? { kind: "f64" };
@@ -151,6 +159,9 @@ function compileConditionalExpression(
     then: thenInstrs,
     else: elseInstrs,
   });
+  fctx.savedBodies.pop(); // elseInstrs
+  fctx.savedBodies.pop(); // thenInstrs
+  popBody(fctx, savedBody);
 
   return resultValType;
 }

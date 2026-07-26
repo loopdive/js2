@@ -60,6 +60,56 @@ beforeAll(() => {
       "",
     ].join("\n"),
   );
+  write(
+    join(physicalApp, "lib/cjs-call-entry.js"),
+    [
+      'const debug = require("./debug-default");',
+      'require("./name-collision");',
+      "export function callDebug() {",
+      '  return debug("eslint:probe");',
+      "}",
+      "",
+    ].join("\n"),
+  );
+  write(
+    join(physicalApp, "lib/debug-default.js"),
+    [
+      "function createDebug(namespace) {",
+      '  return namespace === "eslint:probe" ? 1 : 0;',
+      "}",
+      "module.exports = createDebug;",
+      "",
+    ].join("\n"),
+  );
+  write(
+    join(physicalApp, "lib/name-collision.js"),
+    [
+      "export function collision() {",
+      "  let previous = 0;",
+      "  function debug() {",
+      "    previous += 1;",
+      "    return previous;",
+      "  }",
+      "  return debug();",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  write(
+    join(physicalApp, "lib/lazy-entry.js"),
+    [
+      'const rules = require("./lazy-rules");',
+      "export function loaderCount() {",
+      "  return Object.keys(rules).length;",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  write(
+    join(physicalApp, "lib/lazy-rules.js"),
+    ["module.exports = {", '  unused: () => require("./lazy-rule-implementation"),', "};", ""].join("\n"),
+  );
+  write(join(physicalApp, "lib/lazy-rule-implementation.js"), 'throw new Error("lazy rule must not initialize");\n');
 
   write(join(physicalDep, "package.json"), JSON.stringify({ name: "dep", main: "index.js" }));
   write(join(physicalDep, "index.js"), "module.exports = { answer() { return 40; } };\n");
@@ -176,5 +226,46 @@ describe("#3654 — importer-scoped pnpm/CommonJS resolution", () => {
       (imports as { setExports: (exports: WebAssembly.Exports) => void }).setExports(instance.instance.exports);
     }
     expect((instance.instance.exports.isExpectedBasename as () => number)()).toBe(1);
+  });
+
+  it("calls a CommonJS default import through its lexical module value despite a same-named closure", async () => {
+    const entry = join(fixtureRoot, "node_modules/app/lib/cjs-call-entry.js");
+    const result = await compileProject(entry, {
+      allowJs: true,
+      target: "gc",
+      platform: "node",
+      deferTopLevelInit: true,
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    if (!result.success) return;
+
+    const imports = buildImports(result.imports as never, undefined, result.stringPool);
+    const instance = await WebAssembly.instantiate(result.binary, imports as never);
+    imports.setExports?.(instance.instance.exports as Record<string, Function>);
+    (instance.instance.exports.__module_init as (() => void) | undefined)?.();
+    expect((instance.instance.exports.callDebug as () => number)()).toBe(1);
+  });
+
+  it("does not eagerly trace a require held behind a lazy CommonJS callback", async () => {
+    const entry = join(fixtureRoot, "node_modules/app/lib/lazy-entry.js");
+    const resolver = new ModuleResolver(dirname(entry), {
+      allowJs: true,
+      platform: "node",
+    });
+    const graph = resolveAllImports(entry, resolver);
+    expect([...graph.keys()]).not.toContain(realpathSync(join(physicalApp, "lib/lazy-rule-implementation.js")));
+
+    const result = await compileProject(entry, {
+      allowJs: true,
+      target: "gc",
+      platform: "node",
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    if (!result.success) return;
+
+    const imports = buildImports(result.imports as never, undefined, result.stringPool);
+    const instance = await WebAssembly.instantiate(result.binary, imports as never);
+    imports.setExports?.(instance.instance.exports as Record<string, Function>);
+    expect((instance.instance.exports.loaderCount as () => number)()).toBe(1);
   });
 });

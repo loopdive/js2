@@ -105,6 +105,7 @@ import {
   resolveWithBinding,
 } from "../with-scope.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
+import { moduleGlobalAtIdentifier } from "../function-identity.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -538,7 +539,7 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       return resultType;
     }
     // Check module-level globals
-    const moduleIdx = ctx.moduleGlobals.get(name);
+    const moduleIdx = moduleGlobalAtIdentifier(ctx, expr.left);
     if (moduleIdx !== undefined) {
       const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)];
       const globalType = globalDef?.type;
@@ -560,7 +561,7 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
         coerceType(ctx, fctx, resultType, globalType);
       }
       // Re-read index: RHS compilation may shift globals via addStringConstantGlobal
-      const moduleIdxPost = ctx.moduleGlobals.get(name)!;
+      const moduleIdxPost = moduleGlobalAtIdentifier(ctx, expr.left)!;
       fctx.body.push({ op: "global.set", index: moduleIdxPost });
       fctx.body.push({ op: "global.get", index: moduleIdxPost });
       return globalType ?? resultType;

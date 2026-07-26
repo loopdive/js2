@@ -65,6 +65,7 @@ import {
   compileExternrefObjectDestructuringDecl,
   compileStatement,
 } from "./statements.js";
+import { reserveFunctionDeclarationKey } from "./function-identity.js";
 import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
 import {
   buildDestructureNullThrow,
@@ -648,13 +649,9 @@ export function promoteAccessorCapturesToGlobals(
     // Skip 'this' — it's passed as param 0 to the accessor
     if (name === "this") continue;
 
-    // Skip if it's a known function name (not a variable capture)
-    // #2669: skip names bound to a *user* function (a function reference, not a
-    // captured variable) — but NOT a wasm:js-string builtin import
-    // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
-    // must not block capture of a same-named outer local (e.g. the test262
-    // `let length = "outer"` dstr template). Discriminate by index.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    // A resolved outer local wins over the process-wide funcMap namespace.
+    // Function declarations do not occupy a local slot here; a same-named
+    // funcMap entry can therefore only be an unrelated declaration/helper.
 
     // Get the local's type
     const localType =
@@ -2275,6 +2272,21 @@ export function compileArrowAsClosure(
   if (ts.isBlock(body)) {
     hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
   }
+  // Reserve compiler identities for direct nested declarations before body
+  // statements compile. Lifted closure bodies historically skipped the
+  // ordinary function-declaration hoist entirely; when `function m(){...}`
+  // appeared in esquery after the `ms` package had registered numeric `m`, the
+  // declaration statement mistook the flat-name collision for "already
+  // compiled" and skipped its body. Reserving only the identities here keeps
+  // the existing statement-order emission while making every declaration
+  // collision-free.
+  if (ts.isBlock(body)) {
+    for (const statement of body.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name && statement.body) {
+        reserveFunctionDeclarationKey(ctx, statement, statement.name.text);
+      }
+    }
+  }
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
   // extended candidate gate admits the fn-expr (zero/identifier params, no
@@ -2640,6 +2652,19 @@ export function compileArrowAsCallback(
   // initializer / binding-pattern element default / computed key (see the
   // rationale on the identical scan in `compileArrowAsClosure`).
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
+  // A host callback that calls a lifted nested function must also carry every
+  // environment value that the callee expects. The first ESLint graph exposed
+  // this through AJV's Promise callback:
+  //   then(function () { return _compileAsync(schemaObj); })
+  // `_compileAsync` also captures `self` and `meta`; without promoting those
+  // names here the callback used their declaration-frame numeric slots, which
+  // are out of range in the callback frame at binary emission.
+  for (const name of [...referencedNames]) {
+    if (ownLocals.has(name)) continue;
+    for (const capture of ctx.nestedFuncCaptures.get(name) ?? []) {
+      if (!ownLocals.has(capture.name)) referencedNames.add(capture.name);
+    }
+  }
 
   // Detect which captured variables are written inside the callback body (#859)
   const writtenInCallback = new Set<string>();
@@ -2649,12 +2674,9 @@ export function compileArrowAsCallback(
   for (const name of referencedNames) {
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
-    // #2669: skip names bound to a *user* function (a function reference, not a
-    // captured variable) — but NOT a wasm:js-string builtin import
-    // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
-    // must not block capture of a same-named outer local (e.g. the test262
-    // `let length = "outer"` dstr template). Discriminate by index.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    // A resolved outer local wins over the process-wide funcMap namespace.
+    // This is important for minified bundles where short local names collide
+    // with unrelated top-level function declarations.
     // Skip if the name is the arrow's own parameter (including destructuring bindings)
     if (isOwnParamName(arrow, name)) continue;
     const type =

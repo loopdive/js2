@@ -331,10 +331,13 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         // Start with false (0)
         fctx.body.push({ op: "i32.const", value: 0 });
         for (const fieldName of structFieldNames) {
-          // Load the key and the field name string, compare
-          fctx.body.push({ op: "local.get", index: keyLocal });
           const strGlobal = ctx.stringGlobalMap.get(fieldName);
           if (strGlobal !== undefined) {
+            // Load the key only when the comparison can actually be emitted.
+            // Otherwise an unavailable field-name global would strand the
+            // externref above the i32 accumulator and make the next boolean
+            // consumer (for example `!(key in obj)`) invalid Wasm.
+            fctx.body.push({ op: "local.get", index: keyLocal });
             fctx.body.push({ op: "global.get", index: strGlobal });
             fctx.body.push({ op: "call", funcIdx: eqFunc });
             fctx.body.push({ op: "i32.or" }); // OR with accumulated result

@@ -16,6 +16,7 @@ import {
   promoteAccessorCapturesToGlobals,
 } from "../closures.js";
 import { addFunctionOwnLocals } from "../binding-info.js"; // (#2103) memoized own-locals oracle
+import { functionDeclarationKeyAtIdentifier, reserveFunctionDeclarationKey } from "../function-identity.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
@@ -241,7 +242,9 @@ export function compileNestedFunctionDeclaration(
   opts: CompileNestedFunctionOptions = {},
 ): void {
   if (!stmt.name || !stmt.body) return;
-  const funcName = stmt.name.text;
+  const sourceName = stmt.name.text;
+  const funcName = reserveFunctionDeclarationKey(ctx, stmt, sourceName);
+  ctx.functionNameMap.set(funcName, sourceName);
 
   // Determine parameter types and return type
   // Unannotated binding patterns containing a rest element are widened to
@@ -354,6 +357,28 @@ export function compileNestedFunctionDeclaration(
   for (const s of stmt.body.statements) {
     collectReferencedIdentifiers(s, referencedNames, ownLocals);
   }
+  const referencedFunctionNames = new Set<string>();
+  const referencedFunctionKeys = new Set<string>();
+  const collectReferencedFunctionNames = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      const key = functionDeclarationKeyAtIdentifier(ctx, node);
+      if (key) {
+        referencedFunctionNames.add(node.text);
+        if (ctx.funcMap.has(key)) referencedFunctionKeys.add(key);
+      }
+    }
+    ts.forEachChild(node, collectReferencedFunctionNames);
+  };
+  collectReferencedFunctionNames(stmt.body);
+  // A direct call to a lifted sibling also needs every environment value that
+  // the callee expects. Make those transitive dependencies ordinary captures
+  // of this function, so its lifted frame can forward its own params instead
+  // of reaching back into the declaring frame by a stale local index.
+  for (const key of referencedFunctionKeys) {
+    for (const capture of ctx.nestedFuncCaptures.get(key) ?? []) {
+      referencedNames.add(capture.name);
+    }
+  }
 
   // Detect which captured variables are written inside the function body
   const writtenInBody = new Set<string>();
@@ -446,11 +471,7 @@ export function compileNestedFunctionDeclaration(
     if (name === "this" || name === "super") continue;
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
-    // #2669: skip names bound to a *user* function — but NOT a wasm:js-string
-    // builtin import (concat/length/equals/substring/charCodeAt), which lives in
-    // funcMap yet must not block capture of a same-named outer local (the
-    // test262 `let length = "outer"` dstr template captured by a nested fn).
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    if (referencedFunctionNames.has(name)) continue;
     const type =
       localIdx < fctx.params.length
         ? fctx.params[localIdx]!.type
@@ -1054,11 +1075,18 @@ export function compileNestedFunctionDeclaration(
     // initializers — a destructuring default `{ w = counter() }` calls `counter`
     // from the PARAMETER list, which the body-only `referencedNames` scan misses.
     {
-      const referencedCalleeNames = new Set<string>(referencedNames);
+      const referencedCalleeKeys = new Set<string>(referencedFunctionKeys);
+      const collectParamCalleeKeys = (node: ts.Node): void => {
+        if (ts.isIdentifier(node)) {
+          const key = functionDeclarationKeyAtIdentifier(ctx, node);
+          if (key && ctx.nestedFuncCaptures.has(key)) referencedCalleeKeys.add(key);
+        }
+        ts.forEachChild(node, collectParamCalleeKeys);
+      };
       for (const p of stmt.parameters) {
-        collectReferencedIdentifiers(p, referencedCalleeNames, ownLocals);
+        collectParamCalleeKeys(p);
       }
-      emitEagerNestedCallCaptureBoxes(ctx, liftedFctx, captures, referencedCalleeNames);
+      emitEagerNestedCallCaptureBoxes(ctx, liftedFctx, captures, referencedCalleeKeys);
     }
 
     // #2669: the user parameters are preceded by BOTH the value-capture params
@@ -1613,7 +1641,7 @@ function emitEagerNestedCallCaptureBoxes(
     alreadyBoxed: boolean;
     hasTdzFlag: boolean;
   }>,
-  referencedCalleeNames: ReadonlySet<string>,
+  referencedCalleeKeys: ReadonlySet<string>,
 ): void {
   for (const cap of captures) {
     // Same narrowing as the #2692 eager pass: only plain by-value `var`/param
@@ -1623,7 +1651,7 @@ function emitEagerNestedCallCaptureBoxes(
     // Find a referenced sibling that mutably captures this same name, and adopt
     // ITS ref-cell value type so our refCellTypeIdx matches the lazy call-site's.
     let calleeValType: ValType | undefined;
-    for (const g of referencedCalleeNames) {
+    for (const g of referencedCalleeKeys) {
       const gCaps = ctx.nestedFuncCaptures.get(g);
       if (!gCaps) continue;
       const m = gCaps.find((c) => c.name === cap.name && c.mutable && c.valType);
@@ -1708,11 +1736,20 @@ export function hoistFunctionDeclarations(
   }
   const isShadowedDuplicate = (stmt: ts.FunctionDeclaration): boolean =>
     lastSiblingDeclForName.get(stmt.name!.text) !== stmt;
+  const siblingFuncKeys = new Map<ts.FunctionDeclaration, string>();
+  for (const stmt of stmts) {
+    if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
+    if (isShadowedDuplicate(stmt)) continue;
+    const sourceName = stmt.name.text;
+    const key = reserveFunctionDeclarationKey(ctx, stmt, sourceName);
+    siblingFuncKeys.set(stmt, key);
+    ctx.functionNameMap.set(key, sourceName);
+  }
   if (siblingFuncNames.size > 1) {
     for (const stmt of stmts) {
       if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
       if (isShadowedDuplicate(stmt)) continue;
-      const funcName = stmt.name.text;
+      const funcName = siblingFuncKeys.get(stmt)!;
       if (ctx.funcMap.has(funcName)) continue;
       if (ctx.hoistFailedFuncs?.has(funcName)) continue;
 
@@ -1722,16 +1759,20 @@ export function hoistFunctionDeclarations(
       addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
       const referenced = new Set<string>();
       for (const s of stmt.body.statements) collectReferencedIdentifiers(s, referenced, ownLocals);
+      const referencedFunctionBindings = new Set<string>();
+      const collectFunctionBindings = (node: ts.Node): void => {
+        if (ts.isIdentifier(node) && functionDeclarationKeyAtIdentifier(ctx, node)) {
+          referencedFunctionBindings.add(node.text);
+        }
+        ts.forEachChild(node, collectFunctionBindings);
+      };
+      collectFunctionBindings(stmt.body);
       let capturesOuter = false;
       for (const name of referenced) {
         if (name === "this" || name === "super") continue;
         if (ownLocals.has(name)) continue;
         if (siblingFuncNames.has(name)) continue;
-        // #2669: skip names bound to a *user* function — but NOT a wasm:js-string
-        // builtin import (concat/length/equals/substring/charCodeAt), which lives in
-        // funcMap yet must not block capture of a same-named outer local (the
-        // test262 `let length = "outer"` dstr template captured by a nested fn).
-        if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+        if (referencedFunctionBindings.has(name)) continue;
         if (fctx.localMap.has(name)) {
           capturesOuter = true;
           break;
@@ -1795,7 +1836,8 @@ export function hoistFunctionDeclarations(
       // instantiated (last-wins, §10.2.11 step 14). Skip: the surviving
       // declaration owns the funcMap slot and the Annex B bookkeeping.
       if (isShadowedDuplicate(stmt)) continue;
-      const funcName = stmt.name.text;
+      const sourceName = stmt.name.text;
+      const funcName = siblingFuncKeys.get(stmt) ?? reserveFunctionDeclarationKey(ctx, stmt, sourceName);
       // (#2200 Phase 1) Annex B B.3.3 cancellation: if this block-nested function
       // is ineligible for a web-compat outer var-binding (intervening lexical
       // shadow or same-named param), record the declaring block's range so a read
@@ -1804,9 +1846,9 @@ export function hoistFunctionDeclarations(
       const cancelBlock = annexBHoistCancels(stmt);
       if (cancelBlock) {
         if (!fctx.annexBCancelled) fctx.annexBCancelled = new Map();
-        const ranges = fctx.annexBCancelled.get(funcName) ?? [];
+        const ranges = fctx.annexBCancelled.get(sourceName) ?? [];
         ranges.push({ start: cancelBlock.getStart(), end: cancelBlock.getEnd() });
-        fctx.annexBCancelled.set(funcName, ranges);
+        fctx.annexBCancelled.set(sourceName, ranges);
       } else if (annexBBlockNestedEligible(stmt) !== null) {
         // (#2200 Phase 2) Eligible block-nested function: pre-allocate the
         // web-compat outer var-binding as a TDZ var — an externref local +
@@ -1816,15 +1858,15 @@ export function hoistFunctionDeclarations(
         // `typeof` "undefined" / direct-read ReferenceError; a read after the
         // block ran sees the function value. Skip if the name already has a
         // function-local (e.g. a var/param) — that binding wins, no Annex B var.
-        if (!fctx.localMap.has(funcName)) {
-          allocLocal(fctx, funcName, { kind: "externref" });
+        if (!fctx.localMap.has(sourceName)) {
+          allocLocal(fctx, sourceName, { kind: "externref" });
           if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-          if (!fctx.tdzFlagLocals.has(funcName)) {
-            const flagIdx = allocLocal(fctx, `__tdz_${funcName}`, { kind: "i32" });
-            fctx.tdzFlagLocals.set(funcName, flagIdx);
+          if (!fctx.tdzFlagLocals.has(sourceName)) {
+            const flagIdx = allocLocal(fctx, `__tdz_${sourceName}`, { kind: "i32" });
+            fctx.tdzFlagLocals.set(sourceName, flagIdx);
           }
           if (!fctx.annexBOuterBindings) fctx.annexBOuterBindings = new Set();
-          fctx.annexBOuterBindings.add(funcName);
+          fctx.annexBOuterBindings.add(sourceName);
         }
       }
       const hasReservedBodylessEntry = ctx.preRegisteredBodyless?.has(funcName) ?? false;
@@ -2217,7 +2259,7 @@ export function emitSetExtrasArgv(
   args: ts.Expression[],
   startIdx: number,
 ): void {
-  const { globalIdx, vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+  const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
   const ati = getArrTypeIdxFromVec(ctx, vecTypeIdx);
 
   // Coerce the just-compiled operand (top of stack) to externref so it can be
@@ -2526,7 +2568,11 @@ export function emitSetExtrasArgv(
       fctx.body.push({ op: "local.get", index: totalLenLocal });
       fctx.body.push({ op: "local.get", index: arrTmp });
       fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-      fctx.body.push({ op: "global.set", index: globalIdx });
+      // Compiling an extra argument can add a late string-constant import,
+      // shifting every module-defined global. Re-read the cached side-table
+      // after argument compilation instead of storing through the stale index
+      // returned at function entry.
+      fctx.body.push({ op: "global.set", index: ctx.extrasArgvGlobalIdx });
       return;
     }
     // Helpers unavailable — fall through to the static path (best effort).
@@ -2545,7 +2591,8 @@ export function emitSetExtrasArgv(
   fctx.body.push({ op: "i32.const", value: extrasCount });
   fctx.body.push({ op: "local.get", index: arrTmp });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "global.set", index: globalIdx });
+  // See the spread path above: argument compilation may shift this global.
+  fctx.body.push({ op: "global.set", index: ctx.extrasArgvGlobalIdx });
 }
 
 /**

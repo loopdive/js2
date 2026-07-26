@@ -95,6 +95,7 @@ import { emitFnctorProtoGet } from "./fnctor-prototype.js"; // (#2660 S3a) recon
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { functionKeyAtIdentifier } from "../function-identity.js";
 
 // #2146: resolveEnclosingClassName now lives in shared.ts (imported above).
 
@@ -3516,7 +3517,12 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // (#3163) `calleeIdent` — the cast/paren-unwrapped identifier — so
   // `new (Foo as any)()` takes the same fnctor build path as `new Foo()`.
   if ((!className || !ctx.classSet.has(className)) && calleeIdent) {
-    const fnName = calleeIdent.text;
+    // Function-constructor caches and synthesized struct/function names are
+    // compiler identities, not JavaScript-visible names. A package graph can
+    // contain an unrelated module global with the same spelling (esquery's
+    // nested `l` helper versus another module's numeric `l`); using the flat
+    // spelling made the ctor prologue read that f64 global as a closure.
+    const fnName = functionKeyAtIdentifier(ctx, calleeIdent);
     // Check cache first — if we already built a constructor for this function
     const cachedFnCtor = ctx.funcConstructorMap.get(fnName);
     if (cachedFnCtor) {

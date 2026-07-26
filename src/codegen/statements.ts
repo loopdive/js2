@@ -22,6 +22,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
 import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
 import { compileWithStatement } from "./with-scope.js";
+import { functionDeclarationKey } from "./function-identity.js";
 
 // Sub-module imports — statement-family functions
 import {
@@ -222,6 +223,7 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // bodyless pre-registration is only a reserved slot; fill it here if the
     // hoist pre-pass did not.
     const funcName = stmt.name?.text;
+    const funcKey = funcName ? functionDeclarationKey(ctx, stmt, funcName) : undefined;
     // (#2200 Phase 2) Annex B B.3.3 outer-binding init at the textual position.
     // For an *eligible* block-nested `function F`, the hoist pre-pass pre-allocated
     // an outer var-binding (TDZ local + flag). Now that control flow has reached
@@ -234,9 +236,9 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     if (funcName && fctx.annexBOuterBindings?.has(funcName)) {
       const outerLocal = fctx.localMap.get(funcName);
       const flagLocal = fctx.tdzFlagLocals?.get(funcName);
-      const fnIdx = ctx.funcMap.get(funcName);
+      const fnIdx = funcKey ? ctx.funcMap.get(funcKey) : undefined;
       if (outerLocal !== undefined && flagLocal !== undefined && fnIdx !== undefined) {
-        const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+        const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcKey!, fnIdx);
         if (closureType) {
           // Closure value is on the stack; widen to externref for the outer local.
           if (closureType.kind !== "externref") {
@@ -251,16 +253,16 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       // nothing else to emit at this textual position.
       return;
     }
-    const hasReservedBodylessEntry = funcName ? (ctx.preRegisteredBodyless?.has(funcName) ?? false) : false;
-    if (funcName && ctx.funcMap.has(funcName) && !hasReservedBodylessEntry) return;
+    const hasReservedBodylessEntry = funcKey ? (ctx.preRegisteredBodyless?.has(funcKey) ?? false) : false;
+    if (funcKey && ctx.funcMap.has(funcKey) && !hasReservedBodylessEntry) return;
     // Re-attempt compilation even if hoisting failed — the failure may have been
     // due to const/let captures not yet in scope during the hoisting pre-pass.
     // Now that we're in statement order, those locals should be available.
-    if (funcName && hasReservedBodylessEntry) {
-      const funcIdx = ctx.funcMap.get(funcName);
+    if (funcKey && hasReservedBodylessEntry) {
+      const funcIdx = ctx.funcMap.get(funcKey);
       const reservedEntry = funcIdx !== undefined ? definedFuncAt(ctx, funcIdx) : undefined;
       compileNestedFunctionDeclaration(ctx, fctx, stmt, reservedEntry ? { reuseReservedEntry: reservedEntry } : {});
-      ctx.preRegisteredBodyless?.delete(funcName);
+      ctx.preRegisteredBodyless?.delete(funcKey);
     } else {
       compileNestedFunctionDeclaration(ctx, fctx, stmt);
     }

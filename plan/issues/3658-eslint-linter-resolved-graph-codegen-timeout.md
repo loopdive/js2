@@ -11,7 +11,7 @@ task_type: performance
 area: compiler, codegen, observability
 language_feature: multi-module-compilation
 goal: npm-library-support
-sprint: 76
+sprint: current
 required_by: [1400, 2693]
 es_edition: n/a
 related: [824, 1282, 1400, 1573, 1942, 3654, 3655, 3656, 3657]
@@ -111,3 +111,58 @@ sees two; the Node JS-host binary executes and returns 42.
   treats missing output as an expected compiler diagnostic.
 - Phase timing and peak-memory evidence are recorded here before the issue is
   closed.
+
+## Handover status (2026-07-26)
+
+Work is paused at the user's budget cutoff and is published as a draft PR. The
+first proof remains deliberately in the WasmGC JavaScript-host lane under Node:
+`node:*` dependencies are passed through as host imports (the permanent stress
+test asserts `env.__node_path`) rather than being reimplemented for
+standalone/WASI.
+
+The resolved executable graph is now bounded to 137 codegen files (178 checker
+files, 1,923,212 source bytes). The direct Linter entry compiles to a roughly
+9.3 MiB binary in 688–747 seconds and emits a structured probe result, so the
+original timeout/OOM blocker is resolved. Validation currently stops at:
+
+```text
+WebAssembly.Module(): Compiling function #4883:"__closure_2056" failed:
+local.tee[0] expected type (ref null 819), found global.get of type f64
+```
+
+Closure `2056` maps to esquery 1.7.0's minified `nth-child` matcher:
+
+```js
+function(e,t,r){return P(e,t,r)&&m(e,t,C,r)}
+```
+
+Binary inspection proved that `P` dispatches correctly but the second call reads
+numeric `$global$3` (the `ms` package's `m`) as a callable instead of calling
+esquery's registered `$m` helper. The branch contains declaration-scoped
+function/module-global identities, nested-function reservation, and a
+scope-aware transformed-node lexical recovery. The latest scope-aware shadow
+change passes the focused suites but its full ESLint run was intentionally
+interrupted at about five minutes for this handover, so it is not yet proven to
+change closure `2056`.
+
+Verified before handover:
+
+```text
+109 passed, 3 skipped across the focused 10-file regression set
+23 passed across #2930, #2931, and #3658 identity/live-binding tests
+pnpm run typecheck: passed
+pnpm run check:ir-fallbacks: passed
+```
+
+Next action:
+
+```sh
+pnpm vitest run tests/stress/eslint-tier1.test.ts --reporter=verbose
+```
+
+If closure `2056` is unchanged, add an opt-in diagnostic at
+`compileIdentifierCall` for the esquery `m` identifier and record
+`functionDeclKey`, `funcName`, `lexicalModuleGlobal`, checker declarations, and
+the matching `funcSourceText` keys. Do not mark #1400 or this issue done until
+the stress test validates, instantiates, and `Linter.verify("const x = 1;", {})`
+returns `0`.

@@ -199,8 +199,11 @@ export function emitStringJoinFold(
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...elemToStr, { op: "local.set", index: resultTmp }],
-      else: [...repr.concat(concatWithSep, elemToStr), { op: "local.set", index: resultTmp }],
+      // The two branches must not share instruction object identities. Local
+      // compaction rewrites indices in place; sharing `elemToStr` here made the
+      // second branch remap the first branch's already-remapped indices again.
+      then: [...structuredClone(elemToStr), { op: "local.set", index: resultTmp }],
+      else: [...repr.concat(concatWithSep, structuredClone(elemToStr)), { op: "local.set", index: resultTmp }],
     },
 
     { op: "local.get", index: iTmp },
