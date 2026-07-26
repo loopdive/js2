@@ -470,7 +470,26 @@ export function collectGrowableObjectLiterals(
             }
             // Consumer-safety: varName flows into a CONCRETE-struct-typed position
             // (call/new argument, return, or assignment target) → poison.
-            if (ts.isIdentifier(node) && node.text === varName && isValueUseOfIdentifier(node)) {
+            //
+            // (#739 S2) EXCEPT an `Object.<mop>(…)` argument — the same carve-out
+            // the #2992 S6 standalone guard already applies via `isObjectMopCallArg`,
+            // now applied here so the two arms agree. TS types the 3rd argument of
+            // `Object.defineProperty` as `PropertyDescriptor`, which HAS named own
+            // props (`value`/`writable`/`get`/`set`/…), so `typeRequiresStruct`
+            // called it a struct consumer and poisoned every descriptor object —
+            // the exact vars this pass needs to route to `$Object`. A MOP call is
+            // not a struct consumer: it is precisely what the `$Object` rep serves
+            // (native [[Get]] per descriptor field, §6.2.5.5). Note the *map* form
+            // (`defineProperties`' `PropertyDescriptorMap`) was already safe — it is
+            // a pure string-index dictionary, so `typeRequiresStruct` returns false
+            // — which is why acorn's `prototypeAccessors` stayed marked; only the
+            // singular `PropertyDescriptor` shape was affected.
+            if (
+              ts.isIdentifier(node) &&
+              node.text === varName &&
+              isValueUseOfIdentifier(node) &&
+              !isObjectMopCallArg(node)
+            ) {
               if (typeRequiresStruct(checker.getContextualType(node))) {
                 poisoned = true;
               }
@@ -501,6 +520,55 @@ export function collectGrowableObjectLiterals(
             }
             if (ts.isForInStatement(node) && ts.isIdentifier(node.expression) && node.expression.text === varName) {
               poisoned = true;
+            }
+            // (#739 S2 — HOST-lane descriptor-object pinning) The S1 pin lives in
+            // `collectEmptyObjectWidening`, which only reaches vars initialized
+            // with an EMPTY `{}` literal. A NON-EMPTY pure-data literal that later
+            // receives a RUNTIME-STORE-routed define (accessor descriptor, dynamic
+            // key, no-`value` / explicit-`undefined` field) has the IDENTICAL
+            // two-store defect — and it bites hardest when the var is itself used
+            // as a DESCRIPTOR: the accessor lands in the `_wasmPropDescs` sidecar
+            // while ToPropertyDescriptor's struct-field reader reads the closed
+            // struct, so the getter never fires even though §6.2.5.5 requires a
+            // full [[Get]] per descriptor field.
+            //
+            // Measured A/B on HEAD — the ONLY varying axis is the initializer:
+            //   `const d = {};           d.value = 1; …{get}` → getter FIRES  ✓
+            //   `const d = { value: 1 };              …{get}` → getter SILENT ✗
+            //
+            // Marking `grows` (rather than adding a separate pre-arm like the
+            // standalone `markStandaloneAccessorDefineTargets` block above) is
+            // deliberate: it routes the var to the recursive externref `$Object`
+            // builder while keeping EVERY existing #1897/#2837 consumer-safety
+            // poison in force (arithmetic field reads, concrete-struct-typed
+            // positions, `delete V.k`, `V[expr]`, `for…in V`). Those consumers
+            // lower against the STATIC struct type, so when one is present we
+            // leave the var on the struct path — same when-in-doubt-don't-mark
+            // discipline as the rest of this pass. Host-gated; standalone has its
+            // own arm above and stays byte-identical.
+            if (
+              !ctx.standalone &&
+              ts.isCallExpression(node) &&
+              ts.isPropertyAccessExpression(node.expression) &&
+              ts.isIdentifier(node.expression.expression) &&
+              node.expression.expression.text === "Object" &&
+              ts.isIdentifier(node.expression.name)
+            ) {
+              const method = node.expression.name.text;
+              const recv = node.arguments[0];
+              if (recv && ts.isIdentifier(recv) && recv.text === varName) {
+                if (
+                  method === "defineProperty" &&
+                  node.arguments.length >= 3 &&
+                  definePropertyRoutesToRuntimeStore(node.arguments[1]!, node.arguments[2]!)
+                ) {
+                  grows = true;
+                } else if (method === "defineProperties" && node.arguments.length >= 2) {
+                  // Every `defineProperties` shape lands in the runtime store
+                  // (see `markRuntimeStoreDefineTargets`).
+                  grows = true;
+                }
+              }
             }
             forEachChild(node, visit);
           };

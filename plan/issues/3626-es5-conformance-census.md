@@ -257,6 +257,67 @@ Confirmed floor: **73 tests**. Ceiling if the whole descriptor path cluster is
 one mechanism: **564**. The honest estimate needs a post-fix re-run; do not
 quote 564 as a flip count.
 
+### 2.2.1 ⚠️ CORRECTION (2026-07-26, opus-loop-e) — §2.2 IS REFUTED. DO NOT USE IT.
+
+**The "confirmed floor of 73" is WITHDRAWN. Both §2.2 "probe-confirmed" rows are
+artifacts.** Re-measured on HEAD against the baseline jsonl + V8 controls while
+implementing #739 S2. Do not re-derive the old numbers from the table above.
+
+**A2 ("delete of non-configurable succeeds", 22) — the defect does not exist.**
+HEAD is already spec-correct:
+`defineProperty(o,'x',{value:1,configurable:false}); try{delete o.x}catch(e){e.name}`
+→ **"threw TypeError"**, matching a V8 control. The §2.2 probe recorded
+`'x' in o` → `false`; but the `delete` **throws**, so `'x' in o` never evaluated
+and the recorded `false` is a **swallowed-exception artifact — the probe measured
+nothing and reported a defect.** This is the `propertyHelper`/`verifyProperty`
+vacuity class (#3468/#3592/#3434) landing on the census written to map that very
+area. Corroboration that no mechanism is there: corpus-wide, `configurable`
+failure signatures total **~16, all singletons**. A real mechanism leaves a
+population behind; this one left none.
+
+**A1 ("write to non-writable silently succeeds", 51) — real defect, but the
+DIRECTION is inverted.** Corpus-wide, 18 signatures mention `writable` (~59
+failures):
+
+| direction                                        | count | note                                                             |
+| ------------------------------------------------ | ----- | ---------------------------------------------------------------- |
+| "Expected obj[X] **to be writable, but was not**" | 34    | properties **over**-restricted — the dominant real defect        |
+| "Expected obj[name] **NOT to be writable, but was**" | 10 | the §2.2 direction — all in `{using,await-using}/fn-name-*`, i.e. explicit resource management, **not ES5 descriptors** |
+
+So the ES5-scoped count in the claimed direction is **≤10, not 51**, and the
+dominant defect points the opposite way. The §2.2 probe used an *inline-literal*
+descriptor; with a *variable* descriptor HEAD already throws the correct
+TypeError (#739 S1 pinning works). One unvaried axis (descriptor shape) was read
+as a general claim.
+
+**The descriptor bucket is NOT one mechanism** — which retires the "ceiling 564"
+framing and confirms §2.1's own warning: `built-ins/Object/defineProperty` is
+**276 failures across 102 distinct signatures**, largest **17 (6 % of the
+bucket)**.
+
+**What IS probe-confirmed** (clean A/B, only the initializer varies):
+
+```
+const d = {};           d.value = 1;  Object.defineProperty(d,'configurable',{get})  → getter FIRES  ✓
+const d = { value: 1 };               Object.defineProperty(d,'configurable',{get})  → getter SILENT ✗
+```
+
+Root cause: #739 S1's representation pin lives in `collectEmptyObjectWidening`,
+which only reaches **empty-`{}`** vars. A **non-empty** literal that later
+receives a runtime-store-routed define stays a widened struct, the accessor
+lands in the `_wasmPropDescs` sidecar, and ToPropertyDescriptor's struct-field
+reader never invokes the getter — although §6.2.5.5 requires a full `[[Get]]`
+per descriptor field. Same two-store bug as #739, but on the **descriptor**
+object rather than the receiver. Population: family B1 `accessed !== true` = 38
+ES5-scoped / 61 corpus-wide — **a floor, not a forecast.**
+
+**Method note for whoever measures here next:** if an assertion can throw before
+the value you are reading is evaluated, you are measuring the throw, not the
+value. Always run a negative control that MUST report failure — several probes
+in this investigation silently returned `0` from `String(boolean)` or reported
+"invalid wasm" from an unrelated `typeof e` construct, and only the control
+caught them.
+
 ### 2.3 Mechanical vs hard
 
 **Mechanical** (narrow, well-understood, no representation change):
