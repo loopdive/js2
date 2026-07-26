@@ -64,22 +64,44 @@ Reproducer: `scripts/fixtures/issue-3669-monomorphism/transitions.js`.
 
 ### Transition matrix — seed kind → overwrite kind
 
+Harness lane (authoritative — this is the lane the corpus is scored on):
+
 | seed \ write | number     | string     | boolean   | null       | undefined | object     |
 | ------------ | ---------- | ---------- | --------- | ---------- | --------- | ---------- |
 | **number**   | ok (ctrl)  | **BROKEN** | ok        | **BROKEN** | ok        | **BROKEN** |
-| **string**   | ok         | ok (ctrl)  | ok        | –          | –         | ok         |
-| **boolean**  | **BROKEN** | **BROKEN** | ok (ctrl) | –          | –         | –          |
-| **object**   | ok         | ok         | –         | –          | –         | –          |
+| **string**   | ok         | ok (ctrl)  | ok        | ok         | –         | ok         |
+| **boolean**  | **BROKEN** | **BROKEN** | ok (ctrl) | **BROKEN** | ok        | **BROKEN** |
+| **object**   | ok         | ok         | –         | ok         | –         | –          |
 
-**5 of 12 cross-kind transitions are broken; 7 work.** All three same-type
-controls pass.
+**7 broken of 15 cross-kind cells measured.** All same-type controls pass.
 
-**This is the key structural finding: the failure is selective, not uniform.**
-It is _not_ one missing widening primitive — if slots simply could not widen,
-`num→bool`, `num→undefined`, `str→*` and `obj→*` would fail too, and they do
-not. Nor is it "numeric slots are frozen": `num→bool` succeeds while
-`bool→num` fails, which is asymmetric. So the repair is a set of specific
-transition lowerings in the value-rep substrate, not a one-line fix.
+**The pattern is not arbitrary:** a slot seeded with an **unboxed primitive**
+(number or boolean) corrupts when written with a **reference-kind** value
+(string / null / object); a slot seeded with a **reference** (string / object)
+never corrupts. `undefined` writes always work. The boolean seed is strictly
+worse than the number seed — it additionally breaks on `number`.
+
+**It is still selective, not uniform** — `num→bool`, `num→undefined`,
+`bool→undefined`, `str→*` and `obj→*` all work — so this is not one missing
+widening primitive. The sharpest single lead is the asymmetry **`num→bool`
+works while `bool→num` fails**: two adjacent transitions with opposite outcomes.
+
+### The test shape matters — bare `compile()` misses two cells
+
+A plain `compile()` (properly awaited, using `result.importObject`) reproduces
+**most** of the matrix but **disagrees with the harness lane on two cells**:
+
+| cell             | harness lane | bare `compile()` |
+| ---------------- | ------------ | ---------------- |
+| `bool→number`    | **BROKEN**   | ok               |
+| `bool→undefined` | ok           | **BROKEN**       |
+
+So a fast unit test written against bare `compile()` would **silently pass**
+`bool→num` — which is one half of the asymmetry above, i.e. the single most
+diagnostic cell. **Red tests for this issue must run through the assembled
+harness path**, not a bare compile. (This is the third instance this session of
+bare `compile()` disagreeing with the harness on the same broad surface; see
+#3670.)
 
 ### Scope
 
@@ -112,9 +134,15 @@ builtin dispatch:
 - **#2949** would subsume this at the IR level (`{kind:"dynamic", tag?: JsTag}`),
   but is XL and not a prerequisite for a targeted repair.
 
-**Lane note:** `value-rep-substrate` is Lane B (fable/porffor) under
-`plan/method/lane-partition.md`. This issue was characterised in Lane A at the
-tech lead's direction; the _implementation_ should be routed per the partition.
+**Lane note (ruled):** `value-rep-substrate` is nominally Lane B
+(fable/porffor) under `plan/method/lane-partition.md`. The tech lead has ruled
+that **implementation proceeds in Lane A**: no Lane B agent is active on this,
+so there is nothing to duplicate, and the partition exists to prevent collision
+rather than to route by topic. The defect is also **selective rather than a
+substrate rewrite**, which is not the case the partition was written for.
+Lane B should claim it if they turn out to be working adjacent — and if the fix
+reaches deeper than the selective picture suggests, that is the point to stop
+and re-route rather than push into the substrate.
 
 ## What this is NOT
 
