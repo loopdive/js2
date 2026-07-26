@@ -1,8 +1,9 @@
 {
   "id": "3662",
   "assignee": "ttraenkler/codex-regexp-completion",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3662-regexp-string-set-algebra",
   "claimed_at": "2026-07-26T03:43:05Z",
-  "updated_at": "2026-07-26T03:43:05Z"
+  "updated_at": "2026-07-26T04:54:25Z",
+  "released_at": "2026-07-26T04:54:25Z"
 }
