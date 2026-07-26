@@ -13,8 +13,9 @@ language_feature: ambient-functions
 goal: npm-library-support
 sprint: 76
 es_edition: ES2015
-related: [1371, 2693, 3325, 3518, 3653]
+related: [1371, 2693, 2781, 3325, 3518, 3653]
 ---
+
 # #3657 — IR ambient host call with a boolean result
 
 ## Problem
@@ -68,3 +69,31 @@ This issue is the IR call-graph/lowering gap before that runtime path.
 - `tests/issue-2693-host-delegated-select.test.ts`, after #3653, loads real
   `espree`/`esquery`, compiles, instantiates, and passes its four runtime cases.
 - Numeric/string ambient-call fixtures from #2693 and #3325 remain green.
+
+## Implementation (2026-07-26)
+
+- Added one checker-backed resolver for exact, fixed-arity primitive calls from
+  top-level class members to same-file user `declare function` stubs. Symbol
+  identity, rather than callee text, distinguishes the ambient declaration from
+  shadows, imports, lib globals, and unknown functions.
+- Recorded each certified call as an exact AST-node lowering plan. The class
+  member IR builder reuses the existing typed direct-call lowering only for
+  those planned nodes.
+- Added a final-context preflight that proves declaration collection produced
+  the matching `env` function import with the planned parameter/result ABI
+  before the class member is lowered.
+- Converted the real espree/esquery seam from `it.fails` to an ordinary Node
+  JS-host test and routed its four host functions through `buildImports`.
+
+## Verification (2026-07-26)
+
+- `tests/issue-3657.test.ts` proves genuine `Gate_check` IR emission, validates
+  the module/import manifest, exercises true and false predicate results, and
+  pins the #3325 missing-dependency no-op behavior.
+- The real espree/esquery test compiles, instantiates, and passes all four
+  semicolon-rule cases. After the ambient calls clear this issue's prior
+  unknown-call invariant, its mixed string/number message assembly takes the
+  existing #2781 safe legacy demotion; that fallback is not a compile blocker.
+- The numeric/string #2693 demo and all six #3325 ambient dependency tests
+  remain green.
+- `pnpm run typecheck` and `pnpm run check:ir-fallbacks` pass.

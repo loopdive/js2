@@ -13,6 +13,99 @@
 import { ts } from "../ts-api.js";
 import { isExternalDeclaredClass } from "../checker/type-mapper.js";
 
+export interface IrAmbientClassCallCertification {
+  readonly call: ts.CallExpression;
+  readonly targetName: string;
+  readonly declaration: ts.FunctionDeclaration;
+}
+
+export type IrAmbientClassCallResolver = (call: ts.CallExpression) => IrAmbientClassCallCertification | undefined;
+
+function hasDeclareModifier(node: ts.Node): boolean {
+  return ts.canHaveModifiers(node) && !!ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword);
+}
+
+function isFixedPrimitiveAmbientType(node: ts.TypeNode | undefined): boolean {
+  return (
+    node?.kind === ts.SyntaxKind.BooleanKeyword ||
+    node?.kind === ts.SyntaxKind.NumberKeyword ||
+    node?.kind === ts.SyntaxKind.StringKeyword
+  );
+}
+
+/**
+ * #3657 — certify a direct call from a top-level class member to a same-file
+ * user `declare function` stub.
+ *
+ * This deliberately excludes lib globals, imports, overloads, aliases,
+ * optional/rest/default parameters, and nested functions. The checker proves
+ * declaration identity (so a shadow with the same spelling cannot pass), while
+ * the syntax gate keeps the admitted ABI to exact fixed-arity primitive
+ * params/results already registered by `collectExternDeclarations`.
+ */
+export function makeIrAmbientClassCallResolver(checker: ts.TypeChecker): IrAmbientClassCallResolver {
+  return (call: ts.CallExpression): IrAmbientClassCallCertification | undefined => {
+    try {
+      if (
+        call.questionDotToken ||
+        (call.typeArguments?.length ?? 0) > 0 ||
+        !ts.isIdentifier(call.expression) ||
+        call.arguments.some(ts.isSpreadElement)
+      ) {
+        return undefined;
+      }
+
+      let owner: ts.Node | undefined = call.parent;
+      while (owner && !ts.isFunctionLike(owner) && !ts.isSourceFile(owner)) owner = owner.parent;
+      if (
+        !owner ||
+        (!ts.isMethodDeclaration(owner) &&
+          !ts.isGetAccessorDeclaration(owner) &&
+          !ts.isSetAccessorDeclaration(owner) &&
+          !ts.isConstructorDeclaration(owner)) ||
+        !ts.isClassDeclaration(owner.parent) ||
+        !ts.isSourceFile(owner.parent.parent)
+      ) {
+        return undefined;
+      }
+
+      const resolved = checker.getResolvedSignature(call);
+      const declaration = resolved?.declaration;
+      if (
+        !resolved ||
+        !declaration ||
+        !ts.isFunctionDeclaration(declaration) ||
+        declaration.body ||
+        !declaration.name ||
+        declaration.name.text !== call.expression.text ||
+        declaration.getSourceFile() !== call.getSourceFile() ||
+        !ts.isSourceFile(declaration.parent) ||
+        !hasDeclareModifier(declaration) ||
+        declaration.asteriskToken ||
+        (declaration.typeParameters?.length ?? 0) > 0 ||
+        declaration.parameters.length !== call.arguments.length ||
+        declaration.parameters.some(
+          (parameter) =>
+            !ts.isIdentifier(parameter.name) ||
+            !!parameter.questionToken ||
+            !!parameter.dotDotDotToken ||
+            !!parameter.initializer ||
+            !isFixedPrimitiveAmbientType(parameter.type),
+        ) ||
+        !isFixedPrimitiveAmbientType(declaration.type)
+      ) {
+        return undefined;
+      }
+
+      const symbol = checker.getSymbolAtLocation(call.expression);
+      if (!symbol?.declarations?.includes(declaration)) return undefined;
+      return { call, targetName: declaration.name.text, declaration };
+    } catch {
+      return undefined;
+    }
+  };
+}
+
 /**
  * #3214 B2 / #2856 Calendar — one checker-certified host callback site.
  *

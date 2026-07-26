@@ -10,6 +10,8 @@ export interface IrImportedOptionalParamPlan {
 }
 
 export interface IrImportedCallLoweringPlan {
+  /** Module-body import or same-file ambient host import (#3657). */
+  readonly source: "module-import" | "ambient-host";
   readonly ownerName: string;
   readonly targetName: string;
   readonly params: readonly IrType[];

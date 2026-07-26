@@ -18,6 +18,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { buildImports } from "../src/runtime.js";
 import { createRequireFromEslint, ESLINT_DEV_DEPENDENCY_SKIP, resolveEslintFile } from "./helpers/eslint.js";
 
 // Compiled Linter: host-delegates parse (espree) AND select (esquery).
@@ -74,11 +75,9 @@ describe("#2693 — dual host-delegation seam (host espree parse + host esquery 
     },
   );
 
-  it.skipIf(ESLINT_LINTER === null).fails(
-    `a compiled Linter calls host espree + host esquery and emits the semi diagnostic (blocked by #3657) ${ESLINT_DEV_DEPENDENCY_SKIP}`,
+  it.skipIf(ESLINT_LINTER === null)(
+    `a compiled Linter calls host espree + host esquery and emits the semi diagnostic ${ESLINT_DEV_DEPENDENCY_SKIP}`,
     async () => {
-      // The preceding ordinary test makes a dependency-resolution failure red
-      // instead of allowing this expected compiler failure to absorb it.
       const { espree, esquery } = loadEslintHostDependencies();
 
       const r = await compile(LINTER_SRC, {
@@ -93,34 +92,38 @@ describe("#2693 — dual host-delegation seam (host espree parse + host esquery 
       const STMT_SELECTOR = esquery.parse("VariableDeclaration, ExpressionStatement");
       const tokensOf = (code: string) => espree.tokenize(code, { ecmaVersion: 2022, loc: true });
 
-      const io = r.importObject as unknown as { env: Record<string, unknown>; __setExports?: (e: unknown) => void };
-      io.env.__host_is_statement = (code: string): number => {
-        try {
-          const ast = espree.parse(code, { ecmaVersion: 2022, loc: true });
-          const first = (ast as any).body?.[0];
-          return first && esquery.matches(first, STMT_SELECTOR, []) ? 1 : 0;
-        } catch {
-          return 0;
-        }
-      };
-      io.env.__host_last_is_semi = (code: string): number => {
-        const t = tokensOf(code);
-        const last = t[t.length - 1];
-        return last && last.value === ";" ? 1 : 0;
-      };
-      io.env.__host_last_line = (code: string): number => {
-        const t = tokensOf(code);
-        const last = t[t.length - 1];
-        return last?.loc?.start?.line ?? 0;
-      };
-      io.env.__host_last_col = (code: string): number => {
-        const t = tokensOf(code);
-        const last = t[t.length - 1];
-        return last ? (last.loc?.start?.column ?? 0) + 1 : 0;
-      };
-
-      const { instance } = await WebAssembly.instantiate(r.binary, io as unknown as WebAssembly.Imports);
-      io.__setExports?.(instance.exports);
+      const imports = buildImports(
+        r.imports,
+        {
+          __host_is_statement: (code: string): boolean => {
+            try {
+              const ast = espree.parse(code, { ecmaVersion: 2022, loc: true });
+              const first = (ast as any).body?.[0];
+              return !!first && esquery.matches(first, STMT_SELECTOR, []);
+            } catch {
+              return false;
+            }
+          },
+          __host_last_is_semi: (code: string): boolean => {
+            const t = tokensOf(code);
+            const last = t[t.length - 1];
+            return !!last && last.value === ";";
+          },
+          __host_last_line: (code: string): number => {
+            const t = tokensOf(code);
+            const last = t[t.length - 1];
+            return last?.loc?.start?.line ?? 0;
+          },
+          __host_last_col: (code: string): number => {
+            const t = tokensOf(code);
+            const last = t[t.length - 1];
+            return last ? (last.loc?.start?.column ?? 0) + 1 : 0;
+          },
+        },
+        r.stringPool,
+      );
+      const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
+      imports.setExports?.(instance.exports as Record<string, Function>);
       const verify = instance.exports.verify as (c: string) => string;
 
       // Real espree tokenization + real esquery selector matching, wasm rule logic.

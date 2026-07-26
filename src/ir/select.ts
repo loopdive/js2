@@ -61,7 +61,7 @@ import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codeg
 import { closureSignatureEquals, type IrClassShape, type IrClosureSignature, type IrType } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
-import type { IrHostVoidCallbackResolver } from "./host-extern.js";
+import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
 import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
@@ -431,6 +431,11 @@ export interface IrSelectionOptions {
    * pre-slice conservative boundary.
    */
   readonly importedFunctions?: IrImportedFunctionResolver;
+  /**
+   * (#3657) Checker-certified direct calls from class members to same-file
+   * primitive `declare function` host stubs. Omitted outside JS-host mode.
+   */
+  readonly ambientClassCalls?: IrAmbientClassCallResolver;
   /**
    * (#3214 B2) Checker-certified direct ambient `addEventListener` callback
    * sites. Omitted in host-free modes and bare selector callers so arrows do
@@ -5759,6 +5764,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // identical; the fn stays on the legacy path.
     if (currentAsyncDeclNames.has(expr.expression.text) && !scope.has(expr.expression.text)) {
       return shapeNo("expr-async-callee-not-awaited", expr);
+    }
+    // (#3657) Same-file user `declare function` stubs are already registered
+    // as env imports by the legacy declaration pass. Admit only the exact
+    // class-member call nodes certified by the shared checker resolver.
+    const ambientClassCall = currentSelectionOptions?.ambientClassCalls?.(expr);
+    if (ambientClassCall) {
+      for (const arg of expr.arguments) {
+        if (!isPhase1Expr(arg, scope, localClasses)) return false;
+      }
+      return true;
     }
     // (#3214 A+B1) A checker-certified imported direct call is a stable
     // in-module funcMap target, not an external call.  Bare top-level function

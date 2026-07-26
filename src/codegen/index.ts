@@ -52,7 +52,11 @@ import type {
   IrImportedOptionalParamPlan,
   IrTopLevelFunctionValueLoweringPlan,
 } from "../ir/ast-lowering-plans.js";
-import { makeIrHostGlobalResolver, makeIrHostVoidCallbackResolver } from "../ir/host-extern.js"; // (#2856/#3214)
+import {
+  makeIrAmbientClassCallResolver,
+  makeIrHostGlobalResolver,
+  makeIrHostVoidCallbackResolver,
+} from "../ir/host-extern.js"; // (#2856/#3214/#3657)
 import { makeIrHostDateSnapshotResolver } from "../ir/host-date.js";
 import { supportsIrBackendTargetCapability, type IrBackendTargetCapability } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
@@ -1633,7 +1637,7 @@ interface IrOverlayPlan {
   /** #3519 — pre-integration terminal failures keyed by legacy synthetic name. */
   readonly preparationFailures: Map<string, IrPreparationFailure>;
   readonly declByName: ReadonlyMap<string, ts.FunctionDeclaration>;
-  /** Checker-certified A+B1 imported-call sites, keyed by exact AST node. */
+  /** Checker-certified imported/ambient-host call sites, keyed by exact AST node. */
   readonly importedCalls: Map<ts.CallExpression, IrImportedCallLoweringPlan>;
   /** Bare same-file function values admitted only at certified HOF positions. */
   readonly topLevelFunctionValues: Map<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
@@ -1701,6 +1705,82 @@ function prepareHostDateSnapshotPreflight(
     });
   }
   return retained;
+}
+
+function ambientHostValType(type: IrType | null): ValType | null | undefined {
+  if (type === null) return null;
+  if (type.kind === "string") return { kind: "externref" };
+  if (type.kind !== "val") return undefined;
+  if (type.val.kind === "f64" || type.val.kind === "i32") return type.val;
+  return undefined;
+}
+
+function sameAmbientHostValType(left: ValType, right: ValType): boolean {
+  if (left.kind !== right.kind) return false;
+  if ((left.kind === "ref" || left.kind === "ref_null") && (right.kind === "ref" || right.kind === "ref_null")) {
+    return left.typeIdx === right.typeIdx;
+  }
+  return true;
+}
+
+function hasPreparedAmbientHostImport(ctx: CodegenContext, plan: IrImportedCallLoweringPlan): boolean {
+  const params = plan.params.map(ambientHostValType);
+  const result = ambientHostValType(plan.returnType);
+  if (params.some((param) => param === undefined) || result === undefined) return false;
+
+  const funcIdx = ctx.funcMap.get(plan.targetName);
+  if (funcIdx === undefined || funcIdx < 0 || funcIdx >= ctx.numImportFuncs) return false;
+  let importFuncIdx = 0;
+  for (const imported of ctx.mod.imports) {
+    if (imported.desc.kind !== "func") continue;
+    if (importFuncIdx++ !== funcIdx) continue;
+    if (imported.module !== "env" || imported.name !== plan.targetName) return false;
+    const type = ctx.mod.types[imported.desc.typeIdx];
+    const expectedParams = params as ValType[];
+    const expectedResults = result === null ? [] : [result];
+    return (
+      type?.kind === "func" &&
+      type.params.length === expectedParams.length &&
+      type.results.length === expectedResults.length &&
+      type.params.every((param, index) => sameAmbientHostValType(param, expectedParams[index]!)) &&
+      type.results.every((actual, index) => sameAmbientHostValType(actual, expectedResults[index]!))
+    );
+  }
+  return false;
+}
+
+/**
+ * #3657 — prove that declaration collection materialised every certified
+ * class-member ambient call as the exact env function import before lowering.
+ */
+function prepareAmbientClassCallLowering(
+  ctx: CodegenContext,
+  plan: IrOverlayPlan,
+  selection: IrSelection,
+): IrSelection {
+  const classMembers = new Set(selection.classMembers ?? []);
+  if (classMembers.size === 0) return selection;
+  const blocked = new Set<string>();
+  for (const callPlan of plan.importedCalls.values()) {
+    if (
+      callPlan.source === "ambient-host" &&
+      classMembers.has(callPlan.ownerName) &&
+      !hasPreparedAmbientHostImport(ctx, callPlan)
+    ) {
+      blocked.add(callPlan.ownerName);
+    }
+  }
+  if (blocked.size === 0) return selection;
+  for (const ownerName of blocked) {
+    classMembers.delete(ownerName);
+    plan.preparationFailures.set(ownerName, {
+      kind: "unsupported",
+      code: "late-preparation-unsupported",
+      stage: "resolve",
+      detail: "the checker-certified ambient function is absent from the final env import manifest",
+    });
+  }
+  return { ...selection, classMembers };
 }
 
 interface ObservedIrUnit {
@@ -2221,6 +2301,7 @@ function planIrOverlay(
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
   const resolveHostVoidCallback = jsHostExterns ? makeIrHostVoidCallbackResolver(ast.checker) : undefined;
+  const resolveAmbientClassCall = jsHostExterns ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
   const resolveHostDateSnapshot = supportsHostDateSnapshots ? makeIrHostDateSnapshotResolver(ast.checker) : undefined;
   const resolvePromiseDelay =
     jsHostExterns && !ctx.fast && !ctx.nativeStrings && options.resolveModuleBindings !== false
@@ -2249,6 +2330,7 @@ function planIrOverlay(
       dynMemberReadBuildable,
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
+      ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
       ...(resolveHostDateSnapshot ? { hostDateSnapshots: resolveHostDateSnapshot } : {}),
       ...(resolvePromiseDelay ? { promiseDelays: resolvePromiseDelay } : {}),
       ...(resolveModuleBinding ? { resolveModuleBinding } : {}),
@@ -2456,6 +2538,84 @@ function planIrOverlay(
   const topLevelFunctionValues = new Map<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>();
   const hostVoidCallbacks = new Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>();
   const hostDateImportsByOwner = new Map<string, Set<string>>();
+  if (resolveAmbientClassCall && safeSelection.classMembers && safeSelection.classMembers.size > 0) {
+    const retainedClassMembers = new Set(safeSelection.classMembers);
+    for (const statement of ast.sourceFile.statements) {
+      if (!ts.isClassDeclaration(statement) || !statement.name) continue;
+      const className = statement.name.text;
+      for (const member of statement.members) {
+        if (
+          !ts.isMethodDeclaration(member) &&
+          !ts.isGetAccessorDeclaration(member) &&
+          !ts.isSetAccessorDeclaration(member) &&
+          !ts.isConstructorDeclaration(member)
+        ) {
+          continue;
+        }
+        if (!member.body) continue;
+        let ownerName: string | undefined;
+        if (ts.isConstructorDeclaration(member)) {
+          ownerName = `${className}_new`;
+        } else if (
+          ts.isIdentifier(member.name) ||
+          ts.isStringLiteral(member.name) ||
+          ts.isNumericLiteral(member.name)
+        ) {
+          const baseName = member.name.text;
+          ownerName = ts.isGetAccessorDeclaration(member)
+            ? `${className}_get_${baseName}`
+            : ts.isSetAccessorDeclaration(member)
+              ? `${className}_set_${baseName}`
+              : `${className}_${baseName}`;
+        }
+        if (!ownerName || !retainedClassMembers.has(ownerName)) continue;
+
+        let planningFailure: IrPreparationFailure | undefined;
+        const visit = (node: ts.Node): void => {
+          if (planningFailure) return;
+          if (node !== member && ts.isFunctionLike(node)) return;
+          if (ts.isCallExpression(node)) {
+            const certified = resolveAmbientClassCall(node);
+            if (certified) {
+              try {
+                const params = certified.declaration.parameters.map((parameter) =>
+                  resolvePositionType(effectiveIrParamTypeNode(parameter), undefined, ctx, classShapes),
+                );
+                const returnType = resolvePositionType(
+                  effectiveIrReturnTypeNode(certified.declaration),
+                  undefined,
+                  ctx,
+                  classShapes,
+                );
+                importedCalls.set(node, {
+                  source: "ambient-host",
+                  ownerName,
+                  targetName: certified.targetName,
+                  params,
+                  returnType,
+                  optionalParams: new Map(),
+                  needsArgc: false,
+                });
+              } catch (error) {
+                planningFailure = classifyIrFailure(error, "resolve");
+                return;
+              }
+            }
+          }
+          ts.forEachChild(node, visit);
+        };
+        visit(member.body);
+        if (planningFailure) {
+          preparationFailures.set(ownerName, planningFailure);
+          retainedClassMembers.delete(ownerName);
+          for (const [call, plan] of importedCalls) {
+            if (plan.ownerName === ownerName) importedCalls.delete(call);
+          }
+        }
+      }
+    }
+    safeSelection.classMembers = retainedClassMembers;
+  }
   if (jsHostExterns && options.importedFunctions) {
     for (const [ownerName, declaration] of declByName) {
       if (!safeSelection.funcs.has(ownerName) || !declaration.body) continue;
@@ -2503,6 +2663,7 @@ function planIrOverlay(
                 });
               }
               importedCalls.set(node, {
+                source: "module-import",
                 ownerName,
                 targetName: certified.target.targetName,
                 params,
@@ -3538,12 +3699,8 @@ export function generateModule(
       // classShapes → overrideMap → safeSelection → new.target gate).
       const plan = irPlan ?? planIrOverlay(ctx, ast);
       const { classShapes, overrideMap } = plan;
-      let safeSelection = prepareHostVoidCallbackLowering(
-        ctx,
-        ast.sourceFile,
-        plan.hostVoidCallbacks,
-        plan.safeSelection,
-      );
+      let safeSelection = prepareAmbientClassCallLowering(ctx, plan, plan.safeSelection);
+      safeSelection = prepareHostVoidCallbackLowering(ctx, ast.sourceFile, plan.hostVoidCallbacks, safeSelection);
       safeSelection = prepareHostDateSnapshotPreflight(ctx, ast.sourceFile, plan, safeSelection);
       safeSelection = preparePromiseDelayLowering(
         ctx,
@@ -5802,6 +5959,7 @@ export function generateMultiModule(
           ...(hostImportedFunctions ? { importedFunctions: hostImportedFunctions } : {}),
         });
         let safeSelection = makeMultiIrSafeSelection(ctx, plan, sourceFile, safety);
+        safeSelection = prepareAmbientClassCallLowering(ctx, plan, safeSelection);
         safeSelection = prepareMultiIrImportedLowering(ctx, sourceFile, plan, safeSelection);
         safeSelection = prepareHostVoidCallbackLowering(ctx, sourceFile, plan.hostVoidCallbacks, safeSelection);
         safeSelection = prepareHostDateSnapshotPreflight(ctx, sourceFile, plan, safeSelection);
