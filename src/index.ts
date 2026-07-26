@@ -762,6 +762,21 @@ export async function compileProject(entryFile: string, options?: CompileOptions
 
   // Resolve all imports recursively
   const allFiles = resolveAllImports(resolvedEntry, resolver);
+  const resolutionDiagnostics = resolver.getDiagnostics();
+  if (resolutionDiagnostics.length > 0) {
+    return withImportObject({
+      binary: new Uint8Array(0),
+      wat: "",
+      dts: "",
+      importsHelper: "",
+      success: false,
+      errors: resolutionDiagnostics.map((diagnostic) => ({ ...diagnostic })),
+      stringPool: [],
+      imports: [],
+      hasMain: false,
+      hasTopLevelStatements: false,
+    });
+  }
 
   // Convert to the Record<string, string> format expected by compileMulti
   const files: Record<string, string> = {};

@@ -956,9 +956,9 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
     if (!ts.isImportDeclaration(stmt)) continue;
 
     // Import attributes (TS 5.3+ / TS7) — `import x from "m" with { type: "json" }`.
-    // We don't yet resolve JSON imports at compile time (tracked as a
-    // follow-up to #1288 — JSON imports COULD be inlined statically by reading
-    // the JSON file at compile time, but that's out of scope for the shim).
+    // ESM JSON imports with attributes are not resolved here. #3655 handles
+    // only compileProject's static CommonJS `require("./relative.json")`
+    // during filesystem graph expansion; import attributes remain #1288.
     // Per #1288: emit a one-line note and continue; do NOT throw. The TS7
     // native-preview parser surfaces this shape unconditionally, and TS5 has
     // supported the syntax since 5.3.

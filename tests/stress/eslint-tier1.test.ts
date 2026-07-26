@@ -147,7 +147,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      * references after dead-elim compaction. Fixed by skipping
      * `collectInterface` for `.d.ts` source files. (#1287)
      */
-    it.skip("Tier 1b — package-entry binary is structurally valid Wasm (blocked before emission by #3655/#3656/#3658)", () => {
+    it.skip("Tier 1b — package-entry binary is structurally valid Wasm (blocked before emission by #3656/#3658)", () => {
       // Advance this rung once Tier 1a emits a binary.
     });
 
@@ -160,7 +160,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      * What this rung asserts: compile-time success against a real
      * 32-file CJS module graph. Validation is the next rung.
      */
-    it.skip("Tier 1c — `eslint/lib/linter/linter.js` direct compile succeeds (blocked by #3655/#3658)", async () => {
+    it.skip("Tier 1c — `eslint/lib/linter/linter.js` direct compile succeeds (blocked by #3658)", async () => {
       const entry = requireEslintFile(ESLINT_LINTER, "lib/linter/linter.js");
       const r = await compileProject(entry, { allowJs: true });
       expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -178,7 +178,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      *
      * BLOCKED on #1289.
      */
-    it.skip("Tier 1d — `linter.js` binary instantiates (blocked before validation by #3655/#3658)", async () => {
+    it.skip("Tier 1d — `linter.js` binary instantiates (blocked before validation by #3658)", async () => {
       const entry = requireEslintFile(ESLINT_LINTER, "lib/linter/linter.js");
       const r = await compileProject(entry, { allowJs: true });
       expect(r.success, r.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -195,7 +195,7 @@ describe.skipIf(ESLINT_LINTER === null)(
      * BLOCKED on #1287, #1289, #1273 (instanceof), #1271 (for-in),
      * #1275 (typeof dispatch).
      */
-    it.skip('Tier 1e — Node-host `Linter.verify("const x = 1;", {})` returns `[]` (blocked by #3655/#3656/#3657/#3658)', async () => {
+    it.skip('Tier 1e — Node-host `Linter.verify("const x = 1;", {})` returns `[]` (blocked by #3656/#3657/#3658)', async () => {
       const entry = writeEntry(
         "tier1e-entry.ts",
         `

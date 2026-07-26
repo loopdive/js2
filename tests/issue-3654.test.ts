@@ -118,7 +118,7 @@ describe("#3654 — importer-scoped pnpm/CommonJS resolution", () => {
       expect(resolver.resolve("@eslint/core", entry)).toMatch(/types\.d\.[cm]?ts$/);
       expect(resolver.resolve("../types", entry)).toMatch(/types[/\\]index\.d\.ts$/);
       expect(resolver.resolve("node:path", entry)).toBeNull();
-      expect(resolver.resolve("../../package.json", entry)).toBeNull();
+      expect(resolver.resolve("../../package.json", entry)).toMatch(/eslint[/\\]package\.json$/);
 
       const graphPaths = Array.from(resolveAllImports(entry, resolver).keys());
       expect(new Set(graphPaths.map((path) => realpathSync(path))).size).toBe(graphPaths.length);

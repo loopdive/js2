@@ -5,6 +5,14 @@ import type { CompileOptions } from "./index.js";
 import { rewriteCjsRequire } from "./cjs-rewrite.js";
 import { getDefaultEnvironment } from "./env.js";
 
+export interface ModuleResolutionDiagnostic {
+  message: string;
+  file: string;
+  line: number;
+  column: number;
+  severity: "error";
+}
+
 // Filesystem access goes through the environment adapter (#1096).
 // This module no longer probes `typeof window` / `typeof process` directly
 // and no longer uses top-level `await` — `getDefaultEnvironment()` is fully
@@ -26,6 +34,8 @@ export class ModuleResolver {
   private extensions: string[];
   private resolveCache = new Map<string, string | null>();
   private resolvedImports = new Map<string, Map<string, string>>();
+  private staticJsonSources = new Map<string, string>();
+  private diagnostics: ModuleResolutionDiagnostic[] = [];
 
   /**
    * Create a resolver rooted at a directory.
@@ -151,6 +161,18 @@ export class ModuleResolver {
       return this.resolveCache.get(cacheKey)!;
     }
 
+    // Static relative JSON requires are compile-time modules, not filesystem
+    // capabilities exposed to Wasm. Handle them before TypeScript's script
+    // resolver, which intentionally ignores JSON without resolveJsonModule.
+    if ((specifier.startsWith("./") || specifier.startsWith("../")) && specifier.endsWith(".json")) {
+      const resolvedJson = this.resolveStaticJson(specifier, resolutionContainingFile);
+      this.resolveCache.set(cacheKey, resolvedJson);
+      if (resolvedJson !== null) {
+        this.recordResolvedImport(resolutionContainingFile, specifier, resolvedJson);
+      }
+      return resolvedJson;
+    }
+
     // Use TypeScript's module resolution
     const result = ts.resolveModuleName(specifier, resolutionContainingFile, this.compilerOptions, this.host);
 
@@ -185,14 +207,57 @@ export class ModuleResolver {
 
     this.resolveCache.set(cacheKey, resolved);
     if (resolved !== null) {
-      let imports = this.resolvedImports.get(resolutionContainingFile);
-      if (!imports) {
-        imports = new Map();
-        this.resolvedImports.set(resolutionContainingFile, imports);
-      }
-      imports.set(specifier, resolved);
+      this.recordResolvedImport(resolutionContainingFile, specifier, resolved);
     }
     return resolved;
+  }
+
+  private recordResolvedImport(containingFile: string, specifier: string, resolved: string): void {
+    let imports = this.resolvedImports.get(containingFile);
+    if (!imports) {
+      imports = new Map();
+      this.resolvedImports.set(containingFile, imports);
+    }
+    imports.set(specifier, resolved);
+  }
+
+  private resolveStaticJson(specifier: string, containingFile: string): string | null {
+    const jsonPath = this.canonicalize(path.resolve(path.dirname(containingFile), specifier));
+    let raw: string;
+    try {
+      raw = getFs()!.readFileSync(jsonPath, "utf-8");
+    } catch {
+      this.diagnostics.push({
+        message:
+          `Static JSON require '${specifier}' from '${containingFile}' could not read ` +
+          `'${jsonPath}': file not found`,
+        file: containingFile,
+        line: 1,
+        column: 1,
+        severity: "error",
+      });
+      return null;
+    }
+
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.diagnostics.push({
+        message:
+          `Static JSON require '${specifier}' from '${containingFile}' could not parse ` + `'${jsonPath}': ${detail}`,
+        file: containingFile,
+        line: 1,
+        column: 1,
+        severity: "error",
+      });
+      return null;
+    }
+
+    const binding = `__js2wasm_json_module_value_${this.staticJsonSources.size}`;
+    this.staticJsonSources.set(jsonPath, `const ${binding} = ${JSON.stringify(value)};\nexport default ${binding};\n`);
+    return jsonPath;
   }
 
   /** Return the physical identity used for package-resolution and graph de-duplication. */
@@ -208,6 +273,16 @@ export class ModuleResolver {
    */
   getResolvedImports(containingFile: string): ReadonlyMap<string, string> {
     return this.resolvedImports.get(this.canonicalize(containingFile)) ?? new Map();
+  }
+
+  /** Return the synthesized JavaScript module for a parsed static JSON file. */
+  getStaticJsonSource(filePath: string): string | undefined {
+    return this.staticJsonSources.get(this.canonicalize(filePath));
+  }
+
+  /** Return source-qualified resolver failures collected during graph expansion. */
+  getDiagnostics(): readonly ModuleResolutionDiagnostic[] {
+    return this.diagnostics;
   }
 
   /**
@@ -415,13 +490,15 @@ export function resolveAllImports(entryFile: string, resolver: ModuleResolver): 
     if (visited.has(canonicalPath) || onStack.has(canonicalPath)) return;
     onStack.add(canonicalPath);
 
-    let content: string;
-    try {
-      content = getFs()!.readFileSync(canonicalPath, "utf-8");
-    } catch {
-      // File not found — skip (TS will report errors)
-      onStack.delete(canonicalPath);
-      return;
+    let content = resolver.getStaticJsonSource(canonicalPath);
+    if (content === undefined) {
+      try {
+        content = getFs()!.readFileSync(canonicalPath, "utf-8");
+      } catch {
+        // File not found — skip (TS will report errors)
+        onStack.delete(canonicalPath);
+        return;
+      }
     }
 
     // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` so the
