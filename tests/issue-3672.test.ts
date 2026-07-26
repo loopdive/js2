@@ -403,11 +403,9 @@ describe("#3672 — project codegen reachability", () => {
       });
     } finally {
       consoleError.mockRestore();
-      if (previousProfile === undefined) {
-        delete process.env.JS2WASM_PROFILE_COMPILE;
-      } else {
-        process.env.JS2WASM_PROFILE_COMPILE = previousProfile;
-      }
+      // biome lint disallows `delete process.env.X`; the profile switch reads
+      // strict `=== "1"`, so restoring undefined keeps it disabled.
+      process.env.JS2WASM_PROFILE_COMPILE = previousProfile;
     }
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     if (!result.success) return;

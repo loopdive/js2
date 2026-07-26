@@ -15,6 +15,50 @@ sprint: current
 required_by: [1400, 2693]
 es_edition: n/a
 related: [824, 1282, 1400, 1573, 1942, 3654, 3655, 3656, 3657]
+# Intentional growth for the #1400/#3654-#3672 ESLint graph slice: real-package
+# CJS/module-global identity work + compile-phase telemetry lands across the
+# codegen barrel and call-dispatch modules in one reviewed change-set.
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/compiler.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/declarations.ts
+  - src/codegen/expressions.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/calls.ts
+  - src/import-resolver.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/closures.ts::compileArrowAsClosure
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/statements/nested-declarations.ts::emitSetExtrasArgv
+  - src/codegen/binary-ops-in.ts::compileInOperator
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/compiler.ts::runPipeline
+# moduleGlobalForSymbol/functionDeclKeys need raw checker symbol identity for
+# same-named module-global disambiguation (above what ctx.oracle expresses).
+oracle-ratchet-allow:
+  - src/codegen/function-identity.ts
+  - src/codegen/index.ts
 ---
 
 # #3672 — Bound full codegen for the resolved ESLint Linter graph
