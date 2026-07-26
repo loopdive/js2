@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { compileProfileNow, recordCompileProfile } from "../compile-profile.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { emitWasiErrorConstructor, fillExternGetErrorProps } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -5549,6 +5550,7 @@ export function generateMultiModule(
   // #3519 — typed terminal unit ledger (opt-in).
   irOutcomes?: readonly IrObservedOutcome[];
 } {
+  const totalStarted = compileProfileNow();
   const mod = createEmptyModule();
   const ctx = createCodegenContext(mod, multiAst.checker, options);
   const irUnitInventory = options?.trackIrOutcomes
@@ -5560,6 +5562,7 @@ export function generateMultiModule(
   // Multi-file compilation is linked through import/export module records.
   ctx.sourceIsModule = true;
   try {
+    const externsStarted = compileProfileNow();
     // WASI target: register linear memory, bump pointer global, and WASI imports
     if (ctx.wasi) {
       registerWasiImports(ctx, multiAst.entryFile);
@@ -5612,7 +5615,13 @@ export function generateMultiModule(
     if (options?.nodeBuiltins && options.nodeBuiltins.length > 0) {
       registerNodeBuiltinImports(ctx, options.nodeBuiltins);
     }
+    recordCompileProfile("codegen.externs", externsStarted, {
+      sourceFiles: multiAst.sourceFiles.length,
+      imports: mod.imports.length,
+      types: mod.types.length,
+    });
 
+    const prepassStarted = compileProfileNow();
     // Pre-pass: detect empty object literals that get properties assigned later
     // Must run before import collectors so that widened types are known
     for (const sf of multiAst.sourceFiles) {
@@ -5680,7 +5689,13 @@ export function generateMultiModule(
       }
       recordSourceGlobalEnvironment(ctx, sf);
     }
+    recordCompileProfile("codegen.prepass", prepassStarted, {
+      functions: mod.functions.length,
+      imports: mod.imports.length,
+      types: mod.types.length,
+    });
 
+    const declarationsStarted = compileProfileNow();
     // Phase 2: Collect all declarations — only entry file gets Wasm exports
     // (#2023) Whole-realm new.target detection — OR across all source files.
     for (const sf of multiAst.sourceFiles) {
@@ -5726,15 +5741,26 @@ export function generateMultiModule(
     // so their reads and calls resolve to the target instead of the graceful-null
     // default. Runs after collectDeclarations (targets registered), before bodies.
     registerImportBindingAliases(ctx, multiAst.sourceFiles);
+    recordCompileProfile("codegen.declarations", declarationsStarted, {
+      functions: mod.functions.length,
+      globals: mod.globals.length,
+      types: mod.types.length,
+    });
 
     // Phase 3: Compile all function bodies
+    const bodiesStarted = compileProfileNow();
     for (const sf of multiAst.sourceFiles) {
       compileDeclarations(ctx, sf);
     }
 
     // (#1602) Rebuild method-closure trampolines against final method sigs.
     finalizeMethodTrampolines(ctx);
+    recordCompileProfile("codegen.function-bodies", bodiesStarted, {
+      functions: mod.functions.length,
+      errors: ctx.errors.length,
+    });
 
+    const irOverlayStarted = compileProfileNow();
     // (#2138 M0) Compile-twice IR overlay for multi-module top-level functions.
     // Every legacy body in every source file is already present, and method
     // trampolines are final, before planning starts. Imported calls remain an
@@ -5799,7 +5825,13 @@ export function generateMultiModule(
       // final signature before any fixup/validation pass observes them.
       finalizeMethodTrampolines(ctx);
     }
+    recordCompileProfile("codegen.ir-overlay", irOverlayStarted, {
+      enabled: options?.experimentalIR === true && !ctx.fast,
+      functions: mod.functions.length,
+      errors: ctx.errors.length,
+    });
 
+    const finalizeStarted = compileProfileNow();
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     fixupStructNewArgCounts(ctx);
 
@@ -6052,6 +6084,12 @@ export function generateMultiModule(
     // ("found extern.convert_any of type externref" — externref is NOT a
     // subtype of anyref). Mirror the single-module pipeline at line 1053.
     fixupExternConvertAny(ctx);
+    recordCompileProfile("codegen.finalize", finalizeStarted, {
+      functions: mod.functions.length,
+      imports: mod.imports.length,
+      globals: mod.globals.length,
+      types: mod.types.length,
+    });
   } catch (e) {
     const failure = classifyIrFailure(e, "build");
     for (const sourceFile of multiAst.sourceFiles) {
@@ -6062,6 +6100,11 @@ export function generateMultiModule(
 
   // (#2094) Emit-time backstop for the addImport gate — see generateModule.
   assertNoLeakedHostImports(ctx, mod);
+  recordCompileProfile("codegen.total", totalStarted, {
+    sourceFiles: multiAst.sourceFiles.length,
+    functions: mod.functions.length,
+    errors: ctx.errors.length,
+  });
 
   return {
     module: mod,

@@ -1251,14 +1251,20 @@ export function analyzeMultiSource(
     // Entry-anchored DFS; only files reachable from entry are emitted.
     visit(normalizedEntry);
     userSourceFiles.push(entrySourceFile);
-    // Append any additional user files that weren't reached via the entry's import graph
-    // (the previous behaviour was to emit every rootName, so we keep that for safety).
-    for (const name of rootNames) {
-      if (visited.has(name) || name === normalizedEntry) continue;
-      if (name === NODE_ENV_DTS_NAME) continue;
-      const sf = program.getSourceFile(name);
-      if (sf && sf !== entrySourceFile && !userSourceFiles.includes(sf)) {
-        userSourceFiles.splice(userSourceFiles.length - 1, 0, sf);
+    // compileProject supplies an exact filesystem graph in projectResolutions.
+    // Some of those roots exist only for checker-visible JSDoc/declaration
+    // edges and are not reachable through executable imports from the entry.
+    // Keep them in the Program for type queries, but do not emit their bodies.
+    // compileMulti's historical "emit every input root" behavior remains
+    // unchanged when no project-resolution graph is present.
+    if (!projectResolutions) {
+      for (const name of rootNames) {
+        if (visited.has(name) || name === normalizedEntry) continue;
+        if (name === NODE_ENV_DTS_NAME) continue;
+        const sf = program.getSourceFile(name);
+        if (sf && sf !== entrySourceFile && !userSourceFiles.includes(sf)) {
+          userSourceFiles.splice(userSourceFiles.length - 1, 0, sf);
+        }
       }
     }
   }

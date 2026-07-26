@@ -65,8 +65,9 @@ Current dependency order:
 3. #3655 adds static CommonJS JSON loading for `../../package.json`.
 4. #3656 fixes the independently reproduced IR failure in real
    `eslint/lib/shared/flags.js`.
-5. #3658 bounds the now-expanded 149-file direct graph so the child compile
-   returns a structured result inside the integration budget.
+5. #3658 keeps the 146-file checker graph intact while restricting codegen to
+   the 77 executable sources reachable from the direct Linter entry, then
+   measures the remaining phases against the integration budget.
 6. Re-measure compile and Wasm validation. #2690 remains the known
    RuleTester validator blocker; any newly exposed errors must be measured
    rather than inferred.

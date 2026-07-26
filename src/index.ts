@@ -613,6 +613,7 @@ export interface CompileOptions {
 import * as path from "path";
 import { IncrementalLanguageService } from "./checker/index.js";
 import { compileFilesSource, compileMultiSource, compileSource, compileToObjectSource } from "./compiler.js";
+import { compileProfileNow, recordCompileProfile } from "./compile-profile.js";
 import { ModuleResolver, resolveAllImports } from "./resolve.js";
 import { buildImports as buildImportsRuntime } from "./runtime.js";
 
@@ -748,6 +749,7 @@ export function compileToObject(source: string, options?: CompileOptions) {
  * @param options - Compile options including resolve and externals settings
  */
 export async function compileProject(entryFile: string, options?: CompileOptions): Promise<CompileResult> {
+  const projectStarted = compileProfileNow();
   const logicalEntry = path.resolve(entryFile);
   const logicalRootDir = path.dirname(logicalEntry);
 
@@ -761,10 +763,15 @@ export async function compileProject(entryFile: string, options?: CompileOptions
   const rootDir = path.dirname(resolvedEntry);
 
   // Resolve all imports recursively
+  const graphStarted = compileProfileNow();
   const allFiles = resolveAllImports(resolvedEntry, resolver);
+  recordCompileProfile("project.graph", graphStarted, {
+    checkerFiles: allFiles.size,
+    sourceBytes: Array.from(allFiles.values()).reduce((total, source) => total + source.length, 0),
+  });
   const resolutionDiagnostics = resolver.getDiagnostics();
   if (resolutionDiagnostics.length > 0) {
-    return withImportObject({
+    const result = withImportObject({
       binary: new Uint8Array(0),
       wat: "",
       dts: "",
@@ -776,6 +783,8 @@ export async function compileProject(entryFile: string, options?: CompileOptions
       hasMain: false,
       hasTopLevelStatements: false,
     });
+    recordCompileProfile("project.total", projectStarted, { success: false });
+    return result;
   }
 
   // Convert to the Record<string, string> format expected by compileMulti
@@ -809,7 +818,14 @@ export async function compileProject(entryFile: string, options?: CompileOptions
     }
   }
 
-  return withImportObject(await compileMultiSource(files, entryKey, effectiveOptions, projectResolutions));
+  const compileStarted = compileProfileNow();
+  const compiled = await compileMultiSource(files, entryKey, effectiveOptions, projectResolutions);
+  recordCompileProfile("project.compile", compileStarted, {
+    success: compiled.success,
+    binaryBytes: compiled.binary.byteLength,
+  });
+  recordCompileProfile("project.total", projectStarted, { success: compiled.success });
+  return withImportObject(compiled);
 }
 
 /**

@@ -1,7 +1,7 @@
 ---
 id: 3658
-title: "ESLint linter.js: resolved 149-file graph exhausts a 2 GB compiler heap"
-status: ready
+title: "ESLint linter.js: keep checker-only roots out of bounded codegen"
+status: in_progress
 created: 2026-07-26
 updated: 2026-07-26
 priority: critical
@@ -22,10 +22,10 @@ related: [824, 1282, 1400, 1573, 1942, 3654, 3655, 3656, 3657]
 ## Problem
 
 After #3654 restores ESLint's physical pnpm package context and exact virtual
-module edges, direct `eslint/lib/linter/linter.js` analysis completes with 149
-canonical sources. The entry has zero TS2307 diagnostics for the packages,
-relative modules, type-only packages, and Node builtin owned by #3654; only
-the static `../../package.json` edge owned by #3655 remains.
+module edges, and #3655 materializes static JSON, direct
+`eslint/lib/linter/linter.js` analysis completes with 146 canonical checker
+sources. The entry has zero TS2307 diagnostics and the resolver reports no
+failure.
 
 The honest next frontier is scale: this Node-host WasmGC probe does not return
 within the 180-second budget used by the first ESLint integration test:
@@ -48,24 +48,61 @@ Allocation failed - JavaScript heap out of memory
 It emitted no structured compile result. This is not a TS2307 resolver failure
 and must not be folded back into #3654.
 
+## Investigation and implementation (2026-07-26)
+
+The resolved graph mixes two kinds of source:
+
+- 146 files / 1,734,946 source bytes are needed by the TypeScript Program;
+- only 77 files / 853,579 source bytes are executable from `linter.js`.
+
+The other 69 roots arrive through checker-visible JSDoc and declaration edges.
+`analyzeMultiSource` correctly orders the executable import graph first, but
+then preserved `compileMulti`'s historical behavior by appending every other
+input root to `MultiTypedAST.sourceFiles`. `compileProject` therefore lowered
+checker-only bodies too. The largest was Acorn's 230,947-byte distribution
+file (36,695 AST nodes), which is not executable from the Linter entry.
+
+When exact `projectResolutions` are present, those roots now remain in the
+TypeScript Program for type queries but are excluded from codegen unless the
+entry's executable import graph reaches them. Plain `compileMulti` retains its
+existing all-input behavior.
+
+`JS2WASM_PROFILE_COMPILE=1` now emits machine-readable
+`__JS2_COMPILE_PROFILE__` records at these boundaries:
+
+- project graph expansion and total;
+- multi-source preprocessing, checker, pipeline, and optimization;
+- codegen extern collection, prepasses, declarations, function bodies, IR
+  overlay, finalization, and total;
+- binary, WAT, and declaration/helper artifact emission.
+
+Every record contains elapsed time, current RSS/heap fields, and Node's max-RSS
+high-water mark. Phase records also include relevant source, diagnostic,
+function, type, import, global, or output-byte counts.
+
+The deterministic regression has four checker roots: the entry and runtime
+dependency plus a JSDoc declaration and a checker-only JavaScript body carrying
+the known fatal dynamic-destructuring shape. The Program sees all four; codegen
+sees two; the Node JS-host binary executes and returns 42.
+
 ## Required investigation
 
-- Add phase timing and peak-memory telemetry around graph expansion, checker
-  construction/diagnostics, reachability, declaration collection, function
-  lowering, Wasm emission, and optimization.
-- Determine whether the compiler is making forward progress, repeating work,
-  or expanding code that is unreachable from the direct Linter entry.
-- Record source/function counts entering each phase and identify the dominant
-  files/functions.
-- Keep the probe in the WasmGC JS-host lane under Node. Standalone/WASI work is
-  not required for the first ESLint rung.
-- Do not hide the problem by increasing the test timeout without a measured
-  upper bound and a CI-safe regression budget.
+- [x] Add phase timing and peak-memory telemetry around graph expansion, checker
+      construction/diagnostics, reachability, declaration collection, function
+      lowering, Wasm emission, and optimization.
+- [x] Determine whether the compiler is making forward progress, repeating work,
+      or expanding code that is unreachable from the direct Linter entry.
+- [x] Record source/function counts entering each phase and identify the dominant
+      files/functions.
+- [x] Keep the probe in the WasmGC JS-host lane under Node. Standalone/WASI work is
+      not required for the first ESLint rung.
+- [x] Do not hide the problem by increasing the test timeout without a measured
+      upper bound and a CI-safe regression budget.
 
 ## Acceptance criteria
 
-- A deterministic reduced fixture reproduces the dominant repeated-work or
-  reachability failure if one exists.
+- [x] A deterministic reduced fixture reproduces the dominant repeated-work or
+      reachability failure if one exists.
 - The direct real `linter.js` child probe remains within an explicit,
   measured CI-safe time and memory budget and emits a structured result.
 - The result records the compile/validate split even if a later semantic
