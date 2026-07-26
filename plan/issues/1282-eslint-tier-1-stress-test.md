@@ -128,8 +128,9 @@ frontier is reopened under #1400, with module-graph resolution in #3654.
 Do not use the old Tier 1a/1c status table as evidence that current ESLint
 compiles.
 
-After #3654 restores the 149-file resolved graph, the direct compile exceeds
-the Tier 1 child-process budget instead of returning the former resolver
-diagnostics. Tier 1a is explicitly skipped on #3658 until the child emits a
-structured result; a timeout or abnormal exit is not an expected compiler
-diagnostic.
+After #3654/#3655 restore the 146-file checker graph, the direct compile
+exceeds the Tier 1 child-process budget instead of returning the former
+resolver diagnostics. #3658 now restricts codegen to the 77 executable sources
+reachable from the entry and profiles the remaining phases. Tier 1a stays
+explicitly skipped until the child emits a structured result; a timeout or
+abnormal exit is not an expected compiler diagnostic.

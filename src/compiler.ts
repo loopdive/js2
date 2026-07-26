@@ -45,6 +45,7 @@ import { elideWithIrIds, makeIrInventoryOptions, type IrInventoryOptions } from 
 import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
+import { compileProfileNow, recordCompileProfile } from "./compile-profile.js";
 export { compileToObjectSource } from "./compiler/output.js";
 export type { ObjectCompileResult } from "./compiler/output.js";
 
@@ -983,6 +984,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   const useLinear = options.target === "linear";
 
   // Step 2: Generate the module (IR/codegen).
+  const codegenStarted = compileProfileNow();
   let mod;
   let capturedFallbackCounts: import("./index.js").CompileResult["fallbackCounts"];
   let capturedIrPostClaimErrors: import("./index.js").CompileResult["irPostClaimErrors"];
@@ -1067,6 +1069,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       }
     }
   } catch (e) {
+    recordCompileProfile("pipeline.codegen", codegenStarted, { success: false });
     // Let host WebAssembly exceptions propagate instead of swallowing them as a
     // "Codegen error:" (so e.g. an `eval` host shim throw surfaces to the host).
     if (isWasmException(e)) throw e;
@@ -1084,6 +1087,12 @@ function runPipeline(input: PipelineInput): CompileResult {
       irOutcomes: capturedIrOutcomes,
     });
   }
+  recordCompileProfile("pipeline.codegen", codegenStarted, {
+    success: true,
+    functions: mod.functions.length,
+    globals: mod.globals.length,
+    types: mod.types.length,
+  });
 
   // Step 2b: Apply C ABI transformations if requested (linear target only).
   let cHeader: string | undefined;
@@ -1098,6 +1107,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   widenNonDefaultableTypes(mod);
 
   // Step 3: Emit binary (with source map collection if enabled).
+  const binaryStarted = compileProfileNow();
   let binary: Uint8Array;
   let sourceMapJson: string | undefined;
   try {
@@ -1118,6 +1128,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       binary = emitBinary(mod);
     }
   } catch (e) {
+    recordCompileProfile("pipeline.binary", binaryStarted, { success: false });
     if (isWasmException(e)) throw e;
     pushSourceAnchoredDiagnostic(
       errors,
@@ -1133,11 +1144,16 @@ function runPipeline(input: PipelineInput): CompileResult {
       irOutcomes: capturedIrOutcomes,
     });
   }
+  recordCompileProfile("pipeline.binary", binaryStarted, {
+    success: true,
+    binaryBytes: binary.byteLength,
+  });
 
   // Step 3b: Optimize — applied by the async entry adapters via applyOptimize,
   // not here. This synchronous core ignores options.optimize.
 
   // Step 4: Emit WAT (optional, non-fatal on failure).
+  const watStarted = compileProfileNow();
   let wat = "";
   if (emitWatOutput) {
     try {
@@ -1151,8 +1167,13 @@ function runPipeline(input: PipelineInput): CompileResult {
       );
     }
   }
+  recordCompileProfile("pipeline.wat", watStarted, {
+    enabled: emitWatOutput,
+    watBytes: wat.length,
+  });
 
   // Step 5: Generate .d.ts.
+  const artifactsStarted = compileProfileNow();
   const dts = generateDts(entryAst, mod);
 
   // Step 6: Generate imports helper.
@@ -1164,6 +1185,11 @@ function runPipeline(input: PipelineInput): CompileResult {
     const witOpts = typeof options.wit === "object" ? options.wit : undefined;
     witOutput = generateWit(entryAst, { ...witOpts, imports: mod.imports, types: mod.types });
   }
+  recordCompileProfile("pipeline.artifacts", artifactsStarted, {
+    dtsBytes: dts.length,
+    importsHelperBytes: importsHelper.length,
+    witBytes: witOutput?.length ?? 0,
+  });
 
   return {
     binary,
@@ -1539,9 +1565,11 @@ export async function compileMultiSource(
   options: CompileOptions = {},
   projectResolutions?: ProjectModuleResolutions,
 ): Promise<CompileResult> {
+  const totalStarted = compileProfileNow();
   const errors: CompileError[] = [];
 
   // Apply define substitutions to all source files (#1043)
+  const preprocessStarted = compileProfileNow();
   const definedFiles = options.define
     ? Object.fromEntries(Object.entries(files).map(([k, v]) => [k, applyDefineSubstitutions(v, options.define!)]))
     : files;
@@ -1550,7 +1578,12 @@ export async function compileMultiSource(
   // every input file. This runs before TypeScript's analyzer so the require() calls
   // are seen as proper module imports during cross-file resolution.
   const processedFiles = Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)]));
+  recordCompileProfile("multi.preprocess", preprocessStarted, {
+    checkerFiles: Object.keys(processedFiles).length,
+    sourceBytes: Object.values(processedFiles).reduce((total, source) => total + source.length, 0),
+  });
 
+  const checkerStarted = compileProfileNow();
   const multiAst = analyzeMultiSource(
     processedFiles,
     entryFile,
@@ -1563,6 +1596,11 @@ export async function compileMultiSource(
     },
     projectResolutions,
   );
+  recordCompileProfile("multi.checker", checkerStarted, {
+    checkerFiles: Object.keys(processedFiles).length,
+    codegenFiles: multiAst.sourceFiles.length,
+    diagnostics: multiAst.diagnostics.length,
+  });
 
   // When allowJs is set (e.g. compiling npm packages like lodash-es), only report
   // diagnostics from the entry file — dependency files may have TS errors we can't
@@ -1660,30 +1698,40 @@ export async function compileMultiSource(
       nodeBuiltins.push(builtin);
     }
   }
-  return applyOptimize(
-    runPipeline({
-      userSourceFiles: multiAst.sourceFiles,
-      entryAst,
-      multiAst,
-      errors,
-      codegenOptions: buildCodegenOptions(options, emitSourceMap, {
-        nodeBuiltins,
-        wasiNodeFsFuncs,
-        wasiRawImports,
-        wasiMemAccessors,
-      }),
-      sourcesContent,
-      diagnosticAnchor: multiAst.entryFile,
-      // #3506 — retain real `.js` roots (`allowJs`) while allowing a syntax
-      // oracle to opt back into the ECMAScript early-error pass. Kept separate
-      // from strictJsSyntax because resolution-phase tests must observe the
-      // linked graph without manufacturing a parse rejection.
-      runEarlyErrorsOnAllowJs: options.enforceJsEarlyErrors === true,
-      options,
+  const pipelineStarted = compileProfileNow();
+  const pipelineResult = runPipeline({
+    userSourceFiles: multiAst.sourceFiles,
+    entryAst,
+    multiAst,
+    errors,
+    codegenOptions: buildCodegenOptions(options, emitSourceMap, {
+      nodeBuiltins,
+      wasiNodeFsFuncs,
+      wasiRawImports,
+      wasiMemAccessors,
     }),
+    sourcesContent,
+    diagnosticAnchor: multiAst.entryFile,
+    // #3506 — retain real `.js` roots (`allowJs`) while allowing a syntax
+    // oracle to opt back into the ECMAScript early-error pass. Kept separate
+    // from strictJsSyntax because resolution-phase tests must observe the
+    // linked graph without manufacturing a parse rejection.
+    runEarlyErrorsOnAllowJs: options.enforceJsEarlyErrors === true,
     options,
-    multiAst.entryFile,
-  );
+  });
+  recordCompileProfile("multi.pipeline", pipelineStarted, {
+    success: pipelineResult.success,
+    binaryBytes: pipelineResult.binary.byteLength,
+  });
+
+  const optimizeStarted = compileProfileNow();
+  const result = await applyOptimize(pipelineResult, options, multiAst.entryFile);
+  recordCompileProfile("multi.optimize", optimizeStarted, {
+    enabled: options.optimize === true || typeof options.optimize === "number",
+    binaryBytes: result.binary.byteLength,
+  });
+  recordCompileProfile("multi.total", totalStarted, { success: result.success });
+  return result;
 }
 
 /**
