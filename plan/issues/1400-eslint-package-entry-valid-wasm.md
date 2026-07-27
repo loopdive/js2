@@ -302,7 +302,8 @@ blockers AND on the resolver / CJS-class-linkage work in items #1 and
    file dropped, branch's investigation content carried onto #3672.
 3. Typecheck green (one dup `ambientClassCalls` field removed); biome lint,
    prettier, issue-schema/id gates, IR gates, loc/func/oracle ratchets all pass
-   locally (change-scoped allowances added to `plan/issues/3672-*.md`).
+   locally (change-scoped allowances added to
+   `plan/issues/3672-eslint-linter-resolved-graph-codegen-timeout.md`).
 4. Pushed: PR went DIRTY → BLOCKED; green now: cheap gate, linear-tests,
    equivalence shards 1/5/6/8, PR-level test262 checks, cla-check.
 
