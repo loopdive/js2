@@ -29,6 +29,29 @@ function resolveEsqueryEsm(): string | null {
 
 const ESQUERY_ESM = resolveEsqueryEsm();
 
+/**
+ * Resolve a package the way ESLint itself does.
+ *
+ * The ESM-build collision fixture above cannot catch the array-receiver bug:
+ * `esquery.esm.min.js` is a real ES module, so its factory-local bindings never
+ * merge into the program-wide symbol table. ESLint loads `main` —
+ * `dist/esquery.min.js`, a UMD **script** — and TypeScript merges a script's
+ * top-level bindings across the graph. Only that build collides with the `ms`
+ * package's top-level numerics (`var s = 1000; var m = s * 60;`).
+ */
+function resolveFromEslint(request: string): string | null {
+  const eslintLinter = resolveEslintFile("lib/linter/linter.js");
+  if (eslintLinter === null) return null;
+  try {
+    return createRequire(realpathSync(eslintLinter)).resolve(request);
+  } catch {
+    return null;
+  }
+}
+
+const ESQUERY_CJS = resolveFromEslint("esquery");
+const MS_CJS = resolveFromEslint("ms");
+
 function write(path: string, source: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, source);
@@ -245,6 +268,43 @@ describe("#3672 — project codegen reachability", () => {
     if (!result.success) return;
     expect(WebAssembly.validate(result.binary)).toBe(true);
   });
+
+  it.skipIf(ESQUERY_CJS === null || MS_CJS === null)(
+    "does not adopt another module's numeric global as an array receiver (CJS esquery + ms)",
+    async () => {
+      // Regression: the array-method fast path resolved an identifier receiver
+      // through the process-wide bare-name map (`ctx.moduleGlobals`), not the
+      // identifier's own declaration. esquery's factory-local array `s` is a
+      // capture — absent from `fctx.localMap` — so it matched `ms`'s top-level
+      // `var s = 1000` and an f64 was proxied into the array receiver slot:
+      //   local.tee[0] expected type (ref null 2), found ... of type f64
+      const root = join(fixtureRoot, "esquery-cjs-ms-collision");
+      write(
+        join(root, "entry.js"),
+        [
+          `const ms = require(${JSON.stringify(MS_CJS)});`,
+          `const esquery = require(${JSON.stringify(ESQUERY_CJS)});`,
+          "export function test() {",
+          '  return typeof esquery === "function" && typeof ms === "function" ? 1 : 0;',
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await compileProject(join(root, "entry.js"), {
+        allowJs: true,
+        target: "gc",
+        platform: "node",
+        deferTopLevelInit: true,
+      });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      if (!result.success) return;
+      // Use the Module constructor: it reports WHICH function failed and why,
+      // where WebAssembly.validate only yields a bare false.
+      expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
+    },
+    120_000,
+  );
 
   it.skipIf(ESQUERY_ESM === null)(
     "does not route minified esquery helpers through same-named globals from another module",

@@ -354,3 +354,77 @@ blockers AND on the resolver / CJS-class-linkage work in items #1 and
    status convention, update the PR body, and mark ready for review.
 5. `check:godfiles` fails on CLEAN main too (object-runtime growths) — NOT a
    required check, not this PR's problem; do not chase it.
+
+## Session 2026-07-27b — dispatch regressions resolved (resume steps 1–3)
+
+Commits `1fbc471d4` + `c90aebead` on `codex/1400-eslint-e2e`.
+
+### Control experiment: BRANCH regression, not merge resolution
+
+The handoff's missing control is now run. `tests/issue-3164.test.ts` fails at
+the **pre-merge** head `3ba9d4dd2` exactly as it does post-merge, so the merge
+resolution is exonerated. Bisecting one step further isolates the introducing
+commit precisely:
+
+| Commit                                             | issue-3164        |
+| -------------------------------------------------- | ----------------- |
+| `1a70ed584` fix(ir): lower ambient host calls      | **10 passed**     |
+| `3ba9d4dd2` fix(eslint): advance real Linter graph | **1 failed** (×9) |
+
+### Root cause A — value-held function calls (`call-identifier.ts`)
+
+`3ba9d4dd2` suppressed `closureMap`/`funcMap` whenever the identifier resolved
+to ANY lexical module global. But `var f; f = function(){…}` registers the
+closure _precisely because_ `f` is that global (arrow-phases.ts ~846), so the
+flat entry and the declaration-owned global are ONE binding — instrumentation
+on the #3164 repro shows `closureMapHas=true`, `lexGlobal=2`, `legacyGlobal=2`.
+
+Suppressing it dropped the call onto the generic call-through-global path.
+Diffing WAT against the passing control makes the defect concrete: the control
+sets up the `arguments` object before the call (`global$4 = struct{2, [42,43]}`,
+`global$5 = 0`); `3ba9d4dd2` boxes 42/43 into locals and then **never uses
+them**, calling `call_ref` with only the closure self + funcref. The callee
+therefore saw `arguments.length === 0`.
+
+Fix: record the global a closure entry was registered FOR
+(`ctx.closureBindingGlobals`) and suppress only when it differs from the
+identifier's own global. The cross-module esquery collision the guard targets
+still suppresses — `tests/issue-3672.test.ts` stays green.
+
+### Root cause B — method trampoline receiver (`method-trampolines.ts`)
+
+The new receiver reconciliation treated `ref null $S` vs `ref $S` — the _same_
+struct differing only in nullability — as an ABI mismatch and inserted a
+non-null assertion. That null is deliberate: `buildTrampolineThisSlot` yields
+`ref.null $Shape` when a method ignores its receiver (`next() { return i++; }`),
+which JS permits. The assertion trapped at runtime with "dereferencing a null
+pointer" inside `__obj_meth_tramp___anon_1_next_1`. Instrumented values:
+`wrapperThis={ref_null,33} methodThis={ref,33} usesThis=false`.
+
+Fix: reconcile only a genuinely different receiver REPRESENTATION (the
+host-backed externref ABI the guard was written for), never a pure nullability
+difference on the same struct.
+
+### Verified
+
+- Regression family green: `issue-3164`, `issue-3672`, `issue-1388`,
+  `issue-1610`, `iterator-protocol-custom`, `async-function`, `promise-chains`
+  — **52 passed / 3 skipped**.
+- Typecheck clean; prettier clean; biome error-level clean on changed files.
+- Diff is 48 lines across 6 files.
+
+### Remaining equivalence failures are NOT from this change
+
+A full local `tests/equivalence/` sweep (210 files) reports 13 files / 33 tests
+failing. Re-running those same 13 files at the **unmodified branch head**
+produces an IDENTICAL 13-file / 33-test set, so this change neither causes nor
+fixes them. An `origin/main` comparison is in progress to establish whether they
+are a repo-wide/local-environment condition rather than a branch defect —
+`array-inline-return` already fails on clean `origin/main`, which points that
+way. Do not attribute these to the dispatch work.
+
+### Still open
+
+Resume step 4 — the full `tests/stress/eslint-tier1.test.ts` proof (the issue's
+actual Tier 1 goal) — remains unrun to completion. The prior attempt SIGTERMed
+at the 3600 s budget under load ~27.

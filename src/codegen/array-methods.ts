@@ -24,6 +24,7 @@ import {
 } from "./index.js";
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
+import { moduleGlobalAtIdentifier } from "./function-identity.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { emitTypedArraySetBoundsCheck } from "./typed-array-set-bounds.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -735,7 +736,10 @@ function inferExpressionWasmType(
     const name = expr.text;
     const localIdx = fctx.localMap.get(name);
     if (localIdx !== undefined) return getLocalType(fctx, localIdx);
-    const gIdx = ctx.moduleGlobals.get(name);
+    // Declaration-scoped, NOT the process-wide bare-name map: a package graph
+    // legitimately has an unrelated top-level `s`/`m` in one module and a
+    // lexical binding of that name in another (see moduleGlobalAtIdentifier).
+    const gIdx = moduleGlobalAtIdentifier(ctx, expr);
     if (gIdx !== undefined) return ctx.mod.globals[localGlobalIdx(ctx, gIdx)]?.type;
   }
 
@@ -1237,7 +1241,7 @@ export function compileArrayMethodCall(
         // at instantiation.
         actualType = getLocalType(fctx, localIdx);
       } else {
-        const gIdx = ctx.moduleGlobals.get(name);
+        const gIdx = moduleGlobalAtIdentifier(ctx, receiverExpr);
         if (gIdx !== undefined) {
           const globalDef = ctx.mod.globals[localGlobalIdx(ctx, gIdx)];
           actualType = globalDef?.type;
@@ -1342,11 +1346,21 @@ export function compileArrayMethodCall(
   ]);
   if (ts.isIdentifier(propAccess.expression)) {
     const name = propAccess.expression.text;
-    const gIdx = ctx.moduleGlobals.get(name);
+    // Declaration-scoped resolution (see the identical note in
+    // `receiverValType`). The flat map made esquery's LEXICAL array `s` — a
+    // capture, so absent from `fctx.localMap` — resolve to the `ms` package's
+    // top-level numeric `var s = 1000`, proxying an f64 into the array
+    // receiver slot: "local.tee[0] expected (ref null 2), found ... f64".
+    const gIdx = moduleGlobalAtIdentifier(ctx, propAccess.expression);
     if (gIdx !== undefined && !fctx.localMap.has(name)) {
-      moduleGlobalIdx = gIdx;
       const globalDef = ctx.mod.globals[localGlobalIdx(ctx, gIdx)];
       if (!globalDef) return null;
+      // Defense in depth: a numeric/immediate global can never BE an array
+      // receiver. If resolution still lands on one, decline this fast path so
+      // the generic receiver lowering runs, instead of emitting invalid Wasm.
+      const gk = globalDef.type.kind;
+      if (gk === "f64" || gk === "f32" || gk === "i32" || gk === "i64") return null;
+      moduleGlobalIdx = gIdx;
       const tempLocal = allocLocal(fctx, `__mod_proxy_${name}`, globalDef.type);
       fctx.body.push({ op: "global.get", index: gIdx });
       fctx.body.push({ op: "local.set", index: tempLocal });
