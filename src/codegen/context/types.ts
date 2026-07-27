@@ -2001,6 +2001,18 @@ export interface CodegenContext {
   /** Collision-free module-global slots keyed by their source declaration. */
   moduleGlobalDeclarations: Map<ts.Declaration, number>;
   /**
+   * Module-global slot a `closureMap` entry was registered FOR, keyed by the
+   * same bare name.
+   *
+   * `closureMap` is keyed by source spelling, so a call site cannot otherwise
+   * tell "the closure assigned to this very binding" (`var f; f = function(){}`)
+   * apart from "an unrelated same-named closure in another module". Recording
+   * the owning global at registration time makes that distinction exact: the
+   * flat entry is trustworthy precisely when this global matches the one the
+   * identifier's own declaration resolves to.
+   */
+  closureBindingGlobals: Map<string, number>;
+  /**
    * Module-global targets for ESM import bindings, keyed by the local alias
    * symbol. Multi-file graphs can contain unrelated same-named top-level
    * bindings, so imported identifiers must not rely exclusively on the

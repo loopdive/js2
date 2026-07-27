@@ -360,6 +360,7 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
     }
   }
   shiftMap(ctx.moduleGlobals);
+  shiftMap(ctx.closureBindingGlobals);
   for (const [declaration, idx] of ctx.moduleGlobalDeclarations) {
     if (idx >= threshold) {
       ctx.moduleGlobalDeclarations.set(declaration, idx + delta);

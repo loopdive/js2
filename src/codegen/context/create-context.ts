@@ -162,6 +162,7 @@ export function createCodegenContext(
     nativeGenerators: new Map(),
     moduleGlobals: new Map(),
     moduleGlobalDeclarations: new Map(),
+    closureBindingGlobals: new Map(),
     importBindingGlobals: new Map(),
     liveFuncBindingGlobals: new Set(),
     moduleInitStatements: [],

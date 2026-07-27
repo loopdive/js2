@@ -931,8 +931,19 @@ export function compileIdentifierCall(
     // routed its CommonJS factory callback into Babel's array-copy helper.
     const isLocallyShadowed = fctx.localMap.has(sourceName) && functionDeclKey === undefined;
 
+    // ...but a module global is NOT by itself evidence of a foreign binding.
+    // `var f; f = function(){ … }; f(a, b)` registers the closure precisely
+    // BECAUSE `f` is that global, so the flat entry and the declaration-owned
+    // global describe one binding. Suppressing the closure there dropped the
+    // call onto the generic call-through-global path, which passes no
+    // arguments and never materializes `arguments` — the callee then saw
+    // `arguments.length === 0`. Only a closure registered for a DIFFERENT
+    // global (or for none) is the cross-module collision this guard targets.
+    const closureBindingGlobal = ctx.closureBindingGlobals.get(funcName);
+    const lexicalGlobalIsForeign = lexicalModuleGlobal !== undefined && closureBindingGlobal !== lexicalModuleGlobal;
+
     // Check if this is a closure call
-    let closureInfo = isLocallyShadowed || lexicalModuleGlobal !== undefined ? undefined : ctx.closureMap.get(funcName);
+    let closureInfo = isLocallyShadowed || lexicalGlobalIsForeign ? undefined : ctx.closureMap.get(funcName);
 
     if (!closureInfo) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);

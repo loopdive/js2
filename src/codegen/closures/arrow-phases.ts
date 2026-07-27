@@ -30,6 +30,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { allocLocal } from "../context/locals.js";
+import { moduleGlobalAtIdentifier } from "../function-identity.js";
 import { emitBoundsCheckedArrayGet } from "../shared.js";
 import { spliceNullGuarded } from "./param-emit-helpers.js";
 import {
@@ -828,6 +829,11 @@ export function registerClosureBindingInfo(
   const parent = arrow.parent;
   if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
     ctx.closureMap.set(parent.name.text, closureInfo);
+    // `var f = function(){}` at module scope: the closure and the module
+    // global are two facets of ONE binding. Record the link so a call site
+    // does not mistake this entry for an unrelated same-named module's.
+    const declGlobal = ctx.moduleGlobalDeclarations.get(parent);
+    if (declGlobal !== undefined) ctx.closureBindingGlobals.set(parent.name.text, declGlobal);
   } else if (
     ts.isBinaryExpression(parent) &&
     parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -845,6 +851,10 @@ export function registerClosureBindingInfo(
     } else if (ctx.moduleGlobals.has(assignName)) {
       // Module-level global: `var f; f = () => {...}` — register for closure dispatch
       ctx.closureMap.set(assignName, closureInfo);
+      // This entry exists ONLY because `assignName` is that module global, so
+      // the two are the same binding by construction (see closureBindingGlobals).
+      const assignGlobal = moduleGlobalAtIdentifier(ctx, parent.left) ?? ctx.moduleGlobals.get(assignName);
+      if (assignGlobal !== undefined) ctx.closureBindingGlobals.set(assignName, assignGlobal);
     }
   } else if (ts.isPropertyAssignment(parent) && ts.isIdentifier(parent.name)) {
     // Object literal: { fn: function() { ... } }

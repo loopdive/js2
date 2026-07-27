@@ -421,7 +421,18 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       newBody = buildTrampolineThisSlot(ctx, t.objStructTypeIdx, anyTempLocalIdx, usesThis);
       const wrapperThis: ValType = { kind: "ref_null", typeIdx: t.objStructTypeIdx };
       const methodThis = sig.params[0]!;
-      if (!valTypesMatch(wrapperThis, methodThis)) {
+      // A pure NULLABILITY difference on the same struct is not an ABI
+      // mismatch to reconcile — it is this slot's contract. `buildTrampolineThisSlot`
+      // deliberately yields `ref.null $Shape` when the method ignores its
+      // receiver (`next() { return i++; }`), which JS permits. Coercing
+      // `ref null $S` → `ref $S` inserts a non-null assertion that traps at
+      // runtime ("dereferencing a null pointer") on exactly those receiver-less
+      // methods. Reconcile only a genuinely different receiver REPRESENTATION,
+      // e.g. the host-backed externref ABI this guard was added for.
+      const sameStruct =
+        (methodThis.kind === "ref" || methodThis.kind === "ref_null") &&
+        (methodThis as { typeIdx?: number }).typeIdx === t.objStructTypeIdx;
+      if (!sameStruct && !valTypesMatch(wrapperThis, methodThis)) {
         // Host-backed prototype methods (for example Map.prototype.set in the
         // Node-host lane) expose an externref receiver ABI even though the
         // cached closure was discovered through a statically-shaped object.
