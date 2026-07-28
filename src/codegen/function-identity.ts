@@ -104,11 +104,16 @@ export function functionDeclarationKeyAtIdentifier(ctx: CodegenContext, identifi
     }
     return scope !== undefined && scope.pos <= identifier.pos && scope.end >= identifier.end;
   };
+  // Compare source files by NAME, not object identity: the test262 lane (and
+  // other transformed-AST paths) compile a re-parsed SourceFile while the
+  // checker's symbols point into the original Program's nodes — the same text
+  // under the same fileName, but different objects. Object identity silently
+  // deactivated this veto there.
   if (
     declarations.some(
       (declaration) =>
         declaration !== undefined &&
-        declaration.getSourceFile() === sourceFile &&
+        declaration.getSourceFile()?.fileName === sourceFile.fileName &&
         !ts.isFunctionDeclaration(declaration) &&
         declarationScopeContainsIdentifier(declaration),
     )
@@ -231,12 +236,29 @@ export function moduleGlobalAtIdentifier(ctx: CodegenContext, identifier: ts.Ide
         }
         return n !== undefined;
       };
-      const hasSameFileTopLevelVariableDecl =
-        idFile !== undefined &&
-        [symbol.valueDeclaration, ...(symbol.declarations ?? [])].some(
-          (d) => d !== undefined && !ts.isFunctionDeclaration(d) && d.getSourceFile() === idFile && isTopLevel(d),
-        );
-      if (!hasSameFileTopLevelVariableDecl) return undefined;
+      // AMBIENT declarations carry no runtime binding of their own, so they
+      // are no evidence about which runtime global this name denotes. The DOM
+      // lib declares `declare var length/name/status/…`, and a script-mode
+      // `let length = "outer"` REDECLARES it — the checker then resolves the
+      // identifier to the lib.d.ts symbol, which made the blanket refusal
+      // treat a perfectly ordinary top-level binding as unresolvable (read
+      // «0» across the test262 `length` dstr family). Drop declaration-file
+      // declarations before reasoning; if nothing concrete remains, the
+      // legacy flat map is authoritative exactly as it was pre-#3672.
+      // Same-file comparison is by fileName, not object identity — the
+      // test262 lane compiles a re-parsed SourceFile while checker symbols
+      // point into the original Program's nodes.
+      const concreteDecls = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
+        (d): d is ts.Declaration => d !== undefined && !d.getSourceFile()?.isDeclarationFile,
+      );
+      if (concreteDecls.length > 0) {
+        const hasSameFileTopLevelVariableDecl =
+          idFile !== undefined &&
+          concreteDecls.some(
+            (d) => !ts.isFunctionDeclaration(d) && d.getSourceFile()?.fileName === idFile?.fileName && isTopLevel(d),
+          );
+        if (!hasSameFileTopLevelVariableDecl) return undefined;
+      }
     }
   } catch {
     // Synthetic nodes may not be attached to the checker program.

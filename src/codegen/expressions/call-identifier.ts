@@ -36,6 +36,7 @@ import {
   functionDeclarationKeyAtIdentifier,
   functionKeyAtIdentifier,
   moduleGlobalAtIdentifier,
+  valueSymbolAtIdentifier,
 } from "../function-identity.js";
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
@@ -930,7 +931,20 @@ export function compileIdentifierCall(
     // params in minified bundles (`function a(e) { e() }` alongside
     // `function e() { ... }`). That changed program behavior and, in esquery,
     // routed its CommonJS factory callback into Babel's array-copy helper.
-    const isLocallyShadowed = fctx.localMap.has(sourceName) && functionDeclKey === undefined;
+    // …but only when the binding is a genuine PARAMETER/VARIABLE declaration.
+    // A named function EXPRESSION's self-binding (`(function f(n) { return
+    // f(n - 1); })(…)`) also has no FunctionDeclaration key and can appear in
+    // `localMap`, yet its calls must stay on the closure/funcMap dispatch —
+    // treating it as a shadowed local routed the self-call through a
+    // never-initialized local and threw "Cannot access property on null or
+    // undefined" across the test262 tco-* family (#3687 merge_group park).
+    const shadowSymbolDecl = valueSymbolAtIdentifier(ctx, expr.expression)?.valueDeclaration;
+    const shadowIsVariableBinding =
+      shadowSymbolDecl !== undefined &&
+      (ts.isParameter(shadowSymbolDecl) ||
+        ts.isVariableDeclaration(shadowSymbolDecl) ||
+        ts.isBindingElement(shadowSymbolDecl));
+    const isLocallyShadowed = fctx.localMap.has(sourceName) && functionDeclKey === undefined && shadowIsVariableBinding;
 
     // ...but a module global is NOT by itself evidence of a foreign binding.
     // `var f; f = function(){ … }; f(a, b)` registers the closure precisely
