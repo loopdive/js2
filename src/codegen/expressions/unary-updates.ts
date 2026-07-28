@@ -33,6 +33,7 @@ import {
 } from "../property-access.js";
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for inc/dec
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686) pinned reconstructed-fnctor receiver gate
+import { tryEmitTypedThisIncDec } from "../typed-this.js"; // (#3683 S2) typed-`this` inc/dec
 import { coerceType, compileExpression, skipTransparentExpressions } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { defaultValueInstrs } from "../type-coercion.js";
@@ -480,6 +481,15 @@ function compileMemberIncDec(
       if (staticGlobalIdx !== undefined) {
         return compileStaticPropIncDec(ctx, fctx, staticGlobalIdx, f64Op, mode);
       }
+    }
+
+    // (#3683 S2 branch c2) TYPED-`this` `++`/`--` inside a twin — a
+    // struct.get/struct.set pair against the prologue's typed local instead of
+    // `__get_member_<p>` + unbox + box + `__set_member_<p>`. Emitted before ANY
+    // receiver evaluation so a decline leaves the body untouched.
+    {
+      const typed = tryEmitTypedThisIncDec(ctx, fctx, operand, f64Op, mode);
+      if (typed !== undefined) return typed;
     }
 
     const objType = ctx.checker.getTypeAtLocation(operand.expression);

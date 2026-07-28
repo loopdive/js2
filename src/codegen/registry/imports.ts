@@ -1098,11 +1098,53 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
   };
 
   // 3. __box_number(f64) -> externref
-  registerNative("__box_number", f64ToExternref, [
-    { op: "local.get", index: 0 },
-    { op: "struct.new", typeIdx: boxNumStructIdx },
-    { op: "extern.convert_any" },
-  ]);
+  // (#3673) i31 fast path: an integral value in the signed-31-bit range is
+  // encoded as an UNBOXED `(ref i31)` — no allocation. Every consumer that
+  // discriminates boxed numbers carries a matching i31 arm. Excluded: -0
+  // (i31 cannot carry the sign — `1/x` and Object.is would lose it), NaN and
+  // infinities (fail the trunc round-trip), and values outside [-2^30, 2^30-1]
+  // (fail the shl/shr round-trip).
+  registerNative(
+    "__box_number",
+    f64ToExternref,
+    [
+      { op: "local.get", index: 0 },
+      { op: "i32.trunc_sat_f64_s" },
+      { op: "local.tee", index: 1 },
+      { op: "f64.convert_i32_s" },
+      { op: "local.get", index: 0 },
+      { op: "f64.eq" }, // integral (and clamp-free) round-trip
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: 1 },
+      { op: "i32.shl" },
+      { op: "i32.const", value: 1 },
+      { op: "i32.shr_s" },
+      { op: "local.get", index: 1 },
+      { op: "i32.eq" }, // fits signed 31 bits
+      { op: "i32.and" },
+      { op: "local.get", index: 1 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.ne" },
+      { op: "local.get", index: 0 },
+      { op: "i64.reinterpret_f64" },
+      { op: "i64.const", value: 0n },
+      { op: "i64.lt_s" },
+      { op: "i32.eqz" },
+      { op: "i32.or" }, // t != 0 || sign bit clear (rejects -0 only)
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "local.get", index: 1 }, { op: "ref.i31" }, { op: "extern.convert_any" }],
+        else: [
+          { op: "local.get", index: 0 },
+          { op: "struct.new", typeIdx: boxNumStructIdx },
+          { op: "extern.convert_any" },
+        ],
+      },
+    ],
+    [{ name: "$i31_temp", type: { kind: "i32" } as ValType }],
+  );
 
   // 4. __unbox_number(externref) -> f64
   //    Local 1 is an anyref temp used to ref.test then ref.cast without
@@ -1123,7 +1165,22 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       // any = any.convert_extern(param)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
-      { op: "local.tee", index: 1 },
+      { op: "local.set", index: 1 },
+      // (#3673) i31-boxed small int → its value.
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: -20 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: -20 },
+          { op: "i31.get_s" },
+          { op: "f64.convert_i32_s" },
+          { op: "return" },
+        ],
+      },
+      { op: "local.get", index: 1 },
       // if (ref.test $box_number_struct any) return any.value
       { op: "ref.test", typeIdx: boxNumStructIdx },
       {
@@ -1318,6 +1375,20 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
           { op: "return" },
         ],
       },
+      // (#3673) i31 small int → i64.
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: -20 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: -20 },
+          { op: "i31.get_s" },
+          { op: "i64.extend_i32_s" },
+          { op: "return" },
+        ],
+      },
       { op: "local.get", index: 1 },
       { op: "ref.test", typeIdx: boxNumStructIdx },
       {
@@ -1407,6 +1478,21 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
+      // (#3673) i31 small int → value !== 0 (no NaN possible in i31).
+      { op: "ref.test", typeIdx: -20 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: -20 },
+          { op: "i31.get_s" },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ne" },
+          { op: "return" },
+        ],
+      },
+      { op: "local.get", index: 1 },
       // boxed number? → value !== 0 && value === value
       { op: "ref.test", typeIdx: boxNumStructIdx },
       {
@@ -1502,6 +1588,11 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
     { op: "local.get", index: 0 },
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: boxNumStructIdx },
+    // (#3673) …or an i31-boxed small int.
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: -20 },
+    { op: "i32.or" },
   ]);
 
   // 9. __typeof_boolean(externref) -> i32 — `ref.test $box_boolean_struct`.
@@ -1620,6 +1711,14 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 0 }, { op: "return" }],
       },
+      // (#3673) i31 small int is a number → not this type.
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: -20 },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      },
       { op: "local.get", index: 1 },
       { op: "ref.test", typeIdx: boxBoolStructIdx },
       {
@@ -1712,6 +1811,10 @@ export function addUnionImportsAsNativeFuncs(ctx: CodegenContext): void {
           [
             { op: "local.get", index: 1 },
             { op: "ref.test", typeIdx: boxNumStructIdx },
+            // (#3673) …or an i31-boxed small int.
+            { op: "local.get", index: 1 },
+            { op: "ref.test", typeIdx: -20 },
+            { op: "i32.or" },
           ],
           "number",
         ),

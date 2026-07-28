@@ -18,9 +18,11 @@
  * to the pre-split inline blocks (verified via `prove-emit-identity`).
  */
 import type { Instr, ValType } from "../ir/types.js";
+import type { CodegenContext } from "./context/types.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { nativeStringLiteralInstrs } from "./native-strings.js";
 import type { NativeStrShared } from "./native-strings-shared.js";
 
 /**
@@ -30,12 +32,56 @@ import type { NativeStrShared } from "./native-strings-shared.js";
  * buf(2). Returns the rope flattened to a `NativeString`.
  */
 function flattenConsBody(
+  ctx: CodegenContext,
   strDataTypeIdx: number,
   strTypeIdx: number,
   anyStrTypeIdx: number,
   copyTreeIdx: number,
 ): Instr[] {
+  const consTypeIdx = ctx.consStrTypeIdx;
+  // (#3673) Interned "" literal — the memoization writes it into `right`.
+  const emptyInstrs = nativeStringLiteralInstrs(ctx, "");
   return [
+    // (#3673) Memoized-cons fast path: a previously-flattened cons was
+    // rewritten in place to (left=flat, right=""). Return the flat left
+    // without re-copying. Also catches a natural `x + ""` whose left is
+    // already flat.
+    { op: "local.get", index: 0 },
+    { op: "ref.test", typeIdx: consTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // right.len == 0 ?
+        { op: "local.get", index: 0 },
+        { op: "ref.cast", typeIdx: consTypeIdx },
+        { op: "struct.get", typeIdx: consTypeIdx, fieldIdx: 2 },
+        { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // left is flat ?
+            { op: "local.get", index: 0 },
+            { op: "ref.cast", typeIdx: consTypeIdx },
+            { op: "struct.get", typeIdx: consTypeIdx, fieldIdx: 1 },
+            { op: "ref.test", typeIdx: strTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 0 },
+                { op: "ref.cast", typeIdx: consTypeIdx },
+                { op: "struct.get", typeIdx: consTypeIdx, fieldIdx: 1 },
+                { op: "ref.cast", typeIdx: strTypeIdx },
+                { op: "return" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
     // len = s.len (field 0 of AnyString)
     { op: "local.get", index: 0 },
     { op: "struct.get", typeIdx: anyStrTypeIdx, fieldIdx: 0 },
@@ -50,11 +96,48 @@ function flattenConsBody(
     { op: "i32.const", value: 0 },
     { op: "call", funcIdx: copyTreeIdx },
     { op: "drop" },
-    // return struct.new $NativeString(len, 0, buf)
+    // flat = struct.new $HashedString(len, 0, buf, 0) — (#3673 round 9) the
+    // memoized flat copy carries an uncomputed (0) hash slot so `__obj_hash`
+    // can cache into it on first probe; plain $NativeString when the hashed
+    // subtype isn't registered. Subtype of $NativeString — every consumer
+    // (incl. the memoized-cons fast path's `ref.test`/`ref.cast`) unchanged.
     { op: "local.get", index: 1 },
     { op: "i32.const", value: 0 },
     { op: "local.get", index: 2 },
-    { op: "struct.new", typeIdx: strTypeIdx },
+    ...(ctx.hashedStrTypeIdx >= 0
+      ? ([
+          { op: "i32.const", value: 0 }, // hash: uncomputed
+          { op: "i32.const", value: 0 }, // cacheGen: never populated
+          { op: "ref.null", typeIdx: -18 }, // cacheOwner
+          { op: "ref.null", typeIdx: -18 }, // cacheEntry
+          { op: "ref.null", typeIdx: -18 }, // cacheProps (round 21)
+          { op: "struct.new", typeIdx: ctx.hashedStrTypeIdx },
+        ] satisfies Instr[])
+      : ([{ op: "struct.new", typeIdx: strTypeIdx }] satisfies Instr[])),
+    { op: "local.set", index: 3 },
+    // (#3673) Memoize: rewrite the cons in place to (left=flat, right="") so
+    // the next flatten of this rope takes the fast path above. `len` is
+    // untouched (flat.len == s.len).
+    { op: "local.get", index: 0 },
+    { op: "ref.test", typeIdx: consTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "ref.cast", typeIdx: consTypeIdx },
+        { op: "local.get", index: 3 },
+        { op: "ref.as_non_null" },
+        { op: "struct.set", typeIdx: consTypeIdx, fieldIdx: 1 },
+        { op: "local.get", index: 0 },
+        { op: "ref.cast", typeIdx: consTypeIdx },
+        ...emptyInstrs,
+        { op: "struct.set", typeIdx: consTypeIdx, fieldIdx: 2 },
+      ],
+    },
+    // return flat
+    { op: "local.get", index: 3 },
+    { op: "ref.as_non_null" },
   ];
 }
 
@@ -700,10 +783,10 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
                     { op: "ref.cast", typeIdx: ctx.utf8StrTypeIdx },
                     { op: "call", funcIdx: utf8ToFlatIdx },
                   ],
-                  else: flattenConsBody(strDataTypeIdx, strTypeIdx, anyStrTypeIdx, copyTreeIdx),
+                  else: flattenConsBody(ctx, strDataTypeIdx, strTypeIdx, anyStrTypeIdx, copyTreeIdx),
                 },
               ]
-            : flattenConsBody(strDataTypeIdx, strTypeIdx, anyStrTypeIdx, copyTreeIdx),
+            : flattenConsBody(ctx, strDataTypeIdx, strTypeIdx, anyStrTypeIdx, copyTreeIdx),
       },
     ];
 
@@ -713,6 +796,9 @@ export function emitStrFlattenHelpers(shared: NativeStrShared): void {
       locals: [
         { name: "len", type: { kind: "i32" } },
         { name: "buf", type: strDataRef },
+        // (#3673) holds the freshly-built flat result across the memoization
+        // writeback (flattenConsBody local index 3).
+        { name: "flat", type: { kind: "ref_null", typeIdx: strTypeIdx } },
       ],
       body,
       exported: false,

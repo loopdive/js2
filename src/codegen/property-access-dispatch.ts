@@ -167,6 +167,7 @@ import {
   typeErrorThrowInstrs,
 } from "./property-access.js";
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
+import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -545,6 +546,30 @@ export function tryPinnedAndDeleteAwareDynamicGet(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  // (#3683 S2 branch a) TYPED-`this` field READ inside a typed twin. Runs FIRST
+  // — ahead of the pinned dispatcher below — because it is that dispatcher's
+  // own `$__fnctor_F` arm inlined against the receiver the twin prologue
+  // already `ref.cast` down to a typed local: `struct.get` with NO dispatcher
+  // call and NO box→externref→unbox round-trip, returning the FIELD's ValType
+  // so downstream expression lowering stays numeric. Declines (falls through to
+  // the identical-semantics pinned path) for presence-tracked fields, accessor
+  // props, reserved names and method-typed accesses. See typed-this.ts.
+  {
+    const typed = tryEmitTypedThisFieldGet(ctx, fctx, expr, propName);
+    if (typed !== undefined) return typed;
+  }
+
+  // (#3685 S2) The same inline `struct.get`, for a receiver the receiver-flow
+  // analysis proves rather than one a twin already `ref.cast`. Runs after the
+  // `this` form (whose proof is strictly stronger and whose lowering is
+  // unguarded) and before the pinned dispatcher below, which it replaces for
+  // the reads it admits. Guarded + dynamic-else, so an imprecise verdict is a
+  // slow read, never a wrong value. See typed-this.ts.
+  {
+    const proven = tryEmitProvenReceiverFieldGet(ctx, fctx, expr, propName);
+    if (proven !== undefined) return proven;
+  }
+
   // (#2681/#2686 A3) Pinned-struct dynamic member READ. When the receiver is the
   // `this` of a lifted fnctor-PROTOTYPE method (`fctx.thisStructName`, set by
   // `resolveLiftedMethodThisStruct`), or a local bound from a single-return-

@@ -37,6 +37,7 @@ import type { Instr, ValType, WasmFunction } from "../ir/types.js";
  */
 import { forEachChild, ts } from "../ts-api.js";
 import type { AsyncCfgPlan, AsyncCfgState, AsyncCpsPlan, AsyncResumePoint } from "./async-cps.js";
+import { awaitIsStaticallyResolved } from "./async-static.js"; // (#3723) settled-local flow test
 import {
   ASYNC_CPS_ENABLED,
   FORAWAIT_ITER_SPILL,
@@ -619,6 +620,135 @@ function bindingLiveAcrossLaterAwait(name: string, k: number, plan: AsyncCpsPlan
  * inert), so the wasi single-await routing decision is unchanged by #2906 — only
  * the emitted resume machine generalizes.
  */
+/**
+ * (#3723) Can this `await` actually SUSPEND?
+ *
+ * `await v` on a non-thenable never yields control to a pending job — §27.7.5.3
+ * resumes with `v` unchanged. So an await whose operand type carries no `then`
+ * is a pass-through no matter what the syntax looks like.
+ *
+ * This exists because {@link import("./async-static.js").awaitIsStaticallyResolved}
+ * cannot answer it. That helper is deliberately a checker-free LEAF module (it
+ * imports only `ts-api`, so the IR front-end can consume it without closing the
+ * #3324 import cycle), which means it recognises literals and
+ * `Promise.resolve(<static>)` but must answer "unknown" for a bare identifier —
+ * "which may hold a pending Promise". For `let n = 8; await (n + 1)` that is
+ * needlessly pessimistic: `n` is a `number`.
+ *
+ * The cost of the pessimism was not a missed optimisation. Under WASI the drive
+ * lane returns a real `$Promise` externref, and there is no host microtask queue
+ * to drain it, so a numeric consumer coerced the externref to `f64` and read
+ * **NaN**. Declining to claim an await that provably cannot suspend puts the
+ * function back on the AG0 synchronous path, which returns the value.
+ *
+ * Conservative by construction — it must never claim "cannot suspend" for
+ * something that can:
+ *   - `any` / `unknown` may hold a thenable at runtime → assume it can suspend.
+ *   - a union is safe only if EVERY constituent is non-thenable.
+ *   - anything carrying a `then` member (a real Promise, a custom thenable) →
+ *     can suspend.
+ *
+ * Being wrong in the safe direction just keeps today's behaviour (claim it, run
+ * the frame machine); being wrong the other way would silently drop a real
+ * suspension.
+ */
+/** Strip the wrappers that do not change an awaited value's identity. */
+function unwrapAwaitOperand(expr: ts.Expression): ts.Expression {
+  let e = expr;
+  while (
+    ts.isParenthesizedExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isTypeAssertionExpression(e) ||
+    ts.isNonNullExpression(e)
+  ) {
+    e = e.expression;
+  }
+  return e;
+}
+
+/**
+ * (#3723) `await p` where `p` is a local whose ONLY value is a statically
+ * settled one — `let p = Promise.resolve(7); … await p`.
+ *
+ * The syntactic analysis in `async-static.ts` stops at "a bare identifier may
+ * hold a pending Promise", which is true in general and wrong here: this binding
+ * is written once, from an initializer that helper itself certifies as settled.
+ * Under WASI that pessimism is not a lost optimisation — see
+ * {@link awaitProvablyCannotSuspend} — it produces NaN.
+ *
+ * Soundness rests on SYMBOL identity, not on names: the operand's symbol must
+ * have exactly one declaration, that declaration must be a variable with an
+ * initializer {@link awaitIsStaticallyResolved} accepts, and no assignment
+ * anywhere in the enclosing function may target that same symbol. Comparing
+ * symbols (rather than text) is what makes shadowing, a same-named parameter,
+ * and a same-named binding in a sibling scope all safe — each is a different
+ * symbol, so none of them can be mistaken for this one.
+ *
+ * The assignment scan walks nested functions too, so a closure that mutates the
+ * binding disqualifies it. Every uncertain answer is `false`, which just leaves
+ * today's behaviour in place.
+ */
+function awaitedLocalIsProvablySettled(ctx: CodegenContext, awaitExpr: ts.AwaitExpression): boolean {
+  const checker = ctx.checker;
+  const operand = unwrapAwaitOperand(awaitExpr.expression);
+  if (!ts.isIdentifier(operand)) return false;
+
+  const symbol = checker.getSymbolAtLocation(operand);
+  if (symbol === undefined) return false;
+  const decls = symbol.getDeclarations() ?? [];
+  if (decls.length !== 1) return false; // re-declared / ambiguous → not provable
+  const decl = decls[0]!;
+  if (!ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) return false;
+  if (decl.initializer === undefined) return false; // `let p;` — value comes from elsewhere
+  if (!awaitIsStaticallyResolved(decl.initializer)) return false;
+
+  // The scope to police: the function (or file) the declaration lives in. Any
+  // write to this symbol inside it means the value at the await is not provable.
+  let scope: ts.Node = decl;
+  while (scope.parent !== undefined && !ts.isSourceFile(scope) && !ts.isFunctionLike(scope)) {
+    scope = scope.parent;
+  }
+
+  let assigned = false;
+  const targetsSymbol = (e: ts.Expression): boolean => {
+    const bare = unwrapAwaitOperand(e);
+    return ts.isIdentifier(bare) && checker.getSymbolAtLocation(bare) === symbol;
+  };
+  const scan = (node: ts.Node): void => {
+    if (assigned) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      targetsSymbol(node.left)
+    ) {
+      assigned = true;
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      targetsSymbol(node.operand as ts.Expression)
+    ) {
+      assigned = true;
+      return;
+    }
+    forEachChild(node, scan);
+  };
+  scan(scope);
+  return !assigned;
+}
+
+function awaitProvablyCannotSuspend(ctx: CodegenContext, awaitExpr: ts.AwaitExpression): boolean {
+  const operandType = ctx.checker.getTypeAtLocation(awaitExpr.expression);
+  const parts = operandType.isUnion() ? operandType.types : [operandType];
+  for (const part of parts) {
+    if ((part.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return false;
+    if (part.getProperty("then") !== undefined) return false;
+  }
+  return true;
+}
+
 export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): boolean {
   if (!ASYNC_CPS_ENABLED) return false;
   if (plan.awaitPoints.length === 0) {
@@ -635,7 +765,16 @@ export function asyncFnNeedsDrive(ctx: CodegenContext, fn: ts.FunctionLikeDeclar
     if (fa === null) return false;
     return fa.spillTypes.every(isSpillSafeType);
   }
-  const anyRealSuspension = plan.awaitPoints.some((a) => plan.awaitedStaticallyResolved.get(a) !== true);
+  // (#3723) An await is a real suspension only if it is neither statically
+  // resolved (syntactic, `async-static.ts`) nor provably non-thenable (typed,
+  // `awaitProvablyCannotSuspend`). The second test is what the checker-free leaf
+  // module cannot make.
+  const anyRealSuspension = plan.awaitPoints.some(
+    (a) =>
+      plan.awaitedStaticallyResolved.get(a) !== true &&
+      !awaitProvablyCannotSuspend(ctx, a) &&
+      !awaitedLocalIsProvablySettled(ctx, a),
+  );
   if (!anyRealSuspension) return false; // fully await-elidable → sync + resolved promise
   // (#2906 3c-ii) The native gate admits return-in-try (return-through-finally
   // via the return hook's finalizer replay); the host gate does not.

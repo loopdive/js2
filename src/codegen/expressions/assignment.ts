@@ -34,6 +34,7 @@ import { emitTaDynViewElementSet, emitTaViewElementSet } from "../dataview-nativ
 import { buildDestructureNullThrow, patternIteratorStepCount } from "../destructuring-params.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct write dispatch
+import { tryEmitTypedThisFieldSet } from "../typed-this.js"; // (#3683 S2) typed-`this` field write
 import { reserveMemberSetDispatch } from "../member-set-dispatch.js"; // (#2681/#2686 A3) pre-check set dispatcher
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js"; // (#2681/#2686) symmetric struct read for compound
 import {
@@ -3737,6 +3738,14 @@ function compilePropertyAssignment(
   // a struct instance hits the slot on BOTH sides and a genuine proxy hits the
   // sidecar on BOTH sides — consistent either way. Runs BEFORE the delete-aware
   // write so it wins for pinned receivers.
+  // (#3683 S2 branch b) TYPED-`this` field WRITE inside a twin — the pinned
+  // dispatcher's `$__fnctor_F` arm inlined against the twin prologue's
+  // already-cast local. Runs first; declines fall through unchanged.
+  {
+    const typedSet = tryEmitTypedThisFieldSet(ctx, fctx, target, value, ensureI32Condition);
+    if (typedSet !== undefined) return typedSet;
+  }
+
   {
     const pinnedThis =
       target.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined

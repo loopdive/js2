@@ -11,6 +11,7 @@ import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion }
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 import { needsTdzFlag, resolveWasmType, varBindingNeedsExternrefForUndefined } from "../index.js";
+import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import {
   objectLiteralIsStandaloneAnyObjectCarrier,
@@ -141,6 +142,14 @@ export function usageInferredLocalType(ctx: CodegenContext, decl: ts.VariableDec
 }
 
 function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.VariableDeclaration): ValType {
+  // (#3673) Explicit native type annotation — `let x: i32` where
+  // `type i32 = number`. TypeScript never puts an `aliasSymbol` on an alias of
+  // an intrinsic primitive, so the annotation only survives on the type NODE;
+  // see `native-type-annotations.ts` for the measurement that established this.
+  // Checked first: an explicit annotation is a user assertion about the slot's
+  // representation and outranks every inference below it.
+  const nativeLocal = nativeTypeOfDeclaration(ctx.checker, decl);
+  if (nativeLocal) return nativeLocal;
   if (isNullablePrimitiveType(type)) return { kind: "externref" };
   // (#2806) A `var x = (void 0)` binding needs an externref slot (the same one
   // `= undefined` gets), so a later reference assignment isn't coerced to numeric

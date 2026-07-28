@@ -1329,6 +1329,14 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(GC.prefix);
       enc.byte(GC.any_convert_extern);
       break;
+    case "ref.i31":
+      enc.byte(GC.prefix);
+      enc.byte(GC.ref_i31);
+      break;
+    case "i31.get_s":
+      enc.byte(GC.prefix);
+      enc.byte(GC.i31_get_s);
+      break;
     case "extern.convert_any":
       enc.byte(GC.prefix);
       enc.byte(GC.extern_convert_any);

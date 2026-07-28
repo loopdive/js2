@@ -102,7 +102,14 @@ export async function runHarness({ quiet = false } = {}) {
   let result;
   let threw = null;
   try {
-    result = await compile(acornSource, { fileName: "acorn.mjs" });
+    // #3717 — acorn is plain pre-strict-mode JS; compiling it through full
+    // strict-mode TS type-checking surfaces a wall of legitimate-but-irrelevant
+    // strict-null-check diagnostics (verified against real `tsc --strict`, not
+    // a compiler bug). skipSemanticDiagnostics routes around this exact class
+    // of noise, same as the other three acorn dogfood scripts
+    // (acorn-corpus.mjs/acorn-probe.mjs/acorn-test262.mjs) already do — this
+    // harness was the one outlier still doing full semantic checking.
+    result = await compile(acornSource, { fileName: "acorn.mjs", skipSemanticDiagnostics: true });
   } catch (e) {
     threw = e instanceof Error ? `${e.message}` : String(e);
   }

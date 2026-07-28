@@ -234,7 +234,12 @@ async function main(): Promise<void> {
     contract === "named-verified"
       ? Math.max(allow, scopedAllow)
       : effectiveBaselineTrapTolerance(allow, baseOracle, candidateOracle, scopedAllow);
-  const growth = evaluateTrapCategoryGrowth(baseline, candidate, effectiveAllow);
+  // (#3735) before/after snapshots of the same full-corpus root baseline —
+  // exactly the case missingBaselineRowsAreUnknown was designed for; was
+  // never wired into this CLI's own call (already covered by issue-3592/-3596 tests).
+  const growth = evaluateTrapCategoryGrowth(baseline, candidate, effectiveAllow, {
+    missingBaselineRowsAreUnknown: true,
+  });
 
   const fmt = (counts: Record<string, number>) => TRAP_ERROR_CATEGORIES.map((c) => `${c}=${counts[c]}`).join(" ");
   console.log(`[trap-growth] previous: ${fmt(growth.baseCounts)}`);

@@ -371,6 +371,11 @@ type InstrBase =
   | { op: "rethrow"; depth: number }
   | { op: "any.convert_extern" }
   | { op: "extern.convert_any" }
+  // (#3673) i31 small-int boxing — ref.i31: i32 -> (ref i31); i31.get_s:
+  // (ref null i31) -> i32. Abstract-heap-type ref.test/ref.cast reuse the
+  // existing variants with typeIdx = I31_HEAP_TYPE (-20).
+  | { op: "ref.i31" }
+  | { op: "i31.get_s" }
   // Memory load/store (linear memory)
   | { op: "i32.load"; align: number; offset: number }
   | { op: "i32.load8_u"; align: number; offset: number }

@@ -288,8 +288,9 @@ export function emitObjectMethodAsClosure(
     methodTargetsImport: methodFuncIdx < ctx.numImportFuncs,
   });
 
-  // Emit: ref.func $trampoline, struct.new $closure_struct
+  // Emit: ref.func $trampoline, (#3673) $arity, struct.new $closure_struct
   fctx.body.push({ op: "ref.func", funcIdx: trampolineFuncIdx });
+  fctx.body.push({ op: "i32.const", value: userParams.length });
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 
   return { kind: "ref", typeIdx: structTypeIdx };
@@ -568,10 +569,12 @@ function emitLazyClosureCacheAccess(
   cacheGlobalIdx: number,
   trampolineFuncIdx: number,
   structTypeIdx: number,
+  arity: number,
   constructible = false,
 ): void {
   const initBody: Instr[] = [
     { op: "ref.func", funcIdx: trampolineFuncIdx },
+    { op: "i32.const", value: arity }, // (#3673) $arity
     ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
     { op: "struct.new", typeIdx: structTypeIdx },
     { op: "extern.convert_any" },
@@ -604,7 +607,13 @@ export function emitCachedMethodClosureAccess(
   //   ref.is_null
   //   if (then: build closure, store in $cache)
   //   global.get $cache
-  emitLazyClosureCacheAccess(fctx, cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx);
+  emitLazyClosureCacheAccess(
+    fctx,
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    closureStructTypeIdx,
+    ctx.closureInfoByTypeIdx.get(closureStructTypeIdx)?.paramTypes.length ?? 0,
+  );
   return true;
 }
 
@@ -883,7 +892,14 @@ export function emitCachedFuncClosureAccess(
   //   global.get $cache
   //   any.convert_extern
   //   ref.cast (ref $struct)
-  emitLazyClosureCacheAccess(fctx, cacheGlobalIdx, trampolineFuncIdx, structTypeIdx, constructible);
+  emitLazyClosureCacheAccess(
+    fctx,
+    cacheGlobalIdx,
+    trampolineFuncIdx,
+    structTypeIdx,
+    ctx.closureInfoByTypeIdx.get(structTypeIdx)?.paramTypes.length ?? 0,
+    constructible,
+  );
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });
   return { kind: "ref", typeIdx: structTypeIdx };

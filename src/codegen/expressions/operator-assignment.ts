@@ -12,7 +12,7 @@ import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
 import { tryEmitLinearU8ElementCompound } from "../linear-uint8-codegen.js";
-import { emitAnyAdd, emitModulo, emitToInt32 } from "../binary-ops.js";
+import { emitAnyAdd, emitAnyAddFromExternTemps, emitModulo, emitToInt32 } from "../binary-ops.js";
 import { pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -27,6 +27,7 @@ import {
 } from "../index.js";
 import { resolveComputedKeyExpression } from "../literals.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
+import { EMIT_COMPOUND_OP_HANDLES, tryEmitTypedThisCompound } from "../typed-this.js"; // (#3683 S2) typed-`this` compound
 import { reserveMemberGetDispatch } from "../member-get-dispatch.js";
 import {
   emitAlternateStructSetDispatch,
@@ -2147,6 +2148,14 @@ function compilePropertyCompoundAssignment(
   const objType = ctx.checker.getTypeAtLocation(target.expression);
   const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
 
+  // (#3683 S2 branch c1) TYPED-`this` compound assignment inside a twin. Only
+  // entered for operators `emitCompoundOp` actually lowers — its switch has no
+  // `default`, so an unlisted one would strand the read + RHS on the stack.
+  if (EMIT_COMPOUND_OP_HANDLES.has(op)) {
+    const typed = tryEmitTypedThisCompound(ctx, fctx, target, rhs, op, emitCompoundOp);
+    if (typed !== undefined) return typed;
+  }
+
   // (#3496 merge-queue follow-up) `globalThis.<name> op= value` must keep the
   // receiver on the realm-object externref path for both its read and write.
   // The generic compound path resolves TypeScript's structural
@@ -2510,27 +2519,58 @@ function compilePropertyCompoundAssignmentExternref(
   // ("Invalid property name" — the property name string was NaN). Route the
   // `+=` current-value/RHS pair through the runtime-dispatched JS `+`
   // (`__host_add`, the same bridge emitAnyAdd/#2058 uses for identifier
-  // targets). Host-lane only — standalone keeps the numeric path (its extern
-  // property surface is a different, native lowering).
-  if (op === ts.SyntaxKind.PlusEqualsToken && ctx.standalone !== true && ctx.wasi !== true) {
-    const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
-    if (!rhsAny) return null;
-    if (rhsAny.kind !== "externref") {
-      coerceType(ctx, fctx, rhsAny, { kind: "externref" });
+  // targets).
+  //
+  // (#3673) …and the STANDALONE/WASI lane now too. #2850 left it out ("its
+  // extern property surface is a different, native lowering"), so the exact
+  // symptoms #2850 names were still live standalone — compiled acorn's
+  // `state.lastStringValue += codePointToString(state.lastIntValue)` NaN'd, so
+  // every named capture group keyed the SAME `groupNames` entry and
+  // `/(?<year>\d{4})-(?<month>\d{2})/` failed with "Duplicate capture group
+  // name". Standalone has no `__host_add` import; `emitAnyAddFromExternTemps`
+  // is the in-module §13.15.3 dispatch (`__to_primitive` → typeof-string test →
+  // `__str_concat` or `f64.add`) that `emitAnyAdd` already builds for this lane,
+  // split out so a caller with pre-evaluated operands can reach it.
+  if (op === ts.SyntaxKind.PlusEqualsToken) {
+    const noJsHostAdd = ctx.standalone === true || ctx.wasi === true;
+    if (noJsHostAdd) {
+      // Current value is on the stack (from the read above) — park it, then
+      // evaluate the RHS, so both operands are temps the dispatch can re-read.
+      const lTmp = allocLocal(fctx, `__cmpd_padd_l_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: lTmp });
+      const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
+      if (!rhsAny) return null;
+      if (rhsAny.kind !== "externref") {
+        coerceType(ctx, fctx, rhsAny, { kind: "externref" });
+      }
+      const rTmp = allocLocal(fctx, `__cmpd_padd_r_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: rTmp });
+      const addType = emitAnyAddFromExternTemps(ctx, fctx, lTmp, rTmp);
+      // The no-native-strings fallback yields f64; box it so the write-back
+      // below (which stores an externref) stays uniform.
+      if (addType.kind !== "externref") {
+        coerceType(ctx, fctx, addType, { kind: "externref" });
+      }
+    } else {
+      const rhsAny = compileExpression(ctx, fctx, rhs, { kind: "externref" });
+      if (!rhsAny) return null;
+      if (rhsAny.kind !== "externref") {
+        coerceType(ctx, fctx, rhsAny, { kind: "externref" });
+      }
+      const hostAddIdx = ensureLateImport(
+        ctx,
+        "__host_add",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const finalAddIdx = ctx.funcMap.get("__host_add") ?? hostAddIdx;
+      if (finalAddIdx === undefined) {
+        reportError(ctx, target, "Missing __host_add for compound externref property assignment");
+        return null;
+      }
+      fctx.body.push({ op: "call", funcIdx: finalAddIdx });
     }
-    const hostAddIdx = ensureLateImport(
-      ctx,
-      "__host_add",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    flushLateImportShifts(ctx, fctx);
-    const finalAddIdx = ctx.funcMap.get("__host_add") ?? hostAddIdx;
-    if (finalAddIdx === undefined) {
-      reportError(ctx, target, "Missing __host_add for compound externref property assignment");
-      return null;
-    }
-    fctx.body.push({ op: "call", funcIdx: finalAddIdx });
     const anyResultLocal = allocLocal(fctx, `__cmpd_pany_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: anyResultLocal });
 

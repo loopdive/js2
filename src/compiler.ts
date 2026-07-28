@@ -1104,7 +1104,10 @@ function runPipeline(input: PipelineInput): CompileResult {
   let wat = "";
   if (emitWatOutput) {
     try {
-      wat = emitWat(mod);
+      wat = emitWat(
+        mod,
+        options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
+      );
     } catch (e) {
       pushSourceAnchoredDiagnostic(
         errors,

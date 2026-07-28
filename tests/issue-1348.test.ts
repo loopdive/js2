@@ -170,11 +170,24 @@ describe("#1348 class static initialization and private fields", () => {
     expect(ex.test()).toBe(42);
   });
 
-  it("private in is a brand check and does not throw on wrong receiver", async () => {
+  it("private in is a brand check: false for a wrong-class object, TypeError for a non-object", async () => {
+    // (#3714) `#x in obj` per ES2022 §12.10.3 step 5: `false` for any object
+    // that isn't an `A` instance, but a **TypeError** when `obj` isn't an
+    // Object at all (verified against real V8/Node — `null` throws, it does
+    // not silently evaluate to `false`). This test previously asserted the
+    // opposite for `null` ("does not throw on wrong receiver"); that was the
+    // same spec misreading #3714 found and fixed in binary-ops-in.ts.
     const ex = await compileToWasm(`
       class A {
         #x: number = 1;
         has(o: any): boolean { return #x in o; }
+        hasCaught(o: any): number {
+          try {
+            return #x in o ? 1 : 0;
+          } catch (e) {
+            return e instanceof TypeError ? 2 : 3;
+          }
+        }
       }
       class B {
         #x: number = 2;
@@ -182,10 +195,10 @@ describe("#1348 class static initialization and private fields", () => {
       export function test(): number {
         const a = new A();
         const b = new B();
-        return (a.has(a) ? 1 : 0) + (a.has(b) ? 10 : 0) + (a.has(null) ? 100 : 0);
+        return (a.has(a) ? 1 : 0) + (a.has(b) ? 10 : 0) + a.hasCaught(null) * 100;
       }
     `);
-    expect(ex.test()).toBe(1);
+    expect(ex.test()).toBe(201);
   });
 
   it("private field read rejects unrelated class with the same private name", async () => {

@@ -37,6 +37,16 @@ loc-budget-allow:
   - src/codegen/expressions/assignment.ts
   - src/codegen/expressions/calls.ts
   - src/import-resolver.ts
+  # calls-closures.ts +20: the #1400 closure-call fix — resolve the callee's
+  # module global from its OWN declaration (moduleGlobalAtIdentifier) before
+  # the process-wide bare-name map, and decline dispatch when the resolved
+  # global is numeric (a number cannot carry a closure; loading it into the
+  # __fn_wrap_* self slot produced the invalid local.tee f64-vs-ref that
+  # blocked the ESLint graph). Semantic fix validated by the equivalence
+  # shards going green at this head; net-zero golf would mean re-touching
+  # just-proven dispatch code, so the growth is accepted and extraction is
+  # deferred to the consolidation plan.
+  - src/codegen/expressions/calls-closures.ts
 func-budget-allow:
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
@@ -54,6 +64,17 @@ func-budget-allow:
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/statements/variables.ts::compileVariableStatement
   - src/compiler.ts::runPipeline
+  # compileLiftedClosureBody +15: reserve compiler identities for nested
+  # function declarations before body statements compile — the #1400 fix for
+  # esquery's `function m(){}` colliding with the `ms` package's numeric `m`
+  # ("already compiled" false positive skipped the body). Same reviewed slice,
+  # extraction deferred to the consolidation plan.
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  # compileArrayMethodCall +10: declaration-scoped receiver resolution
+  # (moduleGlobalAtIdentifier) replacing the process-wide bare-name map, which
+  # proxied ms's numeric `var s = 1000` into esquery's lexical array `s`
+  # receiver slot (f64-vs-ref validation failure blocking the ESLint graph).
+  - src/codegen/array-methods.ts::compileArrayMethodCall
 # moduleGlobalForSymbol/functionDeclKeys need raw checker symbol identity for
 # same-named module-global disambiguation (above what ctx.oracle expresses).
 oracle-ratchet-allow:

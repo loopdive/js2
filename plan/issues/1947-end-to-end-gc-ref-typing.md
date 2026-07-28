@@ -4,7 +4,7 @@ title: "End-to-end GC-ref typing — stop externref laundering inside the module
 status: backlog
 sprint: Backlog
 created: 2026-06-10
-updated: 2026-06-10
+updated: 2026-07-27
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -52,6 +52,30 @@ Architect spec first (this is a representation decision):
    mechanics) — each removal is measurable.
 4. Re-measure Binaryen -O3 effect after: expect cast removal + devirt to
    start firing (compare instruction counts on the review's probe corpus).
+
+## Evidence update (2026-07-27, from #3673/#3683)
+
+Step 4 of the approach above — "re-measure Binaryen -O3 effect after;
+expect cast removal + devirt to start firing" — has now been measured
+*incrementally*, and it confirms the thesis of this issue:
+
+| tree | Binaryen `-O3` worth |
+| --- | --- |
+| before #3683 (round 8-era) | ~0 % (flat; measured twice) |
+| after #3683 S2 (typed-`this` twins) | ~5 % |
+| after #3683 S3 (direct calls between twins) | **7.1 %** |
+
+Each step that removed externref laundering on ONE path (`this.field`
+reads, then twin-to-twin calls) handed Binaryen more to work with,
+exactly as predicted. The shipped standalone artifact now enables `-O3`
+(#3673 round 30): binary 1,808 KB → 1,216 KB, deep-warm parse 0.70 →
+0.62 ms.
+
+`#3685` (generic receiver monomorphization) is the natural continuation
+on the *typing* side — it proves arbitrary receivers are concrete struct
+instances so their reads/calls stop laundering through externref — while
+this issue remains the home for the boundary discipline and the non-null
+param half.
 
 ## Acceptance criteria
 

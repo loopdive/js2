@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 417b718f-2c4e-4164-9782-006e2e33f7ff
-  modified: 2026-07-25T02:04:53.189Z
+  modified: 2026-07-25T22:53:44.660Z
 ---
 
 **`verifyProperty` reports pass for ANY expectation — on BOTH lanes, via two different
@@ -23,6 +23,26 @@ all four descriptor checks behind `__hasOwnProperty(desc, <field>)` → all four
 `src/codegen/object-runtime.ts` ~2630-2677. The a1 gate survives only because `obj` is
 usually a builtin fn (the #2896 `__builtinfn_get_meta` arm answers correctly); when `obj` is
 itself a literal, a CORRECT descriptor **fails** — same cause, opposite direction.
+
+**UPDATE 2026-07-26 — both lanes re-measured; root cause A's reach is UNCHANGED.**
+Standalone A/B on one SHA (600-file sample, seed 20260725): arm A stock **156 pass**; arm A2
+(instrumented, detectors REMOVED) reproduces arm A **exactly** at 156/0 — so the flips are
+attributable to the detector, not the instrumentation; arm B (detectors on) **152 fail / 4 pass**.
+⇒ **152/156 (97.4 %) of sampled standalone passes are vacuous**, superseding the stale
+158/161. **#3592 and #3468 did NOT reduce root cause A's reach.** Quote with the denominator;
+does not scale to the corpus.
+
+**HOST arm is FIXED and stakeholder-approved to land** (PR #3635, `#3603` S1: replay
+host-side vec-mirror mutations). Independently confirmed by a second harness: `uncurry.mts`
+host **4/10 → 0/10** *for the spellings it covers* (`push` length-changing, `join`/
+`hasOwnProperty` read-only; **not** length-preserving `sort`/`reverse`/`fill`/`copyWithin`/
+`arr[i]=x`). The resulting **−989 host passes is HONEST de-inflation, not a regression** —
+proven by evaluating the predicate directly with S1 applied vs reverted: **bit-identical**, so
+S1 changes only whether a failure is *reported*. It also exposed two genuine pre-existing
+compiler bugs, filed as **#3646** (`gOPD` → null for a class method when the class has
+computed-name fields, while `hasOwnProperty` says true) and **#3647**
+(`propertyIsEnumerable` true while `gOPD().enumerable` false). See
+[[reference_f1_honest_floor_deinflation_landing_recipe]].
 
 **Root cause B — HOST.** The checks DO run, but the uncurried `__push` is a **silent no-op**,
 so `failures.length === 0` and the terminal `assert(false, __join(...))` never fires. Three

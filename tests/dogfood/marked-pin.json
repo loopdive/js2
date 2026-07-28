@@ -1,0 +1,10 @@
+{
+  "name": "marked",
+  "version": "18.0.2",
+  "tarball": "fixtures/marked-18.0.2.tgz",
+  "registryTarball": "https://registry.npmjs.org/marked/-/marked-18.0.2.tgz",
+  "shasum": "180cb158a2d2dc377821cfb088a10ca1b5630ef0",
+  "integrity": "sha512-NsmlUYBS/Zg57rgDWMYdnre6OTj4e+qq/JS2ot3KrYLSoHLw+sDu0Nm1ZGpRgYAq6c+b1ekaY5NzVchMCQnzcg==",
+  "entryModule": "package/lib/marked.esm.js",
+  "_note": "Pinned per the same project-lead decision as acorn (#1710, 2026-05-29): acquire via a pinned npm-pack tarball, NOT a vendored source copy. The tarball is committed as a fixture so the harness reproduces from a clean checkout with NO run-time network. shasum is the canonical npm sha1 (`npm view marked@18.0.2 dist.shasum`); integrity is the canonical npm sha512 (`dist.integrity`). To refresh: `npm pack marked@<ver>`, update this file, re-run setup. The SAME tarball is the compiled-marked source AND the node-marked differential oracle, so any HTML-output divergence is a compiler bug, never version skew. lib/marked.esm.js is a single self-contained bundle (no imports) — same shape as acorn's dist/acorn.mjs, chosen for the same reason."
+}

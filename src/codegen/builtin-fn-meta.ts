@@ -40,6 +40,7 @@
  */
 import type { Instr } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
+import { closureArityField } from "./closures/funcref-wrapper-types.js";
 
 /**
  * Spec `{name, length}` for the builtin STATIC method closures wired in
@@ -252,8 +253,10 @@ export function ensureBuiltinFnMetaType(
     kind: "struct",
     name: `__builtinfn_meta_${typeIdx}_struct`,
     fields: [
-      // Field 0 must mirror the supertype exactly (same type + mutability).
+      // Field 0 must mirror the supertype exactly (same type + mutability) —
+      // as must the #3673 $arity slot at index 1.
       { name: "func", type: { kind: "funcref" as const }, mutable: false },
+      closureArityField(),
       // Deleted-bits mask: bit 0 = "name" deleted, bit 1 = "length" deleted.
       { name: "bfnstate", type: { kind: "i32" as const }, mutable: true },
       // Stable per-module metadata identity. Structurally-equivalent meta
@@ -283,6 +286,12 @@ export function pushBuiltinFnClosureValueInstrs(
 ): Instr[] {
   const isMeta = ctx.builtinFnMetaByTypeIdx?.has(closure.type.typeIdx) ?? false;
   const instrs: Instr[] = [{ op: "ref.func", funcIdx: closure.funcIdx }];
+  // (#3673) $arity field 1 — the builtin's spec `length` when meta-typed,
+  // else the registered closure signature's param count.
+  const arity = isMeta
+    ? (ctx.builtinFnMetaByTypeIdx?.get(closure.type.typeIdx)?.length ?? 0)
+    : (ctx.closureInfoByTypeIdx.get(closure.type.typeIdx)?.paramTypes.length ?? 0);
+  instrs.push({ op: "i32.const", value: arity });
   if (isMeta) {
     instrs.push({ op: "i32.const", value: 0 }, { op: "i32.const", value: closure.type.typeIdx });
   }

@@ -1,10 +1,29 @@
-# acorn dogfood harness (#1710)
+# Dogfood harnesses — pinned real-package differential testing
 
-A committed, reproducible harness that mechanizes the acorn self-hosting
-dogfood loop: **compile acorn with js2wasm → validate the Wasm → run it →
-differentially diff its AST against node-acorn**. It turns the previously
-throwaway `.tmp/acorn/probe.mjs` scratch work into data that #1711 (triage)
-buckets and that #1712 (acceptance gate) reuses.
+Committed, reproducible harnesses that compile a real, pinned npm package
+with js2wasm, validate the resulting Wasm, run it, and differentially diff
+its output against the SAME package running natively under Node (zero
+version skew — any divergence is a compiler bug, never an oracle mismatch).
+Distinct from the broader `compileProject`-based `npm-library-support` goal
+(lodash, axios, react, hono, eslint, prettier, ...): these harnesses
+specifically target a **single pre-bundled dist file**, so there's no
+multi-file module-resolution graph in the way of isolating compiler bugs.
+
+Two packages so far, plus one deeper conformance check on acorn:
+
+| package | issue | entry file | oracle diff |
+| --- | --- | --- | --- |
+| **acorn** (JS parser) | #1710 | `dist/acorn.mjs` | structural AST diff (`ast-diff.mjs`) |
+| **marked** (Markdown→HTML) | #3716 | `lib/marked.esm.js` | plain string equality (HTML output) |
+| **acorn official suite** | #3729 | `dist/acorn.mjs` | acorn's own real `test/tests*.js` (~3,500 cases) |
+
+## acorn (#1710)
+
+Mechanizes the acorn self-hosting dogfood loop: **compile acorn with
+js2wasm → validate the Wasm → run it → differentially diff its AST against
+node-acorn**. It turns the previously throwaway `.tmp/acorn/probe.mjs`
+scratch work into data that #1711 (triage) buckets and that #1712
+(acceptance gate) reuses.
 
 ## Invoke
 
@@ -66,9 +85,93 @@ npm view acorn@<version> dist.shasum dist.integrity   # canonical values to pin
 The oracle dependency is the SAME tarball, so there is no separate `acorn`
 devDependency to keep in sync.
 
-## Scope
+## Scope (acorn)
 
 This harness does **not** fix any compiler bug — pure tooling. Compiler defects
 it surfaces are recorded in the report for #1711 to triage. Standalone
 (`--target wasi`) execution of compiled acorn is an explicit follow-up
 (a #1711 child), not part of this harness.
+
+## marked (#3716)
+
+Same loop, second package, deliberately simpler: marked's observable
+surface is a single HTML **string** (not an AST object graph), so plain
+string equality replaces `ast-diff.mjs`'s structural diff — no marshalling
+layer needed to compare results.
+
+```bash
+pnpm run dogfood:marked          # run the loop, print a human summary, write the JSON report
+npx tsx tests/dogfood/marked-harness.mjs --json   # machine output to stdout
+DOGFOOD_MARKED=1 pnpm test -- tests/dogfood/marked.test.ts   # vitest contract wrapper
+```
+
+Report: `tests/dogfood/report/marked-surface.json` (gitignored). Pin:
+`marked-pin.json` (same acquisition discipline as acorn — refresh via
+`npm pack marked@<version>` + `npm view marked@<version> dist.shasum
+dist.integrity`).
+
+**Current state (first run, 2026-07-27)**: red surface — `marked` does not
+compile at all yet. Root-caused to #3715 (TypeScript's "evolving array
+type" inference — `let x = []` later populated via `.push()` — is not
+implemented in the checker, so any array of this shape stays typed
+`never[]` forever). This harness's job was to surface that, not fix it;
+see #3715 for the minimal repro and scope. Once that lands, re-run
+`pnpm run dogfood:marked` for the first real run+diff data.
+
+This harness does **not** fix any compiler bug — pure tooling, same as
+acorn's scope note above.
+
+## acorn official suite (#3729)
+
+The other acorn/marked harnesses above diff compiled output against a small,
+hand-written fixture corpus. This one instead runs acorn's **own real test
+suite** (`test/tests*.js`, ~3,500 cases at the pinned version) against
+compiled acorn — its own authoritative "does this parser actually work"
+check, not an approximation of it.
+
+npm does not publish acorn's `test/` directory (stripped by its `files`
+field — confirmed empty on the committed dist tarball), so unlike the dist
+module, the test suite must be acquired from source:
+`setup-acorn-test-suite.mjs` does a shallow `git clone` at a pinned exact
+commit SHA (`acorn-test-suite-pin.json`), verifies the clone's HEAD against
+the pin, then stitches the already sha1-verified dist bytes from
+`setup-acorn.mjs`'s pinned tarball into the clone's `acorn/dist/` so the
+test files' own `require("../acorn")` resolves — without running acorn's
+real rollup build. **This is the one dogfood harness that needs run-time
+network** (a real difference from the others' fully offline tarball
+extraction).
+
+acorn's `test/driver.js` exposes `runTests(config, callback)` fully
+decoupled from any specific acorn build — it just needs a `parse(code,
+options)` function — so the real driver + real test files run unmodified,
+just pointed at compiled-acorn's `parse` instead of native.
+
+```bash
+pnpm run dogfood:acorn-official-suite                       # run the loop, print a human summary, write the JSON report
+npx tsx tests/dogfood/acorn-official-suite.mjs --json        # machine output to stdout
+DOGFOOD_ACORN_OFFICIAL=1 pnpm test -- tests/dogfood/acorn-official-suite.test.ts   # vitest contract wrapper
+```
+
+Report: `tests/dogfood/report/acorn-official-suite.json` (gitignored).
+
+**Current state (2026-07-28): 3,507 / 3,518 passed (99.7%)**. Getting an
+accurate number required fixing a harness-side bug first: compiled-acorn's
+`throw` lowers to a bare `WebAssembly.Exception` with zero JS-reflectable
+payload, which initially made the pass rate look like 55.2% (every
+correctly-thrown syntax error was indistinguishable from "didn't throw at
+all"). Routing through `extractWasmExceptionMessage`
+(`tests/test262-runner.ts`, the project's established #2962 mechanism)
+fixed that. The 11 real residual failures are filed separately: **#3730**
+(comment-collection `onComment` arrays lost across a compiled-internal
+closure, 6 cases) and **#3728** (astral/surrogate-pair Unicode identifier
+character misclassification, 4 cases, plus one unrelated narrow oddity).
+
+Unlike the other acorn/marked vitest wrappers (which only assert the
+harness ran to completion), this one's heavy test gates on a real
+**regression floor** (`results.passed >= 3507` at `results.total ===
+3518`) — this suite is authoritative enough that a drop is worth failing
+CI over. Raise the floor after a genuine fix improves the pass count, never
+lower it to paper over a regression.
+
+This harness does **not** fix any compiler bug — pure tooling, same as the
+other harnesses' scope notes above.

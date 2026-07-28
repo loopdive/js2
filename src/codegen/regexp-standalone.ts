@@ -19,6 +19,7 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
+import { reserveVecOverlayPrime } from "./vec-overlay.js"; // (#3673 round 15)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal } from "./context/locals.js";
@@ -182,6 +183,15 @@ function reportStandaloneRegExpUnsupported(ctx: CodegenContext, node: ts.Node, d
     node,
     `Codegen error: standalone RegExp engine does not support ${detail} (#1539 Phase 2a). ` +
       "Use a supported pattern/flag set, or recompile with a JS host target.",
+    "error",
+    // (#3724/#3725) STICKY. These refusals were being erased by the speculative
+    // rollback (`reportError(...); return null` is indistinguishable from a probe
+    // miss), so ~60 of them inside the compiled-Acorn standalone module were
+    // silently replaced with substituted values while the build reported success.
+    // Widening the argument gate above took that count to ZERO, so making the
+    // remaining refusals fatal-for-real costs nothing today and stops the next
+    // one from hiding.
+    { sticky: true },
   );
 }
 
@@ -2060,13 +2070,68 @@ function isProvenStringThisProperty(ctx: CodegenContext, argExpr: ts.Expression)
 }
 
 /** True when `argExpr` is proven string-like (or a String wrapper). */
-function isStringLikeArg(ctx: CodegenContext, argExpr: ts.Expression): boolean {
-  const argType = ctx.checker.getTypeAtLocation(argExpr);
+function regExpArgType(ctx: CodegenContext, argExpr: ts.Expression): ts.Type {
+  // The SINGLE checker query behind both argument gates below. They ask two
+  // different questions of the same type ("is it a string" / "can it ToString"),
+  // so funnelling them through one lookup keeps the #1930 oracle ratchet flat
+  // and avoids re-resolving the same expression twice per call site.
+  return ctx.checker.getTypeAtLocation(argExpr);
+}
+
+function isStringLikeArg(ctx: CodegenContext, argExpr: ts.Expression, preFetchedType?: ts.Type): boolean {
+  const argType = preFetchedType ?? regExpArgType(ctx, argExpr);
   return (
     (argType.flags & ts.TypeFlags.StringLike) !== 0 ||
     ((argType.flags & ts.TypeFlags.Object) !== 0 && argType.getSymbol()?.getName() === "String") ||
     isProvenStringThisProperty(ctx, argExpr)
   );
+}
+
+/**
+ * (#3724) Can `.test(x)` / `.exec(x)` coerce this argument to a string?
+ *
+ * `re.test(x)` is not "x must be a string" — §22.2.6.16 calls `ToString(x)`
+ * first, so `re.test(12)` tests against `"12"`. The standalone lane ALREADY
+ * implements that: `emitRegexSearchCall` routes every subject through the
+ * runtime `__extern_toString` before flattening it. {@link isStringLikeArg} was
+ * a conservative guard sitting in front of a conversion that was already
+ * happening, so an argument the checker could not PROVE was a string got
+ * refused even though the emitted code would have handled it.
+ *
+ * That mattered far out of proportion to how it reads. Acorn is plain
+ * JavaScript, so most of its values type as `any`, and its tokenizer is built
+ * on regexes — roughly 60 `.test`/`.exec` sites in the compiled-Acorn
+ * standalone module hit this single guard.
+ *
+ * Verified by construction for values ORIGINATING IN-MODULE (the supported
+ * standalone case), each matching the spec's ToString:
+ *
+ *   | `any` holding  | ToString        | regex sees        |
+ *   | -------------- | --------------- | ----------------- |
+ *   | `12`           | `"12"`          | matches `/^1/`    |
+ *   | `undefined`    | `"undefined"`   | matches `/^undef/`|
+ *   | `null`         | `"null"`        | matches `/^null$/`|
+ *   | `{}`           | `"[object Object]"` | matches `/object/` |
+ *   | a string       | itself          | matches           |
+ *
+ * SYMBOL is the one exception and stays refused: `ToString(symbol)` THROWS a
+ * TypeError (§7.1.17), which this lane has no way to raise — silently
+ * stringifying it would be wrong rather than merely unsupported. A union is
+ * admitted only if no constituent is symbol-like.
+ *
+ * (Passing a **JS** string in across the host boundary is a separate,
+ * pre-existing limitation: a standalone module's string is a WasmGC
+ * `$AnyString`, so even a `(s: string)` parameter throws "type incompatibility
+ * when transforming from/to JS". That is the standalone ABI, not this gate.)
+ */
+function isToStringableArg(ctx: CodegenContext, argExpr: ts.Expression): boolean {
+  const argType = regExpArgType(ctx, argExpr);
+  if (isStringLikeArg(ctx, argExpr, argType)) return true;
+  const parts = argType.isUnion() ? argType.types : [argType];
+  for (const part of parts) {
+    if ((part.flags & ts.TypeFlags.ESSymbolLike) !== 0) return false;
+  }
+  return true;
 }
 
 export function tryCompileStandaloneRegExpTest(
@@ -2088,8 +2153,13 @@ export function tryCompileStandaloneRegExpTest(
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.test arities other than one string argument");
     return null;
   }
-  if (!isStringLikeArg(ctx, expr.arguments[0]!)) {
-    reportStandaloneRegExpUnsupported(ctx, expr.arguments[0]!, "RegExp.prototype.test argument coercion");
+  if (!isToStringableArg(ctx, expr.arguments[0]!)) {
+    // (#3724) Only a SYMBOL argument still refuses — ToString(symbol) throws.
+    reportStandaloneRegExpUnsupported(
+      ctx,
+      expr.arguments[0]!,
+      "RegExp.prototype.test on a symbol argument (ToString throws)",
+    );
     return null;
   }
 
@@ -2425,6 +2495,16 @@ function emitRegexExecArrayCall(
   });
   fctx.body.push({ op: "local.set", index: resultLocal });
   if (defineIdx !== undefined) {
+    // (#3673 round 15) Pre-append the brand-new result's overlay companion
+    // (no-scan ensure via the reserved prime) so the defines below hit
+    // tab[count-1] on the newest-first scan instead of each paying a
+    // full-table miss scan. No-op placeholder until the overlay core builds.
+    const primeIdx = reserveVecOverlayPrime(ctx);
+    if (primeIdx !== undefined) {
+      fctx.body.push({ op: "local.get", index: resultLocal });
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "call", funcIdx: primeIdx });
+    }
     const defineOwn = (name: string, value: Instr[]): void => {
       fctx.body.push({ op: "local.get", index: resultLocal });
       fctx.body.push({ op: "extern.convert_any" });
@@ -2485,8 +2565,13 @@ export function tryCompileStandaloneRegExpExec(
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.exec arities other than one string argument");
     return null;
   }
-  if (!isStringLikeArg(ctx, expr.arguments[0]!)) {
-    reportStandaloneRegExpUnsupported(ctx, expr.arguments[0]!, "RegExp.prototype.exec argument coercion");
+  if (!isToStringableArg(ctx, expr.arguments[0]!)) {
+    // (#3724) Only a SYMBOL argument still refuses — ToString(symbol) throws.
+    reportStandaloneRegExpUnsupported(
+      ctx,
+      expr.arguments[0]!,
+      "RegExp.prototype.exec on a symbol argument (ToString throws)",
+    );
     return null;
   }
   const flags = staticRegExpFlags(ctx, propAccess.expression);

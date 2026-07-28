@@ -152,11 +152,12 @@ import { ensureNativeIteratorRuntime, fillNativeIteratorLateArms } from "./itera
 import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
+import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
 import { fillSetRecFieldGetters } from "./collections-es2025.js"; // (#3172)
 import { fillIterHofSteppers } from "./iter-hof-native.js"; // (#2903)
 import { fillLazyIterLadderArms } from "./iter-lazy-native.js"; // (#2903 R3)
 import { fillMemberSetDispatch, reserveVecFieldMaterializers } from "./member-set-dispatch.js";
-import { fillMemberGetDispatch } from "./member-get-dispatch.js";
+import { fillMemberGetDispatch, fillTypedMemberGetF64Dispatch } from "./member-get-dispatch.js";
 import { emitUndefined, ensureGetUndefined, reconcileNativeStrFinalizeShift } from "./expressions/late-imports.js";
 import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
@@ -186,6 +187,7 @@ import {
   fillFnctorPrototypeDispatchArms,
   fillExternIsArray,
   fillProxyDispatch,
+  unshiftExternGetProtoCacheArm,
 } from "./object-runtime.js";
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
@@ -345,6 +347,8 @@ import {
   resolveSameShapeFieldNameCollisions,
 } from "./struct-field-exports.js"; // (#3272) extracted verbatim
 import { analyzeBooleanPropertyNames, recoverBooleanStructFieldBrands } from "./struct-field-boolean-brand.js";
+import { analyzeNumericPropertyNames } from "./numeric-property-analysis.js"; // (#3683 S4a)
+import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,
   emitDeferredWasiHelpers,
@@ -2995,6 +2999,29 @@ export function generateModule(
   // byte-identical. Side-effect free; safe to run unconditionally (no fnctor
   // `new` sites ⇒ empty result ⇒ no-op).
   ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, ast.sourceFile);
+  // (#3673) Names the source itself defines as function-valued members, so the
+  // guarded native-string method lowering can tell a genuine `String.prototype`
+  // call apart from a same-named USER method on an object receiver. Cheap
+  // single walk; an empty result restores the previous lowering exactly.
+  ctx.userMethodNames = collectUserMethodNames(ast.sourceFile);
+  // (#3683 S4a) Whole-program numeric-property verdict, consumed by
+  // `deriveFnctorFields` to give a fnctor field a PHYSICAL f64 slot. MUST run
+  // before `reserveFnctorStructTypes` below — that is what derives the struct
+  // shapes. Standalone-only: the promotion's ToNumber-coercing write is a
+  // deliberate narrowing that the host lane (arbitrary JS callers) does not take.
+  // #2847's boolean verdict is recomputed here rather than read from
+  // `ctx.booleanPropertyNames` (assigned much later) so the exclusion is exact
+  // without reordering an established pass.
+  if (ctx.standalone) {
+    ctx.numericPropertyNames = analyzeNumericPropertyNames(
+      {
+        oracle: ctx.oracle,
+        fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
+        excludeNames: analyzeBooleanPropertyNames(ctx, [ast.sourceFile]),
+      },
+      [ast.sourceFile],
+    );
+  }
   // (#3057) Pre-scan for a dynamic `new <ctorVar>(buffer)` construct so the
   // runtime-kind element byte codec on the generic index path (`ta[i]` / `ta[i]=v`
   // for an `any` receiver) is enabled in helper functions compiled BEFORE the
@@ -3787,6 +3814,12 @@ export function generateModule(
     // reserved a dispatcher (standalone/wasi only).
     fillClosedMethodDispatch(ctx);
 
+    // (#3683 S3) Fill the reserved `__dc_<F>_<m>_<n>` direct-call trampolines
+    // now that every typed twin exists. Runs AFTER the closed-method fill
+    // because a trampoline whose twin did not materialize degrades to that
+    // dispatcher. Read-only over funcMap.
+    fillDirectCallTrampolines(ctx);
+
     // (#3125) Fill the reserved `__promise_has_callable_then` predicate — the
     // native-Promise resolve path's §27.2.1.3.2 Get("then")+IsCallable test —
     // from the SAME struct/closure collectors as the `__call_m_then_vararg`
@@ -3820,12 +3853,21 @@ export function generateModule(
     // `this.lastTokEnd`) resolving to `__extern_get` → `undefined` (acorn 9th wall).
     fillMemberGetDispatch(ctx);
 
+    // (#3673) Fill the TYPED `__get_member_<name>__f64` twins — numeric-slot
+    // hits collapse to a bare `struct.get` arm; misses fall back to the
+    // generic dispatcher body filled just above.
+    fillTypedMemberGetF64Dispatch(ctx);
+
     // Closed compiler structs are not `$Object` hash maps. Fill the native
     // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructExternGetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
+
+    // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
+    // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
+    unshiftExternGetProtoCacheArm(ctx);
 
     // (#1904) Fill the standalone native Array.isArray predicate after all
     // module-local array carriers have been registered.
@@ -5980,6 +6022,12 @@ export function generateMultiModule(
     // registered when the dispatcher is reserved.
     fillClosedMethodDispatch(ctx);
 
+    // (#3683 S3) Fill the reserved `__dc_<F>_<m>_<n>` direct-call trampolines
+    // now that every typed twin exists. Runs AFTER the closed-method fill
+    // because a trampoline whose twin did not materialize degrades to that
+    // dispatcher. Read-only over funcMap.
+    fillDirectCallTrampolines(ctx);
+
     // (#3493) compileMulti shares the same property-access lowering as the
     // single-source path, so a dynamic property write/read can reserve one of
     // these deferred dispatchers here too. Leaving its placeholder body as
@@ -5990,12 +6038,17 @@ export function generateMultiModule(
     // reserve phase, so these fills do not mutate function indices.
     fillMemberSetDispatch(ctx);
     fillMemberGetDispatch(ctx);
+    fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
 
     // Mirror the single-source closed-struct own-property finalizer.
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructExternGetArms(ctx);
     fillFnctorPrototypeDispatchArms(ctx);
+
+    // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
+    // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
+    unshiftExternGetProtoCacheArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
     // numeric reads through an externref (for example `globalThis.logs[i]`).
@@ -6051,6 +6104,24 @@ export function generateMultiModule(
 
     // Emit __call_toString/__call_valueOf exports for ToPrimitive dispatch.
     emitToPrimitiveMethodExports(ctx);
+
+    // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
+    // `__class_to_primitive` driver bodies now that `__extern_length` /
+    // `__extern_get_idx` (filled by fillExternGetIdxVecArms above) and the
+    // `__call_valueOf`/`__call_toString` dispatchers (emitToPrimitiveMethodExports
+    // just above) are registered. Mirrors the single-module `generateModule`
+    // pipeline, which called these two fills but this multi-file path never
+    // did — every standalone multi-file compile reaching `__to_primitive`'s
+    // array/class arms (e.g. `TypedArray.prototype.set(arr, offset)` where
+    // `offset` needs ToNumber on a plain object or array) left both driver
+    // placeholders as their bare `unreachable` stub, so a would-be-catchable
+    // coercion crashed the whole module with an uncatchable Wasm trap instead
+    // of the value it should have produced. No-op when neither driver was
+    // reserved (`ctx.arrayToPrimitiveReserved`/`ctx.classToPrimitiveReserved`
+    // unset) — byte-identical for modules that never reach `__to_primitive`'s
+    // array/class-instance arms.
+    fillArrayToPrimitive(ctx);
+    fillClassToPrimitive(ctx);
 
     // (#1716) Emit __call_@@toPrimitive(self, hint) for runtime ToPrimitive
     // dispatch of a class's [Symbol.toPrimitive] *method* on opaque structs.
@@ -6517,9 +6588,17 @@ const NATIVE_TYPE_MAP: Record<string, ValType> = {
  * alias symbol. Returns the corresponding Wasm ValType, or null if not a native
  * type annotation.
  *
- * TypeScript preserves the alias symbol on types at the usage site, so
- * `let x: i32` where `type i32 = number` will have aliasSymbol.name === "i32"
- * even though the resolved type is `number`.
+ * **(#3673) This premise is false and this function can never fire.**
+ * TypeScript populates `aliasSymbol` for aliases of OBJECT and UNION types,
+ * but not for an alias of an intrinsic primitive: `type i32 = number` resolves
+ * to the shared `numberType`, which carries no alias identity (verified on TS
+ * 5.9.3; instrumenting a full compile of an `i32`-annotated program gave 84
+ * calls, 0 hits, and no alias name ever observed). The live resolution now
+ * happens syntactically, from the declaration's TYPE NODE — see
+ * `native-type-annotations.ts`. This function is kept because it is on the
+ * `resolveWasmType` fast path and returning `null` there is exactly the
+ * historical behaviour; do NOT "fix" it by widening the type test, and do not
+ * add new callers.
  */
 export function resolveNativeTypeAnnotation(tsType: ts.Type): ValType | null {
   const aliasName = tsType.aliasSymbol?.name;

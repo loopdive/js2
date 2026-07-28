@@ -94,6 +94,15 @@ export function __acorn_function_body_canary() {
     fileName: "acorn.mjs",
     skipSemanticDiagnostics: true,
     target: "standalone",
+    // (#3673 round 30) Dogfood the SHIPPED configuration: the CLI defaults to
+    // `-O3` (cli.ts "Builds opt in by default at -O3"), so an unoptimized
+    // artifact here measured something nobody ships. Binaryen is worth a
+    // measured 7.1% on this artifact post-#3683-S3 (it was ~0% pre-S2 — the
+    // monomorphic direct calls are what give it something to inline), and it
+    // also shrinks the binary ~30%. `optimizeBinaryAsync` validates its own
+    // output and falls back to the raw binary with a warning, so this can
+    // only change performance, never correctness.
+    optimize: 3,
   });
   const compileMs = Math.round(performance.now() - started);
   const errors = (result.errors ?? []).map(describeDiagnostic);

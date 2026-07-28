@@ -496,28 +496,11 @@ export function compileStringLiteral(
  * Emits array.new_fixed with the WTF-16 code units, then struct.new.
  */
 export function compileNativeStringLiteral(ctx: CodegenContext, fctx: FunctionContext, value: string): ValType {
-  const strDataTypeIdx = ctx.nativeStrDataTypeIdx;
-  const strTypeIdx = ctx.nativeStrTypeIdx;
-
-  // Push len (i32) — field 0
-  fctx.body.push({ op: "i32.const", value: value.length });
-
-  // Push off (i32) = 0 — field 1
-  fctx.body.push({ op: "i32.const", value: 0 });
-
-  // Push each code unit (i16) and create array with array.new_fixed
-  for (let i = 0; i < value.length; i++) {
-    fctx.body.push({ op: "i32.const", value: value.charCodeAt(i) });
-  }
-  fctx.body.push({
-    op: "array.new_fixed",
-    typeIdx: strDataTypeIdx,
-    length: value.length,
-  });
-
-  // struct.new $NativeString(len, off, data)
-  fctx.body.push({ op: "struct.new", typeIdx: strTypeIdx });
-
+  // (#3673) Interned: one immutable module global per distinct literal,
+  // materialized once at instantiation; the site is a single `global.get`.
+  // See `nativeStringLiteralInstrs` for the rationale + the oversized-literal
+  // inline fallback.
+  fctx.body.push(...nativeStringLiteralInstrs(ctx, value));
   return nativeStringType(ctx);
 }
 
@@ -3602,6 +3585,80 @@ export function compileGuardedNativeStringMethodCall(
       popBody(fctx, saved);
     }
   }
+  // (#3673) USER-METHOD COLLISION arm. The sentinel else-arm above assumes a
+  // `ref.test $AnyString` miss means "array / number / null", for which a
+  // benign default is honest. It is a SILENT WRONG ANSWER when the receiver is
+  // an object that defines a method of the same name — and that is not
+  // hypothetical: compiled acorn's `RegExpValidationState.prototype.at`
+  // collides with `String.prototype.at`, so `state.at(i)` missed the test and
+  // yielded `ref.null $AnyString`, read back as `0` instead of the `-1`
+  // end-of-input sentinel. `regexp_eatPatternCharacters`'s
+  // `while ((ch = state.current()) !== -1 && …)` then spun forever, hanging the
+  // standalone parser on EVERY `u`-flag regex literal.
+  //
+  // When the program itself defines a method of this name, route the miss
+  // through the closed-method dispatcher `__call_m_<method>_<arity>` (the same
+  // machinery #2583 uses for the array search trio: closed-struct arms, then
+  // the open-`$Object` arm that reaches a prototype-assigned user method), and
+  // WIDEN the whole construct to `externref` — the dispatcher hands back a
+  // boxed `any`, and a user method's return type is unrelated to the string
+  // method's. The then-arm's native result is boxed to match.
+  //
+  // Scoped to names the source actually defines, so the unboxed native result
+  // type survives for every other name — notably acorn's `charCodeAt`/`slice`/
+  // `substr` tokenizer hot set, whose whole point (#3673) is to avoid boxing.
+  if (
+    elseInstrs === undefined &&
+    ctx.userMethodNames?.has(method) === true &&
+    (ctx.standalone || ctx.wasi) &&
+    !expr.arguments.some((a) => ts.isSpreadElement(a))
+  ) {
+    const arity = expr.arguments.length;
+    const dispatchIdx = reserveClosedMethodDispatch(ctx, method, arity);
+    flushLateImportShifts(ctx, fctx);
+    const boxNumIdx = ctx.funcMap.get("__box_number");
+    const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+    // Box the then-arm's native result to `externref` so both arms agree.
+    const boolResult = method === "includes" || method === "startsWith" || method === "endsWith";
+    const boxThen = ((): Instr[] | null => {
+      if (resultType.kind === "externref") return [];
+      if (resultType.kind === "ref" || resultType.kind === "ref_null") return [{ op: "extern.convert_any" }];
+      if (resultType.kind === "f64") {
+        return boxNumIdx === undefined ? null : [{ op: "call", funcIdx: boxNumIdx }];
+      }
+      if (resultType.kind === "i32") {
+        if (boolResult) return boxBoolIdx === undefined ? null : [{ op: "call", funcIdx: boxBoolIdx }];
+        return boxNumIdx === undefined ? null : [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx }];
+      }
+      return null;
+    })();
+    if (boxThen !== null) {
+      const saved = pushBody(fctx);
+      fctx.body.push({ op: "local.get", index: recvExt });
+      for (const arg of expr.arguments) {
+        const at = compileExpression(ctx, fctx, arg, { kind: "externref" });
+        if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
+        else if (at === null) fctx.body.push({ op: "ref.null.extern" });
+      }
+      fctx.body.push({ op: "call", funcIdx: dispatchIdx });
+      const dispatchElse = fctx.body;
+      popBody(fctx, saved);
+
+      thenInstrs.push(...boxThen);
+      const widened: ValType = { kind: "externref" };
+      fctx.body.push({ op: "local.get", index: recvExt });
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: widened },
+        then: thenInstrs,
+        else: dispatchElse,
+      });
+      return widened;
+    }
+  }
+
   if (elseInstrs === undefined) {
     elseInstrs = [];
     if (resultType.kind === "f64") {

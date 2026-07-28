@@ -132,25 +132,28 @@ export function snapshotVecMirrors(
   const lenFn = exports.__vec_len as ((v: unknown) => number) | undefined;
   if (typeof lenFn !== "function") return NO_MIRRORS;
   let snaps: VecMirrorSnapshot[] | undefined;
-  const consider = (v: unknown): void => {
-    if (v == null || typeof v !== "object") return;
+  // (#3673) Inline loop, no per-call closure: this runs on every
+  // `__extern_method_call` / `__call_function` crossing, and a fresh closure
+  // per call is measurable there (the transform-added name-defineProperty per
+  // closure made it worse under tsx).
+  for (let i = -1; i < args.length; i++) {
+    const v = i < 0 ? receiver : args[i];
+    if (v == null || typeof v !== "object") continue;
     const vec = _mirrorGet(v as object);
-    if (vec === undefined) return;
+    if (vec === undefined) continue;
     let vecLen: number;
     try {
       vecLen = lenFn(vec);
     } catch {
-      return;
+      continue;
     }
-    if (typeof vecLen !== "number" || vecLen < 0) return;
+    if (typeof vecLen !== "number" || vecLen < 0) continue;
     const mirror = v as unknown[];
     // Index assignment, not `.push()` — see the intrinsic-capture note above:
     // a test262 file may have deleted `Array.prototype.push` by now.
     const list = (snaps ??= []);
     list[list.length] = { mirror, vec, mirrorLen: mirror.length, vecLen };
-  };
-  consider(receiver);
-  for (const a of args) consider(a);
+  }
   return snaps ?? NO_MIRRORS;
 }
 

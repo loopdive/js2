@@ -790,6 +790,10 @@ export function compileLinearIrFunctions(
     }
   }
 
+  if (typeof process !== "undefined" && process.env?.JS2WASM_LINEAR_IR_DEBUG === "1") {
+    console.error("[linear-ir] compiled:", JSON.stringify(compiled));
+    console.error("[linear-ir] rejected:", JSON.stringify(result.rejected, null, 1));
+  }
   return result;
 }
 
