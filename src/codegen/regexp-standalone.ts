@@ -3594,7 +3594,7 @@ export function emitRegExpReflectionFieldRead(
   fctx.body.push({ op: "i32.and" });
   fctx.body.push({ op: "i32.const", value: 0 });
   fctx.body.push({ op: "i32.ne" });
-  return { kind: "i32" };
+  return { kind: "i32", boolean: true };
 }
 
 /**
