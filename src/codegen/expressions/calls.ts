@@ -2112,6 +2112,98 @@ function countSpecLength(params: ts.NodeArray<ts.ParameterDeclaration>): number 
 }
 
 /**
+ * (#3767) Conservative syntax-only proof that the receiver supplied to
+ * `Function.prototype.bind.call(receiver, ...)` cannot have [[Call]].
+ *
+ * Keep identifiers and other runtime values dynamic: standalone's native
+ * closure carriers are callable even though their TypeScript surface can be
+ * `any`/object-like. The literals below, however, are unconditionally
+ * non-callable ECMAScript values. Transparent TypeScript wrappers do not
+ * change that fact.
+ */
+function isStaticallyNonCallableBindTarget(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): boolean {
+  let target = value;
+  while (
+    ts.isParenthesizedExpression(target) ||
+    ts.isAsExpression(target) ||
+    ts.isTypeAssertionExpression(target) ||
+    ts.isSatisfiesExpression(target) ||
+    ts.isNonNullExpression(target)
+  ) {
+    target = target.expression;
+  }
+  const literalNonCallable =
+    target.kind === ts.SyntaxKind.NullKeyword ||
+    target.kind === ts.SyntaxKind.TrueKeyword ||
+    target.kind === ts.SyntaxKind.FalseKeyword ||
+    target.kind === ts.SyntaxKind.RegularExpressionLiteral ||
+    ts.isNumericLiteral(target) ||
+    ts.isBigIntLiteral(target) ||
+    ts.isStringLiteralLike(target) ||
+    ts.isObjectLiteralExpression(target) ||
+    ts.isArrayLiteralExpression(target) ||
+    (ts.isIdentifier(target) && target.text === "undefined" && !fctx.localMap.has("undefined"));
+  if (literalNonCallable) return true;
+
+  // Test262's ES5 RegExp case first binds `/x/` to `var re` and then passes
+  // `re`. The oracle's nominal builtin classification preserves that exact
+  // proof without following arbitrary mutable initializers or treating a
+  // generic object/`any` value as non-callable.
+  return ts.isIdentifier(target) && ctx.oracle.builtinReceiverOf(target) === "RegExp";
+}
+
+/**
+ * Compile `Function.prototype.bind.call(target, thisArg, ...args)`.
+ * Callable targets reshape to the ordinary `.bind` path. Under standalone,
+ * statically non-callable targets take the #3767 eager TypeError guard before
+ * the general hostless `.call` fallback can silently return.
+ */
+function tryCompileIndirectFunctionBindCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): InnerResult | undefined {
+  if (
+    propAccess.name.text !== "call" ||
+    !ts.isPropertyAccessExpression(propAccess.expression) ||
+    propAccess.expression.name.text !== "bind" ||
+    !ts.isPropertyAccessExpression(propAccess.expression.expression) ||
+    propAccess.expression.expression.name.text !== "prototype" ||
+    !ts.isIdentifier(propAccess.expression.expression.expression) ||
+    propAccess.expression.expression.expression.text !== "Function" ||
+    expr.arguments.length < 1
+  ) {
+    return undefined;
+  }
+
+  const fnExpr = expr.arguments[0]!;
+  // ES5 §15.3.4.5 step 2 / current §20.2.3.2 step 2: IsCallable(Target)
+  // false must throw TypeError. Outer-call arguments are evaluated first.
+  if (ctx.standalone && isStaticallyNonCallableBindTarget(ctx, fctx, fnExpr)) {
+    for (const arg of expr.arguments) {
+      const argType = compileExpression(ctx, fctx, arg);
+      if (argType !== null) fctx.body.push({ op: "drop" });
+    }
+    emitThrowTypeError(ctx, fctx, "Function.prototype.bind called on non-callable");
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+
+  // Preserve #1337's conservative callable-only reshape. Dynamic targets
+  // continue through the general `.call` path.
+  const fnTsType = ctx.checker.getTypeAtLocation(fnExpr);
+  if ((fnTsType?.getCallSignatures?.()?.length ?? 0) === 0) return undefined;
+  const reshapedArgs = expr.arguments.slice(1);
+  const reshapedProp = ts.factory.createPropertyAccessExpression(fnExpr as ts.LeftHandSideExpression, "bind");
+  ts.setTextRange(reshapedProp, propAccess);
+  const reshapedCall = ts.factory.createCallExpression(reshapedProp, undefined, reshapedArgs);
+  ts.setTextRange(reshapedCall, expr);
+  (reshapedCall as any).parent = expr.parent;
+  return compileCallExpression(ctx, fctx, reshapedCall as ts.CallExpression);
+}
+
+/**
  * (#1632a) Compile `target.bind(thisArg, ...partialArgs)` to a
  * `__bind_function(target, thisArg, argsArray, nameHint, lengthHint)` host
  * import call. The host delegates to `Function.prototype.bind.apply(wrapped,
@@ -6259,42 +6351,8 @@ function compileCallExpression(
       if (callResult !== undefined) return callResult;
     }
 
-    // (#1337) Function.prototype.bind.call(fn, thisArg, ...args) reshape.
-    // Mirrors the #1596 reshape for Function.prototype.{apply,call}.call: rewrite
-    // to `fn.bind(thisArg, ...args)` so the existing #1632a bind dispatch fires
-    // and routes through __bind_function instead of leaking to the host's
-    // Function.prototype.bind on a wasm-struct receiver ("Bind must be called
-    // on a function"). Only the outer `.call` form is matched —
-    // `Function.prototype.bind.apply(fn, [thisArg, ...args])` is rare.
-    //
-    // Narrowing: only fires when the `fn` target has TS call signatures.
-    // This preserves the legacy "Function.prototype.bind.call(undefined, ...)
-    // throws TypeError" behaviour for spec tests like S15.3.4.5_A13 — the
-    // bind dispatch only intercepts callable receivers; non-callable
-    // targets fall through to the legacy host path which throws correctly.
-    if (
-      propAccess.name.text === "call" &&
-      ts.isPropertyAccessExpression(propAccess.expression) &&
-      propAccess.expression.name.text === "bind" &&
-      ts.isPropertyAccessExpression(propAccess.expression.expression) &&
-      propAccess.expression.expression.name.text === "prototype" &&
-      ts.isIdentifier(propAccess.expression.expression.expression) &&
-      propAccess.expression.expression.expression.text === "Function" &&
-      expr.arguments.length >= 1
-    ) {
-      const fnExpr = expr.arguments[0]!;
-      const fnTsType = ctx.checker.getTypeAtLocation(fnExpr);
-      const fnHasCallSig = (fnTsType?.getCallSignatures?.()?.length ?? 0) > 0;
-      if (fnHasCallSig) {
-        const reshapedArgs = expr.arguments.slice(1);
-        const reshapedProp = ts.factory.createPropertyAccessExpression(fnExpr as ts.LeftHandSideExpression, "bind");
-        ts.setTextRange(reshapedProp, propAccess);
-        const reshapedCall = ts.factory.createCallExpression(reshapedProp, undefined, reshapedArgs);
-        ts.setTextRange(reshapedCall, expr);
-        (reshapedCall as any).parent = expr.parent;
-        return compileCallExpression(ctx, fctx, reshapedCall as ts.CallExpression);
-      }
-    }
+    const indirectBind = tryCompileIndirectFunctionBindCall(ctx, fctx, expr, propAccess);
+    if (indirectBind !== undefined) return indirectBind;
 
     // Handle fn.bind(thisArg, ...partialArgs).
     //

@@ -74,6 +74,30 @@ This rules out the original hypotheses (non-amortized array/string
 growth, GC pressure from over-allocation) as the dominant cost — none of
 those primitives are slow, and none scale badly.
 
+### Also ruled out: JS↔Wasm bridge / AST marshaling (2026-07-28)
+
+A natural hypothesis is that the measured cost is really the returned AST
+object graph crossing the bridge back to JS (the npm-compat harness calls
+`exp.parse(src, opts)` and gets a full AST). **Measured directly and
+ruled out.** Two separate compiles of the SAME pinned acorn — one
+unmodified (parse called from JS, full AST marshalled back), one with an
+in-wasm driver epilogue that runs an identical parse but returns only
+`ast.body.length` (a scalar, so no AST crosses the boundary):
+
+| input | A: full AST → JS | C: scalar only | native | AST-marshal cost (A−C) |
+| --- | ---: | ---: | ---: | ---: |
+| 19,600 B | 940.1ms (154x) | 1100.3ms (181x) | 6.09ms | −160ms (noise) |
+| 78,400 B | 4884.5ms (539x) | 4680.9ms (516x) | 9.07ms | 204ms (4.2%) |
+
+Removing the AST from the return path does **not** help — the two are
+within noise of each other (C is even slower at the smaller size). The
+in-wasm parse alone is **~96-117% of the total measured time**, i.e. the
+entire cost is inside the compiled parse; bridge/marshaling is
+effectively free here. (Consistent with the harness design: it's ONE
+`parse()` call per iteration, not per-token bridge traffic.) So the gap
+is genuinely compiled-code execution speed, which keeps method dispatch
+as the leading hypothesis below.
+
 ## Where the cost most likely actually is
 
 `--prof` couldn't usefully attribute time (98%+ landed in an

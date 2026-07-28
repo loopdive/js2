@@ -373,6 +373,11 @@ export function ensureExternrefToNumberProvider(ctx: CodegenContext, fctx: Funct
   return unboxIdx;
 }
 
+/** Look up the canonical ToPrimitive provider after its owning runtime is ready. */
+export function getToPrimitiveProvider(ctx: CodegenContext): number | undefined {
+  return ctx.funcMap.get("__to_primitive");
+}
+
 /**
  * Append `ToBoolean(value)` (§7.1.2 → i32, 1 = truthy) for a value of ValType
  * `valType` already on the stack into `sink`. The consolidation of the two

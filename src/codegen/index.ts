@@ -191,6 +191,7 @@ import {
 } from "./object-runtime.js";
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillVecPropHelpers } from "./vec-props.js"; // (#3537) array ($Vec) expando side table
+import { finalizeFunctionPoisonPillCalls } from "./function-poison-pill.js";
 import { fillDataViewConstructProtoArm, fillTaDynViewMopArms } from "./ta-dyn-mop.js"; // (#3177/#3371) native view prototype arms
 import { fillObjVecReflectionHelpers } from "./objvec-array-proto.js"; // (#3666) RegExp indices Array reflection
 import { fillReflectIsConstructor } from "./reflect-construct-native.js";
@@ -4058,6 +4059,11 @@ export function generateModule(
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
     peepholeOptimize(mod);
 
+    // ES5 Function `caller`: after dead-import elimination has finalized
+    // function indices, thread each source caller's strictness into source
+    // direct/call_ref invocations. The callee snapshot was emitted at entry.
+    finalizeFunctionPoisonPillCalls(ctx);
+
     // #1984 — freeze the index spaces. Every legitimate late import mutation
     // (addUnionImports / addStringImports / reconcileNativeStrFinalizeShift,
     // across gc/wasi/standalone) has run by this point; the remaining passes
@@ -6204,6 +6210,9 @@ export function generateMultiModule(
 
     // Peephole optimization: remove redundant ref.as_non_null after ref.cast, etc.
     peepholeOptimize(mod);
+
+    // Mirror the single-source ES5 Function `caller` finalizer.
+    finalizeFunctionPoisonPillCalls(ctx);
 
     // #1984 — freeze the index spaces (multi-module path). Same boundary as the
     // single-module generateModule: all legitimate late import mutations have

@@ -39,7 +39,7 @@
       "knownBugs": [
         {
           "issue": 3756,
-          "summary": "parse() scales super-linearly with input size — 14x slower than native at 4.9KB, 424x at 313KB"
+          "summary": "parse() is ~400-500x slower than native at real-file scale — a large constant-factor gap (flat ~60us/byte), likely method-dispatch overhead"
         }
       ]
     },

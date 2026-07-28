@@ -198,6 +198,7 @@ export {
   tryEnsureNativeProtoBrand,
 } from "./builtin-value-read.js";
 import { tryBuiltinPrototypeGetterBrandThrow } from "./builtin-prototype-brand.js";
+import { tryCompileFunctionPoisonRead } from "./function-poison-pill-access.js";
 import {
   finalizeStructAndDynamicMemberGet,
   PA_FALLTHROUGH,
@@ -2966,6 +2967,17 @@ export function compilePropertyAccess(
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const propName = ts.isPrivateIdentifier(expr.name) ? "__priv_" + expr.name.text.slice(1) : expr.name.text;
 
+  // ES5 §15.3.5.4 poison properties.
+  //
+  // Strict function objects have throwing `caller` and `arguments` accessors.
+  // A sloppy function's `caller` additionally throws while its immediate
+  // active caller is strict.  The latter uses the activation-local strictness
+  // snapshot installed by function-poison-pill.ts; it is intentionally limited
+  // to a proven self-reference, because `otherFn.caller` must reflect
+  // *otherFn*'s activation rather than the current function's caller.
+  const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
+  if (functionPoisonResult !== undefined) return functionPoisonResult;
+
   // Descriptor accessors are runtime state even when shape analysis widened
   // the receiver with a same-named field. Consult them before any struct-field
   // fast path so the getter remains observable after a rejected assignment.
@@ -3829,6 +3841,9 @@ export function compileElementAccess(
   if (expr.questionDotToken) {
     return compileOptionalElementAccess(ctx, fctx, expr);
   }
+
+  const functionPoisonResult = tryCompileFunctionPoisonRead(ctx, fctx, expr);
+  if (functionPoisonResult !== undefined) return functionPoisonResult;
 
   const jsonParseElementType = tryEmitJsonParseElementAccess(ctx, fctx, expr);
   if (jsonParseElementType !== undefined) return jsonParseElementType;

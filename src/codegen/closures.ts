@@ -139,6 +139,7 @@ import {
   emitClosureConstruction,
   registerClosureBindingInfo,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
+import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import {
   emitObjectMethodAsClosure,
   finalizeMethodTrampolines,
@@ -2042,6 +2043,7 @@ export function compileLiftedClosureBody(
     // native struct → the #2681/#2686 throw).
     thisStructName: resolveLiftedMethodThisStruct(ctx, arrow),
   };
+  initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
 
   // (#1384) Track liftedFctx.body in liveBodies BEFORE any emission so
   // addUnionImports / shiftLateImportIndices can shift any `call funcIdx`

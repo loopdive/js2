@@ -26,6 +26,7 @@ benchmarks/results/*.json
 !benchmarks/results/loadtime-benchmarks.json
 !benchmarks/results/test262-standalone-highwater.json
 !benchmarks/results/npm-compat.json
+!benchmarks/results/npm-compat-perf.json
 benchmarks/results/*.md
 benchmarks/results/*.txt
 # #1528 — the ~15 MB test262 baseline JSONL lives in loopdive/js2wasm-baselines.

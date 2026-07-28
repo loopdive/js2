@@ -11,6 +11,7 @@ import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { resolvesToAmbientGlobal } from "./expressions/new-super.js";
 import { compileStringLiteral } from "./string-ops.js";
 
 type JsonStaticValue = null | boolean | number | string | JsonStaticValue[] | { [key: string]: JsonStaticValue };
@@ -57,12 +58,20 @@ function staticStringValue(ctx: CodegenContext, expr: ts.Expression, seen = new 
 /**
  * #2166 — resolve a `JSON.stringify` `space` argument (3rd parameter) to a
  * compile-time number or string, so the static stringify path can produce the
- * indented form. Returns `undefined` when the value isn't statically known
- * (caller then refuses / keeps the compact form gate). Per §25.5.2 only the
- * first 10 characters of a string space (or `min(10, floor(n))` for a number)
- * are used; JS's own `JSON.stringify` applies that, so we just forward.
+ * indented form. `null` is the internal "ignore this pure value" result for
+ * statically-known non-Number/non-String shapes; `undefined` means unresolved
+ * and keeps the caller on its refusal path. Per §25.5.2 only the first 10
+ * characters of a string space (or `min(10, floor(n))` for a number) are used.
  */
-export function staticSpaceValue(ctx: CodegenContext, expr: ts.Expression): number | string | undefined {
+export function staticSpaceValue(ctx: CodegenContext, expr: ts.Expression): number | string | null | undefined {
+  return staticSpaceValueInner(ctx, expr, true);
+}
+
+function staticSpaceValueInner(
+  ctx: CodegenContext,
+  expr: ts.Expression,
+  allowInlineNumberWrapper: boolean,
+): number | string | null | undefined {
   const cur = unwrapTransparentExpression(expr);
   if (ts.isNumericLiteral(cur)) return Number(cur.text.replace(/_/g, ""));
   if (ts.isPrefixUnaryExpression(cur) && ts.isNumericLiteral(cur.operand)) {
@@ -71,9 +80,46 @@ export function staticSpaceValue(ctx: CodegenContext, expr: ts.Expression): numb
     if (cur.operator === ts.SyntaxKind.PlusToken) return n;
   }
   if (ts.isStringLiteral(cur) || ts.isNoSubstitutionTemplateLiteral(cur)) return cur.text;
+  if (ts.isNewExpression(cur) && ts.isIdentifier(cur.expression) && resolvesToAmbientGlobal(ctx, cur.expression)) {
+    if (cur.expression.text === "Number" && allowInlineNumberWrapper) {
+      if ((cur.arguments?.length ?? 0) === 0) return 0;
+      if (cur.arguments?.length === 1) {
+        const primitive = staticSpaceValueInner(ctx, cur.arguments[0]!, false);
+        if (typeof primitive === "number") return primitive;
+      }
+      return undefined;
+    }
+    if (
+      cur.expression.text === "Boolean" &&
+      cur.arguments?.length === 1 &&
+      (cur.arguments[0]!.kind === ts.SyntaxKind.TrueKeyword || cur.arguments[0]!.kind === ts.SyntaxKind.FalseKeyword)
+    ) {
+      return null;
+    }
+  }
+  if (
+    ts.isCallExpression(cur) &&
+    ts.isIdentifier(cur.expression) &&
+    cur.expression.text === "Symbol" &&
+    cur.arguments.length === 0 &&
+    resolvesToAmbientGlobal(ctx, cur.expression)
+  ) {
+    return null;
+  }
+  if (
+    cur.kind === ts.SyntaxKind.NullKeyword ||
+    cur.kind === ts.SyntaxKind.TrueKeyword ||
+    cur.kind === ts.SyntaxKind.FalseKeyword ||
+    (ts.isObjectLiteralExpression(cur) && cur.properties.length === 0)
+  ) {
+    return null;
+  }
   if (ts.isIdentifier(cur)) {
     const init = constInitializerForIdentifier(ctx, cur);
-    if (init) return staticSpaceValue(ctx, init);
+    // Primitive const bindings stay foldable. Do not fold a Number wrapper
+    // reached through a binding: its valueOf/toString methods can be mutated
+    // before JSON.stringify observes it.
+    if (init) return staticSpaceValueInner(ctx, init, false);
   }
   return undefined;
 }
@@ -85,7 +131,8 @@ export function staticSpaceValue(ctx: CodegenContext, expr: ts.Expression): numb
  * gap that produces no indentation (the dynamic-graph codec then serialises
  * compactly). The caller passes the gap to `__json_stringify_root_indent`.
  */
-export function jsonGapFromStaticSpace(space: number | string): string {
+export function jsonGapFromStaticSpace(space: number | string | null): string {
+  if (space === null) return "";
   if (typeof space === "number") {
     if (!Number.isFinite(space)) return "";
     const n = Math.min(10, Math.floor(space));
@@ -230,13 +277,13 @@ export function tryEmitJsonStringifyStatic(
   // #2166: resolve a static `space` (number or string) and forward to JS's own
   // JSON.stringify, which applies the §25.5.2 clamping/indentation rules. A
   // dynamic space falls back to the caller's refusal.
-  let space: number | string | undefined;
+  let space: number | string | null | undefined;
   if (spaceArg !== undefined) {
     space = staticSpaceValue(ctx, spaceArg);
     if (space === undefined) return undefined;
   }
 
-  const serialized = space === undefined ? JSON.stringify(value) : JSON.stringify(value, null, space);
+  const serialized = space === undefined || space === null ? JSON.stringify(value) : JSON.stringify(value, null, space);
   if (serialized === undefined) return undefined;
   return compileStringLiteral(ctx, fctx, serialized);
 }

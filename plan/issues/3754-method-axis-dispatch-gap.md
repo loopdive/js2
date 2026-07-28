@@ -183,7 +183,57 @@ the test itself but the two-armed `if` around it defeating inlining of the
 trampoline at the call site — worth confirming before choosing an approach,
 because it changes which fix is right.
 
-### A sound approach that does NOT need general LICM
+### Three experiments, and what they actually pin (2026-07-28)
+
+| shape of the guarded trampoline                | method |
+| ---------------------------------------------- | -----: |
+| today: `ref.test` + inlined legacy else arm     |  0.950 |
+| guard removed entirely (twin arm unconditional) |  0.424 |
+| guard KEPT, else arm shrunk to `unreachable`    |  0.420 |
+| guard KEPT, else arm lifted to a `call $..._slow` | 0.954 |
+
+Read together these are decisive, and they rule out the two obvious fixes:
+
+1. **It is not the `ref.test`, and not the branch.** Keeping both while making
+   the else arm `unreachable` recovers the entire win (0.420 vs 0.424).
+2. **It is not the arm's SIZE either.** Lifting the legacy sequence into its own
+   `__dc_<F>_<m>_<n>_slow` function — implemented, verified emitting a 30-line
+   trampoline whose else arm is a single forwarding call — recovers **nothing**
+   (0.954). That change was written, measured, and reverted rather than landed:
+   it is sound and it works, but shipping a no-op complexity increase is worse
+   than not shipping it.
+
+So the cost is the **presence of a second reachable call** in the trampoline.
+With `unreachable` the function has exactly one call and the engine inlines it
+into the hot loop; with any real fallback — inline or out-of-line — it has two
+and does not. Moving the fallback around inside the function cannot fix that.
+
+### What the fix therefore has to be
+
+The fallback must leave the hot function ENTIRELY, which means the call site
+must be able to choose the **unguarded** `__dc_<F>_<m>_<n>` trampoline. That in
+turn requires the receiver-flow verdict to be a PROOF rather than an inference —
+today it is explicitly not one. `provenReceiverClass` says so in as many words:
+"Soundness does not rest on it — the emitted `ref.test` does."
+
+The verdict is close, though. `analyzeReceiverFlow`'s `source: "new-binding"`
+already means "initialised from `new F(…)` and never written after", and pass 3
+withdraws on `=`, `delete` and `++`/`--`. To promote that to a proof, pass 3
+must also withdraw on the write forms it currently misses:
+
+- compound assignment (`p += …`, and every other assignment-operator token),
+- destructuring assignment targets (`[p] = …`, `({p} = …)`),
+- `for (p of …)` / `for (p in …)` loop bindings.
+
+Plus one check the analysis does not make today: a constructor that explicitly
+returns an object makes `new F(…)` yield something other than `$__fnctor_F`, so
+an unguarded `ref.cast` would trap. Admission must require the class's
+constructor to have no object-returning `return`.
+
+With those closed, `source === "new-binding"` is sound to lower unguarded, and
+no loop-invariant code motion is needed at all.
+
+### The superseded approach (kept for the reasoning)
 
 The guard exists because a receiver-flow verdict (#3685) is a whole-program
 *inference*, so an unguarded `ref.cast` would turn imprecision into a trap.

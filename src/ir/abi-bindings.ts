@@ -122,6 +122,36 @@ export function irImportGlobalRef(
   });
 }
 
+/**
+ * Catalog one retained import-global allocator slot not already owned by a
+ * semantic import binding.
+ *
+ * The distinct role prevents a compatibility-only duplicate import from
+ * colliding with a semantic `irImportGlobalRef` that happens to share both its
+ * module/field spelling and ordinal.
+ */
+export function irRetainedImportGlobalRef(
+  ownerId: IrBindingOwnerId,
+  module: string,
+  field: string,
+  adapterName: string,
+  ordinal: number,
+): IrGlobalRef {
+  const checkedModule = requireNonEmpty(module, "retained global import module");
+  const checkedField = requireString(field, "retained global import field");
+  return globalRef(adapterName, {
+    kind: "import",
+    bindingId: createIrBindingId({
+      ownerId: requireNonEmpty(ownerId, "retained global import owner identity") as IrBindingOwnerId,
+      domain: "global",
+      role: `retained-import:${checkedModule}:${checkedField}`,
+      ordinal,
+    }),
+    module: checkedModule,
+    field: checkedField,
+  });
+}
+
 /** Reference compiler runtime state through an exact program binding. */
 export function irRuntimeGlobalRef(
   ownerId: IrBindingOwnerId,

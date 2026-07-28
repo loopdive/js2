@@ -45,6 +45,12 @@ import { CLSX_OPS } from "../tests/dogfood/clsx-ops.mjs";
 const ROOT = resolve(import.meta.dirname, "..");
 const RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "npm-compat.json");
 const PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", "npm-compat.json");
+// Sibling artifact in the EXACT row shape `<perf-benchmark-chart mode="perf">`
+// consumes (name / wasmUs / jsUs / ratioStd), so the npm-compat page reuses the
+// landing page's own chart component instead of re-implementing a bar chart.
+// `jsUs` is the native-Node time — the component's baseline tick.
+const PERF_RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "npm-compat-perf.json");
+const PERF_PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", "npm-compat-perf.json");
 
 // ---------------------------------------------------------------------------
 // Perf timing helpers — same calibrated-median methodology as
@@ -107,6 +113,9 @@ function measurePerf(sampleOp, wasmFn, nodeFn) {
   }
   const wasmUs = median(wasmSamplesUs);
   const nodeUs = median(nodeSamplesUs);
+  // Per-round ratio samples so the shared <perf-benchmark-chart> can draw the
+  // same error bar it draws for the landing-page sidebar.
+  const ratioSamples = wasmSamplesUs.map((w, i) => (nodeSamplesUs[i] ?? nodeUs) / Math.max(w, 0.000001));
   return {
     sampleOp,
     wasmUs,
@@ -114,6 +123,7 @@ function measurePerf(sampleOp, wasmFn, nodeFn) {
     wasmStdUs: stddev(wasmSamplesUs),
     nodeStdUs: stddev(nodeSamplesUs),
     ratio: nodeUs / Math.max(wasmUs, 0.000001),
+    ratioStd: stddev(ratioSamples),
     warmupRounds,
     measuredRounds,
   };
@@ -209,7 +219,8 @@ function knownBugsFor(name) {
     acorn: [
       {
         issue: 3756,
-        summary: "parse() scales super-linearly with input size — 14x slower than native at 4.9KB, 424x at 313KB",
+        summary:
+          "parse() is ~400-500x slower than native at real-file scale — a large constant-factor gap (flat ~60us/byte), likely method-dispatch overhead",
       },
     ],
     marked: [{ issue: 3715, summary: "TS 'evolving array type' inference unimplemented — blocks compile entirely" }],
@@ -326,3 +337,26 @@ mkdirSync(dirname(PUBLIC_PATH), { recursive: true });
 copyFileSync(RESULTS_PATH, PUBLIC_PATH);
 console.log(`[npm-compat] wrote ${RESULTS_PATH}`);
 console.log(`[npm-compat] wrote ${PUBLIC_PATH}`);
+
+// Perf rows for the shared <perf-benchmark-chart>. Only packages with a real
+// measurement appear — a package whose surface is red has no honest bar to draw.
+const perfRows = packages
+  .filter((p) => p.perf)
+  .map((p) => ({
+    name: p.name,
+    path: p.entryFile,
+    wasmUs: p.perf.wasmUs,
+    jsUs: p.perf.nodeUs,
+    wasmStdUs: p.perf.wasmStdUs,
+    jsStdUs: p.perf.nodeStdUs,
+    ratioStd: p.perf.ratioStd ?? 0,
+    wasmOptimized: true,
+    wasmOptimizeLevel: 4,
+    warmupRounds: p.perf.warmupRounds,
+    measuredRounds: p.perf.measuredRounds,
+    sampleOp: p.perf.sampleOp,
+  }));
+writeFileSync(PERF_RESULTS_PATH, JSON.stringify(perfRows, null, 2) + "\n");
+copyFileSync(PERF_RESULTS_PATH, PERF_PUBLIC_PATH);
+console.log(`[npm-compat] wrote ${PERF_RESULTS_PATH}`);
+console.log(`[npm-compat] wrote ${PERF_PUBLIC_PATH}`);

@@ -442,6 +442,9 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   if (ctx.currentThisGlobalIdx >= threshold) {
     ctx.currentThisGlobalIdx += delta;
   }
+  if (ctx.callerStrictGlobalIdx >= threshold) {
+    ctx.callerStrictGlobalIdx += delta;
+  }
   // (#3251 S1) Vec-overlay state global (registered at finalize; standalone
   // only — no import globals arrive that late, this is belt-and-suspenders).
   if (ctx.vecOverlayStateGlobalIdx !== undefined && ctx.vecOverlayStateGlobalIdx >= threshold) {

@@ -308,6 +308,14 @@ const npmCompatSource = resolvePreferredFileOrNull(
 if (npmCompatSource) {
   copyFile(npmCompatSource, join(PAGES_DIST, "benchmarks", "results", "npm-compat.json"));
 }
+// Sibling perf rows consumed by the shared <perf-benchmark-chart> on that page.
+const npmCompatPerfSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "npm-compat-perf.json"),
+  join(PUBLIC_BENCH, "npm-compat-perf.json"),
+);
+if (npmCompatPerfSource) {
+  copyFile(npmCompatPerfSource, join(PAGES_DIST, "benchmarks", "results", "npm-compat-perf.json"));
+}
 
 // Add the static dashboard route and pre-generated dashboard data when the
 // private planning artifacts are present. Public exports intentionally omit

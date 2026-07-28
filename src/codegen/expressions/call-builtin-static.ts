@@ -94,6 +94,7 @@ import { compileStringLiteral } from "../string-ops.js";
 import { ensureStringRawHelper } from "../string-raw.js";
 import { defaultValueInstrs, pushDefaultValue } from "../type-coercion.js";
 import { compileMathCall } from "./builtins.js";
+import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js";
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
@@ -1927,22 +1928,8 @@ export function compileBuiltinStaticCall(
   ) {
     const arg0 = expr.arguments[0]!;
 
-    // Object.create(Foo.prototype) → struct.new with default fields (Wasm-native fast path)
-    if (ts.isPropertyAccessExpression(arg0) && ts.isIdentifier(arg0.expression) && arg0.name.text === "prototype") {
-      const protoClassName = arg0.expression.text;
-      if (ctx.classSet.has(protoClassName)) {
-        const structTypeIdx = ctx.structMap.get(protoClassName);
-        const fields = ctx.structFields.get(protoClassName);
-        if (structTypeIdx !== undefined && fields) {
-          // Push default values for all fields, then struct.new
-          for (const field of fields) {
-            pushDefaultValue(fctx, field.type, ctx);
-          }
-          fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
-          return { kind: "ref", typeIdx: structTypeIdx };
-        }
-      }
-    }
+    const staticPrototype = tryCompileObjectCreateStaticPrototype(ctx, fctx, arg0);
+    if (staticPrototype !== undefined) return staticPrototype;
 
     // Host import path: Object.create(null) and Object.create(proto[, descriptors])
     // Object.create(null) → empty object with null prototype

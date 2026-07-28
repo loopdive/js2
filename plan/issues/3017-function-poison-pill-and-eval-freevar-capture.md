@@ -1,10 +1,10 @@
 ---
 id: 3017
 title: "Function .caller/.arguments poison-pill throw + free-variable capture in Function/eval shim child module"
-status: ready
+status: in-progress
 sprint: Backlog
 created: 2026-07-03
-updated: 2026-07-03
+updated: 2026-07-28
 priority: medium
 horizon: l
 feasibility: hard
@@ -15,6 +15,26 @@ area: codegen
 language_feature: eval
 goal: correctness
 parent: 2960
+loc-budget-allow:
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/index.ts
+  - src/codegen/literals.ts
+  - src/codegen/property-access.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/statements/nested-declarations.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/property-access.ts::compileElementAccess
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
 ---
 
 ## Problem
@@ -47,11 +67,12 @@ real callable instead of throwing.
 
 ```js
 var foo = new Function("'use strict';");
-foo.caller;      // spec: throws TypeError; actual: returns undefined
-foo.arguments;   // spec: throws TypeError; actual: returns undefined
+foo.caller; // spec: throws TypeError; actual: returns undefined
+foo.arguments; // spec: throws TypeError; actual: returns undefined
 ```
 
 **test262 files:**
+
 - `test/language/statements/function/13.2-5-s.js`
 - `test/language/statements/function/13.2-13-s.js`
 
@@ -78,7 +99,7 @@ instead of either correctly resolving `f` or throwing the spec-correct
 ```js
 (function () {
   "use strict";
-  Function("return f();")();   // actual: "null is not a function" runtime error
+  Function("return f();")(); // actual: "null is not a function" runtime error
 })();
 ```
 
@@ -91,6 +112,7 @@ function"`) rather than the correct `ReferenceError` (or correct resolution when
 `f` IS a global). Getting the scoping and the error shape right is the work.
 
 **test262 file:**
+
 - `test/built-ins/Function/15.3.5.4_2-77gs.js`
 
 **Direction (not a spec):** the child-module code path for the eval/Function
@@ -110,6 +132,45 @@ downstream null-call error.
    `"null is not a function"` error (and `15.3.5.4_2-77gs.js` passes).
 3. No net test262 regression relative to the post-#2548 baseline.
 
+## 2026-07-28 implementation status
+
+Gap 1 is now implemented for statically known source functions and for a
+sloppy function reading its own legacy `caller` property:
+
+- strict source functions throw `TypeError` for `caller` / `arguments` reads
+  and writes through dot or literal-bracket syntax;
+- writes preserve receiver → computed key → RHS → poison-setter evaluation
+  order;
+- a sloppy self-`caller` read snapshots the immediate source caller's
+  strictness at activation entry, so a strict direct caller throws while a
+  strict grandparent behind a sloppy immediate caller does not;
+- the strictness hand-off global, activation local, and call-site markers are
+  emitted lazily only when a source function actually observes its own
+  `caller`.
+
+Same-base local A/B against `origin/main@108c41ecf166b1` for the complete
+97-file `built-ins/Function/15.3.5.4_2-*` family:
+
+- host: 21/97 → 77/97 (56 exact FAIL → PASS);
+- standalone: 20/97 → 80/97 (60 exact FAIL → PASS);
+- zero PASS → FAIL regressions and zero residual failure-signature changes;
+- the 19 strict-grandparent / sloppy-immediate controls (`75gs`–`93gs`)
+  remain green in both lanes.
+
+The two `language/statements/function/13.2-*-s.js` rows remain 2/2 in host.
+Their standalone runs remain blocked before behavior by the pre-existing
+`js2wasm:runtime-eval` import, identically in both A/B arms.
+
+The residual `15.3.5.4_2-*` failures are routes that do not yet identify a
+source activation (dynamic `eval` / `Function` constructor, selected
+constructor/accessor/bound-function paths). They are not hidden by an
+unconditional throw.
+
+Gap 2 (global-environment resolution for free variables in the eval/Function
+shim child module) is intentionally unchanged and remains open. Accordingly,
+this combined tracking issue stays `in-progress`; the Gap 1 source-function
+slice is independently landable.
+
 ## Notes
 
 - Origin: diagnostic follow-up from #2960 / PR #2548.
@@ -121,7 +182,7 @@ downstream null-call error.
 - **Gap 2's normative design is now specified** (architect, 2026-07-04) in
   `docs/architecture/runtime-eval-interpreter.md` **§14** (unified name
   resolution, consumer 2): the shim child module compiles free identifiers
-  with *eval-code linkage* against a global-environment handle passed from the
+  with _eval-code linkage_ against a global-environment handle passed from the
   parent module (its globalThis `$Object`), with a root-miss →
   `ReferenceError`. Implementing that section satisfies acceptance criterion 2
   AND fixes the deeper sharing bug (eval'd `var x` landing in the child's

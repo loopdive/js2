@@ -45,6 +45,7 @@ import { ensureObjVecBuilders } from "./object-runtime.js";
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
+import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import { collectInstrs } from "./statements/shared.js";
 import {
   cacheStringLiterals,
@@ -2654,6 +2655,7 @@ export function compileObjectLiteralForStruct(
         labelMap: new Map(),
         savedBodies: [],
       };
+      initializeFunctionPoisonPillContext(ctx, getterFctx, prop);
       getterFctx.localMap.set("this", 0);
 
       const savedFunc = ctx.currentFunc;
@@ -2764,6 +2766,7 @@ export function compileObjectLiteralForStruct(
         labelMap: new Map(),
         savedBodies: [],
       };
+      initializeFunctionPoisonPillContext(ctx, setterFctx, prop);
       for (let i = 0; i < setterFctxParams.length; i++) {
         setterFctx.localMap.set(setterFctxParams[i]!.name, i);
       }
@@ -3001,6 +3004,7 @@ export function compileObjectLiteralForStruct(
         savedBodies: [],
         isGenerator: isGeneratorMethod,
       };
+      initializeFunctionPoisonPillContext(ctx, methodFctx, prop);
       for (let i = 0; i < methodFctxParams.length; i++) {
         methodFctx.localMap.set(methodFctxParams[i]!.name, i);
       }

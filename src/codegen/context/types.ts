@@ -502,6 +502,18 @@ export interface HoistedCharRead {
 export interface FunctionContext {
   /** Function name */
   name: string;
+  /**
+   * Source-level function represented by this body.  Present only for
+   * ECMAScript functions (not compiler/runtime helpers); used by the ES5
+   * Function `caller` poison lowering to recognize a self-reference.
+   */
+  sourceFunction?: ts.FunctionLikeDeclaration;
+  /** Source strictness of {@link sourceFunction}. */
+  sourceFunctionStrict?: boolean;
+  /** Root function body where an activation-entry snapshot must be inserted. */
+  callerStrictEntryBody?: Instr[];
+  /** Activation-local snapshot of the immediate caller's source strictness. */
+  callerStrictLocalIdx?: number;
   /** Parameters (these are the first N locals) */
   params: { name: string; type: ValType }[];
   /** Additional locals declared in the body */
@@ -1053,6 +1065,7 @@ export interface CodegenContext {
   mod: WasmModule;
   programAbiSession?: import("../program-abi-session.js").ProgramAbiSession;
   programAbiCallableProviders?: import("../program-abi-provider-planning.js").ProgramAbiCallableProviderRegistry;
+  programAbiGlobals?: import("../program-abi-global-planning.js").ProgramAbiGlobalRegistry;
   programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
   irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;
   checker: ts.TypeChecker;
@@ -1897,6 +1910,14 @@ export interface CodegenContext {
    * previous `undefined` fallback. -1 = not yet created.
    */
   currentThisGlobalIdx: number;
+  /** Mutable i32 hand-off used by ES5 Function `caller` poison semantics. */
+  callerStrictGlobalIdx: number;
+  /** Source function name → source strictness, consumed by the final call-site pass. */
+  sourceFunctionStrictness: Map<string, boolean>;
+  /** Root source-function body → strictness; avoids collisions between shadowed names. */
+  sourceFunctionStrictnessByBody: Map<Instr[], boolean>;
+  /** Idempotence guard for the final call-site instrumentation pass. */
+  functionPoisonPillCallsFinalized?: boolean;
   /** Map from struct name → set of closure type indices used for valueOf fields */
   valueOfClosureTypes: Map<string, number[]>;
   /**

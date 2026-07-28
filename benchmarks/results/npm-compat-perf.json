@@ -1,0 +1,44 @@
+[
+  {
+    "name": "acorn",
+    "path": "dist/acorn.mjs",
+    "wasmUs": 6214971.531799994,
+    "jsUs": 15288.137799990363,
+    "wasmStdUs": 208274.35427490805,
+    "jsStdUs": 866.406171122399,
+    "ratioStd": 0,
+    "wasmOptimized": true,
+    "wasmOptimizeLevel": 4,
+    "warmupRounds": 2,
+    "measuredRounds": 9,
+    "sampleOp": "parse(own 226KB dist bundle)"
+  },
+  {
+    "name": "clsx",
+    "path": "dist/clsx.mjs",
+    "wasmUs": 37.805664478182095,
+    "jsUs": 0.1818245110123526,
+    "wasmStdUs": 2.312647765992195,
+    "jsStdUs": 0.008531962475355178,
+    "ratioStd": 0,
+    "wasmOptimized": true,
+    "wasmOptimizeLevel": 4,
+    "warmupRounds": 2,
+    "measuredRounds": 9,
+    "sampleOp": "op_mixed_all_kinds"
+  },
+  {
+    "name": "cookie",
+    "path": "dist/index.js",
+    "wasmUs": 401.9859283054733,
+    "jsUs": 0.8369040968342297,
+    "wasmStdUs": 46.322671286609484,
+    "jsStdUs": 0.08388455814051107,
+    "ratioStd": 0,
+    "wasmOptimized": true,
+    "wasmOptimizeLevel": 4,
+    "warmupRounds": 2,
+    "measuredRounds": 9,
+    "sampleOp": "parseCookie(8-pair header)"
+  }
+]

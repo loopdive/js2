@@ -5,8 +5,8 @@ status: in-progress
 assignee: ttraenkler/codex-r1
 claimed_by: codex-r1
 claimed_at: 2026-07-21T20:23:19Z
-branch: codex/3520-c13-type-class-abi
-pr: 3746
+branch: codex/3520-c14-global-abi
+pr: 3752
 last_merged_pr: 3679
 sprint: current
 created: 2026-07-21
@@ -88,6 +88,7 @@ files:
   - src/codegen/dead-elimination.ts
   - src/codegen/func-space.ts
   - src/codegen/program-abi-import-planning.ts
+  - src/codegen/program-abi-global-planning.ts
   - src/codegen/program-abi-planning.ts
   - src/codegen/program-abi-signatures.ts
   - src/codegen/program-abi-session.ts
@@ -138,6 +139,7 @@ files:
   - tests/issue-3520-class-support-callable-abi.test.ts
   - tests/issue-3520-class-method-alias-abi.test.ts
   - tests/issue-3520-type-class-abi.test.ts
+  - tests/issue-3520-global-population-abi.test.ts
   - tests/issue-3520-program-abi-import-callable-planning.test.ts
   - tests/issue-3520-imported-callable-abi.test.ts
   - tests/issue-2856-calendar-residuals.test.ts
@@ -1695,6 +1697,55 @@ remaining imported globals, exports and public aliases, and production
 display-name scans still remain before R1 can close. This slice populates the
 class/type authority but deliberately does not yet reroute existing
 `structMap` consumers through it.
+
+### 2026-07-28 complete retained global-space continuation
+
+The stacked continuation on `codex/3520-c14-global-abi` makes the complete
+final Wasm global index space explicit in the production Program ABI:
+
+- finalization walks exact retained import-global objects followed by exact
+  defined `GlobalDef` objects, matching Wasm global-index order without reading
+  `moduleGlobals`, a compatibility name, or a captured raw index;
+- a source, runtime, cache, or string-constant global that already has a
+  semantic ABI owner keeps that owner. Every remaining allocator object
+  receives one deterministic entry-source-owned global binding, so the
+  complete final global space is a bijection rather than a selected subset;
+- generic retained import identities preserve the exact module/field payload
+  but use a distinct structural role. A compatibility duplicate therefore
+  cannot collide with a semantic imported-global binding even when both share
+  a spelling and ordinal;
+- duplicate import spellings remain distinct allocator-owned slots and make
+  the legacy reverse lookup explicitly ambiguous. Reusing one allocator object
+  in two final slots is a typed invariant rather than first- or last-wins
+  behavior; and
+- every newly cataloged global retains its structured value type, mutability,
+  exact allocator locator, and post-type-compaction contract. Publication
+  resolves the object against the final module only after the index spaces
+  settle.
+
+The focused global-population matrix passes **4/4**. The sharded #3520 matrix
+reports **255 passing / 1 failing across 45 files**; the sole failure is the
+unchanged linear inventory-count spy assertion in
+`issue-3520-context-integration.test.ts`. The exact C13 control reproduces the
+same failure. Strict TypeScript, scoped Biome/Prettier, diff, LOC/function
+budget, dead-export, checker-oracle, issue-spec, and fallback gates pass.
+The focused class/accessor/externref/Promise/cross-backend matrix passes
+**85/85**, the #2138 multi-source matrix passes **6/6**, and linear integration
+passes **3/3**.
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The eight-shard equivalence gate reports **1,611 passing / 32 known
+failing / 0 new regressions**; four baseline rows now pass and the shared
+baseline remains unchanged. The four direct class runtime suites retain the
+exact C13 control's **23/23** missing-`string_constants` host-fixture failures,
+so they are not C14 regressions.
+
+C14 closes complete imported and defined global-slot population, not R1.
+Inherited accessors, static and externref/Promise-host support helpers, exports
+and public aliases, production consumers of the populated class/type/global
+authorities, and the `LegacyAbiAdapter` replacement of direct `funcMap`,
+`structMap`, module-array, and display-name scans still remain before R1 can
+close.
 
 ### R1a validation evidence
 

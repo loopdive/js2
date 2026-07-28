@@ -693,6 +693,13 @@ export type IrBinop =
   // i32.mul can diverge from what JS's (lossy) float64 multiply then ToInt32
   // would produce. The guard keeps native i32.mul's exact result aligned with
   // JS's actual (here lossless) float64 semantics.
+  //
+  // (#3741) Also emitted by the i32-SLOT-PROMOTION lowering
+  // (`emitPromotedI32Step` / `lowerAsI32` in `ir/from-ast.ts`) for the same
+  // ToInt32-guaranteed positions: an `a + b` under a bitwise wrapper, and the
+  // `i++` / `i += <int literal>` step of a promoted counter. Same soundness
+  // argument, same #1236 boundary — the general `+`/`-` lowering stays
+  // f64-only.
   | "i32.add"
   | "i32.sub"
   | "i32.mul"

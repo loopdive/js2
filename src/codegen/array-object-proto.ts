@@ -52,6 +52,7 @@ import {
 } from "./native-strings.js";
 import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
+import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -820,9 +821,7 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
  * (`emitReflectiveNativeProtoClosureCall`, calls.ts) work instead of falling
  * through to the legacy `.call` that drops `thisArg` and returns 0.
  *
- * Slice 1 wires the index-accessor family (`charAt`, `at`); other members return
- * a catchable-TypeError refusal (`null` → the reflective call falls through
- * unchanged, so behaviour for un-wired members is byte-identical to today).
+ * Slice 1 wires the index-accessor family; unwired members keep their existing catchable-TypeError fallback.
  *
  * Funcidx/type-index discipline: the ONLY late-import adder here is
  * `unboxArgToI32` (its `__unbox_number`); it runs FIRST (mirroring
@@ -832,6 +831,7 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
  */
 function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
   const IN_SCOPE = new Set(["charAt", "at", "charCodeAt", "codePointAt"]);
+  if (member === "substring") return emitStringSubstringMemberBody(ctx, fctx);
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
   // `lastIndexOf` — has a DIFFERENT closure ABI from the index accessors
   // (param 2 is the search STRING, not an integer position; the optional

@@ -284,6 +284,7 @@ export function eliminateDeadImportsAndPlanAbiCallables(ctx: CodegenContext): vo
   eliminateDeadImports(ctx.mod, ctx);
   planProgramAbiCallableImports(ctx);
   ctx.programAbiCallableProviders?.planRetained();
+  ctx.programAbiGlobals?.planRetained();
   ctx.programAbiTypes?.planRetained();
 }
 

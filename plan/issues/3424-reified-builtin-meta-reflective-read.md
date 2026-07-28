@@ -1,10 +1,11 @@
 ---
 id: 3424
 title: "Reified builtin-value `.name`/`.length` reflective reads mis-dispatch when statics share a wrapper signature"
-status: backlog
-sprint: Backlog
+status: in-progress
+sprint: current
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-28
+assignee: ttraenkler/codex-es5-regexp-meta-canonicalization
 priority: medium
 horizon: m
 feasibility: medium
@@ -13,6 +14,8 @@ area: codegen
 language_feature: builtins
 goal: standalone-mode
 related: [2963, 2933, 2896, 2984]
+loc-budget-allow:
+  - src/codegen/property-access-dispatch.ts
 origin: "Surfaced during #2963 Tier 2a (Number.is* first-class values) by opus-dev-b, 2026-07-18"
 ---
 
@@ -97,3 +100,30 @@ values (`property-access.ts`, `builtin-fn-meta.ts` `builtinFnMetaByTypeIdx`)
 — specifically how the exact meta subtype of an `any`-typed reified value
 is recovered at runtime (a chain of `ref.test`s against every registered
 meta subtype, most-derived first, is the sound shape).
+
+## Resolution (2026-07-28)
+
+PR #3646 had already fixed the shared-wrapper `.name` collision by adding an
+immutable exact builtin-function identity to every metadata closure. A fresh
+current-main audit therefore narrowed the remaining gap to `.length`: the
+standalone `any`/`unknown` property-access path bypassed
+`__builtinfn_get_meta` and always called the array-like `__extern_length`
+helper, which returns `0` for closure values.
+
+The standalone-only numeric length reader now:
+
+1. guards the reified value against the common closure-wrapper root;
+2. asks the finalize-filled `__builtinfn_get_meta(value, "length")` helper for
+   the exact identity's spec arity;
+3. preserves the prior `0` result for a plain user closure or a deleted
+   builtin `length`; and
+4. keeps the native-string and generic array/object fallbacks unchanged.
+
+Regression coverage co-extracts six builtins across two shared wrapper
+signatures, including four `[externref] -> i32` values, and asserts every
+`.name`, every `.length`, deletion semantics, and zero host imports.
+
+The fixed RegExp getter matrix remains 30/34. Its four current-main failures
+(`dotAll`/`unicodeSets`/`hasIndices` own-property descriptors and the
+`unicodeSets` boolean value) are distinct descriptor/value roots and are not
+claimed by this metadata canonicalization slice.

@@ -107,6 +107,7 @@ import {
 } from "../with-scope.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { moduleGlobalAtIdentifier } from "../function-identity.js";
+import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 
 /**
@@ -3374,6 +3375,9 @@ function compilePropertyAssignment(
 ): InnerResult {
   const objType = ctx.checker.getTypeAtLocation(target.expression);
 
+  const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
+  if (poisonResult !== undefined) return poisonResult;
+
   // (#2660 S2) `F.prototype = rhs` whole-reassign on a user function constructor
   // (standalone): store `rhs` (built as a native `$Object` when a plain literal)
   // into the per-fnctor prototype global, instead of `__extern_set($closure,
@@ -4202,6 +4206,9 @@ function compileElementAssignment(
   target: ts.ElementAccessExpression,
   value: ts.Expression,
 ): InnerResult {
+  const poisonResult = tryCompileStrictFunctionPoisonAssignment(ctx, fctx, target, value);
+  if (poisonResult !== undefined) return poisonResult;
+
   // (#2709) `super[super()] = value` PutValue: SuperProperty reference resolution
   // runs GetThisBinding() FIRST (§13.3.7.1 step 2), throwing ReferenceError before
   // the inner super() (in the key) or the RHS is evaluated. Emit that throw here,

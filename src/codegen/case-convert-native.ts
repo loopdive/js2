@@ -1,7 +1,8 @@
 // (#40) Pure-Wasm Unicode case conversion for String.prototype.to{Upper,Lower}Case
 // under --target standalone/wasi. Replaces the previous ASCII-only mapping with
-// full Unicode simple (1:1) case mapping + unconditional special (1:N) casing,
-// driven by the generated tables in `case-tables.ts`.
+// full Unicode simple (1:1) case mapping + unconditional special (1:N) casing
+// and the locale-insensitive conditional Final_Sigma rule, driven by the
+// generated tables in `case-tables.ts`.
 //
 // Design (no module globals — avoids late-import global-index shifts):
 //  - The runs table and the special table are built ONCE per call into locals
@@ -20,7 +21,14 @@
 import type { ArrayTypeDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
-import { LOWER_CASE_RUNS, LOWER_CASE_SPECIAL, UPPER_CASE_RUNS, UPPER_CASE_SPECIAL } from "./case-tables.js";
+import {
+  CASED_RANGES,
+  CASE_IGNORABLE_RANGES,
+  LOWER_CASE_RUNS,
+  LOWER_CASE_SPECIAL,
+  UPPER_CASE_RUNS,
+  UPPER_CASE_SPECIAL,
+} from "./case-tables.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 const i32: ValType = { kind: "i32" };
@@ -251,6 +259,104 @@ export function emitNativeCaseConversion(
   makeSimple("__case_simple_upper");
   makeSimple("__case_simple_lower");
 
+  // ── __case_in_ranges(ch: i32, ranges: ref $i32arr) -> i32 ────────────────
+  // Binary-search sorted inclusive [start,end] tuples. The full-code-point
+  // `Cased` and `Case_Ignorable` tables use this predicate for Final_Sigma.
+  {
+    const name = "__case_in_ranges";
+    const typeIdx = addFuncType(ctx, [i32, i32ArrRef], [i32]);
+    const funcIdx = mintDefinedFunc(ctx);
+    ctx.funcMap.set(name, funcIdx);
+    // params: ch(0), ranges(1); locals: lo(2), hi(3), mid(4), base(5),
+    // start(6), end(7)
+    const CH = 0,
+      RANGES = 1,
+      LO = 2,
+      HI = 3,
+      MID = 4,
+      BASE = 5,
+      START = 6,
+      END = 7;
+    const get = (i: number): Instr => ({ op: "local.get", index: i });
+    const set = (i: number): Instr => ({ op: "local.set", index: i });
+    const c = (value: number): Instr => ({ op: "i32.const", value });
+    const rangeGet = (idxInstrs: Instr[]): Instr[] => [
+      get(RANGES),
+      ...idxInstrs,
+      { op: "array.get", typeIdx: i32ArrTypeIdx },
+    ];
+    const body: Instr[] = [
+      c(0),
+      set(LO),
+      get(RANGES),
+      { op: "array.len" },
+      c(1),
+      { op: "i32.shr_u" },
+      set(HI),
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              get(LO),
+              get(HI),
+              { op: "i32.ge_u" },
+              { op: "br_if", depth: 1 },
+              get(LO),
+              get(HI),
+              { op: "i32.add" },
+              c(1),
+              { op: "i32.shr_u" },
+              set(MID),
+              get(MID),
+              c(1),
+              { op: "i32.shl" },
+              set(BASE),
+              ...rangeGet([get(BASE)]),
+              set(START),
+              get(CH),
+              get(START),
+              { op: "i32.lt_u" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [get(MID), set(HI)],
+                else: [
+                  ...rangeGet([get(BASE), c(1), { op: "i32.add" }]),
+                  set(END),
+                  get(CH),
+                  get(END),
+                  { op: "i32.le_u" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [c(1), { op: "return" }],
+                  },
+                  get(MID),
+                  c(1),
+                  { op: "i32.add" },
+                  set(LO),
+                ],
+              },
+              { op: "br", depth: 0 },
+            ],
+          },
+        ],
+      },
+      c(0),
+    ];
+    pushDefinedFunc(ctx, funcIdx, {
+      name,
+      typeIdx,
+      locals: [{ type: i32 }, { type: i32 }, { type: i32 }, { type: i32 }, { type: i32 }, { type: i32 }],
+      body,
+      exported: false,
+    } as unknown as WasmFunction);
+  }
+
   // ── __str_toUpperCase_uni / _lower_uni(s) -> ref $NativeString ────────────
   // Two-pass full case conversion. Builds the runs + special tables into locals
   // once, then: pass 1 computes output length (special entry → its outLen, else
@@ -271,9 +377,12 @@ export function emitNativeCaseConversion(
     const publicName = name === "__str_toUpperCase_uni" ? "__str_toUpperCase" : "__str_toLowerCase";
     ctx.nativeStrHelpers.set(publicName, funcIdx);
     const simpleIdx = ctx.funcMap.get(simpleName)!;
+    const inRangesIdx = ctx.funcMap.get("__case_in_ranges")!;
+    const finalSigma = name === "__str_toLowerCase_uni";
     // params: s(0)
-    // locals: len(1) srcData(2) sOff(3) runs(4) spec(5) specN(6) i(7) ch(8)
-    //         outLen(9) j(10) outArr(11) k(12) specHit(13) specBase(14) m(15)
+    // locals: len(1) srcData(2) sOff(3) runs(4) spec(5) specN(6), source/
+    // destination indices and scratch through scan(15), then Final_Sigma
+    // code-point context scratch (16..20) and property tables (21..22).
     const S = 0,
       LEN = 1,
       DATA = 2,
@@ -289,7 +398,14 @@ export function emitNativeCaseConversion(
       SPECBASE = 12,
       M = 13,
       FS = 14, // flattened input as the concrete $NativeString struct ref
-      SCAN = 15; // findSpecial's scan index (distinct from M, the dest write idx)
+      SCAN = 15, // findSpecial's scan index (distinct from M, the dest write idx)
+      CTX = 16,
+      CP = 17,
+      PAIR = 18,
+      PREVCASED = 19,
+      NEXTCASED = 20,
+      CASED = 21,
+      IGNORABLE = 22;
     const get = (i: number): Instr => ({ op: "local.get", index: i });
     const set = (i: number): Instr => ({ op: "local.set", index: i });
     const tee = (i: number): Instr => ({ op: "local.tee", index: i });
@@ -299,13 +415,176 @@ export function emitNativeCaseConversion(
       ...idxInstrs,
       { op: "array.get", typeIdx: i32ArrTypeIdx },
     ];
-    // src code unit at index expr (i16, unsigned)
-    const srcChar = (idxLocal: number): Instr[] => [
+    // Source code unit at an instruction-computed index (i16, unsigned).
+    const srcCharAt = (idxInstrs: Instr[]): Instr[] => [
       get(DATA),
       get(OFF),
-      get(idxLocal),
+      ...idxInstrs,
       { op: "i32.add" },
       { op: "array.get_u", typeIdx: strDataTypeIdx },
+    ];
+    const srcChar = (idxLocal: number): Instr[] => srcCharAt([get(idxLocal)]);
+    const inRanges = (cpLocal: number, rangesLocal: number): Instr[] => [
+      get(cpLocal),
+      get(rangesLocal),
+      { op: "call", funcIdx: inRangesIdx },
+    ];
+    const between = (local: number, lo: number, hi: number): Instr[] => [
+      get(local),
+      c(lo),
+      { op: "i32.ge_u" },
+      get(local),
+      c(hi),
+      { op: "i32.le_u" },
+      { op: "i32.and" },
+    ];
+    const combineSurrogates = (highLocal: number, lowLocal: number): Instr[] => [
+      get(highLocal),
+      c(0xd800),
+      { op: "i32.sub" },
+      c(10),
+      { op: "i32.shl" },
+      get(lowLocal),
+      c(0xdc00),
+      { op: "i32.sub" },
+      { op: "i32.add" },
+      c(0x10000),
+      { op: "i32.add" },
+      set(CP),
+    ];
+    const scanPreviousCased = (): Instr[] => [
+      c(0),
+      set(PREVCASED),
+      get(I),
+      set(CTX),
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              get(CTX),
+              { op: "i32.eqz" },
+              { op: "br_if", depth: 1 },
+              get(CTX),
+              c(1),
+              { op: "i32.sub" },
+              set(CTX),
+              ...srcCharAt([get(CTX)]),
+              set(CP),
+              // Decode a preceding high+low surrogate pair while moving
+              // backward. CP initially holds the low surrogate.
+              ...between(CP, 0xdc00, 0xdfff),
+              get(CTX),
+              { op: "i32.eqz" },
+              { op: "i32.eqz" },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  ...srcCharAt([get(CTX), c(1), { op: "i32.sub" }]),
+                  set(PAIR),
+                  ...between(PAIR, 0xd800, 0xdbff),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [...combineSurrogates(PAIR, CP), get(CTX), c(1), { op: "i32.sub" }, set(CTX)],
+                  },
+                ],
+              },
+              // Case_Ignorable wins when a code point has both properties
+              // (for example U+0345 COMBINING GREEK YPOGEGRAMMENI).
+              ...inRanges(CP, IGNORABLE),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "br", depth: 1 }],
+              },
+              ...inRanges(CP, CASED),
+              set(PREVCASED),
+              { op: "br", depth: 1 },
+            ],
+          },
+        ],
+      },
+    ];
+    const scanNextCased = (): Instr[] => [
+      c(0),
+      set(NEXTCASED),
+      get(I),
+      c(1),
+      { op: "i32.add" },
+      set(CTX),
+      {
+        op: "block",
+        blockType: { kind: "empty" },
+        body: [
+          {
+            op: "loop",
+            blockType: { kind: "empty" },
+            body: [
+              get(CTX),
+              get(LEN),
+              { op: "i32.ge_u" },
+              { op: "br_if", depth: 1 },
+              ...srcCharAt([get(CTX)]),
+              set(CP),
+              get(CTX),
+              c(1),
+              { op: "i32.add" },
+              set(CTX),
+              // CP is a high surrogate and CTX now points at its possible low
+              // surrogate. Decode it before consulting Unicode properties.
+              ...between(CP, 0xd800, 0xdbff),
+              get(CTX),
+              get(LEN),
+              { op: "i32.lt_u" },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  ...srcCharAt([get(CTX)]),
+                  set(PAIR),
+                  ...between(PAIR, 0xdc00, 0xdfff),
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [...combineSurrogates(CP, PAIR), get(CTX), c(1), { op: "i32.add" }, set(CTX)],
+                  },
+                ],
+              },
+              ...inRanges(CP, IGNORABLE),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "br", depth: 1 }],
+              },
+              ...inRanges(CP, CASED),
+              set(NEXTCASED),
+              { op: "br", depth: 1 },
+            ],
+          },
+        ],
+      },
+    ];
+    const simpleMapped = (): Instr[] => [get(CH), get(RUNS), { op: "call", funcIdx: simpleIdx }];
+    const finalSigmaMapped = (): Instr[] => [
+      ...scanPreviousCased(),
+      ...scanNextCased(),
+      get(PREVCASED),
+      get(NEXTCASED),
+      { op: "i32.eqz" },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: i32 },
+        then: [c(0x03c2)],
+        else: simpleMapped(),
+      },
     ];
     // Find special entry index for ch (linear scan over specN entries of 5 i32);
     // sets SPECHIT = base index (entry*5) or -1. Special tables are tiny
@@ -385,6 +664,14 @@ export function emitNativeCaseConversion(
       c(5),
       { op: "i32.div_u" },
       set(SPECN),
+      ...(finalSigma
+        ? [
+            ...buildConstI32Array(CASED_RANGES, i32ArrTypeIdx),
+            set(CASED),
+            ...buildConstI32Array(CASE_IGNORABLE_RANGES, i32ArrTypeIdx),
+            set(IGNORABLE),
+          ]
+        : []),
       // ── pass 1: outLen ──
       c(0),
       set(OUTLEN),
@@ -498,12 +785,23 @@ export function emitNativeCaseConversion(
                   },
                 ],
                 else: [
-                  // simple: outArr[M] = __case_simple(ch, runs)
+                  // Simple mapping, except for the one language-insensitive
+                  // conditional SpecialCasing rule: Final_Sigma.
                   get(OUTARR),
                   get(M),
-                  get(CH),
-                  get(RUNS),
-                  { op: "call", funcIdx: simpleIdx },
+                  ...(finalSigma
+                    ? [
+                        get(CH),
+                        c(0x03a3),
+                        { op: "i32.eq" } as Instr,
+                        {
+                          op: "if",
+                          blockType: { kind: "val", type: i32 },
+                          then: finalSigmaMapped(),
+                          else: simpleMapped(),
+                        } as Instr,
+                      ]
+                    : simpleMapped()),
                   { op: "array.set", typeIdx: strDataTypeIdx },
                   get(M),
                   c(1),
@@ -545,6 +843,17 @@ export function emitNativeCaseConversion(
         { name: "m", type: i32 }, // 13 M
         { name: "fs", type: { kind: "ref", typeIdx: strTypeIdx } }, // 14 FS
         { name: "scan", type: i32 }, // 15 SCAN
+        { name: "ctx", type: i32 }, // 16 CTX
+        { name: "cp", type: i32 }, // 17 CP
+        { name: "pair", type: i32 }, // 18 PAIR
+        { name: "prevCased", type: i32 }, // 19 PREVCASED
+        { name: "nextCased", type: i32 }, // 20 NEXTCASED
+        ...(finalSigma
+          ? [
+              { name: "cased", type: i32ArrRef }, // 21 CASED
+              { name: "ignorable", type: i32ArrRef }, // 22 IGNORABLE
+            ]
+          : []),
       ],
       body,
       exported: false,

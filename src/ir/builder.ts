@@ -219,10 +219,36 @@ export class IrFunctionBuilder {
   }
 
   emitUnary(op: IrUnop, rand: IrValueId, resultType: IrType): IrValueId {
+    // (#3741) `i32.trunc_sat_f64_s(f64.convert_i32_s(x))` === `x` for every
+    // i32 `x`: the widening is exact (every int32 is representable in f64) and
+    // the saturating truncation of an exact in-range integer is the identity.
+    //
+    // This matters because #3741 gives provably-int32 locals an i32 Wasm slot
+    // and widens on EVERY read, so that no consumer observes the promotion.
+    // Without this cancellation the single most common consumer — an array
+    // index, `arr[i]` — would pay `convert` + `trunc_sat` where it used to pay
+    // just `trunc_sat`, i.e. the promotion would PESSIMIZE indexed loops.
+    //
+    // Guard: only when the `convert` is the immediately-preceding instruction
+    // in the CURRENT sink. That makes same-buffer dominance trivially true and
+    // makes an aliasing second consumer impossible in practice (there has been
+    // no chance to hand the value to anyone else yet).
+    if (op === "i32.trunc_sat_f64_s") {
+      const sink = this.bodyBuffer ?? this.currentBlockInstrsOrNull();
+      const last = sink !== null && sink.length > 0 ? sink[sink.length - 1] : undefined;
+      if (last !== undefined && last.kind === "unary" && last.op === "f64.convert_i32_s" && last.result === rand) {
+        return last.rand;
+      }
+    }
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "unary", op, rand, result, resultType });
     return result;
+  }
+
+  /** The instruction list a `pushInstr` would append to, or null if no block. */
+  private currentBlockInstrsOrNull(): IrInstr[] | null {
+    return this.current === null ? null : this.current.instrs;
   }
 
   emitSelect(condition: IrValueId, whenTrue: IrValueId, whenFalse: IrValueId, resultType: IrType): IrValueId {

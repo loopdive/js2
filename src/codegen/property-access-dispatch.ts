@@ -60,7 +60,7 @@ import {
 import { popBody, pushBody } from "./context/bodies.js";
 import { classMemberFuncKey, resolveMethodOwnerClass } from "./class-member-keys.js";
 import { definedFuncAt } from "./func-space.js";
-import { emitCachedMethodClosureAccess, emitFuncRefAsClosure } from "./closures.js";
+import { emitCachedMethodClosureAccess, emitFuncRefAsClosure, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
@@ -2158,6 +2158,78 @@ export function tryPrototypeMethodAndArityReads(
   return PA_FALLTHROUGH;
 }
 
+/**
+ * (#3424) Emit the standalone numeric `.length` read for an `any`/`unknown`
+ * receiver already compiled to externref. Reified builtin function values are
+ * closure-root subtypes, so consult their exact finalize-filled metadata before
+ * preserving the legacy `__extern_length` fallback for non-closures.
+ */
+function emitStandaloneAnyLength(ctx: CodegenContext, fctx: FunctionContext): ValType {
+  const closureRootIdx = getFuncRefWrapperRootTypeIdx(ctx);
+  ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
+  if (closureRootIdx !== undefined) {
+    ensureLateImport(
+      ctx,
+      "__builtinfn_get_meta",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    addStringConstantGlobal(ctx, "length");
+  }
+  const metaLengthToI32 =
+    closureRootIdx === undefined ? undefined : coercionInstrs(ctx, { kind: "externref" }, { kind: "i32" }, fctx);
+  flushLateImportShifts(ctx, fctx);
+
+  const lenFn = ctx.funcMap.get("__extern_length");
+  const bfnGetMetaFn = ctx.funcMap.get("__builtinfn_get_meta");
+  const genericLength = (recvExternLocal: number): Instr[] =>
+    lenFn !== undefined
+      ? [{ op: "local.get", index: recvExternLocal }, { op: "call", funcIdx: lenFn }, { op: "i32.trunc_sat_f64_s" }]
+      : [{ op: "i32.const", value: 0 }];
+  const guardedLength = (recvExternLocal: number): Instr[] => {
+    if (closureRootIdx === undefined || bfnGetMetaFn === undefined || metaLengthToI32 === undefined) {
+      return genericLength(recvExternLocal);
+    }
+    const metaLocal = allocLocal(fctx, `__bfn_len_meta_${fctx.locals.length}`, { kind: "externref" });
+    return [
+      { op: "local.get", index: recvExternLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: closureRootIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: recvExternLocal },
+          ...stringConstantExternrefInstrs(ctx, "length"),
+          { op: "call", funcIdx: bfnGetMetaFn },
+          { op: "local.tee", index: metaLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: 0 }],
+            else: [{ op: "local.get", index: metaLocal }, ...metaLengthToI32],
+          },
+        ],
+        else: genericLength(recvExternLocal),
+      },
+    ];
+  };
+
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    emitGuardedNativeStringLength(ctx, fctx, guardedLength);
+  } else if (closureRootIdx !== undefined && bfnGetMetaFn !== undefined && metaLengthToI32 !== undefined) {
+    const recvExternLocal = allocLocal(fctx, `__bfn_len_recv_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: recvExternLocal }, ...guardedLength(recvExternLocal));
+  } else if (lenFn !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: lenFn }, { op: "i32.trunc_sat_f64_s" });
+  } else {
+    fctx.body.push({ op: "drop" }, { op: "i32.const", value: 0 });
+  }
+  if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
+  return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+}
+
 export function tryLengthAndNameReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -2693,40 +2765,7 @@ export function tryLengthAndNameReads(
           if (exprResult.kind !== "externref") {
             coerceType(ctx, fctx, exprResult, { kind: "externref" });
           }
-          const lenFn = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
-          flushLateImportShifts(ctx, fctx);
-          // (#2576, extends #2187) The `any`/unknown value may actually be a
-          // native `$AnyString` (object string-value read, generator yield read,
-          // catch binding, indexed element read). `__extern_length` reads
-          // $ObjVec/array length and returns 0 for a bare string, so guard with
-          // `ref.test $AnyString` first: a string hit reads `$AnyString.len`
-          // (field 0); the miss falls to the existing `__extern_length`
-          // array/$ObjVec reader. Always computes an i32 length, converted to f64
-          // once below in !fast mode. sd-3's `receiverIsNativeStringValType` arm
-          // (above) already handles the bare-identifier-with-string-ref-local
-          // case; this covers the opaque-externref cases it cannot see statically.
-          if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-            emitGuardedNativeStringLength(ctx, fctx, (recvExternLocal) =>
-              lenFn !== undefined
-                ? [
-                    { op: "local.get", index: recvExternLocal },
-                    { op: "call", funcIdx: lenFn },
-                    { op: "i32.trunc_sat_f64_s" },
-                  ]
-                : [{ op: "i32.const", value: 0 }],
-            );
-            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_s" });
-            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
-          }
-          if (lenFn !== undefined) {
-            fctx.body.push({ op: "call", funcIdx: lenFn });
-            if (ctx.fast) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
-          }
-          // No helper available — drop and yield 0.
-          fctx.body.push({ op: "drop" });
-          fctx.body.push({ op: ctx.fast ? "i32.const" : "f64.const", value: 0 });
-          return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          return emitStandaloneAnyLength(ctx, fctx);
         }
       }
     }
