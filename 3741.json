@@ -1,9 +1,8 @@
 {
   "id": "3741",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-28T08:08:23Z",
-  "updated_at": "2026-07-28T08:08:23Z",
-  "pr_scan": "off"
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "claude/issue-3741-i32-loop-shadow",
+  "claimed_at": "2026-07-28T13:30:42Z",
+  "updated_at": "2026-07-28T13:30:42Z"
 }
