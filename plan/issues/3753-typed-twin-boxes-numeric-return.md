@@ -21,7 +21,8 @@ func-budget-allow:
   # the machinery must hook, not organic sprawl.
   - src/codegen/binary-ops.ts::compileBinaryExpression
   - src/codegen/index.ts::generateModule
-status: ready
+status: done
+completed: 2026-07-28
 sprint: current
 created: 2026-07-28
 updated: 2026-07-28
@@ -221,9 +222,37 @@ plus a branch per character on a receiver field that does not change.
 
 ## Acceptance criteria
 
-- [ ] The tokenizer axis improves materially against the numbers above, with
+- [x] The tokenizer axis improves materially against the numbers above, with
       checksums still matching (a mismatched checksum voids the measurement).
-- [ ] `dogfood:acorn-corpus` stays at 0 real gaps and the standalone canaries
+      **9.54x -> 4.32x**, and `prop` reached parity (1.33x -> 1.00x) as a
+      side-effect of the same field-representation work.
+- [x] `dogfood:acorn-corpus` stays at 0 real gaps and the standalone canaries
       stay import-free.
-- [ ] No equivalence-suite regressions, bisected against the merge parent.
-- [ ] A mixed-return method still compiles (and still boxes).
+- [x] No equivalence-suite regressions, bisected against the merge parent.
+      Gate: 1611 passing, 32 failing, all 32 already in the baseline.
+- [x] A mixed-return method still compiles (and still boxes) — pinned in
+      `tests/issue-3754-numeric-return-twin.test.ts`, along with a bare
+      `return;`, a body that can fall off the end, and a same-named method
+      elsewhere that returns a non-number.
+
+## Outcome
+
+All three slices landed:
+
+| slice                                       | where                | measured           |
+| ------------------------------------------- | -------------------- | ------------------ |
+| S1 native-string fnctor fields              | this issue           | tokenizer 9.54x -> 4.32x, `prop` -> parity |
+| S2 numeric-operand recognition at `+`       | this issue           | folded into the above |
+| the numeric-RETURN twin (the "original S1-S3") | **#3754**            | `method` 8.88x -> 1.99x |
+
+The numeric-return twin is written up in #3754 rather than here: it was
+proposed here first, deferred twice, and only after #3754's per-call profile
+did it become the *measured* blocker rather than a plausible one. The
+correction section above records why the first slicing aimed at the wrong
+thing — the box was at the FIELD, not the return — and that reasoning is worth
+keeping even though the return box turned out to matter too, on a different
+axis.
+
+Remaining follow-ons, both still open: #3755 (per-call `__str_flatten`) and
+#3754's second lever (hoisting the per-call `ref.test` out of the guarded
+`__dc_*_g` trampoline).

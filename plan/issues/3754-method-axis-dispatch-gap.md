@@ -1,10 +1,18 @@
 ---
 id: 3754
 title: "perf: the `method` axis is 6.21x node — the second-largest remaining gap after #3753"
-status: ready
+loc-budget-allow:
+  # The numeric-return twin touches exactly the four sites that must agree on
+  # the ABI (twin minting, trampoline results, the shim, the verdict itself),
+  # each carrying the soundness argument for why it can impose a type the
+  # declaration does not have.
+  - src/codegen/typed-this.ts
+  - src/codegen/closures.ts
+status: done
 sprint: current
 created: 2026-07-28
 updated: 2026-07-28
+completed: 2026-07-28
 priority: high
 horizon: l
 feasibility: medium
@@ -109,6 +117,94 @@ run per call.
 - [x] A per-call cost table for the `method` axis, calls resolved by name.
 - [x] The dominant cost named, with WAT evidence: the externref twin ABI, not
       the arithmetic.
-- [ ] Numeric-return twins implemented across all four points above.
-- [ ] Measured by same-container interleaved A/B behind a kill switch, with
+- [x] Numeric-return twins implemented across all four points above.
+- [x] Measured by same-container interleaved A/B behind a kill switch, with
       matching checksums.
+
+## Result (2026-07-28)
+
+Implemented across all four points. `refinedTwinReturnType` (typed-this.ts) is
+the single verdict both the twin's minting and the trampoline's reservation
+consult, so they cannot disagree; `JS2WASM_NUMERIC_TWINS=0` restores the boxed
+ABI byte-for-byte.
+
+### Measurement — same container, interleaved, checksums matching
+
+Three interleaved rounds of the js2 leg, `JS2WASM_NUMERIC_TWINS` on/off. Every
+checksum matched on every axis in every round. Round 1 is discarded as warmup:
+its `numeric` reading (3.63 ms against a 1.41 ms steady state) shows the
+container was still noisy, and `numeric` is an axis this change cannot touch —
+which is exactly what makes it a usable noise detector rather than a judgement
+call.
+
+| axis      | twins off | twins on | note                        |
+| --------- | --------: | -------: | --------------------------- |
+| method    |     4.22 | **0.95** | **4.4x**                    |
+| numeric   |     1.41 |     1.41 | untouched (the noise probe) |
+| prop      |     0.63 |     0.64 | untouched                   |
+| alloc     |    0.138 |    0.139 | untouched                   |
+| tokenizer |     0.76 |     0.74 | untouched (within noise)    |
+
+Against node measured in the same container minutes later (0.426 ms → 0.474 ms
+this run), the `method` axis goes from **8.88x to 1.99x**.
+
+### What the loop body became
+
+    call $__dc_P_inc_0_g     ;; -> f64
+    f64.add
+
+The two conversion calls per iteration that #3754's profile named
+(`__to_primitive`, `__unbox_number`) are gone, and the twin no longer ends in
+`__box_number`.
+
+## The second lever, now PRICED (2026-07-28) — worth 2.24x, still open
+
+The per-call `ref.test` in the guarded `__dc_*_g` trampoline was measured the
+same way #3755 was falsified: a throwaway patch making the fill emit the twin
+arm unconditionally (unsound in general; valid for this benchmark, whose
+receiver really is a `P`). That measures the CEILING of any hoisting scheme.
+
+Same container, interleaved, checksums matching:
+
+| arm             | numeric | method     |
+| --------------- | ------: | ---------: |
+| guarded (today) |  1.4017 |     0.9501 |
+| **unguarded**   |  1.4186 | **0.4240** |
+| guarded (today) |  1.4134 |     0.9556 |
+| **unguarded**   |  1.4170 | **0.4331** |
+
+**2.24x.** And 0.424 ms is *node parity* — node measured 0.426–0.474 ms on this
+axis in the same container. `numeric` is flat across all four arms, so this is
+signal, not drift.
+
+That is a much larger residual than expected for one `ref.test`: ~1.8 ns per
+iteration, far more than a well-predicted branch. The likely mechanism is not
+the test itself but the two-armed `if` around it defeating inlining of the
+trampoline at the call site — worth confirming before choosing an approach,
+because it changes which fix is right.
+
+### A sound approach that does NOT need general LICM
+
+The guard exists because a receiver-flow verdict (#3685) is a whole-program
+*inference*, so an unguarded `ref.cast` would turn imprecision into a trap.
+But the benchmark's shape is stronger than an inference:
+
+```js
+var p = new P(0);          // the ONLY definition of this slot
+for (…) { s = s + p.inc(); }
+```
+
+A local whose **every** definition is a `new <Class>(…)` has a *proven* class,
+not an inferred one — the same "every def" formulation `numericSlots` already
+uses, on the same `ScopeTable`/`Slot` machinery. For that narrow case the
+unguarded `__dc_<F>_<m>_<n>` trampoline is sound with no hoisting pass at all.
+
+That is the recommended slice: strengthen the admission for write-once
+`new`-initialised locals, rather than building loop-invariant code motion.
+
+## Follow-on status
+
+- **second lever** — priced at 2.24x above, NOT yet implemented.
+- **#3755** (per-call `__str_flatten`) — measured, worth 0, closed wont-fix.
+- **#3765** (numeric locals stay boxed) — the tokenizer's real remaining lever,
+  filed from the same profiling round.

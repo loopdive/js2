@@ -89,6 +89,7 @@ import {
   directCallLoweringEnabled,
   emitTypedThisPrologue,
   recordDirectCallTwin,
+  refinedTwinReturnType,
 } from "./typed-this.js";
 import { addFunctionOwnLocals, registerOwnLocalsCollector } from "./binding-info.js"; // (#2103) shared, memoized per-function binding-info oracle
 // (#2957 phase 2) arrow/fn-expr async activation. Imported LAST: `async-activation`
@@ -2762,8 +2763,16 @@ export function compileArrowAsClosure(
       const twinParams: ValType[] = useReceiverParam
         ? [{ kind: "ref", typeIdx: admitted.structTypeIdx }, ...arrowParams]
         : liftedParams;
+      // (#3754) NUMERIC-RETURN twin. When the whole-program fixpoint proved this
+      // method returns a number on every path, the twin is minted with `f64`
+      // results instead of the declaration-derived `externref` — see
+      // `refinedTwinReturnType` for why that is sound and why it cannot produce
+      // a stack-type mismatch. Skipped under `JS2WASM_DIRECT_CALLS=0`, where the
+      // twin SHARES the generic body's func type and so cannot diverge from it.
+      const refinedReturn = useReceiverParam ? refinedTwinReturnType(ctx, arrow, closureReturnType ?? null) : undefined;
+      const twinResults: ValType[] = refinedReturn ? [refinedReturn] : [...closureResults];
       const twinTypeIdx = useReceiverParam
-        ? addFuncType(ctx, twinParams, closureResults, `${twinName}_type`)
+        ? addFuncType(ctx, twinParams, twinResults, `${twinName}_type`)
         : liftedFuncTypeIdx;
       const twin = compileLiftedClosureBody(ctx, fctx, arrow, {
         closureName: twinName,
@@ -2771,14 +2780,17 @@ export function compileArrowAsClosure(
         selfBindingName,
         arrowParams,
         // The concise-body return repair cannot fire (admission requires a
-        // BLOCK body), but hand the twin its own array so a future shape
+        // BLOCK body), but this is the twin's OWN array so a future shape
         // change can never let it rewrite the generic's results in place.
-        closureResults: [...closureResults],
+        closureResults: twinResults,
         liftedParams: twinParams,
         structTypeIdx,
         liftedSelfTypeIdx,
         liftedFuncTypeIdx: twinTypeIdx,
-        closureReturnType,
+        // The refined type is IMPOSED on the body, not asserted over it: every
+        // `return` coerces to it through the normal path, which is total for
+        // every kind a return expression can lower to.
+        closureReturnType: refinedReturn ?? closureReturnType,
         isGenerator,
         isAsync,
         asyncDecision,
@@ -2807,7 +2819,7 @@ export function compileArrowAsClosure(
         });
         ctx.liveBodies.delete(twin.liftedFctx.body);
         ctx.funcMap.set(twinName, twinFuncIdx);
-        recordDirectCallTwin(ctx, arrow, twinName, twinParams, closureResults);
+        recordDirectCallTwin(ctx, arrow, twinName, twinParams, twinResults);
         // Prepend IN PLACE: `liftedFctx.body` is the same array object already
         // registered as the generic function's body, and it stays covered by
         // `shiftLateImportIndices` (which walks `ctx.mod.functions`), so the
@@ -2817,15 +2829,32 @@ export function compileArrowAsClosure(
         const guardTmp = useReceiverParam
           ? allocLocal(liftedFctx, `__tt_shim_${liftedFctx.locals.length}`, { kind: "anyref" })
           : undefined;
-        liftedFctx.body.unshift(
-          ...buildTypedThisForwardGuard(
-            admitted.structTypeIdx,
-            ensureCurrentThisGlobal(ctx),
-            liftedFctx.params.length,
-            twinFuncIdx,
-            guardTmp,
-          ),
-        );
+        // (#3754) A refined twin's results no longer equal the generic body's,
+        // so the shim cannot tail-call it — box on the way back out instead.
+        // Read `__box_number` HERE rather than at refinement time: compiling
+        // the twin above may have added late imports, which shift every
+        // function index (the same reason `twinFuncIdx` is minted after it).
+        // A module without the helper keeps the tail call and the boxed twin.
+        const boxNumberIdx = refinedReturn !== undefined ? ctx.funcMap.get("__box_number") : undefined;
+        const boxTwinResult: Instr[] | undefined =
+          boxNumberIdx === undefined ? undefined : [{ op: "call", funcIdx: boxNumberIdx }];
+        // `refinedTwinReturnType` already required the helper to be resolvable,
+        // so this cannot normally miss; if it ever did, emit NO shim rather than
+        // an ill-typed tail call. The generic body then simply stays generic —
+        // the direct-call trampolines still reach the twin, so the only cost is
+        // an unmonomorphized dynamic entry.
+        if (refinedReturn === undefined || boxTwinResult !== undefined) {
+          liftedFctx.body.unshift(
+            ...buildTypedThisForwardGuard(
+              admitted.structTypeIdx,
+              ensureCurrentThisGlobal(ctx),
+              liftedFctx.params.length,
+              twinFuncIdx,
+              guardTmp,
+              boxTwinResult,
+            ),
+          );
+        }
         ctx.typedThisTwinCount = (ctx.typedThisTwinCount ?? 0) + 1;
       }
     }

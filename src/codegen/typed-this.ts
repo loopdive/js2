@@ -329,6 +329,19 @@ export function buildTypedThisForwardGuard(
   twinFuncIdx: number,
   /** `undefined` under the kill-switch — the S2 twin shares this signature. */
   scratchLocalIdx: number | undefined,
+  /**
+   * (#3754) Instructions that lift the twin's REFINED result back up to the
+   * GENERIC body's declared result, or `undefined` when the two agree.
+   *
+   * A numeric-return twin (see {@link refinedTwinReturnType}) yields `f64`
+   * while the generic body it shims still yields `externref`, and `return_call`
+   * requires the callee's results to equal the caller's — so on that path the
+   * shim degrades to `call; <box>; return`. That costs one frame the tail call
+   * would have elided, paid ONLY on the dynamic entry into the generic body;
+   * the devirtualized callers (`__dc_*`) reach the twin without passing through
+   * here at all, which is the path this refinement exists for.
+   */
+  boxTwinResult?: Instr[],
 ): Instr[] {
   const forward: Instr[] =
     scratchLocalIdx === undefined
@@ -345,7 +358,15 @@ export function buildTypedThisForwardGuard(
   // is minted with `closureResults`), so the tail call is well-typed and the
   // shim costs no extra frame. The guard sits at function ENTRY, outside any
   // `try`, so the tail-call restriction on handler scopes cannot apply.
-  forward.push({ op: "return_call", funcIdx: twinFuncIdx });
+  //
+  // The one exception is a numeric-return twin, whose results deliberately do
+  // NOT equal the generic body's — there the tail call is ill-typed and the
+  // shim boxes and returns instead (see `boxTwinResult`).
+  if (boxTwinResult === undefined) {
+    forward.push({ op: "return_call", funcIdx: twinFuncIdx });
+  } else {
+    forward.push({ op: "call", funcIdx: twinFuncIdx }, ...boxTwinResult, { op: "return" });
+  }
   return [
     { op: "global.get", index: currentThisGlobalIdx },
     { op: "any.convert_extern" },
@@ -914,6 +935,77 @@ export function recordDirectCallTwin(
 }
 
 /**
+ * (#3754) The twin's REFINED wasm result, or `undefined` to keep the declared
+ * one.
+ *
+ * ## The problem
+ *
+ * A fnctor prototype method is declared with an UNTYPED receiver
+ * (`P.prototype.inc = function () { return this.n + 1; }`), so the checker
+ * types `this` as `any`, so the return is `any`, so the twin's result lowers to
+ * `externref`. But inside the twin `this` is a `(ref $__fnctor_P)` whose
+ * numeric fields are physical `f64` slots (#3683 S4a) — the value being
+ * returned IS an f64, and the twin boxes it purely to satisfy a signature
+ * derived from the declaration rather than from the body.
+ *
+ * The caller then pays for that box on the way back in: the `method` axis
+ * emitted `call $__dc_P_inc_0_g; call $__to_primitive; call $__unbox_number`
+ * per iteration (#3754's profile), where the arithmetic itself is one
+ * `f64.add`.
+ *
+ * ## Why the fixpoint's verdict is the right evidence
+ *
+ * `numericFunctionNames` is the whole-program fixpoint's answer to "does EVERY
+ * function of this name return a number on EVERY path". It is exactly the
+ * conservative rule #3753 asked for, and it is already load-bearing elsewhere
+ * (`provenNumericOperand` in binary-ops.ts trusts it to unbox an `any`-typed
+ * operand). Its `ownReturnExpressions` precondition also rules out the two
+ * shapes that would otherwise break a refined result — a bare `return;` and a
+ * body that can fall off the end — because both yield `undefined`, not a
+ * number. A method with mixed returns (`return 1` / `return "x"`) fails the
+ * `every` and keeps `externref`, which is the documented risk.
+ *
+ * ## Why this cannot produce a stack-type mismatch
+ *
+ * The refined type is not asserted over the body — it is IMPOSED on it. The
+ * twin compiles with `fctx.returnType = f64`, so every `return` runs the normal
+ * `coerceType(<whatever the expression lowered to>, f64)` path, which is total
+ * for every reference kind (externref / anyref / ref / ref_null) as well as the
+ * numeric ones. So a return expression the fixpoint called numeric but codegen
+ * happened to lower through the dispatcher still lands as an f64 — it just pays
+ * an unbox that a fully-typed lowering would not. Correctness does not depend
+ * on the fixpoint being tight, only on it being sound about "is a number".
+ *
+ * Both consumers — the twin's own minting in closures.ts and the trampoline
+ * reservation below — ask THIS function, so they cannot disagree. If they ever
+ * did, `fillDirectCallTrampolines` compares `twin.results` against the
+ * trampoline's and degrades to the legacy dispatcher rather than emitting a
+ * module that fails validation.
+ */
+export function refinedTwinReturnType(
+  ctx: CodegenContext,
+  fn: ts.ArrowFunction | ts.FunctionExpression,
+  declared: ValType | null,
+): ValType | undefined {
+  // `JS2WASM_NUMERIC_TWINS=0` restores the externref twin ABI byte-for-byte,
+  // which is what makes the A/B differential for this slice possible.
+  if (process.env.JS2WASM_NUMERIC_TWINS === "0") return undefined;
+  if (!ctx.standalone || !directCallLoweringEnabled()) return undefined;
+  // Only worth doing — and only SOUND to do — when the declared result is the
+  // boxed one. Anything else is already a native type the body agrees with.
+  if (declared === null || declared.kind !== "externref") return undefined;
+  // The shim in the generic body has to box the refined result back up; without
+  // the helper to do it there is no lowering, so decline before the twin is
+  // minted rather than after.
+  if (ctx.funcMap.get("__box_number") === undefined) return undefined;
+  const key = writeOnceMethodKeyOf(ctx, fn);
+  if (key === undefined) return undefined;
+  const methodName = key.slice(key.indexOf("/") + 1);
+  if (ctx.numericFunctionNames?.has(methodName) !== true) return undefined;
+  return { kind: "f64" };
+}
+
+/**
  * Memoized `FunctionLikeDeclaration → "<F>/<m>"` view of the S1 verdicts — the
  * method-name-carrying twin of {@link writeOnceOwnerOf}.
  */
@@ -1388,6 +1480,12 @@ export function tryEmitDirectTwinCall(
     padInstrs.push(pad);
   }
 
+  // (#3754) The trampoline's result must follow the TWIN's, not the
+  // declaration's — otherwise the fill sees a signature disagreement and
+  // degrades every devirtualized site to the legacy dispatcher.
+  const refinedReturn = refinedTwinReturnType(ctx, fn, sig.returnType);
+  const callResult = refinedReturn ?? sig.returnType;
+
   const tramp = reserveDirectCallTrampoline(ctx, {
     className,
     methodName,
@@ -1400,8 +1498,10 @@ export function tryEmitDirectTwinCall(
     padInstrs,
     padTypes,
     // Void callee ⇒ no wasm result. The legacy degradation target always yields
-    // an externref, so the fill drops it in that arm (see below).
-    results: sig.returnType === null ? [] : [sig.returnType],
+    // an externref, so the fill drops it in that arm (see below) — and when the
+    // twin's result was refined to `f64`, that same arm unboxes it once through
+    // `unboxFromExternref`, so both arms agree on the wasm result type.
+    results: callResult === null ? [] : [callResult],
     guardedReceiver,
     deps,
   });
@@ -1441,7 +1541,10 @@ export function tryEmitDirectTwinCall(
   }
   fctx.body.push({ op: "call", funcIdx: tramp.funcIdx });
   directCallStats.sites++;
-  return sig.returnType ?? VOID_RESULT;
+  // Report what the trampoline ACTUALLY leaves on the stack — a refined `f64`,
+  // not the declaration's `externref`. Every consumer coerces from this, so a
+  // stale answer here is the one way this slice could miscompile.
+  return callResult ?? VOID_RESULT;
 }
 
 /** Box one native value already on the stack up to `externref`. */
