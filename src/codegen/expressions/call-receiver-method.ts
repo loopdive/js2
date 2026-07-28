@@ -95,6 +95,7 @@ import {
   emitBoolToString,
   isStaticUndefinedArg,
 } from "../string-ops.js";
+import { tryCompileIndexOfHoistedUndefinedSearch } from "../string-indexof-undefined.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { ensureUint8ToBase64, ensureUint8ToHex } from "../uint8-codec.js";
@@ -119,7 +120,7 @@ import {
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
-import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import {
   BUILTIN_CLASS_NAMES,
@@ -2602,6 +2603,7 @@ export function compileReceiverMethodCall(
           }
           continue;
         }
+        if (method === "indexOf" && ai === 0 && tryCompileIndexOfHoistedUndefinedSearch(ctx, fctx, args[ai]!)) continue;
         if (ai < userParamCount) {
           const expectedArgType = paramTypes?.[ai + 1]; // +1 for self param
           const argResult = compileExpression(ctx, fctx, args[ai]!, expectedArgType);
