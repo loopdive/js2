@@ -966,6 +966,9 @@ function compileExpressionBody(
 
   // Inner compile produced no usable value — roll back its partial emission
   // (#1919: body + locals + late imports + errors) and emit a default instead.
+  // (#3725) Diagnostics marked `sticky` survive this unwind: a deliberate
+  // target refusal is not a probe miss, and substituting a default for it
+  // produced a clean compile that trapped at runtime.
   rollbackSpeculative(ctx, fctx, snap);
   let wasmType: ValType;
   if (expectedType) {

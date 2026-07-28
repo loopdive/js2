@@ -731,10 +731,61 @@ export function registerNativeStringTypes(ctx: CodegenContext): void {
     name: "ConsString",
     fields: [
       { name: "len", type: { kind: "i32" }, mutable: false },
-      { name: "left", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: false },
-      { name: "right", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: false },
+      // (#3673) left/right are mutable so `__str_flatten` can memoize: after
+      // flattening a rope it rewrites the cons in place to (left=flat result,
+      // right=""), turning every later flatten of the same rope into a two-
+      // field fast path instead of an O(len) re-copy. `len` stays immutable —
+      // the rewrite preserves the total length.
+      { name: "left", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: true },
+      { name: "right", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx }, mutable: true },
     ],
     superTypeIdx: ctx.anyStrTypeIdx,
+  });
+
+  // (#3673 round 9) `$HashedString <: $NativeString` — a flat string that
+  // CACHES its FNV-1a hash. `__obj_hash` re-hashed the probe key per $Object
+  // lookup (O(len) loop) even though most keys are compile-time constants.
+  // Only two producers allocate this subtype: interned literal globals (hash
+  // BAKED at compile time by `nativeStringLiteralHash`) and `__str_flatten`'s
+  // memoized flat copies (hash 0 = uncomputed, filled lazily by `__obj_hash`
+  // via `struct.set`). Field encoding: 0 = uncomputed; else
+  // `(fnv & 0x7fffffff) | 0x80000000` (the sign bit marks "computed", so a
+  // genuine hash of 0 stays distinguishable). Every existing
+  // `(ref $NativeString)` consumer accepts it via subtyping — no other
+  // allocation or read site changes.
+  // Fields 4-6 (#3673 round 9b): a per-KEY prototype-lookup inline cache used
+  // by `__extern_get` for fnctor-receiver method resolution (acorn's
+  // `this.readToken()` class of call). When a proto-walk starting at a fnctor
+  // prototype finds a DATA entry on the FIRST prototype object and the key is
+  // an interned `$HashedString`, the (owner-proto, entry) pair is memoized ON
+  // THE KEY STRING with the current table generation. A later lookup with the
+  // same interned key + same proto short-circuits the whole `__extern_get`
+  // ladder to one entry-value read. Validity: `cacheGen == __obj_table_gen`
+  // (bumped ONLY by `__obj_grow` — rehash re-mints entry structs), owner
+  // `ref.eq`, and the entry's flags carry neither TOMBSTONE (delete) nor
+  // ACCESSOR (defineProperty morph) — value updates mutate the entry in place
+  // and stay visible through the cache. Fields are `anyref` (not typed refs)
+  // because `$Object`/`$PropEntry` are registered later by the object runtime.
+  ctx.hashedStrTypeIdx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: "HashedString",
+    fields: [
+      { name: "len", type: { kind: "i32" }, mutable: false },
+      { name: "off", type: { kind: "i32" }, mutable: false },
+      { name: "data", type: { kind: "ref", typeIdx: ctx.nativeStrDataTypeIdx }, mutable: false },
+      { name: "hash", type: { kind: "i32" }, mutable: true },
+      { name: "cacheGen", type: { kind: "i32" }, mutable: true },
+      { name: "cacheOwner", type: { kind: "anyref" }, mutable: true },
+      { name: "cacheEntry", type: { kind: "anyref" }, mutable: true },
+      // (#3673 round 21) the owner's props ARRAY at population time — a grow
+      // replaces the array, so `ref.eq` on it is a per-object staleness check
+      // (replaces the global `__obj_table_gen`, whose bump on ANY object's
+      // grow cold-started every cache twice per parse via acorn's options
+      // build). Field 4 degrades to a populated flag (0/1).
+      { name: "cacheProps", type: { kind: "anyref" }, mutable: true },
+    ],
+    superTypeIdx: ctx.nativeStrTypeIdx,
   });
 
   // #1588 PR-B: dual i8/i16 storage. Only register the UTF-8 backing array +

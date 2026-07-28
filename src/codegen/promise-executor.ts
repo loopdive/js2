@@ -130,6 +130,7 @@ export function emitStandalonePromiseFromExecutor(
   //    struct{ func: ref.func $cl, cap_promise: p } upcast to externref.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
     fctx.body.push({ op: "ref.func", funcIdx: clFuncIdx });
+    fctx.body.push({ op: "i32.const", value: 1 }); // (#3673) $arity — settle fns take 1 arg
     fctx.body.push({ op: "local.get", index: pLocal });
     fctx.body.push({ op: "struct.new", typeIdx: capTypeIdx });
     fctx.body.push({ op: "extern.convert_any" });
@@ -268,6 +269,7 @@ export function emitStandalonePromiseFromExecutorValue(
   // 3. resolve / reject as capturing closure VALUES (externref), capturing p.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
     fctx.body.push({ op: "ref.func", funcIdx: clFuncIdx });
+    fctx.body.push({ op: "i32.const", value: 1 }); // (#3673) $arity — settle fns take 1 arg
     fctx.body.push({ op: "local.get", index: pLocal });
     fctx.body.push({ op: "struct.new", typeIdx: capTypeIdx });
     fctx.body.push({ op: "extern.convert_any" });

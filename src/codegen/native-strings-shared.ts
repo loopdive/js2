@@ -81,14 +81,28 @@ export function makeNativeStrShared(
    * to satisfy the wasm type checker.
    */
   function wrapBodyWithFlatten(body: Instr[], strParamIndices: number[]): Instr[] {
-    // 1. Build flatten preamble
+    // 1. Build flatten preamble. (#3673) The `__str_flatten` call is guarded by
+    // an inline `ref.test $NativeString` — already-flat params (the
+    // overwhelmingly common case once literals are interned) skip the call
+    // entirely. These preambles run on EVERY string-helper invocation
+    // (`__str_equals` alone is called per property probe), and the
+    // unconditional call was 35% of a standalone compiled-acorn parse.
     const preamble: Instr[] = [];
     for (const idx of strParamIndices) {
       preamble.push(
         { op: "local.get", index: idx },
-        { op: "call", funcIdx: getFlattenIdx() },
-        // flatten returns ref $NativeString which is subtype of ref $AnyString — can store in param
-        { op: "local.set", index: idx },
+        { op: "ref.test", typeIdx: strTypeIdx },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: idx },
+            { op: "call", funcIdx: getFlattenIdx() },
+            // flatten returns ref $NativeString which is subtype of ref $AnyString — can store in param
+            { op: "local.set", index: idx },
+          ],
+        },
       );
     }
 

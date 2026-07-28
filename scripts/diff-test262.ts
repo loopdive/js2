@@ -297,6 +297,12 @@ export const ORACLE_REBASE_DRIFT_TOLERANCE = 25;
 //     before and independent of this gate in BOTH branches — an allowance
 //     never excuses a new trap.
 export const REGRESSIONS_ALLOW_KEY = "regressions-allow";
+// (#3735) A docs-only PR (touching only plan/issues/**) never triggers
+// test262-sharded.yml's push run at all (path-filtered out), so a
+// trap-growth-allow declared there is invisible to promote-baseline's
+// change-scoping (which reads only the triggering commit's OWN HEAD^1..HEAD
+// diff) — the declaration must land in a PR that also touches a
+// test262-paths-matched file (e.g. this one) to actually be read.
 export const TRAP_GROWTH_ALLOW_KEY = "trap-growth-allow";
 
 export interface RegressionsAllowance {
@@ -661,6 +667,8 @@ export interface TrapCategoryGrowthOptions {
    * for baseline artifacts that are expected to cover the same Test262 corpus:
    * there an absent row is an incomplete observation, not evidence of a new
    * test. The pure helper defaults to strict candidate-only/new-test semantics.
+   * (#3735) `check-baseline-trap-growth.ts`'s before/after root-baseline
+   * compare passes `true` here — see that call site for why.
    */
   missingBaselineRowsAreUnknown?: boolean;
   /**

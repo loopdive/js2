@@ -28,6 +28,7 @@ import {
   flushLateImportShifts,
   materializeStructAsObject,
   registerCoerceType,
+  reserveTypedMemberGetF64DispatchLate,
   unpackedElemType,
 } from "./shared.js";
 
@@ -1760,6 +1761,37 @@ export function coerceType(
   if (from.kind === "externref" && to.kind === "f64") {
     if (ctx.standalone) {
       const hint = toPrimitiveHint ?? "number";
+      // (#3673) Typed member-get rewrite: when the externref on the stack is
+      // literally the result of a `call __get_member_<p>` generic dispatcher
+      // (the acorn `this.pos + size` shape), swap that call for the typed
+      // `__get_member_<p>__f64` twin and skip the `__to_primitive` +
+      // `__unbox_number` chain here — a numeric-slot hit becomes ONE call with
+      // a bare `struct.get` arm instead of three calls plus a number box. The
+      // typed dispatcher's non-numeric/miss arms re-emit this exact chain, so
+      // semantics are unchanged. Flush first: funcMap may be ahead of the
+      // body across a pending late-import shift, and the funcIdx compare
+      // below needs the two in the same regime.
+      if (hint === "number") {
+        flushLateImportShifts(ctx, fctx);
+        const last = fctx.body[fctx.body.length - 1];
+        if (last?.op === "call") {
+          let matchedProp: string | undefined;
+          for (const p of ctx.memberGetDispatchNames ?? []) {
+            if (ctx.funcMap.get(`__get_member_${p}`) === last.funcIdx) {
+              matchedProp = p;
+              break;
+            }
+          }
+          if (matchedProp !== undefined) {
+            const typedIdx = reserveTypedMemberGetF64DispatchLate(ctx, matchedProp, fctx);
+            if (typedIdx !== undefined) {
+              fctx.body.pop();
+              fctx.body.push({ op: "call", funcIdx: typedIdx });
+              return;
+            }
+          }
+        }
+      }
       pushStringHint(ctx, fctx, hint);
       const toPrimIdx = ensureLateImport(
         ctx,

@@ -33,6 +33,7 @@ import {
   emitCachedFuncClosureAccess,
   functionBodyReferencesThis,
 } from "./closures.js";
+import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
 import { reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
@@ -327,11 +328,14 @@ function lowerParamType(
   sourceFile: ts.SourceFile,
 ): ValType {
   const paramType = ctx.checker.getTypeAtLocation(param);
+  // (#3673) An explicit native annotation (`function f(a: i32)`) pins the
+  // parameter's Wasm type; see `native-type-annotations.ts`.
+  const nativeParam = nativeTypeOfDeclaration(ctx.checker, param);
   let wasmType: ValType = bindingPatternParamNeedsWiden(param)
     ? { kind: "externref" }
     : restBindingOverridesToExternref(param)
       ? { kind: "externref" }
-      : resolveWasmType(ctx, paramType);
+      : (nativeParam ?? resolveWasmType(ctx, paramType));
   // If the parameter has a default value and is a non-null ref type, widen to
   // ref_null so callers can pass ref.null as a sentinel for "use default".
   if (param.initializer && wasmType.kind === "ref") {
@@ -533,7 +537,12 @@ function registerBodylessFunctionDeclaration(
     } else {
       results = isVoidType(rUnwrapped)
         ? []
-        : [functionReturnsDynamicObjectCarrier(stmt) ? { kind: "externref" } : resolveWasmType(ctx, rUnwrapped)];
+        : [
+            // (#3673) `function f(): i32` pins the result type syntactically —
+            // the alias identity is only on the return TYPE NODE.
+            nativeTypeFromTypeNode(ctx.checker, stmt.type) ??
+              (functionReturnsDynamicObjectCarrier(stmt) ? { kind: "externref" } : resolveWasmType(ctx, rUnwrapped)),
+          ];
     }
   }
 
@@ -995,7 +1004,14 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         } else {
           results = isVoidType(rUnwrapped)
             ? []
-            : [functionReturnsDynamicObjectCarrier(stmt) ? { kind: "externref" } : resolveWasmType(ctx, rUnwrapped)];
+            : [
+                // (#3673) `function f(): i32` pins the result type syntactically —
+                // the alias identity is only on the return TYPE NODE.
+                nativeTypeFromTypeNode(ctx.checker, stmt.type) ??
+                  (functionReturnsDynamicObjectCarrier(stmt)
+                    ? { kind: "externref" }
+                    : resolveWasmType(ctx, rUnwrapped)),
+              ];
         }
       }
 

@@ -914,26 +914,55 @@ export function lowerIrFunctionBody<S, Slot>(
     vecElementScratch.set(key, idx);
     return idx;
   };
-  const ensureJsBitwiseScratch = (rhsIsI32: boolean): { rhs: number; tmp: number } => {
+  // #3733 — tmp-only accessor, split out of `ensureJsBitwiseScratch` so the
+  // `x | 0` / `x ^ 0` zero-operand fast path below (which needs only the
+  // ToInt32 scratch, not an rhs-holding slot) doesn't allocate an unused
+  // rhs local on every call.
+  const ensureJsBitwiseTmp = (): number => {
     if (jsBitwiseTmpIdx === null) {
       jsBitwiseTmpIdx = func.params.length + locals.length;
       const type: ValType = { kind: "f64" };
       locals.push({ name: "$js_bitwise_tmp", type, logicalType: { kind: "val", val: type } });
     }
+    return jsBitwiseTmpIdx;
+  };
+  // (#3739) Lazily-allocated i64 scratch pool for `emitJsToInt32`'s fast
+  // bit-manipulation path (WasmGC/linear only — see that function). Kept
+  // separate from `jsBitwiseTmpIdx` (f64) since the fast path doesn't use it.
+  let jsBitwiseI64Scratch: { bits: number; e: number; significand: number; magnitude: number } | null = null;
+  const ensureJsBitwiseI64Scratch = (): { bits: number; e: number; significand: number; magnitude: number } => {
+    if (jsBitwiseI64Scratch === null) {
+      const alloc = (name: string): number => {
+        const idx = func.params.length + locals.length;
+        const type: ValType = { kind: "i64" };
+        locals.push({ name, type, logicalType: { kind: "val", val: type } });
+        return idx;
+      };
+      jsBitwiseI64Scratch = {
+        bits: alloc("$js_bitwise_i64_bits"),
+        e: alloc("$js_bitwise_i64_e"),
+        significand: alloc("$js_bitwise_i64_significand"),
+        magnitude: alloc("$js_bitwise_i64_magnitude"),
+      };
+    }
+    return jsBitwiseI64Scratch;
+  };
+  const ensureJsBitwiseScratch = (rhsIsI32: boolean): { rhs: number; tmp: number } => {
+    const tmp = ensureJsBitwiseTmp();
     if (rhsIsI32) {
       if (jsBitwiseRhsIdxI32 === null) {
         jsBitwiseRhsIdxI32 = func.params.length + locals.length;
         const type: ValType = { kind: "i32" };
         locals.push({ name: "$js_bitwise_rhs_i32", type, logicalType: { kind: "val", val: type } });
       }
-      return { rhs: jsBitwiseRhsIdxI32, tmp: jsBitwiseTmpIdx };
+      return { rhs: jsBitwiseRhsIdxI32, tmp };
     }
     if (jsBitwiseRhsIdxF64 === null) {
       jsBitwiseRhsIdxF64 = func.params.length + locals.length;
       const type: ValType = { kind: "f64" };
       locals.push({ name: "$js_bitwise_rhs", type, logicalType: { kind: "val", val: type } });
     }
-    return { rhs: jsBitwiseRhsIdxF64, tmp: jsBitwiseTmpIdx };
+    return { rhs: jsBitwiseRhsIdxF64, tmp };
   };
   // #2949 slice 3 — scratch local for dynamic `tag.test` arms that must read
   // the carrier twice (host-mode Object test: `typeof === "object" && !null`).
@@ -973,6 +1002,19 @@ export function lowerIrFunctionBody<S, Slot>(
     } catch {
       return null;
     }
+  };
+
+  // #3733 — best-effort constant-value peek, same defensive shape as
+  // `tryTypeOf`. Used by the `js.bitor`/`js.bitxor` zero-operand fast path
+  // below to recognise the `x | 0` / `x ^ 0` ToInt32-coercion idiom without
+  // requiring the operand to already be i32-typed in IR (an untyped `number`
+  // literal like the `0` in `s = (s + i) | 0` lowers as f64, so the existing
+  // "both already i32" fast path above doesn't catch it).
+  const tryConstOf = (v: IrValueId): number | null => {
+    const d = defBy.get(v);
+    if (!d || d.kind !== "const") return null;
+    const c = d.value;
+    return c.kind === "i32" || c.kind === "f64" ? c.value : null;
   };
 
   // --- emission -----------------------------------------------------------
@@ -1234,6 +1276,27 @@ export function lowerIrFunctionBody<S, Slot>(
           return;
         }
 
+        if (isJsBitwise && (instr.op === "js.bitor" || instr.op === "js.bitxor") && tryConstOf(instr.rhs) === 0) {
+          // #3733 — `x | 0` / `x ^ 0`: OR/XOR with 0 is the identity on the
+          // ToInt32 bit pattern, so the whole rhs sub-expression — including
+          // its `emitJsToInt32` float round-trip, since an untyped `number`
+          // literal like this `0` lowers as f64, not i32 — is dead work.
+          // `x | 0` is the single most common "coerce to int32" idiom in JS
+          // (e.g. `s = (s + i) | 0`); the legacy AST-direct codegen in
+          // binary-ops.ts already special-cases it, but the IR lowerer
+          // never did, so any function compiled through IR paid the full
+          // double-ToInt32 cost for it (landing-page `loop.ts` benchmark).
+          emitValue(instr.lhs, out);
+          if (!lhsIsI32) {
+            coerceToF64ForBitwise(instr.lhs, out);
+            emitJsToInt32(emitter, out, ensureJsBitwiseTmp(), ensureJsBitwiseI64Scratch);
+          }
+          if (!resultIsI32) {
+            emitter.emitNumericConversion("f64.convert_i32_s", out);
+          }
+          return;
+        }
+
         emitValue(instr.lhs, out);
         // #1303 — defensive coercion only for JS bitwise ops, where the
         // lowering's first instruction (`f64.trunc` inside `emitJsToInt32`)
@@ -1261,11 +1324,11 @@ export function lowerIrFunctionBody<S, Slot>(
           // Stack: [lhs, rhs]
           emitter.emitLocalSet(rhsSlot, out);
           // Stack: [lhs]; rhsSlot holds rhs.
-          if (!lhsIsI32) emitJsToInt32(emitter, out, tmpSlot);
+          if (!lhsIsI32) emitJsToInt32(emitter, out, tmpSlot, ensureJsBitwiseI64Scratch);
           // Stack: [lhs_i32]
           emitter.emitLocalGet(rhsSlot, out);
           // Stack: [lhs_i32, rhs]
-          if (!rhsIsI32) emitJsToInt32(emitter, out, tmpSlot);
+          if (!rhsIsI32) emitJsToInt32(emitter, out, tmpSlot, ensureJsBitwiseI64Scratch);
           // Stack: [lhs_i32, rhs_i32]
           emitter.emitI32Bitwise(jsBitwiseToI32(instr.op), out);
           // `>>>` returns a Uint32; everything else is Int32. Convert
@@ -1732,8 +1795,9 @@ export function lowerIrFunctionBody<S, Slot>(
           throw new Error(`ir/lower: resolver cannot lower closure subtype (${func.name})`);
         }
         const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
-        // ref.func $lifted, push captures, struct.new <subtype>.
+        // ref.func $lifted, (#3673) $arity, push captures, struct.new <subtype>.
         emitter.emitFuncRef(liftedIdx, out);
+        emitter.emitClosureArityOperand?.(instr.signature.params.length, out);
         for (const cap of instr.captures) emitValue(cap, out);
         emitter.emitClosureNew(sub, instr.captures.length, out);
         return;
@@ -3768,7 +3832,102 @@ function jsBitwiseToI32(
 // stream, while non-Wasm sinks can represent the same composite semantics
 // without observing raw Wasm instructions. Bytecode legality continues to
 // reject the js.bitwise family before any of these primitives are called.
-function emitJsToInt32<S>(emitter: BackendEmitter<S>, out: S, tmpLocalIdx: number): void {
+//
+// (#3739) `S = Instr[]` (WasmGC and linear both use this sink type — see
+// `linear-emitter.ts`'s own comment on `emitBinary` for the shared-sink
+// rationale) takes a FAST bit-manipulation path instead: a handwritten-Wasm
+// bisection found the float-based algorithm below (f64.div/f64.floor/f64.mul)
+// never gets tiered up by V8 in a tight loop — stuck at baseline-interpreter
+// speed indefinitely, ~12x slower than an equivalent pure-f64 loop with no
+// floor at all. The bit-manipulation version (decompose the f64's IEEE-754
+// sign/exponent/significand and shift directly) avoids f64.floor entirely;
+// see `emitToInt32` in `src/codegen/binary-ops.ts` for the byte-identical
+// algorithm with full derivation comments (kept here without re-deriving to
+// avoid drift — the two are intentionally the same instruction sequence).
+// Non-Instr[] sinks (Porffor) keep the portable float-based algorithm: Porffor
+// doesn't model i64 bit-cast/shift ops in its expression tree, and extending
+// it to do so is out of scope here (see plan/issues/3739 for the follow-up).
+function emitJsToInt32<S>(
+  emitter: BackendEmitter<S>,
+  out: S,
+  tmpLocalIdx: number,
+  allocI64Scratch: () => { bits: number; e: number; significand: number; magnitude: number },
+): void {
+  if (Array.isArray(out)) {
+    const wasmOut = out as Instr[];
+    const { bits, e, significand, magnitude } = allocI64Scratch();
+    wasmOut.push({ op: "i64.reinterpret_f64" }, { op: "local.set", index: bits });
+    wasmOut.push(
+      { op: "local.get", index: bits },
+      { op: "i64.const", value: 52n },
+      { op: "i64.shr_u" },
+      { op: "i64.const", value: 0x7ffn },
+      { op: "i64.and" },
+      { op: "i64.const", value: 1023n },
+      { op: "i64.sub" },
+      { op: "local.set", index: e },
+    );
+    wasmOut.push(
+      { op: "local.get", index: bits },
+      { op: "i64.const", value: 0xfffffffffffffn },
+      { op: "i64.and" },
+      { op: "i64.const", value: 0x10000000000000n },
+      { op: "i64.or" },
+      { op: "local.set", index: significand },
+    );
+    const shiftLeft: Instr[] = [
+      { op: "local.get", index: significand },
+      { op: "local.get", index: e },
+      { op: "i64.const", value: 52n },
+      { op: "i64.sub" },
+      { op: "i64.shl" },
+    ];
+    const shiftRight: Instr[] = [
+      { op: "local.get", index: significand },
+      { op: "i64.const", value: 52n },
+      { op: "local.get", index: e },
+      { op: "i64.sub" },
+      { op: "i64.shr_u" },
+    ];
+    wasmOut.push(
+      { op: "local.get", index: e },
+      { op: "i64.const", value: 0n },
+      { op: "i64.ge_s" },
+      { op: "local.get", index: e },
+      { op: "i64.const", value: 83n },
+      { op: "i64.le_s" },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i64" } },
+        then: [
+          { op: "local.get", index: e },
+          { op: "i64.const", value: 52n },
+          { op: "i64.ge_s" },
+          { op: "if", blockType: { kind: "val", type: { kind: "i64" } }, then: shiftLeft, else: shiftRight },
+        ],
+        else: [{ op: "i64.const", value: 0n }],
+      },
+      { op: "local.set", index: magnitude },
+    );
+    wasmOut.push(
+      { op: "local.get", index: bits },
+      { op: "i64.const", value: 0n },
+      { op: "i64.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "i32.const", value: 0 },
+          { op: "local.get", index: magnitude },
+          { op: "i32.wrap_i64" },
+          { op: "i32.sub" },
+        ],
+        else: [{ op: "local.get", index: magnitude }, { op: "i32.wrap_i64" }],
+      },
+    );
+    return;
+  }
   // Stack: [f64]
   emitter.emitUnary("f64.trunc", out);
   // Stack: [f64_trunc]

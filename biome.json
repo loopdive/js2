@@ -5,7 +5,15 @@
   },
   "files": {
     "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
-    "ignore": ["**/node_modules/**", "**/dist/**", "**/vendor/**", "test262/**"]
+    "ignore": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/vendor/**",
+      "test262/**",
+      "tests/dogfood/.acorn/**",
+      "tests/dogfood/.marked/**",
+      "tests/dogfood/.acorn-test-suite/**"
+    ]
   },
   "linter": {
     "enabled": true,

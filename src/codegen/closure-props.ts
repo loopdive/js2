@@ -45,7 +45,7 @@
  * constructed) — and `__is_closure_prop_carrier`'s `ref.test` chain needs the
  * COMPLETE closure base-wrapper type set, which is only known at FINALIZE
  * (`collectClosureBaseWrapperTypeIdxs`). So, exactly like `reserveApplyClosure`/
- * `fillApplyClosure` (#1888) and the accessor drivers (#1719): reserve the five
+ * `fillApplyClosure` (#1888) and the accessor drivers (#1719): reserve the
  * helper funcIdxs with `unreachable` stubs at object-runtime-emit time (so the
  * `__extern_*` arms bake a stable `call <idx>`), then fill the real bodies in
  * post-processing. Routing every reference through `funcMap` keeps the
@@ -68,6 +68,7 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
@@ -79,6 +80,7 @@ const CLOSURE_BAG_LOOKUP = "__closure_bag_lookup";
 const CLOSURE_BAG_ENSURE = "__closure_bag_ensure";
 const CLOSURE_PROP_GET = "__closure_prop_get";
 const CLOSURE_PROP_SET = "__closure_prop_set";
+const CLOSURE_METHOD_CALL = "__closure_method_call";
 
 /** $ClosurePropEntry field indices. */
 const F_NEXT = 0;
@@ -120,23 +122,38 @@ export function buildClosurePropMethodCallElseArm(
 ): Instr[] {
   const isClosurePropCarrierIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
   if (isClosurePropCarrierIdx === undefined) return [{ op: "ref.null.extern" }];
+  // (#3673) Prefer the reserved `__closure_method_call` helper: it keeps the
+  // own-property route below AND adds the %Function.prototype%
+  // `call`/`apply` builtins, which a bare own-property lookup can never find
+  // on a WasmGC closure. It needs its own locals, hence a helper rather than
+  // inline instructions (this arm is spliced into `__extern_method_call`,
+  // whose local list is fixed by its own registration site).
+  const closureMethodCallIdx = ctx.funcMap.get(CLOSURE_METHOD_CALL);
   return [
     { op: "local.get", index: 0 }, // recv
     { op: "call", funcIdx: isClosurePropCarrierIdx },
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
-      then: [
-        { op: "local.get", index: 0 }, // recv
-        { op: "local.get", index: 1 }, // name
-        { op: "call", funcIdx: externGetIdx },
-        ...(ctx.funcMap.has("__nullish_to_null")
-          ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
-          : []),
-        { op: "local.get", index: 0 }, // thisArg
-        { op: "local.get", index: 2 }, // args
-        { op: "call", funcIdx: applyClosureIdx },
-      ],
+      then:
+        closureMethodCallIdx !== undefined
+          ? ([
+              { op: "local.get", index: 0 }, // recv
+              { op: "local.get", index: 1 }, // name
+              { op: "local.get", index: 2 }, // args
+              { op: "call", funcIdx: closureMethodCallIdx },
+            ] satisfies Instr[])
+          : ([
+              { op: "local.get", index: 0 }, // recv
+              { op: "local.get", index: 1 }, // name
+              { op: "call", funcIdx: externGetIdx },
+              ...(ctx.funcMap.has("__nullish_to_null")
+                ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+                : []),
+              { op: "local.get", index: 0 }, // thisArg
+              { op: "local.get", index: 2 }, // args
+              { op: "call", funcIdx: applyClosureIdx },
+            ] satisfies Instr[]),
       else: [{ op: "ref.null.extern" }],
     },
   ];
@@ -144,13 +161,13 @@ export function buildClosurePropMethodCallElseArm(
 
 /**
  * Register the `$ClosurePropEntry` struct type + `$__closure_prop_head` global
- * and reserve the five closure-own-property helper placeholders. Called from
+ * and reserve the closure-own-property helper placeholders. Called from
  * `ensureObjectRuntime`'s type section under `ctx.standalone || ctx.wasi`,
  * BEFORE the `__extern_get`/`__extern_set`/`__extern_method_call` bodies bake
  * their `call <idx>`. Idempotent (guards on `ctx.closurePropHelpersReserved`).
  *
  * The struct type is appended at `ctx.mod.types.length`, so it never shifts an
- * existing type index. The five func placeholders are appended at the current
+ * existing type index. The func placeholders are appended at the current
  * end of the function space, so they never shift an existing funcIdx either.
  */
 export function reserveClosurePropHelpers(ctx: CodegenContext): void {
@@ -181,7 +198,7 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
   });
   ctx.closurePropHeadGlobalIdx = headGlobalIdx;
 
-  // --- Reserve the five helper placeholders (filled by fillClosurePropHelpers) ---
+  // --- Reserve the helper placeholders (filled by fillClosurePropHelpers) ---
   const reserve = (name: string, params: ValType[], results: ValType[]): void => {
     if (ctx.funcMap.get(name) !== undefined) return;
     const typeIdx = addFuncType(ctx, params, results, `$${name}_type`);
@@ -205,12 +222,13 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
   reserve(CLOSURE_BAG_ENSURE, [externref], [externref]);
   reserve(CLOSURE_PROP_GET, [externref, externref], [externref]);
   reserve(CLOSURE_PROP_SET, [externref, externref, externref], []);
+  reserve(CLOSURE_METHOD_CALL, [externref, externref, externref], [externref]);
 
   ctx.closurePropHelpersReserved = true;
 }
 
 /**
- * Fill the five reserved closure-own-property helper bodies at FINALIZE, after
+ * Fill the reserved closure-own-property helper bodies at FINALIZE, after
  * every closure root is registered and `__extern_get`/`__extern_set`/
  * `__new_plain_object` are in `funcMap`. No-op when the helpers were never
  * reserved (gc/host mode). Mirrors `fillApplyClosure`.
@@ -408,4 +426,267 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
     // Deps absent — keep a valid empty body (void result).
     setBody(CLOSURE_PROP_SET, [], []);
   }
+
+  fillClosureMethodCall(ctx, setBody, externGetIdx);
+}
+
+/**
+ * (#3673) Fill `__closure_method_call(externref fn, externref name,
+ * externref args) -> externref` — method dispatch when the RECEIVER is a
+ * closure (a function object).
+ *
+ * Two routes, in spec precedence order (§10.2 ordinary [[Get]] then
+ * %Function.prototype%):
+ *
+ *  1. An own property in the closure's side bag (`fn.myTag = () => …`) wins —
+ *     the pre-existing behaviour, preserved verbatim.
+ *  2. Otherwise `call`/`apply` resolve to the %Function.prototype% builtins
+ *     (§20.2.3.3 / §20.2.3.1) and invoke the RECEIVER itself:
+ *       `fn.call(thisArg, a, b)`   → __apply_closure(fn, thisArg, [a, b])
+ *       `fn.apply(thisArg, argArr)`→ __apply_closure(fn, thisArg, argArr)
+ *
+ * Before this, route 1 was the only route: `.call` on a WasmGC closure looked
+ * for an own property literally named "call", found nothing, and the whole
+ * call evaluated to undefined. Any dynamically-dispatched `fn.call(...)` —
+ * where `fn` is a parameter or field, so the static `.call` rewrites in
+ * `calls.ts` cannot fire — silently produced undefined instead of invoking
+ * the function. (Found via compiled acorn: `afterLeftParse.call(this, left,
+ * …)` in `parseMaybeAssign` returned undefined, so every parenthesized
+ * destructuring assignment — `({a} = b)` — crashed on the next line.)
+ *
+ * The method name is matched by `ref.eq` against the INTERNED literal (#3673
+ * round 2), the same identity test the string-receiver fast path in
+ * `__extern_method_call` uses. A name that is not the interned literal (a
+ * rope, a runtime-built string) simply misses and falls through to the
+ * undefined result — i.e. exactly today's behaviour, never worse.
+ *
+ * Throw-free, matching the C-core discipline of this module: an arity or
+ * carrier shape the helper cannot handle returns the undefined sentinel
+ * rather than pulling the late error machinery (and its index-shift hazard)
+ * into the object runtime.
+ */
+function fillClosureMethodCall(
+  ctx: CodegenContext,
+  setBody: (name: string, locals: { name: string; type: ValType }[], body: Instr[]) => void,
+  externGetIdx: number | undefined,
+): void {
+  if (ctx.funcMap.get(CLOSURE_METHOD_CALL) === undefined) return;
+
+  const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
+  const objVecArrTypeIdx = ctx.objectRuntimeTypes?.objVecArrTypeIdx;
+  const nativeStrTypeIdx = ctx.nativeStrTypeIdx;
+
+  const undef = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+
+  // Own-property route (route 1) — the legacy body, and the fallback shape
+  // when any builtin-route dependency is missing.
+  const ownPropRoute = (): Instr[] =>
+    externGetIdx === undefined || applyClosureIdx === undefined
+      ? undef()
+      : [
+          { op: "local.get", index: 0 }, // fn
+          { op: "local.get", index: 1 }, // name
+          { op: "call", funcIdx: externGetIdx },
+          ...(ctx.funcMap.has("__nullish_to_null")
+            ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+            : []),
+          { op: "local.get", index: 0 }, // thisArg — the closure itself
+          { op: "local.get", index: 2 }, // args
+          { op: "call", funcIdx: applyClosureIdx },
+        ];
+
+  const builtinRouteAvailable =
+    applyClosureIdx !== undefined &&
+    objVecNewIdx !== undefined &&
+    objVecPushIdx !== undefined &&
+    objVecTypeIdx !== undefined &&
+    objVecArrTypeIdx !== undefined &&
+    nativeStrTypeIdx >= 0 &&
+    ctx.nativeStrings === true;
+
+  if (!builtinRouteAvailable) {
+    setBody(CLOSURE_METHOD_CALL, [], ownPropRoute());
+    return;
+  }
+
+  // Locals (params 0=fn 1=name 2=args).
+  const M = 3; // externref — own-property lookup result
+  const NAME = 4; // ref null $NativeString — name cast for the ref.eq identity test
+  const ARGS_ANY = 5; // anyref — args carrier
+  const ARGC = 6; // i32
+  const THIS_ARG = 7; // externref
+  const NEW_VEC = 8; // externref — the .call() args tail
+  const I = 9; // i32 — loop cursor
+  const locals: { name: string; type: ValType }[] = [
+    { name: "m", type: { kind: "externref" } },
+    { name: "nameStr", type: { kind: "ref_null", typeIdx: nativeStrTypeIdx } },
+    { name: "argsAny", type: { kind: "anyref" } },
+    { name: "argc", type: { kind: "i32" } },
+    { name: "thisArg", type: { kind: "externref" } },
+    { name: "newVec", type: { kind: "externref" } },
+    { name: "i", type: { kind: "i32" } },
+  ];
+
+  /** args[idx] (idx already on the stack) — caller guarantees idx < argc. */
+  const argAt = (idxInstrs: Instr[]): Instr[] => [
+    { op: "local.get", index: ARGS_ANY },
+    { op: "ref.cast", typeIdx: objVecTypeIdx },
+    { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+    ...idxInstrs,
+    { op: "array.get", typeIdx: objVecArrTypeIdx },
+  ];
+
+  /** `name === "<lit>"` by interned-literal identity. */
+  const nameEq = (lit: string): Instr[] => [
+    { op: "local.get", index: NAME },
+    ...nativeStringLiteralInstrs(ctx, lit),
+    { op: "ref.eq" },
+  ];
+
+  const body: Instr[] = [
+    // ── Route 1: own property in the closure's side bag wins (§10.2 [[Get]]).
+    ...(externGetIdx !== undefined
+      ? ([
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: externGetIdx },
+          ...(ctx.funcMap.has("__nullish_to_null")
+            ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+            : []),
+          { op: "local.tee", index: M },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: M },
+              { op: "local.get", index: 0 }, // thisArg — the closure itself
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: applyClosureIdx! },
+              { op: "return" },
+            ],
+          },
+        ] satisfies Instr[])
+      : []),
+
+    // ── Route 2: %Function.prototype%.call / .apply on the receiver itself.
+    // Bail out unless the name is a flat native string (ropes miss by design).
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: nativeStrTypeIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [...undef(), { op: "return" }] },
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: nativeStrTypeIdx },
+    { op: "local.set", index: NAME },
+
+    // argc = args is $ObjVec ? args.length : 0
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: ARGC },
+    { op: "local.get", index: 2 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: ARGS_ANY },
+    { op: "ref.test", typeIdx: objVecTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: ARGS_ANY },
+        { op: "ref.cast", typeIdx: objVecTypeIdx },
+        { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 0 },
+        { op: "local.set", index: ARGC },
+      ],
+    },
+
+    // thisArg = argc >= 1 ? args[0] : undefined
+    ...undef(),
+    { op: "local.set", index: THIS_ARG },
+    { op: "local.get", index: ARGC },
+    { op: "i32.const", value: 1 },
+    { op: "i32.ge_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...argAt([{ op: "i32.const", value: 0 }]), { op: "local.set", index: THIS_ARG }],
+    },
+
+    // ── fn.call(thisArg, ...rest) → __apply_closure(fn, thisArg, [...rest])
+    ...nameEq("call"),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "call", funcIdx: objVecNewIdx! },
+        { op: "local.set", index: NEW_VEC },
+        { op: "i32.const", value: 1 },
+        { op: "local.set", index: I },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: I },
+                { op: "local.get", index: ARGC },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: NEW_VEC },
+                ...argAt([{ op: "local.get", index: I }]),
+                { op: "call", funcIdx: objVecPushIdx! },
+                { op: "local.get", index: I },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: I },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+        { op: "local.get", index: 0 }, // fn — invoked as itself
+        { op: "local.get", index: THIS_ARG },
+        { op: "local.get", index: NEW_VEC },
+        { op: "call", funcIdx: applyClosureIdx! },
+        { op: "return" },
+      ],
+    },
+
+    // ── fn.apply(thisArg, argArray) → __apply_closure(fn, thisArg, argArray).
+    // `__apply_closure` reads a non-$ObjVec carrier through
+    // `__extern_length`/`__extern_get_idx`, so a plain JS array works as-is;
+    // a missing/undefined argArray degrades to a zero-arg call.
+    ...nameEq("apply"),
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "call", funcIdx: objVecNewIdx! },
+        { op: "local.set", index: NEW_VEC },
+        { op: "local.get", index: ARGC },
+        { op: "i32.const", value: 2 },
+        { op: "i32.ge_s" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...argAt([{ op: "i32.const", value: 1 }]), { op: "local.set", index: NEW_VEC }],
+        },
+        { op: "local.get", index: 0 }, // fn — invoked as itself
+        { op: "local.get", index: THIS_ARG },
+        { op: "local.get", index: NEW_VEC },
+        { op: "call", funcIdx: applyClosureIdx! },
+        { op: "return" },
+      ],
+    },
+
+    // Neither an own property nor a supported builtin.
+    ...undef(),
+  ];
+
+  setBody(CLOSURE_METHOD_CALL, locals, body);
 }

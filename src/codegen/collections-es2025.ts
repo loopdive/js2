@@ -254,6 +254,7 @@ export function ensureGetOrInsertKernels(ctx: CodegenContext): void {
       );
     };
     if (ctx.nativeBoxNumberTypeIdx >= 0) pushRejectTest(ctx.nativeBoxNumberTypeIdx);
+    pushRejectTest(-20); // (#3673) i31-boxed small int is a number — not weakly holdable
     if (ctx.nativeBoxBooleanTypeIdx >= 0) pushRejectTest(ctx.nativeBoxBooleanTypeIdx);
     if (ctx.nativeBigIntTypeIdx >= 0) pushRejectTest(ctx.nativeBigIntTypeIdx);
     if (ctx.anyStrTypeIdx >= 0) pushRejectTest(ctx.anyStrTypeIdx);

@@ -509,6 +509,27 @@ export function ensureAnyFromExternHelper(ctx: CodegenContext, opts?: { forceHon
         { op: "return" },
       ],
     },
+    // (#3673) i31-boxed small int → tag-3 (f64) number classification, so
+    // every downstream tag consumer (__any_add / __any_eq / __any_to_f64)
+    // sees it as an ordinary number.
+    { op: "local.get", index: 1 },
+    { op: "ref.test", typeIdx: -20 },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 3 },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: 1 },
+        { op: "ref.cast", typeIdx: -20 },
+        { op: "i31.get_s" },
+        { op: "f64.convert_i32_s" },
+        { op: "ref.null", typeIdx: EQ_HEAP_TYPE },
+        { op: "ref.null.extern" },
+        { op: "struct.new", typeIdx: anyTypeIdx },
+        { op: "return" },
+      ],
+    },
     { op: "local.get", index: 1 },
     { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
     {
@@ -1240,47 +1261,58 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
                           blockType: { kind: "val", type: { kind: "f64" } },
                           then: [{ op: "f64.const", value: NaN }],
                           else: [
+                            // (#3673) i31-boxed small int externval → value.
                             { op: "local.get", index: 2 },
-                            { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
+                            { op: "ref.test", typeIdx: -20 },
                             {
                               op: "if",
                               blockType: { kind: "val", type: { kind: "f64" } },
                               then: [
                                 { op: "local.get", index: 2 },
-                                { op: "ref.cast", typeIdx: ctx.nativeBoxNumberTypeIdx },
-                                { op: "struct.get", typeIdx: ctx.nativeBoxNumberTypeIdx, fieldIdx: 0 },
+                                { op: "ref.cast", typeIdx: -20 },
+                                { op: "i31.get_s" },
+                                { op: "f64.convert_i32_s" },
                               ],
-                              else:
-                                // (#2966) $BoxedBoolean recovery, symmetric with the
-                                // $BoxedNumber arm above: a boolean crossing the
-                                // open-any boundary is a tag-5 box whose externval is
-                                // the native `$BoxedBoolean` carrier. §7.1.4
-                                // ToNumber(true)=1 / ToNumber(false)=0 — reading the
-                                // box's f64val (always 0) made every dispatched
-                                // boolean numerically 0. Same gate style as #1888.
-                                ctx.nativeBoxBooleanTypeIdx >= 0
-                                  ? [
-                                      { op: "local.get", index: 2 },
-                                      { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
-                                      {
-                                        op: "if",
-                                        blockType: { kind: "val", type: { kind: "f64" } },
-                                        then: [
+                              else: [
+                                { op: "local.get", index: 2 },
+                                { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "val", type: { kind: "f64" } },
+                                  then: [
+                                    { op: "local.get", index: 2 },
+                                    { op: "ref.cast", typeIdx: ctx.nativeBoxNumberTypeIdx },
+                                    { op: "struct.get", typeIdx: ctx.nativeBoxNumberTypeIdx, fieldIdx: 0 },
+                                  ],
+                                  else:
+                                    // (#2966) $BoxedBoolean recovery, symmetric with the
+                                    // $BoxedNumber arm above. §7.1.4 ToNumber(true)=1 /
+                                    // ToNumber(false)=0.
+                                    ctx.nativeBoxBooleanTypeIdx >= 0
+                                      ? [
                                           { op: "local.get", index: 2 },
-                                          { op: "ref.cast", typeIdx: ctx.nativeBoxBooleanTypeIdx },
-                                          { op: "struct.get", typeIdx: ctx.nativeBoxBooleanTypeIdx, fieldIdx: 0 },
-                                          { op: "f64.convert_i32_s" },
-                                        ],
-                                        else: [
+                                          { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx },
+                                          {
+                                            op: "if",
+                                            blockType: { kind: "val", type: { kind: "f64" } },
+                                            then: [
+                                              { op: "local.get", index: 2 },
+                                              { op: "ref.cast", typeIdx: ctx.nativeBoxBooleanTypeIdx },
+                                              { op: "struct.get", typeIdx: ctx.nativeBoxBooleanTypeIdx, fieldIdx: 0 },
+                                              { op: "f64.convert_i32_s" },
+                                            ],
+                                            else: [
+                                              { op: "local.get", index: 0 },
+                                              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
+                                            ],
+                                          },
+                                        ]
+                                      : [
                                           { op: "local.get", index: 0 },
                                           { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
                                         ],
-                                      },
-                                    ]
-                                  : [
-                                      { op: "local.get", index: 0 },
-                                      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 2 },
-                                    ],
+                                },
+                              ],
                             },
                           ],
                         },
@@ -1349,6 +1381,12 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
       { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
       { op: "any.convert_extern" },
       { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
+      // (#3673) …or an i31-boxed small int.
+      { op: "local.get", index: opIdx },
+      { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: -20 },
+      { op: "i32.or" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "f64" } },
@@ -1551,6 +1589,10 @@ export function ensureAnyHelpers(ctx: CodegenContext): void {
         else: [
           { op: "local.get", index: 4 },
           { op: "ref.test", typeIdx: ctx.nativeBoxNumberTypeIdx },
+          // (#3673) …or an i31-boxed small int.
+          { op: "local.get", index: 4 },
+          { op: "ref.test", typeIdx: -20 },
+          { op: "i32.or" },
           ...((ctx.nativeBoxBooleanTypeIdx >= 0
             ? [
                 { op: "local.get", index: 4 },

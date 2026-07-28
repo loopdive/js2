@@ -314,6 +314,12 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push({ op: "struct.new", typeIdx: layout.structTypeIdx });
   }
 
+  // (#3673) $arity operand — sits between the lifted funcref and the captures
+  // in every root-wrapper-hierarchy closure allocation.
+  emitClosureArityOperand(arity: number, out: Instr[]): void {
+    out.push({ op: "i32.const", value: arity });
+  }
+
   emitClosureFuncGet(layout: IrClosureLowering, out: Instr[]): void {
     out.push({ op: "struct.get", typeIdx: layout.structTypeIdx, fieldIdx: layout.funcFieldIdx });
   }

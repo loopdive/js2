@@ -2501,6 +2501,49 @@ function isPrimitiveTypeNode(node: ts.TypeNode): boolean {
   );
 }
 
+/**
+ * (#3673) Bridge a plain numeric SSA value to a plain numeric target type.
+ *
+ * A native type annotation (`pos: i32`, `#323`) makes a class field or a local
+ * a Wasm `i32` while the surrounding JS-typed expressions still produce `f64`.
+ * `this.pos = 0` therefore hands an `f64` const to an `i32` field, which the
+ * assignment sites used to reject outright — so an `i32`-annotated class threw
+ * out of `from-ast` and (under the #2138 IR-first gate) failed the compile.
+ *
+ * This inserts exactly the conversion the LEGACY path inserts at the same seam
+ * (`coerceType` in `codegen/type-coercion.ts`): saturating truncation when
+ * narrowing, signed/unsigned widening when widening. It deliberately handles
+ * ONLY unbranded i32/f32/f64 scalars — a `boolean`/`symbol`-branded i32 keeps
+ * its brand-specific boxing rules and must not be silently reinterpreted, and
+ * every non-`val` type (string/object/closure/…) still falls through to the
+ * caller's mismatch error.
+ *
+ * Returns `null` when no sound conversion applies, so callers keep their
+ * existing "reject and fall back" behaviour.
+ */
+function coerceIrNumeric(value: IrValueId, target: IrType, cx: LowerCtx): IrValueId | null {
+  const from = cx.builder.typeOf(value);
+  if (from.kind !== "val" || target.kind !== "val") return null;
+  const f = from.val;
+  const t = target.val;
+  // Brands are load-bearing at the box seam — never coerce across them.
+  if (f.kind === "i32" && (f.boolean || f.symbol)) return null;
+  if (t.kind === "i32" && (t.boolean || t.symbol)) return null;
+  if (f.kind === t.kind) return null; // caller's equality check already covers this
+  if (f.kind === "f64" && t.kind === "i32") {
+    return cx.builder.emitUnary("i32.trunc_sat_f64_s", value, irVal({ kind: "i32" }));
+  }
+  if (f.kind === "i32" && t.kind === "f64") {
+    // `signed === false` marks the uint32 domain (#1126). Widening it needs
+    // `f64.convert_i32_u`, which the IR unop set does not carry — bail rather
+    // than emit the signed conversion, which would read `-1 >>> 0` back as -1
+    // instead of 2^32-1 (`tests/issue-1817`).
+    if (from.signed === false) return null;
+    return cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
+  }
+  return null;
+}
+
 /** Short debug string for IrType, used in error messages. */
 function describeIrType(t: IrType): string {
   if (t.kind === "val") return t.val.kind;
@@ -5472,7 +5515,12 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
       }
       throw new Error(`ir/from-ast: class ${recvType.shape.className} has no field "${fieldName}" in ${cx.funcName}`);
     }
-    const newValue = lowerExpr(expr.right, cx, field.type);
+    const rawValue = lowerExpr(expr.right, cx, field.type);
+    // (#3673) A natively-annotated field (`pos: i32`) legitimately receives an
+    // f64-typed JS expression; bridge it exactly as legacy `coerceType` does.
+    const newValue = irTypeEquals(cx.builder.typeOf(rawValue), field.type)
+      ? rawValue
+      : (coerceIrNumeric(rawValue, field.type, cx) ?? rawValue);
     const newValueType = cx.builder.typeOf(newValue);
     if (!irTypeEquals(newValueType, field.type)) {
       throw new Error(
@@ -5491,7 +5539,10 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
       );
     }
     const fieldType = recvType.shape.fields[fieldIdx]!.type;
-    const newValue = lowerExpr(expr.right, cx, fieldType);
+    const rawValue = lowerExpr(expr.right, cx, fieldType);
+    const newValue = irTypeEquals(cx.builder.typeOf(rawValue), fieldType)
+      ? rawValue
+      : (coerceIrNumeric(rawValue, fieldType, cx) ?? rawValue);
     const newValueType = cx.builder.typeOf(newValue);
     if (!irTypeEquals(newValueType, fieldType)) {
       throw new Error(
@@ -7757,6 +7808,18 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     // iterator numeric-value path exercises that distinction.
     const detail = `ir/from-ast: Phase 1 requires matching operand types for '${ts.tokenToString(op)}' in ${cx.funcName}`;
     if (checkerProvesBinarySourceCapabilityGap(expr.left, expr.right, cx)) {
+      throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
+    }
+    // (#3727) A PACKED operand (`i8`/`i16`) is a stable capability gap, not a
+    // broken producer promise. Packed kinds are storage-only — WasmGC has no
+    // i8/i16 value type, and the binary emitter rejects one in a value position
+    // ("a packed type leaked"). So the IR simply cannot carry, say, a
+    // `Uint8Array` element into f64 arithmetic
+    // (`for (const v of xs) sum = sum + v`) today, however the operands are
+    // coerced. Classifying it `invariant` made that a HARD compile error and
+    // took the whole function down; the legacy backend lowers this shape fine.
+    // Demote to the unsupported channel so the function falls back instead.
+    if (ltVal?.kind === "i8" || ltVal?.kind === "i16" || rtVal?.kind === "i8" || rtVal?.kind === "i16") {
       throw new IrUnsupportedError("operand-coercion-unsupported", "build", detail);
     }
     throw new Error(detail);

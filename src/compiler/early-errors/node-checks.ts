@@ -1361,12 +1361,22 @@ export function runNodeChecks(ctx: EarlyErrorContext, node: ts.Node): void {
         ctx.addError(node, "'await' is not allowed as an identifier in this context");
       }
     }
-    // Also check await: label pattern (TS parses await: as AwaitExpression + colon)
+    // Also check await: label pattern (TS parses await: as AwaitExpression + colon).
+    // Don't flag if the await is inside a ConditionalExpression (ternary ? await x : y)
+    // — the trailing colon there is the ternary's, not a label colon (mirrors the
+    // identical yield-as-label guard below).
     if (isInsideAsyncFunction(node) || isInsideClassStaticBlock(node)) {
       const endPos = node.end;
       const afterText = ctx.sourceFile.text.substring(endPos, endPos + 5).trimStart();
       if (afterText.startsWith(":")) {
-        ctx.addError(node, "'await' is not allowed as a label identifier in this context");
+        const isInTernary =
+          node.parent &&
+          (ts.isConditionalExpression(node.parent) ||
+            // Also check grandparent for nested parens: (await x) ? await y : await z
+            (ts.isParenthesizedExpression(node.parent) && ts.isConditionalExpression(node.parent.parent)));
+        if (!isInTernary) {
+          ctx.addError(node, "'await' is not allowed as a label identifier in this context");
+        }
       }
     }
     // ES spec: ClassStaticBlockBody: "It is a Syntax Error if ContainsAwait

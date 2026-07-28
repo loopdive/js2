@@ -903,13 +903,31 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       ? ([
           { op: "local.get", index: L_ANY },
           { op: "ref.test", typeIdx: boxNumTypeIdx },
+          // (#3673) …or an i31-boxed small int.
+          { op: "local.get", index: L_ANY },
+          { op: "ref.test", typeIdx: -20 },
+          { op: "i32.or" },
           {
             op: "if",
             blockType: { kind: "empty" },
             then: [
               { op: "local.get", index: L_ANY },
-              { op: "ref.cast", typeIdx: boxNumTypeIdx },
-              { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+              { op: "ref.test", typeIdx: -20 },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "f64" } },
+                then: [
+                  { op: "local.get", index: L_ANY },
+                  { op: "ref.cast", typeIdx: -20 },
+                  { op: "i31.get_s" },
+                  { op: "f64.convert_i32_s" },
+                ],
+                else: [
+                  { op: "local.get", index: L_ANY },
+                  { op: "ref.cast", typeIdx: boxNumTypeIdx },
+                  { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                ],
+              },
               { op: "local.set", index: L_NUM },
               ...formatNumber,
               { op: "return" },
@@ -2912,13 +2930,31 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
           else: [
             { op: "local.get", index: R_ANY },
             { op: "ref.test", typeIdx: boxNumTypeIdx },
+            // (#3673) …or an i31-boxed small int.
+            { op: "local.get", index: R_ANY },
+            { op: "ref.test", typeIdx: -20 },
+            { op: "i32.or" },
             {
               op: "if",
               blockType: { kind: "val", type: externref },
               then: [
                 { op: "local.get", index: R_ANY },
-                { op: "ref.cast", typeIdx: boxNumTypeIdx },
-                { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 }, // f64 value
+                { op: "ref.test", typeIdx: -20 },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "f64" } },
+                  then: [
+                    { op: "local.get", index: R_ANY },
+                    { op: "ref.cast", typeIdx: -20 },
+                    { op: "i31.get_s" },
+                    { op: "f64.convert_i32_s" },
+                  ],
+                  else: [
+                    { op: "local.get", index: R_ANY },
+                    { op: "ref.cast", typeIdx: boxNumTypeIdx },
+                    { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                  ],
+                },
                 { op: "call", funcIdx: numToStrIdx }, // -> externref string
               ],
               else: [
@@ -3034,13 +3070,31 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
                                       else: [
                                         { op: "local.get", index: R_ANY },
                                         { op: "ref.test", typeIdx: boxNumTypeIdx },
+                                        // (#3673) …or an i31-boxed small int.
+                                        { op: "local.get", index: R_ANY },
+                                        { op: "ref.test", typeIdx: -20 },
+                                        { op: "i32.or" },
                                         {
                                           op: "if",
                                           blockType: { kind: "val", type: externref },
                                           then: [
                                             { op: "local.get", index: R_ANY },
-                                            { op: "ref.cast", typeIdx: boxNumTypeIdx },
-                                            { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                                            { op: "ref.test", typeIdx: -20 },
+                                            {
+                                              op: "if",
+                                              blockType: { kind: "val", type: { kind: "f64" } },
+                                              then: [
+                                                { op: "local.get", index: R_ANY },
+                                                { op: "ref.cast", typeIdx: -20 },
+                                                { op: "i31.get_s" },
+                                                { op: "f64.convert_i32_s" },
+                                              ],
+                                              else: [
+                                                { op: "local.get", index: R_ANY },
+                                                { op: "ref.cast", typeIdx: boxNumTypeIdx },
+                                                { op: "struct.get", typeIdx: boxNumTypeIdx, fieldIdx: 0 },
+                                              ],
+                                            },
                                             { op: "call", funcIdx: numToStrIdx },
                                           ],
                                           else: [

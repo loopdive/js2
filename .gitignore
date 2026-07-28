@@ -69,6 +69,8 @@ tests/test*_check*.ts
 # tests/dogfood/fixtures/ IS committed, but the extracted source and the
 # regenerated surface report are derived and stay out of git.
 tests/dogfood/.acorn/
+tests/dogfood/.marked/
+tests/dogfood/.acorn-test-suite/
 tests/dogfood/report/
 /check-*.ts
 /check-*.mts

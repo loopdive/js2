@@ -54,6 +54,7 @@ import {
   ensureLateImport,
   flushLateImportShifts,
   registerReserveMemberGetDispatch,
+  registerReserveTypedMemberGetF64Dispatch,
 } from "./shared.js";
 import { coercionInstrs } from "./type-coercion.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
@@ -62,6 +63,11 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 /** Mangle a property name into the reserved member-get dispatcher name. */
 function dispatcherName(propName: string): string {
   return `__get_member_${propName}`;
+}
+
+/** (#3673) Mangle a property name into the TYPED f64 dispatcher name. */
+function typedF64DispatcherName(propName: string): string {
+  return `__get_member_${propName}__f64`;
 }
 
 /**
@@ -467,6 +473,11 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
               blockType: { kind: "empty" },
               then: [
                 { op: "ref.func", funcIdx: arm.trampIdx },
+                // (#3673) $arity
+                {
+                  op: "i32.const",
+                  value: ctx.closureInfoByTypeIdx.get(arm.closureStructTypeIdx)?.paramTypes.length ?? 0,
+                },
                 { op: "struct.new", typeIdx: arm.closureStructTypeIdx },
                 { op: "extern.convert_any" },
                 { op: "global.set", index: arm.cacheGlobalIdx },
@@ -661,7 +672,171 @@ export function fillMemberGetDispatch(ctx: CodegenContext): void {
   }
 }
 
+/**
+ * (#3673) Reserve (or fetch) the TYPED member-get dispatcher
+ * `__get_member_<name>__f64(recv: externref) -> f64`. A numeric-context read
+ * through the generic dispatcher pays three calls plus a number-box per hit:
+ * the struct arm `struct.get`s an f64 slot, `__box_number`s it up to the
+ * uniform externref, and the read SITE immediately `__to_primitive`s +
+ * `__unbox_number`s it back down (acorn's `this.pos + size` inner loop — the
+ * dominant standalone profile entry after round 6). The typed twin collapses
+ * a numeric-slot hit to ONE call with a bare `struct.get` (+`f64.convert_i32_s`)
+ * arm — no box, no ToPrimitive round-trip. Non-numeric slots and misses route
+ * to the GENERIC dispatcher + the exact `__to_primitive`/`__unbox_number` chain
+ * the site would have emitted, so semantics are unchanged arm-for-arm.
+ *
+ * Reserved by the externref→f64 coercion rewrite in type-coercion.ts (via the
+ * shared.ts late-bound delegate — the reverse static import would close the
+ * `coercionInstrs` eval-time cycle) ONLY when the value on the stack is
+ * literally a `call __get_member_<name>` result and the ToPrimitive hint is
+ * "number". Same reserve-then-fill discipline as the generic dispatcher: all
+ * fill deps (generic dispatcher, "number" hint string, `__to_primitive`,
+ * `__unbox_number` union) registered NOW, placeholder body replaced by
+ * {@link fillTypedMemberGetF64Dispatch} at finalize.
+ */
+export function reserveTypedMemberGetF64Dispatch(
+  ctx: CodegenContext,
+  propName: string,
+  fctx?: FunctionContext,
+): number | undefined {
+  const name = typedF64DispatcherName(propName);
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) {
+    if (fctx) flushLateImportShifts(ctx, fctx);
+    return existing;
+  }
+  // The fill's fallback chain calls the GENERIC dispatcher — reserve it first
+  // (idempotent; the rewrite site only fires on an existing generic call, so
+  // this is a fetch + method-arm refresh in practice).
+  const genericIdx = reserveMemberGetDispatch(ctx, propName, fctx);
+  if (genericIdx === undefined) return undefined;
+  // Fill deps: the "number" ToPrimitive hint string + the unbox pair.
+  addStringConstantGlobal(ctx, "number");
+  const toPrimIdx = ensureLateImport(
+    ctx,
+    "__to_primitive",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  if (toPrimIdx === undefined) return undefined;
+  addUnionImportsViaRegistry(ctx); // __unbox_number
+  // Settle the staged index-space shift BEFORE minting, so the funcIdx below
+  // is final (same #2681 discipline as the generic reserve).
+  if (fctx) flushLateImportShifts(ctx, fctx);
+
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }], "$member_get_f64_dispatch_type");
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
+    typeIdx,
+    locals: [],
+    body: [{ op: "unreachable" }],
+    exported: false,
+  });
+  ctx.funcMap.set(name, funcIdx);
+  (ctx.memberGetTypedF64DispatchNames ??= new Set<string>()).add(propName);
+  return funcIdx;
+}
+
+/**
+ * (#3673) Fill every reserved `__get_member_<name>__f64` dispatcher at
+ * FINALIZE (full struct table). READ-ONLY over funcMap. Runs right after
+ * {@link fillMemberGetDispatch} so arm-ordering equivalence holds against the
+ * generic body it shadows:
+ *   - get-accessor candidates exist → NO field arms (the generic tries
+ *     accessors before fields; a typed field arm would shadow a getter) —
+ *     body is just the fallback chain;
+ *   - f64 slot → `struct.get` direct; i32 slot (incl. boolean-branded — 0/1
+ *     is its ToNumber) → `f64.convert_i32_s`;
+ *   - hazard slots (externref/ref/i64, #2979 sentinel gen-result f64,
+ *     presence-tracked misses) → the fallback chain INSIDE the matched arm,
+ *     preserving the generic candidate order;
+ *   - terminal miss → fallback chain: `call __get_member_<name>` + "number"
+ *     hint + `__to_primitive` + `__unbox_number` — byte-for-byte what the
+ *     rewritten read site used to emit.
+ */
+export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
+  const toPrimIdx = ctx.funcMap.get("__to_primitive");
+  const unboxIdx = ctx.funcMap.get("__unbox_number");
+
+  for (const propName of ctx.memberGetTypedF64DispatchNames ?? []) {
+    const dispIdx = ctx.funcMap.get(typedF64DispatcherName(propName));
+    const dispFn = dispIdx !== undefined ? definedFuncAt(ctx, dispIdx) : undefined;
+    if (!dispFn) continue;
+
+    const genericIdx = ctx.funcMap.get(dispatcherName(propName));
+    // Terminal fallback = the exact chain the rewritten read site replaced.
+    const fallback: Instr[] =
+      genericIdx !== undefined && toPrimIdx !== undefined && unboxIdx !== undefined
+        ? [
+            { op: "local.get", index: 0 }, // recv
+            { op: "call", funcIdx: genericIdx },
+            ...stringConstantExternrefInstrs(ctx, "number"),
+            { op: "call", funcIdx: toPrimIdx },
+            { op: "call", funcIdx: unboxIdx },
+          ]
+        : [{ op: "f64.const", value: NaN }];
+
+    // Accessor candidates disable field arms entirely (see doc above).
+    const candidates =
+      classAccessorCandidatesForProp(ctx, propName).length > 0 ? [] : findAlternateStructsForField(ctx, propName, -1);
+
+    const buildChain = (idx: number): Instr[] => {
+      if (idx >= candidates.length) return fallback;
+      const cand = candidates[idx]!;
+      const numericSlot =
+        (cand.fieldType.kind === "f64" && !isNativeGeneratorResultStruct(ctx, cand.structTypeIdx)) ||
+        cand.fieldType.kind === "i32";
+      const readValue: Instr[] = [
+        { op: "local.get", index: 1 }, // __any
+        { op: "ref.cast", typeIdx: cand.structTypeIdx },
+        { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
+        ...(cand.fieldType.kind === "i32" ? ([{ op: "f64.convert_i32_s" }] satisfies Instr[]) : []),
+      ];
+      const armBody: Instr[] = !numericSlot
+        ? fallback
+        : cand.presenceFieldIdx !== undefined && cand.presenceFieldIdx >= 0
+          ? [
+              { op: "local.get", index: 1 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.presenceFieldIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "f64" } as ValType },
+                then: readValue,
+                // absent → undefined → ToNumber = NaN (matches the generic
+                // arm's undefined-extern → __unbox_number result).
+                else: [{ op: "f64.const", value: NaN }],
+              },
+            ]
+          : readValue;
+      return [
+        { op: "local.get", index: 1 }, // __any
+        { op: "ref.test", typeIdx: cand.structTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "f64" } as ValType },
+          then: armBody,
+          else: buildChain(idx + 1),
+        },
+      ];
+    };
+
+    dispFn.locals = [{ name: "__any", type: { kind: "anyref" } }];
+    dispFn.body = [
+      { op: "local.get", index: 0 }, // recv (externref)
+      { op: "any.convert_extern" },
+      { op: "local.set", index: 1 },
+      ...buildChain(0),
+    ];
+  }
+}
+
 // (#3178) Late-bound delegate registration — destructuring-params.ts reads
 // `done`/`value` through the dispatcher but cannot import this module
 // statically (eval-time cycle; see shared.ts delegate note).
 registerReserveMemberGetDispatch(reserveMemberGetDispatch);
+// (#3673) Same cycle, reverse direction: type-coercion.ts (which this module
+// imports for `coercionInstrs`) rewrites ToNumber-context generic-dispatcher
+// calls into the typed f64 twin via this delegate.
+registerReserveTypedMemberGetF64Dispatch(reserveTypedMemberGetF64Dispatch);

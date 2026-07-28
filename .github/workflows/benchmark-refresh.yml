@@ -27,6 +27,12 @@ jobs:
     if: github.repository == 'loopdive/js2' && (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # Gate MAIN_DEPLOY_KEY (below) behind the same GitHub Environment the
+    # test262 baseline promoters use (`baseline-promote`, deployment branches
+    # restricted to `main`) — see #1216 follow-up. Push events on main satisfy
+    # the branch restriction; pull_request/workflow_dispatch runs never reach
+    # the auto-commit step so they never need the secret.
+    environment: baseline-promote
 
     steps:
       - name: Checkout
@@ -162,53 +168,120 @@ jobs:
       # #1216: auto-commit a freshly-generated playground benchmark baseline
       # back to main on push events.
       #
-      # DISABLED (post #491): The main branch ruleset enforces the merge
-      # queue, so direct `git push` from this workflow fails with
-      # `GH013: Changes must be made through the merge queue`. The whole
-      # auto-commit step is commented out; the benchmark refresh still
-      # RUNS (and uploads artifacts via the upload-artifact step above),
-      # but the freshly-generated baseline is no longer auto-committed
-      # back to main. The baseline can be refreshed via a normal PR when
-      # it drifts.
+      # RE-ENABLED (post-#491 fix): the #1216 version above pushed straight
+      # to `origin` with the default GITHUB_TOKEN, which the main branch
+      # ruleset's merge-queue requirement rejects with
+      # `GH013: Changes must be made through the merge queue`. That silently
+      # froze `benchmarks/results/playground-benchmark-sidebar.json` from
+      # 2026-07-24 onward — every later merge left the landing-page perf
+      # chart stale even though this job kept running successfully.
       #
-      # Original guards (retained for context):
-      #   - Only on `push: main` (not pull_request, not workflow_dispatch).
-      #     The actor check excludes the bot itself to avoid commit loops.
+      # Fix: push over the same SSH deploy-key bypass the test262 baseline
+      # promoters use (`test262-sharded.yml` promote-baseline,
+      # `baseline-summary-sync.yml`) — `MAIN_DEPLOY_KEY` is an Actions secret
+      # on the `baseline-promote` Environment and is listed in the ruleset's
+      # bypass_actors, so a push over that SSH remote is NOT rejected by
+      # GH013 the way a GITHUB_TOKEN push is.
+      #
+      # Guards (same intent as the original #1216 design):
+      #   - `push: main` (not pull_request). The actor check excludes the
+      #     bot itself to avoid commit loops.
       #   - Skip if the benchmark diff reported regressions — promoting
       #     "regressed" numbers would mask real perf regressions instead
-      #     of catching them.
-      #   - Skip if the file is byte-identical to what's committed (no-op).
+      #     of catching them. `workflow_dispatch` with
+      #     `allow_performance_regressions: true` is the one-time manual
+      #     override for the case where the guard itself is what's stuck
+      #     (a stale committed baseline makes every push look regressed,
+      #     so the auto-commit can never fire to refresh it — see the
+      #     2026-07-27 incident where 5 days of drift made every push
+      #     trip the diff). Same override input the hard-fail step already
+      #     used on `workflow_dispatch`; this just extends it to also
+      #     unblock the auto-commit.
+      #   - Defer (exit 0, no error) while the merge queue is non-empty —
+      #     any push to main, even `[skip ci]`, makes GitHub rebuild every
+      #     queued merge group (see #1951, the same reasoning
+      #     `baseline-summary-sync.yml` and promote-baseline apply). The
+      #     next push:main run with an empty queue picks it up.
+      #   - Re-anchor on a freshly-fetched tip of main on every retry
+      #     (Option A pattern) instead of rebasing a dirty tree — under
+      #     merge-queue throughput, main can advance between fetch and push.
       #   - `[skip ci]` in the commit message prevents this commit from
       #     retriggering the workflow.
-      #
-      # Pattern follows `refresh-committed-baseline.yml` (test262 JSONL sync).
-      # - name: Auto-commit refreshed baseline (#1216)
-      #   if: |
-      #     github.event_name == 'push' &&
-      #     github.ref == 'refs/heads/main' &&
-      #     github.actor != 'github-actions[bot]' &&
-      #     steps.benchmark_diff.outputs.regressions != 'true'
-      #   run: |
-      #     set -euo pipefail
-      #     git config user.name "github-actions[bot]"
-      #     git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      #     git add -f benchmarks/results/playground-benchmark-sidebar.json
-      #     git add -f benchmarks/results/playground-benchmark-sidebar-no-jit.json || true
-      #     if git diff --cached --quiet; then
-      #       echo "Baseline byte-identical to committed copy — nothing to commit."
-      #       exit 0
-      #     fi
-      #     git commit -m "chore(ci #1216): refresh playground benchmark baseline [skip ci]"
-      #     if ! git pull --rebase --autostash origin main; then
-      #       git rebase --abort 2>/dev/null || true
-      #       git fetch origin main
-      #       git reset --hard origin/main
-      #       git add -f benchmarks/results/playground-benchmark-sidebar.json
-      #       git add -f benchmarks/results/playground-benchmark-sidebar-no-jit.json || true
-      #       git diff --cached --quiet && exit 0
-      #       git commit -m "chore(ci #1216): refresh playground benchmark baseline [skip ci]"
-      #     fi
-      #     git push
+      - name: Auto-commit refreshed baseline (#1216)
+        if: |
+          github.ref == 'refs/heads/main' &&
+          github.actor != 'github-actions[bot]' &&
+          (
+            (github.event_name == 'push' && steps.benchmark_diff.outputs.regressions != 'true') ||
+            (github.event_name == 'workflow_dispatch' && inputs.allow_performance_regressions)
+          )
+        env:
+          MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          OWNER="${GITHUB_REPOSITORY%/*}"; NAME="${GITHUB_REPOSITORY#*/}"
+          QUEUE_LEN=$(gh api graphql \
+            -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){mergeQueue{entries(first:1){totalCount}}}}' \
+            -f owner="$OWNER" -f name="$NAME" \
+            --jq '.data.repository.mergeQueue.entries.totalCount' 2>/dev/null || echo "")
+          if [ -n "$QUEUE_LEN" ] && [ "$QUEUE_LEN" -gt 0 ] 2>/dev/null; then
+            echo "Merge queue has ${QUEUE_LEN} entrie(s) — deferring benchmark baseline commit (#1951 pattern)."
+            echo "It will land via the next push:main run that sees an empty queue."
+            exit 0
+          fi
+
+          if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
+            echo "::error::MAIN_DEPLOY_KEY secret is empty/unset (environment baseline-promote). The main-repo benchmark push needs the private half of the loopdive/js2 'MAIN_DEPLOY_KEY' deploy key (GITHUB_TOKEN is blocked by ruleset GH013)."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          eval "$(ssh-agent -s)"
+          echo "$MAIN_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          git remote remove deploykey 2>/dev/null || true
+          git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
+
+          PROMOTE_SNAPSHOT="$(mktemp -d)"
+          cp benchmarks/results/playground-benchmark-sidebar.json "$PROMOTE_SNAPSHOT/sidebar.json"
+          [ -f benchmarks/results/playground-benchmark-sidebar-no-jit.json ] && \
+            cp benchmarks/results/playground-benchmark-sidebar-no-jit.json "$PROMOTE_SNAPSHOT/sidebar-no-jit.json" || true
+
+          PUSHED=0
+          for attempt in 1 2 3 4 5; do
+            git fetch deploykey main
+            git checkout -f -B _benchmark_refresh_tmp deploykey/main || {
+              echo "checkout of deploykey/main failed (attempt ${attempt}) — retrying"
+              sleep $((attempt * 5))
+              continue
+            }
+            cp "$PROMOTE_SNAPSHOT/sidebar.json" benchmarks/results/playground-benchmark-sidebar.json
+            git add -f benchmarks/results/playground-benchmark-sidebar.json
+            if [ -f "$PROMOTE_SNAPSHOT/sidebar-no-jit.json" ]; then
+              cp "$PROMOTE_SNAPSHOT/sidebar-no-jit.json" benchmarks/results/playground-benchmark-sidebar-no-jit.json
+              git add -f benchmarks/results/playground-benchmark-sidebar-no-jit.json
+            fi
+            if git diff --cached --quiet; then
+              echo "Baseline already current on main after re-anchor — nothing to push."
+              PUSHED=1
+              break
+            fi
+            git commit -m "chore(ci #1216): refresh playground benchmark baseline [skip ci]"
+            if git push deploykey HEAD:main; then
+              echo "Pushed refreshed playground benchmark baseline to main (attempt ${attempt})."
+              PUSHED=1
+              break
+            fi
+            echo "push race lost (attempt ${attempt}) — re-anchoring on latest main and retrying"
+            sleep $((attempt * 5))
+          done
+          if [ "$PUSHED" != "1" ]; then
+            echo "::error::Failed to push refreshed benchmark baseline after 5 attempts."
+            exit 1
+          fi
 
       # Note (#1216): even after auto-commit lands, the regression-detection
       # step is still informational on PR/push events (gating only on

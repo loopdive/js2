@@ -57,13 +57,14 @@ export function reportError(
   node: ts.Node,
   message: string,
   severity: ReportSeverity = "error",
+  opts?: { readonly sticky?: true },
 ): void {
   let loc = extractLocation(node);
   // If the primary node yielded no location, try the last known good node
   if (loc.line === 0 && ctx.lastKnownNode && ctx.lastKnownNode !== node) {
     loc = extractLocation(ctx.lastKnownNode);
   }
-  ctx.errors.push({ message, line: loc.line, column: loc.column, severity });
+  ctx.errors.push({ message, line: loc.line, column: loc.column, severity, ...(opts?.sticky ? { sticky: true } : {}) });
 }
 
 /**

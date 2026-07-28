@@ -449,6 +449,29 @@ export function reserveMemberGetDispatchLate(
   return _reserveMemberGetDispatch?.(ctx, propName, fctx);
 }
 
+// ── reserveTypedMemberGetF64Dispatch delegate (#3673) ─────────────────
+// type-coercion.ts rewrites `call __get_member_<p>` + ToNumber into the typed
+// `__get_member_<p>__f64` dispatcher, but member-get-dispatch.ts statically
+// imports `coercionInstrs` FROM type-coercion.ts — the reverse static import
+// would close that cycle at eval time. Same late-bound/SOFT shape as the
+// generic reserve delegate above: unregistered → the coercion site keeps its
+// `__to_primitive` + `__unbox_number` path.
+
+let _reserveTypedMemberGetF64Dispatch: ReserveMemberGetDispatchFn | undefined;
+
+export function registerReserveTypedMemberGetF64Dispatch(fn: ReserveMemberGetDispatchFn): void {
+  _reserveTypedMemberGetF64Dispatch = fn;
+}
+
+/** Late-bound `reserveTypedMemberGetF64Dispatch` (see the delegate note above). */
+export function reserveTypedMemberGetF64DispatchLate(
+  ctx: CodegenContext,
+  propName: string,
+  fctx?: FunctionContext,
+): number | undefined {
+  return _reserveTypedMemberGetF64Dispatch?.(ctx, propName, fctx);
+}
+
 // ── isAnyValue ────────────────────────────────────────────────────────
 // Moved here from index.ts so expressions.ts and typeof-delete.ts can import
 // it without depending on index.ts (which depends on expressions.ts).

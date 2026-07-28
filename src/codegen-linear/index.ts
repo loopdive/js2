@@ -25,6 +25,7 @@ import {
   addSetRuntime,
   addStringRuntime,
   addUint8ArrayRuntime,
+  finalizeLinearHeapLayout,
   FMOD_FN,
   linearStringLiteralInstrs,
 } from "./runtime.js";
@@ -264,6 +265,8 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   // ── Emit data segments for string literals ──
   numberFormat.emitLinearStringData(ctx, dataSegmentBase);
+  // Literals are only known now, so the heap floor is fixed up last (#3686).
+  finalizeLinearHeapLayout(mod);
 
   emitClosureTable(ctx);
 
@@ -425,6 +428,8 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
     }
     mod.dataSegments.push({ offset: DATA_SEGMENT_BASE, bytes });
   }
+  // Literals are only known now, so the heap floor is fixed up last (#3686).
+  finalizeLinearHeapLayout(mod);
 
   emitClosureTable(ctx);
 
@@ -4437,8 +4442,40 @@ function inferExprType(ctx: LinearContext, fctx: LinearFuncContext, expr: ts.Exp
   return { kind: "f64" };
 }
 
-/** Resolve a TS type annotation to a ValType */
-function resolveType(_ctx: LinearContext, typeNode: ts.TypeNode | undefined): ValType | null {
+/**
+ * Is this type (after stripping null/undefined) one the linear backend keeps
+ * in an f64 value slot rather than an i32 pointer slot? (#3686 bug 2)
+ *
+ * The linear lane represents every JS number — and booleans, and its
+ * best-effort bigints — as f64. Objects, arrays and strings are i32 pointers.
+ * This asks the checker instead of matching source text, so a *type alias* to
+ * a numeric type answers the same as the type it aliases.
+ */
+function isLinearScalarType(ctx: LinearContext, typeNode: ts.TypeNode): boolean {
+  try {
+    const resolved = ctx.checker.getNonNullableType(ctx.checker.getTypeFromTypeNode(typeNode));
+    const scalar = ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.BigIntLike;
+    if ((resolved.flags & scalar) !== 0) return true;
+    // A union of numeric members (e.g. `type Bit = 0 | 1`) is still a number.
+    if (resolved.isUnion()) return resolved.types.every((member) => (member.flags & scalar) !== 0);
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a TS type annotation to a ValType.
+ *
+ * The `switch` on source text is the fast path for the spelled-out primitives.
+ * Anything else used to fall straight into the `i32` (pointer) default — which
+ * silently mis-typed **every type alias of a numeric type**, `type i32 = number`
+ * and `type Meters = number` alike (#3686 bug 2). The signature slot came out
+ * `i32` while the body compiled the arithmetic as `f64`, so the module failed
+ * validation ("f64.add[0] expected type f64, found local.get of type i32").
+ * The default now asks the checker before assuming "pointer".
+ */
+function resolveType(ctx: LinearContext, typeNode: ts.TypeNode | undefined): ValType | null {
   if (!typeNode) return null;
   // Strip "| undefined" and "| null" for optional types
   const text = typeNode
@@ -4457,7 +4494,8 @@ function resolveType(_ctx: LinearContext, typeNode: ts.TypeNode | undefined): Va
     case "string":
       return { kind: "i32" }; // strings are pointers
     default:
-      return { kind: "i32" }; // pointers for objects
+      // Aliases (`type i32 = number`, `type Meters = number`) resolve here.
+      return isLinearScalarType(ctx, typeNode) ? { kind: "f64" } : { kind: "i32" };
   }
 }
 
@@ -4495,7 +4533,7 @@ function scanClassDeclaration(ctx: LinearContext, classDecl: ts.ClassDeclaration
   for (const member of classDecl.members) {
     if (ts.isPropertyDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
       const fieldName = member.name.text;
-      const fieldType = resolveFieldType(member.type);
+      const fieldType = resolveFieldType(ctx, member.type);
       fieldDefs.push({ name: fieldName, type: fieldType });
       seenFields.add(fieldName);
       // Detect collection kind from type annotation
@@ -4555,7 +4593,7 @@ function scanClassDeclaration(ctx: LinearContext, classDecl: ts.ClassDeclaration
 }
 
 /** Resolve a field type annotation to "i32" or "f64" */
-function resolveFieldType(typeNode: ts.TypeNode | undefined): "i32" | "f64" {
+function resolveFieldType(ctx: LinearContext, typeNode: ts.TypeNode | undefined): "i32" | "f64" {
   if (!typeNode) return "f64";
   const text = typeNode.getText();
   switch (text) {
@@ -4564,7 +4602,9 @@ function resolveFieldType(typeNode: ts.TypeNode | undefined): "i32" | "f64" {
     case "boolean":
       return "f64";
     default:
-      return "i32";
+      // Same alias hazard as resolveType: `v: i32` on a field used to land in
+      // the i32/pointer slot while its reads/writes stayed f64 (#3686 bug 2).
+      return isLinearScalarType(ctx, typeNode) ? "f64" : "i32";
   }
 }
 

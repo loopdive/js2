@@ -2011,6 +2011,15 @@ export function compileNamespaceStaticCall(
             `Pure-Wasm JSON.stringify of null/undefined/boolean works standalone; ` +
             `numbers, objects, arrays, strings, and JSON.parse require the Phase 2 pure-Wasm codec (#1599 Phase 2). ` +
             `Avoid JSON for these shapes in standalone/WASI targets for now.`,
+          "error",
+          // (#3725) STICKY. This `reportError(...); return null` pair is a
+          // deliberate refusal, but `return null` is indistinguishable from an
+          // ordinary probe miss at `compileExpression`'s rollback, which
+          // truncated the diagnostic and substituted a default value. The
+          // observable result was the opposite of a refusal: `JSON.stringify` of
+          // a closed typed-vec compiled to a clean, zero-import standalone module
+          // that trapped on every call ("dereferencing a null pointer").
+          { sticky: true },
         );
         return null;
       }

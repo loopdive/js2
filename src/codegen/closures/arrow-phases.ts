@@ -26,6 +26,7 @@ import {
 } from "../index.js";
 import { addFunctionOwnLocals } from "../binding-info.js";
 import {
+  closureArityField,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
@@ -396,7 +397,7 @@ export function mintClosureStructTypes(
       liftedParams = [{ kind: "ref", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
     } else {
       // Fallback: create a unique struct type
-      const structFields = [{ name: "func", type: { kind: "funcref" as const }, mutable: false }];
+      const structFields = [{ name: "func", type: { kind: "funcref" as const }, mutable: false }, closureArityField()];
       structTypeIdx = ctx.mod.types.length;
       ctx.mod.types.push({
         kind: "struct",
@@ -410,6 +411,7 @@ export function mintClosureStructTypes(
   } else {
     const structFields = [
       { name: "func", type: { kind: "funcref" as const }, mutable: false },
+      closureArityField(),
       ...captures.map((c) => buildCaptureFieldDef(ctx, c)),
     ];
 
@@ -432,14 +434,33 @@ export function mintClosureStructTypes(
       structFields.push({ name: "__constructible", type: { kind: "i32" as const }, mutable: false });
     }
 
-    // For closures with captures (but not named func exprs), make the struct
-    // a subtype of the shared wrapper struct so ref.cast at call sites succeeds.
-    // Named func exprs need ref_null __self (for var hoisting), so they can't
-    // share the wrapper's lifted func type which uses non-null ref.
-    const wrapperTypes = !isNamedFuncExpr ? getOrCreateFuncRefWrapperTypes(ctx, arrowParams, closureResults) : null;
+    // For closures with captures, make the struct a subtype of the shared
+    // wrapper struct so ref.cast at call sites succeeds. Named func exprs need
+    // ref_null __self (for var hoisting), so they can't share the wrapper's
+    // lifted func type which uses non-null ref — but (#3673) they still
+    // SUBTYPE the wrapper and take the nullable canonical ROOT as their self
+    // param: their lifted func types then dedupe BY USER SIGNATURE across all
+    // named function expressions (previously each minted a private
+    // `(ref_null $ownStruct, …)` func type, and acorn's hundreds of
+    // `pp$X.method = function …` closures exploded the `__apply_closure` /
+    // `__call_fn_method_N` ref.test chains to ~90 arms). Bodies downcast the
+    // root self to the private struct for capture access — the same
+    // `usesWrapperFuncType` machinery shared-wrapper captured closures use.
+    const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, arrowParams, closureResults);
 
     structTypeIdx = ctx.mod.types.length;
-    if (wrapperTypes) {
+    if (wrapperTypes && isNamedFuncExpr) {
+      ctx.mod.types.push({
+        kind: "struct",
+        name: `${closureName}_struct`,
+        fields: structFields,
+        superTypeIdx: wrapperTypes.structTypeIdx,
+      });
+      if (constructible) ctx.constructibleClosureTypeIdxs.add(structTypeIdx);
+      liftedSelfTypeIdx = wrapperTypes.liftedSelfTypeIdx;
+      liftedParams = [{ kind: "ref_null", typeIdx: liftedSelfTypeIdx }, ...arrowParams];
+      liftedFuncTypeIdx = addFuncType(ctx, liftedParams, closureResults, `${closureName}_type`);
+    } else if (wrapperTypes) {
       // Subtype of the wrapper struct — inherits field 0 (funcref), adds captures
       ctx.mod.types.push({
         kind: "struct",
@@ -728,9 +749,12 @@ export function emitClosureConstruction(
   captures: ArrowClosureCapture[],
   liftedFuncIdx: number,
   structTypeIdx: number,
+  arity: number,
 ): void {
-  // 7. At the creation site, emit struct.new with funcref + captured values
+  // 7. At the creation site, emit struct.new with funcref + (#3673) declared
+  // arity + captured values
   fctx.body.push({ op: "ref.func", funcIdx: liftedFuncIdx });
+  fctx.body.push({ op: "i32.const", value: arity });
   for (const cap of captures) {
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)

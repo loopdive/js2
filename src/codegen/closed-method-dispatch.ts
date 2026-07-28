@@ -50,6 +50,8 @@ import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
+import { ensureArgcGlobal } from "./statements/nested-declarations.js"; // (#3673 round 13) direct-call argc preset
+import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 13) under-application gate
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 
 /**
@@ -524,6 +526,88 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       ];
     } else {
       current = [{ op: "ref.null.extern" }];
+    }
+
+    // (#3673 round 13) Cached-method DIRECT-call arm, wrapped around the
+    // innermost open fallback only (closed-struct / HOF / iterator /
+    // collection arms keep their existing precedence). On a
+    // `__method_cache_lookup` hit — the receiver's fnctor-prototype method
+    // was already resolved once through the slow path — call
+    // `__call_fn_method_<arity>` directly with the unpacked args, skipping
+    // the per-call `$ObjVec` allocation, `__extern_method_call`, and
+    // `__apply_closure`. argc is preset to the actual count and reset to the
+    // -1 sentinel after, exactly mirroring `fillApplyClosure`.
+    // The scratch local's slot is only known once the fill's `locals` array is
+    // finalized far below (`dispFn.locals = locals`), so the arm is built with
+    // placeholder indices collected in `mcPatchInstrs` and patched there.
+    const mcPatchInstrs: Instr[] = [];
+    {
+      const lookupIdx = ctx.funcMap.get("__method_cache_lookup");
+      const callFnMethodIdx = ctx.funcMap.get(`__call_fn_method_${arity}`);
+      const nullishIdx = ctx.funcMap.get("__nullish_to_null");
+      const rootIdx = getFuncRefWrapperRootTypeIdx(ctx);
+      if (lookupIdx !== undefined && callFnMethodIdx !== undefined && rootIdx !== undefined) {
+        const mLocal = (op: "local.get" | "local.set" | "local.tee"): Instr => {
+          const instr: Instr = { op, index: -1 };
+          mcPatchInstrs.push(instr);
+          return instr;
+        };
+        const argcGlobalIdx = ensureArgcGlobal(ctx);
+        current = [
+          { op: "local.get", index: 0 },
+          ...stringConstantExternrefInstrs(ctx, methodName),
+          { op: "call", funcIdx: lookupIdx },
+          ...(nullishIdx !== undefined ? ([{ op: "call", funcIdx: nullishIdx }] satisfies Instr[]) : []),
+          mLocal("local.tee"),
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          // Direct-call eligibility: the exact-arity export only carries
+          // closures with formals <= call-site arity. An UNDER-applied call
+          // (declared > arity) must take the legacy path, whose
+          // `__apply_closure` #3592 widening pads the missing args — so gate
+          // on the root wrapper's declared-$arity field.
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [
+              mLocal("local.get"),
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: rootIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [
+                  mLocal("local.get"),
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: rootIdx },
+                  { op: "struct.get", typeIdx: rootIdx, fieldIdx: CLOSURE_ARITY_FIELD_IDX },
+                  { op: "i32.const", value: arity },
+                  { op: "i32.le_s" },
+                ],
+                else: [{ op: "i32.const", value: 0 }],
+              },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "i32.const", value: arity },
+              { op: "global.set", index: argcGlobalIdx },
+              { op: "local.get", index: 0 },
+              mLocal("local.get"),
+              ...Array.from({ length: arity }, (_, a): Instr => ({ op: "local.get", index: 1 + a })),
+              { op: "call", funcIdx: callFnMethodIdx },
+              mLocal("local.set"),
+              { op: "i32.const", value: -1 },
+              { op: "global.set", index: argcGlobalIdx },
+              mLocal("local.get"),
+            ],
+            else: current,
+          },
+        ];
+      }
     }
 
     // (#2903) ITERATOR fallback arm for the eager Iterator-helper methods
@@ -1266,6 +1350,14 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         { op: "ref.test", typeIdx: entry.typeIdx },
         { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
       ];
+    }
+
+    // (#3673 round 13) Patch the cached-direct-call arm's scratch-local slot
+    // now that the locals array is final.
+    if (mcPatchInstrs.length > 0) {
+      const mResLocal = arity + 1 + locals.length;
+      locals.push({ name: "__mc_m", type: { kind: "externref" } });
+      for (const instr of mcPatchInstrs) (instr as { index: number }).index = mResLocal;
     }
 
     dispFn.locals = locals;

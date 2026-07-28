@@ -1,0 +1,6 @@
+{
+  "repo": "https://github.com/acornjs/acorn.git",
+  "tag": "8.16.0",
+  "commit": "610d62d8f9cf44ca0e70c516b40c92452235c81b",
+  "_note": "Same acorn version as acorn-pin.json (dist tarball). npm does NOT publish acorn's test/ directory (stripped by its `files` field), so the test SUITE itself must come from source, unlike the dist module. Pinned by exact commit SHA (not just the tag, which could theoretically be force-moved upstream) for the same integrity discipline as acorn-pin.json's sha1. Acquired via a shallow `git clone --branch <tag>`, then the SHA is verified post-clone against this pin — refuse to run on any drift. The already-verified acorn-pin.json dist files are copied into the cloned checkout's acorn/dist/ so `require(\"../acorn\")` in the test files resolves without needing to run acorn's own rollup build (which would pull its full devDependency tree)."
+}

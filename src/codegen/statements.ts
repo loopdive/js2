@@ -281,6 +281,15 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     return;
   }
 
+  // `debugger;` — no-op. Per ECMA-262 §13.16, DebuggerStatement evaluation may
+  // trigger a breakpoint if an implementation-defined debugging facility is
+  // available, and otherwise "has no observable effect". Wasm exposes no such
+  // facility, so eliding it is spec-correct rather than a silent drop. The
+  // linear backend already treats it this way (src/codegen-linear/index.ts).
+  if (stmt.kind === ts.SyntaxKind.DebuggerStatement) {
+    return;
+  }
+
   // Class member nodes that can leak into compileStatement when iterating
   // class body or constructor body — treat as no-ops since field initializers
   // are handled separately in compileClassBodies (index.ts).

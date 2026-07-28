@@ -39,6 +39,31 @@ export interface CodegenError {
    * classification fails loudly instead of silently degrading.
    */
   severity?: "error" | "warning" | "degrade";
+  /**
+   * (#3725) Survive a speculative rollback.
+   *
+   * `rollbackSpeculative` (#1919) truncates `ctx.errors` back to the snapshot,
+   * which is correct for a genuine PROBE — one of several candidate lowerings,
+   * where a failure just means "not this one". But the backend's REFUSAL idiom
+   * is also `reportError(...); return null`, and that lands on the very same
+   * "inner produced no usable value" exit in `compileExpression`. So a
+   * deliberate "this program cannot be compiled for this target" was discarded
+   * and `pushDefaultValue` substituted a null — the compile reported
+   * `success: true` with zero errors and the module trapped at runtime
+   * ("dereferencing a null pointer"). A refusal silently became a trap.
+   *
+   * Marking a diagnostic `sticky` opts it out of that truncation. Use it ONLY at
+   * sites that are a deliberate, documented refusal (target capability gaps like
+   * the #1599 standalone JSON refusal) — never on a probe's failure, which
+   * SHOULD vanish with the emission it described.
+   *
+   * Deliberately opt-IN rather than "retain every fatal diagnostic": auditing
+   * the retain-all behaviour surfaced pre-existing sites that depend on the
+   * swallow (60 `#1539` standalone-RegExp refusals inside the compiled-Acorn
+   * acceptance module alone), so flipping it wholesale is its own remediation
+   * project. See #3725.
+   */
+  sticky?: true;
 }
 
 /** Result returned by generateModule / generateMultiModule. */
@@ -1003,6 +1028,25 @@ export interface FunctionContext {
    * setter + the consuming read/write/compound emitters.
    */
   thisStructName?: string;
+  /**
+   * (#3683 S2) Set ONLY on a typed-`this` TWIN body — the second compilation of
+   * an admitted fnctor prototype method, whose prologue has already cast
+   * `__current_this` down to this struct and parked it in
+   * {@link typedThisLocalIdx}. When present, a `this.<field>` read / write /
+   * compound-update on a PLAIN (non-presence-tracked, non-accessor) field of
+   * this struct lowers to a bare `struct.get`/`struct.set` against that local,
+   * returning the FIELD's ValType — instead of the `__get_member_<name>` /
+   * `__set_member_<name>` dispatcher call plus the externref box/unbox
+   * round-trip the generic body needs for a dynamic `this`. Every OTHER
+   * construct inside the twin keeps its dynamic lowering (`this` as a value
+   * still reads `__current_this`, which the generic body's `ref.test` shim
+   * guarantees holds this instance).
+   */
+  typedThisStructIdx?: number;
+  /** (#3683 S2) `ctx.structFields` key for {@link typedThisStructIdx}. */
+  typedThisStructName?: string;
+  /** (#3683 S2) Local holding the once-cast `(ref $__fnctor_F)` receiver. */
+  typedThisLocalIdx?: number;
 }
 
 export interface CodegenContext {
@@ -1583,6 +1627,16 @@ export interface CodegenContext {
    */
   memberGetDispatchNames?: Set<string>;
   /**
+   * (#3673) Property names that additionally reserved the TYPED f64 read
+   * dispatcher `__get_member_<name>__f64(recv) -> f64`. Reserved by the
+   * externref→f64 coercion rewrite in type-coercion.ts when a ToNumber-context
+   * read site's stack top is literally a generic-dispatcher call — the typed
+   * twin collapses numeric-slot hits to one call with a bare `struct.get`
+   * arm (no `__box_number` / `__to_primitive` / `__unbox_number` round-trip).
+   * Filled by `fillTypedMemberGetF64Dispatch` right after the generic fill.
+   */
+  memberGetTypedF64DispatchNames?: Set<string>;
+  /**
    * (#2963) Class-METHOD arms for the `__get_member_<name>` dispatcher:
    * propName → the receiver-typed arms that answer the canonical method-value
    * singleton (the SAME per-`<Owner>_<method>` cache global the typed
@@ -1659,6 +1713,9 @@ export interface CodegenContext {
    * late import-global insertion can shift it in `fixupModuleGlobalIndices`.
    */
   vecOverlayStateGlobalIdx?: number;
+  /** (#3673) i32 flag global — 1 once any overlay companion carries a numeric
+   *  (array-index) key; gates the `__extern_get_idx` overlay prologue. */
+  vecOverlayNumericGlobalIdx?: number;
   /** (#3251 S1) Type index of `$__overlay_state` (see above). */
   vecOverlayStateTypeIdx?: number;
   /**
@@ -1880,6 +1937,27 @@ export interface CodegenContext {
    * numeric carriers and sidecar writes; computed conservatively per module.
    */
   booleanPropertyNames: Set<string>;
+  /**
+   * #3683 S4a: property names whose complete source write set is NUMERIC
+   * (`analyzeNumericPropertyNames`). `deriveFnctorFields` promotes a fnctor
+   * struct field with such a name from the boxed `externref` carrier to a
+   * physical `f64` slot, which is what lets an S2 typed-`this` twin's
+   * `struct.get` hand back an unboxed number instead of a value the consumer
+   * has to `__unbox_number`. Standalone lane only; `undefined` (⇒ never
+   * promote) in host mode and before the pre-pass runs.
+   */
+  numericPropertyNames?: ReadonlySet<string>;
+  /**
+   * #3673: property names the SOURCE defines as a function-valued member
+   * (`collectUserMethodNames`). Consulted by
+   * `compileGuardedNativeStringMethodCall` so a `String.prototype`-named
+   * method that the program ALSO defines on its own objects (acorn's
+   * `RegExpValidationState.prototype.at` vs `String.prototype.at`) gets a real
+   * dynamic-dispatch fallback on the `ref.test $AnyString` miss instead of a
+   * benign sentinel. `undefined` before the pre-pass ⇒ behave exactly as
+   * before.
+   */
+  userMethodNames?: ReadonlySet<string>;
   /** Set of function names that are async (for .d.ts generation) */
   asyncFunctions: Set<string>;
   /** Set of function names that are generators (function*) */
@@ -2156,6 +2234,21 @@ export interface CodegenContext {
   anyStrTypeIdx: number;
   nativeStrTypeIdx: number;
   consStrTypeIdx: number;
+  /** (#3673 round 9) `$HashedString <: $NativeString` with a cached FNV-1a
+   *  hash field — allocated only by interned literal globals (hash baked at
+   *  compile time) and `__str_flatten` memoized flat copies (lazy); consumed
+   *  by `__obj_hash`'s cache fast path. -1 when native strings are off. */
+  hashedStrTypeIdx: number;
+  /**
+   * (#3673) Interned native-string literal globals: literal value (prefixed by
+   * encoding kind) → module-global index of an immutable `(ref $NativeString)`
+   * / `(ref $Utf8String)` global whose constant init materializes the literal
+   * ONCE at instantiation. Before this, every execution of a literal site
+   * re-allocated the backing array + struct — measured as the dominant
+   * allocation source of a standalone compiled-acorn parse (the `__extern_get`
+   * member ladder allocates its comparison literal per probe per call).
+   */
+  nativeStrLiteralGlobals: Map<string, number>;
   /**
    * (#3469) Standalone host-free `console.log`/`print` output sink. On
    * `--target standalone` `console.log` has no host import and no `fd_write`
@@ -2927,6 +3020,48 @@ export interface CodegenContext {
    * Wasm byte-identical.
    */
   fnctorEscapeGate?: import("../fnctor-escape-gate.js").FnctorEscapeGateResult;
+  /**
+   * (#3685 S3) Memoized receiver-flow verdicts, keyed by source file. The
+   * analysis is whole-program and pure; computing it per call site would be
+   * quadratic on a file the size of acorn's dist.
+   */
+  receiverFlowByFile?: Map<import("typescript").SourceFile, import("../receiver-flow-analysis.js").ReceiverFlowResult>;
+  /**
+   * (#3683 S2) Memoized inverse of `protoMethodWriteOnce.methods` — the RHS
+   * function node of each write-once prototype-method assignment mapped to its
+   * owning fnctor name. Built lazily on the first twin-admission query so the
+   * check is an O(1) node lookup rather than a per-closure scan of every
+   * class's method map. Read-only after construction.
+   */
+  typedThisWriteOnceIndex?: Map<ts.FunctionLikeDeclaration, string>;
+  /**
+   * (#3683 S3) The same inverse index keyed to `"<F>/<m>"` instead of just
+   * `<F>` — S3 needs the METHOD name to pair a compiled twin with the
+   * trampoline reserved for it. Built lazily, read-only after construction.
+   */
+  typedThisWriteOnceKeyIndex?: Map<ts.FunctionLikeDeclaration, string>;
+  /**
+   * (#3683 S2) Diagnostic counter: how many prototype methods received a typed
+   * twin in this compilation. Surfaced by the S2 probe/test, not by codegen.
+   */
+  typedThisTwinCount?: number;
+  /**
+   * (#3683 S3) `"<F>/<m>/<arity>"` → the direct-call TRAMPOLINE reserved for
+   * that prototype method. Reserved lazily at the first devirtualized call site
+   * and FILLED at finalize (`fillDirectCallTrampolines`), because a twin body
+   * routinely calls a method whose own body has not been compiled yet (acorn's
+   * mutually recursive `parseMaybeAssign` ↔ `parseExprOps` ↔ …). See
+   * `typed-this.ts` for why the indirection exists and what each field means.
+   */
+  directCallTrampolines?: Map<string, import("../typed-this.js").DirectCallTrampoline>;
+  /**
+   * (#3683 S3) `"<F>/<m>"` → the compiled typed TWIN of that prototype method:
+   * its wasm function NAME (never a raw index — funcMap is the shift-maintained
+   * source of truth) and its exact param/result ValTypes, so the finalize fill
+   * can prove the trampoline's signature and the twin's agree before baking a
+   * direct `call`. Populated by `compileArrowAsClosure` at twin-mint time.
+   */
+  directCallTwins?: Map<string, { twinName: string; params: ValType[]; results: ValType[] }>;
   /**
    * #2773 S1 (keystone) — fnctor name → reserved `$__fnctor_<Name>` struct type
    * index. Populated up-front by `reserveFnctorStructTypes` (index.ts) at the

@@ -75,13 +75,30 @@ describe("#2879 §4 — carrier-migration crediting (raw pass dip does not breac
 });
 
 describe("#2879 §2 — the committed high-water file is re-baselined to the honest number", () => {
-  it("the committed mark is the host-free count (~12.9k), not the leaky ~26k", () => {
+  // (#3726) These two cases originally asserted `pass < 20000` — the band that
+  // separated the honest host-free count (~12.9k at the time) from the leaky raw
+  // one (~26k). That ceiling was a SNAPSHOT of a deliberately RATCHETING metric,
+  // so every legitimate improvement walked toward it, and #3592's measured
+  // post-de-vacuification re-raise to 22,626 crossed it — failing this suite on
+  // `main` itself, where it sat red because these cases are not in a required
+  // check.
+  //
+  // The ceiling is not what actually distinguishes honest from leaky, and never
+  // was: the real guarantee is #2889's self-describing `host_free_pass` field,
+  // which the WRITE side refuses to synthesize from a leaky `pass` (asserted by
+  // `hostFreeFromReport returns null when host_free_pass is ABSENT` below). So
+  // assert the properties that stay true as the floor ratchets — the field is
+  // present, it agrees with `pass`, and the mark is bounded by the corpus rather
+  // than by a number someone wrote down in July — and drop the magnitude
+  // ceiling that only ever encoded "today's value".
+  it("the committed mark is an honest host-free count, not the leaky raw pass", () => {
     const mark = JSON.parse(readFileSync(HIGHWATER_PATH, "utf-8"));
     expect(Number.isInteger(mark.pass)).toBe(true);
-    // Honest host-free count is roughly half the old leaky 26k — assert it is in
-    // the honest band and well below the old inflated figure.
+    // Lower bound only: the floor ratchets UP, so a floor never goes stale.
     expect(mark.pass).toBeGreaterThan(10000);
-    expect(mark.pass).toBeLessThan(20000);
+    // Structural ceiling: a mark above the corpus size is nonsense by
+    // construction, and this bound moves with the corpus instead of rotting.
+    expect(mark.pass).toBeLessThanOrEqual(mark.official_total);
     expect(mark.tolerance).toBe(50);
   });
 
@@ -91,7 +108,7 @@ describe("#2879 §2 — the committed high-water file is re-baselined to the hon
     expect(Number.isInteger(mark.host_free_pass)).toBe(true);
     expect(mark.host_free_pass).toBe(mark.pass);
     expect(mark.host_free_pass).toBeGreaterThan(10000);
-    expect(mark.host_free_pass).toBeLessThan(20000);
+    expect(mark.host_free_pass).toBeLessThanOrEqual(mark.official_total);
   });
 });
 

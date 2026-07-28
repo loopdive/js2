@@ -967,25 +967,56 @@ function _rethrowIfProxyOrRevoked(e: any, obj: any): void {
   if (_isRevokedProxyError(e) || _isUserProxy(obj)) throw e;
 }
 
+// (#3673) Memoized classification for `_isWasmStruct`. The predicate is on the
+// hot path of EVERY boundary helper (`__extern_get`/`_safeGet`/`_safeSet` call
+// it several times per crossing), and the original probe-set-and-catch
+// implementation forced a V8 exception throw/catch plus a fresh Symbol PER CALL
+// for every WasmGC struct receiver — measured at 57% of total CPU during a
+// compiled-acorn parse. Classification is stable for a given object identity
+// (a struct never becomes a plain object and vice versa), so cache the verdict
+// in a single WeakMap (one probe per call — ~20k calls per small acorn parse
+// makes the second probe of a two-WeakSet scheme measurable). Note
+// `_userProxies` membership also answers false, and a proxy can only be cached
+// here as non-struct — consistent either way.
+const _wasmStructVerdict = new WeakMap<object, boolean>();
+
 function _isWasmStruct(obj: any): boolean {
   if (obj == null || typeof obj !== "object") return false;
+  const verdict = _wasmStructVerdict.get(obj);
+  if (verdict !== undefined) return verdict;
   if (_userProxies.has(obj)) return false;
-  // WasmGC structs have a null prototype and no own keys — quick heuristic
-  // that avoids try/catch on normal objects.
   try {
-    if (Object.getPrototypeOf(obj) !== null) return false;
-    // Final check: attempting a property set on a WasmGC struct throws.
-    // Normal null-proto objects (Object.create(null)) allow sets.
-    // We test with a unique symbol to avoid side-effects.
+    // WasmGC structs have a null prototype — quick check that exits early for
+    // normal objects. (Kept inside the try so an unregistered revoked proxy —
+    // whose traps throw — classifies exactly as before the #3673 rework.)
+    if (Object.getPrototypeOf(obj) !== null) {
+      _wasmStructVerdict.set(obj, false);
+      return false;
+    }
+    // (#3673) WasmGC objects report non-extensible; a plain Object.create(null)
+    // is extensible. This resolves the common case without the probe throw below.
+    if (Object.isExtensible(obj)) {
+      _wasmStructVerdict.set(obj, false);
+      return false;
+    }
+    // Final check (rare: non-extensible null-proto value — a sealed/frozen JS
+    // object or a WasmGC struct): attempting a property set on a WasmGC struct
+    // throws an opaqueness TypeError. We test with a unique symbol to avoid
+    // side-effects.
     const probe = Symbol();
     (obj as any)[probe] = 1;
     delete (obj as any)[probe];
+    _wasmStructVerdict.set(obj, false);
     return false; // set succeeded → regular object
   } catch (e: any) {
-    // Sealed/frozen plain JS objects (null-proto) also throw on new-symbol set.
+    // Sealed/frozen plain JS objects (null-proto) throw on new-symbol set too.
     // WasmGC structs throw "WebAssembly objects are opaque" — NOT an extensibility error.
     // Filter out the JS extensibility error so sealed JS objects aren't misidentified.
-    if (e instanceof TypeError && (e.message ?? "").includes("extensible")) return false;
+    if (e instanceof TypeError && (e.message ?? "").includes("extensible")) {
+      _wasmStructVerdict.set(obj, false);
+      return false;
+    }
+    _wasmStructVerdict.set(obj, true);
     return true; // "WebAssembly objects are opaque" or similar
   }
 }
@@ -2927,16 +2958,49 @@ function _hostToPrimitive(
  * Returns an array of field name strings, or null if the export is not available
  * or the value is not a recognized struct type.
  */
-function _getStructFieldNames(obj: any, exports: Record<string, Function> | undefined): string[] | null {
+// (#3673) Cache the `__struct_field_names` CSV split per distinct CSV string.
+// The CSV is a per-shape constant (one string per struct type), so the split
+// allocation is paid once per shape instead of per call. Callers of
+// `_structFieldNamesRaw` must treat the returned array as immutable — it is
+// shared across calls.
+const _csvSplitCache = new Map<string, readonly string[]>();
+
+function _structFieldNamesRaw(obj: any, exports: Record<string, Function> | undefined): readonly string[] | null {
   if (!exports) return null;
   const fn = exports.__struct_field_names;
   if (typeof fn !== "function") return null;
   const csv = fn(obj);
   if (csv == null || typeof csv !== "string" || csv === "") return null;
-  return csv.split(",").filter((field) => {
-    const presence = exports[`__shas_${field}`];
+  let names = _csvSplitCache.get(csv);
+  if (!names) {
+    names = csv.split(",");
+    _csvSplitCache.set(csv, names);
+  }
+  return names;
+}
+
+function _getStructFieldNames(obj: any, exports: Record<string, Function> | undefined): string[] | null {
+  const names = _structFieldNamesRaw(obj, exports);
+  if (!names) return null;
+  return names.filter((field) => {
+    const presence = exports![`__shas_${field}`];
     return typeof presence !== "function" || presence(obj) !== 0;
   });
+}
+
+/**
+ * (#3673) Single-key own-field membership for a WasmGC struct receiver —
+ * `_getStructFieldNames(obj, exports).includes(key)` without paying a
+ * `__shas_<field>` Wasm presence call for EVERY field of the shape (acorn's
+ * Parser struct has dozens; the full filter was 28% of parse CPU). Presence is
+ * consulted for the ONE requested key only, preserving the per-instance
+ * presence-bit semantics (#2847).
+ */
+function _structHasOwnFieldName(obj: any, key: string, exports: Record<string, Function> | undefined): boolean {
+  const names = _structFieldNamesRaw(obj, exports);
+  if (!names || !names.includes(key)) return false;
+  const presence = exports![`__shas_${key}`];
+  return typeof presence !== "function" || presence(obj) !== 0;
 }
 
 /**
@@ -2977,9 +3041,9 @@ function _wasmStructHasOwn(obj: any, key: any, exports: Record<string, Function>
     return staticMethods.includes(prop) && !_isDeletedClassProp(obj, prop);
   }
   // Static struct field shape (the per-receiver oracle, A1 — NOT a module-global
-  // `__sget_<key>` existence probe).
-  const fieldNames = _getStructFieldNames(obj, exports) ?? [];
-  return fieldNames.includes(String(key));
+  // `__sget_<key>` existence probe). Single-key check (#3673) — avoids the
+  // full per-field presence sweep.
+  return _structHasOwnFieldName(obj, String(key), exports);
 }
 
 /**
@@ -3050,9 +3114,8 @@ function _installErrorCause(inst: any, options: any, exports: Record<string, Fun
   let hasCause = false;
   let causeVal: any;
   if (_isWasmStruct(options)) {
-    const fieldNames = _getStructFieldNames(options, exports);
     const sidecar = _wasmStructProps.get(options);
-    if (fieldNames && fieldNames.includes("cause")) {
+    if (_structHasOwnFieldName(options, "cause", exports)) {
       hasCause = true;
       const getter = exports?.__sget_cause;
       if (typeof getter === "function") causeVal = getter(options);
@@ -3958,8 +4021,7 @@ function _safeGet(
         const tomb = _wasmStructDeletedKeys.get(obj);
         if (!(tomb && tomb.has(key))) {
           const exports = callbackState?.getExports();
-          const fieldNames = _getStructFieldNames(obj, exports) ?? [];
-          if (fieldNames.includes(key)) {
+          if (_structHasOwnFieldName(obj, key, exports)) {
             const getter = exports?.[`__sget_${key}`];
             if (typeof getter === "function") {
               const own = getter(obj);
@@ -4132,7 +4194,7 @@ function _safeSet(
     // collectors place it at insertion-order END (§ EnumerateObjectProperties).
     if (typeof k === "string" && !!tomb && tomb.has(k)) {
       const exportsForShape = exports ?? callbackState?.getExports();
-      if (_getStructFieldNames(obj, exportsForShape)?.includes(k)) {
+      if (_structHasOwnFieldName(obj, k, exportsForShape)) {
         let shadowed = _wasmStructShadowedFields.get(obj);
         if (!shadowed) {
           shadowed = new Set<string>();
@@ -4266,11 +4328,12 @@ function _safeSet(
         }
       }
     }
-    try {
-      obj[key] = val;
-    } catch {
-      /* struct fields may reject unknown keys */
-    }
+    // (#3673) NOTE: no native `obj[key] = val` attempt here. `obj` is a WasmGC
+    // struct in this branch and the JS-API property set on an opaque WasmGC
+    // object unconditionally throws in strict code (this module is ESM/strict),
+    // so the old try/catch write was a guaranteed V8 exception per property
+    // write — measured as a top cost of compiled-acorn parsing. The `__sset_`
+    // writeback above and the sidecar below are the real write lanes.
     // (#2853 B) A successful live-field write skips the sidecar and HEALS any
     // stale sidecar entry for the key — EXCEPT for a #2731 shadowed field
     // (deleted-then-re-added), whose live value deliberately lives in the
@@ -4769,8 +4832,7 @@ function _readOwnDescriptor(
     };
   }
   // 3. Bare struct field via exported getter — zero-overhead data-property path.
-  const fieldNames = _getStructFieldNames(obj, exports) ?? [];
-  if (fieldNames.includes(propStr)) {
+  if (_structHasOwnFieldName(obj, propStr, exports)) {
     const getter = exports?.[`__sget_${propStr}`];
     const value = typeof getter === "function" ? getter(obj) : undefined;
     const descs = _wasmPropDescs.get(obj);
@@ -4962,12 +5024,30 @@ const _classMethodHostBridges = new WeakMap<object, Map<string, Function>>();
  * `Call(nextMethod, iterator)` where nextMethod was read from that instance;
  * an extracted re-bind `f.call(other)` is out of scope — documented #3123).
  */
+// (#3673) Per-exports memo of `__member_kind_<key>` lookups. The exports object
+// of a large module (acorn: thousands of exports) is a dictionary-mode object,
+// and this lookup runs for EVERY dynamic property read on an fnctor instance —
+// the template-string + dict-miss cost was a measurable slice of parse CPU.
+// The exports object is immutable after instantiation, so a null (absent) or
+// function verdict per key is stable.
+const _memberKindFnCache = new WeakMap<object, Map<string, Function | null>>();
+
 function _resolveClassMemberOnInstance(obj: any, key: any, exports: Record<string, Function> | undefined): any {
   if (exports === undefined || typeof key !== "string") return _MISS;
   if (obj == null || typeof obj !== "object" || !_canBeWeakKey(obj)) return _MISS;
   if (!_fnctorInstanceCtor.has(obj)) return _MISS;
-  const kindFn = exports[`__member_kind_${key}`] as unknown as ((v: any) => number) | undefined;
-  if (typeof kindFn !== "function") return _MISS;
+  let kindCache = _memberKindFnCache.get(exports);
+  if (!kindCache) {
+    kindCache = new Map();
+    _memberKindFnCache.set(exports, kindCache);
+  }
+  let kindFn: Function | null | undefined = kindCache.get(key);
+  if (kindFn === undefined) {
+    const found = exports[`__member_kind_${key}`];
+    kindFn = typeof found === "function" ? found : null;
+    kindCache.set(key, kindFn);
+  }
+  if (kindFn === null) return _MISS;
   let kind = 0;
   try {
     kind = kindFn(obj);
@@ -5001,32 +5081,35 @@ function _resolveClassMemberOnInstance(obj: any, key: any, exports: Record<strin
   return _MISS;
 }
 
+// (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
+// path (invoked for every dynamic field read that reaches the host resolver).
+// #1336 — accessor properties (Object.defineProperty(obj, k, {get})) must
+// INVOKE the getter, not return a descriptor. #1935 — return `_MISS` ONLY when
+// no getter is actually callable; a getter that runs and returns `undefined`
+// is a genuine HIT that shadows the field.
+function _invokeSidecarGetter(g: any, obj: any, exports: Record<string, Function> | undefined): any {
+  if (g == null) return _MISS;
+  if (typeof g === "function") return (g as Function).call(obj);
+  if (typeof g === "object" && _isWasmStruct(g) && exports) {
+    const callFn0 = exports["__call_fn_0"];
+    if (typeof callFn0 === "function") return callFn0(g);
+  }
+  return _MISS;
+}
+
 function _resolveHostField(obj: any, key: any, exports: Record<string, Function> | undefined): any {
-  // #1336 — accessor properties (Object.defineProperty(obj, k, {get})) must
-  // INVOKE the getter, not return a descriptor. Sidecar stores the descriptor
-  // function under `__get_<k>` (string) or in `_wasmStructAccessors` (symbol).
-  // #1935 — return `_MISS` ONLY when no getter is actually callable; a getter
-  // that runs and returns `undefined` is a genuine HIT that shadows the field.
-  const invokeGetter = (g: any): any => {
-    if (g == null) return _MISS;
-    if (typeof g === "function") return (g as Function).call(obj);
-    if (typeof g === "object" && _isWasmStruct(g) && exports) {
-      const callFn0 = exports["__call_fn_0"];
-      if (typeof callFn0 === "function") return callFn0(g);
-    }
-    return _MISS;
-  };
+  // #1336 / #1935 — see `_invokeSidecarGetter` above.
   if (typeof key === "string") {
     const wasmSc = _wasmStructProps.get(obj);
     const getter = wasmSc?.[`__get_${key}` as string];
     if (getter !== undefined) {
-      const v = invokeGetter(getter);
+      const v = _invokeSidecarGetter(getter, obj, exports);
       if (v !== _MISS) return v;
     }
   } else if (typeof key === "symbol") {
     const accessor = _wasmStructAccessors.get(obj)?.get(key);
     if (accessor?.get !== undefined) {
-      const v = invokeGetter(accessor.get);
+      const v = _invokeSidecarGetter(accessor.get, obj, exports);
       if (v !== _MISS) return v;
     }
   }
@@ -9336,6 +9419,14 @@ assert._isSameValue = isSameValue;
           return v.toLocaleString();
         };
       if (name === "__extern_is_undefined") return (v: any) => (v === undefined ? 1 : 0);
+      // (#3714) ECMA-262 Type(x) is Object — used by the private-field
+      // brand-check (`#x in obj`, §12.10.3 step 5) to distinguish "a real
+      // object of the wrong class" (false, no throw) from "not an object at
+      // all" (TypeError) when a WasmGC `ref.test` alone can't see past an
+      // opaque externref. Deliberately NOT `typeof v === "object"` alone —
+      // that's `true` for `null` too, but `null` is not an ECMAScript Object.
+      if (name === "__extern_is_object")
+        return (v: any) => (v !== null && (typeof v === "object" || typeof v === "function") ? 1 : 0);
       // (#1328) Array.isArray on an externref value (e.g. a RegExp match
       // result returned from the host). The compile-time type can't decide
       // this for `externref`, so defer to the real spec predicate.
@@ -9975,8 +10066,7 @@ assert._isSameValue = isSameValue;
             if (!_isWasmStruct(o)) return f in Object(o);
             const sc = _wasmStructProps.get(o);
             if (sc && f in sc) return true;
-            const names = _getStructFieldNames(o, callbackState?.getExports());
-            return names !== null && names.includes(f);
+            return _structHasOwnFieldName(o, f, callbackState?.getExports());
           };
           const getField = (o: any, f: string): any => {
             if (!_isWasmStruct(o)) return o[f];
@@ -10268,8 +10358,7 @@ assert._isSameValue = isSameValue;
             const sc = _wasmStructProps.get(o);
             if (sc && field in sc) return true;
             if (typeof field !== "string") return false;
-            const names = _getStructFieldNames(o, callbackState?.getExports());
-            return names !== null && names.includes(field);
+            return _structHasOwnFieldName(o, field, callbackState?.getExports());
           };
           const getField = (o: any, field: string | symbol): any => {
             if (!_isWasmStruct(o)) return o[field];
@@ -15374,7 +15463,7 @@ export function wrapExports(
         /* fall through to next probe */
       }
     }
-    if (_getStructFieldNames(val, exportsForMarshal) != null) return true;
+    if (_structFieldNamesRaw(val, exportsForMarshal) != null) return true;
     if (_isWasmVec(val, exportsForMarshal)) return true;
     return hasVecLen;
   };

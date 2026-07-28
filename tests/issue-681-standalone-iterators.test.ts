@@ -11,7 +11,16 @@ function importNames(result: Awaited<ReturnType<typeof compile>>): string[] {
 function expectNoIteratorHostImports(result: Awaited<ReturnType<typeof compile>>) {
   const names = importNames(result);
   expect(names.filter((name) => ITERATOR_HOST_IMPORT_RE.test(name))).toEqual([]);
-  expect(result.wat).not.toMatch(ITERATOR_HOST_IMPORT_RE);
+  // (#3726) Scan only the WAT's IMPORT lines. The original check ran the regex
+  // over the whole module, which was equivalent back when any mention of
+  // `__iterator` could only be an import. Since #1320 Slice 1 the standalone
+  // iterator protocol is bound to LOCALLY DEFINED Wasm functions with those same
+  // names, so a whole-module match now fires on the host-free implementation
+  // itself — the opposite of what this guard is for. Restricting to `(import`
+  // lines keeps the teeth (a real host import is still caught) without flagging
+  // the native runtime that made the module host-free in the first place.
+  const importLines = (result.wat ?? "").split("\n").filter((line) => line.includes("(import "));
+  expect(importLines.filter((line) => ITERATOR_HOST_IMPORT_RE.test(line))).toEqual([]);
 }
 
 async function expectIteratorRefused(src: string, target: "standalone" | "wasi" = "standalone") {
@@ -59,8 +68,21 @@ describe("#681 standalone iterator protocol slice", () => {
     expectNoIteratorHostImports(result);
   });
 
-  it("refuses unknown for-of iterables in standalone instead of importing __iterator", async () => {
-    const result = await expectIteratorRefused(`
+  // (#3726) This case asserted a COMPILE-TIME REFUSAL for an unknown iterable.
+  // That refusal was the #681-era mechanism for one goal: never leak an
+  // `__iterator` HOST import into a standalone module. #1320 Slice 1 replaced the
+  // mechanism — `ensureNativeIteratorRuntime` binds the iterator protocol to
+  // emitted Wasm, so the module compiles with ZERO imports and a shape the native
+  // `__iterator` cannot canonicalize fails LOUDLY at runtime instead ("traps
+  // loudly rather than silently misbehaving", loops.ts). The goal is still met;
+  // the refusal that used to enforce it is gone, so asserting the refusal was
+  // asserting the mechanism instead of the invariant.
+  //
+  // What is pinned here now is the invariant plus the property that justifies
+  // dropping the refusal: unsupported shapes must be LOUD, never a silent
+  // miscount.
+  it("drives unknown for-of iterables through the native runtime — no __iterator host import", async () => {
+    const src = `
       export function f(xs: any): number {
         let count: number = 0;
         for (const value of xs) {
@@ -68,8 +90,22 @@ describe("#681 standalone iterator protocol slice", () => {
         }
         return count;
       }
-    `);
-    expect(result.errors.some((e) => /generic\/custom iterables/.test(e.message))).toBe(true);
+    `;
+    const result = await compile(src, { target: "standalone" });
+    expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+    expectNoIteratorHostImports(result);
+
+    const mod = await WebAssembly.compile(result.binary as BufferSource);
+    // The load-bearing #681 assertion: standalone stays fully host-free.
+    expect(WebAssembly.Module.imports(mod)).toEqual([]);
+
+    // And the shape the native iterator cannot canonicalize must FAIL, not
+    // silently return a wrong count — that loudness is the entire reason a
+    // compile-time refusal is no longer required here.
+    const { exports } = await WebAssembly.instantiate(mod, {});
+    for (const arg of [undefined, 5, [1, 2, 3]]) {
+      expect(() => (exports as { f(x: unknown): number }).f(arg)).toThrow();
+    }
   });
 
   it("keeps typed-array for-of WASI-clean", async () => {

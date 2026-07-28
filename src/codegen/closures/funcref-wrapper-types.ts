@@ -14,6 +14,23 @@ import { funcSignatureOf } from "../func-space.js"; // (#1916 S2 read chokepoint
 import { addFuncType } from "../index.js";
 
 /**
+ * (#3673) Closure representation constants. Every closure struct in the root
+ * wrapper hierarchy carries, after the field-0 funcref, an immutable i32
+ * DECLARED-ARITY field — the closure's user formal count. `__apply_closure`'s
+ * #3592 widening probe and the `__closure_arity` export read it with a single
+ * `struct.get` on the root instead of a per-func-type `ref.test` chain
+ * (90 arms pre-#3673 on compiled acorn). Capture fields start at index
+ * CLOSURE_CAPTURE_FIELD_BASE — every capture read/write and TDZ-slot index
+ * derives from these constants, never a bare literal.
+ */
+export const CLOSURE_ARITY_FIELD_IDX = 1;
+export const CLOSURE_CAPTURE_FIELD_BASE = 2;
+/** The `$arity` field definition — shared by every closure-struct mint site. */
+export function closureArityField(): { name: string; type: ValType; mutable: false } {
+  return { name: "$arity", type: { kind: "i32" }, mutable: false };
+}
+
+/**
  * Look up a function's parameter and result types from its index.
  */
 export function getFuncSignature(
@@ -58,7 +75,7 @@ export function getOrCreateFuncRefWrapperTypes(
   // Mark as non-final (superTypeIdx = -1) so closures with captures can be
   // subtypes of this wrapper struct, enabling ref.cast to succeed at call sites.
   const closureName = `__fn_wrap_${ctx.closureCounter++}`;
-  const structFields = [{ name: "func", type: { kind: "funcref" as const }, mutable: false }];
+  const structFields = [{ name: "func", type: { kind: "funcref" as const }, mutable: false }, closureArityField()];
   const structTypeIdx = ctx.mod.types.length;
   const rootWrapperTypeIdx = (ctx as unknown as { __funcRefWrapperRootTypeIdx?: number }).__funcRefWrapperRootTypeIdx;
   ctx.mod.types.push({
@@ -131,6 +148,7 @@ export function getOrCreateConstructibleFuncRefWrapperTypes(
     name: `__constructible_fn_wrap_${ctx.closureCounter++}_struct`,
     fields: [
       { name: "func", type: { kind: "funcref" as const }, mutable: false },
+      closureArityField(),
       { name: "__constructible", type: { kind: "i32" as const }, mutable: false },
     ],
     superTypeIdx: base.structTypeIdx,

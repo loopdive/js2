@@ -311,6 +311,39 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   const funcIdx = mintDefinedFunc(ctx);
   ctx.nativeRegexHelpers.set("__regex_run", funcIdx);
 
+  // (#3673 round 22) Backtrack-stack POOL: `__regex_search` invokes the VM
+  // once per scan position, and every invocation allocated (and zeroed) a
+  // fresh 64-slot frame array. A single module-global pool slot makes the
+  // top-level run REUSE the previous run's (possibly grown) stack: checkout
+  // nulls the slot (a NESTED lookaround run then simply allocates fresh —
+  // reentrancy-safe), and both VM exits check the stack back in. Frames above
+  // `top` may retain stale snapshot refs until overwritten — bounded by the
+  // deepest stack seen, the standard engine trade.
+  const stackPoolGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: "__re_stack_pool",
+    type: { kind: "ref_null", typeIdx: frameArrIdx },
+    mutable: true,
+    init: [{ op: "ref.null", typeIdx: frameArrIdx }],
+  });
+  // (#3673 round 23) Shared zero-length caps placeholder: a group-free,
+  // scratch-free program (nSlots == 2) provably never needs its caps
+  // restored on backtrack — caps[0] is set once at entry and never changes
+  // within a run, caps[1] is written only at SAVE 1 immediately before MATCH
+  // returns; backrefs/PROGRESS both imply nSlots > 2. So frame pushes for
+  // such programs skip the per-push snapshot allocation entirely and store
+  // this dummy (the restore side is guarded by the same nSlots test).
+  const capsDummyGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: "__re_caps_dummy",
+    type: { kind: "ref", typeIdx: regexI32ArrayType(ctx) },
+    mutable: false,
+    init: [
+      { op: "i32.const", value: 0 },
+      { op: "array.new_default", typeIdx: regexI32ArrayType(ctx) },
+    ],
+  });
+
   // params
   const PROG = 0,
     CTAB = 1,
@@ -357,28 +390,54 @@ export function ensureRegexRun(ctx: CodegenContext): number {
   ];
 
   // Helper: copy caps -> a fresh array<i32> of length NSLOTS (snapshot).
+  // (#3673 round 23) Both halves are guarded on `nSlots > 2`: group-free,
+  // scratch-free programs (whole-match slots only) need neither the per-push
+  // snapshot allocation nor the restore copy — see the dummy global above.
   const snapshotCaps = (intoLocal: number): Instr[] => [
-    // SNAP = array.new_default(NSLOTS)
     { op: "local.get", index: NSLOTS },
-    { op: "array.new_default", typeIdx: i32Arr },
-    { op: "local.set", index: intoLocal },
-    // array.copy(dst=SNAP, dstIdx=0, src=CAPS, srcIdx=0, len=NSLOTS)
-    { op: "local.get", index: intoLocal },
-    { op: "i32.const", value: 0 },
-    { op: "local.get", index: CAPS },
-    { op: "i32.const", value: 0 },
-    { op: "local.get", index: NSLOTS },
-    { op: "array.copy", dstTypeIdx: i32Arr, srcTypeIdx: i32Arr },
+    { op: "i32.const", value: 2 },
+    { op: "i32.gt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // SNAP = array.new_default(NSLOTS)
+        { op: "local.get", index: NSLOTS },
+        { op: "array.new_default", typeIdx: i32Arr },
+        { op: "local.set", index: intoLocal },
+        // array.copy(dst=SNAP, dstIdx=0, src=CAPS, srcIdx=0, len=NSLOTS)
+        { op: "local.get", index: intoLocal },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: CAPS },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: NSLOTS },
+        { op: "array.copy", dstTypeIdx: i32Arr, srcTypeIdx: i32Arr },
+      ],
+      else: [
+        { op: "global.get", index: capsDummyGlobalIdx },
+        { op: "local.set", index: intoLocal },
+      ],
+    },
   ];
 
-  // Helper: restore CAPS <- snapshot SNAP (copy back).
+  // Helper: restore CAPS <- snapshot SNAP (copy back). No-op when nSlots <= 2
+  // (the snapshot was the dummy).
   const restoreCaps = (fromLocal: number): Instr[] => [
-    { op: "local.get", index: CAPS },
-    { op: "i32.const", value: 0 },
-    { op: "local.get", index: fromLocal },
-    { op: "i32.const", value: 0 },
     { op: "local.get", index: NSLOTS },
-    { op: "array.copy", dstTypeIdx: i32Arr, srcTypeIdx: i32Arr },
+    { op: "i32.const", value: 2 },
+    { op: "i32.gt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: CAPS },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: fromLocal },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: NSLOTS },
+        { op: "array.copy", dstTypeIdx: i32Arr, srcTypeIdx: i32Arr },
+      ],
+    },
   ];
 
   // The dispatch switch over OP. We emit an if/else chain (op === k) … .
@@ -608,7 +667,12 @@ export function ensureRegexRun(ctx: CodegenContext): number {
                                                         blockType: { kind: "empty" },
                                                         then: clearArm(),
                                                         // op == MATCH (the only remaining op): return 1
-                                                        else: [{ op: "i32.const", value: 1 }, { op: "return" }],
+                                                        else: [
+                                                          { op: "local.get", index: STACK },
+                                                          { op: "global.set", index: stackPoolGlobalIdx }, // (#3673 r22) pool check-in
+                                                          { op: "i32.const", value: 1 },
+                                                          { op: "return" },
+                                                        ],
                                                       },
                                                     ],
                                                   },
@@ -1451,14 +1515,32 @@ export function ensureRegexRun(ctx: CodegenContext): number {
     { op: "i32.const", value: REGEX_STEP_CAP },
     { op: "i32.add" },
     { op: "local.set", index: BUDGET },
-    // stack = array.new_default(INITIAL_STACK_CAP); top=0; capUsed=INITIAL
-    { op: "i32.const", value: INITIAL_STACK_CAP },
-    { op: "array.new_default", typeIdx: frameArrIdx },
-    { op: "local.set", index: STACK },
+    // stack = pool checkout ?? array.new_default(INITIAL_STACK_CAP); top=0
+    { op: "global.get", index: stackPoolGlobalIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: INITIAL_STACK_CAP },
+        { op: "array.new_default", typeIdx: frameArrIdx },
+        { op: "local.set", index: STACK },
+        { op: "i32.const", value: INITIAL_STACK_CAP },
+        { op: "local.set", index: CAP_USED },
+      ],
+      else: [
+        { op: "global.get", index: stackPoolGlobalIdx },
+        { op: "ref.as_non_null" },
+        { op: "local.set", index: STACK },
+        { op: "local.get", index: STACK },
+        { op: "array.len" },
+        { op: "local.set", index: CAP_USED },
+        { op: "ref.null", typeIdx: frameArrIdx },
+        { op: "global.set", index: stackPoolGlobalIdx },
+      ],
+    },
     { op: "i32.const", value: 0 },
     { op: "local.set", index: TOP },
-    { op: "i32.const", value: INITIAL_STACK_CAP },
-    { op: "local.set", index: CAP_USED },
     {
       op: "loop",
       blockType: { kind: "empty" },
@@ -1494,7 +1576,16 @@ export function ensureRegexRun(ctx: CodegenContext): number {
             // if top == 0 return 0
             { op: "local.get", index: TOP },
             { op: "i32.eqz" },
-            { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }] },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: STACK },
+                { op: "global.set", index: stackPoolGlobalIdx }, // (#3673 r22) pool check-in
+                { op: "i32.const", value: 0 },
+                { op: "return" },
+              ],
+            },
             // top--; frame = stack[top]
             { op: "local.get", index: TOP },
             { op: "i32.const", value: 1 },
@@ -1608,8 +1699,112 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
     STICKY = 7,
     CAPS = 8;
   const I = 9; // current start position
+  const PC = 10; // (#3673 round 20) anchored-detection scan cursor
+  const LEADCH = 11; // (#3673 round 29) leading literal code unit, -1 when none
 
   const body: Instr[] = [
+    // (#3673 round 20) Start-anchored fast-out: when the program's first
+    // non-SAVE instruction is `BOL` with multiline=0, a match can only ever
+    // begin where `^` holds — every later start position fails the assertion
+    // immediately, so the position scan is pure overhead (acorn's anchored
+    // keyword tests paid ~word-length VM attempts per `.test`). Detecting it
+    // here (two or three array reads per call) needs no compile-time plumbing
+    // and is conservative: any other leading op (SPLIT for `^a|b`, CHAR, …)
+    // leaves the scan untouched. Equivalent by construction: with a
+    // multiline=0 BOL head, run(i) for i>start fails BOL exactly as the scan
+    // would discover, one attempt at `start` decides the result.
+    { op: "i32.const", value: -1 },
+    { op: "local.set", index: LEADCH }, // (#3673 round 29) filter disabled by default
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: PC },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: PC },
+            { op: "i32.const", value: 2 },
+            { op: "i32.add" },
+            { op: "local.get", index: PROG },
+            { op: "array.len" },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: PROG },
+            { op: "local.get", index: PC },
+            { op: "array.get", typeIdx: i32Arr },
+            { op: "i32.const", value: 5 }, // ReOp.SAVE
+            { op: "i32.ne" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: PC },
+            { op: "i32.const", value: 3 },
+            { op: "i32.add" },
+            { op: "local.set", index: PC },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    },
+    { op: "local.get", index: PC },
+    { op: "i32.const", value: 1 },
+    { op: "i32.add" },
+    { op: "local.get", index: PROG },
+    { op: "array.len" },
+    { op: "i32.lt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: PROG },
+        { op: "local.get", index: PC },
+        { op: "array.get", typeIdx: i32Arr },
+        { op: "i32.const", value: 7 }, // ReOp.BOL
+        { op: "i32.eq" },
+        { op: "local.get", index: PROG },
+        { op: "local.get", index: PC },
+        { op: "i32.const", value: 1 },
+        { op: "i32.add" },
+        { op: "array.get", typeIdx: i32Arr },
+        { op: "i32.eqz" }, // operand a == 0 ⇒ not multiline
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "i32.const", value: 1 },
+            { op: "local.set", index: STICKY },
+          ],
+        },
+        // (#3673 round 29) UNANCHORED first-literal prefilter. When the first
+        // non-SAVE op is `CHAR c`, every match MUST begin with `c`, so start
+        // positions whose code unit differs cannot match — the full VM attempt
+        // there is pure overhead. Record `c` in LEADCH; the scan loop below
+        // advances past non-`c` positions with one `array.get` each instead of
+        // a `__regex_run` call. Deliberately narrow: only plain `CHAR` (not
+        // `CHARI`, whose ASCII fold would need two comparisons, and not
+        // `CLASS`, which needs a table walk); `-1` disables the filter, so
+        // every other program keeps the exact round-20 behavior.
+        { op: "local.get", index: PROG },
+        { op: "local.get", index: PC },
+        { op: "array.get", typeIdx: i32Arr },
+        { op: "i32.const", value: 0 }, // ReOp.CHAR
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: PROG },
+            { op: "local.get", index: PC },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "array.get", typeIdx: i32Arr },
+            { op: "local.set", index: LEADCH },
+          ],
+        },
+      ],
+    },
     // i = max(0, start)
     // `select` returns its 1st operand when the condition is non-zero, so to
     // compute `start < 0 ? 0 : start` the operands must be (0, start, start<0):
@@ -1638,6 +1833,50 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
             { op: "local.get", index: SLEN },
             { op: "i32.gt_s" },
             { op: "br_if", depth: 1 },
+            // (#3673 round 29) leading-literal prefilter: advance `i` past any
+            // position whose code unit cannot start a match. Bounds: stops at
+            // `i == slen` so the final empty-tail position still gets its
+            // regular attempt (a CHAR program fails there anyway, but keeping
+            // the loop shape identical avoids reasoning about EOL/lookaround
+            // interactions).
+            { op: "local.get", index: LEADCH },
+            { op: "i32.const", value: 0 },
+            { op: "i32.ge_s" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                {
+                  op: "block",
+                  blockType: { kind: "empty" },
+                  body: [
+                    {
+                      op: "loop",
+                      blockType: { kind: "empty" },
+                      body: [
+                        { op: "local.get", index: I },
+                        { op: "local.get", index: SLEN },
+                        { op: "i32.ge_s" },
+                        { op: "br_if", depth: 1 },
+                        { op: "local.get", index: SDATA },
+                        { op: "local.get", index: SOFF },
+                        { op: "local.get", index: I },
+                        { op: "i32.add" },
+                        { op: "array.get_u", typeIdx: strDataIdx },
+                        { op: "local.get", index: LEADCH },
+                        { op: "i32.eq" },
+                        { op: "br_if", depth: 1 },
+                        { op: "local.get", index: I },
+                        { op: "i32.const", value: 1 },
+                        { op: "i32.add" },
+                        { op: "local.set", index: I },
+                        { op: "br", depth: 0 },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
             // re-init caps to -1
             { op: "local.get", index: CAPS },
             { op: "i32.const", value: 0 },
@@ -1676,7 +1915,11 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
   pushDefinedFunc(ctx, funcIdx, {
     name: "__regex_search",
     typeIdx,
-    locals: [{ name: "i", type: { kind: "i32" } }],
+    locals: [
+      { name: "i", type: { kind: "i32" } },
+      { name: "pc", type: { kind: "i32" } }, // (#3673 round 20)
+      { name: "leadch", type: { kind: "i32" } }, // (#3673 round 29)
+    ],
     body,
     exported: false,
   });

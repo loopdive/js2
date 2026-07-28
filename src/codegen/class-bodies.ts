@@ -5,6 +5,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
+import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
 import {
@@ -765,6 +766,14 @@ export function collectClassDeclaration(
   // Find the constructor to determine struct fields from `this.x = ...` assignments
   const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
   const ownFields: FieldDef[] = [];
+  // (#3673) Declared instance properties, by name — the constructor-assignment
+  // pass below needs the DECLARATION to see an explicit native annotation.
+  const declaredPropertyByName = new Map<string, ts.PropertyDeclaration>();
+  for (const member of decl.members) {
+    if (!ts.isPropertyDeclaration(member) || !member.name || hasStaticModifier(member)) continue;
+    const declaredName = resolveClassMemberName(ctx, member.name);
+    if (declaredName !== undefined) declaredPropertyByName.set(declaredName, member);
+  }
 
   if (ctor?.body) {
     for (const stmt of ctor.body.statements) {
@@ -788,7 +797,15 @@ export function collectClassDeclaration(
         // Skip if this field is already defined in parent
         if (parentFields.some((f) => f.name === fieldName)) continue;
         const fieldTsType = ctx.checker.getTypeAtLocation(stmt.expression.left);
-        const fieldType = resolveWasmType(ctx, fieldTsType);
+        // (#3673) A `this.x = …` in the constructor mints the field BEFORE the
+        // property-declaration loop below runs, so the field's declared native
+        // annotation (`pos: i32;`) must be consulted HERE too — otherwise a
+        // class that both declares and constructor-assigns its fields (the
+        // ordinary TypeScript shape) silently keeps the f64 slot while its
+        // locals narrow, which measures WORSE than no narrowing at all.
+        const fieldType =
+          nativeTypeOfDeclaration(ctx.checker, declaredPropertyByName.get(fieldName)) ??
+          resolveWasmType(ctx, fieldTsType);
         if (!ownFields.some((f) => f.name === fieldName)) {
           ownFields.push({ name: fieldName, type: fieldType, mutable: true });
         }
@@ -807,7 +824,11 @@ export function collectClassDeclaration(
       if (parentFields.some((f) => f.name === fieldName)) continue;
       if (!ownFields.some((f) => f.name === fieldName)) {
         const fieldTsType = ctx.checker.getTypeAtLocation(member);
-        const fieldType = resolveWasmType(ctx, fieldTsType);
+        // (#3673) `pos: i32;` pins the STRUCT FIELD's Wasm type. Whole-chain:
+        // narrowing locals without the fields they flow into measurably
+        // pessimises (see the issue's round-34 table), so the field, the
+        // params and the locals must move together.
+        const fieldType = nativeTypeOfDeclaration(ctx.checker, member) ?? resolveWasmType(ctx, fieldTsType);
         ownFields.push({ name: fieldName, type: fieldType, mutable: true });
       }
     }
@@ -968,7 +989,8 @@ export function collectClassDeclaration(
         });
       } else {
         const paramType = ctx.checker.getTypeAtLocation(param);
-        let wasmType = resolveWasmType(ctx, paramType);
+        // (#3673) explicit native annotation pins the constructor parameter type
+        let wasmType = nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType);
         // Widen ref to ref_null for params with defaults
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
@@ -1118,7 +1140,8 @@ export function collectClassDeclaration(
       const methodParams: ValType[] = isStatic ? [] : [{ kind: "ref", typeIdx: structTypeIdx }];
       for (const param of member.parameters) {
         const paramType = ctx.checker.getTypeAtLocation(param);
-        let wasmType = resolveWasmType(ctx, paramType);
+        // (#3673) explicit native annotation pins the parameter type
+        let wasmType = nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType);
         // Widen ref to ref_null for params with defaults (caller passes ref.null as sentinel)
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
@@ -1165,7 +1188,8 @@ export function collectClassDeclaration(
           retType = unwrapPromiseType(retType, ctx.checker);
         }
         if (!isVoidType(retType)) {
-          methodResults = [resolveWasmType(ctx, retType)];
+          // (#3673) `next(): i32` pins the result type syntactically.
+          methodResults = [nativeTypeFromTypeNode(ctx.checker, member.type) ?? resolveWasmType(ctx, retType)];
         }
       }
 
@@ -1230,7 +1254,7 @@ export function collectClassDeclaration(
       if (sig) {
         const retType = ctx.checker.getReturnTypeOfSignature(sig);
         if (!isVoidType(retType)) {
-          getterResults = [resolveWasmType(ctx, retType)];
+          getterResults = [nativeTypeFromTypeNode(ctx.checker, member.type) ?? resolveWasmType(ctx, retType)];
         }
       }
 
@@ -1264,7 +1288,7 @@ export function collectClassDeclaration(
       const setterParams: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
       for (const param of member.parameters) {
         const paramType = ctx.checker.getTypeAtLocation(param);
-        setterParams.push(resolveWasmType(ctx, paramType));
+        setterParams.push(nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType));
       }
       registerClassOptionalParams(ctx, setterName, member.parameters, setterParams, 1);
 
@@ -1412,7 +1436,7 @@ export function collectClassDeclaration(
       if (ctx.staticProps.has(fullName)) continue; // skip if already registered
 
       const propTsType = ctx.checker.getTypeAtLocation(member);
-      const wasmType = resolveWasmType(ctx, propTsType);
+      const wasmType = nativeTypeOfDeclaration(ctx.checker, member) ?? resolveWasmType(ctx, propTsType);
 
       // Build null/zero initializer for the global
       const init: Instr[] =

@@ -423,6 +423,8 @@ export const GC = {
   ref_cast_null: 0x17,
   any_convert_extern: 0x1a,
   extern_convert_any: 0x1b,
+  ref_i31: 0x1c,
+  i31_get_s: 0x1d,
 } as const;
 
 export const TYPE = {
