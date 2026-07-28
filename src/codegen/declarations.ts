@@ -1334,6 +1334,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
 
   // Fourth: collect module-level variable declarations as wasm globals
+  // (#3687 park) Names registered by THIS collectDeclarations pass, so a
+  // same-file `var x` REDECLARATION aliases the existing global instead of
+  // minting a suffixed second one. Multiple `var x` in one scope are ONE
+  // JavaScript binding; splitting them across two wasm globals made the
+  // sputnik evaluation-order family (`#1: var x = 1; … #2: var x = 0;
+  // x * (x = 1)`) write its initializer into one global while reads and
+  // assignments resolved the other. Cross-FILE same-name vars still get the
+  // distinct suffixed global (they are genuinely different bindings).
+  const registeredThisFile = new Map<string, number>();
   /** Register a single module-level global variable with the given name and wasm type. */
   function registerModuleGlobal(name: string, wasmType: ValType, declaration?: ts.Declaration): void {
     // Skip if shadowed by a *user* function — but NOT by a wasm:js-string
@@ -1404,6 +1413,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           }
         : wasmType;
 
+    // Same-FILE redeclaration (`var x` twice in one scope) is one JavaScript
+    // binding: alias this declaration to the already-registered global. Only
+    // a collision with ANOTHER file's binding mints the suffixed global.
+    const sameFileIdx = registeredThisFile.get(name);
+    if (sameFileIdx !== undefined) {
+      if (declaration) ctx.moduleGlobalDeclarations.set(declaration, sameFileIdx);
+      return;
+    }
+
     const globalIdx = nextModuleGlobalIdx(ctx);
     const bareNameTaken = ctx.moduleGlobals.has(name);
     ctx.mod.globals.push({
@@ -1414,6 +1432,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     });
     if (!bareNameTaken) ctx.moduleGlobals.set(name, globalIdx);
     if (declaration) ctx.moduleGlobalDeclarations.set(declaration, globalIdx);
+    registeredThisFile.set(name, globalIdx);
   }
 
   /** Register binding names from destructuring patterns as module globals. */
