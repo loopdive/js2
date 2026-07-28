@@ -944,7 +944,25 @@ export function compileIdentifierCall(
       (ts.isParameter(shadowSymbolDecl) ||
         ts.isVariableDeclaration(shadowSymbolDecl) ||
         ts.isBindingElement(shadowSymbolDecl));
-    const isLocallyShadowed = fctx.localMap.has(sourceName) && functionDeclKey === undefined && shadowIsVariableBinding;
+    // …and not when the "shadowing" variable IS the closure's own binding.
+    // A top-level `var func = function (a, b) { … arguments … }` can sit in
+    // BOTH localMap and the module-global/closure registries — one binding,
+    // two storages. Suppressing the closure dispatch for it routed the call
+    // through the local-callable arm, which pads `arguments` to declared
+    // arity (test262 arguments-object family, #3687 park). A registered
+    // closure-binding global for this name that the lexical resolution does
+    // not contradict identifies that same-binding case; the minified
+    // `function a(e) { e() }` shadow this guard exists for has no
+    // closure-binding global for `e` and stays suppressed.
+    const closureBindingGlobal = ctx.closureBindingGlobals.get(funcName);
+    const shadowIsClosureOwnBinding =
+      closureBindingGlobal !== undefined &&
+      (lexicalModuleGlobal === undefined || closureBindingGlobal === lexicalModuleGlobal);
+    const isLocallyShadowed =
+      fctx.localMap.has(sourceName) &&
+      functionDeclKey === undefined &&
+      shadowIsVariableBinding &&
+      !shadowIsClosureOwnBinding;
 
     // ...but a module global is NOT by itself evidence of a foreign binding.
     // `var f; f = function(){ … }; f(a, b)` registers the closure precisely
@@ -954,7 +972,6 @@ export function compileIdentifierCall(
     // arguments and never materializes `arguments` — the callee then saw
     // `arguments.length === 0`. Only a closure registered for a DIFFERENT
     // global (or for none) is the cross-module collision this guard targets.
-    const closureBindingGlobal = ctx.closureBindingGlobals.get(funcName);
     const lexicalGlobalIsForeign = lexicalModuleGlobal !== undefined && closureBindingGlobal !== lexicalModuleGlobal;
 
     // Check if this is a closure call
@@ -974,7 +991,17 @@ export function compileIdentifierCall(
     // local `const funcIdx` would hold the pre-shift value.
     // (#1301) Skip funcMap when locally shadowed; the local-callable fallback
     // below handles dispatch via call_ref through the param/local.
-    let funcIdx = isLocallyShadowed || lexicalModuleGlobal !== undefined ? undefined : ctx.funcMap.get(funcName);
+    // Suppress the direct funcMap call only when the lexical global is
+    // FOREIGN to this binding (same test as `closureInfo` above). A module
+    // global whose registered closure IS this binding — `var func =
+    // function(a, b) { … arguments … }; func(true)` — must stay on the
+    // direct-call path: the generic call-through-global dispatch pads
+    // `arguments` to the declared arity, so the callee saw
+    // `arguments.length === 2` for a one-argument call (the test262
+    // arguments-object family in the #3687 merge_group park). The imported
+    // CJS-default case this suppression exists for has no same-binding
+    // closure registration, so it remains suppressed via the foreign test.
+    let funcIdx = isLocallyShadowed || lexicalGlobalIsForeign ? undefined : ctx.funcMap.get(funcName);
     if (funcIdx === undefined) {
       // Before giving up, check if this identifier is a local/param with callable TS type
       // (e.g. function parameter `fn: (x: number) => number` stored as externref).
