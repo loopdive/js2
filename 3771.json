@@ -2,9 +2,7 @@
   "id": "3771",
   "assignee": "ttraenkler/codex-json-rawjson-symbol",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-07-28T18:30:21Z",
-  "claimed_at": "2026-07-28T18:30:21Z",
-  "updated_at": "2026-07-28T18:30:21Z",
-  "pr_scan": "ok"
+  "branch": "codex/3771-json-rawjson-symbol",
+  "claimed_at": "2026-07-28T18:30:39Z",
+  "updated_at": "2026-07-28T18:30:39Z"
 }
