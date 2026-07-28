@@ -7898,21 +7898,21 @@ function resolveImport(
         } else {
           args = a.map(coerce);
         }
-        // #1441 — `split` uses NaN as the "limit was not provided" sentinel.
-        // ToUint32(NaN) is 0, which would produce an empty array; per spec
-        // (22.1.3.21 step 8) a missing limit means 2^32 - 1, so we drop the
-        // trailing NaN and let the JS host apply the default.
+        // #3761 — split uses -1 for omission/2^32 - 1; explicit NaN remains ToUint32(NaN) = 0.
         // #2002 — includes/startsWith/endsWith use NaN as the "position not
         // provided" sentinel for the same reason: a trailing NaN means the
         // arg was omitted, so drop it and let the JS method apply its spec
         // default (0 for includes/startsWith, length for endsWith) instead of
         // ToInteger(NaN)=0.
-        if (
-          (method === "split" || method === "includes" || method === "startsWith" || method === "endsWith") &&
-          args.length >= 2
-        ) {
+        if (args.length >= 2) {
           const last = args[args.length - 1];
-          if (typeof last === "number" && Number.isNaN(last)) {
+          const omitLast =
+            method === "split"
+              ? last === -1
+              : (method === "includes" || method === "startsWith" || method === "endsWith") &&
+                typeof last === "number" &&
+                Number.isNaN(last);
+          if (omitLast) {
             args.pop();
           }
         }

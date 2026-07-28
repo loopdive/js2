@@ -2945,7 +2945,7 @@ export function generateModule(
   const programAbiSession = irPlanningIdentityContext
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
-  const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession);
+  const ctx = createCodegenContext(mod, ast.checker, options, programAbiSession, irPlanningIdentityContext);
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   ctx.sourceIsModule = sourceFileInternal.externalModuleIndicator !== undefined;
   recordSourceGlobalEnvironment(ctx, ast.sourceFile);
@@ -5536,7 +5536,7 @@ export function generateMultiModule(
   const programAbiSession = irPlanningIdentityContext
     ? new ProgramAbiSession(irPlanningIdentityContext.inventory, mod)
     : undefined;
-  const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession);
+  const ctx = createCodegenContext(mod, multiAst.checker, options, programAbiSession, irPlanningIdentityContext);
   // Multi-file compilation is linked through import/export module records.
   ctx.sourceIsModule = true;
   try {
@@ -6130,9 +6130,9 @@ export const STRING_METHODS: Record<string, { params: ValType[]; result: ValType
     params: [{ kind: "f64" }, { kind: "externref" }],
     result: { kind: "externref" },
   },
-  // split: separator (externref) + limit (f64, NaN sentinel for "no limit" — #1441).
-  // The host runtime in `string_method` detects NaN and calls `split(sep)` without
-  // the limit so the spec default 2^32-1 applies (instead of ToUint32(NaN) === 0).
+  // split: separator (externref) + limit (f64, -1 sentinel for "no limit" — #3761).
+  // The host runtime in `string_method` detects -1 and calls `split(sep)` without
+  // the limit. An explicit NaN must remain distinct: ToUint32(NaN) is 0.
   split: { params: [{ kind: "externref" }, { kind: "f64" }], result: { kind: "externref" } },
   match: { params: [{ kind: "externref" }], result: { kind: "externref" } },
   search: { params: [{ kind: "externref" }], result: { kind: "f64" } },

@@ -5,8 +5,8 @@ status: in-progress
 assignee: ttraenkler/codex-r1
 claimed_by: codex-r1
 claimed_at: 2026-07-21T20:23:19Z
-branch: codex/3520-c12-callable-providers
-pr: 3739
+branch: codex/3520-c13-type-class-abi
+pr: 3746
 last_merged_pr: 3679
 sprint: current
 created: 2026-07-21
@@ -82,6 +82,7 @@ files:
   - src/position-map.ts
   - src/process-stdin-prelude.ts
   - src/codegen/class-member-keys.ts
+  - src/codegen/class-layout-registration.ts
   - src/codegen/context/types.ts
   - src/codegen/context/create-context.ts
   - src/codegen/dead-elimination.ts
@@ -90,6 +91,7 @@ files:
   - src/codegen/program-abi-planning.ts
   - src/codegen/program-abi-signatures.ts
   - src/codegen/program-abi-session.ts
+  - src/codegen/program-abi-type-planning.ts
   - src/codegen/ir-first-gate.ts
   - src/codegen/ir-class-shapes.ts
   - src/codegen/ir-overlay-identity.ts
@@ -135,6 +137,7 @@ files:
   - tests/issue-3520-support-callable-abi.test.ts
   - tests/issue-3520-class-support-callable-abi.test.ts
   - tests/issue-3520-class-method-alias-abi.test.ts
+  - tests/issue-3520-type-class-abi.test.ts
   - tests/issue-3520-program-abi-import-callable-planning.test.ts
   - tests/issue-3520-imported-callable-abi.test.ts
   - tests/issue-2856-calendar-residuals.test.ts
@@ -1641,6 +1644,57 @@ externref/Promise-host support helpers, Program ABI type/class-layout entries,
 exports and remaining alias families, and production `LegacyAbiAdapter`
 replacement of `funcMap`, `structMap`, module-array, and name scans still
 remain before R1 can close.
+
+### 2026-07-28 retained type and class-layout continuation
+
+The continuation on `codex/3520-c13-type-class-abi` makes the complete
+post-DCE Wasm type population and every inventoried class explicit in the
+production Program ABI:
+
+- class collection records the exact allocator `TypeDef` beside its exact
+  `IrClassId` before DCE. The existing session-owned type cells follow that
+  object through the complete type-layout remap, so final class slots are
+  resolved from allocator identity rather than `structMap`, a debug name, or a
+  captured raw type index;
+- finalization assigns every retained type object exactly one required
+  `type`-space owner. Exact class layouts retain class-owned entries; all other
+  function, struct, array, recursive-group, and subtype definitions receive
+  deterministic entry-source-owned type identities in final allocator order;
+- every inventoried class receives a class intent. Classes with a live WasmGC
+  layout own its exact type cell, while ambient or otherwise unallocated
+  classes remain explicit slotless intentions rather than disappearing from
+  the whole-program inventory;
+- the canonical type/layout contract excludes cosmetic Wasm debug names but
+  retains value brands, field names/order/mutability/presence metadata,
+  inheritance indices, finality, and nested recursive shapes. Publication
+  rematerializes the contract from the exact final type object after DCE; and
+- legacy class-expression collection can allocate the same exact declaration
+  twice under compatibility names. The structurally last live compatibility
+  allocation becomes the single class-owned slot, while every superseded
+  allocator object remains independently cataloged as a generic retained type.
+  One `IrClassId` is therefore never duplicated or silently rebound.
+
+The focused production/type-contract matrix passes **4/4**. The sharded #3520
+matrix reports **251 passing / 1 failing across 44 files**; the sole failure is
+the unchanged linear inventory-count spy assertion in
+`issue-3520-context-integration.test.ts`, reproduced on the exact C12/current-
+main control. The #2138 multi-source matrix passes **6/6**, and the broad
+class/inheritance/accessor, linear, and 29-case cross-backend matrix is green.
+Strict TypeScript, Prettier, scoped Biome lint, diff, LOC/function budget,
+dead-export, checker-oracle, issue-spec, and fallback gates pass. Hybrid
+readiness remains **31 IR-emitted / 6 typed Unsupported / 0 Invariants across
+37 terminal units**, with all 37 legacy bodies still emitted. The eight-shard
+equivalence gate reports **1,611 passing / 32 known failing / 0 new
+regressions**; four baseline rows now pass and the shared baseline remains
+unchanged.
+
+C13 closes final retained type-slot and class-layout population, not R1.
+Inherited accessors, static and externref/Promise-host support helpers,
+remaining imported globals, exports and public aliases, and production
+`LegacyAbiAdapter` replacement of `funcMap`, `structMap`, module-array, and
+display-name scans still remain before R1 can close. This slice populates the
+class/type authority but deliberately does not yet reroute existing
+`structMap` consumers through it.
 
 ### R1a validation evidence
 

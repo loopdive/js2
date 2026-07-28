@@ -2662,16 +2662,15 @@ export function compileReceiverMethodCall(
               fctx.body.push({ op: "ref.null.extern" });
             }
           } else if (pt.kind === "f64") {
-            // #1441 — `split` uses NaN as the "limit was not provided"
-            // sentinel. ToUint32(NaN) === 0 would produce `[]` if the runtime
-            // passed it through verbatim, so the `string_method` host shim
-            // strips a trailing NaN limit before invoking the JS method.
+            // #3761 — `split` uses -1 for omission so explicit NaN still
+            // reaches host ToUint32(NaN) === 0.
             // #2002 — includes/startsWith/endsWith likewise use NaN for an
             // omitted position so the host shim drops it and the JS method
             // applies its spec default (0 for includes/startsWith, length
             // for endsWith) instead of ToInteger(NaN)=0.
             if (method === "split" || method === "includes" || method === "startsWith" || method === "endsWith") {
-              fctx.body.push({ op: "f64.const", value: Number.NaN });
+              const sentinel = method === "split" ? -1 : Number.NaN;
+              fctx.body.push({ op: "f64.const", value: sentinel });
             } else {
               fctx.body.push({ op: "f64.const", value: 0 });
             }

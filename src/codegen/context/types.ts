@@ -1053,6 +1053,8 @@ export interface CodegenContext {
   mod: WasmModule;
   programAbiSession?: import("../program-abi-session.js").ProgramAbiSession;
   programAbiCallableProviders?: import("../program-abi-provider-planning.js").ProgramAbiCallableProviderRegistry;
+  programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
+  irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;
   checker: ts.TypeChecker;
   /** True when the single-file input is an ECMAScript Module goal. Script-goal
    * module init uses the host global object for top-level `this`; module goal

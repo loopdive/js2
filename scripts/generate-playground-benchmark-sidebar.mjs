@@ -260,10 +260,16 @@ async function measureBenchmark(entry) {
     `--imports=${importsPath}`,
     `--export=${entry.exportName}`,
   ]);
+  // `--expect-tier=optimized` makes the child ASSERT that V8 kept the function
+  // on its optimizing tier across the whole measurement, rather than assuming
+  // it. A warm chart whose JS side quietly fell back to baseline reports a
+  // slow JS baseline, which flatters the wasm:js ratio — a silent wrong number
+  // is worse here than a loud failure.
   const jsResult = runChild(JS_WARM_FLAGS, [
     `--lane=js`,
     `--js-source=${jsSourcePath}`,
     `--export=${entry.exportName}`,
+    `--expect-tier=optimized`,
   ]);
 
   const wasmSamplesUs = wasmResult.samplesUs;
@@ -279,6 +285,10 @@ async function measureBenchmark(entry) {
     mode: "warm",
     jsFlags: JS_WARM_FLAGS,
     wasmFlags: WASM_WARM_FLAGS,
+    // Recorded so the published JSON carries evidence the JS side really was
+    // measured on the optimizing tier, instead of that being an unverifiable
+    // assumption of the chart.
+    jsOptStatus: jsResult.optStatusAfter ?? "unavailable",
     wasmUs: median(wasmSamplesUs),
     jsUs: median(jsSamplesUs),
     wasmStdUs: stddev(wasmSamplesUs),

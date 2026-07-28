@@ -7,6 +7,7 @@
  */
 import { ts } from "../../ts-api.js";
 import type { WasmModule } from "../../ir/types.js";
+import type { IrPlanningIdentityContext } from "../../ir/planning-identity.js";
 import { TsCheckerOracle } from "../../checker/oracle.js";
 import { UsageInference } from "../../checker/usage-inference.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
@@ -14,6 +15,7 @@ import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
 import type { ProgramAbiSession } from "../program-abi-session.js";
 import { ProgramAbiCallableProviderRegistry } from "../program-abi-provider-planning.js";
+import { ProgramAbiTypeRegistry } from "../program-abi-type-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 
 export function createCodegenContext(
@@ -21,6 +23,7 @@ export function createCodegenContext(
   checker: ts.TypeChecker,
   options?: CodegenOptions,
   programAbiSession?: ProgramAbiSession,
+  irPlanningIdentityContext?: IrPlanningIdentityContext,
 ): CodegenContext {
   programAbiSession?.assertModule(mod);
   // #1524 — strict-mode default policy. WASI builds enforce the dual-mode
@@ -47,6 +50,7 @@ export function createCodegenContext(
   const ctx: CodegenContext = {
     mod,
     programAbiSession,
+    irPlanningIdentityContext,
     checker,
     sourceIsModule: false,
     // (#1930) THE type-query boundary. New codegen code MUST prefer
@@ -365,6 +369,9 @@ export function createCodegenContext(
   };
   if (programAbiSession) {
     ctx.programAbiCallableProviders = new ProgramAbiCallableProviderRegistry(programAbiSession, ctx);
+    if (irPlanningIdentityContext) {
+      ctx.programAbiTypes = new ProgramAbiTypeRegistry(programAbiSession, ctx, irPlanningIdentityContext);
+    }
   }
 
   // (#2083) Pre-register the `externref` + `f64` vec struct types up front for
