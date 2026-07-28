@@ -88,7 +88,21 @@ const BENCHMARKS = [
 //                               compile actually completes relative to the
 //                               calling code). NOT what fixes the fatal
 //                               crash below; see `buildWarmJsFactorySource`.
-const JS_WARM_FLAGS = ["--allow-natives-syntax", "--no-concurrent-recompilation"];
+//   --no-maglev                 makes TurboFan the ONLY optimizing tier, so
+//                               `%OptimizeFunctionOnNextCall` cannot settle on
+//                               Maglev (V8's mid-tier) and call it done.
+//                               Maglev defaults OFF on Node 22 but ON on Node
+//                               26, so the same source tiered to TurboFan
+//                               locally and to Maglev on CI — which is why the
+//                               chart's JS baseline read ~5290us there against
+//                               ~374us here, flattering every wasm:js ratio.
+//                               The #3759 tier assertion caught this exactly:
+//                               CI reported status 41 (isFunction, maybeDeopted,
+//                               maglev) with the `optimized` bit CLEAR. A "warm"
+//                               chart should mean peak optimized tier, so pin it
+//                               rather than accept whichever tier the engine's
+//                               defaults happen to pick this release.
+const JS_WARM_FLAGS = ["--allow-natives-syntax", "--no-concurrent-recompilation", "--no-maglev"];
 
 // V8 startup flag that skips Liftoff (the single-pass Wasm baseline
 // compiler) entirely and compiles straight to TurboFan. This is the Wasm-side
