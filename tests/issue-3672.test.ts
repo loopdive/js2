@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { COMPILE_PROFILE_MARKER } from "../src/compile-profile.js";
-import { compileMulti, compileProject, type CompileResult } from "../src/index.js";
+import { compile, compileMulti, compileProject, type CompileResult } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { resolveEslintFile } from "./helpers/eslint.js";
 
@@ -55,6 +55,24 @@ const MS_CJS = resolveFromEslint("ms");
 function write(path: string, source: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, source);
+}
+
+async function compileAndRunNumber(source: string): Promise<number> {
+  const result = await compileMulti({ "entry.js": source }, "entry.js", {
+    allowJs: true,
+    target: "gc",
+    platform: "node",
+  });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  if (!result.success) throw new Error("fixture did not compile");
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+
+  const imports = buildImports(result.imports as never, undefined, result.stringPool);
+  const instance = await WebAssembly.instantiate(result.binary, imports as never);
+  if (typeof (imports as { setExports?: (exports: WebAssembly.Exports) => void }).setExports === "function") {
+    (imports as { setExports: (exports: WebAssembly.Exports) => void }).setExports(instance.instance.exports);
+  }
+  return (instance.instance.exports.test as () => number)();
 }
 
 beforeAll(() => {
@@ -204,6 +222,119 @@ describe("#3672 — project codegen reachability", () => {
       (imports as { setExports: (exports: WebAssembly.Exports) => void }).setExports(instance.instance.exports);
     }
     expect((instance.instance.exports.test as () => number)()).toBe(41);
+  });
+
+  it.each([
+    {
+      name: "named-function-expression self calls",
+      expected: 42,
+      source: [
+        "var recurse = function inner(n) {",
+        "  return n === 0 ? 42 : inner(n - 1);",
+        "};",
+        "export function test() { return recurse(4); }",
+      ].join("\n"),
+    },
+    {
+      name: "top-level length through a destructuring closure",
+      expected: 1,
+      source: [
+        'let length = "outer";',
+        "var read;",
+        "read = ([...{ length: arrayLength }] = [7, 8, 9]) =>",
+        '  length === "outer" && arrayLength === 3 ? 1 : 0;',
+        "export function test() { return read(); }",
+      ].join("\n"),
+    },
+    {
+      name: "Annex B block functions in an inlined IIFE",
+      expected: 42,
+      source: [
+        "export function test() {",
+        "  return (function () {",
+        "    var after;",
+        "    if (true) function value() { return 42; } else ;",
+        "    after = value;",
+        "    var value = 123;",
+        "    return after();",
+        "  })();",
+        "}",
+      ].join("\n"),
+    },
+    {
+      name: "same-file var redeclarations",
+      expected: 1,
+      source: [
+        "var value = 1;",
+        "var value = 0;",
+        "export function test() {",
+        "  var before = value;",
+        "  value = 1;",
+        "  return before * 10 + value;",
+        "}",
+      ].join("\n"),
+    },
+    {
+      name: "arguments length through a var-bound closure",
+      expected: 1,
+      source: [
+        "var count = function (first, second) { return arguments.length; };",
+        "export function test() { return count(true); }",
+      ].join("\n"),
+    },
+    {
+      name: "lifted recursion through a tagged template",
+      expected: 1,
+      source: [
+        "var finished = 0;",
+        "(function () {",
+        "  function visit(_, n) {",
+        "    if (n === 0) { finished = 1; return; }",
+        "    return visit`${n - 1}`;",
+        "  }",
+        "  visit(null, 4);",
+        "})();",
+        "export function test() { return finished; }",
+      ].join("\n"),
+    },
+  ])("preserves #3687 park behavior for $name", async ({ source, expected }) => {
+    await expect(compileAndRunNumber(source)).resolves.toBe(expected);
+  });
+
+  it("does not resolve checker identities for transformed top-level this nodes", async () => {
+    const result = await compileMulti({ "entry.js": "Object.isFrozen(this);\n" }, "entry.js", {
+      allowJs: true,
+      target: "gc",
+      platform: "node",
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    if (!result.success) return;
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+  });
+
+  it("keeps tagged-template capture frames valid beside standalone lastIndexOf NaN lowering", async () => {
+    const result = await compile(
+      [
+        "(function (): void {",
+        "  function visit(_: TemplateStringsArray | null, n: number): void {",
+        "    if (n === 0) return;",
+        "    return visit`${n - 1}`;",
+        "  }",
+        "  visit(null, 3);",
+        "})();",
+        "export function test(): number {",
+        "  const position = { valueOf: function () { return NaN; } };",
+        '  return "ABBABABAB".lastIndexOf("AB", position);',
+        "}",
+      ].join("\n"),
+      { target: "standalone", skipSemanticDiagnostics: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    if (!result.success) return;
+    expect(result.imports).toEqual([]);
+
+    const instance = await WebAssembly.instantiate(result.binary, result.importObject);
+    expect((instance.instance.exports.test as () => number)()).toBe(7);
   });
 
   it("reserves nested function identities before compiling a lifted closure body", async () => {

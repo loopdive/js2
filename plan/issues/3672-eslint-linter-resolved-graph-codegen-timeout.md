@@ -3,7 +3,7 @@ id: 3672
 title: "ESLint linter.js: keep checker-only roots out of bounded codegen"
 status: in-progress
 created: 2026-07-26
-updated: 2026-07-26
+updated: 2026-07-28
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -122,6 +122,67 @@ Allocation failed - JavaScript heap out of memory
 
 It emitted no structured compile result. This is not a TS2307 resolver failure
 and must not be folded back into #3654.
+
+## PR #3687 merge-queue park resolution (2026-07-28)
+
+The first merge-group build of PR #3687 (run `30355079783`, merge head
+`242d5bd70d349709bcdcefc9d299b90d06394f3d`) exposed real regressions rather
+than baseline drift. Against the then-current honest Test262 baseline, passes
+fell from 30,120 to 29,831: 331 pass-to-non-pass transitions, 302 after
+compile-timeout noise, versus 41 improvements (fine-gate net -261).
+`null_deref` traps grew from 153 to 1,205. The baseline was only two
+non-Test262 commits behind the merge-group parent, so changing the baseline or
+masking the paths would have hidden compiler defects.
+
+The failures came from six binding/frame families introduced or exposed by the
+declaration-scoped ESLint work:
+
+1. Function-identity recovery assumed every transformed identifier had a
+   source file, compared reparsed source files by object identity, and treated
+   ambient declarations as runtime bindings. That combination crashed
+   synthetic nodes and blocked same-file Annex B/top-level variable recovery.
+2. A named function expression's self-name was classified as an ordinary local
+   shadow, so recursive calls left the registered function path and loaded an
+   uninitialized local.
+3. The inlined-IIFE `var` hoister preallocated numeric storage for a name also
+   owned by an Annex B block function, making the function value impossible to
+   store in the binding.
+4. Same-file `var` redeclarations minted separate Wasm globals even though
+   JavaScript defines one binding; initializers and reads consequently targeted
+   different globals.
+5. A top-level `var f = function (...) {}` binding was mistaken for a foreign
+   local shadow of its own registered closure. Calls then used the generic
+   padded-arity path, corrupting `arguments.length`.
+6. Tagged-template calls prepended a captured local using the declaring
+   frame's raw index. Lifted recursive bodies have a different frame, so the
+   index could be out of range; the capture must be resolved by name in the
+   current frame when necessary.
+
+These are binding-identity fixes, not special cases for the failing Test262
+files. Permanent reduced coverage in `tests/issue-3672.test.ts` now exercises
+all six families plus the transformed top-level-`this` crash. A conflict-focused
+standalone fixture also combines the tagged-template frame repair with #3753's
+`lastIndexOf` NaN-position lowering, because both changes meet in
+`string-ops.ts`. The exact `108c41ecf166b195741a6f2509539471868156b7`
+current-main simulated merge passes all 21 tests in that issue suite, including
+the two real esquery collision canaries.
+
+For the final differential, the control is the successful merge-group artifact
+from run `30394184030` at exact main
+`89c947994d7a751c40b1539e5e797732cadc1946`: Test262
+`63829c6d925e24a3f5f307b08754aaa1c412c6a6`, oracle v12/honest, WasmGC
+JS-host target, proposals enabled, compiler pool 4, no path scope, IR-first
+disabled, and the dynamic 72-shard partition (47,826 merged host rows). The PR
+remains under the automation-applied `hold` while the guarded exact-head
+candidate runs, so no result can enter the merge queue before the differential
+and required checks are green. The exact-main #3769 Test262 merge-group run
+`30396311352` succeeded by its intentional no-op path: its only incoming change
+was the benchmark-sidebar generator, the detector skipped every shard and
+report-upload step, and the run has no artifact. The earlier full artifact is
+therefore retained as the honest JS-host control: the intervening #3768
+compiler change is confined to standalone RegExp lowering, while #3769 is
+workflow/config- and compiler-byte-disjoint. This avoids inventing provenance
+for a nonexistent #3769 report.
 
 ## Investigation and implementation (2026-07-26)
 
