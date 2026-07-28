@@ -7632,9 +7632,16 @@ export function hoistVarDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
   stmts: ts.NodeArray<ts.Statement> | ts.Statement[],
+  // (#3687 park) Names whose `var` hoisting must be left to the legacy
+  // resolution paths. The inlined-IIFE caller passes the Annex B
+  // function-in-block names: their storage is managed by the annexB
+  // web-compat machinery (the block function's value must be readable
+  // through the var binding), and hoisting them here as initializer-typed
+  // locals (e.g. f64 for `var f = 123`) makes that value unrepresentable.
+  skipNames?: Set<string>,
 ): void {
   for (const stmt of stmts) {
-    walkStmtForVars(ctx, fctx, stmt);
+    walkStmtForVars(ctx, fctx, stmt, skipNames);
   }
 }
 
@@ -7723,9 +7730,15 @@ export function ensureLetConstBindingPatternTdzFlags(
 }
 
 /** Hoist a single variable declaration (handles both simple identifiers and binding patterns). */
-function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.VariableDeclaration): void {
+function hoistVarDecl(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.VariableDeclaration,
+  skipNames?: Set<string>,
+): void {
   if (ts.isIdentifier(decl.name)) {
     const name = decl.name.text;
+    if (skipNames?.has(name)) return;
     if (fctx.localMap.has(name)) return;
     // #1690b: do NOT skip allocation when the name collides with a module
     // global. This hoister only runs for nested function bodies; per JS var
@@ -7832,27 +7845,32 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
   }
 }
 
-function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement): void {
+function walkStmtForVars(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.Statement,
+  skipNames?: Set<string>,
+): void {
   if (ts.isVariableStatement(stmt)) {
     const list = stmt.declarationList;
     // Only hoist `var` (not let/const/using/await-using). #1177
     if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) return;
     for (const decl of list.declarations) {
-      hoistVarDecl(ctx, fctx, decl);
+      hoistVarDecl(ctx, fctx, decl, skipNames);
     }
     return;
   }
   if (ts.isBlock(stmt)) {
-    for (const s of stmt.statements) walkStmtForVars(ctx, fctx, s);
+    for (const s of stmt.statements) walkStmtForVars(ctx, fctx, s, skipNames);
     return;
   }
   if (ts.isIfStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.thenStatement);
-    if (stmt.elseStatement) walkStmtForVars(ctx, fctx, stmt.elseStatement);
+    walkStmtForVars(ctx, fctx, stmt.thenStatement, skipNames);
+    if (stmt.elseStatement) walkStmtForVars(ctx, fctx, stmt.elseStatement, skipNames);
     return;
   }
   if (ts.isWhileStatement(stmt) || ts.isDoStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, skipNames);
     return;
   }
   if (ts.isForStatement(stmt)) {
@@ -7860,11 +7878,11 @@ function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.St
       const list = stmt.initializer;
       if (!(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
         for (const decl of list.declarations) {
-          hoistVarDecl(ctx, fctx, decl);
+          hoistVarDecl(ctx, fctx, decl, skipNames);
         }
       }
     }
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, skipNames);
     return;
   }
   if (ts.isForInStatement(stmt) || ts.isForOfStatement(stmt)) {
@@ -7873,30 +7891,30 @@ function walkStmtForVars(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.St
       const list = stmt.initializer;
       if (!(list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const))) {
         for (const decl of list.declarations) {
-          hoistVarDecl(ctx, fctx, decl);
+          hoistVarDecl(ctx, fctx, decl, skipNames);
         }
       }
     }
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, skipNames);
     return;
   }
   if (ts.isLabeledStatement(stmt)) {
-    walkStmtForVars(ctx, fctx, stmt.statement);
+    walkStmtForVars(ctx, fctx, stmt.statement, skipNames);
     return;
   }
   if (ts.isTryStatement(stmt)) {
-    for (const s of stmt.tryBlock.statements) walkStmtForVars(ctx, fctx, s);
+    for (const s of stmt.tryBlock.statements) walkStmtForVars(ctx, fctx, s, skipNames);
     if (stmt.catchClause) {
-      for (const s of stmt.catchClause.block.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of stmt.catchClause.block.statements) walkStmtForVars(ctx, fctx, s, skipNames);
     }
     if (stmt.finallyBlock) {
-      for (const s of stmt.finallyBlock.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of stmt.finallyBlock.statements) walkStmtForVars(ctx, fctx, s, skipNames);
     }
     return;
   }
   if (ts.isSwitchStatement(stmt)) {
     for (const clause of stmt.caseBlock.clauses) {
-      for (const s of clause.statements) walkStmtForVars(ctx, fctx, s);
+      for (const s of clause.statements) walkStmtForVars(ctx, fctx, s, skipNames);
     }
   }
 }

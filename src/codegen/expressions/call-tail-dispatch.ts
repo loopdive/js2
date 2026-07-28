@@ -183,6 +183,34 @@ function restoreIifeBindings(fctx: FunctionContext, snapshot: IifeBindingSnapsho
   }
 }
 
+/**
+ * (#3687 park) Names of function declarations nested in BLOCKS inside the
+ * IIFE body (if/try/plain blocks — the Annex B function-in-block shape).
+ * Their `var`-binding storage is owned by the annexB web-compat machinery in
+ * nested-declarations.ts; the IIFE var-hoister must not pre-allocate an
+ * initializer-typed local for them (`var f = 123` + block `function f(){}`
+ * allocated an f64 local the function value could never enter — the
+ * annexB *-func-existing-var-update family then read null).
+ */
+function collectBlockNestedFunctionNames(body: ts.ConciseBody): Set<string> {
+  const names = new Set<string>();
+  const visitBlockLevel = (node: ts.Node, topLevel: boolean): void => {
+    if (ts.isFunctionLike(node) && !ts.isFunctionDeclaration(node)) return;
+    if (ts.isFunctionDeclaration(node)) {
+      if (!topLevel && node.name) names.add(node.name.text);
+      return;
+    }
+    ts.forEachChild(node, (child) => visitBlockLevel(child, false));
+  };
+  if (ts.isBlock(body)) {
+    for (const stmt of body.statements) {
+      if (ts.isFunctionDeclaration(stmt)) continue; // top-level decls are ordinary hoists
+      visitBlockLevel(stmt, false);
+    }
+  }
+  return names;
+}
+
 function enterIifeBindings(fctx: FunctionContext, snapshot: IifeBindingSnapshot): void {
   for (const name of snapshot.names) {
     fctx.localMap.delete(name);
@@ -478,7 +506,12 @@ export function compileTailDispatch(
             // distinct function environment. Materialize its `var` bindings
             // before compiling the body so they shadow same-named module
             // globals exactly as they do in an ordinary function body.
-            hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+            hoistVarDeclarations(
+              ctx,
+              fctx,
+              bodyStmts as unknown as ts.Statement[],
+              collectBlockNestedFunctionNames(callee.body),
+            );
             // Hoist let/const with TDZ flags so accesses before init throw (#790)
             hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
             // Hoist function declarations so they're available before textual position
@@ -558,7 +591,12 @@ export function compileTailDispatch(
 
             // See the returning-IIFE arm above: `var` belongs to the IIFE's
             // function environment even though its body is inlined.
-            hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+            hoistVarDeclarations(
+              ctx,
+              fctx,
+              bodyStmts as unknown as ts.Statement[],
+              collectBlockNestedFunctionNames(callee.body),
+            );
             // Hoist let/const with TDZ flags so accesses before init throw (#790)
             hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
             // Hoist function declarations so they're available before textual position
