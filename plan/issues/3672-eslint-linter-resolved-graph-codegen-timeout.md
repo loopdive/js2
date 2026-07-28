@@ -47,6 +47,13 @@ loc-budget-allow:
   # just-proven dispatch code, so the growth is accepted and extraction is
   # deferred to the consolidation plan.
   - src/codegen/expressions/calls-closures.ts
+  # string-ops.ts +9: the #3687-park residue fix — the tagged-template tag-call
+  # capture prepend used raw cap.outerLocalIdx (declaring-frame index), which
+  # is out of range when a lifted nested function recurses via a tagged
+  # template (test262 tagged-template/tco-member 'local index out of range'
+  # compile error). The frame-correction mirrors call-identifier.ts's
+  # captureLocalIndex; extraction deferred to the consolidation plan.
+  - src/codegen/string-ops.ts
 func-budget-allow:
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/expressions/identifiers.ts::compileIdentifierCore
@@ -75,6 +82,9 @@ func-budget-allow:
   # proxied ms's numeric `var s = 1000` into esquery's lexical array `s`
   # receiver slot (f64-vs-ref validation failure blocking the ESLint graph).
   - src/codegen/array-methods.ts::compileArrayMethodCall
+  # compileTaggedTemplateExpression +9: the same frame-correction (see the
+  # string-ops.ts loc-budget note above).
+  - src/codegen/string-ops.ts::compileTaggedTemplateExpression
 # moduleGlobalForSymbol/functionDeclKeys need raw checker symbol identity for
 # same-named module-global disambiguation (above what ctx.oracle expresses).
 oracle-ratchet-allow:
