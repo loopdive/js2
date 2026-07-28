@@ -2384,10 +2384,32 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
 
   // Unwrap `<host> || fn` / `<host> ?? fn` short-circuit fallbacks (and nested
   // chains), checking whether any reachable left operand is a host builtin.
+  // (#1400) A value RETURNED from a Node builtin module method is a host
+  // function, e.g. `const wrapped = util.deprecate(fn, "msg")`. It cannot be
+  // represented as a wasm closure struct, so it must take the
+  // `__call_function` arm. Without this the call falls through to the
+  // "graceful fallback for unknown functions", which drops the arguments and
+  // yields `ref.null.extern` — the call SILENTLY does not happen and the
+  // expression evaluates to null. That is how `util.deprecate(...)()` returned
+  // null in the ESLint graph instead of invoking the wrapped function.
+  //
+  // Narrow by construction: only receivers bound to a Node builtin namespace
+  // (`ctx.nodeBuiltinGlobals`) qualify, so pure local-closure programs keep the
+  // #1941 dual-mode guarantee and stay host-import-free.
+  const isNodeBuiltinCallResult = (node: ts.Expression): boolean => {
+    const inner = unparen(node);
+    if (!ts.isCallExpression(inner)) return false;
+    const callee = unparen(inner.expression);
+    if (!ts.isPropertyAccessExpression(callee)) return false;
+    const recv = unparen(callee.expression);
+    return ts.isIdentifier(recv) && ctx.nodeBuiltinGlobals.has(recv.text);
+  };
+
   const initMayBeHost = (node: ts.Expression): boolean => {
     const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
     if (isHostBuiltinMember(inner)) return true;
     if (isReflectiveAccessorExtraction(inner)) return true;
+    if (isNodeBuiltinCallResult(inner)) return true;
     if (
       ts.isBinaryExpression(inner) &&
       (inner.operatorToken.kind === ts.SyntaxKind.BarBarToken ||

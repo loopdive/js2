@@ -19,6 +19,7 @@
 
 import { ts } from "./ts-api.js";
 import { PositionMap } from "./position-map.js";
+import { isNodeBuiltin } from "./import-resolver.js";
 
 /** A single require() call rewrite plan. */
 interface RequireRewrite {
@@ -366,7 +367,19 @@ function tryRenderRequireImport(decl: ts.VariableDeclaration): string | null {
   if (!decl.initializer) return null;
 
   const moduleSpec = extractRequireSpecifier(decl.initializer);
-  if (moduleSpec === null) return null;
+  if (moduleSpec === null) {
+    // `const X = require("<builtin>").prop` — bind the namespace, then read the
+    // property from it, so the builtin registers as a host import.
+    const chained = extractChainedBuiltinRequire(decl.initializer);
+    if (chained !== null && ts.isIdentifier(decl.name)) {
+      const ns = `__cjs_builtin_ns_${chained.moduleSpec.replace(/[^A-Za-z0-9_$]/g, "_")}_${Math.max(0, decl.pos)}`;
+      return (
+        `import * as ${ns} from ${JSON.stringify(chained.moduleSpec)};\n` +
+        `const ${decl.name.text} = ${ns}.${chained.property};`
+      );
+    }
+    return null;
+  }
 
   // Now look at the binding pattern to decide between default-import and named-import.
   if (ts.isIdentifier(decl.name)) {
@@ -412,6 +425,33 @@ function tryRenderRequireImport(decl: ts.VariableDeclaration): string | null {
 /**
  * If `expr` is `require('literal')`, return the literal string. Otherwise null.
  */
+/**
+ * Match `require("<node builtin>").<prop>` — a require in CHAINED position.
+ *
+ * `extractRequireSpecifier` only matches a bare `require(...)` call, so this
+ * shape was left unrewritten. It then never reached the node-builtin import
+ * collector (which scans for `import` declarations), so no `__node_<mod>` host
+ * import was registered and the module resolved to an EMPTY synthesized
+ * namespace. `util-deprecate/node.js` is exactly this file:
+ *
+ *   module.exports = require('util').deprecate;
+ *
+ * and it is reachable from ESLint's Linter graph, where the call then failed at
+ * runtime with "deprecate is not a function" on a null-prototype empty object.
+ *
+ * Scoped deliberately to Node builtins: those are the specifiers whose runtime
+ * value comes from the host rather than from a compiled module, so leaving them
+ * unresolved is always wrong. Userland chained requires keep their existing
+ * (unrewritten) behaviour.
+ */
+function extractChainedBuiltinRequire(expr: ts.Expression): { moduleSpec: string; property: string } | null {
+  if (!ts.isPropertyAccessExpression(expr)) return null;
+  const moduleSpec = extractRequireSpecifier(expr.expression);
+  if (moduleSpec === null) return null;
+  if (!isNodeBuiltin(moduleSpec)) return null;
+  return { moduleSpec, property: expr.name.text };
+}
+
 function extractRequireSpecifier(expr: ts.Expression): string | null {
   if (!ts.isCallExpression(expr)) return null;
   if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "require") return null;
