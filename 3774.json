@@ -2,9 +2,7 @@
   "id": "3774",
   "assignee": "ttraenkler/codex-es5-regexp-backref-progress",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-07-28T19:05:10Z",
-  "claimed_at": "2026-07-28T19:05:10Z",
-  "updated_at": "2026-07-28T19:05:10Z",
-  "pr_scan": "ok"
+  "branch": "codex/3774-regexp-backref-empty-progress",
+  "claimed_at": "2026-07-28T19:05:43Z",
+  "updated_at": "2026-07-28T19:05:43Z"
 }
