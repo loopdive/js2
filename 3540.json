@@ -1,8 +1,9 @@
 {
   "id": "3540",
   "assignee": "ttraenkler/codex-3540-function-tostring",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3540-native-function-source-facade",
   "claimed_at": "2026-07-28T14:52:33Z",
-  "updated_at": "2026-07-28T14:52:33Z"
+  "updated_at": "2026-07-28T15:15:10Z",
+  "released_at": "2026-07-28T15:15:10Z"
 }
