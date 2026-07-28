@@ -104,6 +104,7 @@ import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
 import { isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
+import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 import { orderNamesByInsertion } from "./struct-field-exports.js";
 // (#3265) Proxy dispatch subsystem extracted to a sibling module (subtask of
@@ -7660,6 +7661,7 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   };
   const seen = new Set<number>();
   const cands: ArrayLikeCand[] = [];
+  const fnctorProtoGlobals = new Map<number, number>();
   for (const [structName, fields] of ctx.structFields) {
     const typeIdx = ctx.structMap.get(structName);
     if (typeIdx === undefined || seen.has(typeIdx)) continue;
@@ -7698,6 +7700,8 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
       numericFields.push({ n, fieldIdx: i, fieldType: f.type });
     }
     seen.add(typeIdx);
+    const protoGlobalIdx = fnctorArray.fnctorPrototypeGlobalForStruct(ctx, structName);
+    if (protoGlobalIdx !== undefined) fnctorProtoGlobals.set(typeIdx, protoGlobalIdx);
     cands.push({ typeIdx, lengthFieldIdx, lengthFieldType: fields[lengthFieldIdx]!.type, numericFields });
   }
   if (cands.length === 0) return;
@@ -7828,11 +7832,12 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   // ── __extern_get_idx arms (params: 1=idx f64; locals: 2=any) ──
   if (getIdxFn && hasPreamble(getIdxFn)) {
     const arms: Instr[] = [];
+    const getIdxSelfIdx = ctx.funcMap.get("__extern_get_idx");
     for (const cand of cands) {
       const fieldChecks: Instr[] = [];
       for (const nf of cand.numericFields) {
         const box = boxClosedStructFieldToExternref(ctx, nf.fieldType);
-        if (box === null) continue; // unboxable field kind — reads as a miss
+        const ownValue = fnctorArray.closedStructIndexValue(2, cand.typeIdx, nf.fieldIdx, box, idxMiss());
         fieldChecks.push(
           { op: "local.get", index: 1 },
           { op: "f64.const", value: nf.n },
@@ -7842,24 +7847,20 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
           {
             op: "if",
             blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: cand.typeIdx },
-              { op: "struct.get", typeIdx: cand.typeIdx, fieldIdx: nf.fieldIdx },
-              ...box,
-              { op: "return" },
-            ],
+            then: [...ownValue, { op: "return" }],
           },
         );
       }
-      if (fieldChecks.length === 0) continue; // no indexable fields — fall-through miss is identical
+      const protoGlobalIdx = fnctorProtoGlobals.get(cand.typeIdx);
+      const inheritedMiss = fnctorArray.fnctorGetIndexMiss(protoGlobalIdx, getIdxSelfIdx, 1, idxMiss());
+      if (fieldChecks.length === 0 && protoGlobalIdx === undefined) continue;
       arms.push(
         { op: "local.get", index: 2 },
         { op: "ref.test", typeIdx: cand.typeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [...fieldChecks, ...idxMiss(), { op: "return" }],
+          then: [...fieldChecks, ...inheritedMiss, { op: "return" }],
         },
       );
     }
@@ -7869,11 +7870,13 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
   // ── __extern_has_idx arms (params: 1=idx f64; locals: 2=any) ──
   if (hasIdxFn && hasPreamble(hasIdxFn)) {
     const arms: Instr[] = [];
+    const hasIdxSelfIdx = ctx.funcMap.get("__extern_has_idx");
     for (const cand of cands) {
-      if (cand.numericFields.length === 0) continue; // fall-through 0 is identical
-      const orChain: Instr[] = [{ op: "i32.const", value: 0 }];
+      const protoGlobalIdx = fnctorProtoGlobals.get(cand.typeIdx);
+      if (cand.numericFields.length === 0 && protoGlobalIdx === undefined) continue;
+      const hasChain = fnctorArray.fnctorHasIndexSeed(protoGlobalIdx, hasIdxSelfIdx, 1);
       for (const nf of cand.numericFields) {
-        orChain.push(
+        hasChain.push(
           { op: "local.get", index: 1 },
           { op: "f64.const", value: nf.n },
           { op: "f64.eq" },
@@ -7886,7 +7889,7 @@ export function fillExternArrayLikeStructArms(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [...orChain, { op: "return" }],
+          then: [...hasChain, { op: "return" }],
         },
       );
     }

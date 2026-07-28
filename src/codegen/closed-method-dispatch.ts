@@ -53,6 +53,7 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { ensureArgcGlobal } from "./statements/nested-declarations.js"; // (#3673 round 13) direct-call argc preset
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js"; // (#3673 round 13) under-application gate
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { buildFnctorArrayHofTargetTest } from "./fnctor-array-prototype.js";
 
 /**
  * (#2583) The callback-free, argument-taking array search/predicate methods
@@ -1207,12 +1208,9 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
           ...((isReduceForm ? [{ op: "i32.const", value: arity >= 2 ? 1 : 0 }] : []) satisfies Instr[]), // hasInit
           { op: "call", funcIdx: hofFuncIdx },
         ];
+        const arrayHofTargetTest = buildFnctorArrayHofTargetTest(ctx, anyLocalIdx, ctx.vecBaseTypeIdx, objVecTypeIdx);
         current = [
-          { op: "local.get", index: anyLocalIdx },
-          { op: "ref.test", typeIdx: ctx.vecBaseTypeIdx },
-          { op: "local.get", index: anyLocalIdx },
-          { op: "ref.test", typeIdx: objVecTypeIdx },
-          { op: "i32.or" },
+          ...arrayHofTargetTest,
           {
             op: "if",
             blockType: { kind: "val", type: { kind: "externref" } },
