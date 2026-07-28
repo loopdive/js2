@@ -1,9 +1,8 @@
 {
   "id": "3769",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-28T18:07:32Z",
-  "updated_at": "2026-07-28T18:07:32Z",
-  "pr_scan": "ok"
+  "assignee": "ttraenkler/codex-es5-json-space",
+  "status": "in-progress",
+  "branch": "codex/3769-json-static-space",
+  "claimed_at": "2026-07-28T18:07:47Z",
+  "updated_at": "2026-07-28T18:07:47Z"
 }
