@@ -244,6 +244,7 @@ import {
   registerAddUnionImports,
 } from "./shared.js";
 import { stackBalance, getFixupEvents, summarizeFixups, strictBalanceDiagnostics } from "./stack-balance.js";
+import { reportGlobalCollisions } from "./diagnose-global-collisions.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureRegexMatchVecType } from "./native-regex.js";
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "./regexp-standalone.js";
@@ -6146,6 +6147,17 @@ export function generateMultiModule(
     // ("found extern.convert_any of type externref" — externref is NOT a
     // subtype of anyref). Mirror the single-module pipeline at line 1053.
     fixupExternConvertAny(ctx);
+    // (#1400) Opt-in: report EVERY numeric-global -> ref-slot site. Wasm only
+    // names the first failing function, so without this each fix just uncovers
+    // the next one, at ~30 min per full-graph compile.
+    reportGlobalCollisions(
+      mod,
+      (f) => {
+        const t = mod.types[(f as { typeIdx: number }).typeIdx];
+        return t && t.kind === "func" ? t.params.length : 0;
+      },
+      ctx.numImportGlobals,
+    );
     recordCompileProfile("codegen.finalize", finalizeStarted, {
       functions: mod.functions.length,
       imports: mod.imports.length,

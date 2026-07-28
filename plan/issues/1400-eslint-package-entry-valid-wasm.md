@@ -428,3 +428,167 @@ way. Do not attribute these to the dispatch work.
 Resume step 4 — the full `tests/stress/eslint-tier1.test.ts` proof (the issue's
 actual Tier 1 goal) — remains unrun to completion. The prior attempt SIGTERMed
 at the 3600 s budget under load ~27.
+
+## Session 2026-07-27c — Tier 1 measured; first validation blocker fixed
+
+### Measured, end to end (was previously unrun)
+
+The full direct-Linter probe now completes rather than SIGTERMing:
+
+| Metric      | Result                                                        |
+| ----------- | ------------------------------------------------------------- |
+| compile     | **success: true** — 10,589,888 bytes, ~28 min, 10 diagnostics |
+| diagnostics | all `severity: warning` (IR-fallback notices), **0 errors**   |
+| validate    | **false** — `__closure_2055` (see below)                      |
+| instantiate | not reached                                                   |
+| verify()    | not reached                                                   |
+
+So acceptance criterion 3's compile half is met for the direct entry; the
+"Reopened" table above recorded `lib/linter/linter.js` direct as compile-FAIL
+and that is now stale. Validation is the remaining gate.
+
+### Blocker family: a numeric module global adopted as a ref
+
+Both instances are the same defect class — codegen resolves an identifier
+through the **process-wide flat bare-name map** `ctx.moduleGlobals.get(name)`
+instead of the identifier's own declaration, so one package's top-level
+numeric wins over another's lexical binding. `ms/index.js` supplies the
+numerics (`var s = 1000; var m = s * 60; var h = m * 60; …`).
+
+**Instance 1 — array receiver. FIXED (commit `ab4aada67`).**
+`array-methods.ts` resolved a receiver by bare name at three sites; esquery's
+factory-local array `s` is a capture (absent from `fctx.localMap`) and matched
+`ms`'s `s`, proxying an f64 into the array slot:
+`local.tee[0] expected (ref null 2), found ... f64`. Now routed through
+`moduleGlobalAtIdentifier`, plus a guard that declines the fast path when the
+resolved global is numeric.
+
+**Instance 2 — callable read. OPEN.** The full graph still fails:
+
+```text
+#4881 "__closure_2055": local.tee[0] expected type (ref null 815),
+found global.get of type f64
+```
+
+Note `found global.get` (direct), not the `local.tee` chain of instance 1 —
+a different emit site. `815` is a struct type and the earlier analysis says
+the collision is a **callable** (esquery's helper read as a value), so the
+prime suspect is `src/codegen/expressions/identifiers.ts` ~1164:
+
+```ts
+const existingClosure = ctx.closureMap.get(functionIdentity);
+if (existingClosure) {
+  const closureModGlobal = ctx.moduleGlobals.get(functionIdentity); // flat map
+  if (closureModGlobal !== undefined) {
+    fctx.body.push({ op: "global.get", index: closureModGlobal });  // bare global.get
+```
+
+Unconfirmed — verify against the WAT before changing it.
+
+### Reproduction: 30 s instead of 28 min
+
+The pre-existing fixture could not catch instance 1 because it imports
+`esquery.esm.min.js`, a real ES module whose factory-local bindings never merge
+into the program-wide symbol table. **ESLint loads `main` =
+`dist/esquery.min.js`, a UMD _script_,** and TypeScript merges a script's
+top-level bindings across the graph. Pairing that CJS build with the real `ms`
+package reproduces in a 214 kB binary. See the new case in
+`tests/issue-3672.test.ts` (verified failing without the fix).
+
+That repro does **not** reproduce instance 2 — esquery + ms alone still
+validates, so the callable collision needs more of the graph.
+
+### Tooling notes for whoever picks this up
+
+- `emitWat: true` on the full graph is **OOM-killed** (cgroup `oom_kill`,
+  ~7.46 GB peak against 7.8 GB physical; the 16 GB cgroup limit is nominal).
+  Split it: compile → write `.wasm` → disassemble out-of-process with
+  `node_modules/.bin/wasm-dis --all-features` (native, streams to disk,
+  ~170 MB WAT). `.tmp/save-binary.mts` does the capture.
+- `wasm-dis` emits **folded** s-expressions and names locals by index;
+  `.tmp/analyze-closure.py <wat> <func>` finds every numeric→ref assignment and
+  names the source global/local. Validated against a known-broken binary.
+- Do **not** gauge liveness with `pgrep -f` on these long runs — the waiter's
+  own command line self-matches. `compileProject` also blocks the event loop,
+  so a `setInterval` heartbeat never fires. Read `/proc/<pid>/VmRSS` instead.
+- Keep the box quiet during a capture; a concurrent typecheck/test run is what
+  tipped it into the OOM kill.
+
+## 2026-07-28 — direct Linter graph VALIDATES and INSTANTIATES
+
+Measured on the direct `eslint/lib/linter/linter.js` entry, Node JS-host lane:
+
+| Metric      | Before this session | Now                                 |
+| ----------- | ------------------- | ----------------------------------- |
+| compile     | fail (per Reopened) | **success**, 10,596,034 bytes       |
+| validate    | false               | **true**                            |
+| instantiate | not reached         | **true**                            |
+| verify()    | not reached         | not reached — see runtime gap below |
+
+**Acceptance criteria 3 and 4 are now met.** AC5 (`verify()` returns `[]`) is
+not: instantiation succeeds and the failure has moved to the runtime host seam.
+
+### What actually unblocked it
+
+One defect family, four independent codegen paths, each resolving an identifier
+through the process-wide bare-name map `ctx.moduleGlobals` instead of the
+identifier's own declaration. In a real package graph the same spelling denotes
+a number in one module and a function/array in another — `ms/index.js` declares
+`var s = 1000; var m = s * 60; var h = m * 60; …` while esquery and minimatch
+carry lexical helpers named `s`/`m`. The numeric wins and is loaded into a
+reference slot:
+
+```text
+local.tee[0] expected type (ref null N), found global.get of type f64
+```
+
+| Path                                        | Status                                            |
+| ------------------------------------------- | ------------------------------------------------- |
+| `array-methods.ts` (receiver, ×3 lookups)   | fixed — regression test, verified failing without |
+| `identifiers.ts` (closure read)             | fixed — fired once, minimatch `m`                 |
+| `calls-closures.ts::compileClosureCall`     | **fixed — this is the one that flipped `valid`**  |
+| `call-identifier.ts` (callee module global) | guard added; does NOT currently fire              |
+
+`compileClosureCall` was the load-bearing one. The earlier
+`closureBindingGlobals` work only gates whether that function is _reached_;
+once inside, it re-resolved the callee by bare name (`ctx.moduleGlobals.get(varName)`)
+and emitted `global.get` of a numeric global into the `__fn_wrap_*` self slot.
+
+The `call-identifier.ts` guard is retained deliberately as defense in depth —
+all four sites enforce one invariant (a numeric global is never a callable,
+closure, or array receiver) — but it is honest to record that it changed no
+bytes on this graph.
+
+### Next frontier: runtime host seam (not codegen)
+
+```text
+TypeError: deprecate is not a function
+  __extern_method_call → src/runtime.ts
+  at __module_init (wasm-function[4290])
+```
+
+Thrown during `__module_init`, i.e. while a module-level statement runs, via the
+host `__extern_method_call` shim. This is the host-delegation work #3657 tracks,
+not another codegen collision.
+
+### Tooling that made this tractable
+
+`src/codegen/diagnose-global-collisions.ts` (opt-in, off by default):
+
+- `J2W_DIAG_GLOBAL_COLLISION=1` — report every numeric→ref-slot assignment.
+  Wasm names only the FIRST failing function, so serial fixing costs ~30 min per
+  hidden instance.
+- `J2W_DIAG_FUNC=<fn>` — dump the 8-instruction window before every ref-typed
+  `local.set|tee` in one function, annotated with global names/types and the
+  struct name behind each ref. **This is what located `compileClosureCall`**;
+  inference from the type index alone had pointed at the wrong path.
+
+Caveats, learned the hard way: emitted global indices address the FINAL binary's
+global space (imported globals occupy the low slots) so lookups must apply
+`localGlobalIdx` — without it the detector names i32 `__tdz_*` globals for what
+Wasm calls f64. And "the previous instruction is the stack producer" is false
+whenever an `if`/`block` supplies the value, so the summary view over-reports;
+trust the window dump.
+
+**Cheap signal:** if a fix leaves `binaryByteLength` unchanged, it never fired.
+That is how the `call-identifier` guard was caught as a no-op without a WAT dump.

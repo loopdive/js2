@@ -73,6 +73,7 @@ import {
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { localGlobalIdx } from "../registry/imports.js";
 import {
   buildArgcExtrasReset,
   buildArgcExtrasSetupFromLocals,
@@ -966,7 +967,23 @@ export function compileIdentifierCall(
       // If so, create or find a matching closure wrapper type and dispatch via call_ref.
       // Only attempt this for actual locals/params — not for unknown imported functions.
       const calleeLocalIdx = fctx.localMap.get(funcName);
-      const calleeModGlobal = calleeLocalIdx === undefined ? lexicalModuleGlobal : undefined;
+      // A NUMERIC module global is not a callable. Across a package graph the
+      // same spelling routinely names a number in one module and a function in
+      // another (ESLint's `ms` declares `var s = 1000; var m = s * 60; …`).
+      // Adopting it here loads an f64 into the funcref-wrapper slot:
+      //   local.tee[0] expected type (ref null N), found global.get of type f64
+      // Decline so the ordinary dispatch below handles the real binding.
+      const calleeModGlobalRaw = calleeLocalIdx === undefined ? lexicalModuleGlobal : undefined;
+      const calleeModGlobalKind =
+        calleeModGlobalRaw === undefined
+          ? undefined
+          : ctx.mod.globals[localGlobalIdx(ctx, calleeModGlobalRaw)]?.type.kind;
+      const calleeModGlobalIsNumeric =
+        calleeModGlobalKind === "f64" ||
+        calleeModGlobalKind === "f32" ||
+        calleeModGlobalKind === "i32" ||
+        calleeModGlobalKind === "i64";
+      const calleeModGlobal = calleeModGlobalIsNumeric ? undefined : calleeModGlobalRaw;
       const calleeCapturedGlobal =
         calleeLocalIdx === undefined && calleeModGlobal === undefined ? ctx.capturedGlobals.get(funcName) : undefined;
       const isKnownVariable =

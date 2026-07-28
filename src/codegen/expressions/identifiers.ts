@@ -1160,17 +1160,39 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
     // Check if there's already a closure registered (e.g. from closureMap)
     const existingClosure = ctx.closureMap.get(functionIdentity);
     if (existingClosure) {
-      // Already a closure — check if there's a module-level global for it
-      const closureModGlobal = ctx.moduleGlobals.get(functionIdentity);
+      // Already a closure — check if there's a module-level global for it.
+      // Prefer the identifier's OWN declaration: `closureMap`/`moduleGlobals`
+      // are keyed by source spelling, so across a package graph the flat map is
+      // a same-name lottery (ESLint's `ms` dependency declares top-level
+      // numeric `s`/`m`/`h` while esquery has lexical helpers of those names).
+      const closureModGlobal = moduleGlobalAtIdentifier(ctx, id) ?? ctx.moduleGlobals.get(functionIdentity);
       if (closureModGlobal !== undefined) {
-        fctx.body.push({ op: "global.get", index: closureModGlobal });
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, closureModGlobal)];
-        return (
-          globalDef?.type ?? {
-            kind: "ref",
-            typeIdx: existingClosure.structTypeIdx,
+        // A numeric global cannot BE this closure's storage. Emitting
+        // `global.get` of an f64 here is what feeds a callable-ref slot and
+        // makes the whole module invalid:
+        //   local.tee[0] expected type (ref null N), found global.get of type f64
+        // Decline instead, and let the cached-singleton path below build a real
+        // closure value for the lexical binding this identifier denotes.
+        const gk = globalDef?.type.kind;
+        const numericGlobal = gk === "f64" || gk === "f32" || gk === "i32" || gk === "i64";
+        if (numericGlobal) {
+          if (process.env.J2W_DIAG_GLOBAL_COLLISION) {
+            const sf = id.getSourceFile()?.fileName ?? "?";
+            console.error(
+              `[collision] identifier '${name}' (key '${functionIdentity}') has a closure but ` +
+                `resolves to NUMERIC global ${closureModGlobal} (${gk}) — declining. at ${sf}`,
+            );
           }
-        );
+        } else {
+          fctx.body.push({ op: "global.get", index: closureModGlobal });
+          return (
+            globalDef?.type ?? {
+              kind: "ref",
+              typeIdx: existingClosure.structTypeIdx,
+            }
+          );
+        }
       }
     }
     // (#1340) For captureless top-level function decls, emit a cached

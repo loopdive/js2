@@ -21,6 +21,7 @@ import { noJsHost } from "../js-errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
+import { moduleGlobalAtIdentifier } from "../function-identity.js";
 import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
@@ -316,8 +317,25 @@ export function compileClosureCall(
   info: ClosureInfo,
 ): InnerResult {
   const localIdx = fctx.localMap.get(varName);
-  const moduleIdx = localIdx === undefined ? ctx.moduleGlobals.get(varName) : undefined;
+  // Resolve the callee's global from its OWN declaration first. `varName` is a
+  // bare spelling and `ctx.moduleGlobals` is process-wide, so in a package
+  // graph the same name can denote a number in one module and a function in
+  // another (ESLint's `ms` declares `var s = 1000; var m = s * 60; …`).
+  const declModuleIdx =
+    localIdx === undefined && ts.isIdentifier(expr.expression)
+      ? moduleGlobalAtIdentifier(ctx, expr.expression)
+      : undefined;
+  const moduleIdx = localIdx === undefined ? (declModuleIdx ?? ctx.moduleGlobals.get(varName)) : undefined;
   if (localIdx === undefined && moduleIdx === undefined) return null;
+  if (moduleIdx !== undefined) {
+    // A numeric global cannot carry a closure. Loading it into the
+    // `__fn_wrap_*` self slot is what produces the invalid
+    //   local.tee[0] expected type (ref null N), found global.get of type f64
+    // that blocks the ESLint graph (#1400). Decline so the caller falls through
+    // to a dispatch that does not assume this name is this closure.
+    const gk = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)]?.type.kind;
+    if (gk === "f64" || gk === "f32" || gk === "i32" || gk === "i64") return null;
+  }
 
   // The lifted function type is authoritative for its self carrier. Shared
   // `__fn_wrap_*` functions use the canonical wrapper root; private/named
@@ -413,7 +431,9 @@ export function compileClosureCall(
       // the live map mirrors why `g = f; g(21)` works: the intermediate-local
       // path resolves through a local whose load lands in the outer body the
       // shifter does visit.
-      const liveModuleIdx = ctx.moduleGlobals.get(varName) ?? moduleIdx!;
+      // Prefer the declaration-owned global for the same reason as above; the
+      // live bare-name map is only the fallback.
+      const liveModuleIdx = declModuleIdx ?? ctx.moduleGlobals.get(varName) ?? moduleIdx!;
       fctx.body.push({ op: "global.get", index: liveModuleIdx });
     }
     // Null-check → TypeError instead of trap on struct.get (#728, #441)
