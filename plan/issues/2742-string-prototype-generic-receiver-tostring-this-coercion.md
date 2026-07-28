@@ -5,7 +5,7 @@ status: in-progress
 assignee: ttraenkler/opus-loop-d
 sprint: current
 created: 2026-06-27
-updated: 2026-07-26
+updated: 2026-07-28
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -21,16 +21,20 @@ depends_on: []
 # regression repair also needs source rest-parameter metadata and one narrow
 # emitted classifier: the generic host dispatcher cannot materialize a rest vec,
 # so the runtime must classify that source shape before exposing the closure.
+# PR #3753 keeps lastIndexOf's method-specific NaN fallback beside the shared
+# native-string integer-argument lowering.
 loc-budget-allow:
   - src/runtime.ts
   - src/codegen/closure-exports.ts
   - src/codegen/closures/arrow-phases.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
+  - src/codegen/string-ops.ts
 func-budget-allow:
   - src/runtime.ts::resolveImport
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+  - src/codegen/string-ops.ts::compileNativeStringMethodCall
 ---
 # #2742 — String.prototype generic-receiver `ToString(this)` coercion
 
@@ -269,3 +273,16 @@ Validation after merging current `main` (`f7d1187fa2c79e0153731308200ebb2c6cac27
 - Exact controls: the three dominant identity regressions pass;
   `proxy-keys.js` reports `missing_builtin` (“not a function”), with no
   `illegal_cast`.
+
+## `lastIndexOf` NaN-position residual (PR #3753, 2026-07-28)
+
+Standalone lowering now preserves `lastIndexOf`'s from-end sentinel when a
+position expression coerces to `NaN` or `undefined`. Other integer-indexed
+String methods retain their ordinary NaN-to-zero behavior.
+
+Exact local-vs-local Test262 A/B on base `c5bd4631724afa`:
+
+- JS-host directory: 19/25 → 19/25; ES5 subset: 15/21 → 15/21.
+- Standalone directory: 15/25 → 17/25; ES5 subset: 11/21 → 13/21.
+- Fail→pass: `S15.5.4.8_A1_T10.js` and `S15.5.4.8_A4_T3.js`.
+- Pass→fail: none. Every remaining failure kept the same normalized signature.

@@ -2245,7 +2245,12 @@ function tryThrowOnBigIntOrSymbolArg(ctx: CodegenContext, fctx: FunctionContext,
  * Returns true when emission succeeded (caller continues building the
  * arg list); false when an unreachable throw was emitted instead.
  */
-function compileStringIntegerArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
+function compileStringIntegerArg(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+  nanFallback = 0,
+): void {
   if (tryThrowOnBigIntOrSymbolArg(ctx, fctx, arg)) {
     // After unreachable, the wasm stack is polymorphic — but we still
     // push a sentinel i32 so the (unreached) call site reads cleanly.
@@ -2266,8 +2271,10 @@ function compileStringIntegerArg(ctx: CodegenContext, fctx: FunctionContext, arg
   if (noJsHost(ctx)) {
     const argType = compileExpression(ctx, fctx, arg);
     if (!argType) {
-      // void → undefined → ToNumber NaN → ToIntegerOrInfinity 0.
-      fctx.body.push({ op: "i32.const", value: 0 });
+      // void → undefined → ToNumber NaN. Most integer-indexed methods map
+      // NaN to 0; lastIndexOf supplies its spec-specific +∞ sentinel so the
+      // reverse search starts from the end.
+      fctx.body.push({ op: "i32.const", value: nanFallback });
       return;
     }
     if (argType.kind === "i64") {
@@ -2288,14 +2295,15 @@ function compileStringIntegerArg(ctx: CodegenContext, fctx: FunctionContext, arg
       kind: "f64",
     });
     fctx.body.push({ op: "local.set", index: fTmp });
-    // ToIntegerOrInfinity: NaN → 0, else trunc toward zero (±∞ saturates).
+    // ToIntegerOrInfinity: NaN → the caller's method-specific fallback, else
+    // trunc toward zero (±∞ saturates).
     fctx.body.push({ op: "local.get", index: fTmp });
     fctx.body.push({ op: "local.get", index: fTmp });
     fctx.body.push({ op: "f64.ne" }); // self != self ⇒ NaN
     fctx.body.push({
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
-      then: [{ op: "i32.const", value: 0 }],
+      then: [{ op: "i32.const", value: nanFallback }],
       else: [{ op: "local.get", index: fTmp }, { op: "i32.trunc_sat_f64_s" }],
     });
     return;
@@ -2449,14 +2457,19 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "local.set", index: local });
     return local;
   };
-  const compileIntegerValueToLocal = (value: ts.Expression | undefined, fallback: number, name: string): number => {
+  const compileIntegerValueToLocal = (
+    value: ts.Expression | undefined,
+    fallback: number,
+    name: string,
+    nanFallback = 0,
+  ): number => {
     const local = allocLocal(fctx, `${name}_${fctx.locals.length}`, {
       kind: "i32",
     });
     // Explicit `undefined` is spec-equivalent to an absent arg → use the
     // method's default sentinel rather than coercing undefined → 0 (#2124).
     if (value && !isStaticUndefinedArg(value)) {
-      compileStringIntegerArg(ctx, fctx, value);
+      compileStringIntegerArg(ctx, fctx, value, nanFallback);
     } else {
       fctx.body.push({ op: "i32.const", value: fallback });
     }
@@ -2766,7 +2779,12 @@ export function compileNativeStringMethodCall(
     // maps explicit `undefined`; map explicit `NaN` here too (#2124).
     const fromArg = expr.arguments[1];
     const fromIsNaN = fromArg !== undefined && ts.isIdentifier(fromArg) && fromArg.text === "NaN";
-    const fromLocal = compileIntegerValueToLocal(fromIsNaN ? undefined : fromArg, 0x7fffffff, "__str_lastIndexOf_from");
+    const fromLocal = compileIntegerValueToLocal(
+      fromIsNaN ? undefined : fromArg,
+      0x7fffffff,
+      "__str_lastIndexOf_from",
+      0x7fffffff,
+    );
     const funcIdx = ctx.nativeStrHelpers.get("__str_lastIndexOf")!;
     fctx.body.push({ op: "local.get", index: receiverLocal });
     fctx.body.push({ op: "local.get", index: searchLocal });
