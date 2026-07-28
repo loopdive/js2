@@ -2678,7 +2678,7 @@ function computeStringBackend(ctx: CodegenContext): StringBackendIndices {
   if (ctx.nativeStrings) {
     for (let i = 0; i < ctx.mod.functions.length; i++) {
       const f = ctx.mod.functions[i]!;
-      if (f.name === "__str_concat" || f.name === "__str_equals") {
+      if (f.name === "__str_concat" || f.name === "__str_equals" || f.name === "__str_concat_owned") {
         nativeHelpers.set(f.name, ctx.numImportFuncs + i);
       }
     }
@@ -3466,8 +3466,15 @@ function makeResolver(
       }
       return [{ op: "global.get", index: globalIdx }];
     },
-    emitStringConcat(): readonly Instr[] {
+    emitStringConcat(_alloc, mode): readonly Instr[] {
       if (ctx.nativeStrings) {
+        // (#3744) `owned-append` — the builder-loop license computed by
+        // `collectOwnedStringAppendSymbols`; see src/ir/string-builder-shape.ts.
+        // Unregistered helper falls through to general concat (correctness first).
+        if (mode === "owned-append") {
+          const ownedIdx = stringBackend.nativeHelpers.get("__str_concat_owned");
+          if (ownedIdx !== undefined) return [{ op: "call", funcIdx: ownedIdx }];
+        }
         const idx = stringBackend.nativeHelpers.get("__str_concat");
         if (idx === undefined) {
           throw new Error("ir/integration: __str_concat helper not registered");

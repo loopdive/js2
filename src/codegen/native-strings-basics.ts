@@ -212,6 +212,194 @@ export function emitStrConcatHelpers(shared: NativeStrShared): void {
       exported: false,
     });
   }
+
+  emitStrConcatOwnedHelper(shared);
+}
+
+/**
+ * `__str_concat_owned` — IR-only owned-append fast path (#3740 / #3744),
+ * called by `string.concat` in `owned-append` mode (`ir/integration.ts`; shape
+ * license in `src/ir/string-builder-shape.ts`). Split out of
+ * `emitStrConcatHelpers` for the #3400 per-function LOC ceiling; emission
+ * order (and thus every minted funcIdx) is unchanged — this runs as that
+ * builder's final step.
+ */
+function emitStrConcatOwnedHelper(shared: NativeStrShared): void {
+  const { ctx, strTypeIdx, strDataTypeIdx, strRef } = shared;
+
+  // --- $__str_concat_owned(lhs: ref $AnyString, rhs: ref $AnyString) -> ref $AnyString ---
+  // (#3740 follow-up) IR-only fast path for a `string.concat` whose LHS is
+  // proven "owned-append" — the caller (`ir/from-ast.ts`'s
+  // `collectOwnedStringAppendSymbols`) has established that `lhs`'s PRIOR
+  // value is never observed again once this call returns, i.e. exactly the
+  // `let s = ""; for (...) s += <expr>` builder-loop shape. That license lets
+  // this helper grow `lhs`'s backing array in place (geometric doubling via
+  // `__str_buf_next_cap`, matching the legacy #1210/#1761 string-builder
+  // rewrite) instead of always allocating+copying a full fresh array the way
+  // the general-purpose `__str_concat` does. The RESULT is still an ordinary,
+  // fully valid `$NativeString` — every existing consumer (length, charAt,
+  // equality, return, ...) works unchanged; only the growth strategy differs.
+  //
+  // Safety argument for "grow lhs's array in place": lhs is always either the
+  // empty-string literal (capacity 0 — always takes the grow-a-fresh-array
+  // branch below on the first append) or this same helper's own prior result
+  // (a data array WE allocated ourselves via `__str_buf_next_cap`, never
+  // shared with an interned literal or any other value). Any earlier struct
+  // wrapper over that same array only ever reads indices below ITS OWN
+  // recorded `len`, so writing into cells at `[lhsLen, newLen)` — strictly
+  // past every earlier wrapper's own length — never changes what an earlier
+  // observer would see. The in-place branch is additionally gated on
+  // `lhsOff === 0` so a genuine sliced/offset view (not something this
+  // builder chain produces, but defensive) always falls through to the copy
+  // path instead.
+  {
+    const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
+    const nextCapIdx = ctx.nativeStrHelpers.get("__str_buf_next_cap")!;
+    const typeIdx = addFuncType(ctx, [strRef, strRef], [strRef]);
+    const funcIdx = mintDefinedFunc(ctx);
+    ctx.nativeStrHelpers.set("__str_concat_owned", funcIdx);
+
+    // params: lhs(0), rhs(1)
+    // locals: flatLhs(2), flatRhs(3), lhsLen(4), rhsLen(5), newLen(6),
+    //         lhsOff(7), data(8), cap(9), newData(10)
+    const body: Instr[] = [
+      // flatLhs = __str_flatten(lhs)  (cheap ref.test+ref.cast identity when
+      // lhs is already flat, which it always is for this call's callers)
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: flattenIdx },
+      { op: "local.set", index: 2 },
+
+      // flatRhs = __str_flatten(rhs)
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: flattenIdx },
+      { op: "local.set", index: 3 },
+
+      // lhsLen = flatLhs.len
+      { op: "local.get", index: 2 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: 4 },
+
+      // rhsLen = flatRhs.len
+      { op: "local.get", index: 3 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 },
+      { op: "local.set", index: 5 },
+
+      // newLen = lhsLen + rhsLen
+      { op: "local.get", index: 4 },
+      { op: "local.get", index: 5 },
+      { op: "i32.add" },
+      { op: "local.set", index: 6 },
+
+      // lhsOff = flatLhs.off
+      { op: "local.get", index: 2 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+      { op: "local.set", index: 7 },
+
+      // data = flatLhs.data
+      { op: "local.get", index: 2 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+      { op: "local.set", index: 8 },
+
+      // cap = array.len(data)
+      { op: "local.get", index: 8 },
+      { op: "ref.as_non_null" },
+      { op: "array.len" },
+      { op: "local.set", index: 9 },
+
+      // if (cap >= newLen) && (lhsOff == 0)
+      { op: "local.get", index: 9 },
+      { op: "local.get", index: 6 },
+      { op: "i32.ge_s" },
+      { op: "local.get", index: 7 },
+      { op: "i32.eqz" },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: strRef },
+        then: [
+          // in-place append: array.copy(data, lhsLen, flatRhs.data, flatRhs.off, rhsLen)
+          { op: "local.get", index: 8 },
+          { op: "ref.as_non_null" },
+          { op: "local.get", index: 4 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+          { op: "local.get", index: 5 },
+          { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
+
+          // result = struct.new $NativeString(newLen, 0, data)
+          { op: "local.get", index: 6 },
+          { op: "i32.const", value: 0 },
+          { op: "local.get", index: 8 },
+          { op: "ref.as_non_null" },
+          { op: "struct.new", typeIdx: strTypeIdx },
+        ],
+        else: [
+          // newCap = __str_buf_next_cap(cap, newLen)
+          { op: "local.get", index: 9 },
+          { op: "local.get", index: 6 },
+          { op: "call", funcIdx: nextCapIdx },
+          { op: "array.new_default", typeIdx: strDataTypeIdx },
+          { op: "local.set", index: 10 },
+
+          // array.copy(newData, 0, data, lhsOff, lhsLen)
+          { op: "local.get", index: 10 },
+          { op: "ref.as_non_null" },
+          { op: "i32.const", value: 0 },
+          { op: "local.get", index: 8 },
+          { op: "ref.as_non_null" },
+          { op: "local.get", index: 7 },
+          { op: "local.get", index: 4 },
+          { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
+
+          // array.copy(newData, lhsLen, flatRhs.data, flatRhs.off, rhsLen)
+          { op: "local.get", index: 10 },
+          { op: "ref.as_non_null" },
+          { op: "local.get", index: 4 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 2 },
+          { op: "local.get", index: 3 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 1 },
+          { op: "local.get", index: 5 },
+          { op: "array.copy", dstTypeIdx: strDataTypeIdx, srcTypeIdx: strDataTypeIdx },
+
+          // result = struct.new $NativeString(newLen, 0, newData)
+          { op: "local.get", index: 6 },
+          { op: "i32.const", value: 0 },
+          { op: "local.get", index: 10 },
+          { op: "ref.as_non_null" },
+          { op: "struct.new", typeIdx: strTypeIdx },
+        ],
+      },
+    ];
+
+    pushDefinedFunc(ctx, funcIdx, {
+      name: "__str_concat_owned",
+      typeIdx,
+      locals: [
+        { name: "flatLhs", type: { kind: "ref_null", typeIdx: strTypeIdx } },
+        { name: "flatRhs", type: { kind: "ref_null", typeIdx: strTypeIdx } },
+        { name: "lhsLen", type: { kind: "i32" } },
+        { name: "rhsLen", type: { kind: "i32" } },
+        { name: "newLen", type: { kind: "i32" } },
+        { name: "lhsOff", type: { kind: "i32" } },
+        { name: "data", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
+        { name: "cap", type: { kind: "i32" } },
+        { name: "newData", type: { kind: "ref_null", typeIdx: strDataTypeIdx } },
+      ],
+      body,
+      exported: false,
+    });
+  }
 }
 
 /**

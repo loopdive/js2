@@ -137,6 +137,7 @@
     "dogfood:marked": "npx tsx tests/dogfood/marked-harness.mjs",
     "dogfood:clsx": "npx tsx tests/dogfood/clsx-harness.mjs",
     "dogfood:cookie": "npx tsx tests/dogfood/cookie-harness.mjs",
+    "generate:npm-compat": "npx tsx scripts/generate-npm-compat-report.mjs",
     "prepublishOnly": "pnpm run build",
     "refresh:benchmarks": "npx tsx --experimental-wasm-stringref --experimental-wasm-custom-descriptors benchmarks/run.ts && pnpm run build:compiler-bundle && node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar.mjs && node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar-no-jit.mjs && pnpm run generate:size-benchmarks && node scripts/generate-browser-runtime-benchmarks.mjs",
     "refresh:benchmarks:no-jit": "pnpm run build:compiler-bundle && node --experimental-wasm-stringref --experimental-wasm-custom-descriptors scripts/generate-playground-benchmark-sidebar-no-jit.mjs",

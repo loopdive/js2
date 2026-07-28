@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>js2wasm — Real npm Package Compatibility</title>
+    <meta
+      name="description"
+      content="Which real, pinned npm packages compile with js2wasm, how many of their tests pass, and how the compiled Wasm performs head-to-head against the same package running natively under Node."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #060a14;
+        --surface: rgba(255, 255, 255, 0.05);
+        --border: rgba(255, 255, 255, 0.12);
+        --fg: #ffffff;
+        --fg-soft: rgba(255, 255, 255, 0.68);
+        --fg-faint: rgba(255, 255, 255, 0.46);
+        --mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Consolas, monospace;
+        --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --pass: #3fb950;
+        --fail: #f85149;
+        --ce: #d29922;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--fg);
+        padding: 24px;
+        padding-top: 88px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 24px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .subtitle {
+        color: var(--fg-faint);
+        margin-bottom: 24px;
+        font-size: 14px;
+        max-width: 760px;
+      }
+      .subtitle a {
+        color: var(--fg-soft);
+      }
+      .legend-box {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        padding: 16px 20px;
+        margin-bottom: 24px;
+        font-size: 13px;
+        color: var(--fg-soft);
+        max-width: 760px;
+      }
+      .legend-box strong {
+        color: var(--fg);
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 0.9em;
+        color: var(--fg-soft);
+      }
+    </style>
+  </head>
+  <body>
+    <site-nav
+      base="./"
+      links='[{"label":"Home","href":"./"},{"label":"Get Started","href":"./getting-started/"},{"label":"Conformance Report","href":"./benchmarks/report.html"},{"label":"npm Packages","href":"./npm-compat.html"},{"label":"Blog","href":"./blog/"}]'
+    ></site-nav>
+
+    <h1>Real npm Package Compatibility</h1>
+    <p class="subtitle">
+      Every package here is compiled from the exact, pinned, published npm tarball — not a reimplementation or a
+      hand-picked snippet. Where a package's own real test suite is reproducible offline, that's what's reported; where
+      it isn't (npm strips <code>test/</code> from most published tarballs), a differential op-by-op comparison against
+      the same package running natively is reported instead, and the two are never conflated. Performance is the
+      compiled Wasm export measured head-to-head against the SAME pinned package running natively under Node — not a
+      synthetic micro-benchmark. See
+      <a href="https://github.com/loopdive/js2/tree/main/tests/dogfood" target="_blank" rel="noopener"
+        >tests/dogfood/</a
+      >
+      for the harnesses that produce this data.
+    </p>
+
+    <div class="legend-box">
+      <strong>How to read this:</strong> "Compiles" / "Validates" track whether js2wasm can turn the real package source
+      into a valid Wasm module at all. "Own test suite" means the package's actual, real tests are running against the
+      compiled output. "Differential ops" means a smaller, harness-authored set of representative calls is compared
+      instead — a real signal, but not the same as passing the package's own test suite. A divergence in either always
+      means a compiler bug, filed as its own issue and linked below — never worked around or hidden.
+    </div>
+
+    <npm-compat-chart src="./benchmarks/results/npm-compat.json"></npm-compat-chart>
+
+    <script type="module" src="./components/site-nav.js"></script>
+    <script type="module" src="./components/npm-compat-chart.js"></script>
+  </body>
+</html>

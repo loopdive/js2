@@ -31,9 +31,29 @@ async function compileNative(source: string): Promise<{ wat: string; binary: Uin
   return { wat, binary: result.binary };
 }
 
-/** Count of `__str_buf_next_cap` grow calls — zero means the presize fired. */
-function growCalls(wat: string): number {
-  return (wat.match(/call \$__str_buf_next_cap/g) || []).length;
+/**
+ * Isolate one exported function's own body text within the module WAT.
+ * Needed because `growCalls` must count grow calls WITHIN the function under
+ * test, not module-wide: unrelated native-string runtime helpers (e.g. the
+ * IR-only `__str_concat_owned`, #3744) also contain a static
+ * `call $__str_buf_next_cap` in their own body, which would otherwise read
+ * as a false "presize didn't fire" positive even though the tested function
+ * never calls it.
+ */
+function exportedFuncWat(wat: string, exportName: string): string {
+  const exportMatch = wat.match(new RegExp(`\\(export "${exportName}" \\(func (\\$[\\w.$]+)\\)\\)`));
+  if (!exportMatch) throw new Error(`export "${exportName}" not found in WAT`);
+  const funcRef = exportMatch[1]!.replace(/\$/, "\\$");
+  const startMatch = new RegExp(`^ \\(func ${funcRef} `, "m").exec(wat);
+  if (!startMatch) throw new Error(`func ${exportMatch[1]} body not found in WAT`);
+  const rest = wat.slice(startMatch.index);
+  const endMatch = /\n \)\n/.exec(rest);
+  return endMatch ? rest.slice(0, endMatch.index + endMatch[0].length) : rest;
+}
+
+/** Count of `__str_buf_next_cap` grow calls in `exportName`'s own body — zero means the presize fired. */
+function growCalls(wat: string, exportName = "run"): number {
+  return (exportedFuncWat(wat, exportName).match(/call \$__str_buf_next_cap/g) || []).length;
 }
 
 async function instantiate(binary: Uint8Array): Promise<WebAssembly.Exports> {
@@ -126,7 +146,7 @@ describe("#1761 — presize string-build buffer from static trip count", () => {
     `;
     const { wat, binary } = await compileNative(src);
     // i % 9 is a fixed-length (1-unit) charAt → presize fires.
-    expect(growCalls(wat)).toBe(0);
+    expect(growCalls(wat, "build")).toBe(0);
     const exports = await instantiate(binary);
     const build = exports.build as (n: number) => number;
 
