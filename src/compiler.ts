@@ -19,6 +19,11 @@ import { assertCodegenRegistrationsComplete } from "./codegen/shared.js";
 import { isFatalCodegenDiagnostic } from "./codegen/context/errors.js";
 import type { WasmModule } from "./ir/types.js";
 import {
+  findSmallestNodeAtPosition,
+  isBindingPatternFalsePositive,
+  isJsDefaultInferredParamFalsePositive,
+} from "./compiler/argument-diagnostics.js";
+import {
   buildImportManifest,
   checkJsTypeCoverage,
   DOWNGRADE_DIAG_CODES,
@@ -112,65 +117,6 @@ const HARD_TS_DIAG_CODES = new Set([
   1213, // "Identifier expected. 'X' is a reserved word in strict mode. Class definitions are automatically in strict mode."
   1214, // "Identifier expected. 'X' is a reserved word in strict mode. Modules are automatically in strict mode."
 ]);
-
-/**
- * #862: TypeScript infers `function f([,])` as `function f([,]: [any?])` — a tuple type.
- * A call site like `f(generator)` then trips TS2345 even though, in JS/TS at runtime,
- * a binding-pattern parameter destructures any iterable per ECMA-262 §13.3.3.6
- * (IteratorBindingInitialization). Suppress 2345 when the target parameter uses an
- * array/object binding pattern and lacks an explicit type annotation — the inferred
- * tuple type is a TypeScript fiction that does not reflect runtime semantics.
- */
-function isBindingPatternFalsePositive(diag: ts.Diagnostic, checker: ts.TypeChecker): boolean {
-  if (diag.code !== 2345) return false;
-  const file = diag.file;
-  if (!file || diag.start === undefined) return false;
-  const pos = diag.start;
-  function findNode(node: ts.Node): ts.Node | undefined {
-    if (pos < node.getStart(file) || pos >= node.getEnd()) return undefined;
-    let found: ts.Node = node;
-    node.forEachChild((child) => {
-      const inner = findNode(child);
-      if (inner) found = inner;
-    });
-    return found;
-  }
-  let n: ts.Node | undefined = findNode(file);
-  while (n && !ts.isCallExpression(n) && !ts.isNewExpression(n)) {
-    n = n.parent;
-  }
-  if (!n || !(ts.isCallExpression(n) || ts.isNewExpression(n))) return false;
-  const args = n.arguments;
-  if (!args) return false;
-  let argIdx = -1;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (pos >= a.getStart(file) && pos < a.getEnd()) {
-      argIdx = i;
-      break;
-    }
-  }
-  if (argIdx < 0) return false;
-  const sig = checker.getResolvedSignature(n);
-  if (!sig) return false;
-  const paramDecl = sig.getDeclaration()?.parameters?.[argIdx];
-  if (!paramDecl) return false;
-  if (paramDecl.type) return false; // explicit annotation — respect it
-  return ts.isArrayBindingPattern(paramDecl.name) || ts.isObjectBindingPattern(paramDecl.name);
-}
-
-function findSmallestNodeAtPosition(file: ts.SourceFile, pos: number): ts.Node | undefined {
-  function visit(node: ts.Node): ts.Node | undefined {
-    if (pos < node.getStart(file) || pos >= node.getEnd()) return undefined;
-    let found: ts.Node = node;
-    node.forEachChild((child) => {
-      const inner = visit(child);
-      if (inner) found = inner;
-    });
-    return found;
-  }
-  return visit(file);
-}
 
 function isDescendantOf(node: ts.Node, ancestor: ts.Node): boolean {
   let current: ts.Node | undefined = node;
@@ -545,6 +491,7 @@ function isInOperatorOperandDiagnostic(diag: ts.Diagnostic): boolean {
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
+  if (checker && isJsDefaultInferredParamFalsePositive(diag, checker)) return false;
   if (checker && isGuardedNullablePrimitiveDiagnostic(diag, checker)) return false;
   if (isProxyHandlerTrapDiagnostic(diag)) return false;
   if (isInOperatorOperandDiagnostic(diag)) return false;

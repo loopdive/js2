@@ -104,7 +104,10 @@ Global-scope evaluation only, deliberately excluding direct-eval scope capture
 - [x] An AOT function calls an interpreted function and vice versa with identical
       boxed-value identity (a `ref.eq` round-trip test).
 - [ ] ≥ 30 test262 eval-positive / Function-positive cases pass under the
-      standalone target.
+      standalone target. (Measured 2026-07-27 after E6 runner wiring: **11
+      attributable** official `eval-code` flips, 0 regressions — see the
+      "Official Test262 `eval-code` measurement" section for the named files
+      and the measured blockers for the rest.)
 - [x] A no-eval module stays within 5% of the current size floor; an
       eval-enabled module documents one measured parser+interpreter size figure.
 - [x] Opcode-set ADR committed under `docs/adr/`.
@@ -433,6 +436,121 @@ lexical capture remains #2929 and is not part of this handoff.
    provider corpus as official Test262 passes.
 5. Check the Test262 acceptance box only after at least 30 named official
    source files pass because of the linked interpreter route.
+
+## Implementation findings (E6 Test262-runner provider link, 2026-07-27)
+
+The ordinary standalone Test262 lane now links the runtime-eval provider.
+The wiring is deliberately thin and lives at the distribution seam, not in
+the compiler:
+
+- `scripts/runtime-eval-provider.mjs` — ONE shared source assembly (pinned
+  Acorn tarball via `tests/dogfood/setup-acorn.mjs` + import-clean
+  `src/interp/*` + the export wrapper proven by
+  `tests/issue-2928-runtime-link.test.ts`), the provider compile options,
+  a disk cache keyed by (source, options, compiler-bundle hash), and
+  fresh-per-test namespace instantiation.
+  `tests/interp/runtime-acorn-package-probe.mjs` consumes the same assembly,
+  so the artifact the harness proves and the artifact the runner links are
+  byte-identical (re-verified: 14/14 canaries, 2,513,425 bytes).
+- `scripts/build-runtime-eval-provider.mjs` — idempotent prebuild wired into
+  `run-test262-vitest.sh` for `TEST262_TARGET=standalone`. It canary-verifies
+  (eval/function/30-body corpus) BEFORE caching; a provider that cannot
+  evaluate `1 + 2` can never be published. Build cost ~71–81 s; cache hit
+  <1 s.
+- `scripts/test262-worker.mjs` — the standalone path goes Module-first; when
+  `WebAssembly.Module.imports()` names `js2wasm:runtime-eval`, the worker
+  links a FRESH provider instance (per-test isolation; instance ≈ 0.4 s,
+  Module compile ≈ 27 ms, once per worker). **Cache miss degrades to the
+  exact status quo** (unresolved import → LinkError): workers never compile
+  the provider, because Acorn compilation takes minutes and the pool kills
+  jobs at 30 s. `TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1` is the attribution
+  kill-switch — it byte-restores pre-wiring behavior for A/B runs.
+- CI chunk shards see a cache miss and keep status-quo behavior; publishing
+  the provider artifact for CI (through #2527 packaging) is follow-up work.
+
+Two measurement traps found and fixed/recorded on the way:
+
+1. **The authoritative command under-reports its own denominator on this
+   branch.** The per-test vitest timeout was a hardcoded 90 s that also
+   measures POOL-QUEUE wait. Once the provider made the annexB eval bodies
+   actually execute (slow — see finding 2), queued tests blew the 90 s and
+   vitest killed them WITHOUT a jsonl row: 202 of 816 files simply vanished
+   from the results (a file that PASSES in isolation was among the missing).
+   Fixed: `TEST262_IT_TIMEOUT_MS` env override (default unchanged at 90 s, CI
+   byte-identical); measurement sweeps pass it explicitly.
+2. **Newly-reachable interpreter executions are pathologically slow or hang**
+   (interpreter-side, out of E6 scope, needs its own issue): an eval body of
+   `if (false) ;` takes ~27 s before throwing through the linked route;
+   `if (false) ; else function f() { ... }` (the annexB function-in-if
+   family, ~100 files) never terminates and eats the 30 s pool timeout.
+   Simple bodies (`1 + 2`, `var`, `function f(){} f()`) run in <1 s. The
+   provider-side `__runtime_indirect_eval` returns instantly for the same
+   bodies when called with JS carriers, so the pathology is in the
+   native-carrier execution path.
+
+## Official Test262 `eval-code` measurement (E6 wiring, 2026-07-27)
+
+Three same-session arms on the same machine, same authoritative command
+(TEST262_TARGET=standalone, TEST262_PATH_FILTER='language/eval-code/',
+COMPILER_POOL_SIZE=2, TEST262_WORKERS=2, --official-scope-only), all with
+`TEST262_IT_TIMEOUT_MS=600000` (see finding 1 above — without it the branch
+arm silently loses 202 of its 816 rows):
+
+| Arm                                            | Run ID          | pass | fail | CE  | compile_timeout |
+| ---------------------------------------------- | --------------- | ---: | ---: | --: | --------------: |
+| control — `main` @ `81dbcad3b`                 | 20260727-020133 |  106 |  670 |  40 |               0 |
+| branch @ `4ac14aacb` + provider                | 20260727-013447 |  117 |  627 |  40 |              32 |
+| branch + `TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1` | 20260727-021328 |  106 |  670 |  40 |               0 |
+
+- The control **exactly reproduces the 2026-07-26 handoff baseline**
+  (106/816 = 105 standard + 1 annexB) — instrument validated.
+- The kill-switch arm is **status-identical to the control on all 816
+  files** — removing the provider injection alone reverts every delta, so
+  every delta is attributable to the linked interpreter route.
+- **11 files flip fail→pass (11 of the ≥30 acceptance bar), 0 regressions:**
+  - `test/annexB/language/eval-code/indirect/global-block-decl-eval-global-skip-early-err-block.js`
+  - `test/annexB/language/eval-code/indirect/global-block-decl-eval-global-skip-early-err-for.js`
+  - `test/annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-skip-early-err-block.js`
+  - `test/annexB/language/eval-code/indirect/global-if-decl-no-else-eval-global-skip-early-err-for.js`
+  - `test/language/eval-code/indirect/block-decl-strict.js`
+  - `test/language/eval-code/indirect/export.js`
+  - `test/language/eval-code/indirect/import.js`
+  - `test/language/eval-code/indirect/non-string-object.js`
+  - `test/language/eval-code/indirect/non-string-primitive.js`
+  - `test/language/eval-code/indirect/parse-failure-6.js`
+  - `test/language/eval-code/indirect/var-env-func-strict.js`
+
+  These are exactly the cases the Phase-1 interpreter can already decide:
+  correct SyntaxError refusal of invalid eval code (parse-failure, import/
+  export declarations, skip-early-err), strict/block-scoping negatives, and
+  §19.2.1's non-string pass-through.
+
+**Why the remaining candidates are blocked (measured on the branch arm, not
+estimated).** 595/816 are direct-eval files — out of scope by design
+(#2929). Of the 221 indirect files: 33 pass (22 pre-existing + 11 new),
+32 hang (→ `compile_timeout`; the annexB function-in-if emit hang recorded
+in finding 2), and 156 still fail with this signature breakdown:
+
+| count | blocking cause (verbatim signature class)                              |
+| ----: | ---------------------------------------------------------------------- |
+|    42 | `interp/emitter: unsupported in Phase 1: statement SwitchStatement`     |
+|    34 | `ReferenceError: assert is not defined` (interp global env cannot see the AOT module's harness globals) |
+|    18 | `ReferenceError: fnGlobalObject is not defined` (same bridging class)   |
+|     8 | `interp/emitter: unsupported ... ForOfStatement`                        |
+|     8 | `interp/emitter: unsupported ... ForInStatement`                        |
+|     8 | `SyntaxError: NaN` (error-message rendering defect in the thrown path)  |
+|    38 | assorted semantic gaps (SameValue mismatches, missing expected throws, null-property access) |
+
+So the two biggest levers toward the ≥30 bar are interpreter-side, not
+packaging-side: (a) AOT↔interp **global-binding bridging** (52 files fail
+purely because eval'd code can't resolve `assert`/harness globals), and
+(b) Phase-1 statement coverage (**SwitchStatement** alone gates 42, for-of/
+for-in another 16) plus the **if-statement hang/slowness** family (32 hangs;
+~27 s even for `if (false) ;`). The acceptance box stays unchecked; the E6
+packaging seam itself is done and measured working.
+
+Artifacts: `benchmarks/results/test262-standalone-results-20260727-{020133,013447,021328}.jsonl`
+(local machine; copies retained in the session workspace `.tmp/e6-*.jsonl`).
 
 ## Coercion-sites allowance (`src/codegen/expressions/eval-inline.ts`)
 

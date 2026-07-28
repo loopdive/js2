@@ -187,6 +187,15 @@ function getCachePaths(wrappedSource: string): { wasmPath: string; metaPath: str
 
 const POOL_SIZE = parseInt(process.env.COMPILER_POOL_SIZE || String(Math.max(1, availableParallelism() - 1)), 10);
 
+// (#2928 E6) Per-test vitest timeout. The 90s default measures POOL-QUEUE WAIT
+// as well as the test's own run: when a slow cluster occupies every pool worker
+// (e.g. interpreter-linked eval tests hitting the 30s pool timeout back to
+// back), queued tests blow this limit and vitest kills them WITHOUT a jsonl
+// row — the run silently under-reports its own denominator (measured: 202 of
+// 816 eval-code rows missing at 2 workers). Raise via env for slow-cluster
+// sweeps; the default stays 90s so CI behavior is unchanged.
+const IT_TIMEOUT_MS = parseInt(process.env.TEST262_IT_TIMEOUT_MS || "90000", 10);
+
 let pool: CompilerPool | null = null;
 
 // ── Compile-timeout retry (#1589) ──────────────────────────────────
@@ -1277,7 +1286,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               metadataFromWorkerResult(r, false),
             );
           },
-          90_000,
+          IT_TIMEOUT_MS,
         );
       }
     });

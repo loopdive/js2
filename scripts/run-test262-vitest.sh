@@ -175,6 +175,18 @@ fi
 "$ESBUILD_BIN" src/runtime.ts --bundle --platform=node --format=esm \
   --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen 2>&1 | tail -1
 
+# ── Prebuild the standalone runtime-eval provider (#2928 E6) ─────
+# Standalone modules that use dynamic eval / new Function link a core-Wasm
+# `js2wasm:runtime-eval` provider (Acorn + interpreter, compiled by js2wasm
+# itself). Build it ONCE here — the pool workers only load the cached binary
+# (compiling Acorn takes minutes; the per-test pool timeout is 30s). Idempotent:
+# cache hit exits in <1s. The cache lives in the shared .test262-cache, so
+# subsequent runs on the same compiler bundle skip the build entirely.
+if [ "$TEST262_TARGET" = "standalone" ]; then
+  echo "Prebuilding runtime-eval provider (#2928 E6)..."
+  NODE_OPTIONS="--max-old-space-size=3072" node scripts/build-runtime-eval-provider.mjs
+fi
+
 # ── Prepare result files ─────────────────────────────────────────
 # Vitest writes to timestamped ${RESULT_PREFIX}-results-YYYYMMDD-HHMMSS.jsonl directly.
 # RUN_TIMESTAMP env var tells test262-shared.ts which filename to use.

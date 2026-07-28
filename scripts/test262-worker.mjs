@@ -23,6 +23,17 @@ import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./
 // runner that was missing the tryNativeExnRender step.
 import { safeStringifyThrown, tryNativeExnRender } from "./lib/wasm-exn-render.mjs";
 import { SANDBOX_GLOBAL_NAMES } from "./test262-sandbox-globals.mjs";
+// (#2928 E6) Standalone runtime-eval provider — cached-binary loading + fresh
+// per-test namespace instantiation for `js2wasm:runtime-eval` imports.
+import {
+  RUNTIME_EVAL_IMPORT_MODULE,
+  buildRuntimeEvalProviderSource,
+  computeCompilerBundleHash,
+  defaultRuntimeEvalProviderCacheDir,
+  instantiateRuntimeEvalNamespace,
+  readCachedRuntimeEvalProvider,
+  runtimeEvalProviderCacheKey,
+} from "./runtime-eval-provider.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -49,6 +60,48 @@ function computeBundleHash() {
   return "no-bundle";
 }
 const BUNDLE_HASH = computeBundleHash();
+
+// ── Standalone runtime-eval provider (#2928 E6) ────────────────────────
+// A standalone module whose ONLY dynamic-code dependency is the core-Wasm
+// `js2wasm:runtime-eval` namespace links against a separately compiled
+// Acorn+interpreter provider. The provider binary is PREBUILT into
+// .test262-cache by scripts/build-runtime-eval-provider.mjs (wired into
+// run-test262-vitest.sh for TEST262_TARGET=standalone); the worker only ever
+// LOADS the cached binary — compiling Acorn takes minutes and the pool kills
+// jobs at 30s, so a cache miss deliberately degrades to the status quo
+// (unresolved import → LinkError), never an in-worker compile.
+// TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1 is the measurement kill-switch:
+// it restores the exact pre-wiring behavior for A/B attribution runs.
+let runtimeEvalProviderModule; // undefined = untried, null = unavailable
+let runtimeEvalProviderNoteShown = false;
+function getRuntimeEvalProviderModule() {
+  if (runtimeEvalProviderModule !== undefined) return runtimeEvalProviderModule;
+  runtimeEvalProviderModule = null;
+  if (process.env.TEST262_DISABLE_RUNTIME_EVAL_PROVIDER === "1") return null;
+  try {
+    const source = buildRuntimeEvalProviderSource();
+    const key = runtimeEvalProviderCacheKey(source, computeCompilerBundleHash());
+    const binary = readCachedRuntimeEvalProvider(defaultRuntimeEvalProviderCacheDir(), key);
+    if (!binary) {
+      if (!runtimeEvalProviderNoteShown) {
+        runtimeEvalProviderNoteShown = true;
+        console.error(
+          `[test262-worker] runtime-eval provider cache MISS (key ${key}) — standalone dynamic-eval ` +
+            `tests keep failing at link; prebuild with scripts/build-runtime-eval-provider.mjs`,
+        );
+      }
+      return null;
+    }
+    runtimeEvalProviderModule = new WebAssembly.Module(binary);
+  } catch (err) {
+    if (!runtimeEvalProviderNoteShown) {
+      runtimeEvalProviderNoteShown = true;
+      console.error(`[test262-worker] runtime-eval provider unavailable: ${err?.message ?? err}`);
+    }
+    runtimeEvalProviderModule = null;
+  }
+  return runtimeEvalProviderModule;
+}
 
 // (#3441) The sandbox-globals list is now the single shared source in
 // scripts/test262-sandbox-globals.mjs — imported by BOTH this worker and
@@ -1769,8 +1822,25 @@ process.on("message", async (msg) => {
     }
 
     try {
-      const wasmResult = await WebAssembly.instantiate(result.binary, importObj);
-      instance = wasmResult.instance;
+      if (target === "standalone") {
+        // (#2928 E6) Module-first so the import list is inspectable before
+        // instantiation. A synchronous CompileError here lands in the same
+        // catch arm as the old binary-form instantiate — classification is
+        // unchanged. When the module links `js2wasm:runtime-eval`, supply a
+        // FRESH provider instance (per-test isolation: the interpreter roots
+        // dynamic functions at global env records).
+        const wasmModule = new WebAssembly.Module(result.binary);
+        if (WebAssembly.Module.imports(wasmModule).some((imp) => imp.module === RUNTIME_EVAL_IMPORT_MODULE)) {
+          const providerModule = getRuntimeEvalProviderModule();
+          if (providerModule) {
+            importObj[RUNTIME_EVAL_IMPORT_MODULE] = instantiateRuntimeEvalNamespace(providerModule);
+          }
+        }
+        instance = await WebAssembly.instantiate(wasmModule, importObj);
+      } else {
+        const wasmResult = await WebAssembly.instantiate(result.binary, importObj);
+        instance = wasmResult.instance;
+      }
     } catch (err) {
       const execMs = performance.now() - execStart;
       // Real Wasm compile/link failures stay as compile_error. A throw from
