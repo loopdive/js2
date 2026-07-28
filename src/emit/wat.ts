@@ -117,7 +117,7 @@ export function escapeWatString(s: string): string {
 }
 
 /** Emit a WAT text representation of the IR module */
-export function emitWat(mod: WasmModule): string {
+export function emitWat(mod: WasmModule, opts?: { onlyFunctions?: Set<string> }): string {
   const lines: string[] = [];
   const indent = (depth: number) => "  ".repeat(depth);
   const inlineableTypes = computeInlineableTypes(mod);
@@ -197,6 +197,7 @@ export function emitWat(mod: WasmModule): string {
 
   for (let i = 0; i < mod.functions.length; i++) {
     const f = mod.functions[i]!;
+    if (opts?.onlyFunctions && !opts.onlyFunctions.has(f.name)) continue;
     lines.push(formatFunction(f, i + numImportFuncs, mod, inlineableTypes));
   }
 

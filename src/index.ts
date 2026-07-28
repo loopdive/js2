@@ -279,6 +279,16 @@ export interface ImportPolicy {
 export interface CompileOptions {
   /** Emit WAT debug output (default: true) */
   emitWat?: boolean;
+  /**
+   * Debug-only: when set, WAT emission only formats functions whose Wasm
+   * name is in this set (plus types/imports/globals for context), skipping
+   * the rest. Full-module `emitWat` can throw "Invalid string length" on
+   * very large graphs (multi-thousand-function compileProject outputs);
+   * this lets a caller recover just the function(s) it actually needs to
+   * inspect (e.g. the one named in a WebAssembly.Module() validation
+   * error) without paying for or risking the full-module string build.
+   */
+  emitWatOnlyFunctions?: string[];
   /** Module name (for debugging) */
   moduleName?: string;
   /** Generate source map (default: false) */
