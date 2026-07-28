@@ -59,12 +59,15 @@ export function functionDeclarationKeyAtIdentifier(ctx: CodegenContext, identifi
     }
   }
   const declarations = [symbol?.valueDeclaration, ...(symbol?.declarations ?? [])];
-  for (const declaration of declarations) {
-    if (declaration && ts.isFunctionDeclaration(declaration)) {
-      const key = ctx.functionDeclKeys.get(declaration);
-      if (key) return key;
-    }
-  }
+
+  // Synthetic nodes (transform-created receivers such as an inlined `this`)
+  // have no parent chain, so `getSourceFile()` returns undefined. The
+  // AST-structure recovery below walks the source file; without this guard it
+  // called `ts.isFunctionDeclaration(undefined)` and crashed 104 test262
+  // compiles ("Cannot read properties of undefined (reading 'kind')" — the
+  // #3687 merge_group park).
+  const sourceFile: ts.SourceFile | undefined = identifier.getSourceFile();
+  if (sourceFile === undefined) return undefined;
 
   // JavaScript files without an explicit import/export are checker "scripts",
   // so TypeScript merges their top-level bindings into one program-wide
@@ -75,7 +78,16 @@ export function functionDeclarationKeyAtIdentifier(ctx: CodegenContext, identifi
   // lexical declaration. Recover it only when the checker supplied no
   // declaration from this source file; a genuine same-file variable/parameter
   // shadow must continue to win.
-  const sourceFile = identifier.getSourceFile();
+  //
+  // The same-file variable veto must run BEFORE the checker loop below, not
+  // only before the AST recovery: when the checker MERGES a `var f` with a
+  // hoisted `function f` in the same scope (Annex B function-in-block,
+  // sloppy-mode `var`+decl pairs), JavaScript reads go through the VARIABLE
+  // binding — its current value, not the declaration's closure. Preferring the
+  // function key here made `f` reads return the stale function after
+  // `f = 123`-style updates (the annexB *-func-existing-var-update family in
+  // the #3687 merge_group park). Cross-module merges are unaffected: the
+  // veto requires a same-file declaration that lexically scopes the read.
   const declarationScopeContainsIdentifier = (declaration: ts.Declaration): boolean => {
     let scope: ts.Node | undefined = declaration.parent;
     while (
@@ -102,6 +114,13 @@ export function functionDeclarationKeyAtIdentifier(ctx: CodegenContext, identifi
     )
   ) {
     return undefined;
+  }
+
+  for (const declaration of declarations) {
+    if (declaration && ts.isFunctionDeclaration(declaration)) {
+      const key = ctx.functionDeclKeys.get(declaration);
+      if (key) return key;
+    }
   }
 
   let lexicalMatch: { key: string; span: number } | undefined;
@@ -185,7 +204,39 @@ export function moduleGlobalAtIdentifier(ctx: CodegenContext, identifier: ts.Ide
       // Applying the realm-wide live-name exception here let an unrelated
       // reassigned `m` route esquery's lexically resolved helper `m()` through
       // the numeric `ms` package global, producing invalid Wasm.
-      return undefined;
+      //
+      // EXCEPTION (#3687 merge_group park): `moduleGlobalDeclarations` is not
+      // a complete inventory. Legacy promotion paths (TDZ hoisting of
+      // top-level let/const, closure-capture promotion, Annex B var hoisting)
+      // create `moduleGlobals` entries WITHOUT registering the declaration,
+      // so a blanket refusal turned single-file reads of those bindings into
+      // undeclared-identifier fallbacks (test262's `let length = "outer"`
+      // dstr family read «0»). When the symbol has a variable-like
+      // declaration at TOP LEVEL of the identifier's OWN source file, the
+      // flat-map entry is that same-file binding's promoted global — allow
+      // it. Both qualifiers are load-bearing: a FUNCTION-only symbol must
+      // keep refusing (the nested-`m()`-vs-numeric-`ms` steal), and a
+      // same-file but function-LOCAL variable must too — esquery's
+      // factory-local array `s` is exactly that, and admitting it re-adopted
+      // the `ms` package's top-level numeric `s` as an array receiver
+      // (struct.get[0] expected (ref null 2), found global.get of type f64).
+      // Function-local bindings are never legacy-promoted into
+      // `moduleGlobals`; only top-level ones are.
+      const idFile = identifier.getSourceFile();
+      const isTopLevel = (d: ts.Declaration): boolean => {
+        let n: ts.Node | undefined = d.parent;
+        while (n !== undefined && !ts.isSourceFile(n)) {
+          if (ts.isFunctionLike(n)) return false;
+          n = n.parent;
+        }
+        return n !== undefined;
+      };
+      const hasSameFileTopLevelVariableDecl =
+        idFile !== undefined &&
+        [symbol.valueDeclaration, ...(symbol.declarations ?? [])].some(
+          (d) => d !== undefined && !ts.isFunctionDeclaration(d) && d.getSourceFile() === idFile && isTopLevel(d),
+        );
+      if (!hasSameFileTopLevelVariableDecl) return undefined;
     }
   } catch {
     // Synthetic nodes may not be attached to the checker program.
