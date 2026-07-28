@@ -1723,8 +1723,47 @@ export function compileIdentifierCall(
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable);
       if (dyn !== null) return dyn;
 
-      // Graceful fallback for unknown functions — compile arguments (for side effects)
+      // (#1400) Before giving up, try the host `__call_function` arm for a
+      // callee that may hold a HOST function. Without this the fallback below
+      // silently does not call it and evaluates to null — `util.deprecate(fn,
+      // "msg")()` returned null instead of invoking the wrapped function in the
+      // ESLint graph. This is reachable only when the callee has NO call
+      // signatures (an untyped host value); the typed path above already has
+      // its own host arm.
+      // A `calleeMayBeHostCallable` binding is the narrow, well-understood case.
+      // But ANY known variable holding an externref can hold a host function at
+      // runtime — notably a value re-exported by a compiled CommonJS module
+      // (`module.exports = util.deprecate(fn, msg)`), where the checker gives no
+      // call signature. Dropping the call there is never right: if the value IS
+      // callable the host calls it, and if it is NOT, the host throws the
+      // spec-correct `TypeError: x is not a function` instead of silently
+      // yielding null. Only the host-free lanes keep the old fallback, since
+      // they have no host to dispatch through.
+      if (isKnownVariable && !ctx.standalone && !noJsHost(ctx)) {
+        const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
+        if (hostCall !== null) return hostCall;
+      }
+
+      // Fallback for unknown functions — compile arguments (for side effects)
       // then emit ref.null extern (undefined) as the return value.
+      //
+      // (#1400) This path DOES NOT CALL ANYTHING. It is a correctness cliff:
+      // the program keeps running and the call expression evaluates to null, so
+      // a miscompile surfaces as a wrong VALUE somewhere far away rather than
+      // as a failure here. `util.deprecate(fn, "msg")()` returned null this way
+      // in the ESLint graph, with no diagnostic at all. Say so out loud —
+      // callers can then see the dropped call instead of debugging a phantom
+      // null downstream.
+      reportError(
+        ctx,
+        expr,
+        `Call to '${sourceName}' in ${expr.getSourceFile()?.fileName ?? "?"} was not compiled: ` +
+          `the callee has no resolvable call signature and no host-callable ` +
+          `fallback applied, so the call is DROPPED and the expression evaluates to null. ` +
+          `This is a miscompile, not a runtime condition — if '${sourceName}' holds a host function, it needs the ` +
+          `__call_function arm (see calleeMayBeHostCallable); if it holds a compiled closure, it needs a resolvable type.`,
+        "warning",
+      );
       for (const arg of expr.arguments) {
         const argType = compileExpression(ctx, fctx, arg);
         if (argType) {
