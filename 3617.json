@@ -1,8 +1,9 @@
 {
   "id": "3617",
   "assignee": "ttraenkler/codex-es5-3617",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3617-standalone-fnctor-constructor",
   "claimed_at": "2026-07-28T20:54:09Z",
-  "updated_at": "2026-07-28T20:54:09Z"
+  "updated_at": "2026-07-28T21:16:52Z",
+  "released_at": "2026-07-28T21:16:52Z"
 }
