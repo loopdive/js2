@@ -1158,7 +1158,16 @@ export function compileTaggedTemplateExpression(
       const tdzFlaggedNested = nestedCaptures ? nestedCaptures.filter((c) => c.hasTdzFlag) : [];
       if (nestedCaptures) {
         for (const cap of nestedCaptures) {
-          fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+          // `cap.outerLocalIdx` addresses the DECLARING frame. A lifted nested
+          // function's own body (e.g. `f` recursing via `` f`${n-1}` `` — the
+          // test262 tagged-template tco-member case) compiles this same call
+          // with a different frame where that index can be out of range; the
+          // capture is then addressable by NAME (its prepended param).
+          // Mirrors call-identifier.ts's captureLocalIndex (#3687 park).
+          const localCount = fctx.params.length + fctx.locals.length;
+          const inRange = cap.outerLocalIdx >= 0 && cap.outerLocalIdx < localCount;
+          const index = inRange ? cap.outerLocalIdx : (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx);
+          fctx.body.push({ op: "local.get", index });
         }
         // #1205 Stage 3: after all value captures, push the boxed TDZ-flag refs.
         // Minimal replication of call-identifier.ts's cap-prepend (kept gated so
