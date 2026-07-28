@@ -1,8 +1,9 @@
 {
   "id": "3767",
   "assignee": "ttraenkler/codex-es5-bind-iscallable",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3767-standalone-bind-iscallable",
   "claimed_at": "2026-07-28T17:33:19Z",
-  "updated_at": "2026-07-28T17:33:19Z"
+  "updated_at": "2026-07-28T17:51:38Z",
+  "released_at": "2026-07-28T17:51:38Z"
 }
