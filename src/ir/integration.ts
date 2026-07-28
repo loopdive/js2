@@ -2678,7 +2678,7 @@ function computeStringBackend(ctx: CodegenContext): StringBackendIndices {
   if (ctx.nativeStrings) {
     for (let i = 0; i < ctx.mod.functions.length; i++) {
       const f = ctx.mod.functions[i]!;
-      if (f.name === "__str_concat" || f.name === "__str_equals") {
+      if (f.name === "__str_concat" || f.name === "__str_equals" || f.name === "__str_concat_owned") {
         nativeHelpers.set(f.name, ctx.numImportFuncs + i);
       }
     }
@@ -3121,6 +3121,10 @@ function makeResolver(
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
   let dynamicLoweringMemo: IrDynamicLowering | null | undefined;
+  const bindCallableProvider = (ref: IrFuncRef, index: number): number =>
+    ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic"
+      ? (ctx.programAbiCallableProviders?.observe(ref, index) ?? index)
+      : index;
   return {
     resolveFunc(ref: IrFuncRef): number {
       if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "function") {
@@ -3188,13 +3192,19 @@ function makeResolver(
           `ir/integration: exact function import ${ref.binding.module}.${ref.binding.field} lost its allocator object`,
         );
       }
+      if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
+        const exactProviderIdx = ctx.programAbiCallableProviders?.resolveCurrentIndex(ref);
+        if (exactProviderIdx !== undefined) return exactProviderIdx;
+      }
       // #2945 — `%` lowers to a call of the Wasm-native exact-fmod helper.
       // Materialize it on demand: `ensureFmod` is idempotent (funcMap-cached)
       // and appends a DEFINED function (never an import), so no existing
       // funcIdx shifts — same append-only discipline as the IR's own closure
       // functions. On-demand keeps the helper out of modules that never use
       // `%` (parity with legacy, which also emits it lazily).
-      if (ref.binding.kind === "intrinsic" && ref.binding.symbol === FMOD_FN) return ensureFmod(ctx);
+      if (ref.binding.kind === "intrinsic" && ref.binding.symbol === FMOD_FN) {
+        return bindCallableProvider(ref, ensureFmod(ctx));
+      }
       // (#2856 C2) `__vec_elem_set_<vecTypeIdx>` — element-store helper with
       // full legacy grow semantics. Materialized on demand, same append-only
       // defined-function discipline as `ensureFmod` (never an import, no
@@ -3205,7 +3215,7 @@ function makeResolver(
         if (helperIdx === null) {
           throw new Error(`ir/integration: cannot materialize ${ref.name} (not a recognisable vec struct)`);
         }
-        return helperIdx;
+        return bindCallableProvider(ref, helperIdx);
       }
       // (#3156) Guarded charCodeAt helpers — materialized on demand, same
       // append-only defined-function discipline as ensureFmod (never an
@@ -3220,14 +3230,14 @@ function makeResolver(
         if (helperIdx === null) {
           throw new Error(`ir/integration: cannot materialize ${ref.name} (wasm:js-string builtins not registered)`);
         }
-        return helperIdx;
+        return bindCallableProvider(ref, helperIdx);
       }
       if (ref.binding.kind === "intrinsic" && ref.binding.symbol === NATIVE_CHARCODEAT_FN) {
         const helperIdx = ensureNativeCharCodeAtHelper(ctx);
         if (helperIdx === null) {
           throw new Error(`ir/integration: cannot materialize ${ref.name} (native-string helpers unavailable)`);
         }
-        return helperIdx;
+        return bindCallableProvider(ref, helperIdx);
       }
       // (#3167) String relational compare helper. Resolve mode-appropriately:
       //   native/WASI → the `__str_compare` defined helper (idempotently
@@ -3247,15 +3257,17 @@ function makeResolver(
           // Re-resolve by name against the post-shift function table (the
           // helper map's captured index can predate later import inserts).
           for (let i = 0; i < ctx.mod.functions.length; i++) {
-            if (ctx.mod.functions[i]!.name === "__str_compare") return ctx.numImportFuncs + i;
+            if (ctx.mod.functions[i]!.name === "__str_compare") {
+              return bindCallableProvider(ref, ctx.numImportFuncs + i);
+            }
           }
-          return helperIdx;
+          return bindCallableProvider(ref, helperIdx);
         }
         const hostIdx = ctx.funcMap.get("string_compare");
         if (hostIdx === undefined) {
           throw new Error(`ir/integration: cannot resolve ${ref.name} (host string_compare import not registered)`);
         }
-        return hostIdx;
+        return bindCallableProvider(ref, hostIdx);
       }
       const adapterName =
         ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic"
@@ -3264,7 +3276,7 @@ function makeResolver(
             ? ref.binding.field
             : ref.name;
       const idx = ctx.funcMap.get(adapterName);
-      if (idx !== undefined) return idx;
+      if (idx !== undefined) return bindCallableProvider(ref, idx);
       // Slice 6 part 4 (#1183): native-string helpers (`__str_charAt`,
       // `__str_concat`, `__str_equals`, `__str_flatten`, etc.) are
       // registered in `ctx.nativeStrHelpers`, not `ctx.funcMap`. The
@@ -3274,14 +3286,14 @@ function makeResolver(
       // `computeStringBackend`'s rationale for the host string ops).
       for (let i = 0; i < ctx.mod.functions.length; i++) {
         if (ctx.mod.functions[i]!.name === adapterName) {
-          return ctx.numImportFuncs + i;
+          return bindCallableProvider(ref, ctx.numImportFuncs + i);
         }
       }
       // Last fallback: the (potentially stale) helpers map. Used when
       // a name doesn't appear in `ctx.mod.functions` because it's a
       // host import rather than a defined helper.
       const helperIdx = ctx.nativeStrHelpers.get(adapterName);
-      if (helperIdx !== undefined) return helperIdx;
+      if (helperIdx !== undefined) return bindCallableProvider(ref, helperIdx);
       throw new IrInvariantError("unknown-function-ref", "lower", `ir/integration: unknown function ref "${ref.name}"`);
     },
     resolveGlobal(ref: IrGlobalRef): number {
@@ -3466,8 +3478,15 @@ function makeResolver(
       }
       return [{ op: "global.get", index: globalIdx }];
     },
-    emitStringConcat(): readonly Instr[] {
+    emitStringConcat(_alloc, mode): readonly Instr[] {
       if (ctx.nativeStrings) {
+        // (#3744) `owned-append` — the builder-loop license computed by
+        // `collectOwnedStringAppendSymbols`; see src/ir/string-builder-shape.ts.
+        // Unregistered helper falls through to general concat (correctness first).
+        if (mode === "owned-append") {
+          const ownedIdx = stringBackend.nativeHelpers.get("__str_concat_owned");
+          if (ownedIdx !== undefined) return [{ op: "call", funcIdx: ownedIdx }];
+        }
         const idx = stringBackend.nativeHelpers.get("__str_concat");
         if (idx === undefined) {
           throw new Error("ir/integration: __str_concat helper not registered");

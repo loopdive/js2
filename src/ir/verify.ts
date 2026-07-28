@@ -1331,6 +1331,12 @@ function binopResultKind(op: import("./nodes.js").IrBinop): ValType["kind"] | nu
     case "js.shr_s":
     case "js.shr_u":
       return null;
+    // (#3758) native i32 arithmetic — genuine i32 values (not bool), but the
+    // `ValType.kind` is still "i32" like every other i32-domain binop below.
+    case "i32.add":
+    case "i32.sub":
+    case "i32.mul":
+      return "i32";
     default:
       // All remaining binops are comparisons / i32 logical → i32 (bool).
       return "i32";

@@ -20,6 +20,7 @@ import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { commitClassStructLayout } from "./class-layout-registration.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) resolve handles for order-stable declaredFuncRefs sort
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
@@ -915,8 +916,7 @@ export function collectClassDeclaration(
   if (parentStructTypeIdx !== undefined) {
     structDef.superTypeIdx = parentStructTypeIdx;
   }
-  ctx.mod.types[structTypeIdx] = structDef;
-  ctx.structFields.set(className, fields);
+  commitClassStructLayout(ctx, decl, className, structTypeIdx, structDef, fields);
 
   // Register a prototype singleton global (externref, lazily initialized)
   // Used by ClassName.prototype and Object.getPrototypeOf(instance).

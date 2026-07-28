@@ -166,10 +166,38 @@ const CORPUS_2D: Array<{ p: string; f: string; inputs: string[] }> = [
   { p: "(?i:[a-c])x", f: "", inputs: ["Bx", "dx"] }, // class folding under modifier
 ];
 
+/**
+ * (#3746) These suites use the HOST `RegExp` as their oracle, so a case is only
+ * meaningful when the host can parse the pattern at all. Inline modifiers
+ * (`(?i:…)`, ES2025 regexp-modifiers) reached V8 after Node 22 — on
+ * v22.22.2 `new RegExp("(?i:abc)")` throws `Invalid group`, and the ~37 cases
+ * below failed on the ORACLE, not on our pipeline.
+ *
+ * Skipping when unsupported rather than deleting: the cases are correct and
+ * become live the moment the runtime gains modifiers, and a hard-coded version
+ * check would rot. Asking the engine is the durable form of the question.
+ */
+const HOST_SUPPORTS_INLINE_MODIFIERS = (() => {
+  try {
+    // biome-ignore lint/complexity/useRegexLiterals: a /(?i:a)/ literal is a parse-time SyntaxError on hosts without inline modifiers — the constructor defers it to runtime so try/catch can probe
+    new RegExp("(?i:a)");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+function patternUsesInlineModifiers(pattern: string): boolean {
+  // `(?i:` / `(?-i:` / `(?im-s:` … — a group opener carrying flag letters.
+  return /\(\?[a-z]*-?[a-z]*:/.test(pattern) && /\(\?[dgimsuvy]+[-:]|\(\?-[dgimsuvy]+/.test(pattern);
+}
+
 describe("#1911 Phase 2d Slice A pipeline vs native RegExp", () => {
   for (const { p, f, inputs } of CORPUS_2D) {
     for (const input of inputs) {
-      it(`/${p}/${f} on ${JSON.stringify(input)}`, () => {
+      const needsModifiers = patternUsesInlineModifiers(p);
+      const runIt = needsModifiers && !HOST_SUPPORTS_INLINE_MODIFIERS ? it.skip : it;
+      runIt(`/${p}/${f} on ${JSON.stringify(input)}`, () => {
         expect(ourMatch(p, f, input)).toEqual(nativeMatch(p, f, input));
       });
     }

@@ -22,7 +22,79 @@ async function run(body: string): Promise<any> {
   return wrapExports(instance.exports, { signatures: result.exportSignatures });
 }
 
+async function runStandalone(body: string): Promise<number> {
+  const src = `export function test(): number { ${body} }`;
+  const result = await compile(src, {
+    fileName: "test.ts",
+    target: "standalone",
+    skipSemanticDiagnostics: true,
+  } as any);
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(result.imports).toEqual([]);
+  expect(WebAssembly.validate(result.binary)).toBe(true);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  return (instance.exports.test as () => number)();
+}
+
 describe("#2666 — base[prop] compound-assign ToPropertyKey once + eval order", () => {
+  it("evaluates the key expression, then rejects a null base before ToPropertyKey or the RHS", async () => {
+    const exp = await run(
+      `var keyCalls = 0; var toStringCalls = 0; var rhsCalls = 0;
+       var base: any = null;
+       function key(): any {
+         keyCalls++;
+         return { toString() { toStringCalls++; return "x"; } };
+       }
+       function rhs(): number { rhsCalls++; return 2; }
+       var isTypeError = 0;
+       try { base[key()] *= rhs(); } catch (e) { isTypeError = e instanceof TypeError ? 1 : 0; }
+       return keyCalls * 1000 + toStringCalls * 100 + rhsCalls * 10 + isTypeError;`,
+    );
+    expect(exp.test()).toBe(1001);
+  });
+
+  it("rejects an undefined base before ToPropertyKey or the RHS", async () => {
+    const exp = await run(
+      `var toStringCalls = 0; var rhsCalls = 0;
+       var base: any = undefined;
+       var key: any = { toString() { toStringCalls++; return "x"; } };
+       function rhs(): number { rhsCalls++; return 2; }
+       var isTypeError = 0;
+       try { base[key] += rhs(); } catch (e) { isTypeError = e instanceof TypeError ? 1 : 0; }
+       return toStringCalls * 100 + rhsCalls * 10 + isTypeError;`,
+    );
+    expect(exp.test()).toBe(1);
+  });
+
+  it("applies the same nullish-base ordering to computed-key update expressions", async () => {
+    const exp = await run(
+      `var keyCalls = 0; var toStringCalls = 0;
+       var base: any = null;
+       function key(): any {
+         keyCalls++;
+         return { toString() { toStringCalls++; return "x"; } };
+       }
+       var isTypeError = 0;
+       try { ++base[key()]; } catch (e) { isTypeError = e instanceof TypeError ? 1 : 0; }
+       return keyCalls * 100 + toStringCalls * 10 + isTypeError;`,
+    );
+    expect(exp.test()).toBe(101);
+  });
+
+  it("preserves the nullish-base ordering in the host-free standalone lowering", async () => {
+    await expect(
+      runStandalone(
+        `var toStringCalls = 0; var rhsCalls = 0;
+         var base: any = undefined;
+         var key: any = { toString() { toStringCalls++; return "x"; } };
+         function rhs(): number { rhsCalls++; return 2; }
+         var isTypeError = 0;
+         try { base[key] += rhs(); } catch (e) { isTypeError = e instanceof TypeError ? 1 : 0; }
+         return toStringCalls * 100 + rhsCalls * 10 + isTypeError;`,
+      ),
+    ).resolves.toBe(1);
+  });
+
   it("a side-effecting computed key is ToPropertyKey'd exactly ONCE", async () => {
     const exp = await run(
       `var n = 0; var o: any = { x: 1 };

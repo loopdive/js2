@@ -18,9 +18,11 @@ files:
     new: []
     breaking: []
 ---
+
 # #374 -- Miscellaneous small patterns
 
 ## Status: in-review
+
 Catch-all for remaining small test262 skip patterns (42 tests total).
 
 ## Details
@@ -47,6 +49,7 @@ Each sub-pattern is small enough that it doesn't warrant its own issue, but coll
 ## Complexity: L (many small fixes)
 
 ## Acceptance criteria
+
 - [x] At least 10 of the 42 tests are fixed (6 skip filters removed: 2 unary empty string + 4 named function expression)
 - [x] No regressions in existing tests
 - [x] Each sub-pattern documented in implementation notes
@@ -56,23 +59,27 @@ Each sub-pattern is small enough that it doesn't warrant its own issue, but coll
 ### Changes made
 
 **1. Unary +/- on empty string (2 skip filters removed)**
+
 - The `+""` case was already handled by `tryStaticToNumber` (returns `Number("") = 0`)
 - For `-""`, added static resolution via `tryStaticToNumber` to the MinusToken case in `compilePrefixUnary`
 - This also simplified the MinusToken handler: the old null/undefined special-case checks are now subsumed by the general `tryStaticToNumber` call (which already handles null->0, undefined->NaN, booleans, etc.)
 - Removed the skip filter in test262-runner.ts
 
 **2. Named function expression reassignment (4 skip filters removed)**
+
 - Added `readOnlyBindings?: Set<string>` field to `FunctionContext` interface
 - When compiling a named function expression, the function name is added to `liftedFctx.readOnlyBindings`
 - In `compileAssignment`, if the LHS identifier is in `readOnlyBindings`, the RHS is compiled (for side effects) but the assignment is silently dropped -- matching JS sloppy mode semantics
 - Removed the skip filter in test262-runner.ts
 
 **3. Math.round(-0.5) -- investigated but not fixed**
+
 - The Math.round implementation logic is correct (copysign preserves -0)
 - The pre-existing failure is caused by fast mode (i32) where Math.round returns i32, and integer division `1/0` can't produce `-Infinity`
 - This is a general fast-mode issue, not specific to Math.round
 
 ### Files changed
+
 - `src/codegen/expressions.ts` -- static resolution in MinusToken case, read-only binding check in compileAssignment
 - `src/codegen/index.ts` -- added `readOnlyBindings` field to FunctionContext
 - `tests/test262-runner.ts` -- removed 2 skip filters

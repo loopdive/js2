@@ -12,6 +12,7 @@ import {
 } from "../ir/program-abi.js";
 import {
   canonicalProgramAbiCallableTypeContract,
+  canonicalProgramAbiTypeDef,
   canonicalProgramAbiValType,
   cloneProgramAbiCallableTypeContract,
   cloneProgramAbiValType,
@@ -645,6 +646,11 @@ export class ProgramAbiSession {
     return locator !== undefined && (allocatorObject === undefined || locatorObject(locator) === allocatorObject);
   }
 
+  /** Return the canonical ABI binding that already owns an exact allocator object. */
+  locatorBindingId(allocatorObject: object): IrBindingId | undefined {
+    return this.locatorOwners.get(allocatorObject);
+  }
+
   registerStructuralReference(id: IrBindingId, key: string): void {
     this.assertOpen(`register structural reference for ${id}`);
     this.assertStructuralReference(id, key, true);
@@ -1169,6 +1175,15 @@ export class ProgramAbiSession {
           mutable: contract.mutable,
         },
       });
+    }
+    if ((draft.intent.kind === "type" || draft.intent.kind === "class") && draft.slotPolicy === "required") {
+      const locator = this.locators.get(draft.id);
+      if (locator?.kind !== "type-cell" || locator.cell.current === null) return draft;
+      const shapeKey = canonicalProgramAbiTypeDef(locator.cell.current);
+      return cloneDraft({
+        ...draft,
+        intent: draft.intent.kind === "type" ? { ...draft.intent, shapeKey } : { ...draft.intent, layoutKey: shapeKey },
+      } as ProgramAbiDraft);
     }
     return draft;
   }

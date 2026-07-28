@@ -1,0 +1,10 @@
+{
+  "name": "clsx",
+  "version": "2.1.1",
+  "tarball": "fixtures/clsx-2.1.1.tgz",
+  "registryTarball": "https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz",
+  "shasum": "eed397c9fd8bd882bfb18deab7102049a2f32999",
+  "integrity": "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==",
+  "entryModule": "package/dist/clsx.mjs",
+  "_note": "Pinned per the same project-lead decision as acorn (#1710, 2026-05-29): acquire via a pinned npm-pack tarball, NOT a vendored source copy. The tarball is committed as a fixture so the harness reproduces from a clean checkout with NO run-time network. shasum is the canonical npm sha1 (`npm view clsx@2.1.1 dist.shasum`); integrity is the canonical npm sha512 (`dist.integrity`). To refresh: `npm pack clsx@<ver>`, update this file, re-run setup. dist/clsx.mjs is a single self-contained ESM bundle (no imports) — same shape as acorn's dist/acorn.mjs. Unlike acorn/marked, clsx's exported function is variadic (reads the `arguments` object with no declared parameters) — calling it directly across the wasm export boundary always sees zero args (a real Wasm-ABI/fixed-arity limitation, not a compiler bug — the exported function's wasm signature has 0 params, so extra host-JS call args are never marshaled in; verified independent of clsx with a minimal `arguments.length` repro). So this harness does NOT call the raw `clsx`/`default` export directly — it appends a small internal driver epilogue (fixed-arity wrapper functions, each making an ordinary INTERNAL call into clsx with hardcoded literal arguments) to the unmodified pinned source, and reads results back through those wrapper exports instead. See clsx-ops.mjs for the shared op list (same op source strings run against both the compiled wrapper exports and native clsx via `new Function`, so oracle and compiled side can never drift from each other)."
+}

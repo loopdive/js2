@@ -47,10 +47,10 @@ import {
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
 } from "./helpers.js";
+import { compileComputedMemberKeyAfterBaseGuard, emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } from "./late-imports.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructNameForExpr } from "./misc.js";
-import { ensureObjectRuntime } from "../object-runtime.js";
 import {
   compileStringBuilderAppend,
   emitStringBuilderAppendCodeUnit,
@@ -2683,38 +2683,6 @@ function compilePropertyCompoundAssignmentExternref(
 }
 
 /**
- * (#2666) ToPropertyKey §7.1.19, applied EXACTLY ONCE to the key externref on
- * the stack, leaving the coerced key externref on the stack. For a member
- * read-modify-write (`o[key] op= rhs`, `o[key]++`) the LHS Reference is
- * evaluated once (§13.15.2 / §13.4), so the key's ToPropertyKey must fire once —
- * but the raw key flows to both `__extern_get` and `__extern_set`, each of which
- * ToPropertyKeys internally, double-firing a side-effecting `toString`/`valueOf`.
- * Coercing here once yields a primitive (string) or a preserved Symbol, which is
- * idempotent under the host's internal ToPropertyKey (string→string,
- * symbol→symbol) so the subsequent get/set do not re-coerce.
- *
- * HOST mode: the `__to_property_key` JS import wraps `_toPropertyKey` (§7.1.19,
- * Symbol-preserving). STANDALONE: the native `__to_property_key` helper
- * (object-runtime.ts) — ensure the object runtime so it is emitted.
- */
-export function emitToPropertyKeyOnce(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (ctx.standalone) {
-    ensureObjectRuntime(ctx);
-    flushLateImportShifts(ctx, fctx);
-    const tpkIdx = ctx.funcMap.get("__to_property_key");
-    if (tpkIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: tpkIdx });
-    }
-    return;
-  }
-  const tpkIdx = ensureLateImport(ctx, "__to_property_key", [{ kind: "externref" }], [{ kind: "externref" }]);
-  flushLateImportShifts(ctx, fctx);
-  if (tpkIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: tpkIdx });
-  }
-}
-
-/**
  * Compile compound assignment on an element access target: arr[i] += value
  * Handles both vec structs (arrays) and plain structs (bracket notation).
  */
@@ -2750,23 +2718,14 @@ function compileElementCompoundAssignment(
     });
     fctx.body.push({ op: "local.set", index: objLocal });
 
-    // Compile key as externref and save to local
-    const keyResult = compileExpression(ctx, fctx, target.argumentExpression, {
-      kind: "externref",
-    });
-    if (!keyResult) return null;
-    // (#2666) ToPropertyKey ONCE (§7.1.19): a read-modify-write
-    // (`o[key] op= rhs`) evaluates the LHS Reference once (§13.15.2), so the
-    // key's ToPropertyKey must fire once. The raw key flows to BOTH
-    // __extern_get and __extern_set, each of which ToPropertyKeys internally —
-    // coercing a side-effecting key object twice. Coerce here once; the stored
-    // primitive (string / preserved Symbol) is idempotent under the host's
-    // internal ToPropertyKey, so no second `toString`.
-    emitToPropertyKeyOnce(ctx, fctx);
-    const keyLocal = allocLocal(fctx, `__cmpd_ekey_${fctx.locals.length}`, {
-      kind: "externref",
-    });
-    fctx.body.push({ op: "local.set", index: keyLocal });
+    const keyLocal = compileComputedMemberKeyAfterBaseGuard(
+      ctx,
+      fctx,
+      objLocal,
+      target.argumentExpression,
+      "__cmpd_ekey",
+    );
+    if (keyLocal === null) return null;
 
     // Read current value: __extern_get(obj, key) -> externref
     fctx.body.push({ op: "local.get", index: objLocal });

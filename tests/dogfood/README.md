@@ -9,13 +9,15 @@ Distinct from the broader `compileProject`-based `npm-library-support` goal
 specifically target a **single pre-bundled dist file**, so there's no
 multi-file module-resolution graph in the way of isolating compiler bugs.
 
-Two packages so far, plus one deeper conformance check on acorn:
+Four packages so far, plus one deeper conformance check on acorn:
 
 | package | issue | entry file | oracle diff |
 | --- | --- | --- | --- |
 | **acorn** (JS parser) | #1710 | `dist/acorn.mjs` | structural AST diff (`ast-diff.mjs`) |
 | **marked** (Markdown→HTML) | #3716 | `lib/marked.esm.js` | plain string equality (HTML output) |
 | **acorn official suite** | #3729 | `dist/acorn.mjs` | acorn's own real `test/tests*.js` (~3,500 cases) |
+| **clsx** (className joiner) | #3748 | `dist/clsx.mjs` | per-op string equality (see below — driver epilogue, not a raw export call) |
+| **cookie** (RFC-6265 parser/serializer) | #3751 | `dist/index.js` | per-op JSON-normalized equality (direct export calls, no epilogue) |
 
 ## acorn (#1710)
 
@@ -172,6 +174,107 @@ harness ran to completion), this one's heavy test gates on a real
 3518`) — this suite is authoritative enough that a drop is worth failing
 CI over. Raise the floor after a genuine fix improves the pass count, never
 lower it to paper over a regression.
+
+This harness does **not** fix any compiler bug — pure tooling, same as the
+other harnesses' scope notes above.
+
+## dayjs — investigated, not committed as a harness (#3747)
+
+Before clsx, `dayjs@1.11.21` was the next candidate: `dayjs.min.js` compiles
+and validates cleanly. But dayjs's dist file is a **UMD bundle**
+(`module.exports = factory()`), unlike acorn/marked/clsx's real ESM entry
+modules with named exports — there's no `export` statement to wire a wasm
+export to, so reaching the returned value required a small `module.exports`
+shim appended around the (unmodified) pinned source. That compiled and
+validated too, but every actual call through the exported value failed with
+`null is not a function`.
+
+Reduced to a minimal repro fully independent of dayjs: reassigning an
+object-literal property (seeded with any non-function value) to a closure
+silently loses callability — `typeof` reports `"object"` and calling it
+throws, with no compile error and nothing throwing anywhere near the actual
+defect. Filed as **#3747** rather than fixed here (`feasibility: hard`) —
+it blocks the `module.exports = ...` pattern used by essentially every
+CJS/UMD-bundled npm package, so it's a real prerequisite for extending this
+corpus to any UMD-shaped package (not just dayjs), not fixed inline. No
+`dayjs-harness.mjs` exists yet; it's a natural follow-up once #3747 lands.
+
+## clsx (#3748)
+
+A third differently-shaped real npm package: `clsx@2.1.1`'s
+`dist/clsx.mjs` is a genuine single-file **ESM** bundle (330 bytes
+minified, zero imports, real `export function clsx(){...}`) — same shape
+as acorn/marked, chosen specifically because dayjs's UMD shape (above)
+turned out not to fit this pattern directly.
+
+clsx's own exported function is variadic — it declares zero parameters and
+reads the `arguments` object internally. Calling it directly across the
+wasm export boundary always observes zero arguments: verified independent
+of clsx that this is an inherent Wasm-ABI fixed-arity limitation (an
+export's wasm function signature is fixed from its declared parameter
+list), not a compiler bug. So `clsx-harness.mjs` compiles the UNMODIFIED
+pinned source with a small internal **driver epilogue** appended
+(`clsx-ops.mjs`) — 18 ops, each a fixed-arity wrapper making an ordinary
+internal call into `clsx` with hardcoded literal arguments. The exact same
+op-code string drives both the compiled wrapper export and the native
+oracle (`new Function("clsx", code)` bound to the same pinned tarball's CJS
+build), so oracle and compiled logic can never drift apart from each other.
+
+```bash
+pnpm run dogfood:clsx                                  # run the loop, print a human summary, write the JSON report
+npx tsx tests/dogfood/clsx-harness.mjs --json           # machine output to stdout
+DOGFOOD_CLSX=1 pnpm test -- tests/dogfood/clsx.test.ts  # vitest contract wrapper
+```
+
+Report: `tests/dogfood/report/clsx-surface.json` (gitignored). Pin:
+`clsx-pin.json`.
+
+**Current state (2026-07-28): 17 / 18 ops match.** The one divergence —
+`clsx([{a:true,b:false},{c:true}])` throwing `dereferencing a null
+pointer` — is a real bug, reduced to a minimal repro fully independent of
+clsx (an array literal containing object literals of *different* shapes
+crashes `for...in`; same-shaped siblings or a single object are fine) and
+filed as **#3749**, not fixed here. Like the other vitest wrappers, this
+one gates on a real regression floor (`equal >= 17` at `total === 18`) —
+tight enough to be meaningful at this scale; raise it after a genuine fix,
+never to paper over a regression.
+
+This harness does **not** fix any compiler bug — pure tooling, same as the
+other harnesses' scope notes above.
+
+## cookie (#3751)
+
+A fourth differently-shaped real npm package: `cookie@2.0.1`'s
+`dist/index.js` is a genuine single-file ESM bundle (RFC-6265
+`Cookie`/`Set-Cookie` header parsing and serialization) — same shape as
+acorn/marked/clsx. Unlike clsx, cookie's four exports (`parseCookie`,
+`stringifyCookie`, `stringifySetCookie`, `parseSetCookie`) are all
+fixed-arity with real declared parameters, so `cookie-harness.mjs` calls
+them DIRECTLY across the wasm export boundary — no driver-epilogue shim
+needed (contrast clsx's variadic `arguments`-based export, above).
+
+```bash
+pnpm run dogfood:cookie                                    # run the loop, print a human summary, write the JSON report
+npx tsx tests/dogfood/cookie-harness.mjs --json             # machine output to stdout
+DOGFOOD_COOKIE=1 pnpm test -- tests/dogfood/cookie.test.ts  # vitest contract wrapper
+```
+
+Report: `tests/dogfood/report/cookie-surface.json` (gitignored). Pin:
+`cookie-pin.json`.
+
+**Current state (2026-07-28): 18 / 21 ops match.** The three divergences
+— all three `parseSetCookie` ops that pass a `Set-Cookie` attribute
+(`HttpOnly`, `Path`, or several combined) — share one root cause: the
+attribute gets assigned onto the result object dynamically inside the
+attribute-parsing loop/switch, and that write is silently dropped (no
+crash, no wrong type — the property is just completely absent from the
+result). The base `{name, value}` shape with zero attributes round-trips
+correctly. Reduced to a minimal repro fully independent of cookie and
+filed as **#3750**, not fixed here — cross-referenced against #3747
+(dayjs) and #3749 (clsx) as likely-related instances of the same general
+"object/array shape representation" gap, each with its own distinct
+symptom. Like the other vitest wrappers, this one gates on a real
+regression floor (`equal >= 18` at `total === 21`).
 
 This harness does **not** fix any compiler bug — pure tooling, same as the
 other harnesses' scope notes above.

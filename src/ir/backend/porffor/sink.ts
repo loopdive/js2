@@ -670,6 +670,29 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
     const effects = left!.effects | right!.effects;
     if (effects !== PORFFOR_FX.none) [left, right] = out.sequence([left!, right!]);
 
+    // (#3758) Native i32 arithmetic — computed via u32 (unsigned) arithmetic
+    // and converted back to i32. Signed-integer-overflow is undefined
+    // behavior in C; unsigned arithmetic wraps modulo 2^32 by definition,
+    // and the resulting BIT PATTERN is identical to true two's-complement
+    // wrapped signed arithmetic (the same fact `emitI32Bitwise`'s shl/shr_s
+    // arms already lean on to sidestep C UB — see their comments below).
+    if (op === "i32.add" || op === "i32.sub" || op === "i32.mul") {
+      const lu = convertExpr("u32", left!, 0);
+      const ru = convertExpr("u32", right!, 0);
+      const opSymbol = op === "i32.add" ? "+" : op === "i32.sub" ? "-" : "*";
+      const sum: PorfforExpr = {
+        kind: "binary",
+        type: "u32",
+        effects: lu.effects | ru.effects,
+        op: opSymbol,
+        left: lu,
+        right: ru,
+        comparison: false,
+      };
+      out.push(convertExpr("i32", sum, 1));
+      return;
+    }
+
     const mapped = binaryOp(op);
     const operandType = mapped.operandType ?? left!.type;
     if (mapped.operandType && mapped.operandType !== left!.type) {

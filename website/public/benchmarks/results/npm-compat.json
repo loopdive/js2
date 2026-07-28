@@ -1,0 +1,196 @@
+{
+  "generatedAt": "2026-07-28T14:37:32.809Z",
+  "note": "Only packages with a committed, reproducible tests/dogfood/*-harness.mjs are listed. mustache (#3720), diff (#3721), and dayjs (#3747) were probed ad-hoc and surfaced real bugs but have no committed harness yet.",
+  "packages": [
+    {
+      "name": "acorn",
+      "version": "8.16.0",
+      "issue": 1710,
+      "entryFile": "dist/acorn.mjs",
+      "shape": "esm-direct",
+      "compile": {
+        "success": true,
+        "durationMs": 28340,
+        "errorCount": 0,
+        "binaryBytes": 596610,
+        "categories": {}
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "official-suite",
+        "passed": 3507,
+        "total": 3518,
+        "passRatePct": 99.69,
+        "sourceIssue": 3729
+      },
+      "perf": {
+        "sampleOp": "parse(own 226KB dist bundle)",
+        "wasmUs": 6214971.531799994,
+        "nodeUs": 15288.137799990363,
+        "wasmStdUs": 208274.35427490805,
+        "nodeStdUs": 866.406171122399,
+        "ratio": 0.002459888628896515,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      "knownBugs": [
+        {
+          "issue": 3756,
+          "summary": "parse() scales super-linearly with input size — 14x slower than native at 4.9KB, 424x at 313KB"
+        }
+      ]
+    },
+    {
+      "name": "marked",
+      "version": "18.0.2",
+      "issue": 3716,
+      "entryFile": "lib/marked.esm.js",
+      "shape": "esm-direct",
+      "compile": {
+        "success": false,
+        "durationMs": 1292,
+        "errorCount": 64,
+        "binaryBytes": 0,
+        "categories": {
+          "other": {
+            "count": 5,
+            "sample": "'S' is possibly 'undefined'.",
+            "buckets": {
+              "'X' is possibly 'X'.": 5
+            }
+          },
+          "ts-possibly-null": {
+            "count": 1,
+            "sample": "Object is possibly 'undefined'.",
+            "buckets": {
+              "Object is possibly 'X'.": 1
+            }
+          },
+          "ts-not-assignable": {
+            "count": 12,
+            "sample": "Argument of type '{ type: string; raw: string; task: any; loose: boolean; text: string; tokens: never[]; }' is not assignable to parameter of type 'never'.",
+            "buckets": {
+              "Argument of type 'X' is not assignable to parameter of type 'X'.": 7,
+              "Argument of type 'X' is not assignable to parameter of type 'X'.\n  Type 'X' is not assignable to type 'X'.": 1,
+              "Type 'X' is not assignable to type 'X'.\n  Types of property 'X' are incompatible.\n    Type 'X' is missing the following properties from type 'X': test, source, ": 1,
+              "Type 'X' is not assignable to type 'X'.\n  The types of 'X' are incompatible between these types.\n    Type 'X' is not assignable to type 'X'.\n      Target signat": 3
+            }
+          },
+          "ts-property-noise": {
+            "count": 46,
+            "sample": "Property 'raw' does not exist on type 'never'.",
+            "buckets": {
+              "Property 'X' does not exist on type 'X'.": 46
+            }
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "no binary emitted"
+      },
+      "tests": null,
+      "perf": null,
+      "knownBugs": [
+        {
+          "issue": 3715,
+          "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
+        }
+      ]
+    },
+    {
+      "name": "clsx",
+      "version": "2.1.1",
+      "issue": 3748,
+      "entryFile": "dist/clsx.mjs",
+      "shape": "esm-driver-epilogue",
+      "compile": {
+        "success": true,
+        "durationMs": 312,
+        "errorCount": 0,
+        "binaryBytes": 7905,
+        "categories": {}
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "differential-ops",
+        "passed": 17,
+        "total": 18,
+        "sourceIssue": 3748
+      },
+      "perf": {
+        "sampleOp": "op_mixed_all_kinds",
+        "wasmUs": 37.805664478182095,
+        "nodeUs": 0.1818245110123526,
+        "wasmStdUs": 2.312647765992195,
+        "nodeStdUs": 0.008531962475355178,
+        "ratio": 0.0048094515338378665,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      "knownBugs": [
+        {
+          "issue": 3749,
+          "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
+        }
+      ]
+    },
+    {
+      "name": "cookie",
+      "version": "2.0.1",
+      "issue": 3751,
+      "entryFile": "dist/index.js",
+      "shape": "esm-direct",
+      "compile": {
+        "success": true,
+        "durationMs": 564,
+        "errorCount": 9,
+        "binaryBytes": 17569,
+        "categories": {
+          "other": {
+            "count": 9,
+            "sample": "Parameter 'str' in function 'parseCookie' has implicit 'any' type. Add a JSDoc annotation: /** @param {number} str */",
+            "buckets": {
+              "Parameter 'X' in function 'X' has implicit 'X' type. Add a JSDoc annotation: /** @param {number} str */": 2,
+              "Parameter 'X' in function 'X' has implicit 'X' type. Add a JSDoc annotation: /** @param {number} options */": 4,
+              "Function 'X' has implicit 'X' return type. Add a JSDoc annotation: /** @returns {number} */": 1,
+              "Parameter 'X' in function 'X' has implicit 'X' type. Add a JSDoc annotation: /** @param {number} cookie */": 2
+            }
+          }
+        }
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": {
+        "kind": "differential-ops",
+        "passed": 18,
+        "total": 21,
+        "sourceIssue": 3751
+      },
+      "perf": {
+        "sampleOp": "parseCookie(8-pair header)",
+        "wasmUs": 401.9859283054733,
+        "nodeUs": 0.8369040968342297,
+        "wasmStdUs": 46.322671286609484,
+        "nodeStdUs": 0.08388455814051107,
+        "ratio": 0.0020819238632608494,
+        "warmupRounds": 2,
+        "measuredRounds": 9
+      },
+      "knownBugs": [
+        {
+          "issue": 3750,
+          "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
+        }
+      ]
+    }
+  ]
+}

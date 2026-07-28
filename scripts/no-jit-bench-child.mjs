@@ -42,6 +42,36 @@ function parseArgs(argv) {
   return out;
 }
 
+// V8 `%GetOptimizationStatus` bit positions we care about (src/runtime/
+// runtime-test.cc). Only the ones this harness asserts on are named.
+const OPT_STATUS_BITS = { optimized: 1 << 4, maglev: 1 << 5, turbofan: 1 << 6, baseline: 1 << 15 };
+
+/**
+ * Read V8's optimization status for `fn`, or `null` when unavailable.
+ *
+ * Built through `new Function` on purpose: this file is shared with the
+ * COLD ("no-jit") lane, which runs under `--jitless` WITHOUT
+ * `--allow-natives-syntax`. A literal `%GetOptimizationStatus(...)` here
+ * would be a parse error in that lane before any guard could run, so the
+ * natives syntax only ever materialises lazily, inside a try/catch, in a
+ * process that enabled it.
+ */
+function readOptStatus(fn) {
+  try {
+    return new Function("f", "return %GetOptimizationStatus(f);")(fn);
+  } catch {
+    return null; // --allow-natives-syntax not enabled: nothing to assert.
+  }
+}
+
+function describeOptStatus(status) {
+  if (status === null) return "unavailable";
+  const on = Object.entries(OPT_STATUS_BITS)
+    .filter(([, mask]) => status & mask)
+    .map(([name]) => name);
+  return on.length ? `${status} (${on.join(",")})` : `${status} (none)`;
+}
+
 function calibrate(fn) {
   let iters = 0;
   const t0 = performance.now();
@@ -105,13 +135,46 @@ async function main() {
   const measuredRounds = 9;
   for (let i = 0; i < warmupRounds; i++) timeIt(fn, iters);
 
+  // `--expect-tier=optimized` (warm lane only) turns the harness's central
+  // assumption into an assertion. Without it a silently-mis-tiered run still
+  // produces a plausible-looking number and publishes it — which is exactly
+  // how the landing page came to report a JS baseline ~14x slower than the
+  // same source measured optimized, with no signal that anything was wrong.
+  // Sampled BEFORE and AFTER the measured rounds: the observed failure is not
+  // "never optimized" but tier OSCILLATION during measurement (a median
+  // between tiers with ~30% variance), which a single up-front check misses.
+  const expectTier = args["expect-tier"];
+  const optStatusBefore = expectTier ? readOptStatus(fn) : null;
+
   const samplesUs = [];
   for (let i = 0; i < measuredRounds; i++) {
     const us = (timeIt(fn, iters) / iters) * 1000;
     samplesUs.push(us);
   }
 
-  process.stdout.write(JSON.stringify({ samplesUs, iters }) + "\n");
+  const optStatusAfter = expectTier ? readOptStatus(fn) : null;
+
+  if (expectTier === "optimized" && optStatusBefore !== null) {
+    const isOpt = (s) => (s & OPT_STATUS_BITS.optimized) !== 0;
+    if (!isOpt(optStatusBefore) || !isOpt(optStatusAfter)) {
+      throw new Error(
+        `expected '${exportName}' to stay on V8's optimizing tier for the whole ` +
+          `measurement, but status was ${describeOptStatus(optStatusBefore)} before ` +
+          `and ${describeOptStatus(optStatusAfter)} after the measured rounds. ` +
+          `The reported timings would not represent optimized-tier speed.`,
+      );
+    }
+  }
+
+  process.stdout.write(
+    JSON.stringify({
+      samplesUs,
+      iters,
+      ...(expectTier
+        ? { optStatusBefore: describeOptStatus(optStatusBefore), optStatusAfter: describeOptStatus(optStatusAfter) }
+        : {}),
+    }) + "\n",
+  );
 }
 
 main().catch((err) => {

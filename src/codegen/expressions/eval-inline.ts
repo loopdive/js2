@@ -33,6 +33,8 @@ import { compileAndEmitToString } from "../coercion-engine.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { emitThrowJsError, noJsHost } from "./helpers.js";
 import { reportError } from "../context/errors.js";
+import { isStrictContext } from "../helpers/is-strict-function.js";
+import { foldedEvalEarlyError } from "./eval-early-errors.js";
 
 /**
  * Synthetic file name for the foreign `SourceFile` an inlined `eval("<literal>")`
@@ -418,10 +420,29 @@ export function tryStaticEvalInline(
   // is an internal field on SourceFile, so access it through a cast.
   const parseDiag = (sf as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
   if (parseDiag && parseDiag.length > 0) {
-    return undefined;
+    emitThrowJsError(ctx, fctx, "SyntaxError", "Invalid eval source");
+    return { kind: "externref" };
   }
 
   const stmts = sf.statements;
+
+  // PerformEval parses the string as a fresh Script and applies that Script's
+  // early errors before executing any statement. The foreign AST splice used
+  // to skip that phase entirely: strict-only names compiled as ordinary
+  // identifiers, and an orphan break/continue acquired the CALLER's loop when
+  // its statements were spliced there. A direct eval also inherits strictness
+  // from its caller; indirect eval does not.
+  //
+  // Keep this deliberately bounded to the rules needed by the folded surface.
+  // Unsupported AST kinds still take allNodesInlineSupported's existing
+  // dynamic-eval fallback below.
+  const bodyIsStrict = evalBodyHasUseStrictDirective(stmts);
+  const evalIsStrict = bodyIsStrict || (allowConstBindings && isStrictContext(expr, ctx.inferModuleStrictArguments));
+  const earlyError = foldedEvalEarlyError(sf, evalIsStrict);
+  if (earlyError !== undefined) {
+    emitThrowJsError(ctx, fctx, "SyntaxError", earlyError);
+    return { kind: "externref" };
+  }
 
   // Empty program — eval returns undefined.
   if (stmts.length === 0) {
@@ -443,7 +464,6 @@ export function tryStaticEvalInline(
   // `eval`/`arguments` throws) that the AST splice does NOT enforce — so
   // function declarations in a strict body keep bailing to the dynamic path
   // (host eval enforces them).  See `allNodesInlineSupported` / #2923 park fix.
-  const bodyIsStrict = evalBodyHasUseStrictDirective(stmts);
   if (!allNodesInlineSupported(sf, bodyIsStrict)) {
     return undefined;
   }

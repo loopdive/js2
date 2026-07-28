@@ -44,7 +44,7 @@ import {
   getFuncParamTypes,
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
-import { emitToPropertyKeyOnce } from "./operator-assignment.js";
+import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-reference.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
 
@@ -352,24 +352,8 @@ function emitExternrefElementIncDec(
   f64Op: "f64.add" | "f64.sub",
   mode: "prefix" | "postfix",
 ): ValType | null {
-  // §13.3.3: base already evaluated; evaluate the key expression (side effects),
-  // then ToPropertyKey ONCE (reference formation, before the null-base check).
-  const keyResult = compileExpression(ctx, fctx, keyExpr, { kind: "externref" });
-  if (!keyResult) return null;
-  emitToPropertyKeyOnce(ctx, fctx);
-  const keyLocal = allocLocal(fctx, `__incdec_ekey_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: keyLocal });
-
-  // RequireObjectCoercible: a wasm-null base throws TypeError before the update.
-  // (Shift-safe: emit the throw into the real body so emitThrowTypeError's
-  // late-import bookkeeping patches prior instrs, then splice into the if-then —
-  // #1720.)
-  fctx.body.push({ op: "local.get", index: baseLocal });
-  fctx.body.push({ op: "ref.is_null" });
-  const throwStart = fctx.body.length;
-  emitThrowTypeError(ctx, fctx, "TypeError: Cannot read properties of null (update target)");
-  const thenBody = fctx.body.splice(throwStart);
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenBody });
+  const keyLocal = compileComputedMemberKeyAfterBaseGuard(ctx, fctx, baseLocal, keyExpr, "__incdec_ekey");
+  if (keyLocal === null) return null;
 
   // Read current: __extern_get(base, key) -> externref (slot-consistent via _safeGet).
   fctx.body.push({ op: "local.get", index: baseLocal });

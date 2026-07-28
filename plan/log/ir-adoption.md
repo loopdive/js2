@@ -159,6 +159,7 @@ and Algorithms' top-level generic Map initializer are both IR-owned.
 | `type-resolution-failure`                | unintended | Same                                                                                                                                                  |
 | `class-method`                           | unintended | #1370/#3000 B-C-E — corpus bucket **0** (#3000-E); NOT yet strict (still covers computed/generator/abstract names, static super, subclass-of-builtin) |
 | `destructuring-param-complex`            | unintended | Complex destructuring params lowered (subset of param-shape)                                                                                          |
+| `string-builder-candidate`               | deferred   | Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)                |
 | `async-function`                         | deferred   | Async bodies — CPS lowering tracked separately (#1373/#1796)                                                                                          |
 | `async-generator`                        | deferred   | Out of scope long-term                                                                                                                                |
 | `deferred-feature`                       | deferred   | `eval` / `Proxy` / `with` — wont-fix                                                                                                                  |

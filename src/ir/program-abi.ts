@@ -38,7 +38,7 @@ export interface ProgramAbiDerivedUnitRecord {
 export type ProgramAbiIntent =
   | {
       readonly kind: "callable";
-      readonly origin: "source" | "import" | "runtime" | "support";
+      readonly origin: "source" | "import" | "runtime" | "intrinsic" | "support";
       readonly signature: ProgramAbiCallableSignature;
       readonly unitId?: IrUnitId;
       readonly classId?: IrClassId;
@@ -198,7 +198,8 @@ export type ProgramAbiInvariantCode =
   | "ambiguous-type-remap"
   | "type-remap-mismatch"
   | "missing-required-locator"
-  | "eliminated-required-locator";
+  | "eliminated-required-locator"
+  | "callable-provider-mismatch";
 
 export class ProgramAbiInvariantError extends Error {
   constructor(

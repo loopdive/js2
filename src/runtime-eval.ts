@@ -414,9 +414,11 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
  * uses the SAME machinery as {@link createEvalShim} (js2wasm's own
  * `compileSourceSync`, a fresh child module, `buildImports` auto-fill, and an
  * LRU cache), but instead of evaluating an expression and returning its value,
- * it compiles the body as an EXPORTED function and returns that export directly
- * — a real JS-callable function the PARENT module can invoke (unlike the
- * eval-path's child-module closure, whose type identity the parent can't cast).
+ * it compiles the body as an EXPORTED function and returns a JS-callable wrapper
+ * around that export. The wrapper also unwraps the child's private Wasm
+ * exception tag so user throws retain their JS identity in the parent module
+ * (unlike the eval-path's child-module closure, whose type identity the parent
+ * can't cast).
  *
  * The compiler lowers a dynamic host-mode `new Function` to
  * `__extern_new_function(paramString, bodyString)`, where `paramString` is the
@@ -425,7 +427,7 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
 export function createNewFunctionShim(options: EvalShimOptions = {}): (params: any, body: any) => any {
   const filename = options.filename ?? "__new_function__.js";
   const FN_CACHE_MAX = 256;
-  // key (`${params} ${body}`) → the callable wasm export.
+  // key (`${params} ${body}`) → the callable child-export wrapper.
   const fnCache = new Map<string, Function>();
   const fnNegCache = new Map<string, SyntaxError>();
 
@@ -510,13 +512,40 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
       autoSetExports(instance.exports as Record<string, Function>);
     }
 
-    const fn = (instance.exports as Record<string, unknown>).__new_fn;
+    const childExports = instance.exports as Record<string, unknown>;
+    const fn = childExports.__new_fn;
     if (typeof fn !== "function") {
       throw new SyntaxError("new Function: compiled module did not export the constructed function");
     }
+    // A user throw from the child export crosses the JS API boundary as a
+    // WebAssembly.Exception. Re-expose its externref payload so the parent
+    // module observes the original JS value (not the transport envelope).
+    // This matters for folded eval early errors in a constructed function:
+    // `assert.throws(SyntaxError, () => new Function(... )())` must see the
+    // SyntaxError instance carried by the child's `__exn` tag.
+    const callable = function (this: unknown, ...args: unknown[]): unknown {
+      try {
+        return Reflect.apply(fn, this, args);
+      } catch (error) {
+        const WasmException = (WebAssembly as unknown as { Exception?: Function }).Exception;
+        if (typeof WasmException === "function" && error instanceof WasmException) {
+          const tag = childExports.__exn_tag ?? childExports.__tag;
+          if (tag !== undefined) {
+            let payload: unknown;
+            try {
+              payload = (error as { getArg(tag: unknown, index: number): unknown }).getArg(tag, 0);
+            } catch {
+              throw error;
+            }
+            throw payload;
+          }
+        }
+        throw error;
+      }
+    };
     if (fnCache.size >= FN_CACHE_MAX) fnCache.delete(fnCache.keys().next().value!);
-    fnCache.set(key, fn as Function);
-    return fn;
+    fnCache.set(key, callable);
+    return callable;
   };
 }
 

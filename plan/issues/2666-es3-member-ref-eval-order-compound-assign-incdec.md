@@ -2,9 +2,9 @@
 id: 2666
 title: "≤ES3: member-reference base[prop] evaluation order in compound-assignment and prefix/postfix ++/-- (ToPropertyKey once, left-before-right)"
 status: in-progress
-assignee: ttraenkler/dev-2046
+assignee: ttraenkler/codex-es5-2666
 created: 2026-06-25
-updated: 2026-06-25
+updated: 2026-07-28
 priority: high
 feasibility: medium
 reasoning_effort: medium
@@ -153,3 +153,35 @@ read-modify-write member paths (compound assignment AND `++`/`--`) evaluate and
 `ToPropertyKey` the computed key before checking the base is coercible. Fixing
 that one ordering is worth **~30 further ≤ES3 tests** on top of #3486's 11, and
 would take the ≤ES3 metadata bucket from 241/273 to ~271/273.
+
+## Current-main remeasurement (2026-07-28, Codex)
+
+Reproduced the exact 30-file residual on fresh `origin/main` using the
+authoritative original-harness runner, in both directions:
+
+| lane       | pass | fail | compile error | total |
+| ---------- | ---: | ---: | ------------: | ----: |
+| host       |    0 |   30 |             0 |    30 |
+| standalone |    0 |   30 |             0 |    30 |
+
+The host lane reaches the second assertion and reports
+`Expected a TypeError but got a Test262Error`, confirming that ToPropertyKey
+still observes the key object before RequireObjectCoercible rejects the nullish
+base. The standalone lane is layered behind an earlier user-constructor
+identity mismatch (`Expected a undefined but got a different error constructor
+with the same name`), so a correct ordering change is not assumed to flip its
+visible verdict; the post-fix two-direction comparison must report that split.
+
+Post-fix measurement over the same 30 files:
+
+| lane       | before | after | measured flips |
+| ---------- | -----: | ----: | -------------: |
+| host       |   0/30 | 30/30 |        **+30** |
+| standalone |   0/30 |  0/30 |          **0** |
+
+The standalone failures retain the exact earlier constructor-identity message;
+none advance far enough to score the second assertion. A host-free focused
+probe independently verifies that the standalone lowering evaluates the raw
+key expression, rejects the undefined base with a TypeError, and observes
+neither ToPropertyKey nor the RHS. This is a layered no-visible-flip result, not
+an extrapolated standalone win.

@@ -283,6 +283,8 @@ export function planProgramAbiCallableImports(ctx: CodegenContext): ReadonlyMap<
 export function eliminateDeadImportsAndPlanAbiCallables(ctx: CodegenContext): void {
   eliminateDeadImports(ctx.mod, ctx);
   planProgramAbiCallableImports(ctx);
+  ctx.programAbiCallableProviders?.planRetained();
+  ctx.programAbiTypes?.planRetained();
 }
 
 /**

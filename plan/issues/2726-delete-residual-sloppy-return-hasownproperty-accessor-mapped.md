@@ -18,9 +18,28 @@ loc-budget-allow:
   - src/codegen/typeof-delete.ts
   - src/ir/select.ts
 created: 2026-06-26
-updated: 2026-07-26
+updated: 2026-07-28
 ---
 
+> **Strict-rerun residual (2026-07-28, codex-2726).** The authoritative
+> original-harness runner exposed one remaining group (e) gap that the earlier
+> focused wrapper did not cover: `11.4.1-4.a-17` passed its sloppy execution but
+> failed the required strict rerun in both host/gc and standalone. Strict
+> functions use an _unmapped_ arguments object, so they intentionally have no
+> `mappedArgsInfo`; the generic property-delete path reported success but could
+> not clear the opaque vec-backed slot. The delete lowering now preserves that
+> generic result (including descriptor refusal), and on success clears a
+> statically indexed unmapped-arguments slot to canonical `undefined`.
+>
+> Same-SHA authoritative A/B: the 69-file delete directory moves host
+> **59→60** and standalone **51→52**, with exactly
+> `11.4.1-4.a-17` flipping in each lane and no reverse flips. Across all 26
+> Test262 files containing direct `delete arguments[...]`, host moves **7→12**
+> and standalone **5→10** (five exact fail→pass flips per lane, zero
+> pass→fail). The remaining standalone-only `11.4.1-5-a-27-s` failure is still
+> the separately owned `preventExtensions`/strict-assignment gap, not delete
+> semantics.
+>
 > **Final resolution (2026-07-26, codex-2726).** Group **(b)** is now **4/4**:
 > the two structural residuals `S11.4.1_A3.1` and
 > `S11.4.1_A3.3_T1` pass in both host/gc and standalone. The implementation

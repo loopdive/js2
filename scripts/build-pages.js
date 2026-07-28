@@ -295,6 +295,20 @@ const PUBLIC_REPORT_SHORT = join(WEBSITE, "public", "benchmarks", "report.html")
 copyFileIfExists(PUBLIC_REPORT, join(PAGES_DIST, "benchmarks", "results", "report.html"));
 copyFileIfExists(PUBLIC_REPORT_SHORT, join(PAGES_DIST, "benchmarks", "report.html"));
 
+// npm package compatibility page (scripts/generate-npm-compat-report.mjs) —
+// same overwrite-Vite pattern as report.html above, since it also uses a
+// <npm-compat-chart> web component Vite doesn't process. The data JSON
+// prefers the canonical benchmarks/results/ copy, falling back to the
+// website/public/ mirror, matching history.json/latest.json below.
+copyFileIfExists(join(WEBSITE, "public", "npm-compat.html"), join(PAGES_DIST, "npm-compat.html"));
+const npmCompatSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "npm-compat.json"),
+  join(PUBLIC_BENCH, "npm-compat.json"),
+);
+if (npmCompatSource) {
+  copyFile(npmCompatSource, join(PAGES_DIST, "benchmarks", "results", "npm-compat.json"));
+}
+
 // Add the static dashboard route and pre-generated dashboard data when the
 // private planning artifacts are present. Public exports intentionally omit
 // them.
@@ -434,7 +448,13 @@ writeFileSync(join(PAGES_DIST, "CNAME"), "js2.loopdive.com\n");
 
 // Copy web components to pages-dist root and dashboard
 const COMPONENTS_DIR = join(WEBSITE, "components");
-for (const file of ["site-nav.js", "t262-charts.js", "trend-chart.js", "perf-benchmark-chart.js"]) {
+for (const file of [
+  "site-nav.js",
+  "t262-charts.js",
+  "trend-chart.js",
+  "perf-benchmark-chart.js",
+  "npm-compat-chart.js",
+]) {
   copyFileIfExists(join(COMPONENTS_DIR, file), join(PAGES_DIST, "components", file));
 }
 

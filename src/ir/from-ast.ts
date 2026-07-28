@@ -98,6 +98,12 @@ import {
   type IrLiftedFunctionArtifactIdentity,
   type IrUnitId,
 } from "./identity.js";
+import {
+  computeI32PureNames,
+  type I32PureNames,
+  isI32PureExprIR,
+  isIrBitwiseOperatorToken,
+} from "./i32-pure-bitwise.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import { effectiveIrParamTypeNode, effectiveIrReturnTypeNode, IR_MATH_METHOD_TABLE } from "./select.js";
 import { JsTag } from "./js-tag.js"; // #2949 S5.2 — box-refinement tags for dynamic equality operands
@@ -815,6 +821,7 @@ export function lowerFunctionAstToIr(
   const liftedUnitProvenance: IrDerivedUnitProvenance[] = [];
   const liftedCounter = { value: 0 };
   const ownedStringAppendSymbols = collectOwnedStringAppendSymbols(fn.body, options.checker);
+  const i32PureNames = computeI32PureNames(fn);
   const emptyArrayInference = inferEmptyArrayElementTypes(
     fn,
     options.checker ? new TsCheckerOracle(options.checker) : undefined,
@@ -837,6 +844,7 @@ export function lowerFunctionAstToIr(
     liftedUnitProvenance,
     liftedCounter,
     mutatedLets,
+    i32PureNames,
     ownedStringAppendSymbols,
     emptyArrayInference,
     // (#2972) statically-known literal string lengths — proven-in-bounds
@@ -1546,6 +1554,18 @@ interface LowerCtx {
    * `lowerFunctionAstToIr` via `collectMutatedLetNames`.
    */
   readonly mutatedLets: ReadonlySet<string>;
+  /**
+   * (#3758) Names proven, by the SAME analyses legacy's own #1120/#1236
+   * i32-local promotion uses (`collectI32CoercedLocals`, `detectI32LoopVar`),
+   * to always hold a clean int32 value when read. Consulted ONLY by
+   * `isI32PureExprIR`/`emitI32PureExpr` (`ir/i32-pure-bitwise.ts` /
+   * this file) to fast-path a bitwise operator's operand lowering through
+   * genuine native i32 arithmetic instead of the expensive ToInt32 dance —
+   * never used to change any local's declared IrType, so no other consumer
+   * in the function is affected. Computed once per outer/nested/closure
+   * function body, mirroring `mutatedLets`.
+   */
+  readonly i32PureNames: I32PureNames;
   /**
    * #3502 conservative ownership proof for string builders. Each symbol is a
    * fresh empty-string `let` whose loop-local uses are discarded `+=` writes
@@ -7603,6 +7623,51 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   );
 }
 
+function peelParensExpr(e: ts.Expression): ts.Expression {
+  let inner: ts.Expression = e;
+  while (ts.isParenthesizedExpression(inner)) inner = inner.expression;
+  return inner;
+}
+
+/**
+ * (#3758) Emit `e` — the caller MUST have already verified
+ * `isI32PureExprIR(e, cx.i32PureNames)` — as a genuine i32-typed IrValueId.
+ * `+`/`-`/guarded-`*` compositions use REAL native `i32.add`/`i32.sub`/
+ * `i32.mul` (added in `ir/nodes.ts`), which wrap modulo 2^32 exactly like
+ * ECMA-262 ToInt32 — never `i32.trunc_sat_f64_s` as a substitute for
+ * arithmetic (that conflation is exactly what made a prior version of this
+ * fast path unsound and reverted — see `ir/i32-pure-bitwise.ts`'s header
+ * comment). Leaves (a proven-pure identifier, an in-range literal, or a
+ * nested bitwise/shift sub-expression — always int32-range by spec
+ * regardless of ITS OWN operands) are lowered via the existing, UNCHANGED
+ * general path and then narrowed via the cheap `i32.trunc_sat_f64_s`,
+ * which is exact here because each leaf's value is independently proven
+ * bounded, not inferred from composing other values.
+ */
+function emitI32PureExpr(e: ts.Expression, cx: LowerCtx): IrValueId {
+  const inner = peelParensExpr(e);
+  if (ts.isBinaryExpression(inner)) {
+    const k = inner.operatorToken.kind;
+    if (k === ts.SyntaxKind.PlusToken || k === ts.SyntaxKind.MinusToken) {
+      const l = emitI32PureExpr(inner.left, cx);
+      const r = emitI32PureExpr(inner.right, cx);
+      const binop = k === ts.SyntaxKind.PlusToken ? "i32.add" : "i32.sub";
+      return cx.builder.emitBinary(binop, l, r, irVal({ kind: "i32" }));
+    }
+    if (k === ts.SyntaxKind.AsteriskToken) {
+      const l = emitI32PureExpr(inner.left, cx);
+      const r = emitI32PureExpr(inner.right, cx);
+      return cx.builder.emitBinary("i32.mul", l, r, irVal({ kind: "i32" }));
+    }
+    // Nested bitwise/shift result — falls through to the leaf case below:
+    // lower via the existing general path (unchanged), then narrow.
+  }
+  const f64Value = lowerExpr(e, cx, irVal({ kind: "f64" }));
+  const valueType = asVal(typeOfValue(f64Value, cx));
+  if (valueType?.kind === "i32") return f64Value; // already i32 — no redundant narrowing
+  return cx.builder.emitUnary("i32.trunc_sat_f64_s", f64Value, irVal({ kind: "i32" }));
+}
+
 function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrValueId {
   const op = expr.operatorToken.kind;
 
@@ -7702,8 +7767,25 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
     }
   }
 
-  const lhs = lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
-  const rhs = lowerExpr(expr.right, cx, irVal({ kind: "f64" }));
+  // (#3758) A bitwise/shift operator whose BOTH operand expressions are
+  // provably computable via genuine native i32 arithmetic (no ToInt32
+  // dance anywhere in either subtree — `isI32PureExprIR`, reusing legacy's
+  // own #1120/#1236 proofs) skips the expensive per-operand ToInt32
+  // emulation (`js.bit*`'s IEEE-754 bit-decomposition, #3739) entirely.
+  // See `ir/i32-pure-bitwise.ts` for the full soundness argument — this
+  // NEVER uses `i32.trunc_sat_f64_s` as a substitute for arithmetic
+  // (that was the exact bug that made a prior version of this fast path
+  // unsound; see #3745's revert history).
+  const i32PureBitwiseOperands =
+    isIrBitwiseOperatorToken(op) &&
+    isI32PureExprIR(expr.left, cx.i32PureNames) &&
+    isI32PureExprIR(expr.right, cx.i32PureNames);
+  const lhs = i32PureBitwiseOperands
+    ? emitI32PureExpr(expr.left, cx)
+    : lowerExpr(expr.left, cx, irVal({ kind: "f64" }));
+  const rhs = i32PureBitwiseOperands
+    ? emitI32PureExpr(expr.right, cx)
+    : lowerExpr(expr.right, cx, irVal({ kind: "f64" }));
   const lt = typeOfValue(lhs, cx);
   const rt = typeOfValue(rhs, cx);
 
@@ -8797,6 +8879,9 @@ function liftNestedFunction(
     // mutated-let scope (collected per-body when slice 6 extends to
     // closures). Empty here keeps the slice-3 nested-fn behavior intact.
     mutatedLets: collectMutatedLetNames(fn),
+    // (#3758) nested functions get their own independent i32-pure-names set,
+    // same reasoning as mutatedLets above.
+    i32PureNames: computeI32PureNames(fn),
     ownedStringAppendSymbols: fn.body ? collectOwnedStringAppendSymbols(fn.body, cx.checker) : new Set<ts.Symbol>(),
     emptyArrayInference: inferEmptyArrayElementTypes(fn, cx.checker ? new TsCheckerOracle(cx.checker) : undefined),
     // Slice 7a (#1169f) — nested function decls are NEVER generators
@@ -8892,6 +8977,9 @@ function liftClosureBody(
       ts.isBlock(expr.body) && (ts.isFunctionExpression(expr) || ts.isArrowFunction(expr))
         ? collectMutatedLetNamesFromBlock(expr.body)
         : new Set<string>(),
+    // (#3758) same independent-per-closure reasoning as mutatedLets above;
+    // computeI32PureNames itself no-ops on a non-block (concise) body.
+    i32PureNames: computeI32PureNames(expr),
     ownedStringAppendSymbols: ts.isBlock(expr.body)
       ? collectOwnedStringAppendSymbols(expr.body, cx.checker)
       : new Set<ts.Symbol>(),

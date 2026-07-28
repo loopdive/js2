@@ -1,6 +1,46 @@
 #!/usr/bin/env node
+/**
+ * Landing-page "warm speed" chart generator.
+ *
+ * Produces `benchmarks/results/playground-benchmark-sidebar.json`, the JIT-
+ * optimized counterpart to `generate-playground-benchmark-sidebar-no-jit.mjs`
+ * ("cold speed"). Both charts now use the same methodology: pin each side to
+ * an explicit V8 tier via startup flags, instead of running N warmup calls
+ * in-process and hoping the engine's dynamic tier-up heuristic lands on the
+ * optimizing tier before the timed samples run.
+ *
+ * Why explicit pinning instead of natural warmup: V8's Wasm tier-up (Liftoff
+ * -> TurboFan) and JS tier-up (Ignition/Sparkplug -> TurboFan) are both
+ * driven by a dynamic, execution-count/byte-budget heuristic. Whether that
+ * heuristic has promoted a given hot function by the time the timed samples
+ * start is nondeterministic run-to-run — confirmed directly: the SAME
+ * compiled binary, run repeatedly with only natural warmup, produced
+ * wall-clock medians ranging over ~5x across process invocations, with
+ * individual samples spiking to 4-6x their own run's median. Forcing one
+ * tier explicitly (this file: TurboFan/optimized; the no-jit sibling:
+ * Liftoff/baseline) removes that source of variance entirely.
+ *
+ * Why this needs child processes: `--no-liftoff` is a V8 startup flag — it
+ * cannot be flipped at runtime. So each measurement runs in a fresh `node`
+ * subprocess via `scripts/no-jit-bench-child.mjs` (shared, unmodified, with
+ * the no-jit sibling — the child is flag-agnostic; it just warms up,
+ * calibrates, and measures whatever function it's given).
+ *
+ * JS side: pinning via `%OptimizeFunctionOnNextCall`, not `--always-turbofan`.
+ * `--always-turbofan` is a tuning/testing flag whose exact name and behavior
+ * has drifted across V8 releases (confirmed: it exists on the sandbox's
+ * Node v22 build but CI's Node v26 rejects it outright with "bad option").
+ * `%OptimizeFunctionOnNextCall` is a stable native-syntax intrinsic V8's own
+ * test suites depend on — it deterministically forces one specific function
+ * to tier up on its next invocation, gated behind `--allow-natives-syntax`
+ * (a flag that has existed, unchanged, for the intrinsic's entire lifetime).
+ * The generated JS factory calls the benchmark once, requests the tier-up,
+ * then calls it again so the exported function is already optimized before
+ * the child's own warmup/measurement loop ever touches it.
+ */
 
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import * as ts from "typescript";
 import { buildImports, compileMulti, instantiateWasm, optimizeBinaryAsync } from "./compiler-bundle.mjs";
@@ -18,6 +58,10 @@ const PLAYGROUND_PUBLIC_PATH = resolve(
   "playground-benchmark-sidebar.json",
 );
 const PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", "playground-benchmark-sidebar.json");
+const ARTIFACT_DIR = resolve(ROOT, ".tmp", "warm-bench");
+const CHILD_SCRIPT = resolve(import.meta.dirname, "no-jit-bench-child.mjs");
+const COMPILER_BUNDLE_PATH = resolve(import.meta.dirname, "compiler-bundle.mjs");
+const WASM_EXPERIMENTAL_FLAGS = ["--experimental-wasm-stringref", "--experimental-wasm-custom-descriptors"];
 
 const HELPERS_SOURCE = readFileSync(HELPERS_PATH, "utf8");
 
@@ -27,6 +71,30 @@ const BENCHMARKS = [
   { path: "examples/benchmarks/string.ts", exportName: "bench_string" },
   { path: "examples/benchmarks/array.ts", exportName: "bench_array" },
 ];
+
+// V8 startup flags for the JS lane:
+//   --allow-natives-syntax      permits the `%`-prefixed native-syntax
+//                               intrinsics the generated JS factory (see
+//                               `buildWarmJsFactorySource`) uses to force its
+//                               own tier-up via `%OptimizeFunctionOnNextCall`,
+//                               instead of depending on a version-sensitive
+//                               tuning flag like the now-removed
+//                               `--always-turbofan`.
+//   --no-concurrent-recompilation
+//                               forces TurboFan compilation onto the main
+//                               thread instead of a background thread —
+//                               defense-in-depth for determinism (no
+//                               background-thread timing variance in when a
+//                               compile actually completes relative to the
+//                               calling code). NOT what fixes the fatal
+//                               crash below; see `buildWarmJsFactorySource`.
+const JS_WARM_FLAGS = ["--allow-natives-syntax", "--no-concurrent-recompilation"];
+
+// V8 startup flag that skips Liftoff (the single-pass Wasm baseline
+// compiler) entirely and compiles straight to TurboFan. This is the Wasm-side
+// analogue of `--always-turbofan`: no baseline-to-optimized transition to be
+// nondeterministic about.
+const WASM_WARM_FLAGS = ["--no-liftoff"];
 
 function stripImportsAndExports(source) {
   return source.replace(/^\s*import\s+[^;]+;\s*$/gm, "").replace(/^export\s+/gm, "");
@@ -42,20 +110,27 @@ function buildJsFactorySource(source, exportName) {
   return `${transpiled}\nreturn { ${exportName} };`;
 }
 
-function calibrate(fn) {
-  let iters = 0;
-  const t0 = performance.now();
-  while (performance.now() - t0 < 100) {
-    fn();
-    iters++;
-  }
-  return Math.max(10, Math.ceil((iters / 100) * 300));
-}
-
-function timeIt(fn, iters) {
-  const t0 = performance.now();
-  for (let i = 0; i < iters; i++) fn();
-  return performance.now() - t0;
+// Same as `buildJsFactorySource`, but forces the exported (niladic) function
+// to tier up to TurboFan before handing it back — requires the factory to
+// run under `--allow-natives-syntax` (JS_WARM_FLAGS), so this is only used
+// for the artifact written for the child process, never for the in-process
+// smoke test (the parent isn't launched with that flag).
+//
+// `%PrepareFunctionForOptimization` MUST be called before
+// `%OptimizeFunctionOnNextCall` — V8's `CanOptimizeFunction` unconditionally
+// CHECKs `ManualOptimizationTable::IsMarkedForManualOptimization` outside
+// fuzzing mode (`src/runtime/runtime-test.cc`) and V8_Fatal()s ("Check
+// failed: CheckMarkedForManualOptimization") if the function was never
+// registered. Omitting this call happened to not crash on this sandbox's
+// older V8 build but reliably crashed CI's Node v26 build on fib.ts.
+function buildWarmJsFactorySource(source, exportName) {
+  const transpiled = ts.transpileModule(stripImportsAndExports(source), {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.None,
+    },
+  }).outputText;
+  return `${transpiled}\n%PrepareFunctionForOptimization(${exportName});\n${exportName}();\n%OptimizeFunctionOnNextCall(${exportName});\n${exportName}();\nreturn { ${exportName} };`;
 }
 
 function median(values) {
@@ -97,97 +172,170 @@ async function optimizeBenchmarkWasm(binary, entryPath) {
   return optimizedBinary;
 }
 
-async function measureBenchmark(entryPath, exportName) {
-  const absEntryPath = resolve(ROOT, "website", "playground", entryPath);
+function runChild(v8Flags, args) {
+  const result = spawnSync(process.execPath, [...WASM_EXPERIMENTAL_FLAGS, ...v8Flags, CHILD_SCRIPT, ...args], {
+    cwd: ROOT,
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    const stderr = result.stderr?.toString() ?? "";
+    throw new Error(`no-jit-bench child failed (exit ${result.status}): ${stderr.slice(0, 800)}`);
+  }
+  const stdout = result.stdout.toString().trim();
+  const lastLine = stdout.split(/\r?\n/).filter(Boolean).pop();
+  return JSON.parse(lastLine);
+}
+
+function smokeTestInProcess(fn) {
+  // Sanity-check that the wasm export and JS factory both produce the same
+  // result before paying for child-process measurement. Mirrors the no-jit
+  // sibling's implicit equivalence assumption.
+  try {
+    return fn();
+  } catch (err) {
+    throw new Error(`benchmark export threw during smoke test: ${err.message || err}`);
+  }
+}
+
+async function prepareArtifacts(entry) {
+  const absEntryPath = resolve(ROOT, "website", "playground", entry.path);
   const source = readFileSync(absEntryPath, "utf8");
 
   const result = await compileMulti(
     {
-      [entryPath]: source,
+      [entry.path]: source,
       "examples/benchmarks/helpers.ts": HELPERS_SOURCE,
     },
-    entryPath,
+    entry.path,
     {},
   );
-
   if (!result.success) {
-    throw new Error(`Compilation failed for ${entryPath}:\n${result.errors.map((e) => e.message).join("\n")}`);
+    throw new Error(`Compilation failed for ${entry.path}:\n${result.errors.map((e) => e.message).join("\n")}`);
   }
+  const wasmBinary = await optimizeBenchmarkWasm(result.binary, entry.path);
 
-  const wasmBinary = await optimizeBenchmarkWasm(result.binary, entryPath);
-
+  // Quick in-process smoke test — not a measurement, just a sanity gate.
   const imports = buildImports(result.imports, {}, result.stringPool);
   const { instance } = await instantiateWasm(wasmBinary, imports.env, imports.string_constants);
   if (imports.setExports) imports.setExports(instance.exports);
-  const wasmFn = instance.exports[exportName];
-  if (typeof wasmFn !== "function") {
-    throw new Error(`Missing wasm export ${exportName} in ${entryPath}`);
-  }
+  const wasmFn = instance.exports[entry.exportName];
+  if (typeof wasmFn !== "function") throw new Error(`Missing wasm export ${entry.exportName}`);
+  smokeTestInProcess(wasmFn);
 
-  const jsFactory = new Function(buildJsFactorySource(source, exportName));
-  const jsExports = jsFactory();
-  const jsFn = jsExports[exportName];
-  if (typeof jsFn !== "function") {
-    throw new Error(`Missing JS export ${exportName} in ${entryPath}`);
-  }
+  const jsFactorySource = buildJsFactorySource(source, entry.exportName);
+  smokeTestInProcess(new Function(jsFactorySource)()[entry.exportName]);
 
-  for (let i = 0; i < 80; i++) {
-    wasmFn();
-    jsFn();
-  }
+  // The artifact handed to the child process forces its own tier-up (see
+  // buildWarmJsFactorySource) — that requires --allow-natives-syntax, which
+  // this (parent) process does not run under, so it's kept separate from the
+  // plain factory used for the smoke test above.
+  const warmJsFactorySource = buildWarmJsFactorySource(source, entry.exportName);
 
-  const iters = calibrate(wasmFn);
-  const warmupRounds = 2;
-  const measuredRounds = 9;
-  for (let i = 0; i < warmupRounds; i++) {
-    timeIt(wasmFn, iters);
-    timeIt(jsFn, iters);
-  }
+  const slug = entry.path.replace(/[^a-z0-9]+/gi, "_");
+  const wasmPath = resolve(ARTIFACT_DIR, `${slug}.wasm`);
+  const jsSourcePath = resolve(ARTIFACT_DIR, `${slug}.factory.js`);
+  const importsPath = resolve(ARTIFACT_DIR, `${slug}.imports.json`);
 
-  const wasmSamplesUs = [];
-  const jsSamplesUs = [];
-  const ratioSamples = [];
-  for (let i = 0; i < measuredRounds; i++) {
-    const wasmUs = (timeIt(wasmFn, iters) / iters) * 1000;
-    const jsUs = (timeIt(jsFn, iters) / iters) * 1000;
-    wasmSamplesUs.push(wasmUs);
-    jsSamplesUs.push(jsUs);
-    ratioSamples.push(jsUs / Math.max(wasmUs, 0.000001));
-  }
+  writeFileSync(wasmPath, wasmBinary);
+  writeFileSync(jsSourcePath, warmJsFactorySource);
+  writeFileSync(
+    importsPath,
+    JSON.stringify({
+      imports: result.imports,
+      stringPool: result.stringPool,
+      runtimeHelpersPath: COMPILER_BUNDLE_PATH,
+    }),
+  );
 
-  const wasmUs = median(wasmSamplesUs);
-  const jsUs = median(jsSamplesUs);
+  return { wasmPath, jsSourcePath, importsPath };
+}
+
+async function measureBenchmark(entry) {
+  const { wasmPath, jsSourcePath, importsPath } = await prepareArtifacts(entry);
+
+  const wasmResult = runChild(WASM_WARM_FLAGS, [
+    `--lane=wasm`,
+    `--wasm=${wasmPath}`,
+    `--imports=${importsPath}`,
+    `--export=${entry.exportName}`,
+  ]);
+  // `--expect-tier=optimized` makes the child ASSERT that V8 kept the function
+  // on its optimizing tier across the whole measurement, rather than assuming
+  // it. A warm chart whose JS side quietly fell back to baseline reports a
+  // slow JS baseline, which flatters the wasm:js ratio — a silent wrong number
+  // is worse here than a loud failure.
+  const jsResult = runChild(JS_WARM_FLAGS, [
+    `--lane=js`,
+    `--js-source=${jsSourcePath}`,
+    `--export=${entry.exportName}`,
+    `--expect-tier=optimized`,
+  ]);
+
+  const wasmSamplesUs = wasmResult.samplesUs;
+  const jsSamplesUs = jsResult.samplesUs;
+  const ratioSamples = wasmSamplesUs.map(
+    (wasmUs, i) => (jsSamplesUs[i] ?? jsSamplesUs[jsSamplesUs.length - 1]) / Math.max(wasmUs, 0.000001),
+  );
 
   return {
-    path: entryPath,
+    path: entry.path,
     wasmOptimized: true,
     wasmOptimizeLevel: 4,
-    wasmUs,
-    jsUs,
+    mode: "warm",
+    jsFlags: JS_WARM_FLAGS,
+    wasmFlags: WASM_WARM_FLAGS,
+    // Recorded so the published JSON carries evidence the JS side really was
+    // measured on the optimizing tier, instead of that being an unverifiable
+    // assumption of the chart.
+    jsOptStatus: jsResult.optStatusAfter ?? "unavailable",
+    wasmUs: median(wasmSamplesUs),
+    jsUs: median(jsSamplesUs),
     wasmStdUs: stddev(wasmSamplesUs),
     jsStdUs: stddev(jsSamplesUs),
     ratioStd: stddev(ratioSamples),
-    warmupRounds,
-    measuredRounds,
+    warmupRounds: 2,
+    measuredRounds: wasmSamplesUs.length,
   };
 }
 
-const snapshot = [];
-for (const bench of BENCHMARKS) {
+async function main() {
+  mkdirSync(ARTIFACT_DIR, { recursive: true });
+
+  const snapshot = [];
+  for (const bench of BENCHMARKS) {
+    process.stdout.write(`Measuring warm: ${bench.path} ... `);
+    try {
+      const row = await measureBenchmark(bench);
+      snapshot.push(row);
+      process.stdout.write(`wasm=${row.wasmUs.toFixed(1)}us js=${row.jsUs.toFixed(1)}us\n`);
+    } catch (error) {
+      process.stdout.write(`FAILED\n`);
+      console.error(`Failed warm benchmark for ${bench.path}:`, error);
+      throw error;
+    }
+  }
+
+  mkdirSync(dirname(RESULTS_PATH), { recursive: true });
+  writeFileSync(RESULTS_PATH, JSON.stringify(snapshot, null, 2) + "\n");
+  mkdirSync(dirname(PLAYGROUND_PUBLIC_PATH), { recursive: true });
+  copyFileSync(RESULTS_PATH, PLAYGROUND_PUBLIC_PATH);
+  mkdirSync(dirname(PUBLIC_PATH), { recursive: true });
+  copyFileSync(RESULTS_PATH, PUBLIC_PATH);
+
+  console.log(`Updated ${RESULTS_PATH}`);
+  console.log(`Updated ${PLAYGROUND_PUBLIC_PATH}`);
+  console.log(`Updated ${PUBLIC_PATH}`);
+
   try {
-    snapshot.push(await measureBenchmark(bench.path, bench.exportName));
-  } catch (error) {
-    console.error(`Failed benchmark snapshot for ${bench.path}`);
-    throw error;
+    rmSync(ARTIFACT_DIR, { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup; the artifacts live in `.tmp/` which is gitignored
+    // anyway.
   }
 }
 
-mkdirSync(dirname(RESULTS_PATH), { recursive: true });
-writeFileSync(RESULTS_PATH, JSON.stringify(snapshot, null, 2) + "\n");
-mkdirSync(dirname(PLAYGROUND_PUBLIC_PATH), { recursive: true });
-copyFileSync(RESULTS_PATH, PLAYGROUND_PUBLIC_PATH);
-mkdirSync(dirname(PUBLIC_PATH), { recursive: true });
-copyFileSync(RESULTS_PATH, PUBLIC_PATH);
-console.log(`Updated ${RESULTS_PATH}`);
-console.log(`Updated ${PLAYGROUND_PUBLIC_PATH}`);
-console.log(`Updated ${PUBLIC_PATH}`);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

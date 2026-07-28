@@ -1,7 +1,8 @@
 ---
 id: 3741
 title: "IR path has no equivalent to legacy's #1120 i32-coerced-local promotion — loop.ts benchmark accumulator pattern still 16x slower under IR than legacy"
-status: ready
+status: done
+completed: 2026-07-28
 sprint: current
 created: 2026-07-28
 updated: 2026-07-28
@@ -14,7 +15,7 @@ area: ir
 language_feature: bitwise-operators
 goal: performance
 depends_on: []
-related: [3707, 3733, 3734, 3739]
+related: [3707, 3733, 3734, 3739, 3758]
 ---
 
 # #3741 — IR path lacks legacy's i32-coerced-local promotion (no-box i32 loop accumulators)
@@ -75,14 +76,14 @@ canonical `for (let i = INT; i < …; i++)` counter shape. **Neither has an IR
 equivalent.** `src/ir/from-ast.ts`'s `lowerVarDecl` (~line 2202) hardcodes
 `irVal({kind:"f64"})` as the default hint for any un-annotated `number`
 local, and IR's selector (`src/ir/select.ts`'s `isPhase1TypeNode`) actively
-*rejects* an explicit `: i32` type-alias annotation from IR eligibility
+_rejects_ an explicit `: i32` type-alias annotation from IR eligibility
 (demotes the whole function to legacy) — so today an i32-accumulator loop
 inside an otherwise-IR-eligible function simply never gets the promotion
 either way.
 
 This is **not** a duplicate of `src/ir/propagate.ts` (#1131 Phase 2's lattice
 type-propagation system) — that module infers param/return types for
-*unannotated* functions so they can become IR-eligible at all (e.g. proving
+_unannotated_ functions so they can become IR-eligible at all (e.g. proving
 `function fib(n) {...}` is `(number) -> number`). It doesn't touch local
 no-box storage representation within an already-eligible function's body,
 which is the problem here.
@@ -125,7 +126,7 @@ benchmark loop compile with i32 `s`/`i` locals:
    latent bug this surfaced — a promoted i32 local returned into a declared
    `f64` result was never widened. The function's own comment ("native
    scalar returns already line up via the hint") was an invariant that held
-   *only* because no un-annotated local could previously resolve to
+   _only_ because no un-annotated local could previously resolve to
    anything but f64; #3741 breaks that invariant. Fixed by reusing the
    existing `coerceIrNumeric` helper (already used elsewhere for exactly
    this i32→f64 widen, `f64.convert_i32_s`) instead of the unconditional
@@ -157,7 +158,7 @@ other call sites this session didn't reach:
   loops+do-while
 - `#2856` whole-component claim tracking (`algorithms.ts`, "zero demotions")
 - `#1804 (6e)/(6f)` — vec reads inside while/for loops (`Phase 1 requires
-  matching operand types for '<'` — the SAME comparison-operand-hint gap
+matching operand types for '<'` — the SAME comparison-operand-hint gap
   fixed for the benchmark's own condition, recurring in a different
   loop/array-index pairing my LHS-drives-RHS fix didn't cover)
 
@@ -185,7 +186,7 @@ reproduce the same 13 failures immediately as a checklist, not a surprise.
 ## A harder blocker found independently: `+`/`-`/`*` are deliberately f64-only in IR
 
 Even with every consumption-site gap above fixed, `s + i` itself cannot
-compute as native `i32.add` through the *general* binary-op path: IR's
+compute as native `i32.add` through the _general_ binary-op path: IR's
 `lowerBinary` unconditionally calls `requireF64(isF64, "+", ...)` for
 `+`/`-`/`*` (`from-ast.ts:~7910/7915/7920`) — comparisons and bitwise ops
 already have an `if (!isF64 && !isI32) requireF64(...)` escape hatch, but
@@ -193,7 +194,7 @@ arithmetic does not. This is not an oversight: it's the IR-level analogue of
 legacy's own #1236 guard (`collectI32CoercedLocals`'s `isI32SafeExpr`
 explicitly excludes `+`/`-`/`*` from the safe-to-promote set, with a
 detailed comment on why — raw i32 arithmetic on i32-safe operands can still
-be wrong if the *sum itself* isn't immediately re-truncated, because Wasm
+be wrong if the _sum itself_ isn't immediately re-truncated, because Wasm
 `i32.add` wraps while a plain `f64.add` widens without truncating).
 
 For the specific pattern that matters (`(a + b) | 0` or similar — a bitwise
@@ -218,7 +219,7 @@ the immediate operand of `|0`) one level deeper.
 
 ## Recommended alternative strategy for a future session
 
-Given the consumption-site blast radius, retyping a local's *global*
+Given the consumption-site blast radius, retyping a local's _global_
 `IrType` (visible to every consumer in the function) is the wrong lever.
 Consider instead a **scoped shadow representation**: keep the local's
 `IrType` as f64 everywhere (unchanged for every existing consumer — return,
@@ -226,7 +227,7 @@ array stores, Map slots, closures, all keep working exactly as today), and
 only within a provably self-contained hot region (a `for`/`while` loop body
 where the accumulator is written exclusively via the bitwise-wrapped pattern
 and never escapes to a call/closure/property-store mid-loop) maintain an
-*additional*, loop-scoped i32 shadow slot — converting f64↔i32 exactly once
+_additional_, loop-scoped i32 shadow slot — converting f64↔i32 exactly once
 at loop entry and loop exit, never changing what any other part of the
 function sees. This is architecturally closer to a register-allocator
 "rematerialize as i32 for this region" optimization than a type-system
@@ -245,3 +246,25 @@ existing IR consumer).
   assumes "un-annotated locals are always f64" — needed regardless of which
   strategy (global retype vs. scoped shadow) a future attempt takes, unless
   the scoped-shadow strategy above sidesteps it entirely by construction.
+
+## Outcome
+
+Closed by **#3758**, which implements exactly the "recommended alternative
+strategy" this issue's own analysis pointed to: a narrowly-scoped fused
+pattern at the bitwise-operator lowering site (`(expr op expr) | 0`-shaped),
+computed via genuine native `i32.add`/`i32.sub`/`i32.mul` for provably
+int32-pure operand subtrees — **never** retyping any local's declared
+`IrType`. Because it never changes what any other consumer of a local sees
+(the native i32 value only exists transiently inside the bitwise operator's
+own operand-lowering step, immediately consumed and discarded), it sidesteps
+the entire consumption-site blast-radius problem that sank the first
+attempt (the 13 failures enumerated above) — there was no cross-cutting
+audit needed because nothing outside `lowerBinary`'s own local scope ever
+observes an i32-typed value that used to be f64.
+
+Verified directly: this issue's own target benchmark
+(`bench_loop`/`loop.ts`'s `let s = 0; for (let i = 0; i < 1000000; i++) s =
+(s + i) | 0;`) now compiles through IR with exactly one `i32.add`, zero
+`i64.*` ToInt32-dance instructions, and produces the correct result.
+#3758's own measured numbers (the `fib.js` benchmark, an equivalent
+accumulator shape) show ~13% faster warm execution.

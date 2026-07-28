@@ -1607,6 +1607,38 @@ export function deriveFnctorFields(
     field.type = { kind: "f64" };
   }
 
+  // (#3753 S1) The STRING half of the same promotion. A field whose every write
+  // is provably a string (`ctx.stringPropertyNames`, the slot-aware verdict from
+  // the same whole-program walk) carries a native `$AnyString` ref instead of the
+  // boxed `externref`.
+  //
+  // The cost this removes is per-ACCESS, not per-write: reading a boxed slot
+  // emits `any.convert_extern` + `ref.test` + `ref.cast` + `__str_flatten`
+  // before the string is usable, so `this.input.charCodeAt(i)` in a scan loop
+  // pays all four per character. #3753 measured that at 6.6x on the tokenizer
+  // axis — the single largest remaining gap to node.
+  //
+  // Same three carve-outs as the numeric promotion above, for the same reasons
+  // (already-typed slots are left alone; a presence-tracked field needs its
+  // carrier to answer `undefined`; an accessor-backed name keeps the
+  // dispatcher's accessor arm), plus two of its own:
+  //   - the native string type must actually be registered (`anyStrTypeIdx`),
+  //     since this runs during struct derivation and the type is lazy;
+  //   - `nativeStrings` must be on, which is what makes `$AnyString` the
+  //     module's string carrier at all.
+  // `JS2WASM_STRING_FIELDS=0` reproduces the pre-#3753 field shapes exactly,
+  // which is what makes a same-container A/B possible (mirrors S4a's
+  // `JS2WASM_NUMERIC_FIELDS=0`).
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && process.env.JS2WASM_STRING_FIELDS !== "0") {
+    for (const field of fields) {
+      if (field.type.kind !== "externref") continue;
+      if (onlyConditional.get(field.name) === true) continue;
+      if (!ctx.stringPropertyNames?.has(field.name)) continue;
+      if (ctx.classAccessorSet.has(`${flowStructName}_${field.name}`)) continue;
+      field.type = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    }
+  }
+
   // Widen non-null ref fields to ref_null so struct.new can use ref.null defaults.
   // (Kept INSIDE the derivation so the reserved field set matches exactly what the
   // struct.new default-init loop expects — see new-super.ts.)

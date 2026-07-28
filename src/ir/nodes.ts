@@ -674,6 +674,28 @@ export type IrBinop =
   // i32 logical (for bool && / || — operands assumed 0|1)
   | "i32.and"
   | "i32.or"
+  // (#3758) Native i32 arithmetic — WRAPS modulo 2^32 on overflow, matching
+  // ECMA-262 ToInt32's wrap semantics exactly (unlike `i32.trunc_sat_f64_s`,
+  // which SATURATES to INT32_MIN/MAX instead — the distinction that made a
+  // prior attempt in this area unsound and reverted, see #3745's history).
+  // Only emitted by `ir/from-ast.ts`'s `emitI32PureArithmetic` for operand
+  // subtrees PROVEN to be built entirely from already-int32-range leaves
+  // (i32-coerced locals, in-range literals, or nested bitwise/shift results,
+  // which are ALWAYS int32-range by ECMA-262 spec regardless of their own
+  // operands). `i32.add`/`i32.sub` need no extra guard (f64 add/sub of two
+  // int32-range operands is exact, |a±b| < 2^32 < 2^53, so wrapping the exact
+  // sum mod 2^32 via native i32.add is bit-identical to ToInt32(a+b)). `i32.mul`
+  // additionally requires the `isI32MulSafe` guard (at least one operand a
+  // "small" literal, |n| < 2^21) to match legacy's OWN i32.mul guard
+  // (`src/codegen/binary-ops.ts`) — not for wrap correctness (native i32.mul
+  // always wraps exactly) but because JS `*` computes in f64 first: for large
+  // operands the true product can exceed 2^53 and round, so an EXACT native
+  // i32.mul can diverge from what JS's (lossy) float64 multiply then ToInt32
+  // would produce. The guard keeps native i32.mul's exact result aligned with
+  // JS's actual (here lossless) float64 semantics.
+  | "i32.add"
+  | "i32.sub"
+  | "i32.mul"
   // #1126 Stage 3 — native i32 magnitude compares. Emitted by the
   // AST→IR lowerer when both operands of `<`, `<=`, `>`, `>=` are
   // i32-typed (a bool, a comparison result, or an i32-domain value

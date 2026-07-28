@@ -2156,6 +2156,26 @@ export function receiverIsNativeStringValType(
 ): boolean {
   if (!(ctx.wasi || ctx.standalone)) return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  // (#3753 S1c) `this.<field>` inside a typed twin, where #3753 S1b promoted the
+  // slot to a native string ref. The value IS a `$AnyString` by construction —
+  // the struct field's own wasm type says so — but the receiver's TS type is
+  // still `any` (the twin's `this` is untyped in the source), so without this
+  // the call fell to the RUNTIME-guarded arm and re-emitted
+  // `ref.test` + `ref.cast` + `__str_flatten` on a value already known to be a
+  // flat native string. That is the per-character cost #3753 measured: promoting
+  // the slot alone moved nothing because the READ never consulted it.
+  if (ts.isPropertyAccessExpression(recv) && recv.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    const structName = fctx.typedThisStructName;
+    if (structName === undefined) return false;
+    const fields = ctx.structFields.get(structName);
+    const field = fields?.find((f) => f.name === recv.name.text);
+    if (field === undefined) return false;
+    if (field.presenceTracked) return false; // absence must stay expressible
+    if (ctx.classAccessorSet.has(`${structName}_${recv.name.text}`)) return false;
+    if (field.type.kind !== "ref" && field.type.kind !== "ref_null") return false;
+    const fieldTypeIdx = (field.type as { typeIdx?: number }).typeIdx;
+    return fieldTypeIdx === ctx.anyStrTypeIdx || (ctx.nativeStrTypeIdx >= 0 && fieldTypeIdx === ctx.nativeStrTypeIdx);
+  }
   if (!ts.isIdentifier(recv)) return false;
   // Only when the static type genuinely lost the string info (`any`/`unknown`).
   // A concrete `string` already routes through the existing isStringType gate;
@@ -3367,6 +3387,77 @@ function emitPlainArrayUndefinedOobGet(
     op: "if",
     blockType: { kind: "val" as const, type: { kind: "externref" } },
     then: [{ op: "local.get", index: boxedLocal }],
+    else: [{ op: "local.get", index: undefLocal }],
+  });
+}
+
+/**
+ * SAFE plain-array OOB read for a WasmGC reference element. The typed carrier
+ * cannot encode the standalone `$undefined` singleton, so widen the unproven
+ * read to externref: a present non-null element is converted at the boundary,
+ * while an OOB index (and a nullable in-bounds hole) returns JS `undefined`.
+ *
+ * Like the primitive sibling above, this is call-site-owned. Array-method,
+ * subview, typed-array, and proven-in-bounds reads retain their existing
+ * representation and byte path.
+ *
+ * Stack in:  [arrayref(non-null $arr), i32 index]
+ * Stack out: [externref]
+ */
+function emitReferenceArrayUndefinedOobGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrTypeIdx: number,
+  elementType: Extract<ValType, { kind: "ref" | "ref_null" }>,
+  lengthBoundInstrs?: Instr[],
+): void {
+  const idxLocal = allocLocal(fctx, `__oobr_idx_${fctx.locals.length}`, { kind: "i32" });
+  const arrLocal = allocLocal(fctx, `__oobr_arr_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
+  fctx.body.push({ op: "local.set", index: idxLocal });
+  fctx.body.push({ op: "local.set", index: arrLocal });
+
+  // Materialise the singleton before constructing detached branch bodies so
+  // any late helper registration and function-index shift happens in-order.
+  emitUndefined(ctx, fctx);
+  const undefLocal = allocLocal(fctx, `__oobr_undef_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: undefLocal });
+
+  const valueLocal =
+    elementType.kind === "ref_null" ? allocLocal(fctx, `__oobr_value_${fctx.locals.length}`, elementType) : undefined;
+  const presentValue: Instr[] =
+    valueLocal === undefined
+      ? [
+          { op: "local.get", index: arrLocal },
+          { op: "local.get", index: idxLocal },
+          { op: "array.get", typeIdx: arrTypeIdx },
+          { op: "extern.convert_any" },
+        ]
+      : [
+          { op: "local.get", index: arrLocal },
+          { op: "local.get", index: idxLocal },
+          { op: "array.get", typeIdx: arrTypeIdx },
+          { op: "local.tee", index: valueLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [{ op: "local.get", index: undefLocal }],
+            else: [{ op: "local.get", index: valueLocal }, { op: "extern.convert_any" }],
+          },
+        ];
+
+  fctx.body.push({ op: "local.get", index: idxLocal });
+  if (lengthBoundInstrs) {
+    fctx.body.push(...lengthBoundInstrs.map((instr) => ({ ...instr })));
+  } else {
+    fctx.body.push({ op: "local.get", index: arrLocal });
+    fctx.body.push({ op: "array.len" });
+  }
+  fctx.body.push({ op: "i32.lt_u" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: presentValue,
     else: [{ op: "local.get", index: undefLocal }],
   });
 }
@@ -4914,9 +5005,9 @@ export function compileElementAccessBody(
     // semantics; deferred). This F1 slice widens the PRIMITIVE element kinds the
     // type-aware box (#2785) can box correctly — `number[]` (f64), `boolean[]`
     // (branded i32), and `symbol[]` (branded i32, #2792) — via `f1ElementBoxType`
-    // below. Other `i32` elements (packed-number / other handle reps),
-    // object-element (`ref`) arrays, and externref (`any[]`/`string[]`) keep their
-    // typed result and are deferred (`f1BoxType === null`).
+    // below. Other `i32` elements (packed-number / other handle reps) and
+    // externref elements keep the shared-helper path; WasmGC `ref` / `ref_null`
+    // elements use the dedicated reference-array widen below.
     const isRegexMatchVec = typeDef.fields.length >= 4 && typeDef.fields[2]?.name === "index";
     const numericHint = expectedType?.kind === "f64" || expectedType?.kind === "i32";
     const taClass = classifyTypedArrayType(ctx.checker.getTypeAtLocation(expr.expression), ctx.checker);
@@ -5001,10 +5092,13 @@ export function compileElementAccessBody(
       // the number 1, regressing the standalone map tests); #2792 completes the
       // `symbol[]` arm now that a native standalone `__box_symbol` exists (a symbol
       // handle boxed as `__box_number` would surface a Number). Packed-number /
-      // other i32 / object / externref elements stay deferred (`f1BoxType ===
-      // null`) and fall through to the unchanged shared-helper read below
-      // (bounds-checked, never traps).
+      // other i32 / externref elements stay deferred (`f1BoxType === null`) and
+      // fall through to the shared-helper read below; WasmGC `ref` / `ref_null`
+      // elements use the dedicated reference-array widen immediately below.
       emitPlainArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, f1BoxType, vecLenBoundInstrs);
+      return { kind: "externref" };
+    } else if (oobUndefined && (arrDef.element.kind === "ref" || arrDef.element.kind === "ref_null")) {
+      emitReferenceArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, vecLenBoundInstrs);
       return { kind: "externref" };
     } else if (oobUndefinedTypedArray) {
       // (#2798 Row 9) Typed-array OOB → JS `undefined`, in-bounds → the element
@@ -5106,10 +5200,14 @@ export function compileElementAccessBody(
     // element's SEMANTIC type (`f1BoxTypeArr`: `{f64}` number[] → `__box_number`,
     // `{i32, boolean}` boolean[] → `__box_boolean`, `{i32, symbol}` symbol[] →
     // `__box_symbol`). Bounds-eliminated reads above keep the unboxed fast path.
-    // Packed-number / other i32 / object / externref elements stay deferred
-    // (`f1BoxTypeArr === null`) and fall through to the unchanged shared-helper
-    // read below. See the full note at the vec-struct call site above.
+    // Packed-number / other i32 / externref elements stay deferred
+    // (`f1BoxTypeArr === null`) and fall through to the shared-helper read
+    // below; WasmGC `ref` / `ref_null` elements use the dedicated widen
+    // immediately below. See the full note at the vec-struct call site above.
     emitPlainArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element, f1BoxTypeArr);
+    return { kind: "externref" };
+  } else if (oobUndefinedArr && (typeDef.element.kind === "ref" || typeDef.element.kind === "ref_null")) {
+    emitReferenceArrayUndefinedOobGet(ctx, fctx, typeIdx, typeDef.element);
     return { kind: "externref" };
   } else if (oobUndefinedTypedArrayArr) {
     // (#2798 Row 9) Typed-array OOB → JS `undefined`, in-bounds → the element

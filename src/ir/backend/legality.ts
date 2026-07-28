@@ -320,6 +320,12 @@ function porfforBinopLegal(op: IrBinop): boolean {
     case "i32.le_u":
     case "i32.gt_u":
     case "i32.ge_u":
+    // (#3758) native i32 arithmetic — `binaryOp` (porffor/sink.ts) maps
+    // these to a plain typed `+`/`-`/`*` Porffor node over i32 operands, the
+    // same shape as any other typed scalar op in this profile.
+    case "i32.add":
+    case "i32.sub":
+    case "i32.mul":
     // #3499: lower.ts expands these through backend-neutral typed scalar
     // primitives (ToInt32, native i32 bitwise op, and signed/unsigned result
     // conversion). No raw Wasm instruction reaches the Porffor sink.

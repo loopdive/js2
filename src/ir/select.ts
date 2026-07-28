@@ -55,6 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
 import { staticPromiseResolveSettledExpr, unwrapPromiseTypeNode } from "../codegen/async-static.js";
@@ -136,6 +137,7 @@ export type IrFallbackReason =
   // future slice can tell "method-specific gate failure" apart from generic
   // body-shape rejections that apply to top-level FunctionDeclarations too.
   | "class-method"
+  | "string-builder-candidate" // (#3740/#3744) kill-switch-forced legacy — see ./string-builder-shape.ts
   | "deferred-feature"; // permanently excluded (eval, with, import(), Proxy)
 
 export interface IrFallback {
@@ -1372,6 +1374,7 @@ function whyNotIrClaimable(
 
   const body = fn.body;
   if (!body) return "body-shape-rejected";
+  if (stringBuilderForcedLegacy(body)) return "string-builder-candidate";
   // (#2856 C1) Reset the early-return context for this function's walk.
   earlyReturnLoopDepth = 0;
   earlyReturnBarrierDepth = 0;
