@@ -1,9 +1,8 @@
 {
   "id": "2949",
-  "assignee": "ttraenkler/codex-ir-member-eq",
-  "status": "released",
-  "branch": "codex/2949-acorn-direct-member-equality",
-  "claimed_at": "2026-07-29T20:25:02Z",
-  "updated_at": "2026-07-29T21:48:44Z",
-  "released_at": "2026-07-29T21:48:44Z"
+  "assignee": "ttraenkler/codex-ir-array-param",
+  "status": "in-progress",
+  "branch": "codex/2949-acorn-implicit-array-param",
+  "claimed_at": "2026-07-29T21:49:16Z",
+  "updated_at": "2026-07-29T21:49:16Z"
 }
