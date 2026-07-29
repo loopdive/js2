@@ -1,0 +1,10 @@
+{
+  "id": "3782",
+  "assignee": "Compile linked Acorn benchmark driver for standalone without stack overflow",
+  "status": "in-progress",
+  "branch": "",
+  "reserved_at": "2026-07-29T05:25:52Z",
+  "claimed_at": "2026-07-29T05:25:52Z",
+  "updated_at": "2026-07-29T05:25:52Z",
+  "pr_scan": "ok"
+}
