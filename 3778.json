@@ -1,10 +1,9 @@
 {
   "id": "3778",
   "assignee": "ttraenkler/codex",
-  "status": "in-progress",
+  "status": "done",
   "branch": "",
-  "reserved_at": "2026-07-29T01:59:06Z",
   "claimed_at": "2026-07-29T01:59:06Z",
-  "updated_at": "2026-07-29T01:59:06Z",
-  "pr_scan": "ok"
+  "updated_at": "2026-07-29T02:30:59Z",
+  "released_at": "2026-07-29T02:30:59Z"
 }
