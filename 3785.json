@@ -1,0 +1,10 @@
+{
+  "id": "3785",
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "claude/fix-3777-warm-js-lane",
+  "reserved_at": "2026-07-29T22:49:17Z",
+  "claimed_at": "2026-07-29T22:49:17Z",
+  "updated_at": "2026-07-29T22:49:17Z",
+  "pr_scan": "degraded"
+}
