@@ -1,8 +1,9 @@
 {
   "id": "2949",
   "assignee": "ttraenkler/codex-ir-member-eq",
-  "status": "in-progress",
+  "status": "released",
   "branch": "codex/2949-acorn-direct-member-equality",
   "claimed_at": "2026-07-29T20:25:02Z",
-  "updated_at": "2026-07-29T20:25:02Z"
+  "updated_at": "2026-07-29T21:48:44Z",
+  "released_at": "2026-07-29T21:48:44Z"
 }
