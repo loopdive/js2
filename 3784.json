@@ -1,0 +1,10 @@
+{
+  "id": "3784",
+  "assignee": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "claude/fix-3783-local-var-demote",
+  "reserved_at": "2026-07-29T22:16:56Z",
+  "claimed_at": "2026-07-29T22:16:56Z",
+  "updated_at": "2026-07-29T22:16:56Z",
+  "pr_scan": "degraded"
+}
