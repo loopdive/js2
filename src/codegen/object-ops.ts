@@ -3396,6 +3396,123 @@ export function compileObjectDefineProperties(
     return { kind: "externref" };
   }
 
+  // (#3782) Rollup-style packages commonly build a fixed descriptor map in a
+  // module variable, fill each descriptor's `get`/`set` field, then apply it
+  // to a function's prototype. The plural native fallback cannot enumerate a
+  // statically-shaped WasmGC map as a dynamic `$Object`. When the map's own key
+  // set is provably fixed and the receiver is a plain user-function prototype,
+  // expand the plural operation into singular definitions. Each descriptor is
+  // still read at the original call site, after all intervening mutations.
+  const stableDescriptorMapEntries = (() => {
+    if (!ctx.standalone || !ts.isIdentifier(descsArg)) return undefined;
+    if (
+      !ts.isPropertyAccessExpression(objArg) ||
+      objArg.name.text !== "prototype" ||
+      !ts.isIdentifier(objArg.expression)
+    ) {
+      return undefined;
+    }
+    const receiverSymbol = ctx.checker.getSymbolAtLocation(objArg.expression);
+    const receiverDeclaration = receiverSymbol?.valueDeclaration;
+    const receiverIsFunction =
+      !!receiverDeclaration &&
+      (ts.isFunctionDeclaration(receiverDeclaration) ||
+        (ts.isVariableDeclaration(receiverDeclaration) &&
+          !!receiverDeclaration.initializer &&
+          ts.isFunctionExpression(unwrapTransparentExpression(receiverDeclaration.initializer))));
+    if (!receiverIsFunction) return undefined;
+
+    const symbol = ctx.checker.getSymbolAtLocation(descsArg);
+    const declaration = symbol?.valueDeclaration;
+    if (
+      !declaration ||
+      !ts.isVariableDeclaration(declaration) ||
+      !declaration.initializer ||
+      !ts.isObjectLiteralExpression(unwrapTransparentExpression(declaration.initializer))
+    ) {
+      return undefined;
+    }
+    const literal = unwrapTransparentExpression(declaration.initializer) as ts.ObjectLiteralExpression;
+    const descriptors = new Map<string, Map<string, ts.Expression>>();
+    for (const property of literal.properties) {
+      if (
+        !ts.isPropertyAssignment(property) ||
+        (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name)) ||
+        !ts.isObjectLiteralExpression(unwrapTransparentExpression(property.initializer))
+      ) {
+        return undefined;
+      }
+      const fields = new Map<string, ts.Expression>();
+      for (const field of (unwrapTransparentExpression(property.initializer) as ts.ObjectLiteralExpression)
+        .properties) {
+        if (!ts.isPropertyAssignment(field) || (!ts.isIdentifier(field.name) && !ts.isStringLiteral(field.name))) {
+          return undefined;
+        }
+        fields.set(field.name.text, field.initializer);
+      }
+      descriptors.set(property.name.text, fields);
+    }
+    const keys = [...descriptors.keys()];
+    if (keys.length === 0 || new Set(keys).size !== keys.length) return undefined;
+    const keySet = new Set(keys);
+    let stable = true;
+    const visit = (node: ts.Node): void => {
+      if (!stable) return;
+      if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+        if (node === declaration.name || node === descsArg) {
+          // Declaration and the defineProperties argument itself are expected.
+        } else if (
+          ts.isPropertyAccessExpression(node.parent) &&
+          node.parent.expression === node &&
+          keySet.has(node.parent.name.text) &&
+          ts.isPropertyAccessExpression(node.parent.parent) &&
+          node.parent.parent.expression === node.parent &&
+          ts.isBinaryExpression(node.parent.parent.parent) &&
+          node.parent.parent.parent.left === node.parent.parent &&
+          node.parent.parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          node.parent.parent.parent.getStart() < expr.getStart()
+        ) {
+          // A direct field assignment before the application preserves the
+          // descriptor map's key set and can be merged into its literal shape.
+          descriptors.get(node.parent.name.text)!.set(node.parent.parent.name.text, node.parent.parent.parent.right);
+        } else {
+          stable = false;
+          return;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(descsArg.getSourceFile());
+    return stable
+      ? keys.map((key) => ({
+          key,
+          descriptor: ts.factory.createObjectLiteralExpression(
+            [...descriptors.get(key)!.entries()].map(([name, initializer]) =>
+              ts.factory.createPropertyAssignment(name, initializer),
+            ),
+          ),
+        }))
+      : undefined;
+  })();
+  if (stableDescriptorMapEntries) {
+    let resultType: ValType | null = null;
+    for (let index = 0; index < stableDescriptorMapEntries.length; index++) {
+      const { key, descriptor } = stableDescriptorMapEntries[index]!;
+      const syntheticCall = ts.factory.createCallExpression(
+        ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "defineProperty"),
+        undefined,
+        [objArg, ts.factory.createStringLiteral(key), descriptor],
+      );
+      ts.setTextRange(syntheticCall, expr);
+      ts.setTextRange(descriptor, descsArg);
+      (descriptor as ts.ObjectLiteralExpression & { parent: ts.Node }).parent = syntheticCall;
+      (syntheticCall as ts.CallExpression & { parent: ts.Node }).parent = expr.parent;
+      resultType = compileObjectDefineProperty(ctx, fctx, syntheticCall);
+      if (resultType && index + 1 < stableDescriptorMapEntries.length) fctx.body.push({ op: "drop" });
+    }
+    return resultType;
+  }
+
   // Static path: descriptors is an object literal — expand to individual defineProperty calls.
   // Pre-check: if any inner descriptor is demonstrably malformed (primitive literal, or an
   // object literal mixing data and accessor fields, or non-function get/set), abort the

@@ -8,11 +8,10 @@
 //
 // Reuses the existing tests/dogfood/*-harness.mjs `runHarness()` exports for
 // compile/validate/differential-correctness data (each already does this,
-// no need to duplicate that logic) and adds ONE new thing on top: a
-// head-to-head perf comparison of the compiled Wasm export against the SAME
-// pinned package running natively under Node — a real npm package, not a
-// synthetic micro-benchmark (contrast the playground sidebar, which compares
-// Wasm against the SAME source transpiled straight to JS).
+// no need to duplicate that logic) and adds head-to-head perf comparisons of
+// the compiled Wasm export against the SAME pinned package running natively
+// under Node. The explicit JS-host and standalone lanes distinguish whether
+// Node or Wasm owns the benchmark driver and repeated-call loop.
 //
 // Scope: only the packages with a real, committed, reproducible dogfood
 // harness (acorn, marked, clsx, cookie). mustache/diff/dayjs were probed
@@ -28,8 +27,8 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 
-import { compile } from "../src/index.ts";
-import { wrapExports } from "../src/runtime.ts";
+import { compile, compileMulti } from "../src/index.ts";
+import { buildStringConstants, buildStringConstants16, jsString, wrapExports } from "../src/runtime.ts";
 
 import { runHarness as runAcorn } from "../tests/dogfood/acorn-harness.mjs";
 import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-official-suite.mjs";
@@ -41,8 +40,66 @@ import { setupAcorn } from "../tests/dogfood/setup-acorn.mjs";
 import { setupClsx } from "../tests/dogfood/setup-clsx.mjs";
 import { setupCookie } from "../tests/dogfood/setup-cookie.mjs";
 import { CLSX_OPS } from "../tests/dogfood/clsx-ops.mjs";
+import {
+  failedPerfLane,
+  measureJsHostPerf,
+  measureStandalonePerf,
+  npmPerfRows,
+  packagePerfRecord,
+  skippedPerfLane,
+} from "./lib/npm-compat-perf.mjs";
+import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
+const PACKAGE_NAMES = ["acorn", "marked", "clsx", "cookie"];
+const cliArgs = process.argv.slice(2);
+
+function optionValue(name) {
+  const exact = cliArgs.indexOf(name);
+  if (exact >= 0) return cliArgs[exact + 1];
+  const prefix = `${name}=`;
+  return cliArgs.find((arg) => arg.startsWith(prefix))?.slice(prefix.length);
+}
+
+const onlyArg = optionValue("--only");
+const selectedPackages = new Set(
+  onlyArg
+    ? onlyArg
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean)
+    : PACKAGE_NAMES,
+);
+const unknownPackages = [...selectedPackages].filter((name) => !PACKAGE_NAMES.includes(name));
+if (unknownPackages.length > 0 || selectedPackages.size === 0) {
+  throw new Error(
+    `--only expects one or more of ${PACKAGE_NAMES.join(", ")}; received ${unknownPackages.join(", ") || "(empty)"}`,
+  );
+}
+const focusedRun = selectedPackages.size !== PACKAGE_NAMES.length;
+const writeArtifacts = !cliArgs.includes("--no-write") && !focusedRun;
+const inspectWatFunctions = optionValue("--inspect-wat")
+  ?.split(",")
+  .map((name) => name.trim())
+  .filter(Boolean);
+const inspectConstantFloor = cliArgs.includes("--inspect-constant-floor");
+const inspectBoundaries = cliArgs.includes("--inspect-boundaries");
+const inspectImports = cliArgs.includes("--inspect-imports");
+const perfOnly = cliArgs.includes("--perf-only");
+const diagnosticsOnly = cliArgs.includes("--diagnostics-only");
+const selectedLane = optionValue("--lane") ?? "both";
+if (!["both", "js-host", "standalone"].includes(selectedLane)) {
+  throw new Error("--lane expects one of both, js-host, or standalone");
+}
+const runJsHostLane = selectedLane === "both" || selectedLane === "js-host";
+const runStandaloneLane = selectedLane === "both" || selectedLane === "standalone";
+if (perfOnly && (selectedPackages.size !== 1 || !selectedPackages.has("acorn"))) {
+  throw new Error("--perf-only currently requires --only acorn");
+}
+if ((diagnosticsOnly || inspectBoundaries) && !runJsHostLane) {
+  throw new Error("--diagnostics-only and --inspect-boundaries require --lane js-host or --lane both");
+}
+
 const RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "npm-compat.json");
 const PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", "npm-compat.json");
 // Sibling artifact in the EXACT row shape `<perf-benchmark-chart mode="perf">`
@@ -52,125 +109,492 @@ const PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", 
 const PERF_RESULTS_PATH = resolve(ROOT, "benchmarks", "results", "npm-compat-perf.json");
 const PERF_PUBLIC_PATH = resolve(ROOT, "website", "public", "benchmarks", "results", "npm-compat-perf.json");
 
-// ---------------------------------------------------------------------------
-// Perf timing helpers — same calibrated-median methodology as
-// generate-playground-benchmark-sidebar.mjs (2 warmup + 9 measured rounds).
-// ---------------------------------------------------------------------------
-function calibrate(fn) {
-  let iters = 0;
-  const t0 = performance.now();
-  while (performance.now() - t0 < 100) {
-    fn();
-    iters++;
+function instrumentImports(importObject, { callbacks = true } = {}) {
+  const importCalls = new Map();
+  const callbackCalls = new Map();
+  if (importObject.__startImportCounting && importObject.__takeImportCounts && !callbacks) {
+    importObject.__startImportCounting();
+    return {
+      instrumented: importObject,
+      importCalls,
+      callbackCalls,
+      stop() {
+        for (const [name, count] of Object.entries(importObject.__takeImportCounts())) {
+          if (count > 0) importCalls.set(`env.${name}`, count);
+        }
+      },
+    };
   }
-  return Math.max(5, Math.ceil((iters / 100) * 300));
+  const instrumented = Object.create(null);
+  for (const [moduleName, namespace] of Object.entries(importObject)) {
+    instrumented[moduleName] = Object.create(null);
+    for (const [name, value] of Object.entries(namespace)) {
+      instrumented[moduleName][name] =
+        typeof value === "function" && moduleName === "env"
+          ? new Proxy(value, {
+              apply(target, thisArg, args) {
+                const key = `${moduleName}.${name}`;
+                importCalls.set(key, (importCalls.get(key) ?? 0) + 1);
+                return Reflect.apply(target, thisArg, args);
+              },
+            })
+          : value;
+    }
+  }
+  if (importObject.__setExports) {
+    Object.defineProperty(instrumented, "__setExports", {
+      value(exports) {
+        if (!callbacks) {
+          importObject.__setExports(exports);
+          return;
+        }
+        const wrapped = {};
+        for (const [name, value] of Object.entries(exports)) {
+          wrapped[name] =
+            typeof value === "function"
+              ? new Proxy(value, {
+                  apply(target, thisArg, args) {
+                    callbackCalls.set(name, (callbackCalls.get(name) ?? 0) + 1);
+                    return Reflect.apply(target, thisArg, args);
+                  },
+                })
+              : value;
+        }
+        importObject.__setExports(wrapped);
+      },
+    });
+  }
+  return { instrumented, importCalls, callbackCalls, stop() {} };
 }
 
-function timeIt(fn, iters) {
-  const t0 = performance.now();
-  for (let i = 0; i < iters; i++) fn();
-  return performance.now() - t0;
+const STANDALONE_BENCHMARK_EXPORT = "__npmCompatStandaloneBenchmark";
+const CLSX_PERF_OP_NAME = "op_two_strings";
+
+function chunkedStringArray(value, chunkSize = 1024) {
+  const chunks = [];
+  for (let offset = 0; offset < value.length; offset += chunkSize) {
+    chunks.push(JSON.stringify(value.slice(offset, offset + chunkSize)));
+  }
+  return `[${chunks.join(",\n")}]`;
 }
 
-function median(values) {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function stddev(values) {
-  if (values.length <= 1) return 0;
-  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
-  return Math.sqrt(variance);
-}
-
-/**
- * Head-to-head timing: wasmFn vs nodeFn, same op, same inputs (baked into
- * each closure by the caller). Returns median microseconds/call for both
- * sides plus their stddev, and `ratio` = nodeUs / wasmUs (>1 means the
- * compiled Wasm export is faster than the real package running natively
- * under Node; <1 means Node is faster).
- */
-function measurePerf(sampleOp, wasmFn, nodeFn) {
-  for (let i = 0; i < 20; i++) {
-    wasmFn();
-    nodeFn();
-  }
-  const iters = calibrate(wasmFn);
-  const warmupRounds = 2;
-  const measuredRounds = 9;
-  for (let i = 0; i < warmupRounds; i++) {
-    timeIt(wasmFn, iters);
-    timeIt(nodeFn, iters);
-  }
-  const wasmSamplesUs = [];
-  const nodeSamplesUs = [];
-  for (let i = 0; i < measuredRounds; i++) {
-    wasmSamplesUs.push((timeIt(wasmFn, iters) / iters) * 1000);
-    nodeSamplesUs.push((timeIt(nodeFn, iters) / iters) * 1000);
-  }
-  const wasmUs = median(wasmSamplesUs);
-  const nodeUs = median(nodeSamplesUs);
-  // Per-round ratio samples so the shared <perf-benchmark-chart> can draw the
-  // same error bar it draws for the landing-page sidebar.
-  const ratioSamples = wasmSamplesUs.map((w, i) => (nodeSamplesUs[i] ?? nodeUs) / Math.max(w, 0.000001));
+function moduleImportMetadata(moduleImports) {
   return {
-    sampleOp,
-    wasmUs,
-    nodeUs,
-    wasmStdUs: stddev(wasmSamplesUs),
-    nodeStdUs: stddev(nodeSamplesUs),
-    ratio: nodeUs / Math.max(wasmUs, 0.000001),
-    ratioStd: stddev(ratioSamples),
-    warmupRounds,
-    measuredRounds,
+    moduleImportCount: moduleImports.length,
+    functionImportCount: moduleImports.filter((entry) => entry.endsWith(":function")).length,
+    ...(inspectImports ? { moduleImports } : {}),
   };
+}
+
+function firstCompileDiagnostic(result) {
+  const error = result?.errors?.[0] ?? result?.diagnostics?.[0];
+  const value = error?.messageText ?? error?.message ?? error;
+  if (typeof value === "string") return value;
+  if (value && typeof value.messageText === "string") return value.messageText;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value ?? "compile returned no binary");
+  }
+}
+
+async function compileStandaloneLane({
+  source,
+  driver,
+  packageFileName,
+  sampleOp,
+  nodeOperation,
+  inlineDriver = false,
+}) {
+  const compileStarted = performance.now();
+  let result;
+  try {
+    const compileOptions = {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      optimize: 4,
+      target: "standalone",
+      // Linked npm graphs can need their complete instance (including
+      // internal callback exports) while module initialization runs. Keep
+      // the binary host-free, but invoke the exported initializer
+      // immediately after instantiation instead of using the Wasm start
+      // section (#3782).
+      deferTopLevelInit: true,
+    };
+    result = inlineDriver
+      ? await compile(`${source}\n${driver}`, {
+          ...compileOptions,
+          fileName: packageFileName,
+        })
+      : await compileMulti(
+          {
+            [packageFileName]: source,
+            "__npm-compat-benchmark.mjs": driver,
+          },
+          "__npm-compat-benchmark.mjs",
+          compileOptions,
+        );
+  } catch (error) {
+    return failedPerfLane("standalone", "compile-error", error instanceof Error ? error.message : String(error), {
+      compileDurationMs: performance.now() - compileStarted,
+    });
+  }
+  const compileDurationMs = performance.now() - compileStarted;
+  if (!result.success || !result.binary?.length) {
+    return failedPerfLane("standalone", "compile-error", firstCompileDiagnostic(result), { compileDurationMs });
+  }
+
+  let module;
+  const moduleCompileStarted = performance.now();
+  let moduleCompileDurationMs;
+  try {
+    module = await WebAssembly.compile(result.binary);
+    moduleCompileDurationMs = performance.now() - moduleCompileStarted;
+  } catch (error) {
+    return failedPerfLane("standalone", "validation-error", error instanceof Error ? error.message : String(error), {
+      compileDurationMs,
+      binaryBytes: result.binary.length,
+    });
+  }
+  const moduleImports = WebAssembly.Module.imports(module).map(
+    ({ module: namespace, name, kind }) => `${namespace}.${name}:${kind}`,
+  );
+  if (moduleImports.length > 0) {
+    return failedPerfLane(
+      "standalone",
+      "host-import-error",
+      `standalone binary retained ${moduleImports.length} host import(s)`,
+      {
+        compileDurationMs,
+        binaryBytes: result.binary.length,
+        ...moduleImportMetadata(moduleImports),
+      },
+    );
+  }
+
+  let instance;
+  const instantiateStarted = performance.now();
+  let instantiateDurationMs;
+  let moduleInitDurationMs;
+  try {
+    instance = await WebAssembly.instantiate(module, {});
+    instantiateDurationMs = performance.now() - instantiateStarted;
+    const moduleInit = instance.exports.__module_init;
+    if (typeof moduleInit === "function") {
+      const moduleInitStarted = performance.now();
+      moduleInit();
+      moduleInitDurationMs = performance.now() - moduleInitStarted;
+    }
+  } catch (error) {
+    return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, instance), {
+      phase: instance ? "module-init" : "instantiate",
+      compileDurationMs,
+      binaryBytes: result.binary.length,
+      ...moduleImportMetadata(moduleImports),
+    });
+  }
+  const wasmBatch = instance.exports[STANDALONE_BENCHMARK_EXPORT];
+  if (typeof wasmBatch !== "function") {
+    return failedPerfLane("standalone", "runtime-error", `missing ${STANDALONE_BENCHMARK_EXPORT} export`, {
+      phase: "resolve-export",
+      compileDurationMs,
+      binaryBytes: result.binary.length,
+      ...moduleImportMetadata(moduleImports),
+    });
+  }
+
+  const nodeBatch = (iterations) => {
+    let checksum = 0;
+    for (let index = 0; index < iterations; index++) checksum += nodeOperation();
+    return checksum;
+  };
+
+  let expectedChecksum;
+  let actualChecksum;
+  let firstBatchDurationMs;
+  try {
+    expectedChecksum = nodeBatch(1);
+    const firstBatchStarted = performance.now();
+    actualChecksum = wasmBatch(1);
+    firstBatchDurationMs = performance.now() - firstBatchStarted;
+  } catch (error) {
+    return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, instance), {
+      phase: "checksum",
+      compileDurationMs,
+      moduleCompileDurationMs,
+      instantiateDurationMs,
+      moduleInitDurationMs,
+      firstBatchDurationMs,
+      binaryBytes: result.binary.length,
+      ...moduleImportMetadata(moduleImports),
+    });
+  }
+  if (!Object.is(actualChecksum, expectedChecksum)) {
+    return failedPerfLane(
+      "standalone",
+      "result-mismatch",
+      `checksum mismatch: Wasm ${String(actualChecksum)}, Node ${String(expectedChecksum)}`,
+      {
+        phase: "checksum",
+        compileDurationMs,
+        moduleCompileDurationMs,
+        instantiateDurationMs,
+        moduleInitDurationMs,
+        firstBatchDurationMs,
+        binaryBytes: result.binary.length,
+        ...moduleImportMetadata(moduleImports),
+        expectedChecksum,
+        actualChecksum,
+      },
+    );
+  }
+
+  try {
+    return {
+      ...measureStandalonePerf(sampleOp, wasmBatch, nodeBatch),
+      compileDurationMs,
+      moduleCompileDurationMs,
+      instantiateDurationMs,
+      moduleInitDurationMs,
+      firstBatchDurationMs,
+      binaryBytes: result.binary.length,
+      ...moduleImportMetadata(moduleImports),
+      expectedChecksum,
+      actualChecksum,
+      testCompiledToWasm: true,
+      benchmarkUsesIr: result.irCompiledFuncs?.includes(STANDALONE_BENCHMARK_EXPORT) ?? false,
+      irCompiledFunctions: result.irCompiledFuncs ?? [],
+      target: "standalone",
+    };
+  } catch (error) {
+    return failedPerfLane("standalone", "runtime-error", renderHarnessThrownText(error, instance), {
+      phase: "measure",
+      compileDurationMs,
+      moduleCompileDurationMs,
+      instantiateDurationMs,
+      firstBatchDurationMs,
+      binaryBytes: result.binary.length,
+      ...moduleImportMetadata(moduleImports),
+      expectedChecksum,
+      actualChecksum,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Per-package perf probes — each returns a `measurePerf(...)` result or null
 // if the package doesn't validate/run (perf is meaningless on a red surface).
 // ---------------------------------------------------------------------------
-async function perfAcorn() {
+async function perfAcornJsHost() {
   const { entryModulePath } = setupAcorn();
   const source = readFileSync(entryModulePath, "utf-8");
   // optimize: 4 — perf numbers must reflect a realistic (wasm-opt'd) deployment,
   // not the debug-friendly unoptimized binary the correctness harnesses use.
-  const result = await compile(source, { fileName: "acorn.mjs", skipSemanticDiagnostics: true, optimize: 4 });
+  const compileStart = performance.now();
+  const result = await compile(source, {
+    fileName: "acorn.mjs",
+    skipSemanticDiagnostics: true,
+    optimize: 4,
+    ...(inspectWatFunctions?.length
+      ? {
+          emitWat: true,
+          emitWatOnlyFunctions: inspectWatFunctions,
+        }
+      : {}),
+  });
+  const compileDurationMs = performance.now() - compileStart;
   if (!result.success || !result.binary?.length) return null;
+  if (inspectWatFunctions?.length) {
+    console.log(`[npm-compat] acorn WAT (${inspectWatFunctions.join(", ")})\n${result.wat ?? "(unavailable)"}`);
+  }
   const importObject = result.importObject ?? {};
-  const { instance } = await WebAssembly.instantiate(result.binary, importObject);
+  const parseOptions = { ecmaVersion: 2022, sourceType: "module" };
+  const wasmCompileStart = performance.now();
+  const compiledModule = await WebAssembly.compile(result.binary);
+  const wasmCompileMs = performance.now() - wasmCompileStart;
+  const moduleImports = WebAssembly.Module.imports(compiledModule).map(
+    ({ module, name, kind }) => `${module}.${name}:${kind}`,
+  );
+  const instantiateStart = performance.now();
+  const instance = await WebAssembly.instantiate(compiledModule, importObject);
+  const instantiateMs = performance.now() - instantiateStart;
+  const wireStart = performance.now();
   importObject.__setExports?.(instance.exports);
-  const exp = wrapExports(instance.exports, { signatures: result.exportSignatures });
+  const wireMs = performance.now() - wireStart;
+  const wrapStart = performance.now();
+  const exp = wrapExports(instance.exports, {
+    signatures: result.exportSignatures,
+  });
+  const wrapMs = performance.now() - wrapStart;
   if (typeof exp.parse !== "function") return null;
+  let boundaryCensus;
+  if (inspectBoundaries) {
+    exp.parse(source, parseOptions);
+    const { importCalls, callbackCalls, stop } = instrumentImports(importObject, { callbacks: false });
+    exp.parse(source, parseOptions);
+    stop();
+    const identicalInput = {
+      wrapperCalls: 1,
+      jsToWasmExportCalls: 1,
+      wasmToHostCalls: [...importCalls.values()].reduce((sum, count) => sum + count, 0),
+      hostToWasmCallbacks: [...callbackCalls.values()].reduce((sum, count) => sum + count, 0),
+      imports: Object.fromEntries([...importCalls].sort(([a], [b]) => a.localeCompare(b))),
+      callbacks: Object.fromEntries([...callbackCalls].sort(([a], [b]) => a.localeCompare(b))),
+    };
+    const changedSourceProbe = instrumentImports(importObject, { callbacks: false });
+    let changedSourceError;
+    try {
+      exp.parse(`${source}\n`, parseOptions);
+    } catch (error) {
+      changedSourceError = error instanceof Error ? error.message : String(error);
+    }
+    changedSourceProbe.stop();
+    const changedSourceCall = {
+      wrapperCalls: 1,
+      jsToWasmExportCalls: 1,
+      wasmToHostCalls: [...changedSourceProbe.importCalls.values()].reduce((sum, count) => sum + count, 0),
+      hostToWasmCallbacks: null,
+      imports: Object.fromEntries([...changedSourceProbe.importCalls].sort(([a], [b]) => a.localeCompare(b))),
+      callbacks: "not instrumented: wrapping Acorn callback exports changes its closure ABI",
+      ...(changedSourceError ? { error: changedSourceError } : {}),
+    };
+    boundaryCensus = {
+      changedSourceCall,
+      identicalInput,
+    };
+    console.log("[npm-compat] Acorn boundary census", JSON.stringify(boundaryCensus));
+  }
 
   const oracleMod = await import(pathToFileURL(entryModulePath).href);
   // Self-hosting sample: parse acorn's own ~6,300-line dist bundle — a real,
   // deterministic, decently-sized workload rather than a synthetic snippet.
+  if (diagnosticsOnly) {
+    const firstStart = performance.now();
+    const ast = exp.parse(source, parseOptions);
+    const firstCallMs = performance.now() - firstStart;
+    const secondStart = performance.now();
+    const secondAst = exp.parse(source, parseOptions);
+    const secondCallMs = performance.now() - secondStart;
+    return {
+      sampleOp: `parse(own ${Math.round(source.length / 1024)}KB dist bundle)`,
+      firstCallMs,
+      secondCallMs,
+      freshResultIdentity: secondAst !== ast,
+      compileDurationMs,
+      wasmCompileMs,
+      instantiateMs,
+      wireMs,
+      wrapMs,
+      binaryBytes: result.binary.length,
+      ...moduleImportMetadata(moduleImports),
+    };
+  }
+  const sampleOp = `parse(own ${Math.round(source.length / 1024)}KB dist bundle).body.length`;
+  const expectedChecksum = oracleMod.parse(source, parseOptions).body.length;
+  const actualChecksum = exp.parse(source, parseOptions).body.length;
+  if (actualChecksum !== expectedChecksum) {
+    return failedPerfLane(
+      "js-host",
+      "result-mismatch",
+      `Acorn checksum mismatch: ${actualChecksum} !== ${expectedChecksum}`,
+      { expectedChecksum, actualChecksum },
+    );
+  }
+  return {
+    ...measureJsHostPerf(
+      sampleOp,
+      () => exp.parse(source, parseOptions).body.length,
+      () => oracleMod.parse(source, parseOptions).body.length,
+    ),
+    compileDurationMs,
+    wasmCompileMs,
+    instantiateMs,
+    wireMs,
+    wrapMs,
+    binaryBytes: result.binary.length,
+    ...moduleImportMetadata(moduleImports),
+    expectedChecksum,
+    actualChecksum,
+    testCompiledToWasm: false,
+    target: "js-host",
+    ...(boundaryCensus ? { boundaryCensus } : {}),
+  };
+}
+
+async function perfAcornStandalone() {
+  const { entryModulePath } = setupAcorn();
+  const source = readFileSync(entryModulePath, "utf-8");
+  const oracleMod = await import(pathToFileURL(entryModulePath).href);
   const parseOptions = { ecmaVersion: 2022, sourceType: "module" };
-  return measurePerf(
-    `parse(own ${Math.round(source.length / 1024)}KB dist bundle)`,
-    () => exp.parse(source, parseOptions),
-    () => oracleMod.parse(source, parseOptions),
+  const sampleOp = `parse(own ${Math.round(source.length / 1024)}KB dist bundle).body.length`;
+  const driver = `
+var __npmCompatChunks = ${chunkedStringArray(source)};
+var __npmCompatInput = "";
+for (var __npmCompatChunkIndex = 0; __npmCompatChunkIndex < __npmCompatChunks.length; __npmCompatChunkIndex++) {
+  __npmCompatInput += __npmCompatChunks[__npmCompatChunkIndex];
+}
+var __npmCompatOptions = { ecmaVersion: 2022, sourceType: "module" };
+
+/** @returns {number} */
+function __npmCompatAcornOperation() {
+  return parse(__npmCompatInput, __npmCompatOptions).body.length;
+}
+
+/** @param {number} iterations */
+export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
+  var checksum = 0;
+  for (var index = 0; index < iterations; index++) {
+    checksum += __npmCompatAcornOperation();
+  }
+  return checksum;
+}`;
+  return compileStandaloneLane({
+    source,
+    driver,
+    packageFileName: "acorn.mjs",
+    sampleOp,
+    nodeOperation: () => oracleMod.parse(source, parseOptions).body.length,
+    inlineDriver: true,
+  });
+}
+
+async function perfAcorn() {
+  const jsHost = runJsHostLane ? await perfAcornJsHost() : skippedPerfLane("js-host");
+  if (diagnosticsOnly) return jsHost;
+  const standalone = runStandaloneLane ? await perfAcornStandalone() : skippedPerfLane("standalone");
+  return packagePerfRecord(
+    jsHost?.sampleOp ?? standalone?.sampleOp ?? "parse(own dist bundle).body.length",
+    jsHost ?? failedPerfLane("js-host", "compile-error", "host compilation failed"),
+    standalone,
   );
 }
 
-async function perfClsx() {
+async function perfClsxJsHost() {
   const { entryModulePath } = setupClsx();
   const clsxSource = readFileSync(entryModulePath, "utf-8");
   // Reuse one already-verified-equal op (see clsx-harness.mjs) as the
   // representative perf workload — comparing timings on an op we've already
   // confirmed produces IDENTICAL output keeps the comparison meaningful.
-  const op = CLSX_OPS.find((o) => o.name === "op_mixed_all_kinds");
-  const epilogue = `export function ${op.name}() {\n${op.code}\n}\n`;
+  const op = CLSX_OPS.find((candidate) => candidate.name === CLSX_PERF_OP_NAME);
+  const epilogue = `
+export function ${op.name}(first, second) {
+  return clsx(first, second);
+}`;
   const result = await compile(clsxSource + "\n" + epilogue, {
     fileName: "clsx.mjs",
     skipSemanticDiagnostics: true,
     optimize: 4,
+    ...(inspectWatFunctions?.length
+      ? {
+          emitWat: true,
+          emitWatOnlyFunctions: inspectWatFunctions,
+        }
+      : {}),
   });
   if (!result.success || !result.binary?.length) return null;
+  if (inspectWatFunctions?.length) {
+    console.log(`[npm-compat] clsx WAT (${inspectWatFunctions.join(", ")})\n${result.wat ?? "(unavailable)"}`);
+  }
   const importObject = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
   importObject.__setExports?.(instance.exports);
@@ -180,34 +604,230 @@ async function perfClsx() {
   const cjsEntryPath = entryModulePath.replace(/\/clsx\.mjs$/, "/clsx.js");
   const { createRequire } = await import("node:module");
   const nativeClsx = createRequire(import.meta.url)(cjsEntryPath).clsx;
-  const nodeFn = new Function("clsx", op.code);
+  const hostArguments = ["foo", "bar"];
+  const expected = nativeClsx(...hostArguments);
+  const actual = exp[op.name](...hostArguments);
+  if (actual !== expected) {
+    return failedPerfLane("js-host", "result-mismatch", `clsx result mismatch: ${String(actual)} !== ${expected}`);
+  }
+  const sampleOp = `${op.name}.length (host-owned arguments)`;
+  const moduleImports = WebAssembly.Module.imports(await WebAssembly.compile(result.binary)).map(
+    ({ module, name, kind }) => `${module}.${name}:${kind}`,
+  );
 
-  return measurePerf(
-    op.name,
-    () => exp[op.name](),
-    () => nodeFn(nativeClsx),
+  const measured = {
+    ...measureJsHostPerf(
+      sampleOp,
+      () => exp[op.name](...hostArguments).length,
+      () => nativeClsx(...hostArguments).length,
+    ),
+    binaryBytes: result.binary.length,
+    ...moduleImportMetadata(moduleImports),
+    expectedChecksum: expected.length,
+    actualChecksum: actual.length,
+    testCompiledToWasm: false,
+    target: "js-host",
+  };
+  if (!inspectConstantFloor) return measured;
+
+  const floorResult = await compile(`export function ${op.name}() { return ${JSON.stringify(expected)}; }`, {
+    fileName: "clsx-constant-floor.mjs",
+    skipSemanticDiagnostics: true,
+    optimize: 4,
+  });
+  if (!floorResult.success || !floorResult.binary?.length) return measured;
+  const floorImports = {
+    env: {},
+    "wasm:js-string": jsString,
+    string_constants: buildStringConstants(floorResult.stringPool),
+    string_constants16: buildStringConstants16(floorResult.stringPool),
+  };
+  const { instance: floorInstance } = await WebAssembly.instantiate(floorResult.binary, floorImports);
+  floorImports.__setExports?.(floorInstance.exports);
+  const floorExports = wrapExports(floorInstance.exports, { signatures: floorResult.exportSignatures });
+  const constantFloor = measureJsHostPerf(
+    `${op.name}_constant_floor`,
+    () => floorExports[op.name]().length,
+    () => nativeClsx(...hostArguments).length,
+  );
+  return {
+    ...measured,
+    constantFloor: {
+      ...constantFloor,
+      binaryBytes: floorResult.binary.length,
+    },
+  };
+}
+
+async function perfClsxStandalone() {
+  const { entryModulePath } = setupClsx();
+  const source = readFileSync(entryModulePath, "utf-8");
+  const op = CLSX_OPS.find((candidate) => candidate.name === CLSX_PERF_OP_NAME);
+  const expression = op.code.replace(/^return\s+/, "").replace(/;\s*$/, "");
+  const cjsEntryPath = entryModulePath.replace(/\/clsx\.mjs$/, "/clsx.js");
+  const { createRequire } = await import("node:module");
+  const nativeClsx = createRequire(import.meta.url)(cjsEntryPath).clsx;
+  const nodeFn = new Function("clsx", op.code);
+  const sampleOp = `${op.name}.length (driver compiled to Wasm)`;
+  const driver = `
+import { clsx } from "./clsx.mjs";
+
+/** @param {number} iterations */
+export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
+  var checksum = 0;
+  for (var index = 0; index < iterations; index++) {
+    checksum += (${expression}).length;
+  }
+  return checksum;
+}`;
+  return compileStandaloneLane({
+    source,
+    driver,
+    packageFileName: "clsx.mjs",
+    sampleOp,
+    nodeOperation: () => nodeFn(nativeClsx).length,
+  });
+}
+
+async function perfClsx() {
+  const jsHost = runJsHostLane ? await perfClsxJsHost() : skippedPerfLane("js-host");
+  const standalone = runStandaloneLane ? await perfClsxStandalone() : skippedPerfLane("standalone");
+  return packagePerfRecord(
+    jsHost?.sampleOp ?? standalone?.sampleOp ?? `${CLSX_PERF_OP_NAME}.length`,
+    jsHost ?? failedPerfLane("js-host", "compile-error", "host compilation failed"),
+    standalone,
   );
 }
 
-async function perfCookie() {
+async function perfCookieJsHost() {
   const { entryModulePath } = setupCookie();
   const cookieSource = readFileSync(entryModulePath, "utf-8");
-  const result = await compile(cookieSource, { fileName: "index.js", skipSemanticDiagnostics: true, optimize: 4 });
+  const result = await compile(cookieSource, {
+    fileName: "index.js",
+    skipSemanticDiagnostics: true,
+    optimize: 4,
+    ...(inspectWatFunctions?.length
+      ? {
+          emitWat: true,
+          emitWatOnlyFunctions: inspectWatFunctions,
+        }
+      : {}),
+  });
   if (!result.success || !result.binary?.length) return null;
+  if (inspectWatFunctions?.length) {
+    console.log(`[npm-compat] cookie WAT (${inspectWatFunctions.join(", ")})\n${result.wat ?? "(unavailable)"}`);
+  }
   const importObject = result.importObject ?? {};
-  const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
-  const exp = wrapExports(instance.exports, { signatures: result.exportSignatures });
-  if (typeof exp.parseCookie !== "function") return null;
-
-  const nativeModule = await import(pathToFileURL(entryModulePath).href);
   // A heavier, realistic multi-attribute Cookie header (8 pairs) rather than
   // the harness's minimal correctness fixtures.
   const header = "a=1; b=2; c=3; d=4; e=5; f=6; g=7; h=8";
-  return measurePerf(
-    "parseCookie(8-pair header)",
-    () => exp.parseCookie(header),
-    () => nativeModule.parseCookie(header),
+  let boundaryCensus;
+  if (inspectBoundaries) {
+    const { instrumented, importCalls, callbackCalls } = instrumentImports(importObject);
+    const { instance: probeInstance } = await WebAssembly.instantiate(result.binary, instrumented);
+    instrumented.__setExports?.(probeInstance.exports);
+    const probeExports = wrapExports(probeInstance.exports, {
+      signatures: result.exportSignatures,
+    });
+    const snapshot = (jsToWasmExportCalls) => ({
+      wrapperCalls: 1,
+      jsToWasmExportCalls,
+      wasmToHostCalls: [...importCalls.values()].reduce((sum, count) => sum + count, 0),
+      hostToWasmCallbacks: [...callbackCalls.values()].reduce((sum, count) => sum + count, 0),
+      imports: Object.fromEntries([...importCalls].sort(([a], [b]) => a.localeCompare(b))),
+      callbacks: Object.fromEntries([...callbackCalls].sort(([a], [b]) => a.localeCompare(b))),
+    });
+    importCalls.clear();
+    callbackCalls.clear();
+    probeExports.parseCookie(header);
+    boundaryCensus = {
+      firstCall: snapshot(1),
+      identicalInput: null,
+    };
+    importCalls.clear();
+    callbackCalls.clear();
+    probeExports.parseCookie(header);
+    boundaryCensus.identicalInput = snapshot(1);
+  }
+  const { instance } = await WebAssembly.instantiate(result.binary, importObject);
+  importObject.__setExports?.(instance.exports);
+  const exp = wrapExports(instance.exports, {
+    signatures: result.exportSignatures,
+  });
+  if (typeof exp.parseCookie !== "function") return null;
+
+  const nativeModule = await import(pathToFileURL(entryModulePath).href);
+  const observe = (parsed) => (parsed.a === "1" && parsed.h === "8" ? 1 : 0);
+  const expectedChecksum = observe(nativeModule.parseCookie(header));
+  const actualChecksum = observe(exp.parseCookie(header));
+  if (actualChecksum !== expectedChecksum) {
+    return failedPerfLane(
+      "js-host",
+      "result-mismatch",
+      `cookie checksum mismatch: ${actualChecksum} !== ${expectedChecksum}`,
+    );
+  }
+  const sampleOp = "parseCookie(8-pair header); verify a/h";
+  const moduleImports = WebAssembly.Module.imports(await WebAssembly.compile(result.binary)).map(
+    ({ module, name, kind }) => `${module}.${name}:${kind}`,
+  );
+  return {
+    ...measureJsHostPerf(
+      sampleOp,
+      () => observe(exp.parseCookie(header)),
+      () => observe(nativeModule.parseCookie(header)),
+    ),
+    binaryBytes: result.binary.length,
+    ...moduleImportMetadata(moduleImports),
+    expectedChecksum,
+    actualChecksum,
+    testCompiledToWasm: false,
+    target: "js-host",
+    ...(boundaryCensus ? { boundaryCensus } : {}),
+  };
+}
+
+async function perfCookieStandalone() {
+  const { entryModulePath } = setupCookie();
+  const source = readFileSync(entryModulePath, "utf-8");
+  const nativeModule = await import(pathToFileURL(entryModulePath).href);
+  const header = "a=1; b=2; c=3; d=4; e=5; f=6; g=7; h=8";
+  const sampleOp = "parseCookie(8-pair header); verify a/h";
+  const driver = `
+import { parseCookie } from "./cookie.js";
+
+function cookieOperation() {
+  var parsed = parseCookie(${JSON.stringify(header)});
+  return parsed.a === "1" && parsed.h === "8" ? 1 : 0;
+}
+
+/** @param {number} iterations */
+export function ${STANDALONE_BENCHMARK_EXPORT}(iterations) {
+  var checksum = 0;
+  for (var index = 0; index < iterations; index++) {
+    checksum += cookieOperation();
+  }
+  return checksum;
+}`;
+  return compileStandaloneLane({
+    source,
+    driver,
+    packageFileName: "cookie.js",
+    sampleOp,
+    nodeOperation: () => {
+      const parsed = nativeModule.parseCookie(header);
+      return parsed.a === "1" && parsed.h === "8" ? 1 : 0;
+    },
+  });
+}
+
+async function perfCookie() {
+  const jsHost = runJsHostLane ? await perfCookieJsHost() : skippedPerfLane("js-host");
+  const standalone = runStandaloneLane ? await perfCookieStandalone() : skippedPerfLane("standalone");
+  return packagePerfRecord(
+    jsHost?.sampleOp ?? standalone?.sampleOp ?? "parseCookie(8-pair header); verify a/h",
+    jsHost ?? failedPerfLane("js-host", "compile-error", "host compilation failed"),
+    standalone,
   );
 }
 
@@ -218,9 +838,12 @@ function knownBugsFor(name) {
   const map = {
     acorn: [
       {
-        issue: 3756,
-        summary:
-          "parse() is ~400-500x slower than native at real-file scale — a large constant-factor gap (flat ~60us/byte), likely method-dispatch overhead",
+        issue: 3780,
+        summary: "host-free Acorn parsing remains slower than native Node and has not reached the IR backend",
+      },
+      {
+        issue: 3782,
+        summary: "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable",
       },
     ],
     marked: [{ issue: 3715, summary: "TS 'evolving array type' inference unimplemented — blocks compile entirely" }],
@@ -250,113 +873,140 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
   };
 }
 
-console.log("[npm-compat] acorn — compile/validate/diff + official test suite (this takes ~1 min)...");
-const acornReport = await runAcorn({ quiet: true });
-const acornSuite = await runAcornOfficialSuite({ quiet: true });
-const acornPerf = await perfAcorn();
+const packages = [];
 
-console.log("[npm-compat] marked — compile/validate/diff...");
-const markedReport = await runMarked({ quiet: true });
+if (selectedPackages.has("acorn")) {
+  if (perfOnly) {
+    console.log("[npm-compat] acorn — perf only (correctness and official suite skipped)...");
+    const { version, pin } = setupAcorn();
+    packages.push({
+      name: "acorn",
+      version,
+      issue: 1710,
+      entryFile: pin.entryModule.replace(/^package\//, ""),
+      shape: "esm-direct",
+      perf: await perfAcorn(),
+      knownBugs: knownBugsFor("acorn"),
+    });
+  } else {
+    console.log("[npm-compat] acorn — compile/validate/diff + official test suite (this takes ~1 min)...");
+    const acornReport = await runAcorn({ quiet: true });
+    const acornSuite = await runAcornOfficialSuite({ quiet: true });
+    const acornPerf = await perfAcorn();
+    packages.push(
+      await buildPackageEntry({
+        name: "acorn",
+        version: acornReport.acorn.version,
+        issue: 1710,
+        entryFile: acornReport.acorn.entryModule.replace(/^package\//, ""),
+        shape: "esm-direct",
+        report: acornReport,
+        tests: {
+          kind: "official-suite",
+          passed: acornSuite.results?.passed ?? null,
+          total: acornSuite.results?.total ?? null,
+          passRatePct: acornSuite.summary?.passRatePct ?? null,
+          sourceIssue: 3729,
+        },
+        perf: acornPerf,
+      }),
+    );
+  }
+}
 
-console.log("[npm-compat] clsx — compile/validate/diff + perf...");
-const clsxReport = await runClsx({ quiet: true });
-const clsxPerf = await perfClsx();
+if (selectedPackages.has("marked")) {
+  console.log("[npm-compat] marked — compile/validate/diff...");
+  const markedReport = await runMarked({ quiet: true });
+  packages.push(
+    await buildPackageEntry({
+      name: "marked",
+      version: markedReport.marked.version,
+      issue: 3716,
+      entryFile: markedReport.marked.entryModule.replace(/^package\//, ""),
+      shape: "esm-direct",
+      report: markedReport,
+      tests: null,
+      perf: null,
+    }),
+  );
+}
 
-console.log("[npm-compat] cookie — compile/validate/diff + perf...");
-const cookieReport = await runCookie({ quiet: true });
-const cookiePerf = await perfCookie();
+if (selectedPackages.has("clsx")) {
+  console.log("[npm-compat] clsx — compile/validate/diff + perf...");
+  const clsxReport = await runClsx({ quiet: true });
+  const clsxPerf = await perfClsx();
+  packages.push(
+    await buildPackageEntry({
+      name: "clsx",
+      version: clsxReport.clsx.version,
+      issue: 3748,
+      entryFile: clsxReport.clsx.entryModule.replace(/^package\//, ""),
+      shape: "esm-driver-epilogue",
+      report: clsxReport,
+      tests: {
+        kind: "differential-ops",
+        passed: clsxReport.summary.opDiff?.equal ?? null,
+        total: clsxReport.summary.opDiff?.total ?? null,
+        sourceIssue: 3748,
+      },
+      perf: clsxPerf,
+    }),
+  );
+}
 
-const packages = await Promise.all([
-  buildPackageEntry({
-    name: "acorn",
-    version: acornReport.acorn.version,
-    issue: 1710,
-    entryFile: acornReport.acorn.entryModule.replace(/^package\//, ""),
-    shape: "esm-direct",
-    report: acornReport,
-    tests: {
-      kind: "official-suite",
-      passed: acornSuite.results?.passed ?? null,
-      total: acornSuite.results?.total ?? null,
-      passRatePct: acornSuite.summary?.passRatePct ?? null,
-      sourceIssue: 3729,
-    },
-    perf: acornPerf,
-  }),
-  buildPackageEntry({
-    name: "marked",
-    version: markedReport.marked.version,
-    issue: 3716,
-    entryFile: markedReport.marked.entryModule.replace(/^package\//, ""),
-    shape: "esm-direct",
-    report: markedReport,
-    tests: null,
-    perf: null,
-  }),
-  buildPackageEntry({
-    name: "clsx",
-    version: clsxReport.clsx.version,
-    issue: 3748,
-    entryFile: clsxReport.clsx.entryModule.replace(/^package\//, ""),
-    shape: "esm-driver-epilogue",
-    report: clsxReport,
-    tests: {
-      kind: "differential-ops",
-      passed: clsxReport.summary.opDiff?.equal ?? null,
-      total: clsxReport.summary.opDiff?.total ?? null,
-      sourceIssue: 3748,
-    },
-    perf: clsxPerf,
-  }),
-  buildPackageEntry({
-    name: "cookie",
-    version: cookieReport.cookie.version,
-    issue: 3751,
-    entryFile: cookieReport.cookie.entryModule.replace(/^package\//, ""),
-    shape: "esm-direct",
-    report: cookieReport,
-    tests: {
-      kind: "differential-ops",
-      passed: cookieReport.summary.opDiff?.equal ?? null,
-      total: cookieReport.summary.opDiff?.total ?? null,
-      sourceIssue: 3751,
-    },
-    perf: cookiePerf,
-  }),
-]);
+if (selectedPackages.has("cookie")) {
+  console.log("[npm-compat] cookie — compile/validate/diff + perf...");
+  const cookieReport = await runCookie({ quiet: true });
+  const cookiePerf = await perfCookie();
+  packages.push(
+    await buildPackageEntry({
+      name: "cookie",
+      version: cookieReport.cookie.version,
+      issue: 3751,
+      entryFile: cookieReport.cookie.entryModule.replace(/^package\//, ""),
+      shape: "esm-direct",
+      report: cookieReport,
+      tests: {
+        kind: "differential-ops",
+        passed: cookieReport.summary.opDiff?.equal ?? null,
+        total: cookieReport.summary.opDiff?.total ?? null,
+        sourceIssue: 3751,
+      },
+      perf: cookiePerf,
+    }),
+  );
+}
 
 const summary = {
   generatedAt: new Date().toISOString(),
   note: "Only packages with a committed, reproducible tests/dogfood/*-harness.mjs are listed. mustache (#3720), diff (#3721), and dayjs (#3747) were probed ad-hoc and surfaced real bugs but have no committed harness yet.",
+  performanceMethodology: {
+    baseline: "same pinned package, inputs, and result observation in native Node",
+    inputModes: {
+      "compile-time-static": "package, test driver, and fixed inputs are visible to the Wasm compiler",
+      "runtime-dynamic": "inputs are owned by the JavaScript host and supplied after Wasm compilation",
+    },
+  },
   packages,
 };
 
-mkdirSync(dirname(RESULTS_PATH), { recursive: true });
-writeFileSync(RESULTS_PATH, JSON.stringify(summary, null, 2) + "\n");
-mkdirSync(dirname(PUBLIC_PATH), { recursive: true });
-copyFileSync(RESULTS_PATH, PUBLIC_PATH);
-console.log(`[npm-compat] wrote ${RESULTS_PATH}`);
-console.log(`[npm-compat] wrote ${PUBLIC_PATH}`);
+// Successful placements become separate chart rows. Failed or deliberately
+// skipped placements remain visible in the package JSON/cards and are never
+// converted to misleading zero-duration bars.
+const perfRows = npmPerfRows(packages);
 
-// Perf rows for the shared <perf-benchmark-chart>. Only packages with a real
-// measurement appear — a package whose surface is red has no honest bar to draw.
-const perfRows = packages
-  .filter((p) => p.perf)
-  .map((p) => ({
-    name: p.name,
-    path: p.entryFile,
-    wasmUs: p.perf.wasmUs,
-    jsUs: p.perf.nodeUs,
-    wasmStdUs: p.perf.wasmStdUs,
-    jsStdUs: p.perf.nodeStdUs,
-    ratioStd: p.perf.ratioStd ?? 0,
-    wasmOptimized: true,
-    wasmOptimizeLevel: 4,
-    warmupRounds: p.perf.warmupRounds,
-    measuredRounds: p.perf.measuredRounds,
-    sampleOp: p.perf.sampleOp,
-  }));
-writeFileSync(PERF_RESULTS_PATH, JSON.stringify(perfRows, null, 2) + "\n");
-copyFileSync(PERF_RESULTS_PATH, PERF_PUBLIC_PATH);
-console.log(`[npm-compat] wrote ${PERF_RESULTS_PATH}`);
-console.log(`[npm-compat] wrote ${PERF_PUBLIC_PATH}`);
+if (writeArtifacts) {
+  mkdirSync(dirname(RESULTS_PATH), { recursive: true });
+  writeFileSync(RESULTS_PATH, JSON.stringify(summary, null, 2) + "\n");
+  mkdirSync(dirname(PUBLIC_PATH), { recursive: true });
+  copyFileSync(RESULTS_PATH, PUBLIC_PATH);
+  console.log(`[npm-compat] wrote ${RESULTS_PATH}`);
+  console.log(`[npm-compat] wrote ${PUBLIC_PATH}`);
+  writeFileSync(PERF_RESULTS_PATH, JSON.stringify(perfRows, null, 2) + "\n");
+  copyFileSync(PERF_RESULTS_PATH, PERF_PUBLIC_PATH);
+  console.log(`[npm-compat] wrote ${PERF_RESULTS_PATH}`);
+  console.log(`[npm-compat] wrote ${PERF_PUBLIC_PATH}`);
+} else {
+  console.log("[npm-compat] skipped aggregate artifact writes");
+  console.log(JSON.stringify({ ...summary, perfRows }, null, 2));
+}

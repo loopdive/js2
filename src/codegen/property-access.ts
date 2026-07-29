@@ -504,6 +504,69 @@ export function runtimeAccessorDescriptorKey(
     return bareKey;
   }
 
+  // (#3782) A function-constructor instance can have a same-named inferred
+  // struct field even though Object.defineProperties installed that name on
+  // its prototype at runtime. The whole-program fnctor analysis already
+  // resolves descriptor-map keys; route those reads through the native
+  // prototype sidecar before the inferred field fast path.
+  const receiverType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(receiver));
+  const receiverTypeName =
+    ctx.fnctorEscapeGate?.receiverStruct.get(receiver) ??
+    (receiverType.kind === "ref" || receiverType.kind === "ref_null"
+      ? ctx.typeIdxToStructName.get(receiverType.typeIdx)
+      : undefined);
+  if (receiverTypeName?.startsWith("__fnctor_")) {
+    const owner = receiverTypeName.slice("__fnctor_".length);
+    if (ctx.fnctorEscapeGate?.protoMethodWriteOnce.runtimeDefined.get(owner)?.has(propName)) {
+      return bareKey;
+    }
+  }
+  if (
+    ctx.standalone &&
+    [...(ctx.fnctorEscapeGate?.protoMethodWriteOnce.runtimeDefined.values() ?? [])].some((keys) => keys.has(propName))
+  ) {
+    return bareKey;
+  }
+  if (ctx.standalone) {
+    let installedOnFnctorPrototype = false;
+    const visitPrototypeDescriptors = (node: ts.Node): void => {
+      if (installedOnFnctorPrototype) return;
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "Object" &&
+        node.expression.name.text === "defineProperties" &&
+        ts.isPropertyAccessExpression(node.arguments[0]) &&
+        node.arguments[0].name.text === "prototype"
+      ) {
+        const descriptors = node.arguments[1];
+        if (descriptors && ts.isIdentifier(descriptors)) {
+          const symbol = ctx.checker.getSymbolAtLocation(descriptors);
+          const declaration = symbol?.valueDeclaration;
+          const initializer =
+            declaration && ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+          if (
+            initializer &&
+            ts.isObjectLiteralExpression(initializer) &&
+            initializer.properties.some(
+              (property) =>
+                ts.isPropertyAssignment(property) &&
+                (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+                property.name.text === propName,
+            )
+          ) {
+            installedOnFnctorPrototype = true;
+            return;
+          }
+        }
+      }
+      ts.forEachChild(node, visitPrototypeDescriptors);
+    };
+    visitPrototypeDescriptors(receiver.getSourceFile());
+    if (installedOnFnctorPrototype) return bareKey;
+  }
+
   // The source fallback below exists for module globals whose function bodies
   // are emitted before the second module-init pass rebuilds descriptor state.
   // Function-local class instances are compiled in statement order and may use

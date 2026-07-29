@@ -103,18 +103,36 @@ class NpmCompatChart extends HTMLElement {
       );
     }
 
-    // Perf
+    // Perf — standalone and JS-host placement are different measurements.
     let perf;
     if (!pkg.perf) {
       perf = this._row("perf vs node", `<span class="muted">not measured</span>`);
     } else {
-      const { sampleOp, wasmUs, nodeUs, ratio } = pkg.perf;
-      const l = this._perfLabel(ratio);
+      const lanes = pkg.perf.lanes ?? { jsHost: pkg.perf };
+      const renderLane = (key, label) => {
+        const lane = lanes[key];
+        if (!lane) return "";
+        const inputLabel =
+          lane.inputMode === "compile-time-static"
+            ? "static at compile time"
+            : lane.inputMode === "runtime-dynamic"
+              ? "dynamic after compile"
+              : "";
+        const rowLabel = inputLabel ? `${label} · ${inputLabel}` : label;
+        if (lane.status && lane.status !== "measured") {
+          const detail = lane.diagnostic ?? lane.reason ?? lane.status;
+          return this._row(`perf · ${rowLabel}`, `<span class="muted">${this._esc(detail)}</span>`);
+        }
+        const result = this._perfLabel(lane.ratio);
+        return this._row(
+          `perf · ${rowLabel}`,
+          `<span class="${result.cls}">${result.text}</span> <span class="muted mono">${this._fmtMs(lane.wasmUs)} vs ${this._fmtMs(lane.nodeUs)}</span>`,
+        );
+      };
       perf =
-        this._row(
-          "perf vs node",
-          `<span class="${l.cls}">${l.text}</span> <span class="muted mono">${this._fmtMs(wasmUs)} vs ${this._fmtMs(nodeUs)}</span>`,
-        ) + `<div class="row sub"><span class="k"></span><span class="v muted">${this._esc(sampleOp)}</span></div>`;
+        renderLane("jsHost", "JS host") +
+        renderLane("standalone", "standalone") +
+        `<div class="row sub"><span class="k"></span><span class="v muted">${this._esc(pkg.perf.sampleOp)}</span></div>`;
     }
 
     const bugs = (pkg.knownBugs ?? []).length

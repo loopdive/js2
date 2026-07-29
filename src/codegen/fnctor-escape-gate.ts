@@ -173,6 +173,8 @@ export interface ProtoMethodWriteOnceResult {
    * methods of these classes without a receiver-type runtime guard.
    */
   readonly inheritedFrom: ReadonlySet<string>;
+  /** Prototype property names installed through Object.defineProperty(ies). */
+  readonly runtimeDefined: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
 const EMPTY_WRITE_ONCE: ProtoMethodWriteOnceResult = {
@@ -180,6 +182,7 @@ const EMPTY_WRITE_ONCE: ProtoMethodWriteOnceResult = {
   poisoned: new Set(),
   otherNameWrites: new Set(),
   inheritedFrom: new Set(),
+  runtimeDefined: new Map(),
 };
 
 const EMPTY_RESULT: FnctorEscapeGateResult = {
@@ -545,6 +548,7 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
   // (#3683 S1b) direct-call admission facts.
   let otherNameWrites: Set<string> | null = new Set<string>();
   const inheritedFrom = new Set<string>();
+  const runtimeDefined = new Map<string, Set<string>>();
 
   // Pass 1 — top-level `var pp = F.prototype;` aliases. A name declared twice
   // for DIFFERENT owners is ambiguous: poison both owners and drop the alias.
@@ -703,6 +707,12 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
     for (const key of demote) {
       perOwner.set(key, { bad: true });
       otherNameWrites?.add(key); // (#3683 S1b) definePropertied slots are written elsewhere
+      let runtimeKeys = runtimeDefined.get(owner);
+      if (!runtimeKeys) {
+        runtimeKeys = new Set();
+        runtimeDefined.set(owner, runtimeKeys);
+      }
+      runtimeKeys.add(key);
     }
   };
 
@@ -833,7 +843,7 @@ export function analyzeProtoMethodWriteOnce(sourceFile: ts.SourceFile): ProtoMet
     }
     if (m.size > 0) methods.set(owner, m);
   }
-  return { methods, poisoned, otherNameWrites, inheritedFrom };
+  return { methods, poisoned, otherNameWrites, inheritedFrom, runtimeDefined };
 }
 
 /**

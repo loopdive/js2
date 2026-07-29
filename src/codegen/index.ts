@@ -5686,8 +5686,28 @@ export function generateMultiModule(
     // default. Runs after collectDeclarations (targets registered), before bodies.
     registerImportBindingAliases(ctx, multiAst.sourceFiles);
 
-    // Phase 3: Compile all function bodies
+    // Phase 3: Compile all function bodies.
+    //
+    // (#3782) compileDeclarations recompiles the one accumulated module
+    // initializer for every source file. Its own two-pass reset covers one
+    // invocation, but without a graph-level reset the next source starts from
+    // the prior pass's END state: Acorn's first Object.defineProperty/freeze
+    // operations are then compiled as redefinitions of already-frozen objects,
+    // and the linked standalone start function throws even when the entry is an
+    // otherwise empty module. Every pass sees the complete collected init list,
+    // so restore only the compiler's order-sensitive facts before each pass;
+    // keep declarations, closures, globals, and emitted bodies accumulated.
+    const multiDeclarationOrderState = {
+      definedPropertyFlags: new Map(ctx.definedPropertyFlags),
+      frozenVars: new Set(ctx.frozenVars),
+      sealedVars: new Set(ctx.sealedVars),
+      nonExtensibleVars: new Set(ctx.nonExtensibleVars),
+    };
     for (const sf of multiAst.sourceFiles) {
+      ctx.definedPropertyFlags = new Map(multiDeclarationOrderState.definedPropertyFlags);
+      ctx.frozenVars = new Set(multiDeclarationOrderState.frozenVars);
+      ctx.sealedVars = new Set(multiDeclarationOrderState.sealedVars);
+      ctx.nonExtensibleVars = new Set(multiDeclarationOrderState.nonExtensibleVars);
       compileDeclarations(ctx, sf);
     }
 

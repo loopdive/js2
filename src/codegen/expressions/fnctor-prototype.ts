@@ -67,7 +67,41 @@ export function resolveUserFnctorName(ctx: CodegenContext, expr: ts.Expression):
   // the keep-in-init made it execute (Test262Error is `keep-typed`). Both ejected
   // the standalone floor (−40). Gate on the S1 escape-gate result (computed at
   // index.ts:1076, before collectDeclarations + codegen, so it is always set).
-  if (!ctx.fnctorEscapeGate?.approvedNames.has(sym.name)) return undefined;
+  const hasRuntimeDescriptorInstall = (() => {
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "Object" &&
+        (node.expression.name.text === "defineProperty" || node.expression.name.text === "defineProperties")
+      ) {
+        const receiver = node.arguments[0];
+        if (
+          receiver &&
+          ts.isPropertyAccessExpression(receiver) &&
+          receiver.name.text === "prototype" &&
+          ts.isIdentifier(receiver.expression)
+        ) {
+          const receiverSymbol = resolveFnctorSymbol(ctx.checker, receiver.expression);
+          if (
+            receiverSymbol &&
+            receiverSymbol.name === sym.name &&
+            receiverSymbol.valueDeclaration === sym.valueDeclaration
+          ) {
+            found = true;
+            return;
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(expr.getSourceFile());
+    return found;
+  })();
+  if (!ctx.fnctorEscapeGate?.approvedNames.has(sym.name) && !hasRuntimeDescriptorInstall) return undefined;
   // Key by the stable symbol name so the WRITE site (`F.prototype = …`) and the
   // READ site (`Object.create(F.prototype)`) resolve to the SAME global.
   return sym.name;

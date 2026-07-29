@@ -121,15 +121,17 @@
 
     <npm-compat-chart src="./benchmarks/results/npm-compat.json"></npm-compat-chart>
 
-    <!-- Same chart component the landing page uses for the wasm/JS sidebar, so
-         the comparison is drawn identically here; the baseline tick is native
-         Node running the SAME pinned package. -->
+    <!-- Each package can contribute two explicitly labelled rows: JS-host keeps
+         runtime-dynamic inputs and the test driver in Node, while standalone
+         exposes compile-time-static inputs by compiling package + driver into
+         host-free Wasm. Both use native Node running the SAME observed
+         operation as baseline. -->
     <perf-benchmark-chart
       src="./benchmarks/results/npm-compat-perf.json"
       mode="perf"
       baseline-label="Node"
-      title="Compiled Wasm vs native Node — same pinned package"
-      legend="Bar = compiled Wasm throughput relative to the same package running natively under Node (tick). Left of the tick is slower than Node."
+      title="Standalone and JS-host Wasm vs native Node"
+      legend="Runtime dynamic / JS host = Node owns inputs and the test loop after Wasm compilation. Compile-time static / standalone = package, fixed inputs, and test driver are visible to the compiler in host-free Wasm. Both consume the result and use the same native Node operation as the tick."
     ></perf-benchmark-chart>
 
     <footer>
@@ -150,8 +152,19 @@
         <h2>Performance</h2>
         Compiled Wasm (
         <code>-O4</code>
-        ) measured head-to-head against the SAME pinned package running natively under Node — a real workload, not a
-        synthetic micro-benchmark. Calibrated median of 9 rounds after warmup.
+        ) reports input knowledge and harness placement separately. In
+        <strong>JS host</strong>
+        , inputs are
+        <strong>runtime dynamic</strong>
+        from the compiler's perspective: Node owns them, the repeated-call loop, result observation, and assertion. In
+        <strong>standalone</strong>
+        , fixed inputs are
+        <strong>static at compile time</strong>
+        because the same package operation and test driver are compiled together with
+        <code>target: "standalone"</code>
+        . A generic optimizer may therefore prove and erase closed work; the row still records and verifies the result.
+        The outer timing call is divided by the number of package operations. Both are calibrated medians of 9 rounds
+        after warmup against the same native package, and the two input modes are never combined.
       </div>
       <div>
         <h2>Divergences</h2>

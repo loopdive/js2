@@ -15154,6 +15154,8 @@ export function buildImports(
   string_constants: Record<string, WebAssembly.Global>;
   string_constants16: Record<string, WebAssembly.Global>;
   setExports?: (exports: Record<string, Function>) => void;
+  startImportCounting?: () => void;
+  takeImportCounts?: () => Record<string, number>;
 } {
   // (#1933) Per-instance state for stateful imports. Created FIRST so the
   // RegExp-accessor install below (and every `resolveImport` call) can thread
@@ -15199,6 +15201,8 @@ export function buildImports(
   };
   let hasCallbacks = false;
   let lastCaughtException: any = undefined;
+  const envImportNames: string[] = [];
+  let importCounts: Uint32Array | undefined;
 
   // (#1467 / #1933) Each instantiated module gets its own symbol id space and
   // per-instance symbol cache/registry, RegExp legacy state, and subclass/
@@ -15218,6 +15222,7 @@ export function buildImports(
 
   for (const imp of manifest) {
     if (imp.module !== "env") continue;
+    const importIndex = envImportNames.push(imp.name) - 1;
     let fn: Function;
 
     // __get_caught_exception needs closure access to lastCaughtException
@@ -15243,6 +15248,7 @@ export function buildImports(
     {
       const original = fn;
       fn = function (this: any, ...args: any[]) {
+        if (importCounts) importCounts[importIndex]++;
         if (hostCallDepth >= MAX_HOST_RECURSION_DEPTH) {
           const err = new RangeError("Maximum call stack size exceeded");
           lastCaughtException = err;
@@ -15272,6 +15278,8 @@ export function buildImports(
     string_constants: Record<string, WebAssembly.Global>;
     string_constants16: Record<string, WebAssembly.Global>;
     setExports?: (exports: Record<string, Function>) => void;
+    startImportCounting?: () => void;
+    takeImportCounts?: () => Record<string, number>;
   } = {
     env,
     "wasm:js-string": jsString,
@@ -15291,6 +15299,19 @@ export function buildImports(
       const fn = pendingExportsDeferred.shift()!;
       fn();
     }
+  };
+  result.startImportCounting = () => {
+    importCounts = new Uint32Array(envImportNames.length);
+  };
+  result.takeImportCounts = () => {
+    const counts: Record<string, number> = Object.create(null);
+    if (importCounts) {
+      for (let index = 0; index < envImportNames.length; index++) {
+        if (importCounts[index] > 0) counts[envImportNames[index]] = importCounts[index];
+      }
+    }
+    importCounts = undefined;
+    return counts;
   };
   return result;
 }
@@ -15413,14 +15434,11 @@ export function wrapExports(
 ): Record<string, any> {
   const callFn0 = rawExports.__call_fn_0 as ((closure: any) => any) | undefined;
   const callFn1 = rawExports.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
-  // #1504: marshal struct/vec returns to plain JS by default. Opt-out:
-  // `wrapExports(exports, { marshal: false })` keeps raw WasmGC handles
-  // (used by test262 runners and advanced callers that want zero-copy access).
+  // #1504: marshal by default; `marshal: false` keeps raw WasmGC handles.
   const marshal: "copy" | false = options?.marshal === false ? false : "copy";
   const exportsForMarshal = rawExports as unknown as Record<string, Function>;
-  // (#1700) Vec allocator + byte-writer for marshalling Uint8Array args into
-  // Wasm vec structs. Either may be undefined (legacy modules / no TypedArray
-  // exports gated their emission off), in which case the wrapper falls back
+  // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be
+  // undefined, in which case the wrapper falls back
   // to passing the arg through unchanged.
   const newVecF64 = (rawExports as Record<string, any>).__new_vec_f64 as ((len: number) => any) | undefined;
   const vecSetByte = (rawExports as Record<string, any>).__vec_set_byte as
@@ -15493,13 +15511,10 @@ export function wrapExports(
       wrapped[key] = val;
       continue;
     }
-    // Wrap user-visible callable exports:
-    //   - closure struct → JS-callable wrapper (regression guard for #1308)
-    //   - named struct / vec → plain JS object/array via `_wasmToPlain`
-    //     (#1504), unless `marshal: false` is passed
-    //   - everything else (primitives, strings, raw externrefs) → pass through
+    // Wrap user exports: closures become callables; structs/vecs marshal to JS;
+    // primitives, strings, and raw externrefs pass through.
     const sig = signatures ? signatures[key] : undefined;
-    wrapped[key] = function (this: any, ...args: any[]): any {
+    const invoke = function (this: any, ...args: any[]): any {
       // (#1700) Argument marshalling: copy JS Uint8Array → Wasm vec via
       // `__new_vec_f64` + `__vec_set_byte`. Runs even under `marshal: false`
       // because the user must be able to call the export at all.
@@ -15527,6 +15542,7 @@ export function wrapExports(
       // Not marshalable → treat as a closure (regression guard for #1308).
       return makeCallableClosureWrapper(result);
     };
+    wrapped[key] = invoke;
   }
   return wrapped;
 }

@@ -3951,14 +3951,12 @@ export function finalizeStructAndDynamicMemberGet(
     // static field fast path and the auto-register path (when the field is on the
     // TS type) both run first, so the hot struct-field read is untouched and only
     // genuinely-absent fields take the MOP route. Class structs stay excluded
-    // (#856 — typed field access). Gated on a JS host (the standalone path keeps
-    // its existing default; the native equivalent rides on the #1888 open-object
-    // runtime).
+    // (#856 — typed field access). Standalone resolves `__extern_get` to the
+    // host-free open-object runtime, which owns the same prototype-accessor
+    // sidecar; excluding it here made Acorn's installed scope getters read as
+    // undefined (#3782).
     const fnctorOrAnonMop =
-      !!typeName &&
-      !ctx.classSet.has(typeName) &&
-      (typeName.startsWith("__fnctor_") || typeName.startsWith("__anon")) &&
-      !noJsHost(ctx);
+      !!typeName && !ctx.classSet.has(typeName) && (typeName.startsWith("__fnctor_") || typeName.startsWith("__anon"));
     const isWasmStruct =
       (structObjType.kind === "ref" || structObjType.kind === "ref_null") &&
       (structObjType as { typeIdx: number }).typeIdx !== undefined &&

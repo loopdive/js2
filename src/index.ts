@@ -696,6 +696,18 @@ function withImportObject(result: CompileResult): CompileResult {
           configurable: true,
         });
       }
+      if (built.startImportCounting && built.takeImportCounts) {
+        Object.defineProperty(cached, "__startImportCounting", {
+          value: built.startImportCounting,
+          enumerable: false,
+          configurable: true,
+        });
+        Object.defineProperty(cached, "__takeImportCounts", {
+          value: built.takeImportCounts,
+          enumerable: false,
+          configurable: true,
+        });
+      }
       return cached;
     },
   });
