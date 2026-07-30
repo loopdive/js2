@@ -377,9 +377,8 @@ rewrite and is unrelated to this rule.
 `benchmark-refresh.yml` measures the PR base and synthetic merge candidate
 sequentially in one `ubuntu-24.04` job. Both checkouts use the same physical
 runner and the same pinned Node 25.7.0, pnpm 10.30.2, Rust 1.94.1, Wasmtime
-46.0.1, and Javy 8.1.1 toolchain. This same-run A/B is the regression
-baseline; committed timings from a different runner are not used for the PR
-verdict.
+46.0.1 toolchain. This same-run A/B is the regression baseline; committed
+timings from a different runner are not used for the PR verdict.
 
 The refreshed set includes the representative internal strategy suite
 (`latest.json`), playground warm and no-JIT charts, size and loadtime
@@ -392,15 +391,18 @@ threshold plus an absolute-byte floor. End-to-end loadtime uses a wider 40%
 joint runtime/JS-reference gate; individual compile-only microtimings remain
 informational. A missing baseline row is a regression.
 
-Javy and StarlingMonkey are change-scoped comparison controls, not
-compiler-regression gates. The workflow remeasures their cold/warm runtimes
-and module sizes only when their benchmark corpus, auxiliary generator or
-host setup, componentizer dependency, or pinned workflow versions change.
-Otherwise their last accepted landing-page values are carried forward
-unchanged with the source commit recorded in every runtime row. When measured,
-Javy's single-entry dynamic module uses dedicated warm wrappers that batch
-several calls inside one exported `run()`; the pinned Rust host uses a fresh
-instance for each outer sample and normalizes the batch wall time per call.
+Javy and StarlingMonkey are post-merge, change-scoped comparison controls, not
+compiler-regression gates. Pull requests always carry their last accepted
+values forward and never rebuild or measure those lanes. After a push to
+`main`, the workflow remeasures their cold/warm runtimes and module sizes only
+when their benchmark corpus, auxiliary generator or host setup, componentizer
+dependency, or pinned workflow versions changed in that push. Unrelated
+`main` pushes and manual runs on unrelated revisions also carry the accepted
+values forward unchanged, with the source commit recorded in every runtime
+row. When measured, the job uses pinned Javy 8.1.1; Javy's single-entry dynamic
+module uses dedicated warm wrappers that batch several calls inside one
+exported `run()`, while the pinned Rust host uses a fresh instance for each
+outer sample and normalizes the batch wall time per call.
 
 Before either checkout is measured, the workflow copies any deliberately
 carried auxiliary controls into an isolated runner-temporary baseline, then

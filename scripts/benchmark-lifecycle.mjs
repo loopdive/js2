@@ -84,14 +84,14 @@ export const BENCHMARK_PROVENANCE = Object.freeze({
       generator: "scripts/generate-wasmtime-hot-runtime.mjs",
       artifacts: ["benchmarks/results/wasm-host-wasmtime-hot-runtime.json"],
       freshness:
-        "current-run AOT and V8 measurements; Javy and StarlingMonkey are measured only when their inputs change and otherwise retain the last accepted values with source provenance",
+        "current-run AOT and V8 measurements; Javy and StarlingMonkey are measured only after a relevant main revision and otherwise retain the last accepted values with source provenance",
     },
     {
       id: "wasmtime-module-size",
       generator: "scripts/generate-wasmtime-hot-runtime.mjs",
       artifacts: ["benchmarks/results/wasm-host-wasmtime-module-size-per-test.json"],
       freshness:
-        "current-run AOT and minified JavaScript sizes; Javy and StarlingMonkey sizes refresh only when their inputs change",
+        "current-run AOT and minified JavaScript sizes; Javy and StarlingMonkey sizes refresh only after a relevant main revision",
     },
   ],
   carriedForwardMeasurements: [
@@ -183,6 +183,7 @@ function packageVersion(root, packageName) {
 }
 
 function collectToolVersions(root) {
+  const auxiliaryInherited = process.env.BENCHMARK_AUXILIARY_MODE === "inherit";
   return {
     node: process.version,
     platform: process.platform,
@@ -195,7 +196,9 @@ function collectToolVersions(root) {
     wasmtime: commandVersion("wasmtime", ["--version"], root),
     rustc: commandVersion("rustc", ["--version"], root),
     cargo: commandVersion("cargo", ["--version"], root),
-    javy: commandVersion(process.env.JAVY_BIN || "javy", ["--version"], root),
+    javy: auxiliaryInherited
+      ? "not-used (auxiliary measurements inherited)"
+      : commandVersion(process.env.JAVY_BIN || "javy", ["--version"], root),
     componentizeJs: packageVersion(root, "@bytecodealliance/componentize-js"),
   };
 }
@@ -966,7 +969,7 @@ export function compareSnapshots(baselineRoot, candidateRoot) {
       ...toolchainNotes(baselineManifest, candidateManifest),
     ],
     informational: [
-      "Wasmtime regression decisions gate the primary AOT lane; Javy and StarlingMonkey lanes are change-scoped comparison controls.",
+      "Wasmtime regression decisions gate the primary AOT lane; Javy and StarlingMonkey are post-merge, change-scoped comparison controls.",
       "End-to-end loadtime is jointly gated against its JS control; compile-only microtimings remain informational.",
       "The legacy non-displayed wasm-host-wasmtime-module-size summary is unsupported and excluded from snapshots.",
     ],

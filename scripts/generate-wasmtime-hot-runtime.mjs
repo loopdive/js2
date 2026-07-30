@@ -63,9 +63,10 @@
  * The hot-runtime JSON also carries `javyUs` and `starlingMonkeyUs` per row
  * so the landing-page chart can render four lanes: js2wasm AOT, V8 with JIT,
  * Javy (interpreter), StarlingMonkey (engine). These comparison controls are
- * change-scoped: `BENCHMARK_AUXILIARY_MODE=measure` rebuilds and measures
- * them, while `inherit` retains the last accepted runtime and size values
- * with their source SHA when all auxiliary inputs are unchanged.
+ * post-merge and change-scoped: PR gates always select `inherit`; a relevant
+ * main revision selects `BENCHMARK_AUXILIARY_MODE=measure` to rebuild and
+ * measure them. `inherit` retains the last accepted runtime and size values
+ * with their source SHA.
  *
  * For the cold rows those auxiliary lanes now use the same #1764 method as
  * the AOT lane: one Rust/Wasmtime embedding process owns a warm Engine and

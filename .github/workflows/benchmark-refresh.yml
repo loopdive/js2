@@ -69,16 +69,21 @@ jobs:
         run: |
           set -euo pipefail
           candidate_sha="${{ steps.refs.outputs.candidate_sha }}"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            comparison_sha="${{ steps.refs.outputs.baseline_sha }}"
-          elif [ "${{ github.event_name }}" = "push" ]; then
+          comparison_sha=""
+          if [ "${{ github.event_name }}" = "push" ]; then
             comparison_sha="${{ github.event.before }}"
-          else
-            comparison_sha=""
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            comparison_sha="$(git -C candidate rev-parse "${candidate_sha}^" 2>/dev/null || true)"
           fi
 
-          auxiliary_mode="measure"
-          if [ -n "$comparison_sha" ] &&
+          # Auxiliary controls never participate in a PR gate. They are
+          # refreshed only after landing on main, and only when one of their
+          # own inputs changed. Every other event carries forward the last
+          # accepted Javy/StarlingMonkey values and their source provenance.
+          auxiliary_mode="inherit"
+          if [ "${{ github.event_name }}" != "pull_request" ] &&
+             [ "${{ github.ref }}" = "refs/heads/main" ] &&
+             [ -n "$comparison_sha" ] &&
              [ "$comparison_sha" != "0000000000000000000000000000000000000000" ] &&
              git -C candidate cat-file -e "${comparison_sha}^{commit}"
           then
@@ -95,9 +100,8 @@ jobs:
                 scripts/lib/landing-wasmtime-runtime.mjs \
                 website/public/benchmarks/competitive/programs
             )"
-            if [ -z "$changed" ]; then
-              auxiliary_mode="inherit"
-            else
+            if [ -n "$changed" ]; then
+              auxiliary_mode="measure"
               echo "Auxiliary benchmark inputs changed:"
               echo "$changed"
             fi
@@ -107,6 +111,16 @@ jobs:
           echo "BENCHMARK_AUXILIARY_MODE=$auxiliary_mode" >> "$GITHUB_ENV"
           echo "BENCHMARK_AUXILIARY_SOURCE_SHA=$comparison_sha" >> "$GITHUB_ENV"
           echo "Auxiliary benchmark mode: $auxiliary_mode"
+
+          legacy_manifest_javy="false"
+          if [ "${{ github.event_name }}" = "pull_request" ] &&
+             [ -f baseline/scripts/benchmark-lifecycle.mjs ] &&
+             ! grep -Fq 'not-used (auxiliary measurements inherited)' baseline/scripts/benchmark-lifecycle.mjs
+          then
+            legacy_manifest_javy="true"
+            echo "Trusted PR base requires a Javy version while packaging inherited auxiliary data."
+          fi
+          echo "legacy_manifest_javy=$legacy_manifest_javy" >> "$GITHUB_OUTPUT"
 
       - name: Setup pinned Node
         uses: actions/setup-node@v6
@@ -127,7 +141,7 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN_VERSION" --profile minimal --no-self-update
           echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN_VERSION" >> "$GITHUB_ENV"
 
-      - name: Install and verify pinned Wasmtime and Javy
+      - name: Install and verify pinned Wasmtime
         shell: bash
         run: |
           set -euo pipefail
@@ -141,6 +155,14 @@ jobs:
           echo "${WASMTIME_SHA256}  ${wasmtime_archive}" | sha256sum --check
           tar -xJf "$wasmtime_archive" -C "$tools"
 
+          echo "$tools/wasmtime-v${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Install and verify pinned Javy
+        if: steps.auxiliary.outputs.mode == 'measure' || steps.auxiliary.outputs.legacy_manifest_javy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/benchmark-tools"
           javy_archive="$tools/javy.gz"
           curl --fail --location --retry 3 \
             "https://github.com/bytecodealliance/javy/releases/download/v${JAVY_VERSION}/javy-x86_64-linux-v${JAVY_VERSION}.gz" \
@@ -149,9 +171,9 @@ jobs:
           gzip --decompress --stdout "$javy_archive" > "$tools/javy"
           chmod +x "$tools/javy"
 
-          echo "$tools/wasmtime-v${WASMTIME_VERSION}-x86_64-linux" >> "$GITHUB_PATH"
           echo "$tools" >> "$GITHUB_PATH"
           echo "JAVY_BIN=$tools/javy" >> "$GITHUB_ENV"
+          "$tools/javy" --version | grep -F "${JAVY_VERSION}"
 
       - name: Verify toolchain versions
         shell: bash
@@ -162,7 +184,6 @@ jobs:
           rustc --version | grep -F "rustc ${RUST_TOOLCHAIN_VERSION}"
           cargo --version
           wasmtime --version | grep -F "${WASMTIME_VERSION}"
-          javy --version | grep -F "${JAVY_VERSION}"
 
       - name: Install candidate dependencies
         run: pnpm --dir candidate install --frozen-lockfile
