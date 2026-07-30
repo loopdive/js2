@@ -109,7 +109,8 @@ function abiDisplayName(globalName: string): string {
 
 /** Allocate and structurally observe one retained top-level TDZ flag. */
 export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.SourceFile, name: string): void {
-  if (!ctx.moduleGlobals.has(name)) return;
+  const canonicalGlobalIdx = ctx.moduleGlobals.get(name);
+  if (canonicalGlobalIdx === undefined) return;
   const flagGlobalIdx = nextModuleGlobalIdx(ctx);
   const flagGlobal: GlobalDef = {
     name: `__tdz_${name}`,
@@ -126,7 +127,31 @@ export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.Sour
       (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
     );
     if (declaration) {
-      ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
+      // (#1400) `ctx.tdzGlobals` is keyed by BARE name, so the `__tdz_<name>`
+      // flag belongs to whichever declaration won the bare-name global. Once
+      // module globals are keyed by DECLARATION, a second file declaring the
+      // same name owns a SUFFIXED global (`__mod_<name>_<n>`) and was observed
+      // under that suffixed display name. Observing this file's declaration as
+      // plain `<name>` then contradicts its own value observation and the ABI
+      // sidecar throws `duplicate-slot-locator` — measured as
+      // "module declaration KEYS was observed with contradictory tdz global
+      // allocator objects", which failed the whole ESLint graph.
+      //
+      // Only the canonical owner gets the TDZ observation; a non-canonical
+      // same-name declaration has no TDZ flag of its own to describe.
+      //
+      // The match must be EXACT — `undefined` is not "close enough". A
+      // declaration absent from `moduleGlobalDeclarations` never got a value
+      // global at all (`registerModuleGlobal` returns early when a real
+      // user-defined function shadows the name), while `ctx.moduleGlobals` can
+      // still hold the name on behalf of ANOTHER file's declaration. Observing
+      // TDZ for it then reaches the sidecar with no value binding to pair
+      // against: "module TDZ global minimatch was observed before its value
+      // global".
+      const declarationGlobalIdx = ctx.moduleGlobalDeclarations.get(declaration);
+      if (declarationGlobalIdx !== undefined && declarationGlobalIdx === canonicalGlobalIdx) {
+        ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
+      }
       return;
     }
   }
