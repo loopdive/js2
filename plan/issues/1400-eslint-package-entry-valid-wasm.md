@@ -3,7 +3,7 @@ id: 1400
 title: "npm: compile ESLint package entry to valid Wasm"
 status: in-progress
 created: 2026-05-11
-updated: 2026-07-26
+updated: 2026-07-30
 completed: 2026-05-20
 priority: critical
 feasibility: hard
@@ -13,7 +13,7 @@ area: compiler, resolver, codegen
 language_feature: commonjs, package-exports, classes
 goal: npm-library-support
 sprint: current
-depends_on: [3653, 3654, 3655, 3656, 3672]
+depends_on: [3653, 3654, 3655, 3656, 3672, 3798]
 es_edition: n/a
 related: [1044, 1075, 1277, 1279, 1282, 1287, 1289, 1573, 1575, 2690, 2691, 2693, 2700, 3657]
 ---
@@ -592,3 +592,129 @@ trust the window dump.
 
 **Cheap signal:** if a fix leaves `binaryByteLength` unchanged, it never fired.
 That is how the `call-identifier` guard was caught as a no-op without a WAT dump.
+
+## Session 2026-07-30 — merge-queue park cleared (the two bot park-holds)
+
+PR #3687 was auto-parked TWICE by `auto-park-bot:merge-group-failure`
+(2026-07-28 run 30355079783, 2026-07-29 run 30417707420). Both parks are now
+diagnosed and the cause is fixed.
+
+### What the park actually was
+
+The second run's failing step names it exactly:
+
+```text
+GATE FAIL: trap category "null_deref" grew 153 → 157 (+4)
+  — uncatchable-trap ratchet (#3189). Newly trapping:
+    test/built-ins/Array/prototype/methods-called-as-functions.js
+    test/built-ins/Error/prototype/toString/called-as-function.js
+    test/built-ins/RegExp/prototype/toString/called-as-function.js
+    test/language/expressions/call/tco-non-eval-function.js
+    test/language/expressions/tagged-template/tco-call.js
+```
+
+**Not a pass regression.** Every one of those five was ALREADY failing in the
+fetched baseline — measured, not inferred:
+
+| Test                                       | Baseline status | Baseline error                                    |
+| ------------------------------------------ | --------------- | ------------------------------------------------- |
+| `Array/prototype/methods-called-as-functions` | `fail`       | `concat Expected a TypeError … no exception`      |
+| `Error/prototype/toString/called-as-function` | `fail`       | `Expected a TypeError … no exception thrown`      |
+| `RegExp/prototype/toString/called-as-function`| `fail`       | `Expected a TypeError … no exception thrown`      |
+| `expressions/call/tco-non-eval-function`      | `fail`       | `Expected SameValue(«0», «1») to be true`         |
+| `expressions/tagged-template/tco-call`        | `fail`       | `Maximum call stack size exceeded`               |
+
+They were RECLASSIFIED from a catchable failure into an uncatchable trap, and
+the #3189 ratchet counts trap categories regardless of prior pass state. The
+rest of that run was strongly positive and must not be lost in the retelling:
+**net +1 pass, host stable-path fine-gate net +41** (42 improvements − 1
+non-timeout regression), aggregate compile time **−8.1 %**. The other 40
+"regressions" were `compile_timeout`, 39 of them classified `ct_flake`
+(runner-load noise).
+
+### Root cause — one defect, two emit sites
+
+`emitNullCheckThrow` (property-access.ts) **downgrades itself** whenever a
+guarded-cast backup is live: a null then means "the cast failed", not "the
+value was null", so it throws only if the ORIGINAL pre-cast value was also
+null and otherwise falls through (#789). That downgrade is sound only when
+some LATER arm handles the wrong-struct-type case.
+
+1. **`call-identifier.ts`** (callable-param dispatch). The compensating arm is
+   the #1712 host-call fallback — gated on `calleeMayBeHostCallable`. When the
+   callee arrives as externref (so a guarded cast runs) but the fallback is
+   gated OFF, nothing catches the failed cast and `struct.get` dereferences
+   null. `var g = f; … g(n - 1)` **inside a function scope** is exactly that
+   shape: an alias of a function DECLARATION is neither a closure struct of
+   the matched shape nor host-callable.
+2. **`string-ops.ts`** (`compileTaggedTemplateExpression`). No null check at
+   all — the guarded cast could null and a bare `ref.as_non_null` trapped.
+   That is `` getF()`${n-1}` `` in `tagged-template/tco-call.js`, where the tag
+   is a CALL RESULT.
+
+Fix: drop the backup so the check is STRICT (catchable TypeError) wherever no
+fallback arm exists. Both replaced paths trapped unconditionally, so no
+previously-passing program can observe the difference.
+
+### Measured, local-vs-local
+
+Narrowing (`.tmp/trap-repro3.mts`) — tail position is NOT the trigger; the
+function-vs-module scope of the alias is:
+
+| Case                                    | clean `origin/main` | branch (pre-fix) | branch (post-fix) |
+| --------------------------------------- | ------------------- | ---------------- | ----------------- |
+| `var g = f` alias in IIFE, tail call    | `0` (wrong, no trap)| **null deref**   | catchable throw   |
+| same, NOT in tail position              | `0`                 | **null deref**   | catchable throw   |
+| direct self-call, no alias              | `1`                 | `1`              | `1`               |
+| `var g = f` alias at MODULE scope        | `1`                 | `1`              | `1`               |
+
+All five test262 files re-run through `runTest262File` at this head: every one
+is now a plain `FAIL` with **no** `dereferencing a null pointer`.
+
+### Equivalence sweep is clean — the 12 failures are pre-existing
+
+`tests/equivalence/` reports **12 files / 32 tests** failing on this branch.
+The SAME sweep on clean `origin/main` reports **12 files / 32 tests**, and
+re-running main's 12 failing files on this branch reproduces all 12 / all 32.
+The sets coincide, so none of it is branch-caused. (Supersedes the earlier
+handoff's 13/33 figure — same conclusion, re-measured at this head.)
+
+### Merge of current main (374 commits behind, DIRTY)
+
+14 hunks / 5 files. The load-bearing call: main had extracted
+`registerModuleGlobal` into `module-global-registration.ts` **keyed by bare
+name**, which collapses same-named module globals across packages — precisely
+the defect this issue's `ms` vs `esquery` `s`/`m` work fixes. The branch's
+declaration-keyed identity, cross-file suffixed globals, and same-file
+redeclaration aliasing were ported INTO the extracted module, preserving
+main's `programAbiGlobals` observation. Full rationale is in the merge commit
+message.
+
+### Status — AC3/AC4 REGRESS after the merge (measured, see #3798)
+
+Do not read the 2026-07-28 section above as still true. It was measured at the
+pre-merge head and that head is now two days and 374 commits stale.
+
+| Stage       | pre-merge `489f96dd`      | post-merge (this PR head)        |
+| ----------- | ------------------------- | -------------------------------- |
+| compile     | **success**, 615.9 s      | **FAILS** (codegen/ABI errors)   |
+| validate    | true                      | not reached                      |
+| instantiate | true                      | not reached                      |
+| `verify()`  | fails — `deprecate is not a function` (#3657 host seam) | not reached |
+
+So **AC3 and AC4 are NOT met on the merged tree.** Merging current main brought
+in the #3520/#3521 structural program-ABI registry, whose one-allocator-per-
+declaration-per-bare-name bijection contradicts this issue's
+declaration-keyed, suffixed module-global identity. Four hard errors surfaced
+in sequence; three are fixed in this PR, the fourth (an IR-binding draft
+collision plus an IR-fallback hard error) is open and lives in a different
+subsystem, so the site-by-site approach was stopped deliberately.
+
+That conflict is now tracked as **#3798**, which owns the architectural
+decision (teach the registry multi-global-per-name, or move the
+disambiguation below its observation layer). #1400 stays open and blocked on
+#3798, then on #3657 for AC5.
+
+Note `tests/stress/eslint-tier1.test.ts` is in **no required check**, so this
+PR can be fully green with the graph broken — verified against the workflow
+definitions, and recorded in #3798.
