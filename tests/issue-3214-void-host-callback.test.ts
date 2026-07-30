@@ -265,7 +265,7 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("demotes before lowering when the deterministic lifted name is occupied", async () => {
+  it("IR-emits when a source function occupies the first lifted display name", async () => {
     const result = await compileHostCallback(`
       function install__closure_0(): number { return 0; }
       export function install(target: EventTarget, sink: HTMLElement): void {
@@ -274,11 +274,12 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     `);
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irCompiledFuncs ?? []).not.toContain("install");
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(result.irCompiledFuncs ?? []).toContain("install");
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("demotes before lowering when a later lifted name is occupied", async () => {
+  it("IR-emits when a source function occupies a later lifted display name", async () => {
     const result = await compileHostCallback(`
       function install__closure_1(): number { return 0; }
       export function install(target: EventTarget, sink: HTMLElement, value: number): void {
@@ -288,7 +289,8 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     `);
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irCompiledFuncs ?? []).not.toContain("install");
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(result.irCompiledFuncs ?? []).toContain("install");
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 

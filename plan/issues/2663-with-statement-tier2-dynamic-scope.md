@@ -4,7 +4,7 @@ title: "feat: `with` statement Tier 2 — dynamic-scope fallback (de-skip the 29
 status: in-progress
 assignee: ttraenkler/dev-conformance
 created: 2026-06-25
-updated: 2026-06-25
+updated: 2026-07-29
 priority: medium
 feasibility: hard
 model: fable
@@ -564,6 +564,35 @@ call $__extern_has                 ;; -> i32  (own+proto, value-independent)
   value-independence fix (use `__extern_has`, not `__dyn_has`'s non-null proxy) is
   Tier 2's own change, not a #2580 dependency.
 - **#1387** (Tier 1) — extended, not replaced.
+
+## Architectural ruling — `with` remains an IR feature (2026-07-29)
+
+The current `src/codegen/with-scope.ts` implementation is transitional. The
+selector's refusal of `WithStatement` means only that the IR cannot represent
+its dynamic environment semantics yet; it is **not** a permanent legacy-only
+boundary. Complete `with` support must ultimately be owned by the IR.
+
+The IR design must represent an Object Environment Record rather than assigning
+every identifier to a fixed local/global slot. At minimum it must preserve:
+
+- single evaluation and `ToObject` conversion of the `with` target;
+- runtime `HasBinding` lookup, including the prototype chain and
+  `@@unscopables`, before falling back to the outer lexical environment;
+- dynamic reads, writes, compound assignments, update expressions, and deletes
+  with spec evaluation order and abrupt-completion propagation;
+- nested `with` environments and interaction with captured outer bindings.
+
+Closed-shape analysis may keep a static fast path, but the proof and the
+resulting environment operations belong in the IR. Direct-codegen handling
+should become only a compatibility adapter while module/function bodies migrate.
+
+IR completion evidence must include:
+
+- representative sloppy-mode `WithStatement` bodies present in
+  `irCompiledFuncs`, with no post-claim demotions;
+- equivalent host and standalone behavior for static and dynamic targets;
+- a same-SHA local A/B measurement of the complete Test262 `with` family,
+  including pass/fail and fail-signature transitions.
 
 ## Residual (as of #2199, PO reconcile 2026-06-28)
 

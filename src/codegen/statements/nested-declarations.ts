@@ -29,6 +29,7 @@ import {
   type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
+import { isForeignEvalNode } from "../expressions/eval-source.js";
 import {
   collectClassDeclaration,
   compileClassBodies,
@@ -54,7 +55,8 @@ import {
   registerEmitArgumentsObject,
   registerHoistFunctionDeclarations,
 } from "../shared.js";
-import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -246,6 +248,7 @@ export function compileNestedFunctionDeclaration(
   const sourceName = stmt.name.text;
   const funcName = reserveFunctionDeclarationKey(ctx, stmt, sourceName);
   ctx.functionNameMap.set(funcName, sourceName);
+  const foreignEvalDeclaration = isForeignEvalNode(stmt);
 
   // Determine parameter types and return type
   // Unannotated binding patterns containing a rest element are widened to
@@ -265,10 +268,11 @@ export function compileNestedFunctionDeclaration(
   const paramTypes: ValType[] = [];
   for (let pi = 0; pi < stmt.parameters.length; pi++) {
     const p = stmt.parameters[pi]!;
-    const paramType = ctx.checker.getTypeAtLocation(p);
-    let wasmType: ValType = restBindingOverridesToExternref(p)
-      ? { kind: "externref" }
-      : resolveWasmType(ctx, paramType);
+    const paramType = foreignEvalDeclaration ? undefined : ctx.checker.getTypeAtLocation(p);
+    let wasmType: ValType =
+      foreignEvalDeclaration || restBindingOverridesToExternref(p)
+        ? { kind: "externref" }
+        : resolveWasmType(ctx, paramType!);
     // If the parameter has a default value and is a non-null ref type,
     // widen to ref_null so callers can pass ref.null as a sentinel for "use default"
     if (p.initializer && wasmType.kind === "ref") {
@@ -313,21 +317,16 @@ export function compileNestedFunctionDeclaration(
     ctx.asyncFunctions.add(funcName);
   }
 
-  // (#2923) A function declaration parsed from an inlined `eval("<const>")`
-  // body lives in a foreign `ts.createSourceFile` with NO checker bindings, so
-  // `getSignatureFromDeclaration` throws (`symbol.escapedName` on an undefined
-  // symbol). Treat that as "no static signature": params already degrade to
-  // externref above (getTypeAtLocation → `any`), and the return type defaults to
-  // externref (dynamic `any`) so a `return <expr>` still yields its value.
-  // (Detected by catch rather than a filename import to avoid an eval-inline ↔
-  // nested-declarations import cycle; a normal declaration always has a symbol,
-  // so the catch only fires for genuinely binding-less foreign nodes.)
+  // (#2923) Foreign eval declarations have no checker signature; use dynamic
+  // externref params and returns without attempting either lazy checker query.
   let sig: ts.Signature | undefined;
-  let foreignNoSignature = false;
-  try {
-    sig = ctx.checker.getSignatureFromDeclaration(stmt);
-  } catch {
-    foreignNoSignature = true;
+  let foreignNoSignature = foreignEvalDeclaration;
+  if (!foreignEvalDeclaration) {
+    try {
+      sig = ctx.checker.getSignatureFromDeclaration(stmt);
+    } catch {
+      foreignNoSignature = true;
+    }
   }
   let returnType: ValType | null = null;
   if (isGenerator) {
@@ -678,7 +677,7 @@ export function compileNestedFunctionDeclaration(
         body: [],
         exported: false,
       };
-      pushDefinedFunc(ctx, reservedFuncIdxNC, reservedEntryNC);
+      pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdxNC, reservedEntryNC);
       ctx.funcMap.set(funcName, reservedFuncIdxNC);
     }
 
@@ -1044,7 +1043,7 @@ export function compileNestedFunctionDeclaration(
       body: [],
       exported: false,
     };
-    pushDefinedFunc(ctx, reservedFuncIdx, reservedEntry);
+    pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reservedEntry);
     ctx.funcMap.set(funcName, reservedFuncIdx);
     ctx.nestedFuncCaptures.set(
       funcName,
@@ -1786,7 +1785,9 @@ export function hoistFunctionDeclarations(
       // Compute the real signature (mirror the slice in
       // compileNestedFunctionDeclaration). Generators return externref; async
       // unwraps Promise<T>.
+      const foreignEvalDeclaration = isForeignEvalNode(stmt);
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
+        if (foreignEvalDeclaration) return { kind: "externref" };
         let wt = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(p));
         if (p.initializer && wt.kind === "ref") {
           wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };
@@ -1795,17 +1796,15 @@ export function hoistFunctionDeclarations(
       });
       const isGen = stmt.asteriskToken !== undefined;
       const isAsync = stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
-      // (#2923) Foreign eval-body function declaration → no checker signature
-      // (getSignatureFromDeclaration throws). Default the reserved result type to
-      // externref, matching the identical fallback in
-      // compileNestedFunctionDeclaration so the reserved funcType matches the
-      // compiled body. Multiple foreign func decls hit THIS pre-reserve pass.
+      // (#2923/#3633) Match compileNestedFunctionDeclaration's externref fallback.
       let sig: ts.Signature | undefined;
-      let foreignNoSig = false;
-      try {
-        sig = ctx.checker.getSignatureFromDeclaration(stmt);
-      } catch {
-        foreignNoSig = true;
+      let foreignNoSig = foreignEvalDeclaration;
+      if (!foreignEvalDeclaration) {
+        try {
+          sig = ctx.checker.getSignatureFromDeclaration(stmt);
+        } catch {
+          foreignNoSig = true;
+        }
       }
       let resultType: ValType | undefined;
       if (isGen) {
@@ -1826,7 +1825,7 @@ export function hoistFunctionDeclarations(
         body: [],
         exported: false,
       };
-      pushDefinedFunc(ctx, reservedFuncIdx, reserved);
+      pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reserved);
       ctx.funcMap.set(funcName, reservedFuncIdx);
       if (!ctx.preRegisteredBodyless) ctx.preRegisteredBodyless = new Set();
       ctx.preRegisteredBodyless.add(funcName);
@@ -2742,16 +2741,16 @@ export function emitArgumentsVecBody(
     });
   }
 
-  // If extras is non-null, copy extras into arr starting at offset numArgs.
-  fctx.body.push({ op: "local.get", index: extrasLocal });
-  fctx.body.push({ op: "ref.is_null" });
+  // Copy non-empty extras after the ABI-supplied formal prefix, not every declared parameter (#3420).
+  fctx.body.push({ op: "local.get", index: extrasLenLocal });
+  fctx.body.push({ op: "i32.eqz" });
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
     then: [],
     else: [
       { op: "local.get", index: arrTmp },
-      { op: "i32.const", value: numArgs },
+      { op: "local.get", index: argcLocal },
       { op: "local.get", index: extrasLocal },
       { op: "ref.as_non_null" },
       { op: "struct.get", typeIdx: vti, fieldIdx: 1 },

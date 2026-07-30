@@ -113,7 +113,26 @@ export function inferParamTypeFromCallSites(
           const argType = ctx.checker.getTypeAtLocation(arg);
           // Skip if the argument itself is also `any` — no useful info
           if (argType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) {
-            // Don't count this call site — it doesn't help
+            // (#3780) The checker still reports an untyped JavaScript LOCAL as
+            // `any` after the standalone numeric-flow analysis has proved that
+            // every definition is numeric and codegen has selected an f64
+            // slot. Reuse that stronger, symbol-scoped verdict here so passing
+            // such a local to another untyped helper does not immediately box
+            // it and lose the proof at the callee ABI.
+            //
+            // This is not body-use guessing: UsageInference only answers
+            // "number" after the grounded definition fixpoint (or its older,
+            // all-uses-apply-ToNumber proof), and the oracle's declaration
+            // lookup keeps shadowed same-name locals distinct. Parameters and
+            // other `any` expressions remain inconclusive exactly as before.
+            if (ts.isIdentifier(arg)) {
+              const declaration = ctx.oracle.variableDeclarationOf(arg);
+              if (declaration && ctx.usageInference.scalarForDecl(declaration) === "number") {
+                const wasmType: ValType = { kind: "f64" };
+                if (agreed === null) agreed = wasmType;
+                else if (agreed.kind !== wasmType.kind) conflict = true;
+              }
+            }
           } else {
             const wasmType = resolveWasmType(ctx, argType);
             if (agreed === null) {

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * Static resolution for Object builtin values captured in locals.
+ * Static resolution for builtin values captured in locals.
  *
  * Keeping this analysis separate from call lowering lets declaration-time
  * representation selection and expression-time semantic routing agree on the
@@ -38,10 +38,20 @@ export function calleeIsBoundFunctionVar(oracle: TypeOracle, expr: ts.Expression
   return resolveBoundFunctionInitializer(oracle, expr) !== undefined;
 }
 
-export function resolveUncurriedObjectPrototypeMethod(
+export type UncurriedBuiltinPrototypeMethod =
+  | { builtin: "Array"; method: "join" | "push" }
+  | { builtin: "Object"; method: "hasOwnProperty" | "propertyIsEnumerable" | "valueOf" };
+
+/**
+ * Resolve the exact immutable `Function.prototype.call.bind(Builtin.prototype.m)`
+ * aliases used by test262's propertyHelper. Invocation can then reuse the
+ * corresponding native direct-call lowering instead of the incomplete generic
+ * standalone builtin-method carrier.
+ */
+export function resolveUncurriedBuiltinPrototypeMethod(
   oracle: TypeOracle,
   expr: ts.Expression,
-): "hasOwnProperty" | "propertyIsEnumerable" | "valueOf" | undefined {
+): UncurriedBuiltinPrototypeMethod | undefined {
   const init = resolveBoundFunctionInitializer(oracle, expr);
   if (!init || !ts.isPropertyAccessExpression(init.expression) || init.expression.name.text !== "bind") {
     return undefined;
@@ -63,13 +73,22 @@ export function resolveUncurriedObjectPrototypeMethod(
     !ts.isPropertyAccessExpression(target) ||
     !ts.isPropertyAccessExpression(target.expression) ||
     target.expression.name.text !== "prototype" ||
-    !ts.isIdentifier(target.expression.expression) ||
-    target.expression.expression.text !== "Object"
+    !ts.isIdentifier(target.expression.expression)
   ) {
     return undefined;
   }
+  const builtin = target.expression.expression.text;
   const method = target.name.text;
-  return method === "hasOwnProperty" || method === "propertyIsEnumerable" || method === "valueOf" ? method : undefined;
+  if (builtin === "Array" && (method === "join" || method === "push")) {
+    return { builtin, method };
+  }
+  if (
+    builtin === "Object" &&
+    (method === "hasOwnProperty" || method === "propertyIsEnumerable" || method === "valueOf")
+  ) {
+    return { builtin, method };
+  }
+  return undefined;
 }
 
 export type StoredObjectStaticMethod =

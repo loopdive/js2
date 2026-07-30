@@ -72,8 +72,8 @@ describe("#3498 landing four-lane backend benchmark", () => {
       },
       {
         id: "fib-recursive",
-        bytes: 318,
-        sha256: "abdd6f6e6c3308220df37f85e7a4c47dc07aba48f4862836dd669809ac53df24",
+        bytes: 361,
+        sha256: "f1b64fb81a182f38cf8ebdc8f39bded7e9878d516f714fb046a8a1b15d0ba916",
         fixedInputs: [0, 1, 10, 30],
         expectedFixedOutputs: [0, 1, 55, 832_040],
       },

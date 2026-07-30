@@ -293,6 +293,8 @@ export interface CompileOptions {
   moduleName?: string;
   /** Generate source map (default: false) */
   sourceMap?: boolean;
+  /** Preserve the Wasm name section through optimization for profiling. */
+  preserveDebugNames?: boolean;
   /** Source map URL to embed in the wasm binary (default: "module.wasm.map") */
   sourceMapUrl?: string;
   /** Compilation target: "gc" (WasmGC, default), "linear" (linear memory),
@@ -693,6 +695,18 @@ function withImportObject(result: CompileResult): CompileResult {
       if (built.setExports) {
         Object.defineProperty(cached, "__setExports", {
           value: built.setExports,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      if (built.startImportCounting && built.takeImportCounts) {
+        Object.defineProperty(cached, "__startImportCounting", {
+          value: built.startImportCounting,
+          enumerable: false,
+          configurable: true,
+        });
+        Object.defineProperty(cached, "__takeImportCounts", {
+          value: built.takeImportCounts,
           enumerable: false,
           configurable: true,
         });

@@ -170,13 +170,39 @@ interface HistoryPoint {
   benchmarks: Record<string, Record<string, number>>; // name → strategy → medianMs
 }
 
-function buildHistory(outDir: string): void {
+export function buildHistory(outDir: string): void {
   const files = fs
     .readdirSync(outDir)
     .filter((f) => /^\d{4}-\d{2}-\d{2}T[\d-]+Z\.json$/.test(f))
     .sort();
 
-  const history: HistoryPoint[] = [];
+  // The repository intentionally keeps only a small subset of the historical
+  // timestamped result files. Preserve the committed aggregate before folding
+  // in files produced by this checkout; rebuilding from the sparse file set
+  // alone silently truncated history on every refresh.
+  const byTimestamp = new Map<string, HistoryPoint>();
+  const historyPath = `${outDir}/history.json`;
+  if (fs.existsSync(historyPath)) {
+    try {
+      const existing: HistoryPoint[] = JSON.parse(fs.readFileSync(historyPath, "utf-8"));
+      if (Array.isArray(existing)) {
+        for (const point of existing) {
+          if (
+            point &&
+            typeof point.timestamp === "string" &&
+            Number.isFinite(Date.parse(point.timestamp)) &&
+            point.benchmarks &&
+            typeof point.benchmarks === "object" &&
+            !Array.isArray(point.benchmarks)
+          ) {
+            byTimestamp.set(point.timestamp, point);
+          }
+        }
+      }
+    } catch {
+      // A malformed aggregate must not hide valid timestamped source files.
+    }
+  }
 
   for (const file of files) {
     // Parse timestamp from filename: 2026-03-07T23-00-07-232Z → 2026-03-07T23:00:07.232Z
@@ -191,10 +217,13 @@ function buildHistory(outDir: string): void {
         if (!benchmarks[r.name]) benchmarks[r.name] = {};
         benchmarks[r.name][r.strategy] = r.medianMs;
       }
-      history.push({ timestamp: isoTimestamp, benchmarks });
+      // Timestamped source files are authoritative for their own point and
+      // replace any matching point from the committed aggregate.
+      byTimestamp.set(isoTimestamp, { timestamp: isoTimestamp, benchmarks });
     } catch {}
   }
 
+  const history = [...byTimestamp.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   fs.writeFileSync(`${outDir}/history.json`, JSON.stringify(history, null, 2));
   console.log(`History saved to ${outDir}/history.json (${history.length} runs)`);
 }

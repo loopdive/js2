@@ -88,21 +88,19 @@ const BENCHMARKS = [
 //                               compile actually completes relative to the
 //                               calling code). NOT what fixes the fatal
 //                               crash below; see `buildWarmJsFactorySource`.
-//   --no-maglev                 makes TurboFan the ONLY optimizing tier, so
-//                               `%OptimizeFunctionOnNextCall` cannot settle on
-//                               Maglev (V8's mid-tier) and call it done.
-//                               Maglev defaults OFF on Node 22 but ON on Node
-//                               26, so the same source tiered to TurboFan
-//                               locally and to Maglev on CI — which is why the
-//                               chart's JS baseline read ~5290us there against
-//                               ~374us here, flattering every wasm:js ratio.
-//                               The #3759 tier assertion caught this exactly:
-//                               CI reported status 41 (isFunction, maybeDeopted,
-//                               maglev) with the `optimized` bit CLEAR. A "warm"
-//                               chart should mean peak optimized tier, so pin it
-//                               rather than accept whichever tier the engine's
-//                               defaults happen to pick this release.
-const JS_WARM_FLAGS = ["--allow-natives-syntax", "--no-concurrent-recompilation", "--no-maglev"];
+//
+// NOTE — `--no-maglev` was added here (#3769) on the theory that CI's JS lane
+// was settling on Maglev, and has been REMOVED: that diagnosis was wrong and
+// the flag was inert. The evidence for "maglev" was the #3759 assertion
+// reporting status 41, decoded with `%GetOptimizationStatus` bit positions
+// hardcoded from Node 22. Those positions shift between V8 releases
+// (`kOptimized` 1<<4 -> 1<<3, `kTurboFanned` 1<<6 -> 1<<5), so on Node 26
+// status 41 is actually isFunction|OPTIMIZED|TURBOFANNED — correctly tiered
+// all along. Verified by running the same probe on a real Node 26: with AND
+// without `--no-maglev` the status is identical (41) and the timing is
+// identical (~344us), i.e. the flag changed nothing. The child now calibrates
+// the optimized signature in-process instead of hardcoding bits.
+const JS_WARM_FLAGS = ["--allow-natives-syntax", "--no-concurrent-recompilation"];
 
 // V8 startup flag that skips Liftoff (the single-pass Wasm baseline
 // compiler) entirely and compiles straight to TurboFan. This is the Wasm-side

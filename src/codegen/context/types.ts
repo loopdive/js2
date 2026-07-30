@@ -1064,8 +1064,13 @@ export interface FunctionContext {
 export interface CodegenContext {
   mod: WasmModule;
   programAbiSession?: import("../program-abi-session.js").ProgramAbiSession;
+  programAbiModuleInitCallables?: import("../program-abi-module-init-planning.js").ProgramAbiModuleInitCallableRegistry;
+  programAbiSourceCallables?: import("../program-abi-source-callable-planning.js").ProgramAbiSourceCallableRegistry;
   programAbiCallableProviders?: import("../program-abi-provider-planning.js").ProgramAbiCallableProviderRegistry;
+  programAbiClassCallables?: import("../program-abi-class-callable-planning.js").ProgramAbiClassCallableRegistry;
+  programAbiCallables?: import("../program-abi-callable-planning.js").ProgramAbiCallableRegistry;
   programAbiGlobals?: import("../program-abi-global-planning.js").ProgramAbiGlobalRegistry;
+  programAbiExports?: import("../program-abi-export-planning.js").ProgramAbiExportRegistry;
   programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
   irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;
   checker: ts.TypeChecker;
@@ -3102,6 +3107,23 @@ export interface CodegenContext {
    * direct `call`. Populated by `compileArrowAsClosure` at twin-mint time.
    */
   directCallTwins?: Map<string, { twinName: string; params: ValType[]; results: ValType[] }>;
+  /**
+   * (#3780) `"<F>/<m>"` → the lifted generic body and the closure instance
+   * created for a write-once prototype method that could not receive a typed
+   * twin (normally because it captures module state). Direct-call trampolines
+   * use this to bypass the dynamic property/apply bridge without discarding the
+   * closure environment.
+   */
+  directCallGenerics?: Map<
+    string,
+    {
+      liftedName: string;
+      selfGlobalIdx: number;
+      selfTypeIdx: number;
+      params: ValType[];
+      results: ValType[];
+    }
+  >;
   /**
    * #2773 S1 (keystone) — fnctor name → reserved `$__fnctor_<Name>` struct type
    * index. Populated up-front by `reserveFnctorStructTypes` (index.ts) at the

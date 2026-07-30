@@ -82,6 +82,7 @@
 // the back-off decision + per-PR grace-window decisions without enqueuing.
 // Requires `gh` authenticated (GITHUB_TOKEN with pull-requests:write in CI).
 
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,7 +98,16 @@ const DRY = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
 // immediately. Override via GRACE_MINUTES env for manual sweeps if ever needed.
 const GRACE_MINUTES = Number(process.env.GRACE_MINUTES ?? "0");
 const GRACE_MS = GRACE_MINUTES * 60 * 1000;
-const HOLD_LABELS = new Set(["hold", "do-not-merge", "do not merge", "wip", "blocked"]);
+export const HOLD_LABELS = new Set([
+  "hold",
+  "do-not-merge",
+  "do not merge",
+  "wip",
+  "blocked",
+  // Owned by passive-stack-retarget.yml from the base PATCH until an exact
+  // base-integrated synchronize event. Never enqueue a stale pre-retarget head.
+  "stack-retarget-pending",
+]);
 // mergeStateStatus values we will enqueue. Do NOT include UNSTABLE: that means
 // required checks are green but a non-required check failed, which is exactly
 // the state that allowed red PRs to enter the merge queue.
@@ -219,6 +229,38 @@ export function isTrailingAddCandidate(prNumber, queued) {
   return !queued.has(prNumber);
 }
 
+// Exact last-moment guard used immediately before enqueuePullRequest. The main
+// sweep snapshot can predate a passive stack retarget: the child may have moved
+// from its stack parent to main and acquired stack-retarget-pending while this
+// run was doing slower check/history reads. Re-reading these fields closes that
+// stale-snapshot window. Pure/exported for deterministic self-check coverage.
+export function freshEnqueueGuard(initial, fresh) {
+  if (!fresh || fresh.number !== initial?.number) return { ok: false, reason: "fresh-pr-missing" };
+  if (fresh.headRefOid !== initial.headRefOid || fresh.headRefName !== initial.headRefName) {
+    return { ok: false, reason: "head-changed-during-sweep" };
+  }
+  if (fresh.baseRefName !== "main") return { ok: false, reason: `base:${fresh.baseRefName || "missing"}` };
+  if (fresh.isDraft) return { ok: false, reason: "draft" };
+  const labels = (fresh.labels || []).map((label) => String(label?.name || "").toLowerCase());
+  if (labels.some((label) => HOLD_LABELS.has(label))) {
+    return { ok: false, reason: "hold-label" };
+  }
+  if (!ENQUEUEABLE.has(fresh.mergeStateStatus)) {
+    return { ok: false, reason: fresh.mergeStateStatus || "merge-state-missing" };
+  }
+  return { ok: true, reason: "exact-fresh-candidate" };
+}
+
+export function enqueueMutationVariables(pullRequestId, expectedHeadOid) {
+  if (typeof pullRequestId !== "string" || pullRequestId === "") {
+    throw new Error("pull request node ID is required");
+  }
+  if (typeof expectedHeadOid !== "string" || !/^[0-9a-f]{40}$/i.test(expectedHeadOid)) {
+    throw new Error("expected head OID must be a 40-character hex SHA");
+  }
+  return { id: pullRequestId, expectedHeadOid };
+}
+
 function openPrs() {
   return JSON.parse(
     gh([
@@ -234,7 +276,21 @@ function openPrs() {
       // author.login + headRepositoryOwner.login feed the #2550 fork-allowlist
       // layer of the author-trust gate (both fields ARE supported by gh 2.23's
       // `pr list --json`, unlike authorAssociation which needs GraphQL).
-      "number,mergeStateStatus,isDraft,labels,id,title,headRefName,author,headRepositoryOwner",
+      "number,mergeStateStatus,isDraft,labels,id,title,headRefName,headRefOid,baseRefName,author,headRepositoryOwner",
+    ]),
+  );
+}
+
+function freshPrForEnqueue(number) {
+  return JSON.parse(
+    gh([
+      "pr",
+      "view",
+      String(number),
+      "--repo",
+      REPO,
+      "--json",
+      "number,mergeStateStatus,isDraft,labels,headRefName,headRefOid,baseRefName",
     ]),
   );
 }
@@ -655,6 +711,42 @@ function runSweep() {
       skipped.push([pr.number, `too-fresh (green ${ageMin}m < ${GRACE_MINUTES}m grace)`]);
       continue;
     }
+
+    // FINAL EXACT GUARD. Everything above used the sweep's initial open-PR
+    // snapshot. A passive stack retarget can add its pending label and change
+    // the PR base while those checks are running. Re-read immediately before
+    // enqueue, require the same head + main base + no hold, then re-read checks
+    // on that exact head. This prevents an already-running sweep from enqueueing
+    // the child's stale pre-retarget greens.
+    let fresh;
+    try {
+      fresh = freshPrForEnqueue(pr.number);
+    } catch (e) {
+      const msg = String(e.stderr || e.message || e)
+        .split("\n")[0]
+        .slice(0, 120);
+      skipped.push([pr.number, `fresh-pr-unavailable: ${msg}`]);
+      continue;
+    }
+    const exact = freshEnqueueGuard(pr, fresh);
+    if (!exact.ok) {
+      skipped.push([pr.number, `fresh-guard:${exact.reason}`]);
+      continue;
+    }
+    const exactChecks = visibleCheckState(pr.number);
+    if (exactChecks.error) {
+      skipped.push([pr.number, `fresh-checks-unavailable: ${exactChecks.error}`]);
+      continue;
+    }
+    if (exactChecks.failed.length > 0) {
+      skipped.push([pr.number, `fresh-failing-checks: ${exactChecks.failed.slice(0, 5).join(", ")}`]);
+      continue;
+    }
+    if (exactChecks.pending.length > 0) {
+      skipped.push([pr.number, `fresh-pending-checks: ${exactChecks.pending.slice(0, 5).join(", ")}`]);
+      continue;
+    }
+
     if (DRY) {
       enqueued.push([pr.number, `would-enqueue (green ${ageMin}m >= ${GRACE_MINUTES}m grace)`]);
       continue;
@@ -662,13 +754,13 @@ function runSweep() {
     try {
       graphql(
         `
-          mutation ($id: ID!) {
-            enqueuePullRequest(input: { pullRequestId: $id }) {
+          mutation ($id: ID!, $expectedHeadOid: GitObjectID!) {
+            enqueuePullRequest(input: { pullRequestId: $id, expectedHeadOid: $expectedHeadOid }) {
               clientMutationId
             }
           }
         `,
-        { id: pr.id },
+        enqueueMutationVariables(pr.id, fresh.headRefOid),
       );
       enqueued.push([pr.number, `enqueued (green ${ageMin}m)`]);
     } catch (e) {
@@ -701,9 +793,54 @@ function runSweep() {
   process.exit(0);
 }
 
+function selfCheck() {
+  const initial = {
+    number: 42,
+    headRefName: "stack/child",
+    headRefOid: "a".repeat(40),
+    baseRefName: "stack/parent",
+    mergeStateStatus: "CLEAN",
+    isDraft: false,
+    labels: [],
+  };
+  const exactMain = { ...initial, baseRefName: "main" };
+  assert.deepEqual(freshEnqueueGuard(initial, exactMain), {
+    ok: true,
+    reason: "exact-fresh-candidate",
+  });
+  assert.deepEqual(
+    freshEnqueueGuard(initial, {
+      ...exactMain,
+      labels: [{ name: "stack-retarget-pending" }],
+    }),
+    { ok: false, reason: "hold-label" },
+    "an already-running sweep must observe the retarget label added after its initial snapshot",
+  );
+  assert.deepEqual(freshEnqueueGuard(initial, initial), {
+    ok: false,
+    reason: "base:stack/parent",
+  });
+  assert.deepEqual(freshEnqueueGuard(initial, { ...exactMain, headRefOid: "b".repeat(40) }), {
+    ok: false,
+    reason: "head-changed-during-sweep",
+  });
+  assert.deepEqual(freshEnqueueGuard(initial, { ...exactMain, mergeStateStatus: "BEHIND" }), {
+    ok: false,
+    reason: "BEHIND",
+  });
+  assert.deepEqual(enqueueMutationVariables("PR_node_id", exactMain.headRefOid), {
+    id: "PR_node_id",
+    expectedHeadOid: exactMain.headRefOid,
+  });
+  assert.throws(() => enqueueMutationVariables("PR_node_id", "not-a-sha"), /40-character hex SHA/);
+  assert.equal(HOLD_LABELS.has("stack-retarget-pending"), true);
+  console.log("enqueue-green-prs: all self-checks passed");
+}
+
 // Only run the live sweep when invoked directly (`node scripts/enqueue-green-prs.mjs`).
 // When imported (e.g. by the gate unit test) this guard is false, so no `gh`
 // call is made on import. Mirrors the main-module convention used across scripts/.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runSweep();
+  if (process.argv.includes("--self-check")) selfCheck();
+  else runSweep();
 }

@@ -139,4 +139,82 @@ describe("#2063 switch StrictEquality (standalone / pure WasmGC)", () => {
       ),
     ).toBe(20);
   });
+
+  it("object-only cases use identity and reject primitives and distinct objects", async () => {
+    const source = `
+      const first: any = { id: 1 };
+      const second: any = { id: 1 };
+      export function f(which: number): number {
+        const value: any =
+          which === 0 ? first :
+          which === 1 ? second :
+          which === 2 ? {} :
+          which === 3 ? 1 :
+          which === 4 ? "first" :
+          which === 5 ? true :
+          which === 6 ? null :
+          undefined;
+        switch (value) {
+          case first: return 10;
+          case second: return 20;
+          default: return 0;
+        }
+      }
+    `;
+    expect(await runStandalone(source, "f", [0])).toBe(10);
+    expect(await runStandalone(source, "f", [1])).toBe(20);
+    expect(await runStandalone(source, "f", [2])).toBe(0);
+    expect(await runStandalone(source, "f", [3])).toBe(0);
+    expect(await runStandalone(source, "f", [4])).toBe(0);
+    expect(await runStandalone(source, "f", [5])).toBe(0);
+    expect(await runStandalone(source, "f", [6])).toBe(0);
+    expect(await runStandalone(source, "f", [7])).toBe(0);
+  });
+
+  it("mixed object and primitive cases keep full StrictEquality semantics", async () => {
+    const source = `
+      const objectCase: any = {};
+      export function f(which: number): number {
+        const value: any = which === 0 ? objectCase : which === 1 ? 1 : {};
+        switch (value) {
+          case objectCase: return 10;
+          case 1: return 20;
+          default: return 0;
+        }
+      }
+    `;
+    expect(await runStandalone(source, "f", [0])).toBe(10);
+    expect(await runStandalone(source, "f", [1])).toBe(20);
+    expect(await runStandalone(source, "f", [2])).toBe(0);
+  });
+
+  it("guards an any discriminant once for homogeneous numeric cases without coercion", async () => {
+    const source = `
+      var visits = 0;
+      function numericCase(value: number): number {
+        visits++;
+        return value;
+      }
+      export function f(which: number): number {
+        visits = 0;
+        const value: any =
+          which === 0 ? 2 :
+          which === 1 ? "2" :
+          which === 2 ? { valueOf: function(): number { return 2; } } :
+          NaN;
+        var result = 0;
+        switch (value) {
+          case numericCase(1): result = 10; break;
+          case numericCase(2): result = 20; break;
+          case numericCase(3): result = 30; break;
+          default: result = 40;
+        }
+        return result + visits;
+      }
+    `;
+    expect(await runStandalone(source, "f", [0])).toBe(22);
+    expect(await runStandalone(source, "f", [1])).toBe(43);
+    expect(await runStandalone(source, "f", [2])).toBe(43);
+    expect(await runStandalone(source, "f", [3])).toBe(43);
+  });
 });

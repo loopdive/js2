@@ -534,10 +534,11 @@ export function canMatchEmpty(node: ReNode): boolean {
     case "udot":
     case "class":
     case "cpclass":
-    case "backref":
-      // backref to an unset group matches empty, but a set group may consume;
-      // treat as consuming — the guard is only skipped when DEFINITELY non-empty.
       return false;
+    case "backref":
+      // An unset capture matches empty, and a participating capture may itself
+      // span zero input units. Conservatively guard quantified backreferences.
+      return true;
     case "bol":
     case "eol":
     case "wordBoundary":

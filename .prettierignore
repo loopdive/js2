@@ -2,6 +2,9 @@ node_modules/
 dist/
 test262/
 benchmarks/results/
+website/public/benchmarks/results/npm-compat.json
+website/public/benchmarks/results/npm-compat-perf.json
+website/public/benchmarks/results/npm-compat-history.json
 .test262-cache/
 scripts/compiler-bundle.mjs
 scripts/runtime-bundle.mjs

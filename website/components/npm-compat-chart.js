@@ -15,7 +15,7 @@
 
 class NpmCompatChart extends HTMLElement {
   static get observedAttributes() {
-    return ["src"];
+    return ["src", "history-src"];
   }
 
   connectedCallback() {
@@ -32,9 +32,14 @@ class NpmCompatChart extends HTMLElement {
     if (!src) return;
     this._renderLoading();
     try {
-      const res = await fetch(src);
+      const historySrc = this.getAttribute("history-src");
+      const [res, historyRes] = await Promise.all([
+        fetch(src, { cache: "no-store" }),
+        historySrc ? fetch(historySrc, { cache: "no-store" }).catch(() => null) : Promise.resolve(null),
+      ]);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      this._render(await res.json());
+      const history = historyRes?.ok ? await historyRes.json() : { schemaVersion: 1, runs: [] };
+      this._render(await res.json(), history);
     } catch (err) {
       this._renderError(err);
     }
@@ -55,6 +60,12 @@ class NpmCompatChart extends HTMLElement {
     return d.innerHTML;
   }
 
+  _npmUrl(pkg, code = false) {
+    const name = encodeURIComponent(String(pkg.name ?? ""));
+    const version = encodeURIComponent(String(pkg.version ?? ""));
+    return `https://www.npmjs.com/package/${name}/v/${version}${code ? "?activeTab=code" : ""}`;
+  }
+
   _fmtDate(iso) {
     if (!iso) return "";
     const d = new Date(iso);
@@ -62,28 +73,277 @@ class NpmCompatChart extends HTMLElement {
     return d.toISOString().slice(0, 10);
   }
 
-  _fmtMs(us) {
-    if (us == null) return "—";
-    const ms = us / 1000;
-    if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
-    if (ms >= 1) return `${ms.toFixed(1)}ms`;
-    return `${us.toFixed(1)}µs`;
-  }
-
   // ratio = nodeUs / wasmUs. >1 => wasm faster. <1 => node faster.
   _perfLabel(ratio) {
     if (ratio == null) return { text: "—", cls: "" };
-    if (ratio >= 1) return { text: `${ratio.toFixed(2)}× faster`, cls: "good" };
-    return { text: `${(1 / ratio).toFixed(0)}× slower`, cls: "bad" };
+    const factor = ratio >= 1 ? ratio : 1 / ratio;
+    const digits = factor >= 100 ? 0 : factor >= 10 ? 1 : 2;
+    const formatted = factor.toLocaleString("en-US", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: digits,
+    });
+    return ratio >= 1 ? { text: `${formatted}× faster`, cls: "good" } : { text: `${formatted}× slower`, cls: "bad" };
+  }
+
+  _speedFactor(ratio) {
+    if (ratio == null) return { text: "—", cls: "muted" };
+    const digits = ratio >= 100 ? 0 : ratio >= 10 ? 1 : ratio >= 1 ? 2 : ratio >= 0.1 ? 2 : ratio >= 0.01 ? 3 : 4;
+    return {
+      text: `${ratio.toLocaleString("en-US", { maximumFractionDigits: digits })}×`,
+      cls: ratio >= 1 ? "good" : "bad",
+    };
   }
 
   _row(label, valueHtml, cls) {
     return `<div class="row"><span class="k">${this._esc(label)}</span><span class="v ${cls || ""}">${valueHtml}</span></div>`;
   }
 
-  _card(pkg) {
+  _operationLabel(sampleOp) {
+    const value = String(sampleOp ?? "");
+    if (/parse\(.*226KB dist bundle/i.test(value)) return "Parse the 226 KB Acorn bundle";
+    if (/op_two_strings/i.test(value)) return "Join two class names";
+    if (/parseCookie\(8-pair (runtime-generated )?header\)/i.test(value)) return "Parse an 8-pair cookie header";
+    return value
+      .replace(/\s*\([^)]*(host-owned arguments|driver compiled to Wasm)[^)]*\)\s*/gi, " ")
+      .replace(/\.body\.length\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  _laneRatio(lane) {
+    if (!lane || (lane.status && lane.status !== "measured")) return null;
+    const ratio = Number(lane.ratio ?? Number(lane.nodeUs) / Number(lane.wasmUs));
+    return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
+  }
+
+  _currentSpeedSnapshot(pkg) {
+    const perf = pkg.perf;
+    if (!perf) return null;
+    const lanes = perf.lanes ?? { jsHost: perf };
+    const jsHostDynamic = this._laneRatio(lanes.jsHost);
+    const standaloneStatic = this._laneRatio(lanes.standalone);
+    const standaloneDynamic = this._laneRatio(lanes.standaloneDynamic);
+    if (jsHostDynamic == null && standaloneStatic == null && standaloneDynamic == null) return null;
+    return {
+      jsHost: { ...(jsHostDynamic == null ? {} : { dynamic: jsHostDynamic }) },
+      standalone: {
+        ...(standaloneStatic == null ? {} : { static: standaloneStatic }),
+        ...(standaloneDynamic == null ? {} : { dynamic: standaloneDynamic }),
+      },
+    };
+  }
+
+  _historyPoints(pkg, history) {
+    const runs = Array.isArray(history) ? history : (history?.runs ?? []);
+    const points = runs
+      .map((run) => ({
+        generatedAt: run.generatedAt,
+        time: new Date(run.generatedAt).getTime(),
+        snapshot: run.packages?.[pkg.name],
+      }))
+      .filter((point) => Number.isFinite(point.time) && point.snapshot);
+
+    const current = this._currentSpeedSnapshot(pkg);
+    const currentTime = new Date(this._data?.generatedAt).getTime();
+    if (current && Number.isFinite(currentTime) && !points.some((point) => point.time === currentTime)) {
+      points.push({ generatedAt: this._data.generatedAt, time: currentTime, snapshot: current });
+    }
+    return points.sort((left, right) => left.time - right.time);
+  }
+
+  _ratioTick(value) {
+    if (value === 0) return "0×";
+    if (value >= 1_000_000) return `${Number((value / 1_000_000).toPrecision(3))}m×`;
+    if (value >= 1000) return `${Number((value / 1000).toPrecision(3))}k×`;
+    return `${Number(value.toPrecision(3))}×`;
+  }
+
+  _shortDate(timestamp) {
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  _speedChart(pkg, history, target, includePrecompiled = false) {
+    const definitions =
+      target === "jsHost"
+        ? [{ key: "dynamic", label: "Dynamic", color: "#8ba4ff" }]
+        : [
+            ...(includePrecompiled ? [{ key: "static", label: "Static", color: "#4ade80" }] : []),
+            { key: "dynamic", label: "Dynamic", color: "#8ba4ff" },
+          ];
+    const historyPoints = this._historyPoints(pkg, history);
+    const series = definitions.map((definition) => ({
+      ...definition,
+      points: historyPoints
+        .map((point) => ({
+          ...point,
+          ratio: Number(point.snapshot?.[target]?.[definition.key]),
+        }))
+        .filter((point) => Number.isFinite(point.ratio) && point.ratio > 0),
+    }));
+    const measuredSeries = series.filter((item) => item.points.length > 0);
+    if (measuredSeries.length === 0) {
+      const lanes = pkg.perf?.lanes ?? {};
+      const lane = target === "jsHost" ? lanes.jsHost : lanes.standaloneDynamic;
+      if (lane?.status && !["measured", "skipped"].includes(lane.status)) {
+        const message =
+          lane.status === "result-mismatch"
+            ? "Dynamic run returned the wrong result"
+            : lane.status === "runtime-error"
+              ? "Dynamic run trapped"
+              : lane.status === "compile-error"
+                ? "Dynamic run did not compile"
+                : "Dynamic run could not be measured";
+        return `<div class="chart-empty chart-failed">${this._esc(message)}</div>`;
+      }
+      const scenario =
+        target === "jsHost" ? "JS-host dynamic" : includePrecompiled ? "standalone" : "standalone dynamic";
+      return `<div class="chart-empty">No ${scenario} speed history yet</div>`;
+    }
+
+    const W = 520;
+    const H = 202;
+    const pad = { top: 14, right: 18, bottom: 31, left: 52 };
+    const plotW = W - pad.left - pad.right;
+    const plotH = H - pad.top - pad.bottom;
+    const ratios = measuredSeries.flatMap((item) => item.points.map((point) => point.ratio));
+    const maxRatio = Math.max(1, ...ratios);
+    const roughStep = maxRatio / 5;
+    const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+    const normalizedStep = roughStep / magnitude;
+    const stepFactor = normalizedStep <= 1 ? 1 : normalizedStep <= 2 ? 2 : normalizedStep <= 5 ? 5 : 10;
+    const tickStep = stepFactor * magnitude;
+    const maxDomain = Math.ceil(maxRatio / tickStep) * tickStep;
+    const y = (ratio) => pad.top + ((maxDomain - Math.max(0, ratio)) / maxDomain) * plotH;
+
+    const times = [...new Set(measuredSeries.flatMap((item) => item.points.map((point) => point.time)))].sort(
+      (left, right) => left - right,
+    );
+    const minTime = times[0];
+    const maxTime = times.at(-1);
+    const x = (time) =>
+      minTime === maxTime ? pad.left + plotW / 2 : pad.left + ((time - minTime) / (maxTime - minTime)) * plotW;
+
+    const tickValues = [];
+    for (let value = 0; value <= maxDomain + tickStep / 2; value += tickStep) tickValues.push(value);
+    if (!tickValues.some((value) => Math.abs(value - 1) < 1e-9)) tickValues.push(1);
+    tickValues.sort((left, right) => right - left);
+    const baselineY = y(1);
+    const visibleTickValues = tickValues.filter((value) => value !== 0 || Math.abs(y(0) - baselineY) >= 14);
+
+    const grid = visibleTickValues
+      .map((value) => {
+        const yPos = y(value);
+        const baseline = Math.abs(value - 1) < 1e-9;
+        return `
+          <line x1="${pad.left}" y1="${yPos}" x2="${W - pad.right}" y2="${yPos}"
+            stroke="${baseline ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.08)"}"
+            stroke-width="${baseline ? 1.5 : 1}" ${baseline ? 'stroke-dasharray="5 4"' : ""}/>
+          <text x="${pad.left - 8}" y="${yPos + 4}" text-anchor="end"
+            fill="${baseline ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.35)"}"
+            font-size="10" font-family="monospace">${this._ratioTick(value)}</text>`;
+      })
+      .join("");
+
+    const paths = measuredSeries
+      .map((item) => {
+        const path = item.points
+          .map((point, index) => `${index === 0 ? "M" : "L"} ${x(point.time)} ${y(point.ratio)}`)
+          .join(" ");
+        const dots = item.points
+          .map(
+            (point) => `
+              <circle cx="${x(point.time)}" cy="${y(point.ratio)}" r="3" fill="${item.color}">
+                <title>${this._esc(`${item.label} · ${this._shortDate(point.generatedAt)} · ${this._perfLabel(point.ratio).text}`)}</title>
+              </circle>`,
+          )
+          .join("");
+        return `<path d="${path}" fill="none" stroke="${item.color}" stroke-width="2"/>${dots}`;
+      })
+      .join("");
+
+    const firstDate = this._shortDate(minTime);
+    const lastDate = this._shortDate(maxTime);
+    const xLabels =
+      minTime === maxTime
+        ? `<text x="${pad.left + plotW / 2}" y="${H - 9}" text-anchor="middle">${this._esc(firstDate)}</text>`
+        : `<text x="${pad.left}" y="${H - 9}" text-anchor="start">${this._esc(firstDate)}</text>
+           <text x="${W - pad.right}" y="${H - 9}" text-anchor="end">${this._esc(lastDate)}</text>`;
+    const legend = series
+      .map((item) => {
+        const latest = item.points.at(-1);
+        const result = latest ? this._perfLabel(latest.ratio) : { text: "not measured", cls: "muted" };
+        return `<span class="chart-legend-item ${latest ? "" : "unavailable"}">
+          <span class="legend-swatch" style="--series-color:${item.color}"></span>
+          <span>${item.label}</span>
+          <strong class="${result.cls}">${result.text}</strong>
+        </span>`;
+      })
+      .join("");
+
+    return `
+      <div class="speed-chart">
+        <svg viewBox="0 0 ${W} ${H}" role="img"
+          aria-label="${this._esc(`${pkg.name} relative speed versus Node over time`)}">
+          <title>${this._esc(`${pkg.name}: relative Wasm speed, with native Node fixed at 1×`)}</title>
+          <rect x="${pad.left}" y="${pad.top}" width="${plotW}" height="${Math.max(0, baselineY - pad.top)}"
+            fill="rgba(74,222,128,0.025)"/>
+          <rect x="${pad.left}" y="${baselineY}" width="${plotW}"
+            height="${Math.max(0, pad.top + plotH - baselineY)}" fill="rgba(248,113,113,0.025)"/>
+          ${grid}
+          <text x="${W - pad.right - 4}" y="${baselineY - 6}" text-anchor="end"
+            fill="rgba(255,255,255,0.62)" font-size="9" font-family="monospace">Node 1×</text>
+          ${paths}
+          <g fill="rgba(255,255,255,0.35)" font-size="9" font-family="monospace">${xLabels}</g>
+        </svg>
+        <div class="chart-legend">${legend}</div>
+        <div class="chart-scale">linear scale · ${times.length} committed run${times.length === 1 ? "" : "s"}</div>
+      </div>`;
+  }
+
+  _bindPerfControls() {
+    const dashboard = this.shadowRoot.querySelector(".chart-dashboard");
+    if (!dashboard) return;
+    const bindToggle = (selector, attribute, datasetKey) => {
+      const buttons = dashboard.querySelectorAll(selector);
+      buttons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const value = button.getAttribute(attribute);
+          dashboard.dataset[datasetKey] = value;
+          buttons.forEach((candidate) => {
+            candidate.setAttribute("aria-pressed", String(candidate.getAttribute(attribute) === value));
+          });
+        });
+      });
+    };
+    bindToggle(".global-target-toggle button[data-target-value]", "data-target-value", "target");
+    bindToggle(
+      ".global-precompilation-toggle button[data-precompilation-value]",
+      "data-precompilation-value",
+      "precompilation",
+    );
+  }
+
+  _card(pkg, history) {
     const compiles = pkg.compile?.success;
     const validates = pkg.validation?.validates;
+    const npmPackageUrl = this._npmUrl(pkg);
+    const npmCodeUrl = this._npmUrl(pkg, true);
+    const issueLink = pkg.issue
+      ? `<a class="issue" href="https://github.com/loopdive/js2/issues/${pkg.issue}" target="_blank" rel="noopener">#${pkg.issue}</a>`
+      : "";
+    const lanes = pkg.perf?.lanes ?? (pkg.perf ? { jsHost: pkg.perf } : {});
+    const speedFactor = (lane) => {
+      const value = this._speedFactor(this._laneRatio(lane));
+      return `<span class="speed-value ${value.cls}">speed ${value.text}</span>`;
+    };
+    const speed = `
+      <span class="speed-factor mono">
+        <span class="speed-host">${speedFactor(lanes.jsHost)}</span>
+        <span class="speed-standalone-dynamic">${speedFactor(lanes.standaloneDynamic)}</span>
+        <span class="speed-standalone-static">${speedFactor(lanes.standalone)}</span>
+      </span>`;
 
     const badge = (ok, label) =>
       `<span class="badge ${ok === true ? "ok" : ok === false ? "bad" : ""}">${this._esc(label)}</span>`;
@@ -92,7 +352,8 @@ class NpmCompatChart extends HTMLElement {
     // load-bearing, so it is the row's own label, never blurred into one number.
     let tests;
     if (!pkg.tests) {
-      tests = this._row("tests", `<span class="muted">n/a — compile blocked</span>`);
+      const reason = compiles ? "runtime not verified" : "compile blocked";
+      tests = this._row("tests", `<span class="muted">n/a — ${reason}</span>`);
     } else {
       const { kind, passed, total, passRatePct } = pkg.tests;
       const pct = passRatePct != null ? passRatePct : total ? ((passed / total) * 100).toFixed(1) : null;
@@ -103,18 +364,23 @@ class NpmCompatChart extends HTMLElement {
       );
     }
 
-    // Perf
+    // Perf — historical ratios stay split by input knowledge and placement;
+    // full methodology lives below the dashboard.
     let perf;
     if (!pkg.perf) {
       perf = this._row("perf vs node", `<span class="muted">not measured</span>`);
     } else {
-      const { sampleOp, wasmUs, nodeUs, ratio } = pkg.perf;
-      const l = this._perfLabel(ratio);
-      perf =
-        this._row(
-          "perf vs node",
-          `<span class="${l.cls}">${l.text}</span> <span class="muted mono">${this._fmtMs(wasmUs)} vs ${this._fmtMs(nodeUs)}</span>`,
-        ) + `<div class="row sub"><span class="k"></span><span class="v muted">${this._esc(sampleOp)}</span></div>`;
+      const operation = this._operationLabel(pkg.perf.sampleOp);
+      perf = `
+        <div class="perf-block">
+          <div class="section-title">
+            <span>Relative speed over time</span>
+            ${operation ? `<span class="operation" title="${this._esc(pkg.perf.sampleOp)}">${this._esc(operation)}</span>` : ""}
+          </div>
+          <div class="perf-view host-chart">${this._speedChart(pkg, history, "jsHost")}</div>
+          <div class="perf-view standalone-dynamic-chart">${this._speedChart(pkg, history, "standalone")}</div>
+          <div class="perf-view standalone-precompiled-chart">${this._speedChart(pkg, history, "standalone", true)}</div>
+        </div>`;
     }
 
     const bugs = (pkg.knownBugs ?? []).length
@@ -132,21 +398,54 @@ class NpmCompatChart extends HTMLElement {
     return `
       <div class="card">
         <div class="card-top">
-          <span class="name">${this._esc(pkg.name)}</span>
+          <a class="name" href="${npmPackageUrl}" target="_blank" rel="noopener"
+            title="View ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.name)}</a>
           <span class="ver mono">v${this._esc(pkg.version)}</span>
-          <a class="issue" href="https://github.com/loopdive/js2/issues/${pkg.issue}" target="_blank" rel="noopener">#${pkg.issue}</a>
+          ${speed}
+          ${issueLink}
         </div>
         <div class="badges">${badge(compiles, "compiles")}${badge(validates, "validates")}</div>
         <div class="rows">${tests}${perf}${bugs}</div>
-        <div class="entry mono">${this._esc(pkg.entryFile)}</div>
+        <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
+          title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
       </div>`;
   }
 
-  _render(data) {
+  _render(data, history) {
+    this._data = data;
+    const measuredDate = document.getElementById("npm-compat-measured");
+    if (measuredDate) measuredDate.textContent = this._fmtDate(data.generatedAt) || "—";
     const pkgs = data.packages ?? [];
+    const failToRun = pkgs.filter((pkg) => pkg.compile?.success && !pkg.validation?.validates);
+    const groups = [
+      {
+        label: "Run",
+        packages: pkgs.filter((pkg) => pkg.compile?.success && pkg.validation?.validates),
+      },
+      ...(failToRun.length ? [{ label: "Fail to run", packages: failToRun }] : []),
+      {
+        label: "Fail to compile",
+        packages: pkgs.filter((pkg) => !pkg.compile?.success),
+      },
+    ];
     const compiling = pkgs.filter((p) => p.compile?.success).length;
     const validating = pkgs.filter((p) => p.validation?.validates).length;
     const metric = (v, l) => `<div class="metric"><span class="value">${v}</span><span class="label">${l}</span></div>`;
+    const packageGroup = (group) => {
+      const count = group.packages.length;
+      return `
+        <details class="package-group"${count ? " open" : ""}>
+          <summary>
+            <span class="group-title"><span class="group-chevron">›</span>${this._esc(group.label)}</span>
+            <span class="group-count">${count} ${count === 1 ? "package" : "packages"}</span>
+          </summary>
+          ${
+            count
+              ? `<div class="cards">${group.packages.map((pkg) => this._card(pkg, history)).join("")}</div>`
+              : `<div class="group-empty">No packages</div>`
+          }
+        </details>`;
+    };
 
     this.shadowRoot.innerHTML = `
       ${this._styles()}
@@ -154,11 +453,33 @@ class NpmCompatChart extends HTMLElement {
         ${metric(pkgs.length, "packages")}
         ${metric(`${compiling}/${pkgs.length}`, "compile")}
         ${metric(`${validating}/${pkgs.length}`, "validate")}
-        ${metric(this._fmtDate(data.generatedAt) || "—", "measured")}
       </div>
-      <div class="cards">${pkgs.map((p) => this._card(p)).join("")}</div>
-      ${data.note ? `<p class="note">${this._esc(data.note)}</p>` : ""}
+      <div class="chart-dashboard" data-target="standalone" data-precompilation="off">
+        <div class="benchmark-toolbar">
+          <div>
+            <span class="toolbar-title">Performance history</span>
+            <span class="toolbar-detail">Controls every package chart</span>
+          </div>
+          <div class="toolbar-controls">
+            <span class="baseline-key"><span></span>Node baseline</span>
+            <div class="toggle-group global-target-toggle" aria-label="Wasm runtime for all package charts">
+              <button type="button" data-target-value="host" aria-pressed="false">JS host</button>
+              <button type="button" data-target-value="standalone" aria-pressed="true">Standalone</button>
+            </div>
+            <div class="toolbar-option">
+              <span class="control-label">Precompilation</span>
+              <div class="toggle-group global-precompilation-toggle" aria-label="Include precompiled static-input results">
+                <button type="button" data-precompilation-value="off" aria-pressed="true">Off</button>
+                <button type="button" data-precompilation-value="on" aria-pressed="false">On</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="package-groups">${groups.map(packageGroup).join("")}</div>
+        ${data.note ? `<p class="note">${this._esc(data.note)}</p>` : ""}
+      </div>
     `;
+    this._bindPerfControls();
   }
 
   _styles() {
@@ -199,17 +520,120 @@ class NpmCompatChart extends HTMLElement {
           letter-spacing: 0.08em;
         }
 
-        .cards {
+        .benchmark-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 10px 12px;
+          border: 1px solid var(--border, rgba(255,255,255,0.12));
+          border-bottom: 0;
+          background: rgba(255, 255, 255, 0.025);
+        }
+        .toolbar-title {
+          color: rgba(255, 255, 255, 0.62);
+          font-size: 10px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        .toolbar-detail {
+          margin-left: 8px;
+          color: rgba(255, 255, 255, 0.28);
+          font-size: 9px;
+        }
+        .toolbar-controls {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          flex-wrap: wrap;
+          gap: 14px;
+        }
+        .toolbar-option {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .control-label {
+          color: rgba(255, 255, 255, 0.35);
+          font-size: 9px;
+        }
+        .package-groups {
           display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-          gap: 1px;
-          background: var(--border, rgba(255,255,255,0.12));
+          gap: 12px;
+        }
+        .package-group {
+          background: var(--bg, #060a14);
           border: 1px solid var(--border, rgba(255,255,255,0.12));
         }
-        .card { background: var(--bg, #060a14); padding: 14px 16px 12px; }
+        .package-group summary {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 10px 12px;
+          color: rgba(255, 255, 255, 0.62);
+          cursor: pointer;
+          list-style: none;
+          text-transform: uppercase;
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.06em;
+        }
+        .package-group summary::-webkit-details-marker { display: none; }
+        .group-title {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+        }
+        .group-chevron {
+          color: var(--text-muted, rgba(255,255,255,0.46));
+          font-size: 16px;
+          line-height: 0;
+          transition: transform 120ms ease;
+        }
+        .package-group[open] .group-chevron { transform: rotate(90deg); }
+        .group-count {
+          color: rgba(255, 255, 255, 0.3);
+          font-weight: 500;
+        }
+        .group-empty {
+          padding: 16px;
+          border-top: 1px solid var(--border, rgba(255,255,255,0.12));
+          color: rgba(255, 255, 255, 0.3);
+          font-size: 11px;
+        }
+        .cards {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+          background: var(--bg, #060a14);
+          border-top: 1px solid var(--border, rgba(255,255,255,0.12));
+        }
+        .card {
+          background: var(--bg, #060a14);
+          box-shadow: inset -1px -1px 0 var(--border, rgba(255,255,255,0.12));
+          padding: 16px;
+          min-width: 0;
+        }
         .card-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
-        .card-top .name { font-size: 15px; font-weight: 600; }
+        .card-top .name {
+          color: inherit;
+          font-size: 15px;
+          font-weight: 600;
+          text-decoration: none;
+        }
+        .card-top .name:hover { text-decoration: underline; }
         .card-top .ver { font-size: 11px; color: var(--text-muted, rgba(255,255,255,0.46)); }
+        .speed-factor > span { display: none; }
+        .speed-value {
+          font-size: 10px;
+          white-space: nowrap;
+        }
+        .chart-dashboard[data-target="host"] .speed-host,
+        .chart-dashboard[data-target="standalone"][data-precompilation="off"] .speed-standalone-dynamic,
+        .chart-dashboard[data-target="standalone"][data-precompilation="on"] .speed-standalone-static {
+          display: inline;
+        }
         .card-top .issue {
           margin-left: auto;
           font-size: 11px;
@@ -233,7 +657,7 @@ class NpmCompatChart extends HTMLElement {
         .rows { display: flex; flex-direction: column; }
         .row {
           display: flex;
-          justify-content: space-between;
+          justify-content: flex-start;
           align-items: baseline;
           gap: 10px;
           font-size: 12px;
@@ -241,7 +665,6 @@ class NpmCompatChart extends HTMLElement {
           border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         }
         .row:last-child { border-bottom: none; }
-        .row.sub { padding-top: 0; margin-top: -4px; border-bottom: none; font-size: 11px; }
         .row .k {
           color: rgba(255, 255, 255, 0.35);
           text-transform: uppercase;
@@ -249,7 +672,10 @@ class NpmCompatChart extends HTMLElement {
           letter-spacing: 0.06em;
           white-space: nowrap;
         }
-        .row .v { text-align: right; }
+        .row .v {
+          min-width: 0;
+          text-align: left;
+        }
         .row .v a { color: var(--accent, #6c8aff); text-decoration: none; }
         .row .v a:hover { text-decoration: underline; }
         .tag {
@@ -261,16 +687,151 @@ class NpmCompatChart extends HTMLElement {
           padding: 1px 4px;
           margin-left: 2px;
         }
+        .perf-block {
+          padding: 12px 0 10px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .section-title {
+          display: flex;
+          justify-content: flex-start;
+          gap: 8px;
+          margin-bottom: 8px;
+          color: rgba(255, 255, 255, 0.35);
+          text-transform: uppercase;
+          font-size: 10px;
+          letter-spacing: 0.06em;
+        }
+        .section-title .operation {
+          min-width: 0;
+          color: var(--text-muted, rgba(255,255,255,0.46));
+          text-transform: none;
+          letter-spacing: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .toggle-group {
+          display: inline-flex;
+          padding: 2px;
+          background: rgba(255, 255, 255, 0.035);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .toggle-group button {
+          appearance: none;
+          border: 0;
+          padding: 4px 8px;
+          background: transparent;
+          color: rgba(255, 255, 255, 0.4);
+          font: inherit;
+          font-size: 9px;
+          line-height: 1;
+          cursor: pointer;
+        }
+        .toggle-group button:hover {
+          color: var(--text, #fff);
+        }
+        .toggle-group button[aria-pressed="true"] {
+          background: rgba(255, 255, 255, 0.1);
+          color: var(--text, #fff);
+        }
+        .baseline-key {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          color: rgba(255, 255, 255, 0.3);
+          font-size: 9px;
+        }
+        .baseline-key span {
+          width: 22px;
+          border-top: 1px dashed rgba(255, 255, 255, 0.55);
+        }
+        .perf-view { display: none; }
+        .chart-dashboard[data-target="host"] .host-chart,
+        .chart-dashboard[data-target="standalone"][data-precompilation="off"] .standalone-dynamic-chart,
+        .chart-dashboard[data-target="standalone"][data-precompilation="on"] .standalone-precompiled-chart {
+          display: block;
+        }
+        .speed-chart {
+          background: rgba(255, 255, 255, 0.035);
+          border: 1px solid rgba(255, 255, 255, 0.07);
+          padding: 4px 7px 8px;
+        }
+        .speed-chart svg {
+          display: block;
+          width: 100%;
+          height: auto;
+          overflow: visible;
+        }
+        .chart-legend {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 7px 14px;
+          padding: 2px 8px 0;
+        }
+        .chart-legend-item {
+          display: inline-grid;
+          grid-template-columns: auto auto auto;
+          align-items: center;
+          gap: 5px;
+          font-size: 9px;
+          color: rgba(255, 255, 255, 0.55);
+        }
+        .chart-legend-item strong {
+          font-size: 9px;
+          font-weight: 500;
+          white-space: nowrap;
+        }
+        .chart-legend-item.unavailable { opacity: 0.48; }
+        .legend-swatch {
+          width: 14px;
+          border-top: 2px solid var(--series-color);
+        }
+        .chart-scale {
+          padding: 5px 8px 0;
+          color: rgba(255, 255, 255, 0.24);
+          font-size: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .chart-empty {
+          display: flex;
+          min-height: 180px;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(255, 255, 255, 0.07);
+          background: rgba(255, 255, 255, 0.025);
+          color: rgba(255, 255, 255, 0.3);
+          font-size: 10px;
+        }
+        .chart-empty.chart-failed {
+          color: var(--red, #f87171);
+        }
         .entry {
+          display: inline-block;
           margin-top: 10px;
           font-size: 10px;
           color: rgba(255, 255, 255, 0.3);
+          text-decoration: none;
         }
+        .entry:hover { color: var(--text-muted, rgba(255,255,255,0.46)); text-decoration: underline; }
         .note {
           margin-top: 18px;
           font-size: 11px;
           color: var(--text-muted, rgba(255,255,255,0.46));
           max-width: 900px;
+        }
+
+        @media (max-width: 720px) {
+          .section-title { flex-direction: column; gap: 3px; }
+          .benchmark-toolbar {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 8px;
+          }
+          .toolbar-controls {
+            width: 100%;
+            justify-content: flex-start;
+          }
         }
       </style>
     `;

@@ -1,7 +1,8 @@
 ---
 id: 3734
 title: "array.ts landing-page benchmark: IR compiles .push() to a non-inlined helper call while legacy fully inlines it — same IR-vs-legacy gap as #3739/#3741, not a generic-dispatch problem"
-status: ready
+status: done
+completed: 2026-07-28
 sprint: current
 created: 2026-07-28
 updated: 2026-07-28
@@ -16,7 +17,130 @@ goal: performance
 depends_on: []
 related: [3704, 3733, 3739, 3741]
 ---
+
 # #3734 — `array.ts` push loop: IR emits a non-inlined helper call, legacy fully inlines
+
+## RESOLVED 2026-07-28 — Cause 1 landed in #3741, Cause 2 landed here
+
+Both causes are now fixed. Measured on this box with one calibrated harness
+(200 warm-ups, calibrated iteration count, median of 9 rounds, the same 4-round
+`wasm-opt -O4` fixpoint the real landing-page artifact pipeline runs), JS pinned
+to V8's optimizing tier via `%OptimizeFunctionOnNextCall`:
+
+| build                                     | time        | vs JS                      |
+| ----------------------------------------- | ----------- | -------------------------- |
+| `main` before #3741 (as filed)            | 204.3 µs    | 5.3x slower                |
+| with #3741 (Cause 1) — this branch's base | 100.4 µs    | 2.25x slower               |
+| **with Cause 2 (this change)**            | **34.2 µs** | **0.85x — FASTER than JS** |
+| legacy (reference)                        | 28.0 µs     | 0.70x                      |
+| JS (V8, native arrays)                    | 40.3 µs     | 1.00x                      |
+
+The IR lane went from **2.25x slower than V8 to 0.85x** — a **2.9x** improvement
+over its own base — and the IR-vs-legacy gap closed from 3.5x to 1.22x.
+
+### What Cause 2 actually was, and why the fix composes with #3741
+
+`inferEmptyArrayElementTypes` (`src/ir/array-element-inference.ts`) resolved an
+empty `number[]`'s element kind from the TS TYPE and mapped `number` → `f64`
+unconditionally. It had no notion of "int-only number", so a vector filled
+exclusively with int32-range integers still got `(array (mut f64))` — 8 bytes
+per element where legacy uses 4, i.e. double the memory traffic across the
+benchmark's 10k elements.
+
+The narrowing has to pay for itself, and on plain `main` it would NOT have:
+typing the array i32 means the store site must narrow the value back, and
+without #3741 that is a real `convert` + `trunc_sat` per store. #3741 added the
+algebraic peephole `i32.trunc_sat_f64_s(f64.convert_i32_s(x)) === x` in
+`IrFunctionBuilder.emitUnary` **and** i32 slot storage for loop counters — so
+here the store becomes a direct i32 → i32 write with no conversion at all. This
+change goes one better and never emits the round trip in the first place: the
+store lowers its value DIRECTLY through #3741's `lowerAsI32(.., "canon")`.
+Measured on a fill-only loop, the narrowed build emits exactly one
+`f64.convert_i32_s` fewer per iteration than the f64 build (asserted in
+`tests/issue-3734-i32-array-elements.test.ts`).
+
+### Why this is safe — the invariants, and why an ARRAY needed a fourth one
+
+#3741's contained-ness argument was two invariants (widen on every read, emit an
+exact i32 on every write). An array needs a third: a local cannot be aliased,
+but an array can, and its element type is part of the MODULE type — visible at
+every access site, including ones in other functions.
+
+- **C (closure)** — the existing escape analysis in `array-element-inference.ts`
+  is what makes the whole thing possible. `isSafeAliasUse` already admits only
+  five shapes (`arr[i]`, `arr.length`, `arr.push(v)`, aliasing to a local, and
+  the initializer position); anything else — a call argument, a `return`, a
+  property store, a closure capture, `for…of` — sets `escaped` and rejects the
+  group outright. So for a group that survives, the COMPLETE set of stores is
+  visible in one function body.
+- **W (write)** — every store's value is proven exactly int32 by
+  `isCanonI32Lowerable` (#3741's hardened Q-CANON predicate: literals in range
+  excluding `-0`, i32-promoted locals, and bitwise/shift results excluding
+  `>>>`) and lowered with `lowerAsI32(.., "canon")`. Never by truncating an
+  already-lowered f64 — that would SATURATE where the source semantics WRAP,
+  which is exactly the #3745 revert.
+- **R (read)** — every read widens with `f64.convert_i32_s` immediately, so
+  every consumer still sees the f64 it saw before. The bounds-checked read gets
+  its own emitter (`emitSafeNarrowedI32VecGet`) that puts the widen INSIDE the
+  `then` arm, because the out-of-bounds arm must keep yielding f64 NaN (the
+  numeric image of JS `undefined`) — a number an i32 vector cannot represent,
+  and `i32.const 0` is a different number.
+- **Discrimination** — a narrowed `number[]` and a genuine `boolean[]` share one
+  `$__vec_i32` registry entry, so `vec.elementValType.kind === "i32"` alone is
+  NOT a valid test. Every site pairs it with
+  `isInt32NarrowedVectorExpression(receiver)`, which answers per RECEIVER
+  EXPRESSION from the inference's may-alias groups.
+
+### The plan/live probe divergence, and why it cannot bite
+
+The narrowing decision is made in a pre-pass, before any lowering, so it cannot
+consult `cx.scope`. It uses a plan-time `IsPromotedI32` built from
+`planI32Slots`'s output (`makePlannedI32Probe`). The store sites re-check with a
+LIVE probe — but the live arm is deliberately the UNION of "i32-promoted slot
+right now" and "in `computeI32PureNames`". That union is provably WEAKER than
+the plan-time arm, because every declaration `planI32Slots` promotes was
+admitted via `collectI32CoercedLocals` or `detectI32LoopVar`, and
+`computeI32PureNames` is exactly the union of those two over the same function.
+So an accepted plan can never turn into a failed emit. (A naive re-check against
+the promoted-slot arm alone WOULD have demoted whole functions for shapes like
+an annotated `let i: number = 0`, where the plan admits the declaration but
+`lowerVarDecl` binds it via the annotation instead — a needless legacy fallback
+for a value that is still exactly int32.)
+
+### Deliberately NOT narrowed (fail closed)
+
+Any shape whose stored value is not modelled, or whose store set is not fully
+visible: compound element stores (`arr[i] += v` — the value derives from the
+current element and can leave int32 range), `arr[i]++`, destructuring targets,
+`delete`, spread pushes, a non-empty literal joined into the group, `-0`,
+literals past 2^31, `>>>` results (uint32 range), the `<module-init>` unit
+(where a binding outlives the scanned body via a global), and the linear
+backend (whose `resolveVecForElement` answers only for `f64`, so the capability
+probe declines and the representation is unchanged). A conservative miss costs
+nothing; a wrong narrowing is a silent wrong answer.
+
+### One real bug found and fixed during implementation
+
+The first version of the element-access classifier treated _any_ binary
+expression with the element access as its LEFT operand as a store. `arr[i] * 2`
+matches that shape and is a plain read — so a perfectly narrowable array
+silently stayed f64 whenever the sum loop did anything with the element. Fixed
+by gating on `isAssignmentOperatorKind` (the contiguous
+`FirstAssignment..LastAssignment` range, which is how TypeScript's own
+non-public `isAssignmentOperator` decides). Caught by the differential probe,
+not by reasoning — worth keeping the case in the test file.
+
+### Files
+
+- `src/ir/array-element-inference.ts` — `int32Narrowed` on the resolved result,
+  the `ExactInt32Proof` hook, the per-use-site whitelist classifier.
+- `src/ir/array-element-lowering.ts` — representation planning, safe narrowed
+  reads, exact-i32 stores, and shared vec-push lowering.
+- `src/ir/analysis/i32-slots.ts` — `makePlannedI32Probe` (plan-time probe).
+- `src/ir/from-ast.ts` — allocation and element access sites delegate their
+  representation-sensitive mechanics to the array subsystem.
+- `tests/issue-3734-i32-array-elements.test.ts` — shape, gating (15 cases) and
+  IR == legacy == JS equivalence (10 cases + the out-of-bounds A/B).
 
 ## REOPENED 2026-07-28 — the close-out below reached the WRONG conclusion
 
@@ -32,11 +156,11 @@ not-actionable-here. That attribution is refuted by direct measurement.
 Same source, same 4-round `-O4` fixpoint, same process, median of 9 rounds
 × 200 calls after 200 warm-up calls:
 
-| build                    | time     | vs JS             |
-| ------------------------ | -------- | ----------------- |
-| **legacy** (`experimentalIR: false`) | **36.5 µs** | **0.51x — 2x FASTER than JS** |
-| JS (V8, native arrays)   | 71.8 µs  | 1.00x             |
-| **IR** (default path)    | **200.9 µs** | **2.80x slower**  |
+| build                                | time         | vs JS                         |
+| ------------------------------------ | ------------ | ----------------------------- |
+| **legacy** (`experimentalIR: false`) | **36.5 µs**  | **0.51x — 2x FASTER than JS** |
+| JS (V8, native arrays)               | 71.8 µs      | 1.00x                         |
+| **IR** (default path)                | **200.9 µs** | **2.80x slower**              |
 
 Legacy WasmGC beats V8's native arrays by 2x on this exact benchmark. So
 there is **no architectural WasmGC-vs-native-array penalty** here — the
@@ -61,12 +185,12 @@ the promotion analysis treats them as one name and conservatively rejects
 **both**. Isolated on the #3741 branch (counting `i32.add`/`i32.lt_s` vs
 `f64.add`/`f64.lt` in the loop bodies):
 
-| case                                    | promoted?             |
-| --------------------------------------- | --------------------- |
-| one loop, counter `i`                   | ✅ i32                |
-| two sibling loops, **both** named `i`   | ❌ **all f64**        |
-| two sibling loops, `i` then `j`         | ✅ i32                |
-| two sibling loops, both `i` (2nd trivial) | ❌ **all f64**      |
+| case                                      | promoted?      |
+| ----------------------------------------- | -------------- |
+| one loop, counter `i`                     | ✅ i32         |
+| two sibling loops, **both** named `i`     | ❌ **all f64** |
+| two sibling loops, `i` then `j`           | ✅ i32         |
+| two sibling loops, both `i` (2nd trivial) | ❌ **all f64** |
 
 Renaming the second counter `i`→`j` — a pure alpha-rename, no semantic
 change — takes the benchmark from **196.3 µs → 132.0 µs (33% faster)** on

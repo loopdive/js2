@@ -110,7 +110,7 @@ describe("#2923 — constant eval: for-of / for-in over literals lift (standalon
   });
 });
 
-describe("#2923 — unsafe-to-lift kinds still bail cleanly to the dynamic path", () => {
+describe("#2923/#3633 — constant eval lift frontier", () => {
   it("a class declaration bails (needs checker heritage/method bindings) — not a compile error", async () => {
     // Acceptance criterion 2: returns 7 OR provably bails with a documented
     // reason. It bails: class codegen dereferences a checker signature the
@@ -164,18 +164,42 @@ describe("#2923 — unsafe-to-lift kinds still bail cleanly to the dynamic path"
     ).toBe(true);
   });
 
-  it("a block-nested function declaration bails (AnnexB B.3.3 conditional hoist not implemented)", async () => {
+  it("a block-nested function declaration uses the Annex B B.3.3 outer binding", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+          return eval("{ function h(){return 4} } h()") as number;
+        }`,
+      ),
+    ).toBe(4);
+  });
+
+  it("an if-nested function declaration uses the Annex B B.3.3 outer binding", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+          return eval("if (true) function k(){return 5} k()") as number;
+        }`,
+      ),
+    ).toBe(5);
+  });
+
+  it("duplicate same-name Annex B declarations bail to preserve eval instantiation lifecycle", async () => {
     expect(
       await bailsToDynamic(
-        `export function test(): number { return eval("{ function h(){return 4} } typeof h") as any; }`,
+        `export function test(): unknown {
+          return eval("var before = f; { function f() {} } { function f() {} }");
+        }`,
       ),
     ).toBe(true);
   });
 
-  it("an if-nested function declaration bails (AnnexB)", async () => {
+  it("a same-name lexical declaration bails to preserve Annex B early-error suppression", async () => {
     expect(
       await bailsToDynamic(
-        `export function test(): number { return eval("if (true) function k(){return 5} typeof k") as any; }`,
+        `export function test(): unknown {
+          return eval("{ let f = 1; { function f() {} } }");
+        }`,
       ),
     ).toBe(true);
   });

@@ -116,21 +116,15 @@
         <a href="https://github.com/loopdive/js2/tree/main/tests/dogfood" target="_blank" rel="noopener">
           tests/dogfood
         </a>
+        · measured
+        <span id="npm-compat-measured">…</span>
       </div>
     </header>
 
-    <npm-compat-chart src="./benchmarks/results/npm-compat.json"></npm-compat-chart>
-
-    <!-- Same chart component the landing page uses for the wasm/JS sidebar, so
-         the comparison is drawn identically here; the baseline tick is native
-         Node running the SAME pinned package. -->
-    <perf-benchmark-chart
-      src="./benchmarks/results/npm-compat-perf.json"
-      mode="perf"
-      baseline-label="Node"
-      title="Compiled Wasm vs native Node — same pinned package"
-      legend="Bar = compiled Wasm throughput relative to the same package running natively under Node (tick). Left of the tick is slower than Node."
-    ></perf-benchmark-chart>
+    <npm-compat-chart
+      src="./benchmarks/results/npm-compat.json"
+      history-src="./benchmarks/results/npm-compat-history.json"
+    ></npm-compat-chart>
 
     <footer>
       <div>
@@ -148,10 +142,11 @@
       </div>
       <div>
         <h2>Performance</h2>
-        Compiled Wasm (
-        <code>-O4</code>
-        ) measured head-to-head against the SAME pinned package running natively under Node — a real workload, not a
-        synthetic micro-benchmark. Calibrated median of 9 rounds after warmup.
+        Charts show Wasm speed relative to the same pinned package in Node on a linear scale; the
+        <strong>Node 1×</strong>
+        line is the baseline. The global control switches between JS-host and standalone runs. Precompilation adds
+        compile-time-static inputs, which may be optimized away; with it off, inputs arrive after compilation. Static
+        and dynamic results stay separate. Values are medians of 9 warmed-up rounds.
       </div>
       <div>
         <h2>Divergences</h2>
@@ -163,6 +158,5 @@
 
     <script type="module" src="./components/site-nav.js"></script>
     <script type="module" src="./components/npm-compat-chart.js"></script>
-    <script type="module" src="./components/perf-benchmark-chart.js"></script>
   </body>
 </html>

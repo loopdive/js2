@@ -35,17 +35,8 @@ import { emitThrowJsError, noJsHost } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { foldedEvalEarlyError } from "./eval-early-errors.js";
-
-/**
- * Synthetic file name for the foreign `SourceFile` an inlined `eval("<literal>")`
- * body is parsed into (see `inlineStaticEval` below). The TypeScript checker has
- * NO bindings for nodes in this file, so `getSymbolAtLocation` returns
- * `undefined` for every identifier — symbol-presence cannot be used to classify
- * resolvability inside an eval body. Consumers that rely on that oracle (e.g.
- * the unresolvable-`delete` flip in typeof-delete.ts, #2726 group (a)) must
- * detect and skip eval-body nodes via this sentinel.
- */
-export const EVAL_SOURCE_FILENAME = "<eval>.ts";
+import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
+import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 
 /**
  * Recursively resolve a compile-time-constant string from an expression.
@@ -464,7 +455,11 @@ export function tryStaticEvalInline(
   // `eval`/`arguments` throws) that the AST splice does NOT enforce — so
   // function declarations in a strict body keep bailing to the dynamic path
   // (host eval enforces them).  See `allNodesInlineSupported` / #2923 park fix.
-  if (!allNodesInlineSupported(sf, bodyIsStrict)) {
+  // Duplicate same-name Annex B declarations and same-name lexical
+  // declarations require EvalDeclarationInstantiation conflict bookkeeping
+  // that the ordinary-source B.3.3 lowering does not reconstruct for a
+  // foreign eval AST. Keep those shapes on the existing runtime path.
+  if (!evalAnnexBDeclarationsInlineSupported(sf) || !allNodesInlineSupported(sf, bodyIsStrict)) {
     return undefined;
   }
 
@@ -492,48 +487,93 @@ export function tryStaticEvalInline(
     flushLateImportShifts(ctx, fctx);
   }
 
-  // Hoist var / function declarations into the enclosing function scope
-  // before compiling any statements.  `let`/`const` enter the block scope
-  // in source order (handled by compileVariableStatement itself).
+  // Direct eval inherits caller bindings. Indirect eval instead runs in the
+  // global environment. The pre-#3633 literal surface already had a known
+  // caller-scope approximation; do not widen that approximation to the newly
+  // liftable Annex B bodies. Compile those bodies through an isolated binding
+  // view so caller locals cannot shadow compiled module/global bindings.
+  const isolateIndirectBindings = !allowConstBindings && hasScriptScopeAnnexBFunction(sf);
+  return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
+}
+
+function compileInlinedEvalStatements(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmts: ts.NodeArray<ts.Statement>,
+  isolateBindings: boolean,
+): InnerResult | undefined {
+  const savedBindingState = isolateBindings
+    ? {
+        localMap: fctx.localMap,
+        boxedCaptures: fctx.boxedCaptures,
+        tdzFlagLocals: fctx.tdzFlagLocals,
+        boxedTdzFlags: fctx.boxedTdzFlags,
+        preHoistedLetConstSlots: fctx.preHoistedLetConstSlots,
+        annexBCancelled: fctx.annexBCancelled,
+        annexBOuterBindings: fctx.annexBOuterBindings,
+      }
+    : undefined;
+
+  if (savedBindingState) {
+    fctx.localMap = new Map();
+    fctx.boxedCaptures = undefined;
+    fctx.tdzFlagLocals = undefined;
+    fctx.boxedTdzFlags = undefined;
+    fctx.preHoistedLetConstSlots = undefined;
+    fctx.annexBCancelled = undefined;
+    fctx.annexBOuterBindings = undefined;
+  }
+
   try {
-    hoistVarDeclarations(ctx, fctx, stmts);
-    hoistLetConstWithTdz(ctx, fctx, stmts);
-    hoistFunctionDeclarations(ctx, fctx, stmts);
-  } catch {
-    // If hoisting blows up (e.g. the checker can't type a foreign node),
-    // fall back to the dynamic-eval path.
-    return undefined;
-  }
-
-  // Compile all but the last statement for side effects.
-  const lastIdx = stmts.length - 1;
-  for (let i = 0; i < lastIdx; i++) {
-    compileStatement(ctx, fctx, stmts[i]!);
-  }
-
-  const last = stmts[lastIdx]!;
-
-  // ExpressionStatement — the expression's value is the eval result.
-  if (ts.isExpressionStatement(last)) {
-    const t = compileExpression(ctx, fctx, last.expression);
-    if (t === null) {
-      // Unreachable (e.g. the expression compiled to a throw).
-      return null;
+    // Hoist var / function declarations before compiling any statements.
+    // `let`/`const` enter the block scope in source order.
+    try {
+      hoistVarDeclarations(ctx, fctx, stmts);
+      hoistLetConstWithTdz(ctx, fctx, stmts);
+      hoistFunctionDeclarations(ctx, fctx, stmts);
+    } catch {
+      // If hoisting blows up (e.g. the checker can't type a foreign node),
+      // fall back to the dynamic-eval path.
+      return undefined;
     }
-    if (t.kind !== "externref") {
-      coerceType(ctx, fctx, t, { kind: "externref" });
+
+    // Compile all but the last statement for side effects.
+    const lastIdx = stmts.length - 1;
+    for (let i = 0; i < lastIdx; i++) {
+      compileStatement(ctx, fctx, stmts[i]!);
     }
+
+    const last = stmts[lastIdx]!;
+
+    // ExpressionStatement — the expression's value is the eval result.
+    if (ts.isExpressionStatement(last)) {
+      const t = compileExpression(ctx, fctx, last.expression);
+      if (t === null) {
+        // Unreachable (e.g. the expression compiled to a throw).
+        return null;
+      }
+      if (t.kind !== "externref") {
+        coerceType(ctx, fctx, t, { kind: "externref" });
+      }
+      return { kind: "externref" };
+    }
+
+    // A non-expression tail returns undefined. A throw leaves the block
+    // polymorphic, so the trailing push is dead but keeps stack types stable.
+    compileStatement(ctx, fctx, last);
+    emitUndefined(ctx, fctx);
     return { kind: "externref" };
+  } finally {
+    if (savedBindingState) {
+      fctx.localMap = savedBindingState.localMap;
+      fctx.boxedCaptures = savedBindingState.boxedCaptures;
+      fctx.tdzFlagLocals = savedBindingState.tdzFlagLocals;
+      fctx.boxedTdzFlags = savedBindingState.boxedTdzFlags;
+      fctx.preHoistedLetConstSlots = savedBindingState.preHoistedLetConstSlots;
+      fctx.annexBCancelled = savedBindingState.annexBCancelled;
+      fctx.annexBOuterBindings = savedBindingState.annexBOuterBindings;
+    }
   }
-
-  // Non-expression last statement (throw, var, if, etc.) — compile it and
-  // push `undefined` as the eval result.  A throw statement compiles to a
-  // `throw` op which leaves the block polymorphic, so the trailing
-  // `undefined` push is still well-formed (it's dead code after throw, but
-  // keeps the stack types consistent from the caller's perspective).
-  compileStatement(ctx, fctx, last);
-  emitUndefined(ctx, fctx);
-  return { kind: "externref" };
 }
 
 /**
@@ -595,28 +635,22 @@ export function allNodesInlineSupported(node: ts.Node, bodyIsStrict: boolean): b
         n.forEachChild(visit);
         return;
       }
-      // (#2923 park fix) A function declaration is liftable ONLY when it is a
-      // TOP-LEVEL statement of a SLOPPY eval Script (hoisted by
-      // `hoistFunctionDeclarations`, signature-tolerant per
-      // `compileNestedFunctionDeclaration`). It must keep bailing to the dynamic
-      // path — which the host `__extern_eval` implements correctly — when:
-      //   (A) the eval body is strict (`"use strict"` prologue): strict
-      //       early-errors + strict-name rules (e.g. `function f(eval){}` /
-      //       `eval = 42` are SyntaxErrors) are NOT enforced by the splice; and
-      //   (B) the declaration is nested in a script-scope block / if / switch /
-      //       for / label (NOT directly a Script statement, and not inside
-      //       another function): AnnexB §B.3.3 Web-Legacy semantics require it to
-      //       create BOTH a block binding and a hoisted var binding in the
-      //       enclosing variable environment, which the splice does not do.
-      // Broadening past these two guards regressed 123 test262 files (102
-      // annexB/language/eval-code {direct,indirect} + 9 language/eval-code
-      // block/switch + 9 language/statements/function 13.*-s / *-eval-stricteval)
-      // when first landed — the merge_group park on PR #2442. A top-level sloppy
-      // func decl (the #2923 win, e.g. `eval("function add(a,b){return a+b}
-      // add(2,3)")`) still lifts. Nested bail nodes (arrow/class) inside a lifted
-      // decl's body are still caught by the recursion below.
+      // (#3633) Sloppy block-nested function declarations are now liftable.
+      // The original #2923 guard predated #2200/#2552's Annex B B.3.3
+      // outer-binding lifecycle. Hoisting a foreign eval Script now uses that
+      // same machinery, preserving both the block binding and the conditional
+      // var-scoped outer binding without crossing the host boundary (where
+      // compiled module/global bindings are invisible).
+      //
+      // Strict eval bodies still bail: their strict-name and declaration
+      // semantics are not yet fully enforced by the foreign-AST splice.
+      // A declaration nested inside another function also stays on the
+      // established fallback: #3633 only widens Script-scope Annex B bodies,
+      // and the nested declaration has a separate instantiation scope.
+      // Nested bail nodes (arrow/class) inside a lifted declaration are still
+      // caught by the recursion below.
       case ts.SyntaxKind.FunctionDeclaration: {
-        if (bodyIsStrict || funcDeclNeedsDynamicEvalPath(n as ts.FunctionDeclaration)) {
+        if (bodyIsStrict || functionDeclarationHasFunctionAncestor(n as ts.FunctionDeclaration)) {
           ok = false;
           return;
         }
@@ -629,6 +663,25 @@ export function allNodesInlineSupported(node: ts.Node, bodyIsStrict: boolean): b
   };
   node.forEachChild(visit);
   return ok;
+}
+
+function functionDeclarationHasFunctionAncestor(fn: ts.FunctionDeclaration): boolean {
+  let parent: ts.Node | undefined = fn.parent;
+  while (parent && !ts.isSourceFile(parent)) {
+    if (
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isArrowFunction(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isConstructorDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)
+    ) {
+      return true;
+    }
+    parent = parent.parent;
+  }
+  return false;
 }
 
 /** Unwrap parens to the underlying expression. */
@@ -675,44 +728,6 @@ function evalBodyHasUseStrictDirective(stmts: ts.NodeArray<ts.Statement>): boole
     // Some other directive (e.g. "use asm") → keep scanning the prologue.
   }
   return false;
-}
-
-/**
- * (#2923 park fix) A function declaration must fall back to the dynamic eval
- * path when it is nested in a SCRIPT-SCOPE block / if / switch / for / label
- * (AnnexB §B.3.3 Web-Legacy Block-Level Function Declaration semantics the
- * splice does not implement). It is safe (returns false) when it is either a
- * top-level statement of the eval Script (hoisted correctly) OR nested inside
- * another function's body (an ordinary nested function, compiled by that
- * function's own codegen — not eval-scope-sensitive).
- */
-function funcDeclNeedsDynamicEvalPath(fn: ts.FunctionDeclaration): boolean {
-  const parent = fn.parent;
-  // Directly a statement of the eval Script → top-level, safe to hoist.
-  if (parent && ts.isSourceFile(parent)) return false;
-  // Walk up: crossing a function boundary before the SourceFile means the decl
-  // lives inside another function (ordinary nested fn) → safe. Reaching the
-  // SourceFile through only lexical statements (block/if/switch/for/label)
-  // means it is a script-scope block-nested declaration → AnnexB-sensitive.
-  let p: ts.Node | undefined = parent;
-  while (p && !ts.isSourceFile(p)) {
-    if (isFunctionLikeContainer(p)) return false;
-    p = p.parent;
-  }
-  return true;
-}
-
-/** Nodes that introduce their own function scope (a lifted decl's ancestors). */
-function isFunctionLikeContainer(n: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(n) ||
-    ts.isFunctionExpression(n) ||
-    ts.isArrowFunction(n) ||
-    ts.isMethodDeclaration(n) ||
-    ts.isConstructorDeclaration(n) ||
-    ts.isGetAccessorDeclaration(n) ||
-    ts.isSetAccessorDeclaration(n)
-  );
 }
 
 /**

@@ -38,6 +38,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
@@ -1307,14 +1308,12 @@ export function compileObjectLiteral(
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }
 
-  // (#2127) Same routing when a spread SOURCE has accessor-declared
-  // properties: the struct spread copies data fields by layout and never
-  // fires the getter. The host path's __object_assign spread performs the
-  // spec CopyDataProperties [[Get]]-then-copy.
+  // (#2127) Accessor-bearing spreads need host CopyDataProperties [[Get]].
   if (expr.properties.length > 0 && _hasAccessorSpreadSource(ctx, expr)) {
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
   }
-
+  // (#3633) Foreign eval literals lack checker types and require the open representation.
+  if (isForeignEvalNode(expr)) return compileObjectLiteralAsExternref(ctx, fctx, expr);
   // (#2714) A spread-containing literal evaluated in a NON-SPECIFIC contextual
   // type (`any`/`unknown`/`object`, or no contextual type) must take the host
   // plain-object path, like the empty-`{}` any-context arm below. The struct

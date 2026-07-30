@@ -26,6 +26,17 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ReOp } from "./regex/bytecode.js";
 import { REGEX_STEP_CAP, REGEX_STEP_CAP_LEN_SATURATION, REGEX_STEP_CAP_PER_UNIT } from "./regex/vm.js";
 
+/**
+ * Runtime-compiled `^(?:literal|literal|...)$` programs with no flags use this
+ * compact, variable-width representation:
+ *   [marker, bodyLength, 0, ...UTF-16 body units]
+ *
+ * `__regex_search` intercepts it before the fixed-width backtracking VM. The
+ * negative marker cannot collide with a ReOp. This is a representation-level
+ * optimization only; every other pattern retains the normal bytecode ABI.
+ */
+export const REGEX_ANCHORED_LITERAL_ALTS_MARKER = -0x40000000;
+
 /** REGEX_STEP_CAP message (§22.2.6.x — cap exhaustion → catchable RangeError). */
 const REGEX_CAP_MESSAGE = "RangeError: regular expression step limit exceeded";
 
@@ -1701,8 +1712,179 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
   const I = 9; // current start position
   const PC = 10; // (#3673 round 20) anchored-detection scan cursor
   const LEADCH = 11; // (#3673 round 29) leading literal code unit, -1 when none
+  const ALT_POS = 12;
+  const ALT_INDEX = 13;
+  const ALT_MATCH = 14;
+  const ALT_BODY_LEN = 15;
 
   const body: Instr[] = [
+    // Runtime-compiled `^(?:literal|literal|...)$` with no flags. Acorn builds
+    // its keyword/reserved-word predicates in this exact generic form. Compare
+    // the subject directly against each literal instead of interpreting a
+    // SPLIT/JMP/CHAR backtracking program for every identifier.
+    { op: "local.get", index: PROG },
+    { op: "array.len" },
+    { op: "i32.const", value: 3 },
+    { op: "i32.ge_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: PROG },
+        { op: "i32.const", value: 0 },
+        { op: "array.get", typeIdx: i32Arr },
+        { op: "i32.const", value: REGEX_ANCHORED_LITERAL_ALTS_MARKER },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            // A non-multiline ^ can only match at index zero. Negative starts
+            // are ToLength-clamped to zero by the ordinary search path.
+            { op: "local.get", index: START },
+            { op: "i32.const", value: 0 },
+            { op: "i32.gt_s" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+            },
+            { op: "local.get", index: PROG },
+            { op: "i32.const", value: 1 },
+            { op: "array.get", typeIdx: i32Arr },
+            { op: "local.set", index: ALT_BODY_LEN },
+            { op: "i32.const", value: 0 },
+            { op: "local.set", index: ALT_POS },
+            {
+              op: "block",
+              blockType: { kind: "empty" },
+              body: [
+                {
+                  op: "loop",
+                  blockType: { kind: "empty" },
+                  body: [
+                    { op: "i32.const", value: 0 },
+                    { op: "local.set", index: ALT_INDEX },
+                    { op: "i32.const", value: 1 },
+                    { op: "local.set", index: ALT_MATCH },
+                    {
+                      op: "block",
+                      blockType: { kind: "empty" },
+                      body: [
+                        {
+                          op: "loop",
+                          blockType: { kind: "empty" },
+                          body: [
+                            { op: "local.get", index: ALT_POS },
+                            { op: "local.get", index: ALT_INDEX },
+                            { op: "i32.add" },
+                            { op: "local.get", index: ALT_BODY_LEN },
+                            { op: "i32.ge_s" },
+                            { op: "br_if", depth: 1 },
+                            { op: "local.get", index: PROG },
+                            { op: "i32.const", value: 3 },
+                            { op: "local.get", index: ALT_POS },
+                            { op: "i32.add" },
+                            { op: "local.get", index: ALT_INDEX },
+                            { op: "i32.add" },
+                            { op: "array.get", typeIdx: i32Arr },
+                            { op: "i32.const", value: 0x7c },
+                            { op: "i32.eq" },
+                            { op: "br_if", depth: 1 },
+                            { op: "local.get", index: ALT_MATCH },
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: ALT_INDEX },
+                                { op: "local.get", index: SLEN },
+                                { op: "i32.ge_s" },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "i32.const", value: 0 },
+                                    { op: "local.set", index: ALT_MATCH },
+                                  ],
+                                  else: [
+                                    { op: "local.get", index: SDATA },
+                                    { op: "local.get", index: SOFF },
+                                    { op: "local.get", index: ALT_INDEX },
+                                    { op: "i32.add" },
+                                    { op: "array.get_u", typeIdx: strDataIdx },
+                                    { op: "local.get", index: PROG },
+                                    { op: "i32.const", value: 3 },
+                                    { op: "local.get", index: ALT_POS },
+                                    { op: "i32.add" },
+                                    { op: "local.get", index: ALT_INDEX },
+                                    { op: "i32.add" },
+                                    { op: "array.get", typeIdx: i32Arr },
+                                    { op: "i32.ne" },
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "empty" },
+                                      then: [
+                                        { op: "i32.const", value: 0 },
+                                        { op: "local.set", index: ALT_MATCH },
+                                      ],
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                            { op: "local.get", index: ALT_INDEX },
+                            { op: "i32.const", value: 1 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: ALT_INDEX },
+                            { op: "br", depth: 0 },
+                          ],
+                        },
+                      ],
+                    },
+                    { op: "local.get", index: ALT_MATCH },
+                    { op: "local.get", index: ALT_INDEX },
+                    { op: "local.get", index: SLEN },
+                    { op: "i32.eq" },
+                    { op: "i32.and" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: CAPS },
+                        { op: "i32.const", value: 0 },
+                        { op: "i32.const", value: 0 },
+                        { op: "array.set", typeIdx: i32Arr },
+                        { op: "local.get", index: CAPS },
+                        { op: "i32.const", value: 1 },
+                        { op: "local.get", index: SLEN },
+                        { op: "array.set", typeIdx: i32Arr },
+                        { op: "i32.const", value: 1 },
+                        { op: "return" },
+                      ],
+                    },
+                    { op: "local.get", index: ALT_POS },
+                    { op: "local.get", index: ALT_INDEX },
+                    { op: "i32.add" },
+                    { op: "local.get", index: ALT_BODY_LEN },
+                    { op: "i32.ge_s" },
+                    { op: "br_if", depth: 1 },
+                    { op: "local.get", index: ALT_POS },
+                    { op: "local.get", index: ALT_INDEX },
+                    { op: "i32.add" },
+                    { op: "i32.const", value: 1 },
+                    { op: "i32.add" },
+                    { op: "local.set", index: ALT_POS },
+                    { op: "br", depth: 0 },
+                  ],
+                },
+              ],
+            },
+            { op: "i32.const", value: 0 },
+            { op: "return" },
+          ],
+        },
+      ],
+    },
     // (#3673 round 20) Start-anchored fast-out: when the program's first
     // non-SAVE instruction is `BOL` with multiline=0, a match can only ever
     // begin where `^` holds — every later start position fails the assertion
@@ -1919,6 +2101,10 @@ export function ensureRegexSearch(ctx: CodegenContext): number {
       { name: "i", type: { kind: "i32" } },
       { name: "pc", type: { kind: "i32" } }, // (#3673 round 20)
       { name: "leadch", type: { kind: "i32" } }, // (#3673 round 29)
+      { name: "altPos", type: { kind: "i32" } },
+      { name: "altIndex", type: { kind: "i32" } },
+      { name: "altMatch", type: { kind: "i32" } },
+      { name: "altBodyLen", type: { kind: "i32" } },
     ],
     body,
     exported: false,

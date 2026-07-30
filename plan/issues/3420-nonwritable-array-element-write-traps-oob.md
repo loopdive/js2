@@ -12,12 +12,22 @@ model: fable
 sprint: current
 horizon: m
 related: [3370, 3417, 3335, 3189]
+# The standalone follow-up extends the existing vec descriptor-overlay owner
+# with numeric-key reflection, ordinary [[Set]], and semantic delete markers.
+# These finalize-time splices share the overlay's private companion-table ABI;
+# extracting them would duplicate that state machine rather than isolate a
+# subsystem. The implementation therefore remains in its owning module.
+loc-budget-allow:
+  - src/codegen/vec-overlay.ts
+func-budget-allow:
+  - src/codegen/vec-overlay.ts::fillVecOverlayHelpers
 ---
 
 # #3420 — non-writable Array element write traps `oob` instead of throwing TypeError
 
 > **RE-SCOPE (2026-07-24).** Per measurement, this splits into two very
 > different-sized pieces:
+>
 > - **Tractable now (narrow):** the **2-test `filter`/`map` `Symbol.species`
 >   result-backing** slice — the HOF result array's element store traps `oob`
 >   instead of honoring the (species-constructed) result backing. That is a
@@ -32,6 +42,7 @@ related: [3370, 3417, 3335, 3189]
 > dev-claimable; the frozen-write bulk is blocked on #2744. `model: fable` stays.
 
 ## Problem
+
 Under the honest v8 harness, `propertyHelper.js::verifyProperty` and frozen-array
 tests exercise writes to non-writable / frozen Array elements. Instead of throwing a
 catchable `TypeError` (strict) or silently no-op'ing (sloppy), the compiler emits an
@@ -47,13 +58,15 @@ oracle-v8 refresh.
 
 Measured (oracle-v8, run 29634290540): 19 tests newly `oob` vs v7 (11 were v7-pass),
 in the Object.freeze / Array.prototype non-writable-target family:
+
 - `built-ins/Object/freeze/15.2.3.9-2-c-*.js`
 - `built-ins/Array/prototype/{splice,unshift,pop,reverse,slice,map,filter}/…non-writable…`
 - `built-ins/Promise/all{,Settled}/resolve-element-function-{length,name}.js`
-Plus a larger latent propertyHelper corpus once #3419 (Duplicate identifier) unblocks
-compilation.
+  Plus a larger latent propertyHelper corpus once #3419 (Duplicate identifier) unblocks
+  compilation.
 
 ## Root cause
+
 Array element assignment lowers to a bounds-checked store that traps on a
 non-writable / frozen (or length-locked) element rather than consulting the element's
 `[[Writable]]`/extensibility slot and taking the spec path (throw TypeError in strict,
@@ -63,6 +76,7 @@ path. Related slot machinery: #2744 (extensible/preventExtensions/seal/freeze
 queries).
 
 ## Implementation Plan
+
 - Locate the array element **store** lowering (`src/codegen/expressions.ts` assignment
   path + `src/codegen/array-methods.ts` for the prototype mutators splice/unshift/pop/
   reverse). On a write to an element whose descriptor is non-writable, or whose array
@@ -76,6 +90,7 @@ queries).
   also honor per-element writability and throw/short-circuit correctly.
 
 ### Edge cases
+
 - Genuine out-of-bounds (index ≥ length on a NON-frozen array that should extend) must
   still extend, not throw.
 - `length` non-writable (frozen array) → setting `length` throws TypeError.
@@ -83,6 +98,7 @@ queries).
   (throw/no-op) — today both collapse to oob.
 
 ## Verification
+
 - Scoped: the 19 listed tests + `Object/freeze/15.2.3.9-2-c-*` pass; assert.throws
   catches the TypeError.
 - Confirms as a real spec-fidelity fix, not oracle skew: these throw catchably rather
@@ -90,6 +106,7 @@ queries).
 - Zero-regression on ordinary array growth/mutation.
 
 ## Notes
+
 Filed per coordinator request as the REAL bug behind the oracle-v8 oob +4 trap flag
 (#3335/#3189). The trap growth itself was within #3370's declared ceiling and
 promoted via a one-time forced refresh; this issue fixes the underlying gap.

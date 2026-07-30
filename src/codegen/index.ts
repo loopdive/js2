@@ -69,6 +69,7 @@ import {
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import { makeIrPromiseDelayResolver } from "../ir/promise-delay.js";
+import { containsStringBuilderLoopShape } from "../ir/string-builder-shape.js";
 import {
   buildIrPromiseDelayLoweringPlans,
   collectIrPromiseDelayOwners,
@@ -81,12 +82,13 @@ import {
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
+  type IrModuleBindingResolver,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
 import { asyncEngineWouldActivate } from "./async-activation.js"; // (#1373b C-1)
 import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
-import { eliminateDeadImportsAndPlanAbiCallables } from "./program-abi-import-planning.js";
+import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
@@ -276,6 +278,7 @@ import {
   applyShapeInference,
   collectDeclarations,
   collectDynamicObjectReturnCarrierTypes,
+  inferImplicitAnyParamType,
   inferNumericReturnTypes,
   collectEmptyObjectWidening,
   collectGrowableObjectLiterals,
@@ -284,6 +287,7 @@ import {
   finalizeUnifiedCollector,
   unifiedVisitNode,
 } from "./declarations.js";
+import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import {
   destructureParamArray,
   destructureParamObject,
@@ -348,7 +352,7 @@ import {
   resolveSameShapeFieldNameCollisions,
 } from "./struct-field-exports.js"; // (#3272) extracted verbatim
 import { analyzeBooleanPropertyNames, recoverBooleanStructFieldBrands } from "./struct-field-boolean-brand.js";
-import { analyzeNumericPropertyNames } from "./numeric-property-analysis.js"; // (#3683 S4a)
+import { applyNumericPropertyAnalysis } from "./numeric-property-analysis.js"; // (#3683 S4a)
 import { collectUserMethodNames } from "./user-method-names.js"; // (#3673)
 import {
   registerWasiImports,
@@ -1726,6 +1730,7 @@ function prepareHostDateSnapshotPreflight(
       backend: "wasmgc",
       target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc",
       allowHostImports: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+      fast: ctx.fast,
     },
     "host-date-snapshot",
   );
@@ -1800,6 +1805,164 @@ function recordObservedIrOutcomes(
   for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
 }
 
+const IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+]);
+
+function collectIrImplicitParamProjectionCandidates(
+  declaration: ts.FunctionDeclaration,
+): ReadonlySet<ts.ParameterDeclaration> {
+  // Projecting an untyped numeric parameter can make an existing builder
+  // benchmark newly IR-claimable. Until #3745 migrates the legacy loop-local
+  // integer promotion, keep that family on its current optimized path.
+  if (declaration.body && containsStringBuilderLoopShape(declaration.body)) return new Set();
+  const paramsByName = new Map<string, ts.ParameterDeclaration>();
+  for (const parameter of declaration.parameters) {
+    if (!parameter.type && ts.isIdentifier(parameter.name)) paramsByName.set(parameter.name.text, parameter);
+  }
+  const candidates = new Set<ts.ParameterDeclaration>();
+  const feedsSupportedShape = (identifier: ts.Identifier): boolean => {
+    let child: ts.Node = identifier;
+    let parent = child.parent;
+    while (ts.isParenthesizedExpression(parent)) {
+      child = parent;
+      parent = parent.parent;
+    }
+    if (ts.isBinaryExpression(parent) && IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS.has(parent.operatorToken.kind)) {
+      return parent.left === child || parent.right === child;
+    }
+    if (
+      ts.isPrefixUnaryExpression(parent) &&
+      (parent.operator === ts.SyntaxKind.PlusToken || parent.operator === ts.SyntaxKind.MinusToken)
+    ) {
+      return parent.operand === child;
+    }
+    if (ts.isPropertyAccessExpression(parent) && parent.expression === child) {
+      return parent.name.text === "length";
+    }
+    if (ts.isElementAccessExpression(parent) && parent.expression === child) return true;
+    if (ts.isConditionalExpression(parent) && parent.condition === child) return true;
+    return false;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      const parameter = paramsByName.get(node.text);
+      if (parameter && feedsSupportedShape(node)) candidates.add(parameter);
+    }
+    forEachChild(node, visit);
+  };
+  if (declaration.body) forEachChild(declaration.body, visit);
+  return candidates;
+}
+
+// #2949 S5.P — declaration lowering already specializes an implicit-any
+// parameter when its call sites establish one concrete ABI. Project
+// that same decision into structural selection and the IR override map so a
+// claimed function cannot widen to dynamic and then lose ABI parity after
+// the direct callable has been allocated.
+interface IrImplicitParamProjection {
+  readonly kind: "f64" | "bool" | "string" | "object" | "dynamic";
+  readonly type: IrType;
+}
+
+function makeIrImplicitParamTypeResolver(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  moduleBindingResolver?: IrModuleBindingResolver,
+): (parameter: ts.ParameterDeclaration) => IrImplicitParamProjection | undefined {
+  const candidatesByDeclaration = new WeakMap<ts.FunctionDeclaration, ReadonlySet<ts.ParameterDeclaration>>();
+  return (parameter) => {
+    if (parameter.type) return undefined;
+    const declaration = parameter.parent;
+    if (!ts.isFunctionDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
+      return undefined;
+    }
+    let candidates = candidatesByDeclaration.get(declaration);
+    if (!candidates) {
+      candidates = collectIrImplicitParamProjectionCandidates(declaration);
+      const onlyStatement = declaration.body?.statements.length === 1 ? declaration.body.statements[0] : undefined;
+      const returned = onlyStatement && ts.isReturnStatement(onlyStatement) ? onlyStatement.expression : undefined;
+      const returnedCall = returned && ts.isCallExpression(returned) ? returned : undefined;
+      const retainedPlan = returnedCall ? moduleBindingResolver?.retainedFunctionMethodPlan(returnedCall) : undefined;
+      if (retainedPlan && returnedCall) {
+        const projected = new Set(candidates);
+        for (let index = 0; index < declaration.parameters.length; index++) {
+          const argument = returnedCall.arguments[index];
+          const candidate = declaration.parameters[index]!;
+          if (
+            argument &&
+            ts.isIdentifier(argument) &&
+            ts.isIdentifier(candidate.name) &&
+            ctx.oracle.valueDeclarationOf(argument) === ctx.oracle.valueDeclarationOf(candidate.name)
+          ) {
+            projected.add(candidate);
+          }
+        }
+        candidates = projected;
+      }
+      candidatesByDeclaration.set(declaration, candidates);
+    }
+    if (!candidates.has(parameter)) return undefined;
+    const parameterFact = ctx.oracle.typeFactOf(parameter);
+    if (parameterFact.kind !== "any" && parameterFact.kind !== "unknown") return undefined;
+    const parameterIndex = declaration.parameters.indexOf(parameter);
+    if (parameterIndex < 0) return undefined;
+    const callSites = inferParamTypeFromCallSites(ctx, declaration.name.text, parameterIndex, sourceFile);
+    if (callSites.sawCallSite && callSites.type === null) {
+      return { kind: "dynamic", type: irDynamic() };
+    }
+    const inferred = inferImplicitAnyParamType(ctx, declaration.name.text, parameterIndex, sourceFile, declaration);
+    if (inferred?.kind === "f64") return { kind: "f64", type: irVal(inferred) };
+    if (inferred?.kind === "i32" && inferred.boolean === true) {
+      return { kind: "bool", type: irVal(inferred) };
+    }
+    if (
+      inferred?.kind === "ref" &&
+      ctx.nativeStrings &&
+      ctx.anyStrTypeIdx >= 0 &&
+      inferred.typeIdx === ctx.anyStrTypeIdx
+    ) {
+      return { kind: "string", type: { kind: "string" } };
+    }
+    if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
+      const structName = ctx.typeIdxToStructName.get(inferred.typeIdx);
+      if (structName?.startsWith("__vec_") || structName?.startsWith("__arr_")) {
+        return { kind: "object", type: irVal(inferred) };
+      }
+    }
+    return undefined;
+  };
+}
+
+function resolveIrOverrideParamType(
+  parameter: ts.ParameterDeclaration,
+  mapped: LatticeType | undefined,
+  ctx: CodegenContext,
+  classShapes: IrClassShapeLookup,
+  resolveImplicitParamType: ReturnType<typeof makeIrImplicitParamTypeResolver>,
+): IrType {
+  const projected = resolveImplicitParamType(parameter);
+  // Keep the established numeric parity-withdrawal path (#3551): lattice f64
+  // may still form the speculative IR view, and the patch-time ABI guard then
+  // withdraws the complete caller cluster if legacy kept the param dynamic.
+  // Nonnumeric mapped kinds cannot lower polymorphic equality soundly before
+  // that guard (the #3471 string failure), so those retain the direct dynamic
+  // ABI in the IR view.
+  if (projected && !(projected.kind === "dynamic" && mapped?.kind === "f64")) return projected.type;
+  return resolvePositionType(effectiveIrParamTypeNode(parameter), mapped, ctx, classShapes);
+}
+
 function planIrOverlay(
   ctx: CodegenContext,
   ast: TypedAST,
@@ -1855,6 +2018,7 @@ function planIrOverlay(
         backend: "wasmgc",
         target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc",
         allowHostImports: jsHostExterns,
+        fast: ctx.fast,
       },
       capability,
     );
@@ -1904,6 +2068,59 @@ function planIrOverlay(
   // claim-then-demote). The carrier keying in `ensureDynMemberGet` matches
   // (`ctx.fast`), so every claimed config emits a valid, carrier-aligned body.
   const dynMemberReadBuildable = !(ctx.fast && !ctx.standalone && !ctx.wasi);
+  const resolveImplicitParamType = makeIrImplicitParamTypeResolver(ctx, ast.sourceFile, resolveModuleBinding);
+  const implicitParamUsesNumericVecAbi = (parameter: ts.ParameterDeclaration): boolean => {
+    const projection = resolveImplicitParamType(parameter);
+    if (projection?.kind !== "object") return false;
+    const valueType = asVal(projection.type);
+    if (valueType?.kind !== "ref" && valueType?.kind !== "ref_null") return false;
+    return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";
+  };
+  const legacyCallerAbiIsProjected = (declaration: ts.FunctionDeclaration): boolean => {
+    const onlyStatement = declaration.body?.statements.length === 1 ? declaration.body.statements[0] : undefined;
+    const returned = onlyStatement && ts.isReturnStatement(onlyStatement) ? onlyStatement.expression : undefined;
+    if (
+      returned &&
+      ts.isCallExpression(returned) &&
+      resolveModuleBinding?.retainedFunctionMethodPlan(returned) !== undefined
+    ) {
+      // #3793 — the exact retained wrapper uses the existing receiver-first
+      // externref dispatcher and the implicit-param resolver above projects
+      // every wrapper argument from the same direct declaration ABI.
+      return true;
+    }
+    let hasIndexedCarrier = false;
+    let hasBooleanProjection = false;
+    let allProjectionsAreBoolean = true;
+    let hasNonFastScalarProjection = false;
+    let allProjectionsAreNonFastStable = true;
+    for (const parameter of declaration.parameters) {
+      if (effectiveIrParamTypeNode(parameter)) continue;
+      const projection = resolveImplicitParamType(parameter);
+      if (!projection) {
+        if (ctx.fast) return false;
+        // In the non-fast ABI an unresolved implicit parameter remains the
+        // generic externref carrier in both front-ends. The IR selector maps
+        // the same unknown evidence to `dynamic`, whose non-fast carrier is
+        // also externref.
+        hasNonFastScalarProjection = true;
+        continue;
+      }
+      if (projection.kind === "object") hasIndexedCarrier = true;
+      if (projection.kind === "bool") hasBooleanProjection = true;
+      else allProjectionsAreBoolean = false;
+      if (projection.kind === "f64" || projection.kind === "dynamic") {
+        hasNonFastScalarProjection = true;
+      } else {
+        allProjectionsAreNonFastStable = false;
+      }
+    }
+    return (
+      hasIndexedCarrier ||
+      (hasBooleanProjection && allProjectionsAreBoolean) ||
+      (!ctx.fast && hasNonFastScalarProjection && allProjectionsAreNonFastStable)
+    );
+  };
   const identityPlan = irOverlayIdentity.planIrOverlayByIdentity(
     ast.sourceFile,
     identityContext,
@@ -1912,6 +2129,15 @@ function planIrOverlay(
       trackFallbacks: collectFallbacks,
       jsHostExterns,
       dynMemberReadBuildable,
+      dynamicRuntimeBuildable: !ctx.fast,
+      // #2952 slice 5 — for-in currently owns only the non-fast dynamic
+      // carrier, which is already externref and can feed the shared
+      // enumeration helpers without a representation conversion.
+      isDynamicForInReceiver: (receiver) => {
+        if (ctx.fast) return false;
+        const fact = ctx.oracle.typeFactOf(receiver);
+        return fact.kind === "any" || fact.kind === "unknown";
+      },
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(resolveHostVoidCallback ? { hostVoidCallbacks: resolveHostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
@@ -1922,6 +2148,9 @@ function planIrOverlay(
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
       isRegExpExpression,
+      resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
+      implicitParamUsesNumericVecAbi,
+      legacyCallerAbiIsProjected,
       projectedClassShapes: classShapes,
       resolveLocalClassExpression,
       supportsSymbolicMathHelpers: true,
@@ -2025,7 +2254,7 @@ function planIrOverlay(
       const params: IrType[] = [];
       for (let i = 0; i < declaration.parameters.length; i++) {
         const p = declaration.parameters[i]!;
-        params.push(resolvePositionType(effectiveIrParamTypeNode(p), entry?.params[i], ctx, classShapeSidecar));
+        params.push(resolveIrOverrideParamType(p, entry?.params[i], ctx, classShapeSidecar, resolveImplicitParamType));
       }
       const override = { params, returnType };
       overrideMapByUnitId.set(unitId, override);
@@ -3014,7 +3243,8 @@ export function generateModule(
   // `ctx.booleanPropertyNames` (assigned much later) so the exclusion is exact
   // without reordering an established pass.
   if (ctx.standalone) {
-    const propertyKinds = analyzeNumericPropertyNames(
+    applyNumericPropertyAnalysis(
+      ctx,
       {
         oracle: ctx.oracle,
         fnctorReceivers: new Set(ctx.fnctorEscapeGate.receiverStruct.keys()),
@@ -3022,14 +3252,6 @@ export function generateModule(
       },
       [ast.sourceFile],
     );
-    ctx.numericPropertyNames = propertyKinds.numeric;
-    // (#3753 S1) The string half of the same walk. A field every write proves a
-    // string gets a NATIVE STRING slot instead of the boxed `externref`, which
-    // deletes the per-access `ref.test` / `ref.cast` / `__str_flatten`.
-    ctx.stringPropertyNames = propertyKinds.string;
-    // (#3753 S2) Names the fixpoint proved return a number on every path, so
-    // `this.acc + this.nextCode()` can unbox once instead of boxing both sides.
-    ctx.numericFunctionNames = propertyKinds.numericFunctions;
   }
   // (#3057) Pre-scan for a dynamic `new <ctorVar>(buffer)` construct so the
   // runtime-kind element byte codec on the generic index path (`ta[i]` / `ta[i]=v`
@@ -4051,7 +4273,7 @@ export function generateModule(
     markLeafStructsFinal(mod, ctx.wasi, callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]));
 
     // Dead import and type elimination pass
-    eliminateDeadImportsAndPlanAbiCallables(ctx); // #1899 authoritative remap, then #3520 retained ABI
+    eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
     repairStructTypeMismatches(mod);
@@ -4218,16 +4440,11 @@ function finalizeInModuleInitFlag(ctx: CodegenContext): void {
   ctx.inModuleInitGlobalIdx = flagIdx;
   for (const r of reads) (r as { index: number }).index = flagIdx;
 
-  // Wrap __module_init (when present): flag = 1 for the body, 0 on completion.
-  let initArrayIdx = -1;
-  for (let i = 0; i < ctx.mod.functions.length; i++) {
-    if (ctx.mod.functions[i]!.name === "__module_init") {
-      initArrayIdx = i;
-      break;
-    }
-  }
-  if (initArrayIdx < 0) return;
-  const initFn = ctx.mod.functions[initArrayIdx]!;
+  // Wrap the exact compiler-created initializer (when present): flag = 1 for
+  // the body, 0 on completion. Preserve the legacy multi-source first-pass
+  // choice until R5 replaces cumulative initializer emission.
+  const initFn = ctx.programAbiModuleInitCallables?.firstFunction();
+  if (!initFn) return;
   initFn.body = [
     { op: "i32.const", value: 1 },
     { op: "global.set", index: flagIdx },
@@ -4240,16 +4457,11 @@ function finalizeInModuleInitFlag(ctx: CodegenContext): void {
 function applyModuleInitGuard(ctx: CodegenContext): void {
   if (ctx.moduleInitGuardApplied) return;
 
-  // Locate __module_init.
-  let initArrayIdx = -1;
-  for (let i = 0; i < ctx.mod.functions.length; i++) {
-    if (ctx.mod.functions[i]!.name === "__module_init") {
-      initArrayIdx = i;
-      break;
-    }
-  }
-  if (initArrayIdx < 0) return; // no module init — nothing to guard
-  const initFuncIdx = ctx.numImportFuncs + initArrayIdx;
+  // Resolve the exact compiler-created initializer. Preserve the legacy
+  // multi-source first-pass choice until R5 owns graph aggregation.
+  const initFn = ctx.programAbiModuleInitCallables?.firstFunction();
+  const initFuncIdx = ctx.programAbiModuleInitCallables?.firstHandle();
+  if (!initFn || initFuncIdx === undefined) return; // no module init — nothing to guard
 
   // 1. __init_done global + self-guard prologue on __module_init.
   const doneGlobalIdx = nextModuleGlobalIdx(ctx);
@@ -4259,7 +4471,6 @@ function applyModuleInitGuard(ctx: CodegenContext): void {
     mutable: true,
     init: [{ op: "i32.const", value: 0 }],
   });
-  const initFn = ctx.mod.functions[initArrayIdx]!;
   initFn.body = [
     { op: "global.get", index: doneGlobalIdx },
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
@@ -4272,7 +4483,7 @@ function applyModuleInitGuard(ctx: CodegenContext): void {
   //    __module_init itself). Idempotency makes repeated entry calls safe.
   for (const fn of ctx.mod.functions) {
     if (!fn.exported) continue;
-    if (fn.name === "__module_init") continue;
+    if (fn === initFn) continue;
     fn.body = [{ op: "call", funcIdx: initFuncIdx }, ...fn.body];
   }
 
@@ -4373,12 +4584,7 @@ function addWasiStartExport(ctx: CodegenContext): void {
   // No callable exported `main` → wrap `__module_init`, which carries all
   // top-level code (including any top-level call to a non-exported `main`).
   if (targetIdx === undefined) {
-    for (let i = 0; i < ctx.mod.functions.length; i++) {
-      if (ctx.mod.functions[i]!.name === "__module_init") {
-        targetIdx = ctx.numImportFuncs + i;
-        break;
-      }
-    }
+    targetIdx = ctx.programAbiModuleInitCallables?.firstHandle();
   }
 
   if (targetIdx !== undefined) {
@@ -5839,7 +6045,17 @@ export function generateMultiModule(
       types: mod.types.length,
     });
 
-    // Phase 3: Compile all function bodies
+    // Phase 3: Compile all function bodies.
+    //
+    // (#3782) main compiled the accumulated module initializer once per source
+    // file and reset the order-sensitive flags before each pass, so Acorn's
+    // Object.defineProperty/freeze operations were not re-compiled as
+    // redefinitions of already-frozen objects. This branch removes the
+    // precondition for that bug outright: the shared init is compiled exactly
+    // ONCE (first source only), so there is no second pass to start from the
+    // prior pass's end state. The graph-level reset is therefore unnecessary
+    // here — and would be actively wrong, since passes 2..N no longer recompile
+    // the init and so would never re-establish the flags it stripped.
     const bodiesStarted = compileProfileNow();
     let compileSharedModuleInit = true;
     for (const sf of multiAst.sourceFiles) {
@@ -6203,7 +6419,7 @@ export function generateMultiModule(
     markLeafStructsFinal(mod, ctx.wasi, callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]));
 
     // Dead import and type elimination pass
-    eliminateDeadImportsAndPlanAbiCallables(ctx); // #1899 authoritative remap, then #3520 retained ABI
+    eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
     // Repair struct.get/struct.set type mismatches (externref → struct ref conversion)
     repairStructTypeMismatches(mod);

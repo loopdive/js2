@@ -94,6 +94,12 @@ import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-inde
 import { emitFnctorProtoGet } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
+import {
+  appendFnctorConstructorParam,
+  emitFnctorConstructorArguments,
+  emitFnctorFieldInitializers,
+  fnctorConstructorParams,
+} from "../fnctor-constructor-identity.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { functionKeyAtIdentifier } from "../function-identity.js";
 
@@ -1459,12 +1465,14 @@ function compileNewFunctionDeclaration(
 
   // 3. Build the constructor function
   // Constructor params match the function declaration params
-  const ctorParams: ValType[] = [];
+  const userCtorParams: ValType[] = [];
   for (let i = 0; i < funcDecl.parameters.length; i++) {
     const param = funcDecl.parameters[i]!;
     const paramType = ctx.checker.getTypeAtLocation(param);
-    ctorParams.push(resolveWasmType(ctx, paramType));
+    userCtorParams.push(resolveWasmType(ctx, paramType));
   }
+  const ctorIdentityParamIdx = userCtorParams.length;
+  const ctorParams = fnctorConstructorParams(ctx, userCtorParams);
 
   const ctorName = `${structName}_new`;
   const ctorResults: ValType[] = [{ kind: "ref", typeIdx: structTypeIdx }];
@@ -1493,9 +1501,10 @@ function compileNewFunctionDeclaration(
     const p = funcDecl.parameters[i]!;
     paramDefs.push({
       name: ts.isIdentifier(p.name) ? p.name.text : `__param${i}`,
-      type: ctorParams[i] ?? { kind: "f64" },
+      type: userCtorParams[i] ?? { kind: "f64" },
     });
   }
+  appendFnctorConstructorParam(ctx, paramDefs);
 
   const ctorFctx: FunctionContext = {
     name: ctorName,
@@ -1516,30 +1525,7 @@ function compileNewFunctionDeclaration(
     ctorFctx.localMap.set(ctorFctx.params[i]!.name, i);
   }
 
-  // Allocate the struct instance with default values
-  for (const field of fields) {
-    if (field.type.kind === "f64") {
-      ctorFctx.body.push({ op: "f64.const", value: 0 });
-    } else if (field.type.kind === "i32") {
-      ctorFctx.body.push({ op: "i32.const", value: 0 });
-    } else if (field.type.kind === "i64") {
-      ctorFctx.body.push({ op: "i64.const", value: 0n });
-    } else if (field.type.kind === "externref") {
-      ctorFctx.body.push({ op: "ref.null.extern" });
-    } else if (field.type.kind === "ref_null") {
-      ctorFctx.body.push({
-        op: "ref.null",
-        typeIdx: (field.type as { typeIdx: number }).typeIdx,
-      });
-    } else if (field.type.kind === "ref") {
-      ctorFctx.body.push({
-        op: "ref.null",
-        typeIdx: (field.type as { typeIdx: number }).typeIdx,
-      });
-    } else {
-      ctorFctx.body.push({ op: "i32.const", value: 0 });
-    }
-  }
+  emitFnctorFieldInitializers(ctx, ctorFctx, fields, ctorIdentityParamIdx);
   ctorFctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
 
   // Store in __self local
@@ -1604,15 +1590,8 @@ function compileNewFunctionDeclaration(
   // the already-incremented numImportFuncs, so an index-based signature lookup
   // would read the PREVIOUS function's params and coerce arguments against the
   // wrong types (observed: `call[0] expected externref, found (ref null $N)`).
-  const paramTypes: ValType[] | undefined = ctorParams;
-  for (let i = 0; i < args.length; i++) {
-    compileExpression(ctx, fctx, args[i]!, paramTypes?.[i]);
-  }
-  if (paramTypes) {
-    for (let i = args.length; i < paramTypes.length; i++) {
-      pushDefaultValue(fctx, paramTypes[i]!, ctx);
-    }
-  }
+  const paramTypes: ValType[] | undefined = userCtorParams;
+  emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
   // Re-lookup funcIdx in case addUnionImports shifted indices
   const finalCtorIdx = ctx.funcMap.get(classMemberFuncKey(ctx, ctorName)) ?? ctorFuncIdx; // (#1983)
   maybeSetArgcForKnownCall(ctx, fctx, ctorName, args.length, paramTypes?.length ?? args.length);
@@ -3452,16 +3431,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     if (cachedFnCtor) {
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
-        const paramTypes = getFuncParamTypes(ctx, ctorFuncIdx);
+        const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
+        const paramTypes = ctx.standalone ? allParamTypes?.slice(0, -1) : allParamTypes;
         const args = expr.arguments ?? [];
-        for (let i = 0; i < args.length; i++) {
-          compileExpression(ctx, fctx, args[i]!, paramTypes?.[i]);
-        }
-        if (paramTypes) {
-          for (let i = args.length; i < paramTypes.length; i++) {
-            pushDefaultValue(fctx, paramTypes[i]!, ctx);
-          }
-        }
+        emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: ctorFuncIdx });
         return { kind: "ref", typeIdx: cachedFnCtor.structTypeIdx };
@@ -3528,16 +3501,10 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     if (cachedFnCtor) {
       const ctorFuncIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName);
       if (ctorFuncIdx !== undefined) {
-        const paramTypes = getFuncParamTypes(ctx, ctorFuncIdx);
+        const allParamTypes = getFuncParamTypes(ctx, ctorFuncIdx);
+        const paramTypes = ctx.standalone ? allParamTypes?.slice(0, -1) : allParamTypes;
         const args = expr.arguments ?? [];
-        for (let i = 0; i < args.length; i++) {
-          compileExpression(ctx, fctx, args[i]!, paramTypes?.[i]);
-        }
-        if (paramTypes) {
-          for (let i = args.length; i < paramTypes.length; i++) {
-            pushDefaultValue(fctx, paramTypes[i]!, ctx);
-          }
-        }
+        emitFnctorConstructorArguments(ctx, fctx, expr.expression, args, paramTypes);
         const finalIdx = ctx.funcMap.get(cachedFnCtor.ctorFuncName) ?? ctorFuncIdx;
         maybeSetArgcForKnownCall(ctx, fctx, cachedFnCtor.ctorFuncName, args.length, paramTypes?.length ?? args.length);
         fctx.body.push({ op: "call", funcIdx: finalIdx });

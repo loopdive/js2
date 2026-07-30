@@ -680,6 +680,27 @@ function collectNumericFlowFacts(
  */
 function collectStringProperties(facts: NumericFlowFacts, scopes: ScopeTable): Set<string> {
   const visited = new Set<Slot>();
+  /**
+   * (#3765) Only as much array-ness as `<array>.join(…)` needs: an array
+   * literal, or a slot whose every definition is one. Same slot walk and cycle
+   * guard as {@link isGroundString}, with its own in-flight set so a
+   * `join`-of-a-slot cannot collide with a string slot already being proven.
+   */
+  const arrayVisited = new Set<Slot>();
+  const isGroundArray = (expr: ts.Expression, depth: number): boolean => {
+    if (depth > 8) return false;
+    const value = unwrap(expr);
+    if (ts.isArrayLiteralExpression(value)) return true;
+    if (!ts.isIdentifier(value)) return false;
+    const slot = scopes.resolve(value, value.text);
+    if (!slot || slot.defs.length === 0 || arrayVisited.has(slot)) return false;
+    arrayVisited.add(slot);
+    try {
+      return slot.defs.every((def) => def.expr !== undefined && isGroundArray(def.expr, depth + 1));
+    } finally {
+      arrayVisited.delete(slot);
+    }
+  };
   const isGroundString = (expr: ts.Expression, depth: number): boolean => {
     if (depth > 8) return false;
     const value = unwrap(expr);
@@ -705,6 +726,15 @@ function collectStringProperties(facts: NumericFlowFacts, scopes: ScopeTable): S
         ts.isPropertyAccessExpression(callee) &&
         STRING_STRING_METHODS.has(callee.name.text) &&
         isGroundString(callee.expression, depth + 1)
+      ) {
+        return true;
+      }
+      // `<array>.join(…)` — a String for ANY array (§23.1.3.16), so no element
+      // proof is needed. See the twin clause in `makeProver`'s `isString`.
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        callee.name.text === "join" &&
+        isGroundArray(callee.expression, depth + 1)
       ) {
         return true;
       }
@@ -804,15 +834,44 @@ function makeProver(
       ) {
         return true;
       }
+      // `<array>.join(…)` — ECMA-262 §23.1.3.16 returns a String for ANY array,
+      // whatever the element types, so no element proof is needed. Added for
+      // #3765: the cross-engine benchmark builds its 35 KB tokenizer subject as
+      // `__parts.join("")`, and without this the `input` field is not a proven
+      // string carrier, so `input.charCodeAt(pos)` is not proven numeric, so the
+      // hot local is not proven numeric — the whole chain fails on the exact
+      // shape it was written for, while a plain string literal subject works.
+      if (
+        ts.isPropertyAccessExpression(callee) &&
+        callee.name.text === "join" &&
+        isArray(callee.expression, depth + 1)
+      ) {
+        return true;
+      }
     }
     return false;
   };
 
+  /** Re-entrancy guard for the slot recursion in {@link isArray}. */
+  const arraySlotsInFlight = new Set<Slot>();
   /** `<string>.split(…)`, array literals, and array-returning array methods. */
   const isArray = (expr: ts.Expression, depth: number): boolean => {
     if (depth > MAX_DEPTH) return false;
     const value = unwrap(expr);
     if (ts.isArrayLiteralExpression(value)) return true;
+    // A local whose every definition is an array (`const parts = [];`), resolved
+    // through the same slot walk and cycle guard {@link isString} uses.
+    if (ts.isIdentifier(value)) {
+      const slot = facts.scopes.resolve(value, value.text);
+      if (!slot || slot.defs.length === 0) return false;
+      if (arraySlotsInFlight.has(slot)) return false;
+      arraySlotsInFlight.add(slot);
+      try {
+        return slot.defs.every((def) => def.expr !== undefined && isArray(def.expr, depth + 1));
+      } finally {
+        arraySlotsInFlight.delete(slot);
+      }
+    }
     if (ts.isCallExpression(value)) {
       const callee = unwrap(value.expression);
       if (!ts.isPropertyAccessExpression(callee)) return false;
@@ -1005,6 +1064,49 @@ export interface PropertyKindVerdicts {
    * so the `+` lowering can too.
    */
   readonly numericFunctions: Set<string>;
+  /**
+   * (#3765) Does a reference to `name` at `node` resolve to a variable slot the
+   * fixpoint proved numeric on **every definition**?
+   *
+   * Exported as a RESOLVER rather than a set because slot identity is
+   * per-`(frame, name)`, not per-name: two different `c`s in two functions are
+   * two slots with two verdicts, and a name-keyed export would silently merge
+   * them. (`numericFunctions` gets away with name-keying only because it is
+   * deliberately a whole-program property of the NAME.) The caller passes any
+   * node inside the referencing scope and the same `ScopeTable` walk the
+   * fixpoint itself used resolves it.
+   *
+   * This is the DEFINITION-site dual of #684's use-site inference: that pass
+   * proves an f64 slot safe because every USE applies ToNumber, this one
+   * because every DEFINITION already is a number. See `usageInferredLocalType`,
+   * which is where the two meet.
+   */
+  readonly isNumericLocal: (node: ts.Node, name: string) => boolean;
+}
+
+/**
+ * The compiler state updated by this subsystem's three carrier verdicts.
+ *
+ * Keeping application beside analysis prevents the module driver from growing
+ * one assignment/feature-switch block per new carrier.
+ */
+export interface NumericPropertyAnalysisTarget {
+  numericPropertyNames?: ReadonlySet<string>;
+  stringPropertyNames?: ReadonlySet<string>;
+  numericFunctionNames?: ReadonlySet<string>;
+  readonly usageInference: {
+    setNumericLocalOracle(oracle: PropertyKindVerdicts["isNumericLocal"]): void;
+  };
+}
+
+/** The verdict shape returned when the analysis declines to run at all. */
+function noVerdicts(): PropertyKindVerdicts {
+  return {
+    numeric: new Set(),
+    string: new Set(),
+    numericFunctions: new Set(),
+    isNumericLocal: () => false,
+  };
 }
 
 export function analyzeNumericPropertyNames(
@@ -1014,15 +1116,14 @@ export function analyzeNumericPropertyNames(
   // Kill-switch: `JS2WASM_NUMERIC_FIELDS=0` reproduces the pre-S4a field
   // shapes byte-for-byte on any program, which is what makes the twin/generic
   // and promoted/unpromoted differentials in the pin suite possible.
-  if (process.env.JS2WASM_NUMERIC_FIELDS === "0")
-    return { numeric: new Set(), string: new Set(), numericFunctions: new Set() };
+  if (process.env.JS2WASM_NUMERIC_FIELDS === "0") return noVerdicts();
   const scopes = buildScopes(sourceFiles);
   const facts = collectNumericFlowFacts(sourceFiles, scopes, host);
   if (facts.poisoned) {
     if (debugEnabled()) {
       process.stderr.write("[numeric-fields] POISONED: computed write/delete through a fnctor instance\n");
     }
-    return { numeric: new Set(), string: new Set(), numericFunctions: new Set() };
+    return noVerdicts();
   }
   // Seed parameter slots from their call sites, the same way #2847 does: a
   // parameter with no visible call site contributes one opaque definition (so
@@ -1130,6 +1231,55 @@ export function analyzeNumericPropertyNames(
     if (!grounded || anyBoolean) numericProperties.delete(name);
   }
 
+  // (#3765) A GROUNDED slot set, for the one consumer that types a wasm local.
+  //
+  // `numericSlots` above is a GREATEST fixpoint: it starts with every slot
+  // optimistically numeric and withdraws. That is right for its own consumer —
+  // the property verdicts apply their own groundedness filter afterwards — but
+  // it lets a pure CYCLE survive with no numeric evidence anywhere in it:
+  //
+  //     var a = b;   // `b` is in the set, so `a` stays
+  //     var b = a;   // `a` is in the set, so `b` stays
+  //
+  // Both are `undefined` at runtime. Promoting either to an f64 local would
+  // read `0`. So the local-typing consumer gets a LEAST fixpoint instead:
+  // start empty and only ever ADD a slot whose every definition is provable
+  // against slots ALREADY admitted. A cycle can never enter, because entering
+  // it requires a member to already be in — which is the definition of
+  // groundedness. The result is by construction a subset of `numericSlots`.
+  const groundedSlots = new Set<Slot>();
+  const groundedProver = makeProver(facts, host, stringProperties, {
+    numericProperties,
+    numericSlots: groundedSlots,
+    numericFunctions,
+  });
+  const groundedCandidates = [...numericSlots];
+  for (let pass = 0; pass <= groundedCandidates.length; pass++) {
+    let added = false;
+    for (const slot of groundedCandidates) {
+      if (groundedSlots.has(slot)) continue;
+      // ANY booleanish definition disqualifies the slot, mirroring the
+      // `anyBoolean` filter on the property path — but for a STRICTER reason.
+      // `isNumeric` deliberately answers true for booleans, which is fine for a
+      // FIELD because #2847 brands boolean fields as i32 and the property path
+      // defers to that brand. A local has no such brand path: an f64 local
+      // holding a comparison result makes `` `${b}` `` print "1" where JS says
+      // "true". Caught by `coercion/tostring > standalone-O > template over
+      // any-boolean`.
+      const allNumeric =
+        slot.defs.length > 0 &&
+        slot.defs.every(
+          (def) => def.forcedNumeric === true || (def.expr !== undefined && groundedProver.isNumeric(def.expr)),
+        ) &&
+        !slot.defs.some((def) => def.expr !== undefined && groundedProver.isBooleanish(def.expr));
+      if (allNumeric) {
+        groundedSlots.add(slot);
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
+
   if (debugEnabled()) {
     process.stderr.write(
       `[numeric-fields] ${numericProperties.size}/${writtenNames.size} property names numeric: ` +
@@ -1168,5 +1318,36 @@ export function analyzeNumericPropertyNames(
       });
     }
   }
-  return { numeric: numericProperties, string: stringProperties, numericFunctions };
+  return {
+    numeric: numericProperties,
+    string: stringProperties,
+    numericFunctions,
+    // Resolved through the SAME `ScopeTable` the fixpoint used, so a caller
+    // cannot accidentally consult a different (looser) notion of scope.
+    isNumericLocal: (node, name) => {
+      const slot = scopes.resolve(node, name);
+      return slot !== undefined && groundedSlots.has(slot);
+    },
+  };
+}
+
+/**
+ * Run the whole-program analysis and apply every carrier verdict together.
+ *
+ * The local kill switch only withholds the local oracle. Field, string, and
+ * return verdicts remain installed because they have independent switches and
+ * predate #3765.
+ */
+export function applyNumericPropertyAnalysis(
+  target: NumericPropertyAnalysisTarget,
+  host: NumericPropertyAnalysisHost,
+  sourceFiles: readonly ts.SourceFile[],
+): void {
+  const verdicts = analyzeNumericPropertyNames(host, sourceFiles);
+  target.numericPropertyNames = verdicts.numeric;
+  target.stringPropertyNames = verdicts.string;
+  target.numericFunctionNames = verdicts.numericFunctions;
+  if (process.env.JS2WASM_NUMERIC_LOCALS !== "0") {
+    target.usageInference.setNumericLocalOracle(verdicts.isNumericLocal);
+  }
 }

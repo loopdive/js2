@@ -84,6 +84,21 @@ export class ProgramAbiTypeRegistry {
     return classId;
   }
 
+  /** Resolve one exact source class to its current allocator-owned struct layout. */
+  layoutForClass(classId: IrClassId): { readonly typeIdx: number; readonly type: StructTypeDef } | undefined {
+    const canonical = this.classes
+      .get(classId)
+      ?.filter((observation) => {
+        const current = observation.cell.current;
+        return current?.kind === "struct" && this.ctx.mod.types.includes(current);
+      })
+      .at(-1);
+    const type = canonical?.cell.current;
+    if (!type || type.kind !== "struct") return undefined;
+    const typeIdx = this.ctx.mod.types.indexOf(type);
+    return typeIdx < 0 ? undefined : Object.freeze({ typeIdx, type });
+  }
+
   /** Plan all source classes plus every retained allocator type after DCE. */
   planRetained(): void {
     if (this.planned) return;

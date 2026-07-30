@@ -1,7 +1,7 @@
 ---
 id: 3540
 title: "spec gap: Function.prototype.toString source text — compiled closures stringify as `[object Object]` / callback-shim source instead of NativeFunction syntax (57/80 toString-dir fails)"
-status: ready
+status: done
 sprint: current
 created: 2026-07-23
 priority: medium
@@ -69,3 +69,30 @@ function-valued externref boxing carry a host `Function` facade (or intercept
   post-#3534 baseline: 23/80).
 - No closure-representation change (that is #3534's settled invariant:
   externref-boxed closure values, never narrowed).
+
+## Implementation (2026-07-28)
+
+- Host coercion positively identifies raw compiled closures through the emitted
+  `__is_closure` discriminator and uses `function () { [native code] }` only
+  after user-defined `@@toPrimitive` / `valueOf` / `toString` methods have had
+  their ordinary precedence.
+- Host callback and closure bridges expose the same NativeFunction facade
+  instead of their internal runtime implementation source.
+- Standalone finalization extends the shared closure classifier used by
+  `typeof` to divert closures through the same facade in
+  `__extern_toString`. Closure storage and call dispatch are unchanged.
+
+## Validation
+
+Measured with the maintained forked Test262 runner, official scope only, exact
+`built-ins/Function/prototype/toString/` filter (80 files):
+
+- Baseline `ba0bb8ab9b7d893df41b4c7590c51ad05f767175`: gc **23/80**,
+  standalone **5/80**.
+- Final branch rebased on `83de8d3625deb4e8850dc1bcdac0885db0a15172`:
+  gc **44/80** (**21 exact fail-to-pass flips, 0 regressions**), standalone
+  **5/80** (0 regressions; 31 failing rows now observe the NativeFunction
+  facade but remain red in the standalone-compiled matcher or for independent
+  class/builtin/proxy gaps).
+- Focused regression gate: 35/35 across #1128, #1988, #1990, #2175, #3429,
+  and #3540; `pnpm run typecheck` and Prettier checks pass.

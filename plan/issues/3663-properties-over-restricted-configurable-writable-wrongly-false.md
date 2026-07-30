@@ -16,6 +16,17 @@ es_edition: es5
 goal: es5
 related: [3647, 3661, 3662, 739, 3626, 3603]
 origin: "2026-07-26 lead measurement of the #3603 host de-inflation regression set (merge_group run 30179758665); independently corroborates opus-loop-e's refutation of the ES5 census's A1 direction."
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/ir/select.ts
+  - src/ir/integration.ts
+  - src/ir/lower.ts
+func-budget-allow:
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/select.ts::isPhase1Expr
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
 ---
 
 # #3663 — properties are OVER-restricted

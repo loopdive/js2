@@ -63,6 +63,16 @@ function devirtualized(out: CompileOut, className: string, method: string): bool
   return new RegExp(`__dc_${className}_${method}_\\d`).test(out.wat);
 }
 
+function namedFunctionBody(out: CompileOut, name: string): string {
+  // Include the delimiter so `__dc_P_m_1` does not accidentally select the
+  // guarded `__dc_P_m_1_g` sibling when both are present.
+  const start = out.wat.indexOf(`(func $${name} `);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const tail = out.wat.slice(start + 1);
+  const next = tail.search(/\n\s*\(func \$/);
+  return out.wat.slice(start, next < 0 ? undefined : start + 1 + next);
+}
+
 describe("#3683 S3 — direct-call devirtualization", () => {
   it("devirtualizes this.m() inside a twin and agrees with the dynamic lowering", async () => {
     const src = `var P = function P(n) { this.pos = n; };
@@ -77,6 +87,29 @@ export function test(): number { var p = new P(0); return p.twice(3); }`;
     // MUTATES the receiver, so a wrong `this` would be visible.
     expect(direct.run()).toBe(9);
     expect(dynamic.run()).toBe(9);
+  });
+
+  it("carries bare this in the typed receiver and removes the ambient receiver frame", async () => {
+    const src = `var P = function P() {};
+var pp = P.prototype;
+pp.same = function (value) { return value === this ? 1 : 0; };
+pp.go = function () { return this.same(this); };
+export function test(): number { return new P().go(); }`;
+    const direct = await build(src);
+    const framed = await build(src, {
+      JS2WASM_TWIN_RECEIVER_PARAM: "0",
+      JS2WASM_ELIDE_UNUSED_ARGC_FRAME: "0",
+    });
+    expect(direct.run()).toBe(1);
+    expect(framed.run()).toBe(1);
+
+    const directTrampoline = namedFunctionBody(direct, "__dc_P_same_1");
+    const framedTrampoline = namedFunctionBody(framed, "__dc_P_same_1");
+    // This method has neither defaults nor `arguments`, so the optimized twin
+    // needs no ambient frame writes. The control retains argc enter/leave plus
+    // save/install/restore of `__current_this`.
+    expect(directTrampoline.match(/global\.set/g) ?? []).toHaveLength(0);
+    expect(framedTrampoline.match(/global\.set/g) ?? []).toHaveLength(4);
   });
 
   it("preserves side-effect ORDER across devirtualized calls", async () => {
@@ -129,6 +162,60 @@ export function test(): number { var p = new P(); return p.down(10) * 100 + p.ev
     expect(devirtualized(direct, "P", "odd")).toBe(true);
     expect(direct.run()).toBe(55 * 100 + 0 * 10 + 1);
     expect(dynamic.run()).toBe(direct.run());
+  });
+
+  it("calls a captured write-once method body directly while retaining its live closure", async () => {
+    const src = `var bias = 7;
+var adjust = function (k) { return k + bias; };
+var P = function P(v) { this.v = v; };
+var pp = P.prototype;
+pp.add = function (k) { return this.v + adjust(k); };
+pp.go = function (k) { return this.add(k); };
+export function test(): number {
+  var p = new P(1);
+  var before = p.go(2);
+  bias = 20;
+  return before * 100 + p.go(2);
+}`;
+    const { direct, dynamic } = await bothLanes(src);
+    expect(devirtualized(direct, "P", "add")).toBe(true);
+    const directValue = direct.run();
+    const dynamicValue = dynamic.run();
+    expect(directValue).toBe(1023);
+    expect(dynamicValue).toBe(directValue);
+
+    const start = direct.wat.indexOf("(func $__dc_P_add_1");
+    expect(start).toBeGreaterThanOrEqual(0);
+    const trampoline = direct.wat.slice(start, start + 1800);
+    // The WAT renderer currently numbers internal globals/functions. Pin the
+    // structural distinction: test the retained closure global, reload that
+    // SAME global in the hit arm, and call the lifted body directly. The miss
+    // arm remains the legacy dispatcher for pre-initialization safety.
+    expect(trampoline).toMatch(
+      /global\.get (\d+)\s+ref\.is_null\s+i32\.eqz[\s\S]*?\(then\s+global\.get \1\s+ref\.as_non_null[\s\S]*?call \d+/,
+    );
+  });
+
+  it("devirtualizes guarded this-calls inside a captured generic method body", async () => {
+    const src = `var bias = 4;
+var adjust = function (k) { return k + bias; };
+var P = function P(v) { this.v = v; };
+var pp = P.prototype;
+pp.add = function (k) { return this.v + k; };
+pp.go = function (k) { return this.add(adjust(k)); };
+export function test(): number {
+  var p = new P(3);
+  var before = p.go(2);
+  bias = 10;
+  return before * 100 + p.go(2);
+}`;
+    const { direct, dynamic } = await bothLanes(src);
+    expect(direct.wat).toMatch(/\(func \$__dc_P_add_1_g\b/);
+    expect(dynamic.wat).not.toMatch(/\(func \$__dc_P_add_1_g\b/);
+    const directValue = direct.run();
+    const dynamicValue = dynamic.run();
+    expect(directValue).toBe(915);
+    expect(dynamicValue).toBe(directValue);
   });
 
   it("keeps .call / .apply detached receivers on the generic (non-twin) body", async () => {

@@ -186,6 +186,26 @@ describe("#2856 exact Promise timer delay IR slice", () => {
     ).resolves.toBe(333);
   });
 
+  it("IR-emits and settles when source functions reuse the Promise lifted display names", async () => {
+    const result = await compileDelay(`
+      function delay__closure_0(): number { return 0; }
+      function delay__closure_0__closure_1(): number { return 0; }
+      ${DELAY_BODY}
+    `);
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(result.irCompiledFuncs ?? []).toContain("delay");
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    await expect(
+      settled((instance.exports.delay as (ms: number, value: number) => Promise<number>)(1, 444)),
+    ).resolves.toBe(444);
+  });
+
   it("is byte-deterministic across repeated optimized compiles", async () => {
     const [a, b] = await Promise.all([
       compileDelay(DELAY_BODY, { optimize: true }),
@@ -277,31 +297,35 @@ describe("#2856 exact Promise timer delay IR slice", () => {
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irCompiledFuncs ?? []).not.toContain("delay");
     expect(result.irCompiledFuncs ?? []).toContain("independent");
+    if (_label === "shadowed setTimeout") {
+      expect(result.irCompiledFuncs ?? []).toContain("setTimeout");
+    }
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
   it.each([
-    ["delay__closure_0", `function delay__closure_0(): number { return 0; }`],
-    ["delay__closure_0__closure_1", `function delay__closure_0__closure_1(): number { return 0; }`],
     ["Promise_new", `function Promise_new(value?: any): any { return value; }`],
     ["__timer_set_timeout", `function __timer_set_timeout(callback: any, _ms?: any): any { return callback; }`],
     ["__box_number", `function __box_number(value?: number): any { return value; }`],
     ["__call_1_f64", `function __call_1_f64(_fn: any, value?: number): number { return value ?? 0; }`],
-  ] as const)("demotes collision %s before adding incidental helpers", async (_collision, declaration) => {
-    const source = `${declaration}\n${DELAY_BODY}\n${INDEPENDENT_LEAF}`;
-    const [ir, legacy] = await Promise.all([compileDelay(source), compileDelay(source, { experimentalIR: false })]);
-    expect(ir.success, ir.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(ir.irCompiledFuncs ?? []).not.toContain("delay");
-    expect(ir.irCompiledFuncs ?? []).toContain("independent");
-    expect(ir.irPostClaimErrors ?? []).toEqual([]);
-    expect(ir.irFirstSkipped ?? []).not.toContain("delay");
-    expect(manifestImportNames(ir)).toEqual(manifestImportNames(legacy));
-    if (_collision !== "Promise_new") expect(importNames(ir)).toEqual(importNames(legacy));
-  });
+  ] as const)(
+    "demotes runtime-helper collision %s before adding incidental helpers",
+    async (_collision, declaration) => {
+      const source = `${declaration}\n${DELAY_BODY}\n${INDEPENDENT_LEAF}`;
+      const [ir, legacy] = await Promise.all([compileDelay(source), compileDelay(source, { experimentalIR: false })]);
+      expect(ir.success, ir.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(ir.irCompiledFuncs ?? []).not.toContain("delay");
+      expect(ir.irCompiledFuncs ?? []).toContain("independent");
+      expect(ir.irPostClaimErrors ?? []).toEqual([]);
+      expect(ir.irFirstSkipped ?? []).not.toContain("delay");
+      expect(manifestImportNames(ir)).toEqual(manifestImportNames(legacy));
+      if (_collision !== "Promise_new") expect(importNames(ir)).toEqual(importNames(legacy));
+    },
+  );
 
-  it("keeps a finally-demotable delay component compile-twice", async () => {
+  it("keeps a runtime-helper-demotable delay component compile-twice", async () => {
     const result = await compileDelay(`
-      function delay__closure_0(): number { return 0; }
+      function __timer_set_timeout(callback: any, _ms?: any): any { return callback; }
       function delay(ms: number, value: number): Promise<number> {
         return new Promise<number>((resolve) => {
           setTimeout(() => resolve(value), ms);

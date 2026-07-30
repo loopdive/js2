@@ -6,7 +6,6 @@ import { createIrBindingId, type IrBindingId, type IrSourceId } from "../ir/iden
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncTypeDef, Import, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
-import { eliminateDeadImports } from "./dead-elimination.js";
 import {
   canonicalProgramAbiCallableTypeContract,
   cloneProgramAbiCallableTypeContract,
@@ -277,15 +276,6 @@ export function planProgramAbiCallableImports(ctx: CodegenContext): ReadonlyMap<
   }
 
   return new ImmutableProgramAbiImportCatalog<IrBindingId>(catalogEntries);
-}
-
-/** Compact imports, then publish the exact retained callable-import population. */
-export function eliminateDeadImportsAndPlanAbiCallables(ctx: CodegenContext): void {
-  eliminateDeadImports(ctx.mod, ctx);
-  planProgramAbiCallableImports(ctx);
-  ctx.programAbiCallableProviders?.planRetained();
-  ctx.programAbiGlobals?.planRetained();
-  ctx.programAbiTypes?.planRetained();
 }
 
 /**

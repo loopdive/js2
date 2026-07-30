@@ -78,7 +78,7 @@ import {
   getOrRegisterVecType,
 } from "./registry/types.js";
 import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __bind_dyn callable gate
-import { buildApplyClosureArityWidening } from "./closure-exports.js"; // (#3592) under-application widening
+import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
@@ -101,7 +101,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
-import { isOpenDescriptorShape } from "./property-descriptor-shape.js";
+import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import { buildObjectEnumerationHelpers } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
 import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
@@ -132,7 +132,7 @@ const FLAG_ENUMERABLE = 0x02;
 const FLAG_CONFIGURABLE = 0x04;
 // #1888 Slice 5 — accessor descriptor: when set, the entry's value is replaced
 // by the `$get`/`$set` funcref-bearing slots (fields 4/5). 0x08 is the first
-// free bit (0x10/0x20/0x40 remain free; 0x80 = TOMBSTONE).
+// extension bit (0x10 internal; 0x20/0x40 vec-overlay; 0x80 = TOMBSTONE).
 const FLAG_ACCESSOR = 0x08;
 // #1910/#1472 S2 — internal-slot marker. Set on the single reserved $PropEntry a
 // boxed primitive wrapper (`new Number`/`new String`/`new Boolean`) carries: it
@@ -141,12 +141,12 @@ const FLAG_ACCESSOR = 0x08;
 // FLAG_ENUMERABLE is not), so it never appears in Object.keys/for-in/JSON, and
 // `__to_primitive` reads it FIRST (before the OrdinaryToPrimitive valueOf/toString
 // probe) per §7.1.1.1 — standalone ships no Number.prototype.valueOf, so the slot
-// IS the recoverable internal value. 0x20/0x40 remain free.
+// IS the recoverable internal value. 0x20/0x40 are reserved by vec-overlay.ts.
 export const FLAG_INTERNAL = 0x10;
 // 0x20 = FLAG_COMPANION_VALUE (#3251, vec-overlay.ts) — on an array-overlay
 // COMPANION data entry whose [[Value]] could not be written back into the vec
 // element (kind-incompatible carrier); dynamic readers answer from the
-// companion. 0x40 remains free.
+// companion. 0x40 marks a semantically deleted dense vec index.
 const FLAG_TOMBSTONE = 0x80;
 /**
  * Reserved own-key under which a boxed primitive wrapper stores its internal
@@ -5559,7 +5559,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     );
   }
 
-  bridgeFn.body = body;
+  bridgeFn.body = [...buildTransferredCharAtApplyArm(ctx, ARG_OF), ...body];
   bridgeFn.locals = locals;
 }
 
@@ -6593,7 +6593,8 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     const shapeId = ctx.shapeIdByStructName.get(structName);
     for (let fieldIdx = 0; fieldIdx < fields.length; fieldIdx++) {
       const field = fields[fieldIdx];
-      if (!field?.name || field.name.startsWith("$") || field.name.startsWith("__")) continue;
+      const exposedFieldName = exposedClosedStructFieldName(field?.name);
+      if (!field || !exposedFieldName) continue;
       const boxable =
         field.type.kind === "externref" ||
         field.type.kind === "ref_extern" ||
@@ -6608,10 +6609,10 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
       const presenceFieldIdx = field.presenceTracked
         ? fields.findIndex((candidate) => candidate?.name === `$has_${field.name}`)
         : -1;
-      let entries = byField.get(field.name);
+      let entries = byField.get(exposedFieldName);
       if (!entries) {
         entries = [];
-        byField.set(field.name, entries);
+        byField.set(exposedFieldName, entries);
       }
       entries.push({
         typeIdx,
@@ -6624,7 +6625,6 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     }
   }
   if (byField.size === 0) return;
-
   const readAndBox = (entry: Entry): Instr[] => {
     const read: Instr[] = [
       { op: "local.get", index: 0 },

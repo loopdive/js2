@@ -63,6 +63,7 @@ import { emitLazyClassObjectGet } from "./expressions/extern.js";
 import { compilePostfixUnary, compilePrefixUnary } from "./expressions/unary.js";
 
 import { compileCallExpression } from "./expressions/calls.js";
+import { isForeignEvalNode } from "./expressions/eval-source.js";
 
 import { compileClassExpression, compileNewExpression } from "./expressions/new-super.js";
 import { emitNewTargetClassId } from "./new-target.js"; // (#2023)
@@ -160,11 +161,10 @@ export { compileMemberIncDec, compilePostfixUnary, compilePrefixUnary } from "./
 
 // ── Dispatcher helpers (used only within this file) ────────────────────
 
-/**
- * Check if a call expression targets an async function/method.
- * Used to determine whether the result needs Promise.resolve() wrapping (#919).
- */
+/** Check whether a call needs Promise.resolve() wrapping (#919). */
 function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): boolean {
+  // Foreign eval calls have no checker signatures and are always synchronous.
+  if (isForeignEvalNode(expr)) return false;
   // (#2903) `.finally(...)` nodes lowered to the NATIVE §27.2.5.3 machinery
   // already return a `$Promise` — the fulfilled-wrap would double-wrap (and
   // its try/catch_all would null a rejection reason). The per-node marker is
@@ -1058,6 +1058,19 @@ function compileExpressionInner(
   }
 
   if (expr.kind === ts.SyntaxKind.ThisKeyword) {
+    // A typed-this twin receives its exact runtime receiver in param/local 0.
+    // Reuse that value for bare/non-field `this` expressions too, rather than
+    // round-tripping through the ambient `__current_this` global. This makes
+    // the receiver parameter a complete representation of `this`, so direct
+    // twin-to-twin calls do not need to install a dynamic receiver frame.
+    if (
+      process.env.JS2WASM_TWIN_RECEIVER_PARAM !== "0" &&
+      fctx.typedThisLocalIdx !== undefined &&
+      fctx.typedThisStructIdx !== undefined
+    ) {
+      fctx.body.push({ op: "local.get", index: fctx.typedThisLocalIdx });
+      return { kind: "ref", typeIdx: fctx.typedThisStructIdx };
+    }
     const selfIdx = fctx.localMap.get("this");
     if (selfIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: selfIdx });

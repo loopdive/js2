@@ -4,7 +4,7 @@ title: "IR multi-exit control flow: labeled break/continue, switch (br_table), d
 status: ready
 sprint: current
 created: 2026-07-02
-updated: 2026-07-25
+updated: 2026-07-29
 priority: medium
 horizon: l
 feasibility: hard
@@ -28,6 +28,11 @@ loc-budget-allow:
   # builder arms live in the node/union + builder files by design.
   - src/ir/nodes.ts
   - src/ir/builder.ts
+  # Slice 5 threads the checker-backed carrier capability from production
+  # selection and pre-registers the existing #2964 runtime before lowering.
+  - src/codegen/index.ts
+  - src/ir/integration.ts
+  - scripts/gen-ir-adoption.mjs
 # The ctrlStack frames, resolveBrLabel iterClose obligation and forof.iter
 # frame changes necessarily live inside the closure-based lowering driver
 # (they share its emitter/resolver/slot state): +31 / +6 lines.
@@ -40,6 +45,9 @@ func-budget-allow:
   # were NOT granted: the per-instr structural checks were split out into
   # `verifyInstrStructure` instead (see the slice-4 notes).
   - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::makeFromAstResolver
+branch: codex/2952-acorn-for-in
 ---
 
 # #2952 — six direct-only statement kinds share one structural blocker
@@ -428,7 +436,7 @@ runtime `TypeError: collectUses is not a function or its return value is
 not iterable` at claim time, not a compile error. Candidate follow-up:
 fold it onto nodes.ts `directUses` or add the never-check.
 
-**Deliberately NOT taken (slice-5 bank):**
+**Deliberately NOT taken before slice 5:**
 
 - **Tail-position switch** — a function ENDING in a switch (`switch … case
 0: return 1; default: return 2;` as the last statement) is a
@@ -438,8 +446,73 @@ fold it onto nodes.ts `directUses` or add the never-check.
   covers most real code.
 - **String-literal case tests** — need string.eq dispatch; if-chain over
   `string.eq` is straightforward once wanted.
-- **for-in** — stays split out (host-import `__object_keys` iteration,
-  pairs with #2964): it is substrate work, not control flow.
+- **for-in** — split out because its runtime substrate pairs with #2964,
+  rather than the switch/control-flow machinery.
+
+## Slice 5 — runtime-dynamic for-in (2026-07-29)
+
+The exact Acorn runtime-dynamic driver identified one #2952-owned residual:
+
+```js
+function hasProp(obj) {
+  for (var _ in obj) return true;
+  return false;
+}
+```
+
+This slice claims that function without adding a new IR node:
+
+- `for (var id in receiver)` lowers to the existing `for.loop` instruction.
+- The receiver must be checker-certified `any`/`unknown` and use the non-fast
+  dynamic carrier, which is already externref. Fast `$AnyValue`, typed
+  object/array receivers, other head forms, any use of the enumerated head
+  value, post-loop use of the `var` head, and labeled for-in remain on the
+  direct path.
+- Host mode calls `__for_in_keys/len/get/has`; standalone/WASI calls
+  `__object_keys_forin`, `__extern_length`, `__extern_get_idx`, and
+  `__extern_has`. Both are the existing #2964 ABI: snapshot ordered keys once,
+  then re-check liveness immediately before each body visit.
+- Runtime registration happens before Phase 3 symbolic-call resolution, so
+  host import shifts and standalone helper creation cannot invalidate an
+  in-flight lowered body.
+- The selector capability is checker-backed and fail-closed. Bare selector
+  callers must opt in explicitly; fast and unproven receivers never claim.
+
+Exact unchanged Acorn outcome after the slice: **15/43 emitted**, the previous
+14 plus `hasProp`, with **zero withdrawals**. Remaining outcomes are 18
+body-shape, 3 logical-value, 2 RegExp-constructor, 2 parameter-type, 2
+call-graph-closure, and 1 constructor-resolution blockers.
+
+### #3796 integration and parity requirements
+
+PR #3796 remains the direct-backend performance baseline; this slice does not
+touch its direct codegen files. The sound named runtime-dynamic measurement is
+48.970 ms/op versus Node 4.406 ms/op (11.11x), checksum 422, zero Wasm imports,
+and zero reachable IR-emitted functions. The stripped measurement is
+50.114 ms/op versus 4.424 ms/op (11.33x), 1,765,609 bytes.
+
+IR retirement must preserve these direct-backend wins:
+
+1. A switch discriminant proven to be a real f64 local skips boxing and type
+   dispatch.
+2. Only a twin-exclusive, unguarded trampoline may omit the
+   `__current_this` frame. Guarded twins retain it because the legacy miss arm
+   observes ambient `this`; retained generic-closure paths retain it too.
+3. A direct trampoline may omit the argc frame only when `arguments`,
+   overapplication, and parameter initializers are absent and omitted formals
+   are padded.
+4. The native RegExp brand arm precedes the field/user-method ladder because
+   `$NativeRegExp` and user closed structs are disjoint.
+
+## Test Results (slice 5)
+
+- Exact unchanged Acorn outcome driver: `hasProp` flips to emitted; 15/43
+  emitted total; zero withdrawals.
+- `tests/issue-2952-slice5.test.ts`: 5/5 pass — fail-closed selector boundary,
+  wider-head negatives, host runtime over empty/own/inherited keys, fast
+  carrier pre-claim fallback, and standalone native-helper registration plus
+  instantiation.
+- `pnpm run typecheck`: clean.
 
 ## Test Results (slice 4)
 

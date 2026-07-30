@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FieldDef } from "../ir/types.js";
+export { exposedClosedStructFieldName } from "./fnctor-identity-fields.js";
 
 /**
  * Descriptor contracts without a concrete value carrier belong to the open

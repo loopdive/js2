@@ -1,0 +1,121 @@
+name: Retarget stacked PR children after parent merge
+
+# A stacked child targets its parent's head branch. React to the trusted parent
+# merge event on GitHub itself so no developer agent or polling loop has to
+# survive until the merge queue reaches that parent.
+#
+# SECURITY — pull_request_target:
+#   - this workflow checks out ONLY the repository's default branch;
+#   - it never checks out or executes the merged PR's head;
+#   - event fields are passed as data and verified against a fresh API read;
+#   - GITHUB_TOKEN can only manage the automation-owned pending label;
+#   - the installation token is repository-scoped and narrowed to contents +
+#     PR writes.
+# A GitHub App token is required instead of GITHUB_TOKEN: after the base PATCH,
+# App-authored update-branch integrates the new base and emits
+# pull_request:synchronize, giving the child fresh CI. The pending label is
+# released only by the exact synchronize event for the new, base-integrated
+# head.
+
+on:
+  pull_request_target:
+    types: [closed, synchronize]
+
+permissions:
+  contents: read
+  issues: write # automation hold across PATCH -> update-branch -> synchronize
+
+jobs:
+  retarget:
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      # Duplicate delivery for one parent is idempotent. Keep distinct parent
+      # events independent so GitHub's single-pending concurrency rule cannot
+      # discard an unrelated merge event.
+      group: passive-stack-retarget-parent-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted default-branch helper only
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/enqueue-green-prs.mjs
+            scripts/retarget-stacked-pr-children.mjs
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Self-check exact stack guards
+        run: |
+          node scripts/retarget-stacked-pr-children.mjs --self-check
+          node scripts/enqueue-green-prs.mjs --self-check
+
+      # No GITHUB_TOKEN fallback: its update-branch mutation would not create
+      # downstream workflow runs. The App token is scoped to this repository by
+      # default and explicitly narrowed to the two permissions this job needs.
+      - name: Mint repository-scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.ENQUEUE_APP_ID }}
+          private-key: ${{ secrets.ENQUEUE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Retarget immediate open children
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HOLD_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PARENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          PARENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PARENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PARENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/retarget-stacked-pr-children.mjs
+
+  release-pending:
+    if: >-
+      github.event.action == 'synchronize' &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      # A later synchronize is at least as fresh as an earlier one; serialize
+      # per PR and never cancel a running exact-release check.
+      group: passive-stack-release-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted default-branch helper only
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/retarget-stacked-pr-children.mjs
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Release pending label after exact base-integrated synchronize
+        env:
+          HOLD_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          PULL_REQUEST_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PREVIOUS_HEAD_SHA: ${{ github.event.before }}
+          PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/retarget-stacked-pr-children.mjs --release-pending

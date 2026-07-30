@@ -1,10 +1,10 @@
 ---
 id: 3617
 title: "Standalone: a plain fnctor instance's .constructor reads undefined (standalone counterpart of #3486)"
-status: ready
+status: done
 sprint: current
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-07-28
 priority: medium
 horizon: l
 feasibility: hard
@@ -93,18 +93,73 @@ Two known obstacles:
 
 ## Acceptance criteria
 
-- [ ] For a user `function MyError(m) { this.message = m; }`, standalone
+- [x] For a user `function MyError(m) { this.message = m; }`, standalone
       `(new MyError()).constructor === MyError` is `true` when compared through
       a function parameter (the `assert.throws` shape).
-- [ ] Genuine, not vacuous: the same comparison against a DIFFERENT compiled
+- [x] Genuine, not vacuous: the same comparison against a DIFFERENT compiled
       constructor is `false`, and `.constructor` is not `undefined`.
-- [ ] `Object.keys(new MyError())` is unchanged (no new enumerable own prop).
-- [ ] No standalone floor regression; the #2660 `keep-typed` / species
+- [x] `Object.keys(new MyError())` is unchanged (no new enumerable own prop).
+- [x] No standalone floor regression; the #2660 `keep-typed` / species
       `Ctor.prototype` identity cases named above stay green.
-- [ ] JS-host lane untouched (that is #3486).
+- [x] JS-host lane untouched (that is #3486).
 
 ## Reproduction
 
-`runTest262File` is **not** the CI path and mangles standalone thrown payloads —
-see #3614's Reproduction section for the `CompilerPool("unified")` harness and
-the two esbuild bundle prerequisites.
+Use `runTest262File` from `tests/test262-runner.ts`. It is now the authoritative
+path: literal upstream harness assembly plus the untouched test body, including
+the strict rerun where applicable.
+
+## Resolution — hidden native instance→constructor link (2026-07-28, Codex)
+
+Standalone fnctor instances now carry a hidden, immutable `$constructor`
+externref field. The call site evaluates and parks the exact runtime callee
+before the user arguments, passes it as a hidden trailing constructor parameter,
+and the native constructor initializes the field before running the user body.
+The dynamic `"constructor"` getter exposes that value while own-property,
+descriptor, and enumeration finalizers continue to exclude the `$`-prefixed
+physical slot.
+
+This is a real identity link rather than a nominal-shape classifier:
+
+- two structurally identical empty constructors remain distinguishable;
+- the correct constructor matches through function parameters and a different
+  compiled constructor does not;
+- `this.constructor` is already correct inside the constructor body;
+- `hasOwnProperty("constructor")` remains false and `Object.keys` is unchanged;
+- the host lane is byte-identical because the field, hidden parameter, and
+  getter arm are standalone-only.
+
+### Authoritative corrected legacy population
+
+The corrected `scripts/generate-editions.ts` classifier yields 282 raw
+`UNCLASSIFIED_LEGACY` files. Applying the report's official-scope filter removes
+nine proposal-scope `Intl402/*/formatToParts` rows, leaving the authoritative
+**273-test** population.
+
+Same-SHA original-harness A/B on `origin/main`
+`ab0953f373a5760987bf3f36c3c51f1cdad59418`:
+
+| lane       | before                                | after                                | delta |
+| ---------- | ------------------------------------- | ------------------------------------ | ----: |
+| host       | 272 pass / 1 compile error            | 272 pass / 1 compile error           |    +0 |
+| standalone | 221 pass / 47 fail / 5 compile errors | 262 pass / 6 fail / 5 compile errors |   +41 |
+
+All 41 visible standalone constructor-identity failures flipped to pass: 33
+compound-assignment files and eight prefix/postfix increment/decrement files.
+Every other row kept the same status, error, and reason. Host had zero status,
+signature, or Wasm-hash drift; standalone had no pass regression and no
+fail→fail signature drift in this population.
+
+A wider same-runner A/B over all 153 fresh standalone-baseline rows containing
+`different error constructor with the same name` measured **46 fail→pass** plus
+**28 fail→fail** rows that advanced past constructor identity to their next
+independent assertion/feature defect: **74 rows demonstrably affected** by the
+mechanism.
+
+Validation:
+
+- `tests/issue-3617.test.ts`: 4/4
+- adjacent fnctor/constructor suites: 71/71
+- guard suite: 182 passed, 4 skipped
+- TypeScript typecheck: clean
+- IR fallback gate: clean

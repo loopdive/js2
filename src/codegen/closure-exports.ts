@@ -23,6 +23,210 @@ import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } fro
 import { ensureAnyToExternHelper, isAnyValue } from "./any-helpers.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
+export { buildTransferredCharAtApplyArm } from "./char-at-transfer.js";
+import { installCompiledClosureToStringArm } from "./coercion-engine.js";
+import {
+  planProgramAbiEntrySourceSupportCallable,
+  PROGRAM_ABI_CALLABLE_ROLE,
+  resolveProgramAbiSupportCallableHandle,
+} from "./program-abi-planning.js";
+
+const CLOSURE_HOST_BRIDGE_ROLE = "closure-host-bridge";
+const CLOSURE_HOST_BRIDGE_MANIFEST_NAME = "__\0js2_closure_host_bridge";
+const CLOSURE_HOST_BRIDGE_MANIFEST_PHYSICAL_BASE = "$cm";
+const CLOSURE_HOST_BRIDGE_MARKER_NAME = "__\0js2_closure_host_bridge_marker";
+const CLOSURE_HOST_BRIDGE_MARKER_PHYSICAL_BASE = "$ct";
+const CLOSURE_HOST_BRIDGE_BINDINGS_NAME = "__\0js2_closure_host_bridge_bindings";
+const CLOSURE_HOST_BRIDGE_BINDINGS_PHYSICAL_BASE = "$cu";
+const CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
+const publishedClosureHostBridgeBits = new WeakMap<CodegenContext, number>();
+const publishedClosureHostBridgeFuncs = new WeakMap<CodegenContext, Map<number, WasmFunction>>();
+const publishedClosureHostBridgeManifests = new WeakSet<CodegenContext>();
+
+const CLOSURE_HOST_BRIDGE_ORDINAL = Object.freeze({
+  directCall0: 0,
+  directCall1: 1,
+  directCall2: 2,
+  directCall3: 3,
+  directCall4: 4,
+  methodCall0: 5,
+  methodCall1: 6,
+  methodCall2: 7,
+  methodCall3: 8,
+  methodCall4: 9,
+  methodCall5: 10,
+  closureArity: 11,
+  isClosure: 12,
+  closureHasRest: 13,
+} as const);
+
+/**
+ * Reserved physical export family for closure helpers.
+ *
+ * Keep the physical family independent from the Program ABI ordinals: method
+ * dispatchers 6..8 remain runtime-visible but are intentionally outside the
+ * bounded C31 structural-ownership slice.
+ */
+function closureHostBridgeDefinition(logicalName: string): { physicalBase: string; bit: number } {
+  const direct = /^__call_fn_([0-4])$/.exec(logicalName);
+  if (direct) {
+    const bit = Number(direct[1]);
+    return { physicalBase: `$c${bit.toString(36)}`, bit };
+  }
+  const method = /^__call_fn_method_([0-8])$/.exec(logicalName);
+  if (method) {
+    const bit = 5 + Number(method[1]);
+    return { physicalBase: `$c${bit.toString(36)}`, bit };
+  }
+  if (logicalName === "__closure_arity") return { physicalBase: "$ce", bit: 14 };
+  if (logicalName === "__is_closure") return { physicalBase: "$cf", bit: 15 };
+  if (logicalName === "__closure_has_rest") return { physicalBase: "$cg", bit: 16 };
+  throw new Error(`unknown closure host bridge ${logicalName}`);
+}
+
+/**
+ * Publish one closure host helper from its exact allocator object.
+ *
+ * The historical logical label remains the public fast path. Every compiler
+ * helper also owns the terminal alias in its reserved short family; when a user
+ * already owns that label or prefix, preserve each user export and append the
+ * exact helper. The runtime authenticates that alias without replacing public
+ * names.
+ */
+function publishClosureHostBridge(ctx: CodegenContext, func: WasmFunction, derivedOrdinal: number | undefined): number {
+  ctx.mod.functions.push(func);
+  const ref =
+    derivedOrdinal === undefined
+      ? undefined
+      : planProgramAbiEntrySourceSupportCallable(ctx, {
+          role: CLOSURE_HOST_BRIDGE_ROLE,
+          roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.closureHostBridge,
+          derivedOrdinal,
+          displayName: func.name,
+          func,
+        });
+  const funcIdx = resolveProgramAbiSupportCallableHandle(ctx, ref, func);
+  if (funcIdx === undefined) {
+    throw new Error(`closure host bridge ${func.name} lost its exact allocator object`);
+  }
+  const definition = closureHostBridgeDefinition(func.name);
+  const occupied = new Set(ctx.mod.exports.map((entry) => entry.name));
+  const physicalBase = definition.physicalBase;
+  let maxOccupiedSuffix = -1;
+  for (const name of occupied) {
+    if (!name.startsWith(physicalBase)) continue;
+    const suffix = name.slice(physicalBase.length);
+    if (/^\$*$/.test(suffix)) maxOccupiedSuffix = Math.max(maxOccupiedSuffix, suffix.length);
+  }
+  const logicalNameOccupied = occupied.has(func.name);
+  if (!logicalNameOccupied) {
+    ctx.mod.exports.push({
+      name: func.name,
+      desc: { kind: "func", index: funcIdx },
+    });
+    occupied.add(func.name);
+  }
+  for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
+    const physicalName = `${physicalBase}${"$".repeat(suffixLength)}`;
+    if (occupied.has(physicalName)) continue;
+    ctx.mod.exports.push({
+      name: physicalName,
+      desc: { kind: "func", index: funcIdx },
+    });
+    occupied.add(physicalName);
+  }
+  publishedClosureHostBridgeBits.set(ctx, (publishedClosureHostBridgeBits.get(ctx) ?? 0) | (1 << definition.bit));
+  let publishedFuncs = publishedClosureHostBridgeFuncs.get(ctx);
+  if (!publishedFuncs) {
+    publishedFuncs = new Map();
+    publishedClosureHostBridgeFuncs.set(ctx, publishedFuncs);
+  }
+  publishedFuncs.set(definition.bit, func);
+  return funcIdx;
+}
+
+/**
+ * Publish one immutable compiler-authored availability manifest.
+ *
+ * The bitset distinguishes compiler helpers from user-controlled names. An
+ * empty marker table authenticates the metadata, and a fixed funcref table
+ * binds each availability bit to the exact helper object. Every physical family
+ * is collision-safe; the logical names use reserved NUL-containing labels that
+ * ordinary TypeScript exports cannot declare accidentally.
+ */
+function emitClosureHostBridgeManifest(ctx: CodegenContext): void {
+  if (publishedClosureHostBridgeManifests.has(ctx)) return;
+  const bits = publishedClosureHostBridgeBits.get(ctx) ?? 0;
+  if ((bits & (1 << 15)) === 0) return;
+  publishedClosureHostBridgeManifests.add(ctx);
+
+  const bindingsTableIdx =
+    ctx.mod.imports.filter((entry) => entry.desc.kind === "table").length + ctx.mod.tables.length;
+  ctx.mod.tables.push({ elementType: "funcref", min: 17, max: 17 });
+  const markerTableIdx = bindingsTableIdx + 1;
+  ctx.mod.tables.push({ elementType: "funcref", min: 0, max: 0 });
+  for (const [bit, func] of publishedClosureHostBridgeFuncs.get(ctx) ?? []) {
+    const funcOffset = ctx.mod.functions.indexOf(func);
+    if (funcOffset < 0) throw new Error(`closure host bridge manifest lost helper bit ${bit}`);
+    ctx.mod.elements.push({
+      tableIdx: bindingsTableIdx,
+      offset: [{ op: "i32.const", value: bit }],
+      funcIndices: [ctx.numImportFuncs + funcOffset],
+    });
+  }
+  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: CLOSURE_HOST_BRIDGE_MANIFEST_NAME,
+    type: { kind: "i32" },
+    mutable: false,
+    init: [{ op: "i32.const", value: CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC | bits }],
+  });
+
+  const publishManifestExport = (
+    logicalName: string,
+    physicalBase: string,
+    desc: { kind: "table" | "global"; index: number },
+  ): void => {
+    const occupied = new Set(ctx.mod.exports.map((entry) => entry.name));
+    if (!occupied.has(logicalName)) {
+      ctx.mod.exports.push({ name: logicalName, desc });
+      occupied.add(logicalName);
+    }
+    let maxOccupiedSuffix = -1;
+    for (const name of occupied) {
+      if (!name.startsWith(physicalBase)) continue;
+      const suffix = name.slice(physicalBase.length);
+      if (/^\$*$/.test(suffix)) maxOccupiedSuffix = Math.max(maxOccupiedSuffix, suffix.length);
+    }
+    for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
+      const physicalName = `${physicalBase}${"$".repeat(suffixLength)}`;
+      if (occupied.has(physicalName)) continue;
+      ctx.mod.exports.push({ name: physicalName, desc });
+      occupied.add(physicalName);
+    }
+  };
+
+  publishManifestExport(CLOSURE_HOST_BRIDGE_MARKER_NAME, CLOSURE_HOST_BRIDGE_MARKER_PHYSICAL_BASE, {
+    kind: "table",
+    index: markerTableIdx,
+  });
+  publishManifestExport(CLOSURE_HOST_BRIDGE_BINDINGS_NAME, CLOSURE_HOST_BRIDGE_BINDINGS_PHYSICAL_BASE, {
+    kind: "table",
+    index: bindingsTableIdx,
+  });
+  publishManifestExport(CLOSURE_HOST_BRIDGE_MANIFEST_NAME, CLOSURE_HOST_BRIDGE_MANIFEST_PHYSICAL_BASE, {
+    kind: "global",
+    index: globalIdx,
+  });
+}
+
+function directClosureHostBridgeOrdinal(arity: number): number | undefined {
+  return arity >= 0 && arity <= 4 ? CLOSURE_HOST_BRIDGE_ORDINAL.directCall0 + arity : undefined;
+}
+
+function methodClosureHostBridgeOrdinal(arity: number): number | undefined {
+  return arity >= 0 && arity <= 5 ? CLOSURE_HOST_BRIDGE_ORDINAL.methodCall0 + arity : undefined;
+}
 
 /**
  * Emit __call_fn_0 export (#851): call a zero-arg WasmGC closure from JS.
@@ -248,7 +452,6 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   const params: ValType[] = [];
   for (let i = 0; i < arity + 1; i++) params.push({ kind: "externref" });
   const exportFuncTypeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `$${exportName}_type`);
-  const funcIdx = ctx.numImportFuncs + mod.functions.length;
   const bwIdx = baseWrapperIdx;
 
   const body: Instr[] = [];
@@ -401,22 +604,21 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
   body.push(...buildFuncrefExtraction(ctx, entries, anyLocal, funcLocal));
   body.push(...funcrefDispatch);
 
-  mod.functions.push({
-    name: exportName,
-    typeIdx: exportFuncTypeIdx,
-    locals: [
-      { name: "__any", type: { kind: "anyref" } },
-      { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
-      { name: "__funcref", type: { kind: "funcref" } },
-    ],
-    body,
-    exported: true,
-  } as WasmFunction);
-
-  mod.exports.push({
-    name: exportName,
-    desc: { kind: "func", index: funcIdx },
-  });
+  publishClosureHostBridge(
+    ctx,
+    {
+      name: exportName,
+      typeIdx: exportFuncTypeIdx,
+      locals: [
+        { name: "__any", type: { kind: "anyref" } },
+        { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
+        { name: "__funcref", type: { kind: "funcref" } },
+      ],
+      body,
+      exported: true,
+    } as WasmFunction,
+    directClosureHostBridgeOrdinal(arity),
+  );
 }
 
 /**
@@ -586,7 +788,6 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   const params: ValType[] = [];
   for (let i = 0; i < totalParams; i++) params.push({ kind: "externref" });
   const exportFuncTypeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `$${exportName}_type`);
-  const funcIdx = ctx.numImportFuncs + mod.functions.length;
   const bwIdx = baseWrapperIdx;
 
   // Convert closure externref → anyref (closure is at local index 1).
@@ -849,27 +1050,26 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   body.push({ op: "global.set", index: currentThisGlobalIdx });
   body.push({ op: "local.get", index: resultSaveLocal });
 
-  mod.functions.push({
-    name: exportName,
-    typeIdx: exportFuncTypeIdx,
-    locals: [
-      { name: "__any", type: { kind: "anyref" } },
-      { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
-      { name: "__funcref", type: { kind: "funcref" } },
-      { name: "__prev_this", type: { kind: "externref" } },
-      { name: "__result", type: { kind: "externref" } },
-      // (#3673 round 10) declared arity read off the root wrapper for the
-      // arity-bucketed signature dispatch (-1 = not root-readable).
-      { name: "__declared_arity", type: { kind: "i32" } },
-    ],
-    body,
-    exported: true,
-  } as WasmFunction);
-
-  mod.exports.push({
-    name: exportName,
-    desc: { kind: "func", index: funcIdx },
-  });
+  const funcIdx = publishClosureHostBridge(
+    ctx,
+    {
+      name: exportName,
+      typeIdx: exportFuncTypeIdx,
+      locals: [
+        { name: "__any", type: { kind: "anyref" } },
+        { name: "__struct", type: { kind: "ref_null", typeIdx: bwIdx } },
+        { name: "__funcref", type: { kind: "funcref" } },
+        { name: "__prev_this", type: { kind: "externref" } },
+        { name: "__result", type: { kind: "externref" } },
+        // (#3673 round 10) declared arity read off the root wrapper for the
+        // arity-bucketed signature dispatch (-1 = not root-readable).
+        { name: "__declared_arity", type: { kind: "i32" } },
+      ],
+      body,
+      exported: true,
+    } as WasmFunction,
+    methodClosureHostBridgeOrdinal(arity),
+  );
 
   // (#1719 CPR) Register in funcMap so the in-Wasm `__drive_proto_iterator`
   // driver (filled in post-processing) can resolve `__call_fn_method_0` by name
@@ -899,7 +1099,6 @@ export function emitIsClosureExport(ctx: CodegenContext): void {
   if (baseTypeIdxs.length === 0) return;
 
   const isClosureTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$is_closure_type");
-  const funcIdx = ctx.numImportFuncs + mod.functions.length;
 
   // body: convert extern→any, then chained ref.test → return 1 on first match.
   const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
@@ -914,18 +1113,17 @@ export function emitIsClosureExport(ctx: CodegenContext): void {
   }
   body.push({ op: "i32.const", value: 0 });
 
-  mod.functions.push({
-    name: "__is_closure",
-    typeIdx: isClosureTypeIdx,
-    locals: [{ name: "__any", type: { kind: "anyref" } }],
-    body,
-    exported: true,
-  } as WasmFunction);
-
-  mod.exports.push({
-    name: "__is_closure",
-    desc: { kind: "func", index: funcIdx },
-  });
+  publishClosureHostBridge(
+    ctx,
+    {
+      name: "__is_closure",
+      typeIdx: isClosureTypeIdx,
+      locals: [{ name: "__any", type: { kind: "anyref" } }],
+      body,
+      exported: true,
+    } as WasmFunction,
+    CLOSURE_HOST_BRIDGE_ORDINAL.isClosure,
+  );
 }
 
 /**
@@ -1128,7 +1326,6 @@ export function emitClosureArityExport(ctx: CodegenContext): void {
   if (entries.length === 0) return;
 
   const arityTypeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$closure_arity_type");
-  const funcIdx = ctx.numImportFuncs + mod.functions.length;
 
   // Locals: 0 = value externref (param), 1 = anyref, 2 = funcref.
   const anyLocal = 1;
@@ -1182,21 +1379,20 @@ export function emitClosureArityExport(ctx: CodegenContext): void {
   }
   body.push({ op: "i32.const", value: -1 });
 
-  mod.functions.push({
-    name: "__closure_arity",
-    typeIdx: arityTypeIdx,
-    locals: [
-      { name: "__any", type: { kind: "anyref" } },
-      { name: "__funcref", type: { kind: "funcref" } },
-    ],
-    body,
-    exported: true,
-  } as WasmFunction);
-
-  mod.exports.push({
-    name: "__closure_arity",
-    desc: { kind: "func", index: funcIdx },
-  });
+  const funcIdx = publishClosureHostBridge(
+    ctx,
+    {
+      name: "__closure_arity",
+      typeIdx: arityTypeIdx,
+      locals: [
+        { name: "__any", type: { kind: "anyref" } },
+        { name: "__funcref", type: { kind: "funcref" } },
+      ],
+      body,
+      exported: true,
+    } as WasmFunction,
+    CLOSURE_HOST_BRIDGE_ORDINAL.closureArity,
+  );
   // Native in-module callers (notably `__apply_closure`) need the same
   // classifier the JS wrapper uses. Register the canonical function index so
   // reserve-then-fill runtimes can call it without introducing another ABI.
@@ -1219,10 +1415,12 @@ export function emitClosureHasRestExport(ctx: CodegenContext): void {
   const restTypes = [...ctx.closureInfoByTypeIdx]
     .filter(([, info]) => info.hasRestParam === true)
     .map(([typeIdx]) => typeIdx);
-  if (restTypes.length === 0) return;
+  if (restTypes.length === 0) {
+    emitClosureHostBridgeManifest(ctx);
+    return;
+  }
 
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }], "$closure_has_rest_type");
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
   const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
   for (const restType of new Set(restTypes)) {
     body.push(
@@ -1237,17 +1435,18 @@ export function emitClosureHasRestExport(ctx: CodegenContext): void {
   }
   body.push({ op: "i32.const", value: 0 });
 
-  ctx.mod.functions.push({
-    name: "__closure_has_rest",
-    typeIdx,
-    locals: [{ name: "__any", type: { kind: "anyref" } }],
-    body,
-    exported: true,
-  } as WasmFunction);
-  ctx.mod.exports.push({
-    name: "__closure_has_rest",
-    desc: { kind: "func", index: funcIdx },
-  });
+  publishClosureHostBridge(
+    ctx,
+    {
+      name: "__closure_has_rest",
+      typeIdx,
+      locals: [{ name: "__any", type: { kind: "anyref" } }],
+      body,
+      exported: true,
+    } as WasmFunction,
+    CLOSURE_HOST_BRIDGE_ORDINAL.closureHasRest,
+  );
+  emitClosureHostBridgeManifest(ctx);
 }
 
 /**
@@ -1368,6 +1567,10 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // closure-base-wrapper list (`closure-classifier.ts`).
   const closureI32Arms = (anyLocalIdx: number, matchValue: number): Instr[] =>
     buildClosureRefTestArms(ctx, anyLocalIdx, [{ op: "i32.const", value: matchValue }, { op: "return" }]);
+
+  // #3540: the single coercion engine owns compiled-closure stringification;
+  // this finalizer supplies the now-complete closure classifier.
+  installCompiledClosureToStringArm(ctx);
 
   // --- __typeof_function: param(0) externref → 1 if closure wrapper else 0.
   const tf = fnByName("__typeof_function");

@@ -585,6 +585,51 @@ export type IrModuleBindingInspection =
   | { readonly kind: "unsupported"; readonly declaration: ts.VariableDeclaration }
   | { readonly kind: "not-direct" };
 
+/**
+ * Exact top-level native RegExp carrier that can be consumed by the standalone
+ * IR bridge. The binding stays outside the general module-value projection:
+ * only `.test(subject)` receives this proof, and the real legacy-allocated
+ * externref global remains the receiver at runtime.
+ */
+export interface IrStaticRegExpTestPlan {
+  readonly declaration: ts.VariableDeclaration;
+  readonly pattern: string;
+  readonly flags: string;
+  /** Structural fields are present on the identity-aware production resolver. */
+  readonly globalBindingId?: IrBindingId;
+  readonly sourceId?: IrSourceId;
+  readonly declarationOrdinal?: number;
+}
+
+export interface IrStaticNumericArrayPlan {
+  readonly declaration: ts.VariableDeclaration;
+  readonly globalBindingId?: IrBindingId;
+  readonly sourceId?: IrSourceId;
+  readonly declarationOrdinal?: number;
+}
+
+/**
+ * Exact retained function-object receiver plus one directly assigned method.
+ *
+ * This is intentionally not a direct-call plan: lowering must still perform a
+ * live receiver-preserving method dispatch so `Parser.parse` observes
+ * `this === Parser` and later property writes remain visible.
+ */
+export interface IrRetainedFunctionMethodPlan {
+  readonly receiverDeclaration: ts.VariableDeclaration;
+  readonly receiverTarget: ts.FunctionExpression;
+  readonly methodTarget: ts.FunctionExpression;
+  readonly receiverName: string;
+  readonly methodName: string;
+  readonly arity: number;
+  /** Structural fields are present on the identity-aware production resolver. */
+  readonly receiverUnitId?: IrUnitId;
+  readonly methodUnitId?: IrUnitId;
+  readonly receiverGlobalBindingId?: IrBindingId;
+  readonly receiverSourceId?: IrSourceId;
+  readonly receiverDeclarationOrdinal?: number;
+}
+
 interface IrModuleBindingResolverSurface<TIdentity, TInspection> {
   (node: ts.Identifier, writeValue?: ts.Expression): TIdentity | undefined;
   /**
@@ -609,6 +654,15 @@ interface IrModuleBindingResolverSurface<TIdentity, TInspection> {
   readonly supportsHostNumberToString: boolean;
   /** Prove an initializer/RHS matches the binding's actual IR representation. */
   readonly bindingValueMatches: (node: ts.Identifier, value: ts.Expression) => boolean;
+  /**
+   * Prove an exact source-owned static RegExp carrier for standalone `.test`.
+   * General RegExp values remain unsupported module bindings.
+   */
+  readonly staticRegExpTestPlan: (node: ts.Expression) => IrStaticRegExpTestPlan | undefined;
+  /** Exact stable top-level numeric array used at a direct-call vec boundary. */
+  readonly staticNumericArrayPlan: (node: ts.Expression) => IrStaticNumericArrayPlan | undefined;
+  /** Exact retained function-object method call whose receiver must stay live. */
+  readonly retainedFunctionMethodPlan: (call: ts.CallExpression) => IrRetainedFunctionMethodPlan | undefined;
 }
 
 export interface IrLegacyModuleBindingResolver extends IrModuleBindingResolverSurface<
@@ -644,6 +698,7 @@ function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker)
   if (!symbol) return undefined;
   const sourceFile = node.getSourceFile();
   const candidates = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
+  const directDeclarations = new Set<ts.VariableDeclaration>();
   for (const candidate of candidates) {
     if (!candidate || !ts.isVariableDeclaration(candidate)) continue;
     if (candidate.getSourceFile() !== sourceFile) continue;
@@ -652,12 +707,28 @@ function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker)
     if (!ts.isVariableDeclarationList(list)) continue;
     const statement = list.parent;
     if (!ts.isVariableStatement(statement) || statement.parent !== sourceFile) continue;
-    // Capability C is intentionally lexical-binding-only. Module `var`
-    // hoisting has wider aliasing rules and stays on the legacy path.
-    if (!(list.flags & ts.NodeFlags.Let) && !(list.flags & ts.NodeFlags.Const)) continue;
-    return candidate;
+    directDeclarations.add(candidate);
   }
-  return undefined;
+  if (directDeclarations.size !== 1) return undefined;
+  const declaration = [...directDeclarations][0]!;
+  const list = declaration.parent as ts.VariableDeclarationList;
+  if (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) return declaration;
+
+  // #2949 Acorn follow-up — a unique top-level `var` in an ES module has one
+  // checker identity and one legacy `__mod_*` slot, so scalar reads/writes can
+  // share that slot with IR just like `let`. Reject scripts and merged/repeated
+  // declarations: their hoisting/global-alias rules are wider than this exact
+  // source-owned capability.
+  if (!ts.isExternalModule(sourceFile)) return undefined;
+  const declaredType = checker.getTypeAtLocation(declaration.name);
+  if ((declaredType.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) === 0) return undefined;
+  const sameSourceDeclarations = new Set(
+    candidates.filter(
+      (candidate): candidate is ts.Declaration =>
+        candidate !== undefined && candidate.getSourceFile() === sourceFile && !ts.isExportSpecifier(candidate),
+    ),
+  );
+  return sameSourceDeclarations.size === 1 && sameSourceDeclarations.has(declaration) ? declaration : undefined;
 }
 
 function localVariableDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.VariableDeclaration | undefined {
@@ -1114,6 +1185,296 @@ function writeValueMatches(
   return targetKind.kind !== "i32" || (valueKind.kind === "i32" && valueKind.semantic === targetKind.semantic);
 }
 
+function exactTopLevelVariableDeclaration(
+  node: ts.Identifier,
+  checker: ts.TypeChecker,
+): ts.VariableDeclaration | undefined {
+  const symbol = checker.getSymbolAtLocation(node);
+  if (!symbol) return undefined;
+  const sourceFile = node.getSourceFile();
+  const candidates = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
+  const declarations = new Set(
+    candidates.filter(
+      (candidate): candidate is ts.VariableDeclaration =>
+        candidate !== undefined &&
+        ts.isVariableDeclaration(candidate) &&
+        candidate.getSourceFile() === sourceFile &&
+        ts.isIdentifier(candidate.name) &&
+        ts.isVariableDeclarationList(candidate.parent) &&
+        ts.isVariableStatement(candidate.parent.parent) &&
+        candidate.parent.parent.parent === sourceFile,
+    ),
+  );
+  return declarations.size === 1 ? [...declarations][0] : undefined;
+}
+
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+}
+
+function identifierIsWritten(node: ts.Identifier): boolean {
+  let target: ts.Node = node;
+  let parent = target.parent;
+  while (
+    (ts.isParenthesizedExpression(parent) && parent.expression === target) ||
+    (ts.isArrayLiteralExpression(parent) && parent.elements.includes(target as ts.Expression)) ||
+    (ts.isObjectLiteralExpression(parent) && parent.properties.includes(target as ts.ObjectLiteralElementLike)) ||
+    (ts.isPropertyAssignment(parent) && parent.initializer === target) ||
+    (ts.isShorthandPropertyAssignment(parent) && parent.name === target) ||
+    (ts.isSpreadElement(parent) && parent.expression === target) ||
+    (ts.isSpreadAssignment(parent) && parent.expression === target)
+  ) {
+    target = parent;
+    parent = target.parent;
+  }
+  if (ts.isBinaryExpression(parent) && parent.left === target && isAssignmentOperator(parent.operatorToken.kind)) {
+    return true;
+  }
+  if (
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return true;
+  }
+  return (ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === target;
+}
+
+function isVarModuleDeclaration(declaration: ts.VariableDeclaration): boolean {
+  return (
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+  );
+}
+
+function sourceBindingIsStable(checker: ts.TypeChecker, declaration: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(declaration.name)) return false;
+  const symbol = checker.getSymbolAtLocation(declaration.name);
+  if (!symbol) return false;
+  let stable = true;
+  const visit = (node: ts.Node): void => {
+    if (!stable) return;
+    if (ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === symbol && identifierIsWritten(node)) {
+      stable = false;
+      return;
+    }
+    node.forEachChild(visit);
+  };
+  declaration.getSourceFile().forEachChild(visit);
+  return stable;
+}
+
+function matchingRetainedMethodAssignment(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  receiverSymbol: ts.Symbol,
+  methodName: string,
+): ts.BinaryExpression | undefined {
+  const writes: ts.BinaryExpression[] = [];
+  let unsupportedWrite = false;
+  const visit = (node: ts.Node): void => {
+    if (unsupportedWrite) return;
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.name.text === methodName &&
+      checker.getSymbolAtLocation(node.expression) === receiverSymbol
+    ) {
+      const parent = node.parent;
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.left === node &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        writes.push(parent);
+      } else if (
+        (ts.isBinaryExpression(parent) && parent.left === node && isAssignmentOperator(parent.operatorToken.kind)) ||
+        ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+          (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
+        (ts.isDeleteExpression(parent) && parent.expression === node)
+      ) {
+        unsupportedWrite = true;
+        return;
+      }
+    }
+    node.forEachChild(visit);
+  };
+  sourceFile.forEachChild(visit);
+  if (unsupportedWrite || writes.length !== 1) return undefined;
+  const assignment = writes[0]!;
+  return ts.isExpressionStatement(assignment.parent) && assignment.parent.parent === sourceFile
+    ? assignment
+    : undefined;
+}
+
+/**
+ * Prove that a retained-call argument can cross the receiver-first dynamic
+ * dispatcher bridge without a build-time representation guess.
+ *
+ * Dynamic values pass through, numbers and strings have canonical boxes, and
+ * reference values use the established externalization path. Boolean values
+ * deliberately remain excluded: their i32 carrier is ambiguous at this seam
+ * unless the lowerer also receives an exact boolean-brand proof.
+ */
+function retainedMethodArgumentIsBridgeable(checker: ts.TypeChecker, argument: ts.Expression): boolean {
+  const type = checker.getTypeAtLocation(unwrapParens(argument));
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return true;
+  if ((type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.StringLike)) !== 0) return true;
+  if ((type.flags & (ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !== 0) return true;
+  return false;
+}
+
+function makeRetainedFunctionMethodPlan(
+  checker: ts.TypeChecker,
+  call: ts.CallExpression,
+): IrRetainedFunctionMethodPlan | undefined {
+  if (
+    call.questionDotToken ||
+    call.typeArguments?.length ||
+    !ts.isPropertyAccessExpression(call.expression) ||
+    !ts.isIdentifier(call.expression.expression) ||
+    !ts.isIdentifier(call.expression.name) ||
+    call.arguments.some(ts.isSpreadElement)
+  ) {
+    return undefined;
+  }
+  if (call.arguments.some((argument) => !retainedMethodArgumentIsBridgeable(checker, argument))) {
+    return undefined;
+  }
+  const receiver = call.expression.expression;
+  const receiverDeclaration = exactTopLevelVariableDeclaration(receiver, checker);
+  const receiverTarget = receiverDeclaration?.initializer ? unwrapParens(receiverDeclaration.initializer) : undefined;
+  if (
+    !receiverDeclaration ||
+    !receiverTarget ||
+    !ts.isFunctionExpression(receiverTarget) ||
+    !isVarModuleDeclaration(receiverDeclaration) ||
+    !sourceBindingIsStable(checker, receiverDeclaration)
+  ) {
+    return undefined;
+  }
+  const receiverSymbol = checker.getSymbolAtLocation(receiver);
+  if (!receiverSymbol || checker.getSymbolAtLocation(receiverDeclaration.name) !== receiverSymbol) return undefined;
+  const methodName = call.expression.name.text;
+  const assignment = matchingRetainedMethodAssignment(
+    checker,
+    receiverDeclaration.getSourceFile(),
+    receiverSymbol,
+    methodName,
+  );
+  const methodTarget = assignment ? unwrapParens(assignment.right) : undefined;
+  if (
+    !methodTarget ||
+    !ts.isFunctionExpression(methodTarget) ||
+    methodTarget.asteriskToken ||
+    methodTarget.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    methodTarget.typeParameters?.length ||
+    call.arguments.length !== methodTarget.parameters.length ||
+    methodTarget.parameters.some(
+      (parameter) =>
+        !ts.isIdentifier(parameter.name) ||
+        parameter.dotDotDotToken !== undefined ||
+        parameter.questionToken !== undefined ||
+        parameter.initializer !== undefined,
+    )
+  ) {
+    return undefined;
+  }
+  return {
+    receiverDeclaration,
+    receiverTarget,
+    methodTarget,
+    receiverName: receiver.text,
+    methodName,
+    arity: call.arguments.length,
+  };
+}
+
+function staticStringFromExpression(
+  checker: ts.TypeChecker,
+  expression: ts.Expression,
+  seen: Set<ts.VariableDeclaration>,
+): string | undefined {
+  const value = unwrapParens(expression);
+  if (ts.isStringLiteralLike(value)) return value.text;
+  if (ts.isNoSubstitutionTemplateLiteral(value)) return value.text;
+  if (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = staticStringFromExpression(checker, value.left, new Set(seen));
+    if (left === undefined) return undefined;
+    const right = staticStringFromExpression(checker, value.right, new Set(seen));
+    return right === undefined ? undefined : left + right;
+  }
+  if (!ts.isIdentifier(value)) return undefined;
+  const declaration = exactTopLevelVariableDeclaration(value, checker);
+  if (!declaration?.initializer || seen.has(declaration) || !sourceBindingIsStable(checker, declaration)) {
+    return undefined;
+  }
+  const nextSeen = new Set(seen);
+  nextSeen.add(declaration);
+  return staticStringFromExpression(checker, declaration.initializer, nextSeen);
+}
+
+function staticRegExpInitializer(
+  checker: ts.TypeChecker,
+  initializer: ts.Expression,
+): { readonly pattern: string; readonly flags: string } | undefined {
+  const value = unwrapParens(initializer);
+  if (value.kind === ts.SyntaxKind.RegularExpressionLiteral) {
+    const text = value.getText();
+    const lastSlash = text.lastIndexOf("/");
+    if (lastSlash <= 0) return undefined;
+    return { pattern: text.slice(1, lastSlash), flags: text.slice(lastSlash + 1) };
+  }
+  if (!ts.isNewExpression(value) && !ts.isCallExpression(value)) return undefined;
+  if (!ts.isIdentifier(value.expression) || value.expression.text !== "RegExp") return undefined;
+  const constructorSymbol = checker.getSymbolAtLocation(value.expression);
+  if (
+    constructorSymbol &&
+    (constructorSymbol.declarations ?? []).some((declaration) => !declaration.getSourceFile().isDeclarationFile)
+  ) {
+    return undefined;
+  }
+  const args = value.arguments ?? [];
+  if (args.length < 1 || args.length > 2 || args.some(ts.isSpreadElement)) return undefined;
+  const pattern = staticStringFromExpression(checker, args[0]!, new Set());
+  if (pattern === undefined) return undefined;
+  const flags = args[1] === undefined ? "" : staticStringFromExpression(checker, args[1], new Set());
+  if (flags === undefined || flags.includes("g") || flags.includes("y")) return undefined;
+  return { pattern, flags };
+}
+
+function makeStaticRegExpTestPlan(checker: ts.TypeChecker, node: ts.Expression): IrStaticRegExpTestPlan | undefined {
+  if (!ts.isIdentifier(node)) return undefined;
+  const declaration = exactTopLevelVariableDeclaration(node, checker);
+  if (
+    !declaration?.initializer ||
+    !isVarModuleDeclaration(declaration) ||
+    !sourceBindingIsStable(checker, declaration)
+  ) {
+    return undefined;
+  }
+  const initializer = staticRegExpInitializer(checker, declaration.initializer);
+  return initializer ? { declaration, ...initializer } : undefined;
+}
+
+function makeStaticNumericArrayPlan(
+  checker: ts.TypeChecker,
+  node: ts.Expression,
+): IrStaticNumericArrayPlan | undefined {
+  if (!ts.isIdentifier(node)) return undefined;
+  const declaration = exactTopLevelVariableDeclaration(node, checker);
+  if (
+    !declaration?.initializer ||
+    !isVarModuleDeclaration(declaration) ||
+    !ts.isArrayLiteralExpression(unwrapParens(declaration.initializer)) ||
+    !sourceBindingIsStable(checker, declaration)
+  ) {
+    return undefined;
+  }
+  const type = checker.getTypeAtLocation(declaration.name);
+  const element = type.getNumberIndexType();
+  return element && (element.flags & ts.TypeFlags.NumberLike) !== 0 ? { declaration } : undefined;
+}
+
 export function makeIrLegacyModuleBindingResolver(
   checker: ts.TypeChecker,
   options: IrModuleBindingResolverOptions,
@@ -1135,12 +1496,13 @@ export function makeIrLegacyModuleBindingResolver(
     ) {
       return { kind: "unsupported", declaration };
     }
-    const mutable = (list.flags & ts.NodeFlags.Let) !== 0;
+    const isModuleVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
+    const mutable = isModuleVar || (list.flags & ts.NodeFlags.Let) !== 0;
     if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration };
 
     const declaredType = checker.getTypeAtLocation(declaration.name);
     let valueKind = scalarKind(declaredType, options);
-    if (!valueKind && options.allowHostExterns) {
+    if (!valueKind && !isModuleVar && options.allowHostExterns) {
       const className = externClassNameForType(declaredType, checker, options);
       if (className) {
         valueKind = { kind: "extern", className };
@@ -1268,6 +1630,27 @@ export function makeIrLegacyModuleBindingResolver(
         return false;
       }
     },
+    staticRegExpTestPlan(node: ts.Expression): IrStaticRegExpTestPlan | undefined {
+      try {
+        return makeStaticRegExpTestPlan(checker, node);
+      } catch {
+        return undefined;
+      }
+    },
+    staticNumericArrayPlan(node: ts.Expression): IrStaticNumericArrayPlan | undefined {
+      try {
+        return makeStaticNumericArrayPlan(checker, node);
+      } catch {
+        return undefined;
+      }
+    },
+    retainedFunctionMethodPlan(call: ts.CallExpression): IrRetainedFunctionMethodPlan | undefined {
+      try {
+        return makeRetainedFunctionMethodPlan(checker, call);
+      } catch {
+        return undefined;
+      }
+    },
   });
 }
 
@@ -1289,10 +1672,10 @@ export function makeIrModuleBindingResolver(
   if (!identityContext) return legacy;
 
   const ownerAt = (node: ts.Node): IrUnitId => requireIrPlanningOwnerUnitId(identityContext, node);
-  const bindingIdentity = (
-    identity: IrLegacyModuleBindingIdentity,
+  const bindingLocation = (
+    declaration: ts.VariableDeclaration,
   ): Pick<IrModuleBindingIdentity, "globalBindingId" | "tdzBindingId" | "sourceId" | "declarationOrdinal"> => {
-    const sourceFile = identity.declaration.getSourceFile();
+    const sourceFile = declaration.getSourceFile();
     const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
     if (identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
       return planningInvariant(
@@ -1304,8 +1687,8 @@ export function makeIrModuleBindingResolver(
     let found = false;
     for (const statement of sourceFile.statements) {
       if (!ts.isVariableStatement(statement)) continue;
-      for (const declaration of statement.declarationList.declarations) {
-        if (declaration === identity.declaration) {
+      for (const candidate of statement.declarationList.declarations) {
+        if (candidate === declaration) {
           found = true;
           break;
         }
@@ -1326,6 +1709,10 @@ export function makeIrModuleBindingResolver(
       declarationOrdinal,
     };
   };
+  const bindingIdentity = (
+    identity: IrLegacyModuleBindingIdentity,
+  ): Pick<IrModuleBindingIdentity, "globalBindingId" | "tdzBindingId" | "sourceId" | "declarationOrdinal"> =>
+    bindingLocation(identity.declaration);
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrModuleBindingInspection => {
     const ownerUnitId = ownerAt(node);
     const inspected = legacy.inspectDirectBinding(node, writeValue);
@@ -1377,6 +1764,43 @@ export function makeIrModuleBindingResolver(
       ownerAt(node);
       return legacy.bindingValueMatches(node, value);
     },
+    staticRegExpTestPlan(node: ts.Expression): IrStaticRegExpTestPlan | undefined {
+      ownerAt(node);
+      const plan = legacy.staticRegExpTestPlan(node);
+      return plan ? { ...plan, ...bindingLocation(plan.declaration) } : undefined;
+    },
+    staticNumericArrayPlan(node: ts.Expression): IrStaticNumericArrayPlan | undefined {
+      ownerAt(node);
+      const plan = legacy.staticNumericArrayPlan(node);
+      return plan ? { ...plan, ...bindingLocation(plan.declaration) } : undefined;
+    },
+    retainedFunctionMethodPlan(call: ts.CallExpression): IrRetainedFunctionMethodPlan | undefined {
+      ownerAt(call);
+      const plan = legacy.retainedFunctionMethodPlan(call);
+      if (!plan) return undefined;
+      const receiverUnitId = identityContext.unitIdByDeclaration.get(plan.receiverTarget);
+      const methodUnitId = identityContext.unitIdByDeclaration.get(plan.methodTarget);
+      if (
+        receiverUnitId === undefined ||
+        methodUnitId === undefined ||
+        identityContext.declarationByUnitId.get(receiverUnitId) !== plan.receiverTarget ||
+        identityContext.declarationByUnitId.get(methodUnitId) !== plan.methodTarget
+      ) {
+        return planningInvariant(
+          "missing-unit-declaration",
+          `retained ${plan.receiverName}.${plan.methodName} call has no exact function-expression identity`,
+        );
+      }
+      const receiverLocation = bindingLocation(plan.receiverDeclaration);
+      return {
+        ...plan,
+        receiverUnitId,
+        methodUnitId,
+        receiverGlobalBindingId: receiverLocation.globalBindingId,
+        receiverSourceId: receiverLocation.sourceId,
+        receiverDeclarationOrdinal: receiverLocation.declarationOrdinal,
+      };
+    },
   });
 }
 
@@ -1424,5 +1848,8 @@ export function projectIrModuleBindingResolverToLegacy(
     scalarExpressionFamily: (expr: ts.Expression) => resolver.scalarExpressionFamily(expr),
     supportsHostNumberToString: resolver.supportsHostNumberToString,
     bindingValueMatches: (node: ts.Identifier, value: ts.Expression) => resolver.bindingValueMatches(node, value),
+    staticRegExpTestPlan: (node: ts.Expression) => resolver.staticRegExpTestPlan(node),
+    staticNumericArrayPlan: (node: ts.Expression) => resolver.staticNumericArrayPlan(node),
+    retainedFunctionMethodPlan: (call: ts.CallExpression) => resolver.retainedFunctionMethodPlan(call),
   });
 }

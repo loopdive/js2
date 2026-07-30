@@ -121,14 +121,18 @@ export interface TypeOracle {
    */
   variableInitializerOf(id: ts.Node): ts.Expression | undefined;
   /**
+   * Value declaration for an identifier binding. Returning the AST declaration
+   * keeps declaration-source and binding-identity proofs inside the oracle
+   * boundary without exposing the checker Symbol.
+   */
+  valueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
+  /**
    * Variable declaration for a plain identifier binding. Returning the AST
    * declaration (rather than the checker Symbol) keeps binding-identity
    * queries inside the oracle boundary while allowing callers to inspect
    * declaration syntax such as `var` versus `let`/`const`.
    */
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined;
-  /** Value declaration bound to an identifier, without exposing a checker Symbol. */
-  valueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
 }
 
 /** Builtins with first-class compiler handling (mirrors type-mapper's set —
@@ -319,9 +323,7 @@ export class TsCheckerOracle implements TypeOracle {
 
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined {
     try {
-      if (!ts.isIdentifier(id)) return undefined;
-      const sym = this.checker.getSymbolAtLocation(id);
-      const decl = sym?.valueDeclaration;
+      const decl = this.valueDeclarationOf(id);
       if (!decl || !ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) {
         return undefined;
       }

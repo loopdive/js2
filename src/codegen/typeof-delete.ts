@@ -12,7 +12,7 @@ import { reportError } from "./context/errors.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
-import { EVAL_SOURCE_FILENAME } from "./expressions/eval-inline.js";
+import { EVAL_SOURCE_FILENAME } from "./expressions/eval-source.js";
 import {
   emitUndefined,
   ensureLateImport,

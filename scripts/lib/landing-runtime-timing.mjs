@@ -6,6 +6,46 @@ import { spawnSync } from "node:child_process";
 
 import { landingWasmtimeRunArgs } from "./landing-wasmtime-runtime.mjs";
 
+export function landingAuxiliaryRuntimeSource(source, arg, iterations = 1) {
+  if (typeof source !== "string" || !source) throw new Error("auxiliary source must be non-empty");
+  if (!Number.isFinite(arg)) throw new Error("auxiliary runtime argument must be finite");
+  if (!Number.isSafeInteger(iterations) || iterations <= 0) {
+    throw new Error("auxiliary batch iterations must be a positive safe integer");
+  }
+  const programBody = source
+    .replace(/export const benchmark[\s\S]*?};\n/, "")
+    .replace(/\bexport\s+function\s+run\b/, "function __benchRun");
+  if (!programBody.includes("function __benchRun")) {
+    throw new Error("unable to rewrite exported run() for auxiliary runtime wrapper");
+  }
+  const invocation = `__benchSink = (__benchSink + (__benchRun(${arg}) | 0)) | 0;`;
+  const runBody =
+    iterations === 1
+      ? `  ${invocation}`
+      : `  for (let __benchIteration = 0; __benchIteration < ${iterations}; __benchIteration++) {
+    ${invocation}
+  }`;
+  return `${programBody}
+let __benchSink = 0;
+export function run() {
+${runBody}
+}
+`;
+}
+
+export function normalizeBatchedRuntimeSamples(samplesMs, iterations) {
+  if (!Array.isArray(samplesMs) || samplesMs.length === 0) {
+    throw new Error("batched runtime samples must be a non-empty array");
+  }
+  if (!Number.isSafeInteger(iterations) || iterations <= 0) {
+    throw new Error("batch iterations must be a positive safe integer");
+  }
+  if (samplesMs.some((sample) => typeof sample !== "number" || !Number.isFinite(sample) || sample <= 0)) {
+    throw new Error("batched runtime samples must contain positive finite numbers");
+  }
+  return samplesMs.map((sample) => sample / iterations);
+}
+
 export function landingVmScriptSource(sourcePath) {
   const source = readFileSync(sourcePath, "utf8");
   const programBody = source
@@ -49,6 +89,10 @@ export function landingNodeWarmSample(childPath, sourcePath, arg) {
 
 /** Existing #1764 warm-engine / fresh-store+instance Wasmtime methodology. */
 export function landingWasmtimeFreshInstanceSamples(hostPath, wasmPath, arg, runs, options = {}) {
+  return landingWasmtimeHostSamples(hostPath, wasmPath, arg, runs, options);
+}
+
+function landingWasmtimeHostSamples(hostPath, wasmPath, arg, runs, options) {
   const args = [];
   if (options.component) args.push("--component");
   for (const preload of options.preloads ?? []) args.push("--preload", `${preload.name}=${preload.path}`);
@@ -60,7 +104,7 @@ export function landingWasmtimeFreshInstanceSamples(hostPath, wasmPath, arg, run
     maxBuffer: 16 * 1024 * 1024,
   });
   if (result.status !== 0) {
-    throw new Error(`Wasmtime cold host failed (exit ${result.status}): ${(result.stderr ?? "").slice(0, 800)}`);
+    throw new Error(`Wasmtime benchmark host failed (exit ${result.status}): ${(result.stderr ?? "").slice(0, 800)}`);
   }
   const parsed = parseLandingWasmtimeColdHostOutput(result.stdout, runs);
   return { ...parsed, command };

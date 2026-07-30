@@ -60,6 +60,7 @@ import {
   typedArrayPackedSignedness,
   typedArrayVecStorage,
 } from "./index.js";
+import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
@@ -502,6 +503,62 @@ export function runtimeAccessorDescriptorKey(
   const flags = ctx.definedPropertyFlags.get(dpfKey);
   if (flags !== undefined && (flags & DESCRIPTOR_FLAG_ACCESSOR) !== 0 && ctx.sidecarDefinedPropertyKeys.has(bareKey)) {
     return bareKey;
+  }
+
+  // (#3782) A function-constructor instance can have a same-named inferred
+  // struct field even though Object.defineProperties installed that name on
+  // its prototype at runtime. The whole-program fnctor analysis already
+  // resolves descriptor-map keys; route those reads through the native
+  // prototype sidecar before the inferred field fast path.
+  const receiverTypeName = ctx.fnctorEscapeGate?.receiverStruct.get(receiver) ?? ctx.oracle.declaredNameOf(receiver);
+  const receiverOwner = receiverTypeName?.startsWith("__fnctor_")
+    ? receiverTypeName.slice("__fnctor_".length)
+    : receiverTypeName;
+  if (receiverOwner && ctx.fnctorEscapeGate?.protoMethodWriteOnce.runtimeDefined.get(receiverOwner)?.has(propName)) {
+    return bareKey;
+  }
+  if (
+    ctx.standalone &&
+    [...(ctx.fnctorEscapeGate?.protoMethodWriteOnce.runtimeDefined.values() ?? [])].some((keys) => keys.has(propName))
+  ) {
+    return bareKey;
+  }
+  if (ctx.standalone) {
+    let installedOnFnctorPrototype = false;
+    const visitPrototypeDescriptors = (node: ts.Node): void => {
+      if (installedOnFnctorPrototype) return;
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "Object" &&
+        node.expression.name.text === "defineProperties" &&
+        ts.isPropertyAccessExpression(node.arguments[0]) &&
+        node.arguments[0].name.text === "prototype"
+      ) {
+        const descriptors = node.arguments[1];
+        if (descriptors && ts.isIdentifier(descriptors)) {
+          const declaration = ctx.oracle.variableDeclarationOf(descriptors);
+          const initializer = declaration?.initializer;
+          if (
+            initializer &&
+            ts.isObjectLiteralExpression(initializer) &&
+            initializer.properties.some(
+              (property) =>
+                ts.isPropertyAssignment(property) &&
+                (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+                property.name.text === propName,
+            )
+          ) {
+            installedOnFnctorPrototype = true;
+            return;
+          }
+        }
+      }
+      ts.forEachChild(node, visitPrototypeDescriptors);
+    };
+    visitPrototypeDescriptors(receiver.getSourceFile());
+    if (installedOnFnctorPrototype) return bareKey;
   }
 
   // The source fallback below exists for module globals whose function bodies
@@ -2948,6 +3005,92 @@ function tryStandaloneGrowableDynamicGet(
   return { kind: "externref" };
 }
 
+/**
+ * Read `<proven fnctor>.<dynamic-object-field>.<prop>` through the canonical
+ * standalone `$Object` lookup directly.
+ *
+ * The generic member-read finalizer cannot see the value provenance of the
+ * intermediate externref, so it emits a call-site closed-struct candidate
+ * ladder before reaching `__extern_get`. Fields such as acorn's
+ * `Parser.options` are initialized by a function proven to return an open
+ * `$Object`; `__extern_get` already contains the complete native-struct
+ * fallback and, importantly, its per-(receiver,key) cache runs before that
+ * ladder. Calling it directly therefore removes duplicate dispatch without
+ * narrowing semantics if the mutable field is later replaced.
+ */
+function tryKnownFnctorDynamicObjectCarrierGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.PropertyAccessExpression,
+  propName: string,
+): ValType | undefined {
+  // Narrow rollback switch used by the Acorn exact A/B benchmark.
+  if (process.env.JS2WASM_TYPED_OPEN_CARRIER_READS === "0") return undefined;
+  if (!ctx.standalone) return undefined;
+  if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
+  const carrierRead = expr.expression;
+  const carrierOwner =
+    carrierRead.expression.kind === ts.SyntaxKind.ThisKeyword
+      ? (fctx.typedThisStructName ?? resolveReceiverStruct(ctx, fctx, carrierRead.expression))
+      : resolveReceiverStruct(ctx, fctx, carrierRead.expression);
+  let carrierField = carrierOwner
+    ? ctx.structFields.get(carrierOwner)?.find((field) => field.name === carrierRead.name.text)
+    : undefined;
+  // Constructor-parameter flow can lose its concrete fnctor owner even though
+  // the field provenance remains unique module-wide (Acorn's
+  // `Node(parser).parser.options`). Calling the canonical getter is semantics-
+  // preserving for every receiver representation; the name-level proof merely
+  // keeps this performance shortcut scoped to fields that really carry an open
+  // object somewhere in the program.
+  if (carrierField?.dynamicObjectCarrier !== true) {
+    const matching = [...ctx.structFields.values()]
+      .flat()
+      .filter((field) => field.name === carrierRead.name.text && field.dynamicObjectCarrier === true);
+    if (matching.length === 1) carrierField = matching[0];
+  }
+  if (carrierField?.dynamicObjectCarrier !== true || carrierField.type.kind !== "externref") return undefined;
+  if (
+    propName === "length" ||
+    propName === "constructor" ||
+    propName === "__proto__" ||
+    propName === "prototype" ||
+    propName === "name"
+  ) {
+    return undefined;
+  }
+  if (ctx.oracle.signatureOf(expr) !== undefined) return undefined;
+
+  const getIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  if (getIdx === undefined) return undefined;
+  addStringConstantGlobal(ctx, propName);
+  flushLateImportShifts(ctx, fctx);
+  const recvType = compileExpression(ctx, fctx, carrierRead);
+  if (!recvType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (recvType.kind !== "externref") {
+    coerceType(ctx, fctx, recvType, { kind: "externref" });
+  }
+  const recvTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: recvTmp });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: typeErrorThrowInstrs(ctx, expr),
+    else: [],
+  });
+  fctx.body.push({ op: "local.get", index: recvTmp });
+  releaseTempLocal(fctx, recvTmp);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  return { kind: "externref" };
+}
+
 export function compilePropertyAccess(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3011,6 +3154,11 @@ export function compilePropertyAccess(
 
   {
     const __r = tryStandaloneGrowableDynamicGet(ctx, fctx, expr, propName);
+    if (__r !== undefined) return __r;
+  }
+
+  {
+    const __r = tryKnownFnctorDynamicObjectCarrierGet(ctx, fctx, expr, propName);
     if (__r !== undefined) return __r;
   }
 
@@ -4274,14 +4422,13 @@ export function compileElementAccessBody(
       const recvLocal = allocLocal(fctx, `__nve_recv_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: recvLocal });
       // (#3007) index → f64 → idxLocal, compiled BEFORE the fast-path funcIdxs are
-      // captured. A computed index (`a[a.length - 1]`) lowers its own dynamic
-      // reads, which can register late imports and shift every DEFINED-function
+      // captured. A computed index lowers reads that can register late imports and shift every DEFINED-function
       // index — including `__vec_get`. The pre-#3007 order captured `__vec_get`
       // BEFORE this compile, so the index's imports left it stale; the desynced
       // `then` arm emitted an invalid instruction stream (`f64.convert_i32_s` on
       // the externref receiver → "expected i32, found externref", invalid Wasm).
-      // Resolving the imports and `__vec_get` AFTER the index compile (single
-      // flush) keeps every funcIdx live through emission. For a non-import-adding
+      // Resolving imports and `__vec_get` AFTER the index compile (single flush)
+      // keeps every funcIdx live through emission. For a non-import-adding
       // index (e.g. a literal) the import order is identical, so valid output is
       // byte-for-byte unchanged.
       compileExpression(ctx, fctx, expr.argumentExpression, { kind: "f64" });
@@ -4295,7 +4442,7 @@ export function compileElementAccessBody(
       );
       const boxNumIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
       flushLateImportShifts(ctx, fctx);
-      const vgIdx = ctx.funcMap.get("__vec_get") ?? reserveVecMethodHelper(ctx, "get");
+      const vgIdx = resolveVecHostBridgeHelper(ctx, "get") ?? reserveVecMethodHelper(ctx, "get");
       if (vgIdx !== undefined && extGetIdx !== undefined && boxNumIdx !== undefined) {
         // isVec = OR of ref.test over the registered vec carriers.
         const anyTmp = allocLocal(fctx, `__nve_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
@@ -4388,8 +4535,8 @@ export function compileElementAccessBody(
         [{ kind: "externref" }],
       );
       flushLateImportShifts(ctx, fctx);
-      const vgIdx = ctx.funcMap.get("__vec_get") ?? reserveVecMethodHelper(ctx, "get");
-      const vlIdx = ctx.funcMap.get("__vec_len") ?? reserveVecMethodHelper(ctx, "len");
+      const vgIdx = resolveVecHostBridgeHelper(ctx, "get") ?? reserveVecMethodHelper(ctx, "get");
+      const vlIdx = resolveVecHostBridgeHelper(ctx, "len") ?? reserveVecMethodHelper(ctx, "len");
       if (unboxIdx !== undefined && extGetIdx !== undefined && vgIdx !== undefined && vlIdx !== undefined) {
         const idxF64 = allocLocal(fctx, `__dyn_idxf_${fctx.locals.length}`, { kind: "f64" });
         const idxI32 = allocLocal(fctx, `__dyn_idxi_${fctx.locals.length}`, { kind: "i32" });

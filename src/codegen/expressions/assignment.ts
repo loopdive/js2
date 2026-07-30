@@ -91,6 +91,7 @@ import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.j
 import { tryCompileStandaloneDetachedWrite } from "../dataview-native.js"; // (#3173) $DETACHBUFFER marker write
 import { externrefBackedOwnFieldBacking, getOrRegisterErrorStructType } from "../registry/error-types.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
+import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { resolveEffectiveStructName } from "../property-access.js";
 import {
@@ -3938,10 +3939,9 @@ function compilePropertyAssignment(
   // `new Foo()`, `this`) — no trap is possible there and the check is dead
   // weight. Mirrors the array-element write guard below (`isProvablyNonNull`).
   const guardNull = structObjResult.kind === "ref_null" && !isProvablyNonNull(target.expression, ctx.checker);
-  const valType = compileExpression(ctx, fctx, value, fields[fieldIdx]!.type);
-  if (!valType) return null;
-  // Save value so the assignment expression returns the RHS.
-  const tmpVal = allocLocal(fctx, `__prop_assign_${fctx.locals.length}`, valType);
+  const trackedValue = compileCoercionRhs(ctx, fctx, value, fields[fieldIdx]!.type, typeName, fieldName);
+  if (!trackedValue) return null;
+  const [valType, tmpVal] = trackedValue;
   if (guardNull) {
     // stack: [receiver, value] — stash value, then null-check the receiver.
     fctx.body.push({ op: "local.set", index: tmpVal });

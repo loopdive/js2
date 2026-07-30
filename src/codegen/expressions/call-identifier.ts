@@ -73,6 +73,7 @@ import {
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
+import { isForeignEvalNode } from "./eval-source.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import {
@@ -771,6 +772,13 @@ export function compileIdentifierCall(
         if (isStringType(argTsType)) {
           // Already a native string — return as-is
           return argType;
+        }
+        // Native/standalone object ToString needs a real `$AnyString` result.
+        // The coercion engine dispatches a statically-known toString/valueOf
+        // method in Wasm and normalizes every primitive result, including a
+        // void-returning method's legitimate `undefined`.
+        if (ctx.nativeStrings) {
+          return emitToString(ctx, fctx, argType, argTsType, "string");
         }
         // Object ref → coerce via @@toPrimitive("string") or toString(), else "[object Object]"
         coerceType(ctx, fctx, argType, { kind: "externref" }, "string");
@@ -2354,13 +2362,12 @@ export function compileIdentifierCall(
       maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, paramCount);
     }
 
-    // Re-lookup funcIdx: argument compilation may trigger addUnionImports
-    // which shifts defined-function indices, making the earlier lookup stale.
+    // Argument compilation may shift defined-function indices.
     const finalFuncIdx = ctx.funcMap.get(funcName) ?? funcIdx;
     fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
-
-    // Determine return type from function signature
-    const sig = ctx.checker.getResolvedSignature(expr);
+    // Foreign eval calls lack checker signatures; the resolved Wasm signature is authoritative.
+    if (isForeignEvalNode(expr) && wasmFuncReturnsVoid(ctx, finalFuncIdx)) return VOID_RESULT;
+    const sig = isForeignEvalNode(expr) ? undefined : ctx.checker.getResolvedSignature(expr);
     if (sig) {
       const retType = ctx.checker.getReturnTypeOfSignature(sig);
       if (isEffectivelyVoidReturn(ctx, retType, funcName)) return VOID_RESULT;

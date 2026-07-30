@@ -5,12 +5,12 @@ status: in-progress
 assignee: ttraenkler/codex-r1
 claimed_by: codex-r1
 claimed_at: 2026-07-21T20:23:19Z
-branch: codex/3520-c14-global-abi
-pr: 3752
-last_merged_pr: 3679
+branch: codex/3520-c29-function-value-abi
+pr: 3799
+last_merged_pr: 3798
 sprint: current
 created: 2026-07-21
-updated: 2026-07-28
+updated: 2026-07-29
 priority: critical
 horizon: l
 complexity: L
@@ -82,29 +82,51 @@ files:
   - src/position-map.ts
   - src/process-stdin-prelude.ts
   - src/codegen/class-member-keys.ts
+  - src/codegen/class-bodies.ts
   - src/codegen/class-layout-registration.ts
   - src/codegen/context/types.ts
   - src/codegen/context/create-context.ts
   - src/codegen/dead-elimination.ts
+  - src/codegen/declarations.ts
+  - src/codegen/statements/nested-declarations.ts
   - src/codegen/func-space.ts
+  - src/codegen/module-global-registration.ts
+  - src/codegen/program-abi-class-callable-planning.ts
+  - src/codegen/program-abi-callable-planning.ts
+  - src/codegen/program-abi-export-planning.ts
+  - src/codegen/program-abi-finalization.ts
   - src/codegen/program-abi-import-planning.ts
   - src/codegen/program-abi-global-planning.ts
+  - src/codegen/program-abi-module-init-planning.ts
+  - src/codegen/program-abi-source-callable-planning.ts
   - src/codegen/program-abi-planning.ts
+  - src/codegen/closure-exports.ts
   - src/codegen/program-abi-signatures.ts
   - src/codegen/program-abi-session.ts
   - src/codegen/program-abi-type-planning.ts
+  - src/codegen/property-access.ts
+  - src/codegen/closed-method-dispatch.ts
+  - src/codegen/vec-access-exports.ts
+  - src/runtime.ts
   - src/codegen/ir-first-gate.ts
   - src/codegen/ir-class-shapes.ts
   - src/codegen/ir-overlay-identity.ts
   - src/codegen/ir-overlay-finalize.ts
   - src/codegen/ir-overlay-outcomes.ts
   - src/codegen/ir-overlay-safety.ts
+  - src/codegen/closures.ts
+  - src/codegen/closures/funcref-as-closure.ts
+  - src/codegen/closures/method-trampolines.ts
   - src/codegen/index.ts
+  - src/runtime.ts
   - src/codegen/stdlib-selfhost.ts
   - docs/ir/ir-contract.md
   - docs/ir/ir-module.schema.json
   - benchmarks/allocation-policy-proof.ts
   - tests/helpers/ir-identities.ts
+  - tests/issue-3520-class-member-alias-abi.test.ts
+  - tests/issue-3520-host-class-callable-abi.test.ts
+  - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/backend-contract.test.ts
   - tests/issue-3520-function-artifact-identity.test.ts
   - tests/issue-3520-lifted-program-abi.test.ts
@@ -136,21 +158,34 @@ files:
   - tests/issue-3520-program-abi-callable-planning.test.ts
   - tests/issue-3520-program-abi-type-remap.test.ts
   - tests/issue-3520-support-callable-abi.test.ts
+  - tests/issue-3520-vec-support-callable-abi.test.ts
   - tests/issue-3520-class-support-callable-abi.test.ts
+  - tests/issue-3520-class-integration-callable-abi.test.ts
   - tests/issue-3520-class-method-alias-abi.test.ts
+  - tests/issue-3520-closure-host-bridge-abi.test.ts
+  - tests/issue-3520-module-init-callable-abi.test.ts
+  - tests/issue-3520-source-callable-abi.test.ts
   - tests/issue-3520-type-class-abi.test.ts
   - tests/issue-3520-global-population-abi.test.ts
+  - tests/issue-3520-module-global-integration-abi.test.ts
+  - tests/issue-3520-callable-export-population-abi.test.ts
   - tests/issue-3520-program-abi-import-callable-planning.test.ts
   - tests/issue-3520-imported-callable-abi.test.ts
   - tests/issue-2856-calendar-residuals.test.ts
   - tests/issue-1899-funcidx-authority.test.ts
 loc-budget-allow:
+  - src/codegen/closure-exports.ts
+  - src/codegen/expressions/builtins.ts
+  - src/codegen/declarations.ts
+  - src/codegen/statements/nested-declarations.ts
   - src/codegen/context/types.ts
   - src/ir/integration.ts
+  - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/nodes.ts
   - src/ir/verify.ts
   - src/ir/backend/porffor/assembler.ts
+  - src/runtime.ts
 # R1 must resolve exact checker declarations to the one authoritative identity
 # inventory. TypeOracle deliberately does not expose ts.Symbol/ts.Type objects,
 # so these two structural joins remain reviewed raw-checker boundaries until
@@ -1746,6 +1781,984 @@ and public aliases, production consumers of the populated class/type/global
 authorities, and the `LegacyAbiAdapter` replacement of direct `funcMap`,
 `structMap`, module-array, and display-name scans still remain before R1 can
 close.
+
+### 2026-07-28 complete callable-space and public value-export continuation
+
+The stacked continuation on `codex/3520-c15-callable-export-abi` makes the
+complete final Wasm function index space and every public function/global
+export explicit in the production Program ABI:
+
+- after dead-import elimination and semantic import/provider planning, final
+  callable population walks exact retained function-import objects followed by
+  exact defined `WasmFunction` objects. Existing source, import, runtime,
+  intrinsic, class, and support owners remain canonical; every otherwise
+  unowned definition receives one deterministic entry-source support identity.
+  The result is a one-to-one function-space population without reading
+  `funcMap`, a module-array position through a captured import count, or a
+  display name;
+- generic retained definitions use explicit source support provenance. Support
+  callable validation now requires exactly one unit, class, or source anchor,
+  checks that anchor against the authoritative inventory, and retains it in the
+  immutable callable intent;
+- one finalization boundary now orders dead-import/type compaction, retained
+  callable imports, semantic providers, total callable ownership, total global
+  ownership, public export aliases, and retained type/class publication. An
+  export can therefore target only an exact allocator object that already has
+  one required owner;
+- every public function/global spelling becomes a non-allocating `export`
+  alias of that exact callable/global binding. Equal public targets share one
+  canonical owner, same-named internal functions remain distinct, ambiguous
+  legacy reverse lookup fails, duplicate external names fail across all export
+  kinds, and missing targets are typed invariants; and
+- function export descriptors may carry either a live index or a stable
+  `#1916` function handle. Export planning resolves the handle through
+  `absoluteFuncIndex`, whose current-import count and
+  `funcOrdinalToPosition` registry are the existing final-layout authority,
+  then selects the exact import/function object. The descriptor remains a
+  handle until serialization; Program ABI records the resolved final slot.
+  Memory/table/tag exports remain backend-layout concerns outside the Program
+  ABI's function/global/type value spaces.
+
+The focused callable/export population matrix passes **5/5**, including a real
+stable-handle export. The complete #3520 matrix reports **260 passing / 1
+failing across 46 files**; the sole failure is the unchanged linear
+inventory-count spy assertion in `issue-3520-context-integration.test.ts`, and
+the exact C14 parent reproduces it. The broad class/accessor/externref/Promise,
+cross-backend, #2138, and linear matrix passes **101/101 across 12 files**.
+Strict TypeScript, scoped Biome/Prettier, diff, LOC/function budget,
+dead-export, checker-oracle, issue-spec, and fallback gates pass.
+
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The full equivalence gate reports **1,611 passing / 32 known failing /
+0 new regressions**; four baseline rows now pass and the shared baseline
+remains unchanged. No local Test262 corpus run was performed, and neither
+`benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C15 closes total final callable-slot population and public function/global
+export aliases, not R1. Semantic inherited accessor, static, externref, and
+Promise-host support identities still need to replace their compatibility
+selection seams. Production consumers must then route through the populated
+callable/global/type/class authorities, and `LegacyAbiAdapter` must become the
+only name-keyed boundary by replacing direct `funcMap`, `structMap`,
+`moduleGlobals`, module-array, and display-name scans before R1 can close.
+
+### 2026-07-28 semantic inherited class-member continuation
+
+The next stacked continuation on `codex/3520-c16-legacy-abi-cutover`
+([PR #3763](https://github.com/loopdive/js2/pull/3763)) removes the inherited
+accessor/static callable seam:
+
+- `class.call` now retains the semantic member kind separately from the
+  source-level member name. Getters and setters no longer smuggle backend
+  spellings such as `get_value` through the IR, and
+  `IrClassLowering.memberFunc(kind, name)` replaces the kind-erasing
+  `methodFunc(name)` contract;
+- own instance methods, getters, setters, and static methods resolve only to an
+  exact inventoried source-unit kind. With a production Program ABI session,
+  a projected member that has neither an exact source owner nor an exact
+  inherited owner is an Invariant instead of silently reaching the generic
+  name adapter;
+- inherited methods, getters, setters, and statics walk the source-qualified
+  class-shape chain, prove one exact ancestor AST declaration and terminal
+  unit, and verify that the child compatibility key and ancestor key identify
+  the same allocator-owned `WasmFunction`; and
+- getter/setter/static child bindings are non-allocating, class-owned Program
+  ABI aliases of the canonical ancestor source callable. Ordinary method alias
+  IDs retain their existing role for compatibility; the new roles include the
+  semantic kind and member name.
+
+The production regression covers an `A -> B -> C` hierarchy with an inherited
+getter, setter, and static method plus colliding top-level `C_get_value`,
+`C_set_value`, and `C_scale` functions. It proves distinct source identities,
+collision-relocated child aliases, exact canonical signatures/final slots, no
+child function allocation, distinct user-function ownership, and end-to-end
+execution.
+
+The focused class-member matrix passes **13/13 across 3 files**. The complete
+#3520 matrix reports **261 passing / 1 failing across 47 files**; the sole
+failure remains the inherited linear inventory-count spy assertion previously
+reproduced on the exact C14 parent. The adjacent accessor/class,
+cross-backend, integration-preflight, constructor/super, and linear matrix
+passes **86/86 across 8 files**. Strict TypeScript, Biome lint, scoped
+Prettier, diff, LOC/function budget, dead-export, checker-oracle, issue-spec,
+and fallback gates pass.
+
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The supported eight-shard equivalence gate reports **1,611 passing /
+32 known failing / 0 new regressions**; four baseline rows now pass and the
+shared baseline remains unchanged. Two attempted unsharded runs exhausted
+their Vitest worker channel before producing JSON, so the final evidence uses
+the repository's lower-memory shard mode. No local Test262 corpus run was
+performed, and neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C16 closes projected local class-method/accessor/static callable identity, not
+R1. Externref-backed class and Promise-host support helpers still need exact
+semantic ownership. Production consumers must then route through the
+populated callable/global/type/class authorities, and `LegacyAbiAdapter` must
+become the only name-keyed boundary by replacing direct `funcMap`,
+`structMap`, `moduleGlobals`, module-array, and display-name scans before R1
+can close.
+
+### 2026-07-28 retained host-class callable continuation
+
+The next stacked continuation on `codex/3520-c17-host-class-abi`
+([PR #3770](https://github.com/loopdive/js2/pull/3770)) makes every retained
+class source callable and the JS-host Promise constructor helper structurally
+authoritative:
+
+- class collection now observes the exact allocator-owned function object for
+  each explicit or implicit constructor, method, getter, and setter beside its
+  exact AST declaration. It likewise records WasmGC `<Class>_init` and
+  Promise-subclass `<Class>_new__onhost` helpers beneath the exact
+  `IrClassId`;
+- after DCE, one class-callable registry selects the structurally last live
+  allocation for each source unit or class support identity. A retained direct
+  body receives the canonical unit owner even when IR selection rejected the
+  class, while an IR-replaced object keeps the locator already installed by
+  integration;
+- the Promise run-on-host body now has the semantic
+  `promise-subclass-onhost-constructor` role and a class-owned structural
+  reference. Collision relocation remains a diagnostic/allocator name only;
+  it cannot select the helper or its final slot; and
+- class semantic planning runs before total retained-callable population.
+  Only genuinely unclassified functions can therefore receive the generic
+  `retained-module-function` identity. Reusing a retained allocator object
+  under a different semantic owner is a typed duplicate-locator invariant.
+
+The production anti-vacuity fixture combines `Error`-backed and
+`Promise`-backed subclasses with six colliding top-level function names. All
+five class source units are explicitly Unsupported by IR selection and retain
+their direct bodies, yet each publishes its exact source-unit callable ID,
+collision-relocated allocator object, final slot, and post-DCE signature. The
+retained Promise `__onhost` body separately publishes the exact class support
+identity and final function object.
+
+The focused host-class, inherited-member, Promise-constructor, and externref
+runtime matrix passes **18/18 across 6 files**. The sharded #3520 matrix reports
+**262 passing / 1 failing across 48 files**; the sole failure remains the
+inherited linear inventory-count spy assertion documented by C12-C16. The
+adjacent #2138 multi-source matrix passes **6/6**, for **268 passing / 1 known
+failing across 49 files** in the combined migration run.
+The broader accessor/class, constructor/super, integration-preflight,
+cross-backend, and linear matrix reports **91 passing / 27 failing across 12
+files** on both C17 and the exact C16 parent. Every failure is the identical
+known host-fixture omission of the `string_constants` import; C17 adds none.
+
+Strict TypeScript, full error-level and scoped Biome lint, Prettier, diff,
+LOC/function budget, dead-export, godfile, checker-oracle, issue-spec,
+test-vacuity, verdict-oracle, done-status, and issue-index consistency gates
+pass.
+
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The fallback ratchet reports no unintended, post-claim, or
+module-level increase. The supported eight-shard equivalence gate reports
+**1,611 passing / 32 known failing / 0 new regressions**; four baseline rows
+now pass and the shared baseline remains unchanged. No local Test262 corpus run
+was performed, and neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C17 closes retained local, externref-backed, and Promise-host class callable
+identity, not R1. Production consumers must still route through the populated
+callable/global/type/class authorities, and `LegacyAbiAdapter` must become the
+only name-keyed boundary by replacing direct `funcMap`, `structMap`,
+`moduleGlobals`, module-array, and display-name scans before R1 can close.
+
+### 2026-07-28 exact module-initializer callable continuation
+
+The stacked continuation on `codex/3520-c18-module-init-abi` removes
+display-name lookup from compiler-created module-initializer allocation,
+IR-patch resolution, startup wiring, and initialization guards:
+
+- every compiler-created initializer is allocated through a stable function
+  handle and recorded in an exact sidecar even when Program ABI telemetry is
+  disabled. IR integration resolves the preallocated body from its
+  source-qualified module-init unit instead of scanning for
+  `__module_init`;
+- the single-source retained initializer owns the exact module-init unit
+  binding and final callable slot. A same-named user function owns its separate
+  top-level-function binding and can no longer steal the IR patch, startup
+  target, or public initializer alias;
+- the sidecar follows allocator handles through IR body replacement and
+  dead-layout finalization. Startup guards compare the exact function object,
+  so a user-authored `__module_init` remains an ordinary exported/user
+  callable; and
+- the current multi-source frontend still emits cumulative initializer passes.
+  Until R5 replaces that behavior with one prepared whole-program unit, every
+  physical pass receives an explicit entry-source support identity and ordinal
+  rather than an invented source-unit owner. Existing first-pass guard/start
+  behavior and final public alias selection are preserved byte-for-byte.
+
+The three-test anti-vacuity fixture proves the same-name IR-emitted case, an
+Unsupported direct-body case, and two ordered multi-source passes at runtime.
+The exact C17 parent rejects the collision fixture because both callables
+attach to the user function; C18 assigns two exact required bindings and
+distinct final slots, preserves the user result `99`, and runs the synthetic
+initializer once to produce the expected top-level state. The focused suite
+passes **3/3**, and the combined callable-population/module-init suite passes
+**8/8**.
+
+The sharded #3520 plus #2138 migration matrix reports **272 passing / 1 known
+failing across 50 files**. The sole failure is the inherited linear
+inventory-count spy assertion already reproduced on C12-C17. The adjacent
+module-init/startup/ABI matrix adds no branch-specific failure; two optional
+test262.fyi fixtures are unavailable because that local corpus/submodule is
+not installed.
+
+For a non-collision numeric module, the exact C17 parent and C18 emit identical
+bytes in all four checked modes: host
+`cc43eff221a66ea95123b273ff2fabd3e3e8e6045d072696fdebd0d21d2bf8c0`,
+deferred host
+`722a2a8038937ed145c483b3336e8711eb20dddcc0910972bf0a214bb1ea354e`,
+standalone
+`903c9b027532c47c856c6f13fc76f68ca1a4ebee0c3a17408d918e70c1f72ea6`,
+and WASI
+`a4033b7b395844fc1cb421e26c232a671d0dd56d276230df978b966788aa5afc`.
+
+Strict TypeScript, formatting/diff, scoped lint, LOC/function budget,
+dead-export, godfile, checker-oracle, issue-spec, test-vacuity,
+verdict-oracle, done-status, and issue-index consistency gates pass. Hybrid
+readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported / 0
+Invariants across 37 terminal units**, while strict IR-only correctly remains
+not ready because all 37 legacy bodies are still emitted. The six typed
+blockers are four async/call-graph selection units and two static class-member
+builds. The fallback ratchet reports no unintended, post-claim, or
+module-level increase.
+
+The supported eight-shard equivalence gate reports **1,611 passing / 32 known
+failing / 0 new regressions**; four baseline rows now pass and the shared
+baseline remains unchanged. No local Test262 corpus run was performed, and
+neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C18 closes structural ownership and resolution for current module-initializer
+allocators, not R1 or R5. Remaining R1 production consumers still include
+direct `funcMap`, `structMap`, `moduleGlobals`, module-array, and display-name
+joins outside the module-init seam. Multi-source compile-once initialization
+and body-ownership changes remain explicitly deferred to the prepared-program
+R2-R5 cutover.
+
+### 2026-07-28 exact top-level source-callable continuation
+
+The stacked continuation on `codex/3520-c19-source-callable-abi` removes the
+production `funcMap` name join between top-level function allocation, retained
+direct bodies, IR replacement, and symbolic direct-call resolution:
+
+- each top-level function declaration now receives a stable function handle
+  and is observed atomically against its exact declaration/unit identity.
+  Compiler-injected top-level shims are accepted only when the inventory
+  classifies them under an explicit compiler-origin `synthetic-support`
+  identity;
+- IR integration resolves source artifacts and planned source-unit targets
+  through that exact registry. The only remaining name fallback at this seam
+  is restricted to low-level compatibility tests that deliberately construct
+  integration without a production identity context;
+- stable handles follow an allocator through IR object replacement and
+  dead-layout finalization. A supported IR-emitted body and an Unsupported
+  retained direct body therefore publish the same source-unit callable
+  identity rather than switching between a source owner and a generic retained
+  support owner; and
+- same-named functions in different source files retain distinct declaration
+  identities, allocator handles, required ABI bindings, and final slots even
+  when the current multi-source collision policy keeps both bodies on the
+  direct path. Legacy reverse lookup reports ambiguity instead of choosing the
+  last `funcMap` entry.
+
+The exact C18 parent publishes no source-unit binding for an Unsupported
+default-parameter function and neither source-unit binding for a same-named
+cross-file pair. C19 publishes all three exact required bindings. The focused
+anti-vacuity/runtime suite passes **3/3**; the source/module-init/total-callable
+population matrix passes **11/11**; and the IR-first, multi-module,
+preregistration, and function-artifact matrix passes **24/24**.
+
+The six-shard #3520 plus #2138 migration matrix reports **281 passing / 1
+known failing across 52 files**. The sole failure is the inherited linear
+inventory-count spy assertion reproduced throughout C12-C18. A compatibility
+test initially exposed the intentional no-identity integration harness; its
+restricted adapter fallback and the full original shard now pass **37/37**.
+
+For a supported numeric source function, the exact C18 parent and C19 emit
+identical bytes in all four checked modes: host and deferred host
+`12eff1c41f38ee28b4162f6b5ff3e05e57d6f8060ec9fd7577be0b72bafe8a85`,
+standalone
+`2e3508c8c7c6b21c7f56168d6febc639a40c23c1365d82bc5a3a05f4b7766d29`,
+and WASI
+`9e0eda0baf5d05fcdd0b6d7cb79dc6c0f73792bc05a80d9e47d126c043fc4cf4`.
+
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The fallback ratchet reports no unintended, post-claim, or
+module-level increase. Strict TypeScript, formatting/diff, scoped lint,
+LOC/function budget, dead-export, godfile, checker/verdict-oracle,
+issue-spec, test-vacuity, done-status, and issue-index consistency gates pass.
+
+The supported eight-shard equivalence gate reports **1,611 passing / 32 known
+failing / 0 new regressions**; the same four baseline rows now pass and the
+shared baseline remains unchanged. No local Test262 corpus run was performed,
+and neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C19 closes exact top-level declaration callable ownership, not R1. Class
+integration still has a physical compatibility-key join, and function
+expressions, lifted/support allocation, module globals, class/type consumers,
+and remaining module-array/display-name scans must still move behind the
+structural authorities before R1 can close.
+
+### 2026-07-28 exact class integration callable continuation
+
+The stacked continuation on `codex/3520-c20-class-integration-abi` removes the
+production physical-name join for exact class source callables and
+class-constructor initializer support:
+
+- the class allocator registry exposes stable handles for exact constructor,
+  method/accessor, and compiler-owned `<Class>_init` observations. Resolution
+  follows the allocator object through replacement and DCE rather than
+  recovering it from `funcMap`;
+- IR class resolution and Phase-3 class body replacement use those exact
+  source-unit/support identities. A name fallback remains only for low-level
+  compatibility contexts that deliberately omit the production registry; and
+- the anti-vacuity fixture deletes every physical-name mapping for one
+  implicit constructor, instance method, and initializer support function
+  before integration. The exact C19 parent fails with a typed
+  `missing-function-slot`; C20 resolves all three objects, IR-emits both
+  `main` and the method, and retains the exact unit mappings.
+
+The focused class ABI suite passes **4/4**. The wider class optimization and
+behavior matrix passes **54/54** across constructor allocation, class-body
+replacement, instance/static dispatch, getters/setters, inheritance and
+`super`, source/support aliases, host classes, and host/native-string modes.
+This is preservation evidence for the current class lowering optimizations;
+retirement remains blocked on the program-wide optimization inventory in
+#3518, so no direct class handler is deleted by this identity-only slice.
+
+Strict TypeScript, formatting/diff, LOC budget, dead-export, godfile,
+checker/verdict-oracle, issue-spec, test-vacuity, done-status, and issue-index
+consistency gates pass. Hybrid readiness remains **READY** at **31 IR-emitted /
+6 typed Unsupported / 0 Invariants across 37 terminal units**, with all 37
+legacy bodies still emitted. The fallback ratchet remains unchanged with zero
+unintended, post-claim, or module-level increases.
+
+The six-shard #3520 plus #2138 migration matrix reports **282 passing / 1
+inherited known failing across 53 files**. The sole failure is the unchanged
+linear inventory-count spy assertion (two builds observed versus one expected).
+The supported eight-shard equivalence gate reports **1,611 passing / 32 known
+failing / 0 new regressions**; the same four baseline rows pass and the shared
+baseline remains unchanged.
+
+The exact C19 parent and C20 produce byte-identical class-program output in all
+four checked modes: host and deferred host
+`8e85294fa13c47a41f17e5c370aed18c46876994ded547d5f1a5c592e41a0dd5`,
+standalone
+`26338f2162dcb59169417085b908462be3c03233c8988be1f686a95ae43ec182`,
+and WASI
+`b1693c53c755bf26e9cdef72bb33778dafac47222224e07ce28b8e03f3302378`.
+No local Test262 run was performed, and neither
+`benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C20 closes the exact class source and constructor-init resolution seam, not R1.
+Inherited child alias validation still consumes physical compatibility keys.
+Class/type/global registries, lifted and other support allocation, function
+expressions, and remaining module-array/display-name scans must still move
+behind structural authorities before R1 can close.
+
+### 2026-07-29 inherited class integration callable continuation
+
+The next stacked continuation on
+`codex/3520-c21-inherited-class-alias-abi`
+([PR #3786](https://github.com/loopdive/js2/pull/3786)) removes the production
+physical-key dependency for inherited class callables:
+
+- class collection observes each compatibility alias beside its exact child
+  `IrClassId` and canonical ancestor `IrUnitId`. The registry follows the
+  allocator-owned function object back to its exact source unit and never
+  reconstructs identity from class, member, getter/setter, or static display
+  labels;
+- IR class integration resolves the ancestor allocation through the exact
+  source-unit handle and the child alias through the exact
+  `(child class, canonical unit)` pair. Physical `funcMap` lookup remains only
+  for low-level compatibility contexts that deliberately omit the production
+  registry; and
+- the anti-vacuity fixture uses an `A -> B -> C` hierarchy with an inherited
+  instance method, getter, setter, and static method. It deletes every
+  physical-name entry sharing the four allocator handles before integration,
+  then proves all four child aliases plan against their exact canonical units.
+
+The focused method/member/integration alias suite passes **3/3**. The broader
+class ABI, integration, optimization, inheritance, `super`, private-member,
+linear, host, and native-string matrix has **181 passing tests across 20 green
+files**. Six adjacent legacy runtime files reproduce the exact parent result:
+**45 failures / 2 passes**, all failures reporting the unchanged missing
+`string_constants` runtime import. They are a control-matched harness issue,
+not a new C21 result.
+
+The #3520 plus #2138 migration matrix passes **283 tests with one inherited
+known failure across 54 files** when each file runs in a fresh Vitest process.
+The sole failure is the unchanged linear inventory-count spy assertion (two
+builds observed versus one expected). Running the full matrix in one child
+process reaches the documented Vitest heap ceiling, so no result is inferred
+from that runner failure.
+
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The fallback ratchet remains unchanged with zero unintended,
+post-claim, or module-level increase. Strict TypeScript, Biome lint,
+formatting, and diff checks pass.
+
+The supported eight-shard equivalence gate reports **1,611 passing / 32 known
+failing / 0 new regressions**; the same four baseline rows pass and the shared
+baseline remains unchanged. No local Test262 corpus run was performed, and
+neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C21 closes inherited class callable integration, not R1. The compatibility
+alias map remains for direct-codegen consumers until their optimizations and
+runtime behavior are structurally owned. Class/type/global registries, lifted
+and other support allocation, function expressions, and remaining
+module-array/display-name scans must still move behind structural authorities
+before R1 can close.
+
+### 2026-07-29 exact class layout integration continuation
+
+The next stacked continuation on
+`codex/3520-c22-class-layout-integration-abi`
+([PR #3787](https://github.com/loopdive/js2/pull/3787)) removes the production
+class-name join for struct layouts and field indices:
+
+- the existing type registry now resolves the current allocator-owned
+  `StructTypeDef` and module type index by exact `IrClassId`. It follows the
+  type cell through allocator replacement and DCE remapping instead of
+  recovering the layout from `structMap`;
+- IR class integration derives its field-index table from that exact struct
+  object. `structMap` and `structFields` remain fallback inputs only for
+  low-level compatibility contexts that deliberately omit the production
+  registry; and
+- the inherited-class anti-vacuity fixture now deletes the `A`, `B`, and `C`
+  entries from both physical layout maps, in addition to deleting every
+  physical callable mapping. IR integration still resolves all three layouts,
+  their inherited fields, and the four inherited callable kinds.
+
+The focused layout/callable suite passes **6/6**. The broader exact class/type,
+integration, optimization, inheritance, `super`, private-member, and linear
+matrix passes **69/69 across 15 files** when each file runs in a fresh Vitest
+process.
+
+The #3520 plus #2138 migration matrix remains **283 passing / 1 inherited
+known failure across 54 files**. The sole failure is the unchanged linear
+inventory-count spy assertion (two builds observed versus one expected).
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The fallback ratchet reports no unintended, post-claim, or
+module-level increase.
+
+The supported eight-shard equivalence gate remains **1,611 passing / 32 known
+failing / 0 new regressions**; the same four baseline rows pass and the shared
+baseline remains unchanged. Strict TypeScript, Biome lint, formatting, diff,
+LOC/function budget, dead-export, and godfile gates pass.
+
+No local Test262 corpus run was performed. The stacked continuation does not
+target `main`, while the full Test262 workflow runs at the merge-group
+boundary. Neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C22 closes exact class layout and field integration, not R1. Direct codegen
+still owns the compatibility layout maps until its class optimizations and
+runtime behavior retire. Module globals, remaining class/type consumers,
+lifted and other support allocation, function expressions, and module-array
+or display-name scans must still move behind structural authorities before R1
+can close.
+
+### 2026-07-29 exact module-global integration continuation
+
+The current stacked continuation on
+`codex/3520-c23-module-global-integration-abi`
+([PR #3789](https://github.com/loopdive/js2/pull/3789)) removes the production
+module-binding join through `moduleGlobals` and `tdzGlobals`:
+
+- declaration collection exposes each direct top-level identifier
+  declaration's exact allocator-owned value global to the Program ABI global
+  registry. Retained TDZ allocation attaches the exact flag object to that
+  same `ts.VariableDeclaration`;
+- repeated declarations that share one compatibility allocation observe the
+  same object without reallocating it. The user-function/import collision
+  behavior from #2669 and #3428 is preserved in a focused module-global
+  registration subsystem rather than growing the declaration driver;
+- IR module-binding integration resolves value and TDZ storage by the exact
+  declaration observation whenever the production registry exists. Missing
+  structural observations fail closed; the two name maps are consulted only
+  by low-level compatibility contexts that omit Program ABI ownership; and
+- the anti-vacuity fixture deletes both the `state` value entry from
+  `moduleGlobals` and its flag entry from `tdzGlobals` before integration.
+  `<module-init>` still emits, and both exact `GlobalDef` objects receive their
+  source-owned Program ABI plans and locators.
+
+The focused Program ABI global/module-init matrix passes **19/19 across five
+files**. The allocation extraction's #2669, #3428, module-global, and TDZ
+regression controls pass **25/25**. The adjacent #3142 selector control remains
+**14/15**, and #3529 compatibility preflight remains **11/13**; their three
+assertion failures reproduce unchanged on the exact C22 parent.
+
+The #3520 plus #2138 migration matrix advances to **284 passing / 1 inherited
+known failure across 55 files**. The sole failure remains the linear
+inventory-count spy assertion (two builds observed versus one expected).
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The fallback ratchet reports no unintended, post-claim, or
+module-level increase.
+
+The supported eight-shard equivalence gate remains **1,611 passing / 32 known
+failing / 0 new regressions**; the same four baseline rows pass and the shared
+baseline remains unchanged. Strict TypeScript, Biome lint, formatting, diff,
+LOC/function budget, dead-export, godfile, oracle-ratchet, and adoption gates
+pass.
+
+No local Test262 corpus run was performed. This continuation is stacked rather
+than targeting `main`, while the full Test262 workflow runs at the merge-group
+boundary. Neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C23 closes exact module value/TDZ integration, not R1. Direct codegen still
+owns the compatibility maps until its module-state optimizations and runtime
+behavior retire. Remaining class/type consumers, lifted and other support
+allocation, function expressions, and module-array or display-name scans must
+still move behind structural authorities before R1 can close.
+
+### 2026-07-29 exact synthesized artifact allocation continuation
+
+The current stacked continuation on
+`codex/3520-c24-synthetic-slot-abi`
+([PR #3790](https://github.com/loopdive/js2/pull/3790)) removes the production
+display-name join from fresh lifted and monomorphized artifact allocation:
+
+- every synthesized artifact in a Program ABI session now receives a fresh
+  allocator-owned `WasmFunction` keyed through its exact derived `IrUnitId`.
+  Production no longer probes `funcMap` for an empty same-labelled function;
+- production also stops publishing the synthesized slot back into `funcMap`,
+  so an exact source function with the same compatibility label cannot have
+  its physical mapping overwritten. Low-level integration callers without a
+  Program ABI session retain the old compatibility behavior; and
+- the anti-vacuity fixture pairs a captured lifted closure named
+  `owner__closure_0` with an empty top-level source function of that exact
+  label. C23 reproduces a duplicate-locator invariant because both Program ABI
+  owners share one allocator object; C24 proves they publish distinct final
+  function slots.
+
+The focused lifted, monomorphization, integration-pass, outcome-correlation,
+and callable-planning matrix passes **29/29 across eight files**. The #3520
+plus #2138 migration matrix advances to **285 passing / 1 inherited known
+failure across 55 files**. The sole failure remains the linear
+inventory-count spy assertion (two builds observed versus one expected).
+
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The fallback ratchet reports no unintended, post-claim, or
+module-level increase. The supported eight-shard equivalence gate remains
+**1,611 passing / 32 known failing / 0 new regressions**.
+
+Strict TypeScript, Biome lint, formatting, LOC/function budget, dead-export,
+and godfile gates pass. No local Test262 corpus run was performed because this
+continuation is stacked rather than targeting `main`; the full corpus runs at
+the merge-group boundary. Neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C24 closes fresh synthesized artifact slot allocation, not R1. Remaining
+class/type consumers, preflight reservations for lifted support, function
+expressions, and module-array or display-name scans must still move behind
+structural authorities before R1 can close.
+
+### 2026-07-29 synthesized reservation retirement continuation
+
+The next stacked continuation on
+`codex/3520-c25-synthetic-reservation-abi`
+([PR #3791](https://github.com/loopdive/js2/pull/3791)) removes the obsolete
+preflight display-name reservation for the synthesized host-callback and
+Promise-delay families:
+
+- when a Program ABI session owns the compilation, overlay finalization no
+  longer demotes an exact source owner merely because `funcMap` or the module
+  contains a source function with the callback, Promise executor, or Promise
+  timer artifact's compatibility label;
+- low-level contexts without Program ABI ownership retain the old name
+  collision guard. Exact `__make_callback`, `Promise_new`,
+  `__timer_set_timeout`, `__box_number`, and `__call_1_f64` runtime-helper
+  import validation remains unchanged; and
+- structural anti-vacuity tests prove the same occupied label demotes a
+  compatibility context but retains the exact owner under a real
+  `ProgramAbiSession`. End-to-end host-callback and Promise fixtures prove
+  genuine IR emission, binary validity, and Promise settlement while the
+  corresponding source functions coexist.
+
+The focused structural, callback, lifted-slot, and Promise identity matrix
+passes **47/47**. The targeted Promise integration selection passes **8/8**,
+including runtime settlement with both lifted labels occupied. The exact
+fresh-process #3520/#2138/linear matrix reports **283 passing / 1 inherited
+known failure across 55 files**; the sole failure is the unchanged linear
+inventory-count spy assertion.
+
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The fallback ratchet reports no unintended, post-claim, or
+module-level increase. The supported eight-shard equivalence gate remains
+**1,611 passing / 32 known failing / 0 new regressions**; four baseline rows
+pass and the shared baseline remains unchanged.
+
+Strict TypeScript, Biome lint, formatting, diff, LOC/function budget,
+dead-export, godfile, oracle-ratchet, and adoption gates pass. No local Test262
+corpus run was performed because this continuation is stacked; the full corpus
+runs when the stack targets `main` or reaches the merge-group boundary.
+Neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+Queue shepherding found one inherited current-`main` gap in the changed root
+tests: a void closure parameter call in statement position was still rejected
+after IR selection. C25 now represents that `closure.call` with a null result
+while preserving the existing expression-position refusal. The shadowed
+`setTimeout` fixture proves the helper remains IR-compiled, and the focused
+callback, Promise, overlay, and Program ABI matrix passes **86/86** with strict
+TypeScript and Biome lint green.
+
+C25 closes the callback and Promise-delay synthesized-name reservations, not
+R1. Remaining class/type consumers, function expressions, other support
+families, and module-array or display-name scans must still move behind
+structural authorities before R1 can close.
+
+### 2026-07-29 nested source-callable ownership continuation
+
+The next stacked continuation on
+`codex/3520-c26-nested-callable-abi`
+([PR #3792](https://github.com/loopdive/js2/pull/3792)) publishes retained
+direct-codegen nested callables through their exact source-unit Program ABI
+owners:
+
+- arrows and function expressions now publish their existing optimized
+  `WasmFunction` under the callable binding derived from their exact
+  `IrUnitId`;
+- direct host callbacks and object-literal methods, getters, and setters use
+  the same structural path. The object-member AST nodes previously entered the
+  closure compiler through a compatibility cast, so the registry now validates
+  their actual `object-method`, `object-getter`, or `object-setter` inventory
+  kind; and
+- pushing the direct body and observing its structural owner is atomic. This
+  slice does not rebuild the body, change its optimization decisions, or skip
+  legacy emission.
+
+The focused nested-callable, host-callback, and Program ABI matrix passes
+**63/63**. The targeted Promise integration selection passes **8/8**. The
+committed fresh-process #3520/#2138/linear matrix reports **286 passing / 1
+inherited known failure across 55 files**; the sole failure remains the
+unchanged linear inventory-count spy assertion.
+
+Hybrid readiness remains **READY** at **31 IR-emitted / 6 typed Unsupported /
+0 Invariants across 37 terminal units**, with all 37 legacy bodies still
+emitted. The fallback ratchet reports no unintended, post-claim, or
+module-level increase. The supported eight-shard equivalence gate remains
+**1,611 passing / 32 known failing / 0 new regressions**; four baseline rows
+pass and the shared baseline remains unchanged.
+
+Strict TypeScript, Biome lint, formatting, diff, LOC/function budget,
+dead-export, godfile, oracle-ratchet, and adoption gates pass. The first
+merge-group Test262 run exposed two adapter boundaries in this slice: a
+top-level function declaration routed through an accessor callback could let
+the callback body steal the declaration's exact source slot, while
+literal-eval callables created after inventory freeze were incorrectly treated
+as inventoried source units. Nested publication now observes only non-function
+declarations with an exact inventory record; top-level callback adapters and
+post-inventory support callables remain on generic callable planning. The
+focused source-callable suite passes **8/8**, and the exact **19** Test262 paths
+covering the reported callable-planning failures pass **19/19** locally.
+Neither `benchmarks/results/test262-run.log` nor
+`scripts/equivalence-baseline.json` is changed.
+
+C26 closes exact retained ownership for arrows, function expressions, host
+callbacks, and object-literal methods/accessors, not R1. Nested function
+declarations, typed-`this` twins and other support callables, remaining
+class/type consumers, and module-array or display-name scans must still move
+behind structural authorities before R1 can close.
+
+### 2026-07-29 nested function-declaration ownership continuation
+
+The next continuation on
+`codex/3520-c27-nested-function-abi`
+([PR #3797](https://github.com/loopdive/js2/pull/3797))
+publishes retained nested function declarations through their exact
+`nested-function` Program ABI owners:
+
+- capture-free, capturing, forward-sibling, and recursive reservations now
+  publish the same preallocated `WasmFunction` object under the callable
+  binding derived from the declaration's exact `IrUnitId`;
+- the eager class-order reservation in `declarations.ts` uses the same
+  structural publication path, so early registration cannot fall back to a
+  display-name or raw module-array lookup; and
+- literal-eval declarations created after inventory freeze stay on generic
+  support-callable planning. This continuation does not rebuild bodies, alter
+  hoisting or capture boxing, change optimization decisions, or skip direct
+  emission.
+
+The focused source-callable ownership suite passes **11/11**, covering the
+pre-reserved sibling, capturing, single nested, eager class-order, runtime, and
+post-inventory eval paths. A broader nested-function audit reports **137
+passing / 5 skipped** across nine files. Three runtime failures reproduce
+identically on the exact `cd9d53f20428a9` parent, while two additional rows
+require the absent local Test262 checkout; there is no new failure attributable
+to C27.
+
+C27 closes exact retained ownership for nested function declarations, not R1.
+Typed-`this` twins and other support callables, remaining class/type consumers,
+and module-array or display-name scans must still move behind structural
+authorities before R1 can close.
+
+### 2026-07-29 typed-this twin callable ownership continuation
+
+The continuation on `codex/3520-c28-typed-this-abi`
+([PR #3798](https://github.com/loopdive/js2/pull/3798)) gives every admitted
+typed-`this` twin its own structural Program ABI owner:
+
+- the original function-expression body keeps the callable binding derived
+  from its exact source `IrUnitId`, while the optimized twin receives a
+  separate `typed-this-twin` support binding anchored beneath that same unit;
+- twin observation happens atomically with allocator publication, and final
+  ownership is selected only after DCE. A removed twin creates no required ABI
+  slot, while a retained twin is resolved from its exact `WasmFunction` object
+  rather than its generated `__typed_this` label; and
+- admission, the second optimized compilation, receiver-param specialization,
+  numeric field/return/local promotion, arity padding, direct-call
+  devirtualization, guard-shim construction, and the generic fallback body are
+  unchanged.
+
+The production fixture proves the generic body and admitted twin finalize to
+two different function slots while the standalone program still returns the
+expected value. The focused source-callable and complete typed-`this`
+optimization matrix passes **103/103 across eight files**. Strict TypeScript
+and changed-file Biome lint pass. The hybrid IR-only readiness lane remains
+**READY** at **31 emitted / 6 typed Unsupported / 0 Invariants across 37
+terminal units**, with all 37 legacy bodies still emitted.
+
+C28 closes exact ownership for the typed-`this` twin family, not R1. Other
+support callables, remaining class/type consumers, and module-array or
+display-name scans must still move behind structural authorities before R1
+can close.
+
+### 2026-07-29 direct function-value ownership continuation
+
+The continuation on `codex/3520-c29-function-value-abi` moves retained direct
+function-value wrapper artifacts behind their source unit's Program ABI owner:
+
+- capture-free direct values keep the existing lazy module-global singleton.
+  The exact trampoline and cache `GlobalDef` are now observed as one pair and
+  published under `function-value-trampoline` and `function-value-cache`
+  bindings derived from the target declaration's `IrUnitId`;
+- capturing nested declarations keep their activation-local, first-dynamic-read
+  memoization. Their shared module trampoline receives the same unit-derived
+  callable owner, while no module cache binding is invented; and
+- an already prepared C8 singleton is reused only when its callable and global
+  locators are the exact retained allocator objects. Finalization does not
+  recompute its pre-DCE signature contract. Post-inventory helpers, imports,
+  class adapters, and synthetic-name collision fallbacks remain on generic
+  compatibility planning.
+
+The implementation does not change wrapper types, trampoline bodies,
+`ref.func` enrollment, pending signature rebuilding, constructibility,
+capture boxing, TDZ flags, closure identity, direct `call_ref` selection, or
+lazy cache instructions. The focused source-callable suite passes **13/13**,
+including runtime identity and calls for both capture-free and capturing
+nested declarations. The C8 production support-callable suite passes **2/2**,
+the function-value planner suite passes **10/10**, and the #2976 closure
+identity suite passes **4/4**. The #3270 closure-split control is **6/7** on
+both this branch and the exact landed C28 base; its existing IR-fallback
+diagnostic for a bare nested-function reference is unchanged.
+
+The required expected-green migration matrix passes **98/98 across 11 files**,
+and cross-backend differential validation passes **29/29**. The full
+equivalence gate reports **1,611 passing / 32 current failures / 36 known
+baseline failures**, with zero new regressions and four baseline failures now
+passing; the baseline is intentionally unchanged. Strict TypeScript, Biome
+lint, formatting, LOC, godfile, dead-export, oracle-ratchet, and IR-adoption
+gates pass. Hybrid IR-only readiness remains **READY** at **31 emitted / 6
+typed Unsupported / 0 Invariants across 37 terminal units**, with all 37
+legacy bodies still emitted. Neither the equivalence baseline nor the
+Test262 run log is changed.
+
+C29 closes exact retained ownership for direct source function-value
+trampolines and capture-free cache globals, not R1. Other support callable
+families, remaining class/type consumers, and module-array or display-name
+scans must still move behind structural authorities before R1 can close.
+
+### 2026-07-30 vec host-bridge callable ownership continuation
+
+The continuation on `codex/3520-c30-vec-host-bridge` moves the six core vec
+host bridges behind one entry-source-owned structural family:
+
+- `__vec_len`, `__vec_get`, `__is_vec`, `__vec_mut_supported`, `__vec_push`,
+  and `__vec_pop` publish `vec-host-bridge` support bindings at fixed ordinals
+  0 through 5 beneath the canonical entry source. Their callable ordering role
+  is the next reserved role after `typedThisTwin`;
+- reservation allocates all six helpers as one batch and observes the exact
+  `WasmFunction` objects only after every allocation succeeds. Final body
+  filling and compile-time calls resolve those objects through their current
+  handles, so late-import shifts cannot redirect selection through a generated
+  name; and
+- `funcMap` remains a compatibility publication only when the helper label is
+  unoccupied. The historical logical export is also the zero-overhead runtime
+  fast path. A physical export is added only when a user already owns that
+  logical export or occupies its exact short `$v<ordinal>` family, using a
+  deterministic `$` suffix on collision. Free suffix gaps are filled with
+  helper aliases through one slot beyond the last occupied suffix, so the
+  runtime can select the final function in the contiguous family without
+  mistaking a preserved user export for the helper. Runtime projection first
+  requires the historical logical export, preventing an array-free user
+  `$v<ordinal>` from fabricating an internal vec helper. A user can export all
+  six historical helper labels or all six short prefixes and still retain
+  those exact names and bodies while runtime array reads, wrapping, and
+  mutation use the structural helpers; and
+- structural observation, body filling, and physical publication are
+  correctness-critical. Their failures now abort compilation before physical
+  bridge publication instead of returning a successful module containing
+  placeholder bodies.
+
+The exact five-entry `SINGLE_HOST_ENTRIES` census was run in fresh processes
+against `origin/main` at `e541b9d56c766c` and this continuation, using
+`readFileSync(entry) -> analyzeSource(source, entry) ->
+generateModule(ast, { experimentalIR: true, trackIrOutcomes: true })`.
+Defined functions remain **166 → 166**. Generic
+`retained-module-function` rows move **101 → 77**, exactly matching the
+**24** vec bridge rows present across four of the five entries. The same
+measurement keeps routing and body outcomes unchanged at **37 terminal /
+30 emitted / 7 Unsupported / 0 Invariants / 37 legacy bodies / 30 IR
+bodies**.
+
+The size follow-up compares raw binaries from `origin/main` at
+`10f40b6458c6c`, PR head `11abdfd6b544`, and the collision-only alias
+implementation. Three representative helper-using modules measure
+**1,065 / 1,340 / 1,569 bytes** on main, **1,222 / 1,497 / 1,726 bytes** at
+the PR head, and **1,065 / 1,340 / 1,569 bytes** after the follow-up. The
+deterministic **+157 bytes per module** is therefore eliminated rather than
+traded for a shorter always-present duplicate namespace. Ordinary modules
+publish zero `$v<ordinal>` physical aliases; only an actual logical-label or
+exact short-family collision pays for its affected short family.
+
+The focused C30 suite passes **9/9**. It proves all six source-anchored IDs,
+fixed ordinals, direct final-slot object identity, and zero vec support
+publication for an array-free module; reserve-to-fill allocator-object
+identity survives a forced late-import increase and subsequent dead-import
+compaction; all six public-label collisions preserve the user exports while a
+runtime E2E asserts push length, intermediate length/value, pop value, final
+length, and wrapped returned-array values; sparse short-namespace collisions
+retain six distinct terminal structural helpers; all-six prefix-only
+collisions terminate in the structural helpers while preserving wrapped
+`[7, 8, 3]` and fieldless-class `{}` behavior; an array-free `$v0` spoof
+creates no historical logical helper and preserves the helper-free fieldless
+fallback; forced ABI observation failure produces a compile error with no
+physical exports; tracked/untracked binaries are equal with IR enabled; and
+routing/outcome telemetry remains stable. The adjacent callable-planning,
+#2083, #3272, #3637, #2927, and #3311 matrix passes **50/50 across six files**.
+The IR fallback ratchet, function budget, strict TypeScript, and the exact
+census pass without changing the equivalence baseline or Test262 run log.
+
+C30 closes exact retained ownership for the six core vec host bridges, not R1.
+Other support callable families and remaining module-array or display-name
+consumers must still move behind structural authorities before R1 can close.
+
+### 2026-07-30 closure host-bridge callable ownership continuation
+
+The C31 continuation on `codex/3520-c31-closure-host-bridge` moves the bounded
+host-visible closure dispatcher family behind one entry-source-owned structural
+role:
+
+- direct `__call_fn_0` through `__call_fn_4` use fixed
+  `closure-host-bridge` ordinals 0 through 4, method
+  `__call_fn_method_0` through `__call_fn_method_5` use ordinals 5 through 10,
+  `__closure_arity` uses 11, and `__is_closure` uses 12. The optional
+  `__closure_has_rest` classifier uses ordinal 13 only in modules that actually
+  emit it. Higher method dispatchers remain on generic retained ownership in
+  this bounded slice;
+- each existing helper body is first materialized as one exact
+  `WasmFunction`, then planned under the canonical entry source and published
+  at the current Program ABI-resolved handle. The public labels, exported
+  signatures, dispatcher bodies, method-receiver save/restore behavior,
+  `funcMap` compatibility entries, closure classifier semantics, and #2083
+  closure-free gating remain unchanged. When a user owns a logical helper name
+  or its reserved `$cN` physical prefix, codegen preserves every user export
+  and publishes the exact helper at the terminal free physical suffix. One
+  immutable compiler-authored i32 manifest records exactly which helpers were
+  emitted. A collision-safe empty Wasm table authenticates that metadata as
+  compiler-owned rather than a user name/value convention, while a 17-slot
+  funcref table binds every set bit to the exact compiler helper object. The JS
+  runtime proves the manifest is an immutable i32 and both tables have exact
+  `funcref` element types and `0..0` / `17..17` limits through Wasm import
+  validation. It rejects reserved bits, externref or malformed tables, never
+  falls back to a user logical export, and composes closure and vec projections
+  from the same raw export object into one internal view; and
+- tracked and untracked compilation use the same allocator-object lookup.
+  Tracking adds only structural ownership metadata and does not allocate,
+  relabel, or rebuild a helper.
+
+The exact five-entry `SINGLE_HOST_ENTRIES` census was run against C30 main at
+`c462d0216e3925` plus C31. It reports **166** defined functions, **51** generic
+`retained-module-function` rows, exactly **24** `vec-host-bridge` rows, and
+exactly **26** `closure-host-bridge` rows across the emitting entries. The
+closure manifest adds no callable and does not change the structural row
+counts. Routing and body outcomes remain **37 terminal / 30 emitted / 7
+Unsupported / 0 Invariants / 37 legacy bodies / 30 IR bodies**.
+
+The focused C31 suite passes **11/11**. It proves every fixed ID and public label,
+the absence of a second generic callable owner, exact final-slot object
+resolution across a forced late import and dead-slot compaction, zero bridge
+rows for a closure-free module, tracked/untracked byte equality, direct closure
+identity/call behavior, method receiver identity, conditional rest
+classification, collision-safe logical and physical export ownership, and the
+five-entry census. Simultaneous vec and closure logical/physical/manifest
+collisions resolve through both `buildImports().setExports` and `wrapExports`.
+A closure-free forged `__is_closure` + `__call_fn_0` + `$cf` family remains
+public but cannot fabricate runtime closure discovery, so a fieldless class
+instance still crosses `wrapExports` as an object. Missing compiler aliases,
+non-empty markers, mutable-i32 or f64 manifests, and reserved availability bits
+also fail closed for a real compiled boxed class. An externref table containing
+matching JS helper functions is rejected even when its length, availability,
+and terminal aliases otherwise match. The adjacent #2083 and vec/closure
+dispatch-runtime matrix passes **95/95 across thirteen files**, including the
+focused C30 and C31 structural-ownership suites.
+
+C31 closes exact retained ownership for this bounded closure host-dispatch
+family, not R1. Higher-arity method dispatchers, other support callable
+families, remaining class/type consumers, and module-array or display-name
+scans still need structural owners before R1 can close.
+
+### 2026-07-30 date civil support callable ownership continuation
+
+The C32 continuation on `codex/3520-c32-date-civil-support` gives
+`__date_civil_from_days` one canonical entry-source `date-civil-support`
+binding at derived ordinal 0 and callable role ordinal 10. The exact allocator
+object remains behind its stable function handle; tracked and untracked
+binaries are byte-identical, and late-import/DCE locator resolution moves
+0 → 1 → 0 without rebuilding the helper. A same-named source function cannot
+occupy the Date role or redirect Date lowering: C32 always mints the exact
+helper independently and installs the `funcMap` compatibility alias only when
+the logical name is free.
+
+Across `SINGLE_HOST_ENTRIES`, C31+C32 contain **166** defined functions,
+**74** generic rows, **26** closure rows, and **1** Date row. Composed with
+C30, the census is **50 generic + 24 vec + 26 closure + 1 Date**, the intended
+one-for-one **51 → 50** generic move for C32. Routing remains **37 terminal /
+30 emitted / 7 Unsupported / 0 Invariants / 37 legacy bodies / 30 IR bodies**,
+so terminal adoption gain is zero.
+
+The focused C32 suite passes **7/7**, including matching `bigint → bigint` and
+mismatched `number → number` source-name collisions in both tracked and
+untracked standalone lanes. Both the Date calendar result and user function
+result are preserved, both binaries validate, and each tracked binary matches
+its untracked counterpart. The suite also preserves leap-day output
+`20240229`, exact structural/final-slot ownership, and census parity. The
+adjacent negative-year suite passes **42/42** and the calendar-residual suite
+passes **28/28**. The sole `date-native` `Date.now()` harness failure reproduces
+on the exact C31 parent because `env.__date_now` is not supplied.
+
+C32 closes exact retained ownership for this one civil-date support helper, not
+R1. Other Date helpers and remaining support callable families still need
+structural owners.
 
 ### R1a validation evidence
 

@@ -167,6 +167,7 @@ const REQUIRED_DELEGATE_OWNERS: Readonly<Record<string, string>> = {
   compileArrowAsClosure: "closures.ts",
   emitBoundsCheckedArrayGet: "array-methods.ts",
   coerceType: "type-coercion.ts",
+  ensureExternrefToStringProvider: "coercion-engine.ts",
   ensureLateImport: "expressions/late-imports.ts (registered by expressions.ts)",
   flushLateImportShifts: "expressions/late-imports.ts (registered by expressions.ts)",
   ensureAnyHelpers: "any-helpers.ts",
@@ -342,6 +343,37 @@ export function coerceType(
   toPrimitiveHint?: "number" | "string" | "default",
 ): void {
   _coerceType(ctx, fctx, from, to, toPrimitiveHint);
+}
+
+// ── externref ToString provider ──────────────────────────────────────
+//
+// The implementation belongs to coercion-engine.ts, the single owner of the
+// runtime ToString vocabulary. type-coercion.ts needs its function index for a
+// nested OrdinaryToPrimitive branch while the engine already imports
+// coerceType/tryStructToString from type-coercion.ts, so this registered
+// delegate preserves the acyclic dependency boundary.
+
+type EnsureExternrefToStringProviderFn = (
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: "string" | "default",
+) => number | undefined;
+
+let _ensureExternrefToStringProvider: EnsureExternrefToStringProviderFn = () => {
+  throw unregisteredDelegateError("ensureExternrefToStringProvider");
+};
+
+export function registerEnsureExternrefToStringProvider(fn: EnsureExternrefToStringProviderFn): void {
+  _ensureExternrefToStringProvider = fn;
+  markRegistered("ensureExternrefToStringProvider");
+}
+
+export function ensureExternrefToStringProvider(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  hint: "string" | "default",
+): number | undefined {
+  return _ensureExternrefToStringProvider(ctx, fctx, hint);
 }
 
 // ── materializeStructAsObject (#2358) ─────────────────────────────────

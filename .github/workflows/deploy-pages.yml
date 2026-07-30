@@ -4,6 +4,20 @@ on:
   push:
     branches:
       - main
+  # (#3788) `benchmark-refresh.yml` measures for ~4 minutes and only THEN
+  # commits the refreshed numbers, with `[skip ci]` in the message. That
+  # `[skip ci]` is deliberate (it stops the commit retriggering its own
+  # workflow, and #1951 established that any push to main rebuilds every
+  # queued merge group) — but it suppresses EVERY workflow for that push,
+  # including this one. So the push-triggered deploy above always builds from
+  # the numbers committed BEFORE the current push's refresh, and the fresh
+  # ones only reach the site on the next unrelated push to main. Deploying
+  # once more when Refresh Benchmarks finishes closes that window without
+  # touching the `[skip ci]` semantics.
+  workflow_run:
+    workflows: ["Refresh Benchmarks"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -20,12 +34,22 @@ concurrency:
 
 jobs:
   build:
-    if: github.repository == 'loopdive/js2'
+    # A failed/cancelled Refresh Benchmarks run has nothing new to publish, and
+    # redeploying on it would just burn a build — only follow through on success.
+    if: |
+      github.repository == 'loopdive/js2' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          # (#3788) On a `workflow_run` event `github.sha` is the head SHA of
+          # the TRIGGERING run — the pre-refresh commit — so the default
+          # checkout would redeploy the exact stale numbers this trigger exists
+          # to replace. Pin to the tip of main to pick up the refresh commit.
+          # `push` and `workflow_dispatch` keep their existing behaviour.
+          ref: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
           submodules: recursive
           fetch-depth: 0
           fetch-tags: true

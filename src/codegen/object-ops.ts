@@ -40,6 +40,14 @@ import { emitUndefined } from "./expressions/late-imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { compileNativeStringLiteral, compileStringLiteral } from "./string-ops.js";
 import { getVecInfo } from "./type-coercion.js";
+import {
+  descriptorFieldName,
+  inheritedTrueDescriptorFlags,
+  tryConstantFoldToBoolean,
+  unwrapTransparentExpression,
+} from "./object-descriptor-analysis.js";
+
+export { tryConstantFoldToBoolean } from "./object-descriptor-analysis.js";
 
 /**
  * (#2580 B-acc) ES §6.1.7 — a canonical *array index* is a String that is a
@@ -113,79 +121,6 @@ function provesDenseLiteralOwnIndex(
   return !interveningReference;
 }
 
-// ── Compile-time ToBoolean coercion of descriptor flag initializers ──
-/**
- * Try to constant-fold `ToBoolean(<expr>)` at compile time. Returns:
- *   - `true`/`false` if the expression has a statically-known truthiness
- *   - `undefined` if the value cannot be determined at compile time (caller
- *     must evaluate at runtime or fall back to the dynamic path).
- *
- * Per ES spec §6.2.5.6 step 5.b, every descriptor attribute (writable,
- * enumerable, configurable) is run through `ToBoolean` before being stored.
- * Previously the codegen only accepted the `true`/`false` keyword literals
- * and silently dropped the entire attribute when any other expression
- * appeared (so `{ configurable: -12345 }` resulted in `configurable: false`
- * — a silent spec violation triggering 1,000+ test262 failures).
- */
-export function tryConstantFoldToBoolean(init: ts.Expression): boolean | undefined {
-  // Strip parentheses
-  while (ts.isParenthesizedExpression(init)) init = init.expression;
-  // Strip non-null/as assertions (TS-only no-ops)
-  while (ts.isNonNullExpression(init) || ts.isAsExpression(init) || ts.isTypeAssertionExpression(init)) {
-    init = init.expression;
-  }
-
-  if (init.kind === ts.SyntaxKind.TrueKeyword) return true;
-  if (init.kind === ts.SyntaxKind.FalseKeyword) return false;
-  if (init.kind === ts.SyntaxKind.NullKeyword) return false;
-  if (ts.isIdentifier(init) && init.text === "undefined") return false;
-  if (ts.isIdentifier(init) && init.text === "NaN") return false;
-  if (ts.isIdentifier(init) && init.text === "Infinity") return true;
-  if (ts.isNumericLiteral(init)) {
-    const n = Number(init.text);
-    return !!n && !Number.isNaN(n);
-  }
-  if (ts.isBigIntLiteral(init)) {
-    // Strip trailing "n"
-    const txt = init.text.replace(/n$/, "");
-    return BigInt(txt) !== 0n;
-  }
-  if (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init)) {
-    return init.text.length > 0;
-  }
-  if (ts.isTemplateExpression(init)) {
-    // Non-empty template (has head text or spans) is always truthy as a string
-    return init.head.text.length > 0 || init.templateSpans.length > 0;
-  }
-  // Object/array literals → truthy
-  if (ts.isObjectLiteralExpression(init) || ts.isArrayLiteralExpression(init)) return true;
-  // Function/arrow → truthy
-  if (ts.isFunctionExpression(init) || ts.isArrowFunction(init) || ts.isClassExpression(init)) return true;
-  // Unary minus / plus on numeric literal: !!(-12345) = true; !!(+0) = false
-  if (ts.isPrefixUnaryExpression(init)) {
-    const inner = tryConstantFoldToBoolean(init.operand);
-    if (init.operator === ts.SyntaxKind.MinusToken || init.operator === ts.SyntaxKind.PlusToken) {
-      // -N, +N preserve truthiness for numeric literal operands
-      if (ts.isNumericLiteral(init.operand)) {
-        const n = Number(init.operand.text);
-        return !!n && !Number.isNaN(n);
-      }
-    }
-    if (init.operator === ts.SyntaxKind.ExclamationToken) {
-      return inner !== undefined ? !inner : undefined;
-    }
-    if (init.operator === ts.SyntaxKind.TildeToken && ts.isNumericLiteral(init.operand)) {
-      const n = Number(init.operand.text);
-      const v = ~(n | 0);
-      return v !== 0;
-    }
-  }
-  // `void <expr>` always yields undefined
-  if (ts.isVoidExpression(init)) return false;
-  // Cannot determine statically — caller must handle the dynamic case
-  return undefined;
-}
-
 /**
  * Check whether a descriptor argument is statically a non-object primitive
  * value (number/string/boolean/null/undefined). When true, ES §6.2.5.5 step 1
@@ -209,28 +144,6 @@ function isStaticallyNonObjectDescArg(descArg: ts.Expression): boolean {
   return false;
 }
 
-const DESCRIPTOR_FIELD_NAMES = new Set(["value", "writable", "enumerable", "configurable", "get", "set"]);
-
-function unwrapTransparentExpression(expr: ts.Expression): ts.Expression {
-  while (
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isNonNullExpression(expr) ||
-    ts.isParenthesizedExpression(expr) ||
-    ts.isSatisfiesExpression(expr)
-  ) {
-    expr = (
-      expr as
-        | ts.AsExpression
-        | ts.TypeAssertion
-        | ts.NonNullExpression
-        | ts.ParenthesizedExpression
-        | ts.SatisfiesExpression
-    ).expression;
-  }
-  return expr;
-}
-
 function isUndefinedLikeExpression(expr: ts.Expression): boolean {
   const inner = unwrapTransparentExpression(expr);
   return (
@@ -238,13 +151,6 @@ function isUndefinedLikeExpression(expr: ts.Expression): boolean {
     (ts.isIdentifier(inner) && inner.text === "undefined") ||
     ts.isVoidExpression(inner)
   );
-}
-
-function descriptorFieldName(name: ts.PropertyName): string | undefined {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) {
-    return DESCRIPTOR_FIELD_NAMES.has(name.text) ? name.text : undefined;
-  }
-  return undefined;
 }
 
 function descriptorUndefinedFields(descArg: ts.Expression): string[] {
@@ -1180,6 +1086,35 @@ function emitMappedArgValueDefine(
  *
  * Returns obj (externref).
  */
+function emitInheritedTrueDescriptorDefineProperty(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  objArg: ts.Expression,
+  propArg: ts.Expression,
+  descArg: ts.Expression,
+  call: ts.CallExpression,
+): ValType | null | undefined {
+  const inheritedFlags = inheritedTrueDescriptorFlags(ctx, descArg, call);
+  if (!inheritedFlags) return undefined;
+  return emitExternDefinePropertyNoValue(
+    ctx,
+    fctx,
+    objArg,
+    propArg,
+    descArg,
+    inheritedFlags.writable,
+    undefined,
+    inheritedFlags.configurable,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+    false,
+    true,
+  );
+}
+
 export function compileObjectDefineProperty(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1189,15 +1124,7 @@ export function compileObjectDefineProperty(
   const propArg = expr.arguments[1]!;
   // Strip TS-only `as`/`!`/type-assertion wrappers so descriptor shape inspection
   // (object-literal detection, primitive-literal R5 check, etc.) sees the real node.
-  let descArg = expr.arguments[2]!;
-  while (
-    ts.isAsExpression(descArg) ||
-    ts.isNonNullExpression(descArg) ||
-    ts.isTypeAssertionExpression(descArg) ||
-    ts.isParenthesizedExpression(descArg)
-  ) {
-    descArg = (descArg as ts.AsExpression).expression;
-  }
+  const descArg = unwrapTransparentExpression(expr.arguments[2]!);
 
   // (#2726) Record the defineProperty'd `varName:propName` on an identifier
   // receiver up-front, BEFORE any lowering-path branch (inline data fast path,
@@ -1639,6 +1566,10 @@ export function compileObjectDefineProperty(
   // externref so the runtime sees a uniform entry point — this matches the
   // sibling Object.create path at calls.ts:3996+ (#1631).
   if (!ts.isObjectLiteralExpression(descArg)) {
+    // (#3663) Fold direct inherited TRUE descriptor flags into the canonical
+    // runtime store when the carrier and prototype writes are both proven.
+    const inheritedResult = emitInheritedTrueDescriptorDefineProperty(ctx, fctx, objArg, propArg, descArg, expr);
+    if (inheritedResult !== undefined) return inheritedResult;
     const init = descriptorInitializerForIdentifier(ctx, descArg);
     const r = emitDefinePropertyDescRuntime(
       ctx,
@@ -2520,6 +2451,25 @@ function computeRuntimeFlags(
   return flags;
 }
 
+function resolveKnownStructProperty(
+  ctx: CodegenContext,
+  objArg: ts.Expression,
+  propArg: ts.Expression,
+): { isKnown: boolean; structName: string | undefined; propName: string | undefined } {
+  const objTsType = ctx.checker.getTypeAtLocation(objArg);
+  const staticStructName = resolveStructName(ctx, objTsType);
+  const structName = staticStructName || (ts.isIdentifier(objArg) ? widenedStructNameForUse(ctx, objArg) : undefined);
+  const propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
+  const structTypeIdx = structName ? ctx.structMap.get(structName) : undefined;
+  const fields = structName ? ctx.structFields.get(structName) : undefined;
+  const fieldIdx = fields && propName ? fields.findIndex((field) => field.name === propName) : -1;
+  return {
+    isKnown: staticStructName !== undefined && structTypeIdx !== undefined && fields !== undefined && fieldIdx >= 0,
+    structName,
+    propName,
+  };
+}
+
 /**
  * Extract any dynamic-flag expressions (non-constant-foldable) from a descriptor
  * object literal. The compiler converts each to runtime `__to_boolean` calls so
@@ -2980,6 +2930,7 @@ function emitExternDefinePropertyNoValue(
   setExpr?: ts.Expression,
   getExplicitUndefined = false,
   setExplicitUndefined = false,
+  forceRuntime = false,
 ): ValType | null {
   // Compile obj
   const objType = compileExpression(ctx, fctx, objArg);
@@ -3031,16 +2982,9 @@ function emitExternDefinePropertyNoValue(
   // helper. Accessor descriptors also need the runtime path even when the key is
   // a known struct field: the sidecar is the only store that compiled reads can
   // consult for `get: identifierRef` / `set: identifierRef` descriptors.
-  const objTsType = ctx.checker.getTypeAtLocation(objArg);
-  const _staticStructName = resolveStructName(ctx, objTsType);
-  const _structName = _staticStructName || (ts.isIdentifier(objArg) ? widenedStructNameForUse(ctx, objArg) : undefined);
-  const _propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
-  const _structTypeIdx = _structName ? ctx.structMap.get(_structName) : undefined;
-  const _fields = _structName ? ctx.structFields.get(_structName) : undefined;
-  const _fieldIdx = _fields && _propName ? _fields.findIndex((f) => f.name === _propName) : -1;
-  const isKnownStructField =
-    _staticStructName !== undefined && _structTypeIdx !== undefined && _fields !== undefined && _fieldIdx >= 0;
-  if ((!isKnownStructField || isAccessorDesc) && propLocal !== undefined) {
+  const structProperty = resolveKnownStructProperty(ctx, objArg, propArg);
+  const isKnownStructField = structProperty.isKnown;
+  if ((forceRuntime || !isKnownStructField || isAccessorDesc) && propLocal !== undefined) {
     markRuntimeDefinedProperty(ctx, objArg, propArg);
     const propName = ts.isStringLiteral(propArg) ? propArg.text : undefined;
 
@@ -3202,26 +3146,26 @@ function emitExternDefinePropertyNoValue(
       // the #1888 S5c per-(struct,prop) module globals so runtime consumers
       // that dispatch on the struct shape (the #3125
       // `__promise_has_callable_then` predicate, the S5c read/write sites)
-      // still see the accessor. `_structName` resolves HERE (post-obj-compile)
-      // because compiling the literal registered its anon type; when it does
-      // not resolve, behaviour is unchanged (pre-#3125: accessor dropped).
-      // The TS-type resolution (`_structName`) misses an anonymous inline
+      // still see the accessor. `structProperty.structName` resolves HERE
+      // (post-obj-compile) because compiling the literal registered its anon
+      // type; when it does not resolve, behaviour is unchanged (pre-#3125:
+      // accessor dropped). The TS-type resolution misses an anonymous inline
       // literal; the COMPILED wasm type of the receiver identifies its closed
       // struct directly.
       const mirrorStructName =
-        _structName ??
+        structProperty.structName ??
         (objType.kind === "ref" || objType.kind === "ref_null"
           ? ctx.typeIdxToStructName.get(objType.typeIdx)
           : undefined);
-      if (S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone && mirrorStructName && _propName !== undefined) {
+      if (S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone && mirrorStructName && structProperty.propName !== undefined) {
         if (getNode) {
-          const getGlobalIdx = ensureStructAccessorGlobal(ctx, mirrorStructName, _propName, "get");
+          const getGlobalIdx = ensureStructAccessorGlobal(ctx, mirrorStructName, structProperty.propName, "get");
           if (buildAccessorClosure(ctx, fctx, getNode as unknown as ts.FunctionExpression)) {
             fctx.body.push({ op: "global.set", index: getGlobalIdx });
           }
         }
         if (setNode) {
-          const setGlobalIdx = ensureStructAccessorGlobal(ctx, mirrorStructName, _propName, "set");
+          const setGlobalIdx = ensureStructAccessorGlobal(ctx, mirrorStructName, structProperty.propName, "set");
           if (buildAccessorClosure(ctx, fctx, setNode as unknown as ts.FunctionExpression)) {
             fctx.body.push({ op: "global.set", index: setGlobalIdx });
           }
@@ -3394,6 +3338,121 @@ export function compileObjectDefineProperties(
     emitThrowTypeError(ctx, fctx, `${nullAccessorField} must be a function: null`);
     fctx.body.push({ op: "unreachable" });
     return { kind: "externref" };
+  }
+
+  // (#3782) Rollup-style packages commonly build a fixed descriptor map in a
+  // module variable, fill each descriptor's `get`/`set` field, then apply it
+  // to a function's prototype. The plural native fallback cannot enumerate a
+  // statically-shaped WasmGC map as a dynamic `$Object`. When the map's own key
+  // set is provably fixed and the receiver is a plain user-function prototype,
+  // expand the plural operation into singular definitions. Each descriptor is
+  // still read at the original call site, after all intervening mutations.
+  const stableDescriptorMapEntries = (() => {
+    if (!ctx.standalone || !ts.isIdentifier(descsArg)) return undefined;
+    if (
+      !ts.isPropertyAccessExpression(objArg) ||
+      objArg.name.text !== "prototype" ||
+      !ts.isIdentifier(objArg.expression)
+    ) {
+      return undefined;
+    }
+    const receiverDeclaration = ctx.oracle.valueDeclarationOf(objArg.expression);
+    const receiverIsFunction =
+      !!receiverDeclaration &&
+      (ts.isFunctionDeclaration(receiverDeclaration) ||
+        (ts.isVariableDeclaration(receiverDeclaration) &&
+          !!receiverDeclaration.initializer &&
+          ts.isFunctionExpression(unwrapTransparentExpression(receiverDeclaration.initializer))));
+    if (!receiverIsFunction) return undefined;
+
+    const declaration = ctx.oracle.variableDeclarationOf(descsArg);
+    if (
+      !declaration ||
+      !ts.isVariableDeclaration(declaration) ||
+      !declaration.initializer ||
+      !ts.isObjectLiteralExpression(unwrapTransparentExpression(declaration.initializer))
+    ) {
+      return undefined;
+    }
+    const literal = unwrapTransparentExpression(declaration.initializer) as ts.ObjectLiteralExpression;
+    const descriptors = new Map<string, Map<string, ts.Expression>>();
+    for (const property of literal.properties) {
+      if (
+        !ts.isPropertyAssignment(property) ||
+        (!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name)) ||
+        !ts.isObjectLiteralExpression(unwrapTransparentExpression(property.initializer))
+      ) {
+        return undefined;
+      }
+      const fields = new Map<string, ts.Expression>();
+      for (const field of (unwrapTransparentExpression(property.initializer) as ts.ObjectLiteralExpression)
+        .properties) {
+        if (!ts.isPropertyAssignment(field) || (!ts.isIdentifier(field.name) && !ts.isStringLiteral(field.name))) {
+          return undefined;
+        }
+        fields.set(field.name.text, field.initializer);
+      }
+      descriptors.set(property.name.text, fields);
+    }
+    const keys = [...descriptors.keys()];
+    if (keys.length === 0 || new Set(keys).size !== keys.length) return undefined;
+    const keySet = new Set(keys);
+    let stable = true;
+    const visit = (node: ts.Node): void => {
+      if (!stable) return;
+      if (ts.isIdentifier(node) && ctx.oracle.variableDeclarationOf(node) === declaration) {
+        if (node === declaration.name || node === descsArg) {
+          // Declaration and the defineProperties argument itself are expected.
+        } else if (
+          ts.isPropertyAccessExpression(node.parent) &&
+          node.parent.expression === node &&
+          keySet.has(node.parent.name.text) &&
+          ts.isPropertyAccessExpression(node.parent.parent) &&
+          node.parent.parent.expression === node.parent &&
+          ts.isBinaryExpression(node.parent.parent.parent) &&
+          node.parent.parent.parent.left === node.parent.parent &&
+          node.parent.parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          node.parent.parent.parent.getStart() < expr.getStart()
+        ) {
+          // A direct field assignment before the application preserves the
+          // descriptor map's key set and can be merged into its literal shape.
+          descriptors.get(node.parent.name.text)!.set(node.parent.parent.name.text, node.parent.parent.parent.right);
+        } else {
+          stable = false;
+          return;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(descsArg.getSourceFile());
+    return stable
+      ? keys.map((key) => ({
+          key,
+          descriptor: ts.factory.createObjectLiteralExpression(
+            [...descriptors.get(key)!.entries()].map(([name, initializer]) =>
+              ts.factory.createPropertyAssignment(name, initializer),
+            ),
+          ),
+        }))
+      : undefined;
+  })();
+  if (stableDescriptorMapEntries) {
+    let resultType: ValType | null = null;
+    for (let index = 0; index < stableDescriptorMapEntries.length; index++) {
+      const { key, descriptor } = stableDescriptorMapEntries[index]!;
+      const syntheticCall = ts.factory.createCallExpression(
+        ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier("Object"), "defineProperty"),
+        undefined,
+        [objArg, ts.factory.createStringLiteral(key), descriptor],
+      );
+      ts.setTextRange(syntheticCall, expr);
+      ts.setTextRange(descriptor, descsArg);
+      (descriptor as ts.ObjectLiteralExpression & { parent: ts.Node }).parent = syntheticCall;
+      (syntheticCall as ts.CallExpression & { parent: ts.Node }).parent = expr.parent;
+      resultType = compileObjectDefineProperty(ctx, fctx, syntheticCall);
+      if (resultType && index + 1 < stableDescriptorMapEntries.length) fctx.body.push({ op: "drop" });
+    }
+    return resultType;
   }
 
   // Static path: descriptors is an object literal — expand to individual defineProperty calls.

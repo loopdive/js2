@@ -11,11 +11,12 @@
     "wasmFlags": [
       "--no-liftoff"
     ],
-    "wasmUs": 4016.198919999997,
-    "jsUs": 9962.118242424243,
-    "wasmStdUs": 2.703918804778232,
-    "jsStdUs": 8.429364255474965,
-    "ratioStd": 0.0032455856054932077,
+    "jsOptStatus": "41 (matches optimized-signature 40)",
+    "wasmUs": 4219.472124999994,
+    "jsUs": 9269.856000000002,
+    "wasmStdUs": 2.4127177709635834,
+    "jsStdUs": 47.589897766904734,
+    "ratioStd": 0.011670857742958387,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -31,11 +32,12 @@
     "wasmFlags": [
       "--no-liftoff"
     ],
-    "wasmUs": 5767.778055555557,
-    "jsUs": 5621.163629107981,
-    "wasmStdUs": 1.1856508973383353,
-    "jsStdUs": 1656.091399501844,
-    "ratioStd": 0.28710692585466246,
+    "jsOptStatus": "41 (matches optimized-signature 40)",
+    "wasmUs": 180.13002522522513,
+    "jsUs": 311.36460955347883,
+    "wasmStdUs": 0.4622614007244677,
+    "jsStdUs": 0.11956848427903505,
+    "ratioStd": 0.004337653561367558,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -51,11 +53,12 @@
     "wasmFlags": [
       "--no-liftoff"
     ],
-    "wasmUs": 5.510741357069146,
-    "jsUs": 3.912063376945816,
-    "wasmStdUs": 0.05666211188581849,
-    "jsStdUs": 0.09708139558963184,
-    "ratioStd": 0.015598776534120807,
+    "jsOptStatus": "41 (matches optimized-signature 40)",
+    "wasmUs": 4.789692793956477,
+    "jsUs": 3.5165741007403506,
+    "wasmStdUs": 0.057876875649684086,
+    "jsStdUs": 0.07622904484213237,
+    "ratioStd": 0.019617056434832553,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -71,11 +74,12 @@
     "wasmFlags": [
       "--no-liftoff"
     ],
-    "wasmUs": 78.94525233644859,
-    "jsUs": 48.16926314586189,
-    "wasmStdUs": 1.3389707567039035,
-    "jsStdUs": 5.364700363671319,
-    "ratioStd": 0.06919592892809055,
+    "jsOptStatus": "41 (matches optimized-signature 40)",
+    "wasmUs": 54.694985386607456,
+    "jsUs": 29.845708153269953,
+    "wasmStdUs": 0.22810878636692286,
+    "jsStdUs": 0.9699581329598321,
+    "ratioStd": 0.018995294788961618,
     "warmupRounds": 2,
     "measuredRounds": 9
   }

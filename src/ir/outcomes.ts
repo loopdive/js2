@@ -44,6 +44,19 @@ export type IrUnsupportedCode =
   //     to a non-f64 (e.g. an externref generator value): the numeric coercion
   //     is legacy-only. Measured casualty: tests/issue-2079 (a for-of over a
   //     generator, `s += v`) hard-erroring where legacy compiles+runs (=3).
+  // A FIFTH site in this same class, found 2026-07-29 (#3784):
+  //   - `unboxed-number-local-unprovable` — the #2782/#2790 no-box NUMBER-local
+  //     proof gate in `lowerVarDecl` (from-ast.ts). Its own comment states the
+  //     contract: "anything unprovable — `any` / `unknown` / a MIXED
+  //     `number | string` union — demotes to the SAFE boxed legacy lowering".
+  //     It threw a PLAIN `Error`, so `classifyIrFailure` bucketed it as
+  //     `unexpected-internal-throw` and the documented demotion became a hard
+  //     compile error. Latent until #3783 adopted function-local `var`s into the
+  //     IR path: that made the selector CLAIM functions whose locals reach this
+  //     gate, so `function g(s){ var c = s.charCodeAt(0); return f(c); }` — an
+  //     `any`-typed receiver, i.e. ordinary untyped JS — stopped compiling at
+  //     all (empty binary) on every target. `let` was equally affected.
+  | "unboxed-number-local-unprovable"
   | "element-store-unsupported"
   | "element-access-unsupported"
   | "return-type-legacy-coupling"

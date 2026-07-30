@@ -13,6 +13,7 @@ import { valTypesMatch } from "../shared.js";
 import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -23,6 +24,27 @@ type WidenedPropCandidate = {
   type: ValType;
   primitiveSeed: boolean;
 };
+
+function literalShapeNames(obj: ts.ObjectLiteralExpression): Set<string> | null {
+  const names = new Set<string>();
+  for (const property of obj.properties) {
+    if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) return null;
+    const name = property.name;
+    if (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name)) return null;
+    names.add(name.text);
+  }
+  return names;
+}
+
+function propertyChainRoot(pae: ts.PropertyAccessExpression): { root: string; depth: number } | null {
+  let expression: ts.Expression = pae;
+  let depth = 0;
+  while (ts.isPropertyAccessExpression(expression)) {
+    depth++;
+    expression = expression.expression;
+  }
+  return ts.isIdentifier(expression) ? { root: expression.text, depth } : null;
+}
 
 function isRuntimePrimitiveSeed(type: ValType, tsType: ts.Type): boolean {
   const sentinelFlags = ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null;
@@ -470,36 +492,11 @@ export function collectGrowableObjectLiterals(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
-  // A literal property name we can build onto a $Object (data prop, statically-known key).
-  function literalShapeNames(obj: ts.ObjectLiteralExpression): Set<string> | null {
-    const names = new Set<string>();
-    for (const p of obj.properties) {
-      if (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) {
-        const nm = p.name;
-        if (ts.isIdentifier(nm) || ts.isStringLiteral(nm) || ts.isNumericLiteral(nm)) {
-          names.add(nm.text);
-        } else {
-          return null; // computed / symbol key — externref builder may decline; skip marking
-        }
-      } else {
-        return null; // spread / method / accessor — not a pure data literal
-      }
-    }
-    return names;
-  }
-
-  // Resolve a property-access chain's root identifier + depth. Returns null if the
-  // base is not ultimately a plain identifier (e.g. a call result).
-  function chainRoot(pae: ts.PropertyAccessExpression): { root: string; depth: number } | null {
-    let e: ts.Expression = pae;
-    let depth = 0;
-    while (ts.isPropertyAccessExpression(e)) {
-      depth++;
-      e = e.expression;
-    }
-    if (ts.isIdentifier(e)) return { root: e.text, depth };
-    return null;
-  }
+  // Emergency rollback for the closed-outer-table refinement below. Keeping
+  // this narrow switch makes the performance claim directly A/B measurable:
+  // `0` restores the old "every depth-2 write opens the root" policy.
+  const keepClosedOuterForDeclaredNestedWrites = process.env.JS2WASM_KEEP_CLOSED_NESTED_TABLES !== "0";
+  const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
 
   // Does a contextual type at a use site REQUIRE the closed-struct representation?
   // True only for a CONCRETE nominal struct (named own properties, not any/unknown/
@@ -611,10 +608,33 @@ export function collectGrowableObjectLiterals(
               node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
               ts.isPropertyAccessExpression(node.left)
             ) {
-              const info = chainRoot(node.left);
+              const info = propertyChainRoot(node.left);
               if (info && info.root === varName) {
                 if (info.depth >= 2) {
-                  grows = true; // nested deep-mutation (the acorn descriptor case)
+                  // A deep write does not necessarily grow the ROOT object.
+                  // Acorn's token table is the important generic shape:
+                  //
+                  //   var types = { parenR: new TokenType("]"), ... };
+                  //   types.parenR.updateContext = fn;
+                  //
+                  // `updateContext` is a declared TokenType field, so only the
+                  // nested instance mutates. Opening `types` itself turns every
+                  // fixed-key token read into a 17KB `__extern_get` ladder.
+                  //
+                  // Keep the conservative open-object route when the final
+                  // field is absent from the nested literal/fnctor declaration.
+                  // That is still Acorn's descriptor-table case:
+                  //
+                  //   var descriptors = { inFunction: { configurable: true } };
+                  //   descriptors.inFunction.get = fn; // `get` is new
+                  //
+                  // The rollback switch preserves an exact old-policy A/B.
+                  const targetsDeclaredNestedField =
+                    keepClosedOuterForDeclaredNestedWrites &&
+                    nestedWriteTargetsDeclaredField(decl.initializer as ts.ObjectLiteralExpression, node.left, varName);
+                  if (!targetsDeclaredNestedField) {
+                    grows = true;
+                  }
                 } else if (info.depth === 1 && !shape.has(node.left.name.text)) {
                   grows = true; // direct out-of-shape field add
                 }

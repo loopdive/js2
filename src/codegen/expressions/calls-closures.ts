@@ -35,6 +35,7 @@ import {
   emitWrapperDynamicMethodCall,
   STANDALONE_TA_SCALAR_HOFS,
 } from "./calls.js";
+import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
 
 /**
  * (#3033) Per-source-file set of member names the USER's own code defines as
@@ -1362,12 +1363,7 @@ function tryStaticIsPrototypeOf(
   return callable ? true : undefined;
 }
 
-/**
- * Try to resolve a method call on an `any`-typed receiver through registered extern classes.
- * When the type checker resolves the receiver as `any` (e.g. when lib files aren't loaded
- * in ESM/bundled contexts), we dispatch known collection methods (Set.union, Map.get, etc.)
- * by looking them up in ctx.externClasses and lazily registering the import.
- */
+/** Resolve an `any`-typed receiver method through registered extern classes. */
 export function tryExternClassMethodOnAny(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1381,21 +1377,15 @@ export function tryExternClassMethodOnAny(
   // Let the closed-method dispatcher perform that runtime identity check.
   if (ctx.standalone && methodName === "test" && expr.arguments.length === 1) return null;
 
+  if (methodName === "isPrototypeOf") {
+    const prototypeResult = tryCompileGetPrototypeOfIsPrototypeOf(ctx, fctx, expr, propAccess.expression);
+    if (prototypeResult) return prototypeResult;
+  }
+
   // (#2994) `Object.prototype.isPrototypeOf` / `Function.prototype.isPrototypeOf`
-  // static fold. On an `any`-typed receiver — which is how `Function.prototype`
-  // / `Object.prototype` (builtin prototype objects) surface here — the
-  // extern-class iteration below finds `isPrototypeOf` on the `Object` base
-  // extern class and emits an `Object_isPrototypeOf` host import the standalone
-  // runtime can't satisfy (round-5 leak analysis: 12 execution-verified
-  // sole-import leaky passes). The WasmGC-native `__isPrototypeOf` walks the
-  // `$Object.$proto` chain, but builtin prototypes/constructors (Object.prototype,
-  // Function.prototype, Number, …) are not linked into that chain in standalone
-  // mode, so routing there returns a spurious `false` (substrate gap — out of
-  // scope here). Instead statically fold the provably-true shapes — mirroring
-  // tryStaticInstanceOf's `instanceof Object` short-circuit (#1729): every
-  // non-primitive object descends from `Object.prototype`, and every
-  // callable/constructable value descends from `Function.prototype`. Undecidable
-  // shapes fall through to the existing host path unchanged (no regression).
+  // static fold for builtin prototype objects, whose native prototype links are
+  // not materialized in standalone. Mirrors tryStaticInstanceOf's `instanceof
+  // Object` short-circuit (#1729); undecidable shapes retain the host path.
   if (methodName === "isPrototypeOf") {
     const staticResult = tryStaticIsPrototypeOf(ctx, propAccess.expression, expr.arguments[0]);
     if (staticResult !== undefined) {

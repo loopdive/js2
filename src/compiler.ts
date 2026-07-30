@@ -54,6 +54,10 @@ import type { CompileError, CompileOptions, CompileResult } from "./index.js";
 import { optimizeBinaryAsync } from "./optimize.js";
 import { generateWit } from "./wit-generator.js";
 import { compileProfileNow, recordCompileProfile } from "./compile-profile.js";
+import {
+  foldGroundCallsInMultiFilesForCompile as foldGroundCallsInMulti,
+  foldGroundExportCallsForCompile as foldGroundCalls,
+} from "./compiler/ground-call-fold.js";
 export { compileToObjectSource } from "./compiler/output.js";
 export type { ObjectCompileResult } from "./compiler/output.js";
 
@@ -654,7 +658,10 @@ async function applyOptimize(
 ): Promise<CompileResult> {
   if (!options.optimize || !result.success) return result;
   const level = typeof options.optimize === "number" ? options.optimize : 3;
-  const optResult = await optimizeBinaryAsync(result.binary, { level });
+  const optResult = await optimizeBinaryAsync(result.binary, {
+    level,
+    preserveNames: options.preserveDebugNames,
+  });
   if (optResult.optimized) {
     result.binary = optResult.binary;
   }
@@ -1188,7 +1195,10 @@ export async function compileSource(
 
   if (options.optimize && result.success) {
     const level = typeof options.optimize === "number" ? options.optimize : 3;
-    const optResult = await optimizeBinaryAsync(result.binary, { level });
+    const optResult = await optimizeBinaryAsync(result.binary, {
+      level,
+      preserveNames: options.preserveDebugNames,
+    });
     if (optResult.optimized) {
       result.binary = optResult.binary;
     }
@@ -1219,9 +1229,8 @@ export function compileSourceSync(
   // (e.g., test262 worker pool), causing false "depth exceeded" errors.
   resetCompileDepth();
 
-  // #2146 — fail fast (with the offending module named) if any codegen delegate
-  // was never wired, instead of throwing an obscure "X not yet registered" deep
-  // inside codegen only when the relevant feature is exercised. This entry pulls
+  // #2146 — fail fast if any codegen delegate was never wired, instead of
+  // throwing an obscure error only when the relevant feature is exercised. This entry pulls
   // in every registrar module statically (via the codegen imports above), so the
   // assertion always passes on the production path; it only fires if a future
   // refactor breaks the registrar-import chain.
@@ -1317,13 +1326,13 @@ export function compileSourceSync(
   // prelude) was injected ahead of a `.js`-named user file, parse the combined
   // unit under the TS grammar so the prelude's TS syntax (type annotations,
   // `private`, signature declarations) isn't hard-rejected with TS8009/8010/8017.
-  // ScriptKind-only override; the `.js`-derived semantics (lenient checking)
-  // stay intact. Byte-neutral when no prelude was injected.
+  // ScriptKind-only override; `.js`-derived lenient checking stays intact.
   const forceTsGrammar = stdinResult.injected || iterStaticsResult.injected;
 
+  processedSource = foldGroundCalls(processedSource, effectiveFileName, options.optimize, isJsMode && !forceTsGrammar);
+
   // Step 1a: #3418 — host-free targets elide dead pure top-level bindings before
-  // parsing so unreachable bodies do not register host imports. Same-length
-  // whitespace blanking needs no PositionMap; syntax errors leave source intact.
+  // parsing so unreachable bodies do not register host imports.
   if (options.target === "standalone" || options.target === "wasi") {
     const scriptKind = isJsMode && !forceTsGrammar ? ts.ScriptKind.JS : ts.ScriptKind.TS;
     const elision = irIds.elideWithIrIds(processedSource, effectiveFileName, scriptKind, irInventory);
@@ -1469,12 +1478,9 @@ export function compileSourceSync(
     return failResult(errors);
   }
 
-  // #1927 — everything from ES early-error detection down through emit is the
-  // shared pipeline core. The single-source path is the only one that runs the
-  // full pre-parse rewrite prologue + import preprocessing above; it threads the
-  // single-source-only `nodeBuiltins`/`wasiNodeFsFuncs`/`jsxRuntime` through
-  // `buildCodegenOptions`. `compileSourceSync` stays synchronous and never runs
-  // wasm-opt (the `eval` host shim contract) — `runPipeline` stops before it.
+  // #1927 — everything from ES early-error detection through emit is shared.
+  // This single-source path runs the full rewrite prologue and threads its data
+  // into codegen; the synchronous eval contract stops before wasm-opt.
   const emitSourceMap = options.sourceMap === true;
   const sourcesContent = new Map<string, string>();
   sourcesContent.set(effectiveFileName, source);
@@ -1528,9 +1534,10 @@ export async function compileMultiSource(
   // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` (#1279) across
   // every input file. This runs before TypeScript's analyzer so the require() calls
   // are seen as proper module imports during cross-file resolution.
-  const processedFiles = Object.fromEntries(
+  const rewrittenFiles = Object.fromEntries(
     Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v, { platform: options?.platform })]),
   );
+  const processedFiles = foldGroundCallsInMulti(rewrittenFiles, entryFile, options.optimize);
   recordCompileProfile("multi.preprocess", preprocessStarted, {
     checkerFiles: Object.keys(processedFiles).length,
     sourceBytes: Object.values(processedFiles).reduce((total, source) => total + source.length, 0),

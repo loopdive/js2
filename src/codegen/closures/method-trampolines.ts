@@ -32,6 +32,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
+import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
 
 /**
  * (#2015) Build the `this`-slot prologue for an object-method trampoline.
@@ -857,6 +858,7 @@ export function ensureFuncClosureSingleton(
     ctx.funcClosureGlobals.set(funcName, cacheGlobalIdx);
   }
 
+  observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx, cacheGlobalIdx);
   return { cacheGlobalIdx, trampolineFuncIdx, closureStructTypeIdx: structTypeIdx };
 }
 

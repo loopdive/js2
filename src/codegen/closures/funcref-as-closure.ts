@@ -15,6 +15,7 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
 import {
   closureArityField,
   getFuncSignature,
@@ -365,6 +366,7 @@ export function emitFuncRefAsClosure(
       body: trampolineBody,
       exported: false,
     });
+    observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx);
     ctx.funcMap.set(trampolineName, trampolineFuncIdx);
 
     // Register closureInfo so array method callbacks can use call_ref

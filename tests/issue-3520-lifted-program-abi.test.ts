@@ -114,4 +114,40 @@ describe("#3520 production lifted-callable Program ABI planning", () => {
     ).toBe(4);
     expect(firstLiftedSlot.func.typeIdx).not.toBe(sameLabelSourceSlot.func.typeIdx);
   });
+
+  it("does not reuse an empty same-labelled source slot for a lifted artifact", () => {
+    const ast = analyzeSource(
+      `
+        export function owner(value: number): number {
+          const callback = (): number => value + 1;
+          return callback();
+        }
+
+        export function owner__closure_0(): void {}
+      `,
+      "/repo/issue-3520-lifted-empty-collision.ts",
+    );
+    const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile });
+    const owner = inventory.allUnits.find((unit) => unit.kind === "top-level-function" && unit.displayName === "owner");
+    const emptySource = inventory.allUnits.find(
+      (unit) => unit.kind === "top-level-function" && unit.displayName === "owner__closure_0",
+    );
+    if (!owner || !emptySource) throw new Error("missing empty-slot collision fixtures");
+    const liftedUnitId = createDerivedIrUnitId({
+      parentId: owner.id,
+      role: "lifted-closure",
+      ordinal: 0,
+    });
+
+    const result = generateModule(ast, { experimentalIR: true, trackIrOutcomes: true });
+    const hardErrors = result.errors.filter((error) => error.severity !== "warning");
+    expect(hardErrors, hardErrors.map((error) => error.message).join("\n")).toEqual([]);
+    expect(result.programAbi).toBeDefined();
+
+    const liftedIndex = result.programAbi!.abi.resolveFinalIndex(irUnitCallableBindingId(liftedUnitId));
+    const sourceIndex = result.programAbi!.abi.resolveFinalIndex(irUnitCallableBindingId(emptySource.id));
+    expect(liftedIndex).toEqual(expect.objectContaining({ space: "function" }));
+    expect(sourceIndex).toEqual(expect.objectContaining({ space: "function" }));
+    expect(liftedIndex).not.toEqual(sourceIndex);
+  });
 });

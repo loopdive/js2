@@ -27,6 +27,7 @@ benchmarks/results/*.json
 !benchmarks/results/test262-standalone-highwater.json
 !benchmarks/results/npm-compat.json
 !benchmarks/results/npm-compat-perf.json
+!benchmarks/results/npm-compat-history.json
 benchmarks/results/*.md
 benchmarks/results/*.txt
 # #1528 — the ~15 MB test262 baseline JSONL lives in loopdive/js2wasm-baselines.
@@ -75,6 +76,9 @@ tests/dogfood/.marked/
 tests/dogfood/.acorn-test-suite/
 tests/dogfood/.cookie/
 tests/dogfood/.clsx/
+tests/dogfood/.eslint/
+tests/dogfood/.prettier/
+tests/dogfood/.react/
 tests/dogfood/report/
 /check-*.ts
 /check-*.mts

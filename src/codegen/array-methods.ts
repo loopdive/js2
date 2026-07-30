@@ -1005,7 +1005,7 @@ function emitDynViewMethodTwoArm(
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   callExpr: ts.CallExpression,
-  receiverType: ts.Type,
+  receiverType: ts.Type | undefined,
   methodName: string,
   expectedType: ValType | undefined,
 ): ValType | null | undefined | typeof VOID_RESULT {
@@ -1131,7 +1131,7 @@ export function compileArrayMethodCall(
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   callExpr: ts.CallExpression,
-  receiverType: ts.Type,
+  receiverType: ts.Type | undefined,
   overrideMethodName?: string,
   expectedType?: ValType,
   skipDynViewWrap = false,
@@ -1196,8 +1196,8 @@ export function compileArrayMethodCall(
 
   const receiverExpr = propAccess.expression;
   const arrInfo =
-    resolveArrayInfo(ctx, receiverType) ??
-    resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, receiverExpr, false));
+    (receiverType === undefined ? null : resolveArrayInfo(ctx, receiverType)) ??
+    resolveArrayInfoFromWasmType(ctx, inferExpressionWasmType(ctx, fctx, receiverExpr, receiverType === undefined));
   if (!arrInfo) return undefined;
 
   let { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;

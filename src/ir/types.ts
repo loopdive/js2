@@ -169,6 +169,13 @@ export interface FieldDef {
   type: ValType;
   mutable: boolean;
   /**
+   * The field's constructor initializer is a call proven to return the native
+   * open `$Object` carrier (for example acorn's `this.options = getOptions()`).
+   * This is an optimisation hint only: consumers must keep the canonical
+   * dynamic fallback because the mutable field may subsequently be replaced.
+   */
+  dynamicObjectCarrier?: true;
+  /**
    * The physical carrier was inferred as numeric, but whole-program source
    * analysis proved every definition/write produces a JS boolean (#2847).
    * Kept separate from ValType so finalize-time host boxing can recover the

@@ -1,6 +1,13 @@
 {
-  "generatedAt": "2026-07-28T14:37:32.809Z",
+  "generatedAt": "2026-07-30T04:25:42.771Z",
   "note": "Only packages with a committed, reproducible tests/dogfood/*-harness.mjs are listed. mustache (#3720), diff (#3721), and dayjs (#3747) were probed ad-hoc and surfaced real bugs but have no committed harness yet.",
+  "performanceMethodology": {
+    "baseline": "same pinned package, inputs, and result observation in native Node",
+    "inputModes": {
+      "compile-time-static": "package, test driver, and fixed inputs are visible to the Wasm compiler",
+      "runtime-dynamic": "an input or input-selecting value is supplied by the JavaScript host only after Wasm compilation"
+    }
+  },
   "packages": [
     {
       "name": "acorn",
@@ -10,9 +17,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 28340,
+        "durationMs": 7899,
         "errorCount": 0,
-        "binaryBytes": 596610,
+        "binaryBytes": 604618,
         "categories": {}
       },
       "validation": {
@@ -27,19 +34,232 @@
         "sourceIssue": 3729
       },
       "perf": {
-        "sampleOp": "parse(own 226KB dist bundle)",
-        "wasmUs": 6214971.531799994,
-        "nodeUs": 15288.137799990363,
-        "wasmStdUs": 208274.35427490805,
-        "nodeStdUs": 866.406171122399,
-        "ratio": 0.002459888628896515,
+        "sampleOp": "parse(own 226KB dist bundle).body.length",
+        "lanes": {
+          "jsHost": {
+            "status": "measured",
+            "placement": "js-host",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "parse(own 226KB dist bundle).body.length",
+            "wasmUs": 1308875.0839999993,
+            "nodeUs": 4544.20800000662,
+            "wasmStdUs": 24099.33779616998,
+            "nodeStdUs": 1071.022037836787,
+            "ratio": 0.0034718423901227095,
+            "ratioStd": 0.0008231337134984167,
+            "iters": 1,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              1305782.5000000012,
+              1276413.124999999,
+              1292802.958,
+              1311645.7919999957,
+              1332766.1249999946,
+              1290837.2079999973,
+              1308875.0839999993,
+              1332379.541000002,
+              1359434.5840000024
+            ],
+            "nodeSamplesUs": [
+              4526.125000003958,
+              4544.20800000662,
+              4493.45799999719,
+              4613.500000006752,
+              4360.333999997238,
+              4599.583000002895,
+              7933.875000002445,
+              4476.0000000096625,
+              4684.750000000349
+            ],
+            "compileDurationMs": 13997.66275,
+            "wasmCompileMs": 0.7733750000006694,
+            "instantiateMs": 3.1023329999989073,
+            "wireMs": 0.001082999999198364,
+            "wrapMs": 0.12604099999953178,
+            "binaryBytes": 332182,
+            "moduleImportCount": 1149,
+            "functionImportCount": 77,
+            "expectedChecksum": 422,
+            "actualChecksum": 422,
+            "testCompiledToWasm": false,
+            "target": "js-host",
+            "resultObservation": "js-host-full-ast"
+          },
+          "standalone": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "compile-time-static",
+            "sampleOp": "parse(own 226KB dist bundle).body.length",
+            "wasmUs": 0.03209836054860508,
+            "nodeUs": 5237.259557376927,
+            "wasmStdUs": 0.0039679189446043634,
+            "nodeStdUs": 331.88905670404614,
+            "ratio": 163162.8366017755,
+            "ratioStd": 24836.801916963504,
+            "iters": 61,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.038934426408902295,
+              0.02937704910615795,
+              0.03414754097380477,
+              0.030737704946659505,
+              0.03209836054860508,
+              0.03893442617034631,
+              0.03960655742614973,
+              0.030737704946659505,
+              0.03006557369085609
+            ],
+            "nodeSamplesUs": [
+              4865.219950819814,
+              5680.416655737704,
+              5400.467901639249,
+              5628.73019672144,
+              5838.198770491738,
+              4994.1898852459835,
+              5056.244540983691,
+              5237.259557376927,
+              4995.178278688519
+            ],
+            "compileDurationMs": 40316.389834,
+            "moduleCompileDurationMs": 0.24275000000488944,
+            "instantiateDurationMs": 0.05208399999537505,
+            "firstBatchDurationMs": 0.029165999992983416,
+            "binaryBytes": 20874,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 422,
+            "actualChecksum": 422,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": true,
+            "irCompiledFunctions": [
+              "__npmCompatStandaloneBenchmark"
+            ],
+            "target": "standalone",
+            "staticEvaluation": {
+              "operationEvaluatedInWasm": true,
+              "operationResultType": "number",
+              "stageDurationMs": 104.95191599999089,
+              "stageBinaryBytes": 1673410,
+              "stageModuleImportCount": 0
+            }
+          },
+          "standaloneDynamic": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
+            "wasmUs": 46019.79757142752,
+            "nodeUs": 4937.601285712195,
+            "wasmStdUs": 1238.2171279835673,
+            "nodeStdUs": 133.50345626946594,
+            "ratio": 0.10729298141845416,
+            "ratioStd": 0.002813846200371613,
+            "iters": 7,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              47324.46428571296,
+              46674.756000001384,
+              46019.79757142752,
+              45873.76785714462,
+              49092.85714286047,
+              45761.02971428606,
+              47639.01785714136,
+              45257.62499999837,
+              44964.73214285548
+            ],
+            "nodeSamplesUs": [
+              4937.601285712195,
+              4937.261857142273,
+              4902.059571426695,
+              4933.898857141945,
+              5272.226142859186,
+              4955.53571428588,
+              5110.750000000865,
+              5204.297714284621,
+              4895.166714284902
+            ],
+            "compileDurationMs": 37899.551500000016,
+            "moduleCompileDurationMs": 8.121083000005456,
+            "instantiateDurationMs": 5.311083999986295,
+            "moduleInitDurationMs": 4.646749999985332,
+            "firstBatchDurationMs": 91.7865420000162,
+            "binaryBytes": 1673539,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 422,
+            "actualChecksum": 422,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": false,
+            "irCompiledFunctions": [
+              "isInAstralSet",
+              "codePointToString",
+              "functionFlags",
+              "checkKeyName",
+              "isLocalVariableAccess",
+              "isPrivateFieldAccess",
+              "hasProp",
+              "isRegularExpressionModifier",
+              "isSyntaxCharacter",
+              "isControlLetter",
+              "isValidUnicode",
+              "isCharacterClassEscape",
+              "isUnicodePropertyNameCharacter",
+              "isUnicodePropertyValueCharacter",
+              "isClassSetReservedDoublePunctuatorCharacter",
+              "isClassSetSyntaxCharacter",
+              "isClassSetReservedPunctuator",
+              "isDecimalDigit",
+              "isHexDigit",
+              "hexToInt",
+              "isOctalDigit"
+            ],
+            "target": "standalone",
+            "runtimeArgumentSuppliedAfterCompile": true
+          }
+        },
+        "wasmUs": 1308875.0839999993,
+        "nodeUs": 4544.20800000662,
+        "wasmStdUs": 24099.33779616998,
+        "nodeStdUs": 1071.022037836787,
+        "ratio": 0.0034718423901227095,
+        "ratioStd": 0.0008231337134984167,
+        "iters": 1,
         "warmupRounds": 2,
-        "measuredRounds": 9
+        "measuredRounds": 9,
+        "wasmSamplesUs": [
+          1305782.5000000012,
+          1276413.124999999,
+          1292802.958,
+          1311645.7919999957,
+          1332766.1249999946,
+          1290837.2079999973,
+          1308875.0839999993,
+          1332379.541000002,
+          1359434.5840000024
+        ],
+        "nodeSamplesUs": [
+          4526.125000003958,
+          4544.20800000662,
+          4493.45799999719,
+          4613.500000006752,
+          4360.333999997238,
+          4599.583000002895,
+          7933.875000002445,
+          4476.0000000096625,
+          4684.750000000349
+        ]
       },
       "knownBugs": [
         {
-          "issue": 3756,
-          "summary": "parse() is ~400-500x slower than native at real-file scale — a large constant-factor gap (flat ~60us/byte), likely method-dispatch overhead"
+          "issue": 3780,
+          "summary": "runtime-dynamic Acorn remains slower than native Node; only the separately reported compile-time-static lane folds to IR"
+        },
+        {
+          "issue": 3782,
+          "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
         }
       ]
     },
@@ -51,7 +271,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 1292,
+        "durationMs": 241,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -109,7 +329,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 312,
+        "durationMs": 65,
         "errorCount": 0,
         "binaryBytes": 7905,
         "categories": {}
@@ -125,14 +345,187 @@
         "sourceIssue": 3748
       },
       "perf": {
-        "sampleOp": "op_mixed_all_kinds",
-        "wasmUs": 37.805664478182095,
-        "nodeUs": 0.1818245110123526,
-        "wasmStdUs": 2.312647765992195,
-        "nodeStdUs": 0.008531962475355178,
-        "ratio": 0.0048094515338378665,
+        "sampleOp": "op_two_strings.length (host-owned arguments)",
+        "lanes": {
+          "jsHost": {
+            "status": "measured",
+            "placement": "js-host",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "op_two_strings.length (host-owned arguments)",
+            "wasmUs": 0.4438005326885313,
+            "nodeUs": 0.017848953293771848,
+            "wasmStdUs": 0.031133296443668294,
+            "nodeStdUs": 0.0163295335497064,
+            "ratio": 0.04021841340667931,
+            "ratioStd": 0.03909885461625075,
+            "iters": 484711,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.40196718663285363,
+              0.4234396888042426,
+              0.48865088475399704,
+              0.4624652628061075,
+              0.4438005326885313,
+              0.4457406929077243,
+              0.4822826550253644,
+              0.40143714502044636,
+              0.41155554546932227
+            ],
+            "nodeSamplesUs": [
+              0.0450779784243038,
+              0.016185246466495128,
+              0.017848953293771848,
+              0.05630004270586315,
+              0.04228679563701183,
+              0.01597739065129505,
+              0.01610332342362355,
+              0.05062251939814366,
+              0.01652144267407386
+            ],
+            "binaryBytes": 2100,
+            "moduleImportCount": 21,
+            "functionImportCount": 16,
+            "expectedChecksum": 7,
+            "actualChecksum": 7,
+            "testCompiledToWasm": false,
+            "target": "js-host"
+          },
+          "standalone": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "compile-time-static",
+            "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
+            "wasmUs": 0.0006623784893116832,
+            "nodeUs": 0.012206402851459037,
+            "wasmStdUs": 0.000029359201414684937,
+            "nodeStdUs": 0.0006075667755491357,
+            "ratio": 18.428138969523957,
+            "ratioStd": 0.8488289648995463,
+            "iters": 12031452,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.0006508324182309657,
+              0.0006505241428887761,
+              0.0006689653917079841,
+              0.0007204969940469576,
+              0.0007332586291353038,
+              0.0006781184847849061,
+              0.0006507423210433092,
+              0.0006623784893116832,
+              0.0006571872621846222
+            ],
+            "nodeSamplesUs": [
+              0.011764173019183376,
+              0.013003944411695287,
+              0.013227850636814746,
+              0.013285065260616496,
+              0.012656137347345381,
+              0.012206402851459037,
+              0.011835146747042688,
+              0.012024234481423722,
+              0.011677566764177062
+            ],
+            "compileDurationMs": 681.1492499999877,
+            "moduleCompileDurationMs": 0.30758399999467656,
+            "instantiateDurationMs": 0.05641699998523109,
+            "firstBatchDurationMs": 0.022082999988924712,
+            "binaryBytes": 20340,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 7,
+            "actualChecksum": 7,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": true,
+            "irCompiledFunctions": [
+              "__npmCompatStandaloneBenchmark"
+            ],
+            "target": "standalone"
+          },
+          "standaloneDynamic": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
+            "wasmUs": 0.22503833927799757,
+            "nodeUs": 0.02834141975008313,
+            "wasmStdUs": 0.008016975750337664,
+            "nodeStdUs": 0.0012042744704736374,
+            "ratio": 0.12594040571492132,
+            "ratioStd": 0.004999555959558809,
+            "iters": 1314344,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.22503833927799757,
+              0.24062948208383056,
+              0.23364634144485813,
+              0.22454674499216312,
+              0.21886063846297993,
+              0.2238699183775311,
+              0.24318110403363072,
+              0.23428598220859595,
+              0.22330623337571623
+            ],
+            "nodeSamplesUs": [
+              0.029571596172699267,
+              0.02919010015641942,
+              0.026985832476131275,
+              0.02742049113472529,
+              0.027104268745483908,
+              0.02834141975008313,
+              0.03070923593824559,
+              0.027532778328960807,
+              0.028979158424259698
+            ],
+            "compileDurationMs": 1000.5854999999865,
+            "moduleCompileDurationMs": 0.36312500000349246,
+            "instantiateDurationMs": 0.07133299999986775,
+            "firstBatchDurationMs": 0.27550000001792796,
+            "binaryBytes": 33894,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 14,
+            "actualChecksum": 14,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": false,
+            "irCompiledFunctions": [],
+            "target": "standalone",
+            "runtimeArgumentSuppliedAfterCompile": true
+          }
+        },
+        "wasmUs": 0.4438005326885313,
+        "nodeUs": 0.017848953293771848,
+        "wasmStdUs": 0.031133296443668294,
+        "nodeStdUs": 0.0163295335497064,
+        "ratio": 0.04021841340667931,
+        "ratioStd": 0.03909885461625075,
+        "iters": 484711,
         "warmupRounds": 2,
-        "measuredRounds": 9
+        "measuredRounds": 9,
+        "wasmSamplesUs": [
+          0.40196718663285363,
+          0.4234396888042426,
+          0.48865088475399704,
+          0.4624652628061075,
+          0.4438005326885313,
+          0.4457406929077243,
+          0.4822826550253644,
+          0.40143714502044636,
+          0.41155554546932227
+        ],
+        "nodeSamplesUs": [
+          0.0450779784243038,
+          0.016185246466495128,
+          0.017848953293771848,
+          0.05630004270586315,
+          0.04228679563701183,
+          0.01597739065129505,
+          0.01610332342362355,
+          0.05062251939814366,
+          0.01652144267407386
+        ]
       },
       "knownBugs": [
         {
@@ -149,7 +542,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 564,
+        "durationMs": 114,
         "errorCount": 9,
         "binaryBytes": 17569,
         "categories": {
@@ -176,14 +569,150 @@
         "sourceIssue": 3751
       },
       "perf": {
-        "sampleOp": "parseCookie(8-pair header)",
-        "wasmUs": 401.9859283054733,
-        "nodeUs": 0.8369040968342297,
-        "wasmStdUs": 46.322671286609484,
-        "nodeStdUs": 0.08388455814051107,
-        "ratio": 0.0020819238632608494,
+        "sampleOp": "parseCookie(8-pair header); verify a/h",
+        "lanes": {
+          "jsHost": {
+            "status": "measured",
+            "placement": "js-host",
+            "inputMode": "runtime-dynamic",
+            "sampleOp": "parseCookie(8-pair header); verify a/h",
+            "wasmUs": 145.00655457412932,
+            "nodeUs": 0.2718980021059384,
+            "wasmStdUs": 37.52731419781082,
+            "nodeStdUs": 0.0065638114082192806,
+            "ratio": 0.0018750738744498646,
+            "ratioStd": 0.0005065670844445156,
+            "iters": 4755,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              94.00944605678541,
+              107.28982649842712,
+              117.82514006308902,
+              131.14564479495175,
+              145.00655457412932,
+              160.81565909568621,
+              177.8449352260752,
+              199.30781619348483,
+              204.70381177708185
+            ],
+            "nodeSamplesUs": [
+              0.27209085173127323,
+              0.2735541535215305,
+              0.26862082019209327,
+              0.2714862250274911,
+              0.27775141955514904,
+              0.26472996845430097,
+              0.2718980021059384,
+              0.2886172450065797,
+              0.26760420609719965
+            ],
+            "binaryBytes": 14089,
+            "moduleImportCount": 135,
+            "functionImportCount": 34,
+            "expectedChecksum": 1,
+            "actualChecksum": 1,
+            "testCompiledToWasm": false,
+            "target": "js-host"
+          },
+          "standalone": {
+            "status": "measured",
+            "placement": "standalone",
+            "inputMode": "compile-time-static",
+            "sampleOp": "parseCookie(8-pair header); verify a/h",
+            "wasmUs": 0.0006720381787873619,
+            "nodeUs": 0.26594448618623473,
+            "wasmStdUs": 0.000012552028517435273,
+            "nodeStdUs": 0.005187198675952733,
+            "ratio": 395.7282407170823,
+            "ratioStd": 10.195462416818248,
+            "iters": 1112660,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              0.0006750337030009243,
+              0.0006641741412222001,
+              0.0006882911221673454,
+              0.0006654854133277727,
+              0.0006651106357912185,
+              0.0006515170851959288,
+              0.0006954810993406326,
+              0.0006720381787873619,
+              0.0006770567828520668
+            ],
+            "nodeSamplesUs": [
+              0.26071535060125633,
+              0.2616514335017118,
+              0.26784102960473394,
+              0.26594448618623473,
+              0.265593413082168,
+              0.26671501177358553,
+              0.26752358402385334,
+              0.27930219024678254,
+              0.26233350709112063
+            ],
+            "compileDurationMs": 656.4887500000186,
+            "moduleCompileDurationMs": 0.3060420000110753,
+            "instantiateDurationMs": 0.05424999998649582,
+            "firstBatchDurationMs": 0.02016600000206381,
+            "binaryBytes": 20340,
+            "moduleImportCount": 0,
+            "functionImportCount": 0,
+            "expectedChecksum": 1,
+            "actualChecksum": 1,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": true,
+            "irCompiledFunctions": [
+              "__npmCompatStandaloneBenchmark"
+            ],
+            "target": "standalone"
+          },
+          "standaloneDynamic": {
+            "status": "runtime-error",
+            "placement": "standalone",
+            "inputMode": "runtime-dynamic",
+            "diagnostic": "TypeError: Cannot access property on null or undefined at 14:17",
+            "phase": "checksum",
+            "compileDurationMs": 1420.755375000008,
+            "moduleCompileDurationMs": 0.4792079999751877,
+            "instantiateDurationMs": 0.09166700000059791,
+            "moduleInitDurationMs": 0.15979100001277402,
+            "binaryBytes": 43838,
+            "moduleImportCount": 0,
+            "functionImportCount": 0
+          }
+        },
+        "wasmUs": 145.00655457412932,
+        "nodeUs": 0.2718980021059384,
+        "wasmStdUs": 37.52731419781082,
+        "nodeStdUs": 0.0065638114082192806,
+        "ratio": 0.0018750738744498646,
+        "ratioStd": 0.0005065670844445156,
+        "iters": 4755,
         "warmupRounds": 2,
-        "measuredRounds": 9
+        "measuredRounds": 9,
+        "wasmSamplesUs": [
+          94.00944605678541,
+          107.28982649842712,
+          117.82514006308902,
+          131.14564479495175,
+          145.00655457412932,
+          160.81565909568621,
+          177.8449352260752,
+          199.30781619348483,
+          204.70381177708185
+        ],
+        "nodeSamplesUs": [
+          0.27209085173127323,
+          0.2735541535215305,
+          0.26862082019209327,
+          0.2714862250274911,
+          0.27775141955514904,
+          0.26472996845430097,
+          0.2718980021059384,
+          0.2886172450065797,
+          0.26760420609719965
+        ]
       },
       "knownBugs": [
         {
@@ -191,6 +720,115 @@
           "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
         }
       ]
+    },
+    {
+      "name": "eslint",
+      "version": "10.0.3",
+      "issue": 1400,
+      "entryFile": "lib/api.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 3125,
+        "timedOut": false,
+        "timeoutMs": 180000,
+        "errorCount": 6,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 6,
+            "sample": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
+          }
+        },
+        "errors": [
+          {
+            "message": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
+          },
+          {
+            "message": "Module '\"./linter\"' declares 'Linter' locally, but it is not exported."
+          },
+          {
+            "message": "Module '\"./rule-tester\"' declares 'RuleTester' locally, but it is not exported."
+          },
+          {
+            "message": "Module '\"./languages/js/source-code\"' declares 'SourceCode' locally, but it is not exported."
+          },
+          {
+            "message": "Cannot find name 'module'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node`."
+          },
+          {
+            "message": "Codegen error: inherited class callable LazyLoadingRuleMap_has has no exact defined function for handle 590"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
+      },
+      "tests": null,
+      "perf": null,
+      "knownBugs": [
+        {
+          "issue": 3672,
+          "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
+        }
+      ]
+    },
+    {
+      "name": "prettier",
+      "version": "3.8.1",
+      "issue": null,
+      "entryFile": "standalone.mjs",
+      "shape": "esm-project",
+      "compile": {
+        "success": false,
+        "durationMs": 1046,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+          }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+          }
+        ]
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+      },
+      "tests": null,
+      "perf": null,
+      "knownBugs": []
+    },
+    {
+      "name": "react",
+      "version": "19.2.6",
+      "issue": null,
+      "entryFile": "index.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": true,
+        "durationMs": 752,
+        "timedOut": false,
+        "timeoutMs": 120000,
+        "errorCount": 0,
+        "binaryBytes": 2163,
+        "categories": {}
+      },
+      "validation": {
+        "validates": true,
+        "firstError": null
+      },
+      "tests": null,
+      "perf": null,
+      "knownBugs": []
     }
   ]
 }

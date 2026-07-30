@@ -48,7 +48,7 @@ A failure here surfaces in the PR Checks tab but does not block merge.
 |---|---|---|
 | `test262 js-host/standalone shard 1..57` (114 matrix jobs) | `.github/workflows/test262-sharded.yml` | Individual shard results feed into `merge shard reports`, which is the required check. Individual shard failures are visible for diagnosis but the aggregated signal is what gates. |
 | `differential gate (branch vs main)` | `.github/workflows/test262-differential.yml` | Branch-vs-main HEAD comparison with src-tree-hash caching (#1246). Useful diagnostic signal, but the sharded `merge shard reports` is the authoritative gate. Kept running for visibility into per-PR deltas. |
-| `refresh-benchmarks` | `.github/workflows/benchmark-refresh.yml` | Playground benchmark regression gate. Currently informational at the branch-protection level, but the workflow itself fails on regression for PRs (#1525, §6 below). Promote to required once a longer signal window confirms stability. |
+| `measure-and-gate` | `.github/workflows/benchmark-refresh.yml` | Same-run benchmark regression gate. Currently informational at the branch-protection level, but the workflow itself fails on substantial PR regressions (§6 below). Promote to required once the expanded suite has a longer stable signal window. |
 | `Test262 Canary` | `.github/workflows/test262-canary.yml` | Smoke check on a small slice of test262 — fast feedback, not authoritative. |
 | `cross-backend-parity` | `.github/workflows/cross-backend-parity.yml` | #2711 — runs the #1854 cross-backend differential harness (WasmGC/host vs linear/standalone) over the builtin corpus; red on a host↔standalone divergence. Advisory: deliberately NOT in the required list and deliberately does NOT run in `merge_group`, so it cannot block or wedge the queue. **Do not promote to required while it skips `merge_group`** — a required check that never runs in the queue blocks it permanently (see §below on test262-sharded skip). Per-method gaps it documents: child issues #2715–#2721. |
 | `porffor-source-native-canary` | `.github/workflows/porffor-source-canary.yml` | #3478 — explicitly initializes only the pinned optional Porffor gitlink, then compares real-source JavaScript, production linear-Wasm, and sanitizer-instrumented Porffor-C under both allocator policies. Advisory and absent from `merge_group`, so the optional submodule cannot become a required queue dependency. |
@@ -372,32 +372,71 @@ rewrite and is unrelated to this rule.
 
 ---
 
-## 6. Benchmark regression gate (PRs)
+## 6. Benchmark measurement, regression gate, and promotion
 
-The playground benchmark workflow (`benchmark-refresh.yml`) historically
-emitted regression diffs but did not fail PRs — the rationale in #1214 was
-that CI-runner noise made the wasm/js ratio drift in a way that didn't
-reflect a real compiler regression.
+`benchmark-refresh.yml` measures the PR base and synthetic merge candidate
+sequentially in one `ubuntu-24.04` job. Both checkouts use the same physical
+runner and the same pinned Node 25.7.0, pnpm 10.30.2, Rust 1.94.1, Wasmtime
+46.0.1 toolchain. This same-run A/B is the regression baseline; committed
+timings from a different runner are not used for the PR verdict.
 
-With #1216 the baseline auto-commits on push-to-main from the same CI
-runner pool, so the baseline now reflects CI characteristics rather than
-a local dev machine. The remaining noise is small enough to gate against.
+The refreshed set includes the representative internal strategy suite
+(`latest.json`), playground warm and no-JIT charts, size and loadtime
+artifacts (including the complete `loadtime/` asset directory), and the
+freshly measured js2 Wasmtime/V8 hot-runtime rows and per-program AOT sizes.
+Runtime regressions fail only when both the
+JS-relative ratio and the absolute Wasm/strategy time cross the configured
+substantial-regression thresholds. Deterministic sizes use a percentage
+threshold plus an absolute-byte floor. End-to-end loadtime uses a wider 40%
+joint runtime/JS-reference gate; individual compile-only microtimings remain
+informational. A missing baseline row is a regression.
 
-**Policy (effective with #1525):**
+Javy and StarlingMonkey are post-merge, change-scoped comparison controls, not
+compiler-regression gates. Pull requests always carry their last accepted
+values forward and never rebuild or measure those lanes. After a push to
+`main`, the workflow remeasures their cold/warm runtimes and module sizes only
+when their benchmark corpus, auxiliary generator or host setup, componentizer
+dependency, or pinned workflow versions changed in that push. Unrelated
+`main` pushes and manual runs on unrelated revisions also carry the accepted
+values forward unchanged, with the source commit recorded in every runtime
+row. When measured, the job uses pinned Javy 8.1.1; Javy's single-entry dynamic
+module uses dedicated warm wrappers that batch several calls inside one
+exported `run()`, while the pinned Rust host uses a fresh instance for each
+outer sample and normalizes the batch wall time per call.
 
-- On `pull_request`: regression detection **fails the workflow** (gate is
-  hard, not informational). Threshold values stay at the existing
-  `--max-relative-regression 0.50` and `--max-wasm-slowdown 0.40` until
-  we have a longer signal window to tighten them.
-- On `push: main`: regression detection is logged but does **not** fail
-  the workflow — the auto-commit step skips the baseline refresh in this
-  case (already implemented), which is the right outcome.
-- On `workflow_dispatch`: behaviour unchanged
-  (`allow_performance_regressions=false` enforces; `true` permits).
+Before either checkout is measured, the workflow copies any deliberately
+carried auxiliary controls into an isolated runner-temporary baseline, then
+removes every current-run output and the compiled `loadtime/` directory while
+preserving `history.json`. Generators must recreate the complete set; only the
+explicitly change-scoped auxiliary fields may be inherited, and missing or
+invalid carry provenance fails packaging.
 
-The PR-fail mode is gated by a `--strict` env var (`BENCHMARK_STRICT=1`)
-in `scripts/diff-playground-benchmarks.mjs`-equivalent shell logic, so the
-behaviour can be flipped without touching the JS script.
+One limitation remains: the legacy, non-displayed
+`wasm-host-wasmtime-module-size.json` summary has no generator and is not
+represented as a freshly measured or promoted artifact.
+
+Every packaged snapshot includes a manifest with `generatedAt`, the full
+source SHA, exact tool versions, and the byte length and SHA-256 of every
+artifact. Pull-request code runs with read-only repository permissions and
+never enters the `baseline-promote` environment. The base branch's lifecycle
+script packages, validates, and compares both PR snapshots, so a PR cannot
+weaken its own verdict by editing the gate.
+
+For the one introduction PR where the base branch does not yet contain the
+lifecycle script, the workflow uses the base branch's existing playground
+sidebar diff as its trusted gate and uses candidate code only to package and
+validate the read-only candidate artifact. The full base-controlled lifecycle
+gate activates after that change lands; candidate lifecycle code is never used
+to decide a full comparison while a base lifecycle exists.
+
+After an accepted push to `main` (or a manual refresh), a separate trusted job
+downloads and validates the complete snapshot, verifies that `main` still
+equals the measured source SHA, and promotes all files in one `[skip ci]`
+commit through `MAIN_DEPLOY_KEY`. Promotion is unconditional after successful
+main generation: the PR gate already made the regression decision, and
+comparing main against an older committed snapshot would freeze an accepted
+change. The job then explicitly dispatches `deploy-pages.yml`, because
+`[skip ci]` suppresses push-triggered deployment.
 
 ---
 

@@ -15,7 +15,12 @@ import type { ValType } from "../types.js";
 export type IrBackendKind = "wasmgc" | "linear" | "bytecode" | "porffor";
 
 /** Source/target features whose availability is known before IR construction. */
-export type IrBackendTargetCapability = "host-date-snapshot" | "host-regexp-constructor";
+export type IrBackendTargetCapability =
+  | "host-date-snapshot"
+  | "host-regexp-constructor"
+  | "host-object-define-property"
+  | "standalone-native-regexp-test-carrier"
+  | "legacy-numeric-array-global";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -26,6 +31,8 @@ export interface IrBackendTargetProfile {
   readonly backend: IrBackendKind;
   readonly target: "gc" | "linear" | "standalone" | "wasi";
   readonly allowHostImports: boolean;
+  /** Legacy fast-array storage has a distinct ABI not yet represented in IR. */
+  readonly fast?: boolean;
 }
 
 /**
@@ -45,6 +52,12 @@ export function supportsIrBackendTargetCapability(
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
     case "host-regexp-constructor":
       return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+    case "host-object-define-property":
+      return profile.backend === "wasmgc" && profile.target === "gc" && profile.allowHostImports;
+    case "standalone-native-regexp-test-carrier":
+      return profile.backend === "wasmgc" && profile.target === "standalone" && !profile.allowHostImports;
+    case "legacy-numeric-array-global":
+      return profile.backend === "wasmgc" && profile.fast !== true;
   }
 }
 

@@ -162,6 +162,52 @@ if grep -q '"format:check"' package.json 2>/dev/null; then
   fi
 fi
 
+# ---------- (3c) change-scoped oracle ratchet -----------------------------
+#
+# CI rejects new direct TypeScript-checker queries under src/codegen. Run the
+# exact change-scoped ratchet locally so an oracle-boundary regression is
+# reported before the quality job. This is fast and read-only.
+
+if grep -q '"check:oracle-ratchet"' package.json 2>/dev/null; then
+  echo "Pre-push: oracle ratchet ..."
+  if ! pnpm run check:oracle-ratchet; then
+    echo ""
+    echo "Fix direct checker growth before pushing, or use --no-verify (CI will catch)."
+    exit 1
+  fi
+  echo "Pre-push: oracle ratchet OK."
+fi
+
+# ---------- (3d) change-scoped coercion-site ratchet ----------------------
+#
+# Keep new ToNumber/ToString/equality work on the shared coercion engine. This
+# is the exact fast, read-only gate used by CI.
+
+if grep -q '"check:coercion-sites"' package.json 2>/dev/null; then
+  echo "Pre-push: coercion-site ratchet ..."
+  if ! pnpm run check:coercion-sites; then
+    echo ""
+    echo "Route new coercions through the shared engine before pushing, or use --no-verify (CI will catch)."
+    exit 1
+  fi
+  echo "Pre-push: coercion-site ratchet OK."
+fi
+
+# ---------- (3e) numeric-local IR parity regression -----------------------
+#
+# The quality job exercises #3765 because Acorn's tokenizer depends on this
+# direct/IR carrier contract. Run the exact focused file locally: a late IR
+# rejection otherwise appears only after the branch reaches Actions.
+
+echo "Pre-push: numeric-local IR parity (#3765) ..."
+if ! pnpm exec vitest run tests/issue-3765-numeric-locals.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism; then
+  echo ""
+  echo "Fix the #3765 direct/IR numeric-local regression before pushing, or use --no-verify (CI will catch)."
+  exit 1
+fi
+echo "Pre-push: numeric-local IR parity OK."
+
 # ---------- (4) sync conformance numbers in docs -------------------------
 #
 # Keeps README.md / ROADMAP.md / CLAUDE.md / plan/goals/goal-graph.md in

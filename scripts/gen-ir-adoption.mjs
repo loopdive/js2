@@ -35,7 +35,12 @@ const SECTIONS = [
   {
     title: "Statements",
     rows: [
-      ["`VariableStatement`", "mixed", "Single-binding `let/const/var` works. Destructuring init throws.", "#1372"],
+      [
+        "`VariableStatement`",
+        "mixed",
+        "Initialized `let`/`const` plus function-local `var` proven free of hoisting, redeclaration, capture, and scope escape (#3783). Destructuring and module-global `var` remain partial.",
+        "#3783",
+      ],
       ["`ExpressionStatement`", "mixed", "Calls / assignments / pre-post `++ --` work. Other shapes throw.", "#1131"],
       [
         "`IfStatement`",
@@ -64,7 +69,7 @@ const SECTIONS = [
       [
         "`BreakStatement`",
         "mixed",
-        "Unlabeled `break` binds the nearest loop OR switch (`breakTargetLabel`, #2952 slice 4); labeled break targets labeled loops (slice 3), labeled switches and labeled non-loop blocks (`labeled.block`, slice 4) — all via `br.label` + the lowering-time depth resolver. Breaks in still-direct-only contexts (for-in) stay legacy.",
+        "Unlabeled `break` binds the nearest loop OR switch (`breakTargetLabel`, #2952 slice 4); labeled break targets labeled loops (slice 3), labeled switches and labeled non-loop blocks (`labeled.block`, slice 4) — all via `br.label` + the lowering-time depth resolver. Wider for-in forms stay direct.",
         "#2952",
       ],
       [
@@ -82,10 +87,15 @@ const SECTIONS = [
       [
         "`LabeledStatement`",
         "mixed",
-        "Labeled LOOPS claimed via the loop's own `loopLabel` (+ IteratorClose on crossing branches, #2952 slice 3); labeled switches alias the switch's `breakLabel`; other labeled statements claim via the break-only `labeled.block` frame (slice 4). A label on a still-direct-only statement (for-in) stays legacy.",
+        "Labeled LOOPS claimed via the loop's own `loopLabel` (+ IteratorClose on crossing branches, #2952 slice 3); labeled switches alias the switch's `breakLabel`; other labeled statements claim via the break-only `labeled.block` frame (slice 4). Labeled for-in stays direct.",
         "#2952",
       ],
-      ["`ForInStatement`", "direct-only", "Object iteration host-import based today.", "#2952"],
+      [
+        "`ForInStatement`",
+        "mixed",
+        "Non-fast dynamic `for (var id in receiver)` with an unused head value claims via existing `for.loop` plus #2964 snapshot/liveness helpers (#2952 slice 5). Fast `$AnyValue`, typed receivers, wider heads, head-value uses, and labeled for-in stay direct.",
+        "#2952",
+      ],
       [
         "`ClassDeclaration`",
         "mixed",

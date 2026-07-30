@@ -12,6 +12,7 @@ import {
 import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../src/ir/promise-delay-lowering.js";
 import { ts } from "../src/ts-api.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
+import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import {
   applyIrFinalContextFunctionRetention,
   closeIrBlockedComponentByIdentity,
@@ -71,6 +72,29 @@ function emptyContext(): CodegenContext {
   } as unknown as CodegenContext;
 }
 
+function withProgramAbiSession(ctx: CodegenContext, identityContext: IrPlanningIdentityContext): CodegenContext {
+  ctx.programAbiSession = new ProgramAbiSession(identityContext.inventory, ctx.mod);
+  return ctx;
+}
+
+function exactHostVoidCallbackContext(): CodegenContext {
+  return {
+    funcMap: new Map([["__make_callback", 0]]),
+    numImportFuncs: 1,
+    mod: {
+      imports: [{ module: "env", name: "__make_callback", desc: { kind: "func", typeIdx: 0 } }],
+      types: [
+        {
+          kind: "func",
+          params: [{ kind: "i32" }, { kind: "externref" }],
+          results: [{ kind: "externref" }],
+        },
+      ],
+      functions: [],
+    },
+  } as unknown as CodegenContext;
+}
+
 function callbackPlan(ownerUnitId: IrUnitId, ownerName: string, liftedOrdinal = 0): IrHostVoidCallbackLoweringPlan {
   return {
     ownerUnitId,
@@ -114,8 +138,8 @@ function promisePlan(owner: ts.FunctionDeclaration, ownerUnitId: IrUnitId): IrPr
     timerSignature: { params: [], returnType: null },
     executorCaptureNames: [],
     timerCaptureNames: [],
-    executorLiftedName: `${owner.name!.text}__promise_executor_0`,
-    timerLiftedName: `${owner.name!.text}__promise_timer_0`,
+    executorLiftedName: `${owner.name!.text}__closure_0`,
+    timerLiftedName: `${owner.name!.text}__closure_0__closure_1`,
   };
 }
 
@@ -440,6 +464,33 @@ describe("#3520 structural overlay finalization", () => {
     );
   });
 
+  it("lets Program ABI own callback slots when a source function reuses the synthesized display name", () => {
+    const fixture = source(
+      "/repo/callback-synthetic-name.ts",
+      `
+        function owner__closure_0(): number { return 0; }
+        function owner(): number { consume(() => {}); return 1; }
+      `,
+    );
+    const context = contextFor([fixture]);
+    const owner = functions(fixture, "owner")[0]!;
+    const ownerId = unitId(context, owner);
+    const callback = collectNodes(owner, ts.isArrowFunction)[0]!;
+    const callbacks = new Map([[callback, callbackPlan(ownerId, "owner")]]);
+
+    const compatibilityContext = exactHostVoidCallbackContext();
+    compatibilityContext.funcMap.set("owner__closure_0", compatibilityContext.numImportFuncs);
+    expect(
+      prepareHostVoidCallbackLoweringByIdentity(compatibilityContext, fixture, callbacks, new Set([ownerId]), context),
+    ).toEqual(new Set());
+
+    const programAbiContext = withProgramAbiSession(exactHostVoidCallbackContext(), context);
+    programAbiContext.funcMap.set("owner__closure_0", programAbiContext.numImportFuncs);
+    expect(
+      prepareHostVoidCallbackLoweringByIdentity(programAbiContext, fixture, callbacks, new Set([ownerId]), context),
+    ).toEqual(new Set([ownerId]));
+  });
+
   it("filters and records Promise preparation by exact owner ID and rejects stale plans", () => {
     const fixture = source(
       "/repo/promise.ts",
@@ -509,6 +560,39 @@ describe("#3520 structural overlay finalization", () => {
         ),
       "terminal-record-mismatch",
     );
+  });
+
+  it("lets Program ABI own Promise lifted slots when source functions reuse their display names", () => {
+    const fixture = source(
+      "/repo/promise-synthetic-names.ts",
+      `
+        function owner__closure_0(): number { return 0; }
+        function owner__closure_0__closure_1(): number { return 0; }
+        function owner(): number {
+          new Promise((resolve) => { setTimeout(() => resolve(1), 1); });
+          return 1;
+        }
+      `,
+    );
+    const context = contextFor([fixture]);
+    const owner = functions(fixture, "owner")[0]!;
+    const ownerId = unitId(context, owner);
+    const plan = promisePlan(owner, ownerId);
+    const plans = promisePlans(plan);
+
+    const compatibilityContext = exactPromiseContext();
+    compatibilityContext.funcMap.set(plan.executorLiftedName, compatibilityContext.numImportFuncs);
+    compatibilityContext.funcMap.set(plan.timerLiftedName, compatibilityContext.numImportFuncs + 1);
+    expect(
+      preparePromiseDelayLoweringByIdentity(compatibilityContext, fixture, plans, new Set([ownerId]), context),
+    ).toEqual(new Set());
+
+    const programAbiContext = withProgramAbiSession(exactPromiseContext(), context);
+    programAbiContext.funcMap.set(plan.executorLiftedName, programAbiContext.numImportFuncs);
+    programAbiContext.funcMap.set(plan.timerLiftedName, programAbiContext.numImportFuncs + 1);
+    expect(
+      preparePromiseDelayLoweringByIdentity(programAbiContext, fixture, plans, new Set([ownerId]), context),
+    ).toEqual(new Set([ownerId]));
   });
 
   it("rejects Promise plan sites removed from their exact current owner body", () => {

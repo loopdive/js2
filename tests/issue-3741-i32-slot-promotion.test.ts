@@ -125,8 +125,14 @@ describe("#3741 — i32 slot promotion (shape)", () => {
     const bodyA = funcBody(a.wat, "run");
     const bodyB = funcBody(b.wat, "run");
 
-    // Three i32 slots either way: the accumulator plus both counters.
-    expect([...bodyA.matchAll(/\(local \$\$slot_\w+ i32\)/g)]).toHaveLength(3);
+    // Three SOURCE-level i32 slots either way: the accumulator plus both
+    // counters. (#3786) `__ru_*` slots are excluded — the reduction unroller
+    // adds its own partial accumulators to these loops, and this assertion is
+    // about which of the PROGRAM's bindings got promoted, not about the total
+    // local count, which any later optimization is free to change.
+    const sourceSlots = (w: string) =>
+      [...w.matchAll(/\(local \$\$slot_(\w+) i32\)/g)].filter((m) => !m[1].startsWith("__ru_"));
+    expect(sourceSlots(bodyA)).toHaveLength(3);
     expect(bodyA).not.toMatch(/\(local \$\$slot_\w+ f64\)/);
     // Same instruction mix as the alpha-renamed program — the ONLY difference
     // between the two sources is the second counter's name.
@@ -134,6 +140,31 @@ describe("#3741 — i32 slot promotion (shape)", () => {
       [/i32\.add/g, /i32\.lt_s/g, /f64\.add/g, /f64\.lt/g].map((re) => (w.match(re) ?? []).length).join("/");
     expect(mix(bodyA)).toBe(mix(bodyB));
     expect(bodyA).not.toContain("f64.add");
+  });
+
+  it("keeps Fibonacci loop-carried state in i32 through an immutable next value", async () => {
+    const r = await compile(
+      `/** @param {number} n @returns {number} */
+       export function run(n) {
+         let a = 0;
+         let b = 1;
+         for (let i = 0; i < n; i++) {
+           const next = (a + b) | 0;
+           a = b;
+           b = next;
+         }
+         return a | 0;
+       }`,
+      { emitWat: true, fileName: "fib.js", target: "wasi", nativeStrings: true },
+    );
+    expect(r.success).toBe(true);
+    expect(r.irCompiledFuncs).toContain("run");
+    const body = funcBody(r.wat, "run");
+
+    expect(body).toMatch(/\(local \$\$slot_a i32\)/);
+    expect(body).toMatch(/\(local \$\$slot_b i32\)/);
+    expect(body).toContain("i32.add");
+    expect(body).not.toContain("i32.trunc_sat_f64_s");
   });
 });
 

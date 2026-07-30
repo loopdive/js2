@@ -51,6 +51,7 @@ import {
   buildClosurePropMethodCallElseArm,
   buildClosurePropSetMissArm,
 } from "./closure-props.js";
+import { buildTransferredCharAtMethodArm } from "./char-at-transfer.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -133,9 +134,11 @@ export function buildVecOrClosurePropMethodCallElseArm(
   applyClosureIdx: number,
 ): Instr[] {
   const closureArm = buildClosurePropMethodCallElseArm(ctx, externGetIdx, applyClosureIdx);
+  const transferredCharAtArm = buildTransferredCharAtMethodArm(ctx, externGetIdx, applyClosureIdx);
   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
-  if (isVecIdx === undefined) return closureArm;
+  if (isVecIdx === undefined) return [...transferredCharAtArm, ...closureArm];
   return [
+    ...transferredCharAtArm,
     { op: "local.get", index: 0 }, // recv
     { op: "call", funcIdx: isVecIdx },
     {

@@ -24,6 +24,13 @@ export type EmptyArrayInferenceResult =
       readonly kind: "resolved";
       readonly elementKind: SupportedElementKind;
       readonly elementValType: ValType;
+      /**
+       * (#3734) True when every value that can ever be stored into this
+       * may-alias group is provably an exact signed int32, so the vector may
+       * be laid out with `i32` elements (half the memory traffic of `f64`)
+       * while reads widen back to `f64`. `elementValType` is `i32` iff set.
+       */
+      readonly int32Narrowed: boolean;
       readonly aliases: readonly string[];
       readonly evidence: readonly ConcreteElementKind[];
     }
@@ -48,7 +55,24 @@ interface GroupEvidence {
   readonly concrete: Set<ConcreteElementKind>;
   escaped: boolean;
   invalidJoin: boolean;
+  /**
+   * (#3734) Cleared the moment ANY store into this group cannot be proven to
+   * write an exact signed int32, or any use site is a shape whose stored value
+   * this pass does not model (compound element assignment, `++`/`--` on an
+   * element, a destructuring target, a non-empty literal joined in, …).
+   * Starts `true` and only ever goes false — fail-closed by construction.
+   */
+  int32Stores: boolean;
 }
+
+/**
+ * (#3734) "Is the VALUE of this expression always exactly a signed int32?"
+ *
+ * Supplied by the caller (`ir/from-ast.ts` passes `isCanonI32Lowerable` bound
+ * to a plan-time i32-slot probe) so this module stays free of lowering
+ * concerns. Absent ⇒ nothing is provable ⇒ no group is ever narrowed.
+ */
+export type ExactInt32Proof = (expression: ts.Expression) => boolean;
 
 /**
  * Function-local, path-insensitive evidence for empty array literals.
@@ -97,13 +121,29 @@ export class EmptyArrayElementInference {
   isResolvedVectorExpression(expression: ts.Expression): boolean {
     return this.resultForExpression(expression)?.kind === "resolved";
   }
+
+  /**
+   * (#3734) True when `expression` denotes a may-alias group whose element
+   * representation was narrowed to `i32`. Read/store sites consult THIS rather
+   * than the vec's element ValType alone: a narrowed `number[]` and a genuine
+   * `boolean[]` share one `$__vec_i32` registry entry, and only the former may
+   * widen on read / narrow on write.
+   */
+  isInt32NarrowedVectorExpression(expression: ts.Expression): boolean {
+    const result = this.resultForExpression(expression);
+    return result?.kind === "resolved" && result.int32Narrowed;
+  }
 }
 
 /** Analyze one function body without rewriting or annotating its source AST. */
 export function inferEmptyArrayElementTypes(
   fn: FunctionWithBody,
   oracle?: Pick<TypeOracle, "typeFactOf" | "elementFactOf" | "contextualFactOf">,
+  isExactInt32?: ExactInt32Proof,
 ): EmptyArrayElementInference {
+  // (#3734) Absent proof ⇒ nothing narrows. Bound once so the two use sites
+  // below need no non-null assertion.
+  const proveInt32: ExactInt32Proof = isExactInt32 ?? (() => false);
   const aliases = new AliasGraph();
   const emptyLiterals: ts.ArrayLiteralExpression[] = [];
   const allArrays: ts.ArrayLiteralExpression[] = [];
@@ -133,7 +173,13 @@ export function inferEmptyArrayElementTypes(
   const candidateRoots = new Set(emptyLiterals.map((literal) => aliases.root(aliases.keyForArray(literal))));
   const groups = new Map<string, GroupEvidence>();
   for (const root of candidateRoots) {
-    groups.set(root, { aliases: new Set(), concrete: new Set(), escaped: false, invalidJoin: false });
+    groups.set(root, {
+      aliases: new Set(),
+      concrete: new Set(),
+      escaped: false,
+      invalidJoin: false,
+      int32Stores: isExactInt32 !== undefined,
+    });
   }
   for (const name of aliases.names()) {
     const group = groups.get(aliases.root(aliases.keyForName(name)));
@@ -166,6 +212,12 @@ export function inferEmptyArrayElementTypes(
   for (const literal of allArrays) {
     const group = groupForExpression(literal);
     if (!group) continue;
+    // (#3734) An i32-narrowed group must be able to account for EVERY value
+    // that reaches its backing storage. A non-empty literal joined into the
+    // group seeds elements this pass would have to prove one by one; the
+    // narrowing payoff is on the empty-literal-then-fill shape, so simply
+    // refuse the narrow layout instead of growing the proof surface.
+    if (literal.elements.length > 0) group.int32Stores = false;
     for (const element of literal.elements) {
       if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) {
         group.invalidJoin = true;
@@ -210,6 +262,12 @@ export function inferEmptyArrayElementTypes(
     if (!inNested && ts.isElementAccessExpression(node)) {
       const group = groupForExpression(node.expression);
       if (group) {
+        // (#3734) Classify this element access as read / plain store / neither
+        // BEFORE the evidence arms below (which are only about the element's
+        // TS type, not about what a narrowed layout can hold).
+        if (group.int32Stores && !elementAccessKeepsInt32Layout(node, proveInt32)) {
+          group.int32Stores = false;
+        }
         const parent = node.parent;
         if (ts.isBinaryExpression(parent) && parent.left === node) {
           if (parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
@@ -237,8 +295,14 @@ export function inferEmptyArrayElementTypes(
       const group = groupForExpression(node.expression.expression);
       if (group) {
         for (const argument of node.arguments) {
-          if (ts.isSpreadElement(argument)) group.invalidJoin = true;
-          else addFact(group, oracle?.typeFactOf(argument), argument);
+          if (ts.isSpreadElement(argument)) {
+            group.invalidJoin = true;
+            group.int32Stores = false;
+          } else {
+            addFact(group, oracle?.typeFactOf(argument), argument);
+            // (#3734) Every pushed value is a store into the backing array.
+            if (group.int32Stores && !proveInt32(argument)) group.int32Stores = false;
+          }
         }
       }
     }
@@ -260,7 +324,12 @@ export function inferEmptyArrayElementTypes(
           : {
               kind: "resolved",
               elementKind: "number",
-              elementValType: { kind: "f64" },
+              // (#3734) `int32Stores` survives only when the escape closure
+              // above ALSO held, so a narrowed group is one whose complete set
+              // of stores is visible in this function body and individually
+              // proven exact-int32.
+              elementValType: group.int32Stores ? { kind: "i32" } : { kind: "f64" },
+              int32Narrowed: group.int32Stores,
               aliases: aliasNames,
               evidence,
             };
@@ -440,6 +509,66 @@ function syntacticElementKind(expression: ts.Expression): ConcreteElementKind | 
     }
   }
   return undefined;
+}
+
+/**
+ * `=` and every compound-assignment token. The kinds are contiguous between
+ * `FirstAssignment` and `LastAssignment`, which is how TypeScript's own
+ * (non-public) `isAssignmentOperator` decides. Needed because "binary
+ * expression whose LEFT operand is the element access" is NOT the same as
+ * "store": `arr[i] * 2` also matches that shape and is a plain read.
+ */
+function isAssignmentOperatorKind(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
+}
+
+/**
+ * (#3734) May an `arr[i]` use site keep the group's i32 element layout?
+ *
+ * Answered by WHITELIST, not blacklist: an element access is either
+ *   - a plain store `arr[i] = v` whose `v` is a proven exact int32, or
+ *   - a plain READ (which the lowering widens back to f64, so it is
+ *     representation-transparent),
+ * and anything else — a compound store `arr[i] += v` / `arr[i] >>>= v`, an
+ * `arr[i]++` / `--arr[i]`, a destructuring target (`[arr[0]] = xs`,
+ * `({p: arr[0]} = o)`, `for (arr[0] of xs)`), a `delete arr[i]` — is refused.
+ * The refused shapes are not necessarily unsound; they are simply shapes whose
+ * STORED VALUE this pass does not model, and a wrong element representation is
+ * a silent wrong answer, so the conservative branch is the only safe default.
+ */
+function elementAccessKeepsInt32Layout(node: ts.ElementAccessExpression, isExactInt32: ExactInt32Proof): boolean {
+  const parent = node.parent;
+  if (ts.isBinaryExpression(parent) && parent.left === node && isAssignmentOperatorKind(parent.operatorToken.kind)) {
+    // Only a plain `=` is modelled; every compound form derives the stored
+    // value from the CURRENT element, which can leave int32 range (`arr[i] *= 3`).
+    if (parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false;
+    return isExactInt32(parent.right);
+  }
+  if (
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    parent.operand === node &&
+    (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return false;
+  }
+  if (ts.isDeleteExpression(parent)) return false;
+  // Assignment-target positions that are not BinaryExpression-shaped.
+  if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === node) return false;
+  // An element access nested directly inside an array/object literal may be a
+  // destructuring assignment target (`[arr[0]] = xs`), which the walk above
+  // cannot distinguish from an ordinary read without resolving the literal's
+  // role. Refuse rather than guess.
+  if (
+    ts.isArrayLiteralExpression(parent) ||
+    ts.isObjectLiteralExpression(parent) ||
+    ts.isPropertyAssignment(parent) ||
+    ts.isShorthandPropertyAssignment(parent) ||
+    ts.isSpreadElement(parent) ||
+    ts.isSpreadAssignment(parent)
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function isFunctionLikeBoundary(node: ts.Node): boolean {

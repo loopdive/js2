@@ -30,6 +30,11 @@ import {
 } from "./runtime/iterator-polyfills.js";
 import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
 export { buildStringConstants, buildStringConstants16 };
+import {
+  compiledClosureNativeSource,
+  createNativeFunctionCallbackBridge,
+  installNativeFunctionSourceFacade,
+} from "./runtime/native-function-source.js";
 import { _arrayProtoSparseFastPaths } from "./runtime/array-proto-sparse.js"; // (#3103, #1234) sparse-aware Array.prototype fast paths
 import { registerVecMirror, snapshotVecMirrors, reconcileVecMirrors } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back
 import {
@@ -967,6 +972,181 @@ function _rethrowIfProxyOrRevoked(e: any, obj: any): void {
   if (_isRevokedProxyError(e) || _isUserProxy(obj)) throw e;
 }
 
+const _VEC_HOST_BRIDGE_EXPORTS = [
+  ["__vec_len", "$v0"],
+  ["__vec_get", "$v1"],
+  ["__is_vec", "$v2"],
+  ["__vec_mut_supported", "$v3"],
+  ["__vec_push", "$v4"],
+  ["__vec_pop", "$v5"],
+] as const;
+
+const _CLOSURE_HOST_BRIDGE_EXPORTS = [
+  ["__call_fn_0", "$c0"],
+  ["__call_fn_1", "$c1"],
+  ["__call_fn_2", "$c2"],
+  ["__call_fn_3", "$c3"],
+  ["__call_fn_4", "$c4"],
+  ["__call_fn_method_0", "$c5"],
+  ["__call_fn_method_1", "$c6"],
+  ["__call_fn_method_2", "$c7"],
+  ["__call_fn_method_3", "$c8"],
+  ["__call_fn_method_4", "$c9"],
+  ["__call_fn_method_5", "$ca"],
+  ["__call_fn_method_6", "$cb"],
+  ["__call_fn_method_7", "$cc"],
+  ["__call_fn_method_8", "$cd"],
+  ["__closure_arity", "$ce"],
+  ["__is_closure", "$cf"],
+  ["__closure_has_rest", "$cg"],
+] as const;
+
+const _CLOSURE_HOST_BRIDGE_MANIFEST = ["__\0js2_closure_host_bridge", "$cm"] as const;
+const _CLOSURE_HOST_BRIDGE_MARKER = ["__\0js2_closure_host_bridge_marker", "$ct"] as const;
+const _CLOSURE_HOST_BRIDGE_BINDINGS = ["__\0js2_closure_host_bridge_bindings", "$cu"] as const;
+const _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
+const _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC_MASK = 0xfff00000;
+const _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK = 0x0001ffff;
+const _CLOSURE_HOST_BRIDGE_MANIFEST_RESERVED_MASK = 0x000e0000;
+const _immutableI32GlobalVerdict = new WeakSet<WebAssembly.Global>();
+let _immutableI32GlobalProbeModule: WebAssembly.Module | undefined;
+const _emptyFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
+const _bindingFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
+let _emptyFuncrefTableProbeModule: WebAssembly.Module | undefined;
+let _bindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
+
+/**
+ * Resolve the terminal compiler alias in one collision-safe physical family.
+ */
+function _terminalHostBridgeAlias(exports: Record<string, any>, physicalBase: string): unknown {
+  let physicalName = physicalBase;
+  let helper: unknown;
+  while (Object.prototype.hasOwnProperty.call(exports, physicalName)) {
+    helper = exports[physicalName];
+    physicalName += "$";
+  }
+  return helper;
+}
+
+/** Prove a Global's exact type and mutability through Wasm import validation. */
+function _isImmutableI32Global(value: unknown): value is WebAssembly.Global {
+  if (!(value instanceof WebAssembly.Global)) return false;
+  if (_immutableI32GlobalVerdict.has(value)) return true;
+  try {
+    _immutableI32GlobalProbeModule ??= new WebAssembly.Module(
+      Uint8Array.from([0, 97, 115, 109, 1, 0, 0, 0, 2, 8, 1, 1, 101, 1, 103, 3, 127, 0]),
+    );
+    new WebAssembly.Instance(_immutableI32GlobalProbeModule, { e: { g: value } });
+    _immutableI32GlobalVerdict.add(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Prove a Table's exact funcref limits through Wasm import validation. */
+function _isExactFuncrefTable(value: unknown, size: 0 | 17): value is WebAssembly.Table {
+  if (!(value instanceof WebAssembly.Table) || value.length !== size) return false;
+  const verdict = size === 0 ? _emptyFuncrefTableVerdict : _bindingFuncrefTableVerdict;
+  if (verdict.has(value)) return true;
+  try {
+    const bytes =
+      size === 0
+        ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 0, 0]
+        : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 17, 17];
+    let probe = size === 0 ? _emptyFuncrefTableProbeModule : _bindingFuncrefTableProbeModule;
+    if (!probe) {
+      probe = new WebAssembly.Module(Uint8Array.from(bytes));
+      if (size === 0) _emptyFuncrefTableProbeModule = probe;
+      else _bindingFuncrefTableProbeModule = probe;
+    }
+    new WebAssembly.Instance(probe, { e: { t: value } });
+    verdict.add(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface ClosureHostBridgeMetadata {
+  bits: number;
+  bindings: WebAssembly.Table;
+}
+
+/** Read and authenticate compiler-authored closure-helper metadata. */
+function _closureHostBridgeMetadata(exports: Record<string, any>): ClosureHostBridgeMetadata | undefined {
+  const [markerLogicalName, markerPhysicalBase] = _CLOSURE_HOST_BRIDGE_MARKER;
+  if (!Object.prototype.hasOwnProperty.call(exports, markerLogicalName)) return undefined;
+  const marker = _terminalHostBridgeAlias(exports, markerPhysicalBase);
+  if (!_isExactFuncrefTable(marker, 0)) return undefined;
+
+  const [logicalName, physicalBase] = _CLOSURE_HOST_BRIDGE_MANIFEST;
+  if (!Object.prototype.hasOwnProperty.call(exports, logicalName)) return undefined;
+  const manifest = _terminalHostBridgeAlias(exports, physicalBase);
+  if (!_isImmutableI32Global(manifest) || typeof manifest.value !== "number") return undefined;
+  const value = manifest.value | 0;
+  if ((value & _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC_MASK) !== _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC) return undefined;
+  if ((value & _CLOSURE_HOST_BRIDGE_MANIFEST_RESERVED_MASK) !== 0) return undefined;
+  const bits = value & _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK;
+
+  const [bindingsLogicalName, bindingsPhysicalBase] = _CLOSURE_HOST_BRIDGE_BINDINGS;
+  if (!Object.prototype.hasOwnProperty.call(exports, bindingsLogicalName)) return undefined;
+  const bindings = _terminalHostBridgeAlias(exports, bindingsPhysicalBase);
+  if (!_isExactFuncrefTable(bindings, 17)) return undefined;
+  try {
+    for (let bit = 0; bit < _CLOSURE_HOST_BRIDGE_EXPORTS.length; bit++) {
+      const binding = bindings.get(bit);
+      if ((bits & (1 << bit)) !== 0 ? typeof binding !== "function" : binding !== null) return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return { bits, bindings };
+}
+
+/**
+ * Compose vec and closure bridge projections from the same raw export object.
+ *
+ * Vec keeps its collision-only logical-name gate. Closure availability comes
+ * only from the compiler-authored manifest; user-controlled helper-like names
+ * never establish ownership. All overrides land in one prototype view so the
+ * two bridge families cannot hide each other's raw own properties.
+ */
+function _hostBridgeExportView<T extends Record<string, any>>(exports: T): T {
+  const overrides = new Map<string, unknown>();
+  for (const [logicalName, physicalBase] of _VEC_HOST_BRIDGE_EXPORTS) {
+    if (!Object.prototype.hasOwnProperty.call(exports, logicalName)) continue;
+    const helper = _terminalHostBridgeAlias(exports, physicalBase);
+    if (typeof helper !== "function" || exports[logicalName] === helper) continue;
+    overrides.set(logicalName, helper);
+  }
+
+  const closureMetadata = _closureHostBridgeMetadata(exports);
+  for (let bit = 0; bit < _CLOSURE_HOST_BRIDGE_EXPORTS.length; bit++) {
+    const [logicalName, physicalBase] = _CLOSURE_HOST_BRIDGE_EXPORTS[bit]!;
+    if (!Object.prototype.hasOwnProperty.call(exports, logicalName)) continue;
+    let helper: unknown;
+    if (closureMetadata !== undefined && (closureMetadata.bits & (1 << bit)) !== 0) {
+      helper = _terminalHostBridgeAlias(exports, physicalBase);
+      if (typeof helper !== "function" || helper !== closureMetadata.bindings.get(bit)) helper = undefined;
+    }
+    if (exports[logicalName] === helper) continue;
+    overrides.set(logicalName, helper);
+  }
+
+  if (overrides.size === 0) return exports;
+  const view = Object.create(exports) as T;
+  for (const [logicalName, helper] of overrides) {
+    Object.defineProperty(view, logicalName, {
+      value: helper,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return view;
+}
+
 // (#3673) Memoized classification for `_isWasmStruct`. The predicate is on the
 // hot path of EVERY boundary helper (`__extern_get`/`_safeGet`/`_safeSet` call
 // it several times per crossing), and the original probe-set-and-catch
@@ -1285,6 +1465,7 @@ function _wrapWasmClosure(
     const ret = callFn(closure, ...padded);
     return _wasmAccessorGetterReturnWrappers.has(wrapped) ? _maybeWrapAccessorGetterCallable(ret, callbackState) : ret;
   };
+  installNativeFunctionSourceFacade(wrapped);
   _wasmClosureWrapperSource.set(wrapped, { closure, arity });
   if (_canBeWeakKey(closure)) {
     if (!byArity) {
@@ -1446,6 +1627,7 @@ function _wrapWasmClosureUnknownArity(
   } catch {
     /* best-effort constructor identity for function-expression wrappers */
   }
+  installNativeFunctionSourceFacade(wrapped);
   _wasmClosureWrapperSource.set(wrapped, { closure, arity: -1 });
   if (closure != null && typeof closure === "object") {
     _wasmClosureDynamicWrapperCache.set(closure, wrapped);
@@ -1586,6 +1768,7 @@ function _wrapVoidHostCallback(
   const wrapped = (..._args: any[]): void => {
     dispatch();
   };
+  installNativeFunctionSourceFacade(wrapped);
   _wasmVoidHostCallbackCache.set(closure as object, wrapped);
   _wasmClosureWrapperTargets.set(wrapped, closure as object);
   return wrapped;
@@ -1666,13 +1849,13 @@ function _wrapExecReturnForHost(
   fn: (...args: any[]) => any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
 ): (...args: any[]) => any {
-  return function execReturnBridge(this: any, ...args: any[]): any {
+  return installNativeFunctionSourceFacade(function execReturnBridge(this: any, ...args: any[]): any {
     const ret = fn.apply(this, args);
     if (ret != null && typeof ret === "object" && _isWasmStruct(ret)) {
       return _wrapForHost(ret, callbackState?.getExports());
     }
     return ret;
-  };
+  });
 }
 
 /**
@@ -2611,6 +2794,12 @@ function _toPrimitive(
     if (ts !== _PRIM_ABSENT) return ts;
   }
 
+  // A compiled closure with no user-defined coercion method behaves like a
+  // function whose inherited Function.prototype.toString is implementation
+  // defined. Keep this fallback after @@toPrimitive/valueOf/toString so own
+  // user overrides retain ordinary JavaScript precedence.
+  const closureSource = compiledClosureNativeSource(raw, callbackState);
+  if (closureSource !== undefined) return closureSource;
   return undefined;
 }
 
@@ -2949,6 +3138,8 @@ function _hostToPrimitive(
   // silently swallow the error and produce NaN, breaking
   // `+{ valueOf: () => ({}), toString: () => ({}) }` which the spec
   // requires to throw.
+  const closureSource = compiledClosureNativeSource(raw, callbackState);
+  if (closureSource !== undefined && !methodInvokedReturnedObject) return closureSource;
   if (_isWasmStruct(raw) && !methodInvokedReturnedObject) return "[object Object]";
   throw new TypeError("Cannot convert object to primitive value");
 }
@@ -14271,30 +14462,7 @@ assert._isSameValue = isSameValue;
         // closure. Legacy callbacks keep their non-negative `__cb_N` ids and
         // therefore remain byte-for-byte on the existing dispatch path.
         if (id === -1) return _wrapVoidHostCallback(cap, callbackState);
-        return (...args: any[]) => {
-          const exports = callbackState?.getExports();
-          // (#3284) A callback whose reaction fires DURING WebAssembly.instantiate
-          // — e.g. a top-level `Promise.resolve(x).then(cb)` whose microtask
-          // drains while the async instantiate helper is still awaiting, BEFORE
-          // the caller wires `setExports` — sees `getExports()` undefined and
-          // would otherwise silently no-op (the `.then` callback never runs).
-          // Park it and replay the moment setExports wires the instance, mirroring
-          // the #2128 `getter_callback_maker` setter fix. Purely additive: when
-          // exports are already wired (the normal post-instantiation path, incl.
-          // every wrapTest/equivalence body that runs inside an exported function
-          // the host calls AFTER setExports), the branch is skipped and behaviour
-          // below is unchanged — so no harness-executed callback is affected.
-          if (exports === undefined && callbackState) {
-            const defer = (callbackState as { deferToExports?: (fn: () => void) => void }).deferToExports;
-            if (defer) {
-              defer(() => {
-                callbackState.getExports()?.[`__cb_${id}`]?.(cap, ...args);
-              });
-              return undefined;
-            }
-          }
-          return exports?.[`__cb_${id}`]?.(cap, ...args);
-        };
+        return createNativeFunctionCallbackBridge(id, cap, callbackState);
       };
     case "getter_callback_maker":
       return (id: number, cap: any) => {
@@ -14346,6 +14514,7 @@ assert._isSameValue = isSameValue;
             ? _maybeWrapAccessorGetterCallable(ret, callbackState)
             : ret;
         };
+        installNativeFunctionSourceFacade(bridge);
         _wasmGetterCallbackWrappers.add(bridge);
         return bridge;
       };
@@ -15160,6 +15329,8 @@ export function buildImports(
   string_constants: Record<string, WebAssembly.Global>;
   string_constants16: Record<string, WebAssembly.Global>;
   setExports?: (exports: Record<string, Function>) => void;
+  startImportCounting?: () => void;
+  takeImportCounts?: () => Record<string, number>;
 } {
   // (#1933) Per-instance state for stateful imports. Created FIRST so the
   // RegExp-accessor install below (and every `resolveImport` call) can thread
@@ -15205,6 +15376,8 @@ export function buildImports(
   };
   let hasCallbacks = false;
   let lastCaughtException: any = undefined;
+  const envImportNames: string[] = [];
+  let importCounts: Uint32Array | undefined;
 
   // (#1467 / #1933) Each instantiated module gets its own symbol id space and
   // per-instance symbol cache/registry, RegExp legacy state, and subclass/
@@ -15224,6 +15397,7 @@ export function buildImports(
 
   for (const imp of manifest) {
     if (imp.module !== "env") continue;
+    const importIndex = envImportNames.push(imp.name) - 1;
     let fn: Function;
 
     // __get_caught_exception needs closure access to lastCaughtException
@@ -15249,6 +15423,7 @@ export function buildImports(
     {
       const original = fn;
       fn = function (this: any, ...args: any[]) {
+        if (importCounts) importCounts[importIndex]++;
         if (hostCallDepth >= MAX_HOST_RECURSION_DEPTH) {
           const err = new RangeError("Maximum call stack size exceeded");
           lastCaughtException = err;
@@ -15278,6 +15453,8 @@ export function buildImports(
     string_constants: Record<string, WebAssembly.Global>;
     string_constants16: Record<string, WebAssembly.Global>;
     setExports?: (exports: Record<string, Function>) => void;
+    startImportCounting?: () => void;
+    takeImportCounts?: () => Record<string, number>;
   } = {
     env,
     "wasm:js-string": jsString,
@@ -15289,7 +15466,7 @@ export function buildImports(
   // Always provide setExports — needed for callbacks, native string marshaling,
   // and struct field getter discovery (__sget_*).
   result.setExports = (exports: Record<string, Function>) => {
-    wasmExports = exports;
+    wasmExports = _hostBridgeExportView(exports);
     // (#1712) Replay operations parked during the module START function (see
     // pendingExportsDeferred above) now that struct introspection exports
     // are reachable.
@@ -15297,6 +15474,19 @@ export function buildImports(
       const fn = pendingExportsDeferred.shift()!;
       fn();
     }
+  };
+  result.startImportCounting = () => {
+    importCounts = new Uint32Array(envImportNames.length);
+  };
+  result.takeImportCounts = () => {
+    const counts: Record<string, number> = Object.create(null);
+    if (importCounts) {
+      for (let index = 0; index < envImportNames.length; index++) {
+        if (importCounts[index] > 0) counts[envImportNames[index]] = importCounts[index];
+      }
+    }
+    importCounts = undefined;
+    return counts;
   };
   return result;
 }
@@ -15417,16 +15607,13 @@ export function wrapExports(
     signatures?: Record<string, WrapExportsSignature>;
   },
 ): Record<string, any> {
-  const callFn0 = rawExports.__call_fn_0 as ((closure: any) => any) | undefined;
-  const callFn1 = rawExports.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
-  // #1504: marshal struct/vec returns to plain JS by default. Opt-out:
-  // `wrapExports(exports, { marshal: false })` keeps raw WasmGC handles
-  // (used by test262 runners and advanced callers that want zero-copy access).
+  // #1504: marshal by default; `marshal: false` keeps raw WasmGC handles.
   const marshal: "copy" | false = options?.marshal === false ? false : "copy";
-  const exportsForMarshal = rawExports as unknown as Record<string, Function>;
-  // (#1700) Vec allocator + byte-writer for marshalling Uint8Array args into
-  // Wasm vec structs. Either may be undefined (legacy modules / no TypedArray
-  // exports gated their emission off), in which case the wrapper falls back
+  const exportsForMarshal = _hostBridgeExportView(rawExports as unknown as Record<string, Function>);
+  const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
+  const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
+  // (#1700) Vec allocator + byte-writer for Uint8Array args. Either may be
+  // undefined, in which case the wrapper falls back
   // to passing the arg through unchanged.
   const newVecF64 = (rawExports as Record<string, any>).__new_vec_f64 as ((len: number) => any) | undefined;
   const vecSetByte = (rawExports as Record<string, any>).__vec_set_byte as
@@ -15473,6 +15660,11 @@ export function wrapExports(
   const hasVecLen = typeof exportsForMarshal.__vec_len === "function";
   const looksMarshalable = (val: any): boolean => {
     if (val == null || typeof val !== "object") return false;
+    // No positively discovered compiler closure family means this module
+    // cannot return a compiled closure. Do not let a user `__is_closure`
+    // label or the historical old-module fallback turn class instances into
+    // callable wrappers.
+    if (typeof isClosureFn !== "function") return true;
     if (typeof isClosureFn === "function") {
       try {
         if (isClosureFn(val) === 1) return false;
@@ -15499,13 +15691,10 @@ export function wrapExports(
       wrapped[key] = val;
       continue;
     }
-    // Wrap user-visible callable exports:
-    //   - closure struct → JS-callable wrapper (regression guard for #1308)
-    //   - named struct / vec → plain JS object/array via `_wasmToPlain`
-    //     (#1504), unless `marshal: false` is passed
-    //   - everything else (primitives, strings, raw externrefs) → pass through
+    // Wrap user exports: closures become callables; structs/vecs marshal to JS;
+    // primitives, strings, and raw externrefs pass through.
     const sig = signatures ? signatures[key] : undefined;
-    wrapped[key] = function (this: any, ...args: any[]): any {
+    const invoke = function (this: any, ...args: any[]): any {
       // (#1700) Argument marshalling: copy JS Uint8Array → Wasm vec via
       // `__new_vec_f64` + `__vec_set_byte`. Runs even under `marshal: false`
       // because the user must be able to call the export at all.
@@ -15533,6 +15722,7 @@ export function wrapExports(
       // Not marshalable → treat as a closure (regression guard for #1308).
       return makeCallableClosureWrapper(result);
     };
+    wrapped[key] = invoke;
   }
   return wrapped;
 }

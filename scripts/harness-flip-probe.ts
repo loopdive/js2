@@ -53,6 +53,9 @@
  *   # is a reading stable? runs each file twice and reports disagreement
  *   npx tsx scripts/harness-flip-probe.ts --files list.txt --check-determinism
  *
+ *   # measure the host-free lane with the same authentic harness
+ *   npx tsx scripts/harness-flip-probe.ts --files list.txt --target standalone
+ *
  * `--files` takes one test262 path per line, relative to `test262/` or
  * `test262/test/`; `#` comments and blank lines are ignored.
  */
@@ -67,10 +70,12 @@ const CONTROL_FAIL = join(CONTROL_DIR, "control-must-fail.js");
 
 /** Outcome buckets. `skip` is deliberately NOT folded into pass or fail. */
 type Status = "pass" | "fail" | "compile_error" | "compile_timeout" | "skip" | "error";
+type Target = "host" | "standalone";
 
 interface Row {
   file: string;
   status: Status;
+  target?: Target;
   detail?: string;
 }
 
@@ -84,12 +89,13 @@ function usage(msg?: string): never {
     [
       "harness-flip-probe — flip measurement through the real assembled test262 harness",
       "",
-      "  --files <path>            file with one test262 path per line",
+      "  --files <path|->          file with one test262 path per line (`-` = stdin)",
       "  --paths a,b,c             inline comma-separated paths",
       "  --out <path.jsonl>        write results (default: stdout summary only)",
       "  --diff <a.jsonl> <b.jsonl>  compare two runs of THIS tool",
       "  --self-test               verify the instrument can report both outcomes",
       "  --check-determinism       run each file twice, report disagreement",
+      "  --target host|standalone  compiler lane (default: host)",
       "  --timeout <ms>            per-file timeout (default 60000)",
       "",
     ].join("\n"),
@@ -112,18 +118,19 @@ function categoryOf(rel: string): string {
   return parts[0] ?? "unknown";
 }
 
-async function runOne(absPath: string, timeoutMs: number): Promise<Row> {
+async function runOne(absPath: string, timeoutMs: number, target: Target): Promise<Row> {
   const rel = absPath.startsWith(TEST262_ROOT) ? absPath.slice(TEST262_ROOT.length + 1) : absPath;
   try {
-    const r = await runTest262File(absPath, categoryOf(rel), timeoutMs);
+    const r = await runTest262File(absPath, categoryOf(rel), timeoutMs, target === "standalone" ? target : undefined);
     return {
       file: rel,
       status: r.status as Status,
+      target,
       // Kept for humans only — never aggregated (see method rule 5).
       ...(r.reason ? { detail: String(r.reason) } : r.error ? { detail: String(r.error).slice(0, 400) } : {}),
     };
   } catch (e) {
-    return { file: rel, status: "error", detail: (e as Error)?.message?.slice(0, 400) ?? "threw" };
+    return { file: rel, status: "error", target, detail: (e as Error)?.message?.slice(0, 400) ?? "threw" };
   }
 }
 
@@ -135,14 +142,14 @@ async function runOne(absPath: string, timeoutMs: number): Promise<Row> {
  * verdict (always-fail, always-skip, silently-vacuous) looks exactly like a real
  * measurement in the output, and has previously been mistaken for one here.
  */
-async function assertInstrumentWorks(timeoutMs: number): Promise<void> {
+async function assertInstrumentWorks(timeoutMs: number, target: Target): Promise<void> {
   if (!existsSync(CONTROL_PASS) || !existsSync(CONTROL_FAIL)) {
     console.error(`FATAL: control fixtures missing under ${CONTROL_DIR}`);
     console.error("Refusing to report numbers without a positive control.");
     process.exit(3);
   }
-  const good = await runOne(CONTROL_PASS, timeoutMs);
-  const bad = await runOne(CONTROL_FAIL, timeoutMs);
+  const good = await runOne(CONTROL_PASS, timeoutMs, target);
+  const bad = await runOne(CONTROL_FAIL, timeoutMs, target);
   const ok = good.status === "pass" && FAIL_LIKE.has(bad.status);
   console.error(
     `control: must-pass -> ${good.status}${good.detail ? ` (${good.detail.slice(0, 120)})` : ""}\n` +
@@ -160,7 +167,7 @@ async function assertInstrumentWorks(timeoutMs: number): Promise<void> {
 }
 
 function readList(p: string): string[] {
-  return readFileSync(p, "utf-8")
+  return readFileSync(p === "-" ? 0 : p, "utf-8")
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l.length > 0 && !l.startsWith("#"));
@@ -196,6 +203,23 @@ function summarise(rows: Row[]): Record<string, number> {
 function doDiff(beforePath: string, afterPath: string): void {
   const before = loadRows(beforePath);
   const after = loadRows(afterPath);
+  const targetOf = (rows: Map<string, Row>): Target | undefined => {
+    const targets = new Set([...rows.values()].map((row) => row.target).filter((target) => target !== undefined));
+    if (targets.size > 1) {
+      console.error("FATAL: a diff arm mixes compiler targets. Refusing to report a flip count.");
+      process.exit(3);
+    }
+    return targets.values().next().value;
+  };
+  const beforeTarget = targetOf(before);
+  const afterTarget = targetOf(after);
+  if (beforeTarget !== undefined && afterTarget !== undefined && beforeTarget !== afterTarget) {
+    console.error(
+      `FATAL: compiler targets differ (${beforeTarget} vs ${afterTarget}). ` +
+        "Record both A/B arms with the same --target.",
+    );
+    process.exit(3);
+  }
 
   const union = new Set<string>([...before.keys(), ...after.keys()]);
   const flipsToPass: string[] = [];
@@ -279,6 +303,7 @@ async function main(): Promise<void> {
   let pathsArg: string | undefined;
   let outArg: string | undefined;
   let timeoutMs = 60000;
+  let target: Target = "host";
   let selfTest = false;
   let checkDeterminism = false;
   const diffArgs: string[] = [];
@@ -289,7 +314,11 @@ async function main(): Promise<void> {
     else if (a === "--paths") pathsArg = argv[++i];
     else if (a === "--out") outArg = argv[++i];
     else if (a === "--timeout") timeoutMs = Number(argv[++i]);
-    else if (a === "--self-test") selfTest = true;
+    else if (a === "--target") {
+      const value = argv[++i];
+      if (value !== "host" && value !== "standalone") usage(`invalid target ${value}`);
+      target = value;
+    } else if (a === "--self-test") selfTest = true;
     else if (a === "--check-determinism") checkDeterminism = true;
     else if (a === "--diff") {
       diffArgs.push(argv[++i]!, argv[++i]!);
@@ -302,7 +331,7 @@ async function main(): Promise<void> {
   }
 
   // The control runs before ANY measurement, in every mode.
-  await assertInstrumentWorks(timeoutMs);
+  await assertInstrumentWorks(timeoutMs, target);
   if (selfTest) {
     console.log("self-test OK: instrument reports both pass and fail.");
     return;
@@ -319,9 +348,9 @@ async function main(): Promise<void> {
   let nondeterministic = 0;
   for (let i = 0; i < list.length; i++) {
     const abs = resolveTestPath(list[i]!);
-    const row = await runOne(abs, timeoutMs);
+    const row = await runOne(abs, timeoutMs, target);
     if (checkDeterminism) {
-      const again = await runOne(abs, timeoutMs);
+      const again = await runOne(abs, timeoutMs, target);
       if (again.status !== row.status) {
         nondeterministic++;
         console.error(`  NONDETERMINISTIC ${row.file}: ${row.status} then ${again.status}`);

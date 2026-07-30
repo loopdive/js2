@@ -710,6 +710,45 @@ export function ensureExternStrictEqHelper(ctx: CodegenContext): number | undefi
 }
 
 /**
+ * Native standalone `(externref, externref) -> i32` loose equality. Each
+ * carrier is classified by the shared externref-to-AnyValue helper and the
+ * existing `__any_eq` body owns the complete IsLooselyEqual dispatch.
+ */
+export function ensureExternLooseEqHelper(ctx: CodegenContext): number | undefined {
+  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  const existing = ctx.funcMap.get("__extern_loose_eq");
+  if (existing !== undefined) return existing;
+  const fromExternIdx = ensureAnyFromExternHelper(ctx);
+  ensureAnyHelpers(ctx);
+  const anyEqIdx = ctx.funcMap.get("__any_eq");
+  if (fromExternIdx === undefined || anyEqIdx === undefined) return undefined;
+
+  const typeIdx = addFuncType(
+    ctx,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    "__extern_loose_eq",
+  );
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__extern_loose_eq",
+    typeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: fromExternIdx },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: fromExternIdx },
+      { op: "call", funcIdx: anyEqIdx },
+    ],
+    exported: false,
+  });
+  ctx.funcMap.set("__extern_loose_eq", funcIdx);
+  ctx.anyHelpers.set("__extern_loose_eq", funcIdx);
+  return funcIdx;
+}
+
+/**
  * (#1461/#54) Native standalone `(externref, externref) -> i32` SameValueZero
  * (§7.2.11) over two boxed externref values — the pure-Wasm replacement for the
  * `__same_value_zero` host import in the array-like `includes` search arm.

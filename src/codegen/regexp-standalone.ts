@@ -49,6 +49,7 @@ import {
   MATCH_VEC_FIELD_INDICES,
   MATCH_VEC_FIELD_INPUT,
   MATCH_VEC_FIELD_GROUPS,
+  REGEX_ANCHORED_LITERAL_ALTS_MARKER,
   REGEXP_MATCH_VEC_STRUCT,
   regexI32ArrayType,
 } from "./native-regex.js";
@@ -81,6 +82,7 @@ import { compileStringLiteral } from "./string-ops.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 
 export const STANDALONE_REGEXP_ABI_VERSION = 1;
 
@@ -170,7 +172,6 @@ export function hasStandaloneRegExpEngine(state: StandaloneRegExpEngineState): b
 }
 
 const STANDALONE_REGEXP_STRUCT_NAME = "__StandaloneRegExp";
-export const STANDALONE_REGEXP_CARRIER_TEST_HELPER = "__regexp_test_carrier";
 // g/i/y from Phase 2a, m/s from 2c, d/u/v from 2d (#1911 — `d` does not
 // change MATCHING semantics; the `.indices` result surface is #1914's lane;
 // u/v code-point atoms resolve via compile-time host enumeration, Slice B).
@@ -1438,6 +1439,73 @@ function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): number {
         { op: "i32.const", value: 0 },
         { op: "array.new_default", typeIdx: i32ArrIdx },
         { op: "local.set", index: PROG },
+      ],
+    },
+    // Replace the generic backtracking program for the exact no-flags,
+    // fully-anchored literal-alternation language with a compact payload that
+    // `__regex_search` compares directly. Construction remains dynamic and
+    // observes the runtime pattern; only the representation and matcher change.
+    { op: "local.get", index: SIMPLE },
+    { op: "local.get", index: ANCHORED },
+    { op: "i32.and" },
+    { op: "local.get", index: FBITS },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: END },
+        { op: "local.get", index: START },
+        { op: "i32.sub" },
+        { op: "local.tee", index: CHARS },
+        { op: "i32.const", value: 3 },
+        { op: "i32.add" },
+        { op: "array.new_default", typeIdx: i32ArrIdx },
+        { op: "local.set", index: PROG },
+        { op: "local.get", index: PROG },
+        { op: "i32.const", value: 0 },
+        { op: "i32.const", value: REGEX_ANCHORED_LITERAL_ALTS_MARKER },
+        { op: "array.set", typeIdx: i32ArrIdx },
+        { op: "local.get", index: PROG },
+        { op: "i32.const", value: 1 },
+        { op: "local.get", index: CHARS },
+        { op: "array.set", typeIdx: i32ArrIdx },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: I },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: I },
+                { op: "local.get", index: CHARS },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: PROG },
+                { op: "i32.const", value: 3 },
+                { op: "local.get", index: I },
+                { op: "i32.add" },
+                { op: "local.get", index: PDATA },
+                { op: "local.get", index: POFF },
+                { op: "local.get", index: START },
+                { op: "i32.add" },
+                { op: "local.get", index: I },
+                { op: "i32.add" },
+                { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+                { op: "array.set", typeIdx: i32ArrIdx },
+                { op: "local.get", index: I },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: I },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
       ],
     },
     { op: "local.get", index: FBITS },

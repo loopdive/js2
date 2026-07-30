@@ -19,6 +19,7 @@ import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-ma
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
 import { definedFuncAt, funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
+import { pushProgramAbiNestedCallable, pushProgramAbiTypedThisTwin } from "./program-abi-source-callable-planning.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3b) manual import-shift must skip stable handles
 import { addStringConstantGlobal } from "./registry/imports.js"; // (#2025)
 import { stringConstantExternrefInstrs } from "./native-strings.js"; // (#2025)
@@ -88,6 +89,7 @@ import {
   buildTypedThisForwardGuard,
   directCallLoweringEnabled,
   emitTypedThisPrologue,
+  recordDirectCallGeneric,
   recordDirectCallTwin,
   refinedTwinReturnType,
 } from "./typed-this.js";
@@ -2722,9 +2724,8 @@ export function compileArrowAsClosure(
   closureReturnType = generic.closureReturnType;
   liftedFuncTypeIdx = generic.liftedFuncTypeIdx;
 
-  // 6. Register the lifted function
   const liftedFuncIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, liftedFuncIdx, {
+  pushProgramAbiNestedCallable(ctx, arrow, liftedFuncIdx, {
     name: closureName,
     typeIdx: liftedFuncTypeIdx,
     locals: liftedFctx.locals,
@@ -2735,6 +2736,7 @@ export function compileArrowAsClosure(
   // remove from liveBodies to keep it tight (the regular walker dedupes anyway).
   ctx.liveBodies.delete(liftedFctx.body);
   ctx.funcMap.set(closureName, liftedFuncIdx);
+  let recordedTwin = false;
 
   // 6b. (#3683 S2) Typed-`this` TWIN. When this lifted closure is an admitted
   //     write-once fnctor prototype method, compile its body a SECOND time with
@@ -2812,7 +2814,7 @@ export function compileArrowAsClosure(
         ctx.liveBodies.delete(twin.liftedFctx.body);
       } else {
         const twinFuncIdx = mintDefinedFunc(ctx);
-        pushDefinedFunc(ctx, twinFuncIdx, {
+        pushProgramAbiTypedThisTwin(ctx, arrow, twinFuncIdx, {
           name: twinName,
           typeIdx: twin.liftedFuncTypeIdx,
           locals: twin.liftedFctx.locals,
@@ -2822,6 +2824,7 @@ export function compileArrowAsClosure(
         ctx.liveBodies.delete(twin.liftedFctx.body);
         ctx.funcMap.set(twinName, twinFuncIdx);
         recordDirectCallTwin(ctx, arrow, twinName, twinParams, twinResults);
+        recordedTwin = true;
         // Prepend IN PLACE: `liftedFctx.body` is the same array object already
         // registered as the generic function's body, and it stays covered by
         // `shiftLateImportIndices` (which walks `ctx.mod.functions`), so the
@@ -2862,8 +2865,23 @@ export function compileArrowAsClosure(
     }
   }
 
+  const directGenericGlobalIdx = recordedTwin
+    ? undefined
+    : recordDirectCallGeneric(ctx, arrow, closureName, structTypeIdx, liftedParams, closureResults);
+
   // 7. At the creation site, emit struct.new with funcref + arity + captured values.
   emitClosureConstruction(ctx, fctx, captures, liftedFuncIdx, structTypeIdx, arrowParams.length);
+  if (directGenericGlobalIdx !== undefined) {
+    // Keep one typed handle to the exact closure instance installed on the
+    // write-once prototype. The assignment still consumes the same value:
+    // store it, then reload and narrow the nullable global back to the
+    // non-null allocation type left by `struct.new`.
+    fctx.body.push(
+      { op: "global.set", index: directGenericGlobalIdx },
+      { op: "global.get", index: directGenericGlobalIdx },
+      { op: "ref.as_non_null" },
+    );
+  }
 
   // 8. Register closure info so call sites can emit call_ref — see registerClosureBindingInfo.
   registerClosureBindingInfo(ctx, arrow, structTypeIdx, liftedFuncTypeIdx, closureReturnType, arrowParams);
@@ -3225,9 +3243,8 @@ export function compileArrowAsCallback(
   if (savedFunc) ctx.parentBodiesStack.pop();
   ctx.currentFunc = savedFunc;
 
-  // 6. Register and export the callback function
   const cbFuncIdx = mintDefinedFunc(ctx);
-  pushDefinedFunc(ctx, cbFuncIdx, {
+  pushProgramAbiNestedCallable(ctx, arrow, cbFuncIdx, {
     name: cbName,
     typeIdx: cbTypeIdx,
     locals: cbFctx.locals,

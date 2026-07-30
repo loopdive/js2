@@ -293,10 +293,12 @@ export function prepareHostVoidCallbackLoweringByIdentity(
   if (!hasExactHostVoidCallbackMakerImport(ctx)) {
     for (const callback of activePlans) blocked.add(callback.ownerUnitId);
   }
-  for (const callback of activePlans) {
-    const liftedName = `${callback.ownerName}__closure_${callback.liftedOrdinal}`;
-    if (ctx.funcMap.has(liftedName) || ctx.mod.functions.some((fn) => fn.name === liftedName)) {
-      blocked.add(callback.ownerUnitId);
+  if (!ctx.programAbiSession) {
+    for (const callback of activePlans) {
+      const liftedName = `${callback.ownerName}__closure_${callback.liftedOrdinal}`;
+      if (ctx.funcMap.has(liftedName) || ctx.mod.functions.some((fn) => fn.name === liftedName)) {
+        blocked.add(callback.ownerUnitId);
+      }
     }
   }
   return blocked.size === 0
@@ -599,10 +601,12 @@ export function preparePromiseDelayLoweringByIdentity(
   ) {
     for (const delay of activePlans) blocked.add(delay.ownerUnitId);
   }
-  for (const delay of activePlans) {
-    for (const liftedName of [delay.executorLiftedName, delay.timerLiftedName]) {
-      if (ctx.funcMap.has(liftedName) || ctx.mod.functions.some((fn) => fn.name === liftedName)) {
-        blocked.add(delay.ownerUnitId);
+  if (!ctx.programAbiSession) {
+    for (const delay of activePlans) {
+      for (const liftedName of [delay.executorLiftedName, delay.timerLiftedName]) {
+        if (ctx.funcMap.has(liftedName) || ctx.mod.functions.some((fn) => fn.name === liftedName)) {
+          blocked.add(delay.ownerUnitId);
+        }
       }
     }
   }

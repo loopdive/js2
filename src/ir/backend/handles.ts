@@ -22,7 +22,7 @@
 
 import type { Instr, ValType } from "../types.js";
 import type { JsTag } from "../js-tag.js";
-import type { IrFuncRef } from "../nodes.js";
+import type { IrClassMemberKind, IrFuncRef } from "../nodes.js";
 import type {
   LinearAllocationSitePlan,
   LinearRecordLayoutPlan,
@@ -191,15 +191,16 @@ export interface IrVecLowering {
  *                             function (`<className>_new` is only its
  *                             compatibility label); the resolver maps the
  *                             binding to the funcIdx.
- *   - `methodFunc(name)`     binding-aware reference to an instance method;
+ *   - `memberFunc(kind,name)` binding-aware reference to a class member;
  *                             the compatibility label is commonly
- *                             `<className>_<methodName>`.
+ *                             `<className>_<methodName>` (or the corresponding
+ *                             getter/setter spelling).
  */
 export interface IrClassLowering {
   readonly structTypeIdx: number;
   fieldIdx(name: string): number;
   readonly constructorFunc: IrFuncRef;
-  methodFunc(name: string): IrFuncRef;
+  memberFunc(kind: IrClassMemberKind, name: string): IrFuncRef;
   /**
    * #3000-E: binding-aware reference to the constructor-init function
    * (`<className>_init` is its usual compatibility label) — signature

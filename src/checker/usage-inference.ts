@@ -65,11 +65,53 @@ type FunctionLikeWithBody = ts.FunctionLikeDeclaration & { body: ts.Block | ts.C
 /** Per-use classification. `bail` poisons the whole variable. */
 type UseClass = "safe-evidence" | "safe" | "bail";
 
+/**
+ * (#3765) "Does a reference to `name` at `node` resolve to a slot whose every
+ * DEFINITION is provably a number?" — the whole-program fixpoint's verdict,
+ * supplied by `analyzeNumericPropertyNames`. See {@link UsageInference}.
+ */
+export type NumericLocalOracle = (node: ts.Node, name: string) => boolean;
+
 export class UsageInference {
-  private readonly declCache = new WeakMap<ts.VariableDeclaration, InferredScalar | null>();
-  private readonly fnCache = new WeakMap<ts.Node, Set<ts.Symbol>>();
+  private declCache = new WeakMap<ts.VariableDeclaration, InferredScalar | null>();
+  private fnCache = new WeakMap<ts.Node, Set<ts.Symbol>>();
+  private numericLocals: NumericLocalOracle | undefined;
 
   constructor(private readonly checker: ts.TypeChecker) {}
+
+  /**
+   * (#3765) Install the whole-program DEFINITION-site verdict as a second,
+   * independent admission route.
+   *
+   * The two routes prove the same conclusion — "an f64 slot is observationally
+   * equivalent here" — from opposite ends:
+   *
+   *  - the **use-site** route (#684, above) proves it because every USE already
+   *    applies ToNumber, which says nothing about what the variable holds;
+   *  - the **definition-site** route proves it because every DEFINITION is
+   *    already a number, which makes every use safe *whatever it is*.
+   *
+   * So the def-site route lifts the use restrictions wholesale: `return c`,
+   * `f(c)`, `c === x`, `typeof c` and `x + c` — every one of them a hard bail
+   * for #684 — are all fine once the value is known to be a number. That is
+   * the entire point: the tokenizer's `var c = s.charCodeAt(i); …; return c`
+   * is rejected by #684 on the `return` alone.
+   *
+   * The three admission facts that stay REQUIRED are the ones the def-site
+   * proof does not speak to: the binding must not be captured by a nested
+   * closure (a capture lives in a ref cell, not a wasm local), must not be read
+   * before its declaration (an f64 slot reads 0/NaN where JS says `undefined` —
+   * the fixpoint proves what every WRITE holds, not that a write has happened
+   * yet), and must not be bigint.
+   *
+   * Called once, before any function body compiles; clears the memo caches so
+   * an early query cannot pin a pre-oracle verdict.
+   */
+  setNumericLocalOracle(oracle: NumericLocalOracle): void {
+    this.numericLocals = oracle;
+    this.declCache = new WeakMap();
+    this.fnCache = new WeakMap();
+  }
 
   /**
    * The scalar a boxed-`any` local should be narrowed to, or `undefined` when
@@ -115,7 +157,7 @@ export class UsageInference {
     if (cached) return cached;
     const result = new Set<ts.Symbol>();
     try {
-      analyzeFunctionBody(this.checker, fn, result);
+      analyzeFunctionBody(this.checker, fn, result, this.numericLocals);
     } catch {
       result.clear();
     }
@@ -128,10 +170,24 @@ export class UsageInference {
  * Core analysis. Split out as a free function so a single `try/catch` in
  * `analyzeFunction` guards it. Populates `out` with the narrow-safe symbols.
  */
-function analyzeFunctionBody(checker: ts.TypeChecker, fn: FunctionLikeWithBody, out: Set<ts.Symbol>): void {
+function analyzeFunctionBody(
+  checker: ts.TypeChecker,
+  fn: FunctionLikeWithBody,
+  out: Set<ts.Symbol>,
+  numericLocals?: NumericLocalOracle,
+): void {
   // 1. Collect candidate symbols: function-local any/unknown identifier
   //    bindings (not for-of/in).
-  const candidates = new Map<ts.Symbol, { sawEvidence: boolean; bailed: boolean }>();
+  /**
+   * `bailed` blocks only the #684 use-site route (some use is not
+   * ToNumber-invariant). `poisoned` blocks BOTH routes — it records the facts
+   * neither proof speaks to: capture by a nested closure, a read positioned
+   * before the declaration, and a bigint initializer.
+   */
+  const candidates = new Map<
+    ts.Symbol,
+    { sawEvidence: boolean; bailed: boolean; poisoned: boolean; decl: ts.VariableDeclaration; declEnd: number }
+  >();
 
   const collectCandidate = (decl: ts.VariableDeclaration): void => {
     if (!ts.isIdentifier(decl.name)) return;
@@ -151,12 +207,21 @@ function analyzeFunctionBody(checker: ts.TypeChecker, fn: FunctionLikeWithBody, 
     if (!t || !(t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown))) return;
     const sym = checker.getSymbolAtLocation(decl.name);
     if (!sym) return;
-    const state = candidates.get(sym) ?? { sawEvidence: false, bailed: false };
+    const state = candidates.get(sym) ?? {
+      sawEvidence: false,
+      bailed: false,
+      poisoned: false,
+      decl,
+      declEnd: decl.end,
+    };
+    // A `var` may be redeclared; a use is only safely-after-assignment if it
+    // follows the LAST of them.
+    if (decl.end > state.declEnd) state.declEnd = decl.end;
     // A statically-bigint initializer poisons the narrowing: bigint arithmetic
     // (`5n * 2n === 10n`) is NOT f64 arithmetic, and mixing an f64 slot with a
     // bigint operand traps. `let x: any = 5n; -x` (unary, no sibling to inspect)
     // is only caught here.
-    if (decl.initializer && isStaticallyBigInt(checker, decl.initializer)) state.bailed = true;
+    if (decl.initializer && isStaticallyBigInt(checker, decl.initializer)) state.poisoned = true;
     candidates.set(sym, state);
   };
 
@@ -185,8 +250,17 @@ function analyzeFunctionBody(checker: ts.TypeChecker, fn: FunctionLikeWithBody, 
       const state = sym && candidates.get(sym);
       if (state) {
         if (nested) {
-          state.bailed = true; // captured by a nested closure
+          state.poisoned = true; // captured by a nested closure — lives in a ref cell
         } else {
+          // (#3765) A read positioned before the declaration's end sees the
+          // slot's pre-assignment value. JS says `undefined`; an f64 local says
+          // 0 (or NaN for a hoisted `var` the hoister seeds). Both proofs are
+          // about what a WRITE stores, so neither covers a read that precedes
+          // every write — `if (a) return c; var c = 1;` and the self-reading
+          // `var c = c + 1` are the shapes. Position order catches the
+          // backward-jump cases (a loop body reading `c` above its own `var c`)
+          // too, since the read still lexically precedes the declaration.
+          if (node.pos < state.declEnd) state.poisoned = true;
           const cls = classifyUse(checker, node);
           if (cls === "bail") state.bailed = true;
           else if (cls === "safe-evidence") state.sawEvidence = true;
@@ -198,7 +272,14 @@ function analyzeFunctionBody(checker: ts.TypeChecker, fn: FunctionLikeWithBody, 
   fn.forEachChild((c) => walk(c, false));
 
   for (const [sym, state] of candidates) {
-    if (!state.bailed && state.sawEvidence) out.add(sym);
+    if (state.poisoned) continue;
+    // Route 1 (#684): every use is ToNumber-invariant, and at least one is real
+    // arithmetic. Route 2 (#3765): every definition is provably a number, which
+    // makes the uses irrelevant. Either alone suffices.
+    const useSiteProven = !state.bailed && state.sawEvidence;
+    const defSiteProven =
+      ts.isIdentifier(state.decl.name) && numericLocals?.(state.decl.name, state.decl.name.text) === true;
+    if (useSiteProven || defSiteProven) out.add(sym);
   }
 }
 

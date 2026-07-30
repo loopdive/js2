@@ -185,11 +185,13 @@ export interface IrClassFieldDescriptor {
 }
 
 /**
- * Slice 4 (#1169d) — descriptor for one instance method on a class. The
- * implicit `this` receiver is NOT listed in `params` — the lowerer
- * prepends it when emitting the call. A void method has
- * `returnType: null`.
+ * Descriptor for one projected callable class member. The implicit `this`
+ * receiver on instance methods/accessors is NOT listed in `params`; the
+ * lowerer prepends it when emitting the call. Static methods have no implicit
+ * receiver. A void method or setter has `returnType: null`.
  */
+export type IrClassMemberKind = "method" | "getter" | "setter" | "static";
+
 export interface IrClassMethodDescriptor {
   readonly name: string;
   readonly params: readonly IrType[];
@@ -207,7 +209,7 @@ export interface IrClassMethodDescriptor {
    * sound). `"static"` methods have no `this` param at the Wasm level and are
    * invoked via `class.static_call` (never through an instance receiver).
    */
-  readonly memberKind?: "method" | "getter" | "setter" | "static";
+  readonly memberKind?: IrClassMemberKind;
 }
 
 /**
@@ -222,15 +224,14 @@ export interface IrClassMethodDescriptor {
  *                        — the lowerer maps each field `name` to a Wasm
  *                        struct field index via `resolveClass`, which knows
  *                        about the legacy `__tag` prefix at field 0.
- *   - `methods`          instance methods with caller-visible signatures.
- *                        Static methods are out of slice 4 scope and are
- *                        not listed.
+ *   - `methods`          callable class members with caller-visible
+ *                        signatures and an explicit semantic member kind.
  *   - `constructorParams` user-visible param list for `new C(...)`.
  *
- * Class methods themselves are NOT IR-claimable in slice 4 — they remain on
- * the legacy class-bodies path. The call site carries the class descriptor and
- * member key; the resolver returns a typed callable reference for the selected
- * legacy-allocated slot.
+ * Class-member bodies currently share the legacy allocator. The call site
+ * carries the class descriptor, semantic member kind, and source member name;
+ * the resolver returns an exact typed callable reference for the selected
+ * allocator-owned slot.
  */
 export interface IrClassShape {
   readonly classId: IrClassId;
@@ -1274,7 +1275,8 @@ export interface IrInstrClosureCap extends IrInstrBase {
  * canonical wrapper root. The typed funcref cast performs the exact signature
  * check; `call_ref` receives that field-0 funcref, never the wrapper itself.
  *
- * Result type: `signature.returnType`.
+ * Result type: `signature.returnType`, or null for a void call in statement
+ * position.
  */
 export interface IrInstrClosureCall extends IrInstrBase {
   readonly kind: "closure.call";
@@ -1409,14 +1411,16 @@ export interface IrInstrClassSet extends IrInstrBase {
 }
 
 /**
- * Invoke an instance method. `receiver` must be `IrType.class` whose
- * shape contains `methodName`. The implicit `this` is prepended as the
+ * Invoke an instance method or accessor. `receiver` must be `IrType.class`
+ * whose shape contains the (`memberKind`, `methodName`) pair. `methodName`
+ * remains the source-level member name even for getters/setters; the resolver
+ * owns their compatibility spelling. The implicit `this` is prepended as the
  * first call argument. Lowering emits:
  *   <emit receiver>
  *   <emit each arg in order>
- *   call $<className>_<methodName>
+ *   call $<resolved exact member binding>
  *
- * Result type: the method descriptor's `returnType`. A void method has
+ * Result type: the member descriptor's `returnType`. A void method/setter has
  * `result: null` and `resultType: null`; the AST→IR lowerer rejects
  * such calls in expression position so we never see a void method as
  * `lowerExpr` output.
@@ -1424,6 +1428,7 @@ export interface IrInstrClassSet extends IrInstrBase {
 export interface IrInstrClassCall extends IrInstrBase {
   readonly kind: "class.call";
   readonly receiver: IrValueId;
+  readonly memberKind: Exclude<IrClassMemberKind, "static">;
   readonly methodName: string;
   readonly args: readonly IrValueId[];
 }
@@ -1491,7 +1496,7 @@ export interface IrInstrClassInstanceOf extends IrInstrBase {
  * (#3144) Static method call `C.m(args)` on a locally-declared user class.
  * No receiver: legacy compiles a static method WITHOUT a `self` param
  * (`class-bodies.ts` — `methodParams = isStatic ? [] : [self]`), so the
- * lowering emits args then a call resolved via `IrClassLowering.methodFunc`.
+ * lowering emits args then a call resolved via `IrClassLowering.memberFunc`.
  * Its typed binding selects the slot; its name remains the compatibility key
  * for the current backend adapter. `shape` is the class named at the call site; an inherited static
  * resolves through the same key thanks to legacy's inherited-member key

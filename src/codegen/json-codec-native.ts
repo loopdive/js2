@@ -57,7 +57,7 @@ import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { reserveReplacerDriver, reserveReviverDriver, reserveToJsonDriver } from "./accessor-driver.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
-
+import { buildRawJsonSymbolToStringGuard, prepareRawJsonSymbolToString } from "./json-rawjson-symbol.js";
 const EQ_HEAP_TYPE = -19; // signed LEB128 → 0x6d → TYPE.eq (for ref.null any/eq)
 
 /**
@@ -2860,7 +2860,7 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
   ensureNativeStringHelpers(ctx);
   const rt = ensureObjectRuntime(ctx);
   emitNativeNumberFormat(ctx, new Set(["number_toString"]));
-  emitWasiErrorConstructor(ctx, "SyntaxError", 1);
+  prepareRawJsonSymbolToString(ctx);
   const parseTextIdx = emitJsonParseText(ctx);
 
   const i32: ValType = { kind: "i32" };
@@ -2910,8 +2910,8 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
     //   $__box_number_struct → number_toString(value)
     //   $__box_boolean_struct→ "true" / "false"
     //   $AnyValue             → tag-dispatch its primitive payload
-    //   else (object/array/symbol/undefined) → "[object Object]", which the
-    //        parser below rejects → SyntaxError (matching §25.5.3).
+    //   $Symbol → TypeError; other unsupported refs → "[object Object]", which
+    //   the parser below rejects → SyntaxError (matching §25.5.3).
     { op: "local.get", index: R_V },
     { op: "ref.is_null" },
     {
@@ -2921,7 +2921,7 @@ export function emitJsonRawJson(ctx: CodegenContext): number {
       else: [
         { op: "local.get", index: R_V },
         { op: "any.convert_extern" },
-        { op: "local.tee", index: R_ANY },
+        ...buildRawJsonSymbolToStringGuard(ctx, R_ANY),
         { op: "ref.test", typeIdx: anyStrTypeIdx },
         {
           op: "if",

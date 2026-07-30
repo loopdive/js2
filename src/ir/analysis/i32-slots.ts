@@ -467,14 +467,26 @@ export function planI32Slots(
   }
 
   // (4) Producibility fixpoint: shrink until every surviving candidate's writes
-  // are all lowerable to an exact i32 *using only the surviving candidates*.
-  // The identifier probe resolves a use site to its GOVERNING declaration, so
-  // a same-named sibling binding never leaks its promotion into another scope.
+  // are all lowerable to an exact i32. Besides the surviving promoted slots,
+  // admit names from Q-CANON itself: immutable intermediates such as
+  //
+  //     const next = (a + b) | 0;
+  //     b = next;
+  //
+  // are provably int32-valued even though they do not need mutable slot
+  // storage. `lowerAsI32` can consume those through `i32PureNames`; excluding
+  // them here caused the whole Fibonacci cycle (`a`, `b`) to be demoted to
+  // f64. `collectI32CoercedLocals` already rejects duplicate/shadowed names, so
+  // the name-based half of this probe cannot leak across sibling bindings.
+  //
+  // The promoted-slot half still resolves a use site to its GOVERNING
+  // declaration, so a same-named sibling binding never leaks its promotion
+  // into another scope.
   const promotedAt: IsPromotedI32 = (id: ts.Identifier): boolean => {
     for (const c of candidates.values()) {
       if (c.name === id.text && nodeContains(c.scope, id)) return true;
     }
-    return false;
+    return canonNames.has(id.text);
   };
   for (;;) {
     let changed = false;
@@ -492,6 +504,30 @@ export function planI32Slots(
 }
 
 const EMPTY: ReadonlySet<ts.VariableDeclaration> = new Set<ts.VariableDeclaration>();
+
+/**
+ * (#3734) An `IsPromotedI32` probe answerable BEFORE lowering starts, built
+ * from `planI32Slots`'s own output.
+ *
+ * `from-ast.ts`'s live probe (`promotedI32Probe`) reads `cx.scope`, so it only
+ * exists once lowering reaches a use site. Analyses that must decide something
+ * up front — e.g. whether an empty `number[]` may be given an i32 element
+ * representation — need the same answer during the pre-pass. This reproduces
+ * exactly the containment test `planI32Slots` itself used to reach its
+ * fixpoint (name match + the declaration's binding scope contains the use), so
+ * the two probes agree by construction on every declaration the planner kept.
+ *
+ * Consumers must still re-check with the LIVE probe at lowering time and fail
+ * closed if it disagrees — this one is a planning aid, not a licence.
+ */
+export function makePlannedI32Probe(slots: ReadonlySet<ts.VariableDeclaration>): IsPromotedI32 {
+  if (slots.size === 0) return () => false;
+  const scoped = [...slots].map((decl) => ({
+    name: (decl.name as ts.Identifier).text,
+    scope: declarationScope(decl),
+  }));
+  return (id: ts.Identifier): boolean => scoped.some((s) => s.name === id.text && nodeContains(s.scope, id));
+}
 // ---------------------------------------------------------------------------
 // Pure token/op tables shared with `from-ast.ts`'s emitter
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import { ts } from "../../ts-api.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { isPristineEs5IntrinsicIsFrozenCall } from "../../ir/object-integrity.js";
 import { resolveArrayInfo } from "../array-methods.js";
 import { numberIsPredicateOps } from "../number-is-predicate-ops.js";
 import { sameValueNumberOps } from "../same-value-number-ops.js";
@@ -99,6 +100,7 @@ import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
+import { tryCompileEs5GetPrototypeOfEarly, tryCompileEs5GetPrototypeOfValue } from "./object-get-prototype-of.js";
 import {
   BUILTIN_CLASS_NAMES,
   compileCallExpression,
@@ -1489,6 +1491,17 @@ export function compileBuiltinStaticCall(
     const method = propAccess.name.text;
     const arg0 = expr.arguments[0]!;
 
+    // Test262's original top-level harness is not yet IR-claimed. Keep this
+    // compatibility adapter thin: the semantic classification remains owned
+    // by ir/object-integrity and is shared with selector + AST→IR lowering.
+    if (
+      method === "isFrozen" &&
+      isPristineEs5IntrinsicIsFrozenCall(expr, (node) => isGlobalBuiltinIdentifier(ctx, fctx, node))
+    ) {
+      fctx.body.push({ op: "i32.const", value: 0 });
+      return { kind: "i32" };
+    }
+
     // (#2744) The host-mode static fold (`ctx.frozenVars`/`ctx.sealedVars`
     // keyed on the identifier) was execution-order-blind — `Object.freeze(o)`
     // populates those sets during codegen, so an *earlier* `Object.isFrozen(o)`
@@ -1656,27 +1669,20 @@ export function compileBuiltinStaticCall(
     return { kind: "externref" };
   }
 
-  // Handle Object.getPrototypeOf(obj) — return prototype as externref
-  // For class instances, creates a struct representing the prototype and returns
-  // it as externref via extern.convert_any. For plain objects, returns null.
   if (
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Object" &&
-    propAccess.name.text === "getPrototypeOf" &&
-    expr.arguments.length >= 1
+    isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression) &&
+    propAccess.name.text === "getPrototypeOf"
   ) {
+    const es5Early = tryCompileEs5GetPrototypeOfEarly(ctx, fctx, expr);
+    if (es5Early) return es5Early;
     const arg0 = expr.arguments[0]!;
 
     // (#2743 a) `Object.getPrototypeOf(arguments)` is %Object.prototype%
     // (§10.4.4), NOT the array prototype the vec representation would yield.
-    // The arguments object is an ordinary Object, so its `[[Prototype]]` must
-    // be the SAME `Object.prototype` value the compiler materializes for any
-    // plain object — `Object.getPrototypeOf({}) === Object.getPrototypeOf(
-    // arguments)`. Emit the compiler's own `Object.prototype` value-read
-    // (reusing the real `Object` identifier node `propAccess.expression`), so
-    // both sides reference one identity. Host-mode only; standalone keeps the
-    // bare vec. (`arguments` is a side-effect-free identifier, so dropping it
-    // is unnecessary.)
+    // Emit the compiler's own `Object.prototype` value so ordinary objects and
+    // arguments share one identity. Host-mode only; standalone keeps the vec.
     if (!noJsHost(ctx) && ts.isIdentifier(arg0) && arg0.text === "arguments" && fctx.localMap.has("arguments")) {
       const objProtoExpr = ts.factory.createPropertyAccessExpression(
         propAccess.expression,
@@ -1793,6 +1799,9 @@ export function compileBuiltinStaticCall(
     }
 
     const argTsType = ctx.checker.getTypeAtLocation(arg0);
+
+    const es5Value = tryCompileEs5GetPrototypeOfValue(ctx, fctx, expr);
+    if (es5Value) return es5Value;
 
     // (#3013) `Object.getPrototypeOf(<array iterator>)` → the shared native
     // `%ArrayIteratorPrototype%` singleton (standalone/WASI). Every array

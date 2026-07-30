@@ -154,7 +154,13 @@ async, adoption-owner, and broader-corpus coverage closure named above.
    actual compile outcomes.
 6. **Runtime is rewired, not copied.** Shared coercion/string/object/collection/
    regex/async behavior stays single-sourced behind semantic IR intents.
-7. **Deletion follows reachability.** No direct handler is removed until the
+7. **Optimizations migrate before deletion.** Every reachable direct handler
+   must have its correctness behavior and optimization decisions inventoried.
+   Each optimization needs an IR lowering/pass owner plus differential
+   output-shape or performance evidence where semantic equivalence alone would
+   miss a regression. An unmapped optimization blocks deletion; it is never
+   silently discarded as cleanup.
+8. **Deletion follows reachability.** No direct handler is removed until the
    new gate proves it unreachable in every supported policy/backend and the
    #3090 audit confirms the call edge is gone.
 
@@ -179,6 +185,10 @@ async, adoption-owner, and broader-corpus coverage closure named above.
       graph are unreachable and deleted. The refreshed #3090 report records
       zero frontend-only survivors and separately records retained runtime/
       substrate code.
+- [ ] The direct-handler retirement inventory maps every behavior and
+      optimization to an IR lowering, pass, runtime semantic intent, or
+      explicit Unsupported outcome. Differential Wasm-shape and performance
+      gates show that deletion does not silently drop legacy optimizations.
 - [ ] Equivalence, cross-backend, linear, typecheck, lint/format, loc/dead-
       export, full Test262, standalone-floor, and artifact-validity gates pass
       on the final merged result.
