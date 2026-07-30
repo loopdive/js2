@@ -1,0 +1,10 @@
+{
+  "id": "3796",
+  "assignee": "codex/finish-node-at-receiver-call",
+  "status": "in-progress",
+  "branch": "codex/ir-named-this-call",
+  "reserved_at": "2026-07-30T12:37:01Z",
+  "claimed_at": "2026-07-30T12:37:01Z",
+  "updated_at": "2026-07-30T12:37:01Z",
+  "pr_scan": "ok"
+}
