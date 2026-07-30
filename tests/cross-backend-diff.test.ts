@@ -61,7 +61,7 @@ async function run(program: CrossBackendProgram, backend: Backend): Promise<Comp
     // WasmGC modules use js-string + host imports built by the runtime helper.
     const built = buildImports(result.imports, {}, result.stringPool);
     const { instance } = await instantiateWasm(result.binary, built.env, built.string_constants);
-    built.setExports?.(instance.exports as Record<string, Function>);
+    built.setInstance?.(instance);
     return { ok: true, exports: instance.exports as CompileRun["exports"] };
   } catch (e) {
     return { ok: false, error: `instantiate/runtime: ${(e as Error).message ?? String(e)}` };

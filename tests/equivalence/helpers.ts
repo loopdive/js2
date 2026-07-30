@@ -254,23 +254,23 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
  *
  * Unlike calling `buildImports` + `WebAssembly.instantiate` directly, this
  * overlays the runtime's faithful host imports (struct sidecar reads,
- * iterator protocol) AND registers the wasm exports via `setExports` so
+ * iterator protocol) AND registers the wasm instance via `setInstance` so
  * runtime callbacks like `__extern_get`'s `__sget_<field>` struct-getter
- * fallback work. Direct `buildImports` callers that skip `setExports` see
+ * fallback work. Direct `buildImports` callers that skip `setInstance` see
  * `undefined` for opaque WasmGC struct fields, which makes destructuring
  * defaults wrongly fire in the harness even when the real runtime is correct.
  */
 export async function instantiateWithRuntime(result: CompileResult) {
   const imports = buildImports(result);
-  let setExportsFn: ((exports: Record<string, Function>) => void) | undefined;
+  let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
   if (result.imports && result.imports.length > 0) {
     const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
-    setExportsFn = runtimeResult.setExports;
+    setInstanceFn = runtimeResult.setInstance;
     imports.env = { ...(imports.env as Record<string, Function>), ...runtimeResult.env };
     if (runtimeResult.string_constants) imports.string_constants = runtimeResult.string_constants;
   }
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  if (setExportsFn) setExportsFn(instance.exports as Record<string, Function>);
+  setInstanceFn?.(instance);
   return instance;
 }
 
@@ -290,10 +290,10 @@ export async function compileToWasm(source: string) {
   // Use the runtime's buildImports for full host import support (iterator protocol, etc.)
   // Merge with the manual buildImports for wasm:js-string polyfill and string_constants.
   const manualImports = buildImports(result);
-  let setExportsFn: ((exports: Record<string, Function>) => void) | undefined;
+  let setInstanceFn: ((instance: WebAssembly.Instance) => void) | undefined;
   if (result.imports && result.imports.length > 0) {
     const runtimeResult = buildRuntimeImports(result.imports, undefined, result.stringPool);
-    setExportsFn = runtimeResult.setExports;
+    setInstanceFn = runtimeResult.setInstance;
     // Merge: runtime env overrides manual env, keep manual wasm:js-string and string_constants
     const mergedEnv = { ...(manualImports.env as Record<string, Function>), ...runtimeResult.env };
     manualImports.env = mergedEnv;
@@ -304,9 +304,7 @@ export async function compileToWasm(source: string) {
   }
   const { instance } = await WebAssembly.instantiate(result.binary, manualImports);
   // Set exports so runtime callbacks (iterator protocol, struct field getters) can access them
-  if (setExportsFn) {
-    setExportsFn(instance.exports as Record<string, Function>);
-  }
+  setInstanceFn?.(instance);
   return instance.exports as Record<string, Function>;
 }
 

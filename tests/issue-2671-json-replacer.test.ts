@@ -21,8 +21,8 @@ async function run(body: string): Promise<any> {
   expect(result.binary?.length).toBeGreaterThan(0);
   const importObject: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
-  return wrapExports(instance.exports, { signatures: result.exportSignatures });
+  importObject.__setInstance?.(instance);
+  return wrapExports(instance, { signatures: result.exportSignatures });
 }
 
 describe("#2671 — JSON.stringify array replacer (PropertyList)", () => {

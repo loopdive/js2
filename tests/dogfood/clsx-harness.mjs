@@ -176,8 +176,8 @@ export async function runHarness({ quiet = false } = {}) {
     try {
       const importObject = result.importObject ?? {};
       const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-      importObject.__setExports?.(instance.exports);
-      compiledExports = wrapExports(instance.exports, { signatures: result.exportSignatures });
+      importObject.__setInstance?.(instance);
+      compiledExports = wrapExports(instance, { signatures: result.exportSignatures });
       report.diff.exports = Object.keys(compiledExports).filter((k) => !k.startsWith("__"));
     } catch (e) {
       report.diff.skippedReason = `instantiate failed: ${e instanceof Error ? e.message : String(e)}`;

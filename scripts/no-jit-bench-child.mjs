@@ -178,7 +178,7 @@ async function loadWasmFn(wasmPath, importsPath, exportName) {
   const { buildImports, instantiateWasm } = await import(helpersUrl);
   const imports = buildImports(importsManifest.imports ?? [], {}, importsManifest.stringPool ?? []);
   const { instance } = await instantiateWasm(wasmBytes, imports.env, imports.string_constants);
-  if (imports.setExports) imports.setExports(instance.exports);
+  imports.setInstance?.(instance);
   const fn = instance.exports?.[exportName];
   if (typeof fn !== "function") throw new Error(`wasm export ${exportName} not found`);
   return fn;

@@ -182,7 +182,7 @@ export async function runCorpus({ quiet = false, includeAcornSelf = true } = {})
   const { instance } = await WebAssembly.instantiate(r.binary, io);
   // LOAD-BEARING — do NOT drop this line when copying this setup into a new probe.
   // The host runtime resolves dynamic method dispatch through
-  // `callbackState.getExports()`. Until `__setExports` hands it the instance's
+  // `callbackState.getExports()`. Until `__setInstance` hands it the instance's
   // exports, that returns `undefined`, dispatch silently mis-resolves, and the
   // runtime's method-not-a-function guard fires — so EVERY dynamic method reads
   // as missing. The failure is maximally misleading: `parse` looks broken
@@ -190,8 +190,8 @@ export async function runCorpus({ quiet = false, includeAcornSelf = true } = {})
   // This has cost real hours twice: #1694 (~30 min) and #3348 (filed as a
   // "compiled-acorn parse() regression", nearly triggered a 343-commit bisect —
   // resolved wont-fix; the only defect was a probe missing this line).
-  io.__setExports?.(instance.exports);
-  const exp = wrapExports(instance.exports, { signatures: r.exportSignatures });
+  io.__setInstance?.(instance);
+  const exp = wrapExports(instance, { signatures: r.exportSignatures });
   if (typeof exp.parse !== "function") {
     throw new Error(`[corpus] compiled acorn exposes no callable parse — exports: ${Object.keys(exp).slice(0, 30)}`);
   }

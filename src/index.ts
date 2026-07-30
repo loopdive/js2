@@ -161,7 +161,7 @@ export interface CompileResult {
    *
    * Only present (and even then, possibly an empty object) when at least
    * one exported function has a TypedArray param or return. Forward the
-   * value to `wrapExports(exports, { signatures: result.exportSignatures })`.
+   * value to `wrapExports(instance, { signatures: result.exportSignatures })`.
    */
   exportSignatures?: Record<string, ExportSignature>;
   /**
@@ -175,6 +175,7 @@ export interface CompileResult {
    * ```js
    * const r = await compile(src);
    * const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
+   * r.importObject.__setInstance?.(instance);
    * ```
    *
    * Standalone / `wasi` mode is the zero-import portable default and needs no
@@ -508,7 +509,7 @@ export interface CompileOptions {
    * (#2796) Differential-test-harness fidelity flag. In the default JS-host
    * (WasmGC) target, top-level module code runs via the wasm `start` section —
    * i.e. DURING `WebAssembly.instantiate`, BEFORE the host can call
-   * `setExports(instance.exports)`. Top-level code that introspects WasmGC
+   * `setInstance(instance)`. Top-level code that introspects WasmGC
    * structs (`for…in` / `Object.keys` over a runtime-shaped object) needs the
    * `__struct_field_names` / `__sget_*` exports, which only exist once the
    * instance is constructed — so during the start section they resolve to
@@ -518,7 +519,7 @@ export interface CompileOptions {
    *
    * When `true`, emit the top-level `__module_init` as an EXPORT and do NOT run
    * it via the wasm `start` section, so the host can invoke
-   * `instance.exports.__module_init()` AFTER wiring `setExports` — symmetric
+   * `instance.exports.__module_init()` AFTER wiring `setInstance` — symmetric
    * with the standalone `_start` model. The differential-test harness
    * (`scripts/diff-test.ts`) sets this so the HOST lane runs top-level code with
    * the same fully-wired runtime the standalone lane uses, rather than tripping
@@ -688,12 +689,19 @@ function withImportObject(result: CompileResult): CompileResult {
       // __sget_* struct reads, __is_closure gating). Callers wire it after
       // instantiation:
       //   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
-      //   (r.importObject as any).__setExports?.(instance.exports);
+      //   (r.importObject as any).__setInstance?.(instance);
       // Non-enumerable so WebAssembly.instantiate's import resolution (which
       // only reads the module-declared namespaces) never sees it.
       if (built.setExports) {
         Object.defineProperty(cached, "__setExports", {
           value: built.setExports,
+          enumerable: false,
+          configurable: true,
+        });
+      }
+      if (built.setInstance) {
+        Object.defineProperty(cached, "__setInstance", {
+          value: built.setInstance,
           enumerable: false,
           configurable: true,
         });

@@ -771,12 +771,12 @@ function _validatePropertyDescriptor(
   existingDesc?: PropertyDescriptor,
 ): number {
   const existing = descs.get(_normalizeDescKey(prop));
-  const hasValue = Object.prototype.hasOwnProperty.call(desc, "value");
-  const hasWritable = Object.prototype.hasOwnProperty.call(desc, "writable");
-  const hasEnumerable = Object.prototype.hasOwnProperty.call(desc, "enumerable");
-  const hasConfigurable = Object.prototype.hasOwnProperty.call(desc, "configurable");
-  const hasGet = Object.prototype.hasOwnProperty.call(desc, "get");
-  const hasSet = Object.prototype.hasOwnProperty.call(desc, "set");
+  const hasValue = _hasOwn(desc, "value");
+  const hasWritable = _hasOwn(desc, "writable");
+  const hasEnumerable = _hasOwn(desc, "enumerable");
+  const hasConfigurable = _hasOwn(desc, "configurable");
+  const hasGet = _hasOwn(desc, "get");
+  const hasSet = _hasOwn(desc, "set");
 
   // Compute new flags. ECMA-262 §10.1.6.3 ValidateAndApplyPropertyDescriptor:
   // a *redefine* keeps every attribute the descriptor omits — only fields
@@ -1014,6 +1014,34 @@ const _emptyFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
 const _bindingFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
 let _emptyFuncrefTableProbeModule: WebAssembly.Module | undefined;
 let _bindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
+const _reflectApply = Reflect.apply;
+const _objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const _instanceExportsGetter = Object.getOwnPropertyDescriptor(WebAssembly.Instance.prototype, "exports")?.get;
+
+/**
+ * Test ownership without consulting mutable Function.prototype.call or a
+ * subsequently replaced Reflect.apply.
+ */
+function _hasOwn(value: unknown, key: PropertyKey): boolean {
+  return _reflectApply(_objectHasOwnProperty, value, [key]) as boolean;
+}
+
+/**
+ * Read exports through the WebAssembly.Instance internal-slot brand check.
+ *
+ * `instanceof` is insufficient: an ordinary object can inherit from
+ * WebAssembly.Instance.prototype, and a Proxy around an instance retains that
+ * prototype. The captured intrinsic application also remains valid if user
+ * code later replaces Function.prototype.call.
+ */
+function _brandedInstanceExports(value: unknown): WebAssembly.Exports | undefined {
+  if (!_instanceExportsGetter) return undefined;
+  try {
+    return _reflectApply(_instanceExportsGetter, value, []) as WebAssembly.Exports;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Resolve the terminal compiler alias in one collision-safe physical family.
@@ -1021,7 +1049,7 @@ let _bindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
 function _terminalHostBridgeAlias(exports: Record<string, any>, physicalBase: string): unknown {
   let physicalName = physicalBase;
   let helper: unknown;
-  while (Object.prototype.hasOwnProperty.call(exports, physicalName)) {
+  while (_hasOwn(exports, physicalName)) {
     helper = exports[physicalName];
     physicalName += "$";
   }
@@ -1076,12 +1104,12 @@ interface ClosureHostBridgeMetadata {
 /** Read and authenticate compiler-authored closure-helper metadata. */
 function _closureHostBridgeMetadata(exports: Record<string, any>): ClosureHostBridgeMetadata | undefined {
   const [markerLogicalName, markerPhysicalBase] = _CLOSURE_HOST_BRIDGE_MARKER;
-  if (!Object.prototype.hasOwnProperty.call(exports, markerLogicalName)) return undefined;
+  if (!_hasOwn(exports, markerLogicalName)) return undefined;
   const marker = _terminalHostBridgeAlias(exports, markerPhysicalBase);
   if (!_isExactFuncrefTable(marker, 0)) return undefined;
 
   const [logicalName, physicalBase] = _CLOSURE_HOST_BRIDGE_MANIFEST;
-  if (!Object.prototype.hasOwnProperty.call(exports, logicalName)) return undefined;
+  if (!_hasOwn(exports, logicalName)) return undefined;
   const manifest = _terminalHostBridgeAlias(exports, physicalBase);
   if (!_isImmutableI32Global(manifest) || typeof manifest.value !== "number") return undefined;
   const value = manifest.value | 0;
@@ -1090,7 +1118,7 @@ function _closureHostBridgeMetadata(exports: Record<string, any>): ClosureHostBr
   const bits = value & _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK;
 
   const [bindingsLogicalName, bindingsPhysicalBase] = _CLOSURE_HOST_BRIDGE_BINDINGS;
-  if (!Object.prototype.hasOwnProperty.call(exports, bindingsLogicalName)) return undefined;
+  if (!_hasOwn(exports, bindingsLogicalName)) return undefined;
   const bindings = _terminalHostBridgeAlias(exports, bindingsPhysicalBase);
   if (!_isExactFuncrefTable(bindings, 17)) return undefined;
   try {
@@ -1115,7 +1143,7 @@ function _closureHostBridgeMetadata(exports: Record<string, any>): ClosureHostBr
 function _hostBridgeExportView<T extends Record<string, any>>(exports: T): T {
   const overrides = new Map<string, unknown>();
   for (const [logicalName, physicalBase] of _VEC_HOST_BRIDGE_EXPORTS) {
-    if (!Object.prototype.hasOwnProperty.call(exports, logicalName)) continue;
+    if (!_hasOwn(exports, logicalName)) continue;
     const helper = _terminalHostBridgeAlias(exports, physicalBase);
     if (typeof helper !== "function" || exports[logicalName] === helper) continue;
     overrides.set(logicalName, helper);
@@ -1124,7 +1152,7 @@ function _hostBridgeExportView<T extends Record<string, any>>(exports: T): T {
   const closureMetadata = _closureHostBridgeMetadata(exports);
   for (let bit = 0; bit < _CLOSURE_HOST_BRIDGE_EXPORTS.length; bit++) {
     const [logicalName, physicalBase] = _CLOSURE_HOST_BRIDGE_EXPORTS[bit]!;
-    if (!Object.prototype.hasOwnProperty.call(exports, logicalName)) continue;
+    if (!_hasOwn(exports, logicalName)) continue;
     let helper: unknown;
     if (closureMetadata !== undefined && (closureMetadata.bits & (1 << bit)) !== 0) {
       helper = _terminalHostBridgeAlias(exports, physicalBase);
@@ -1975,7 +2003,7 @@ function _instanceofResult(
     // Dynamic path: `target` is an object (primitives were thrown at step 1).
     // An OWN `@@hasInstance` (even null/undefined) means it is deliberately
     // used as a non-callable RHS → TypeError.
-    if (Object.prototype.hasOwnProperty.call(target, Symbol.hasInstance)) {
+    if (_hasOwn(target, Symbol.hasInstance)) {
       return _INSTANCEOF_THROW;
     }
     // (#2740) A HOST object (not a WasmGC struct) is native JS — if it were
@@ -5609,10 +5637,10 @@ function _vecDefineOwnProperty(
   const keyStr = String(key);
   const sDescs = _getSidecarDescs(obj);
   const oldLen = lenFn(obj);
-  const hasValue = Object.prototype.hasOwnProperty.call(desc, "value");
-  const hasWritable = Object.prototype.hasOwnProperty.call(desc, "writable");
-  const hasGet = Object.prototype.hasOwnProperty.call(desc, "get");
-  const hasSet = Object.prototype.hasOwnProperty.call(desc, "set");
+  const hasValue = _hasOwn(desc, "value");
+  const hasWritable = _hasOwn(desc, "writable");
+  const hasGet = _hasOwn(desc, "get");
+  const hasSet = _hasOwn(desc, "set");
 
   // ── "length" → §10.4.2.1 ArraySetLength ─────────────────────────────
   if (keyStr === "length") {
@@ -10341,9 +10369,9 @@ assert._isSameValue = isSameValue;
           const existingVal = _sidecarGet(obj, key);
           const newFlags = _validatePropertyDescriptor(sDescs, nKey, d, existingVal, existingDesc);
           sDescs.set(nKey, newFlags);
-          const hasValue = Object.prototype.hasOwnProperty.call(d, "value");
-          const hasGet = Object.prototype.hasOwnProperty.call(d, "get");
-          const hasSet = Object.prototype.hasOwnProperty.call(d, "set");
+          const hasValue = _hasOwn(d, "value");
+          const hasGet = _hasOwn(d, "get");
+          const hasSet = _hasOwn(d, "set");
           if (hasValue) {
             _sidecarSet(obj, key, d.value);
             // (#2668 Slice A) Keep the typed struct field in sync so a static
@@ -10410,7 +10438,7 @@ assert._isSameValue = isSameValue;
                 const existingVal = _sidecarGet(obj, prop);
                 const newFlags = _validatePropertyDescriptor(sDescs, nProp, desc, existingVal, existingDesc);
                 sDescs.set(nProp, newFlags);
-                if (Object.prototype.hasOwnProperty.call(desc, "value")) {
+                if (_hasOwn(desc, "value")) {
                   _sidecarSet(obj, prop, desc.value);
                   // (#2668 Slice A) Mirror into the typed struct field for static reads.
                   _structFieldWriteback(obj, prop, desc.value, callbackState);
@@ -10636,7 +10664,7 @@ assert._isSameValue = isSameValue;
                 const existingVal2 = _sidecarGet(obj, key as string);
                 const newFlags = _validatePropertyDescriptor(sDescs!, nKey, desc, existingVal2, existingDesc2);
                 sDescs!.set(nKey, newFlags);
-                if (Object.prototype.hasOwnProperty.call(desc, "value")) _sidecarSet(obj, key as string, desc.value);
+                if (_hasOwn(desc, "value")) _sidecarSet(obj, key as string, desc.value);
                 else if (!(newFlags & _SC_ACCESSOR) && existingDesc2 === undefined)
                   _sidecarSet(obj, key as string, undefined);
               } else {
@@ -10689,7 +10717,7 @@ assert._isSameValue = isSameValue;
                   const existingVal2 = _sidecarGet(obj, key);
                   const newFlags = _validatePropertyDescriptor(sDescs, nKey, desc, existingVal2, existingDesc2);
                   sDescs.set(nKey, newFlags);
-                  if (Object.prototype.hasOwnProperty.call(desc, "value")) _sidecarSet(obj, key, desc.value);
+                  if (_hasOwn(desc, "value")) _sidecarSet(obj, key, desc.value);
                   else if (!(newFlags & _SC_ACCESSOR) && existingDesc2 === undefined) _sidecarSet(obj, key, undefined);
                 }
               } else {
@@ -11530,7 +11558,7 @@ assert._isSameValue = isSameValue;
           }
           if (!_isWasmStruct(obj)) {
             try {
-              return Object.prototype.hasOwnProperty.call(obj, key) ? 1 : 0;
+              return _hasOwn(obj, key) ? 1 : 0;
             } catch {
               return 0;
             }
@@ -12426,8 +12454,7 @@ assert._isSameValue = isSameValue;
       // Array.of(...items) — creates array from arguments (#965)
       if (name === "__array_of") return (items: any[]): any[] => items;
       // Object.prototype methods for extern class dispatch (#799 WI2)
-      if (name === "Object_hasOwnProperty")
-        return (obj: any, key: any) => (Object.prototype.hasOwnProperty.call(obj, key) ? 1 : 0);
+      if (name === "Object_hasOwnProperty") return (obj: any, key: any) => (_hasOwn(obj, key) ? 1 : 0);
       if (name === "Object_isPrototypeOf")
         return (obj: any, candidate: any) => {
           try {
@@ -12575,7 +12602,7 @@ assert._isSameValue = isSameValue;
           }
           if (!_isWasmStruct(obj)) {
             try {
-              return Object.prototype.hasOwnProperty.call(obj, key) ? 1 : 0;
+              return _hasOwn(obj, key) ? 1 : 0;
             } catch {
               return 0;
             }
@@ -15317,7 +15344,14 @@ function wrapWithContainment(
   return fn;
 }
 
-/** Build the WebAssembly import object from a closed manifest */
+/**
+ * Build the WebAssembly import object from a closed manifest.
+ *
+ * After instantiation, prefer `setInstance(instance)`. It proves the
+ * WebAssembly.Instance internal-slot brand before wiring the exports record.
+ * `setExports(instance.exports)` remains available for legacy callback, vec,
+ * closure, and string wiring.
+ */
 export function buildImports(
   manifest: ImportDescriptor[],
   deps?: Record<string, any>,
@@ -15328,6 +15362,7 @@ export function buildImports(
   "wasm:js-string": typeof jsString;
   string_constants: Record<string, WebAssembly.Global>;
   string_constants16: Record<string, WebAssembly.Global>;
+  setInstance?: (instance: WebAssembly.Instance) => void;
   setExports?: (exports: Record<string, Function>) => void;
   startImportCounting?: () => void;
   takeImportCounts?: () => Record<string, number>;
@@ -15452,6 +15487,7 @@ export function buildImports(
     "wasm:js-string": typeof jsString;
     string_constants: Record<string, WebAssembly.Global>;
     string_constants16: Record<string, WebAssembly.Global>;
+    setInstance?: (instance: WebAssembly.Instance) => void;
     setExports?: (exports: Record<string, Function>) => void;
     startImportCounting?: () => void;
     takeImportCounts?: () => Record<string, number>;
@@ -15474,6 +15510,13 @@ export function buildImports(
       const fn = pendingExportsDeferred.shift()!;
       fn();
     }
+  };
+  result.setInstance = (instance: WebAssembly.Instance) => {
+    const exports = _brandedInstanceExports(instance);
+    if (exports === undefined) {
+      throw new TypeError("setInstance: expected a genuine WebAssembly.Instance");
+    }
+    result.setExports!(exports as Record<string, Function>);
   };
   result.startImportCounting = () => {
     importCounts = new Uint32Array(envImportNames.length);
@@ -15517,7 +15560,7 @@ export function buildImports(
  * Usage:
  * ```ts
  * const { instance } = await WebAssembly.instantiate(binary, imports);
- * const exports = wrapExports(instance.exports);
+ * const exports = wrapExports(instance);
  * const negated = exports.negate(jsFn);  // typeof === "function"
  * negated();                              // dispatches via __call_fn_0
  * ```
@@ -15589,15 +15632,18 @@ function marshalTypedArrayArgs(
 }
 
 /**
- * Wrap a Wasm instance's exports so `Uint8Array` (and other TypedArray)
+ * Wrap a Wasm instance or its exports so `Uint8Array` (and other TypedArray)
  * arguments and return values marshal correctly across the JS↔Wasm boundary.
+ *
+ * Prefer passing the genuine `WebAssembly.Instance`. Passing its raw exports
+ * record retains the historical API.
  *
  * Pass the per-export type metadata from {@link CompileResult.exportSignatures}
  * as `options.signatures`; without it the wrapper is a passthrough. Returns a
  * new exports object; the original is left untouched.
  */
 export function wrapExports(
-  rawExports: WebAssembly.Exports,
+  instanceOrExports: WebAssembly.Instance | WebAssembly.Exports,
   options?: {
     marshal?: "copy" | false;
     /** Per-export TS-level type metadata from `CompileResult.exportSignatures`
@@ -15609,6 +15655,7 @@ export function wrapExports(
 ): Record<string, any> {
   // #1504: marshal by default; `marshal: false` keeps raw WasmGC handles.
   const marshal: "copy" | false = options?.marshal === false ? false : "copy";
+  const rawExports = _brandedInstanceExports(instanceOrExports) ?? (instanceOrExports as WebAssembly.Exports);
   const exportsForMarshal = _hostBridgeExportView(rawExports as unknown as Record<string, Function>);
   const callFn0 = exportsForMarshal.__call_fn_0 as ((closure: any) => any) | undefined;
   const callFn1 = exportsForMarshal.__call_fn_1 as ((closure: any, arg: any) => any) | undefined;
@@ -15817,8 +15864,6 @@ export async function compileAndInstantiate(source: string, deps?: Record<string
   const imports = buildImports(result.imports, deps, result.stringPool);
   const binary = new Uint8Array(result.binary);
   const { instance } = await instantiateWasm(binary, imports.env, imports.string_constants, imports.string_constants16);
-  if (imports.setExports) {
-    imports.setExports(instance.exports as Record<string, Function>);
-  }
+  imports.setInstance?.(instance);
   return instance.exports;
 }

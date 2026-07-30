@@ -677,7 +677,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   // and the worker's own fixture-graph branch
                   // (scripts/test262-worker.mjs `...deferOpt`). Without it the
                   // whole harness assembly runs in the wasm `(start)` section,
-                  // i.e. BEFORE `setExports(instance.exports)` wires the
+                  // i.e. BEFORE `setInstance(instance)` wires the
                   // runtime — and own properties on function objects are not
                   // yet readable, so `assert.sameValue(...)` threw
                   // "sameValue is not a function" in 22 module-code tests and
@@ -793,11 +793,9 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   });
                   const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);
                   fixtureInstance = instance;
-                  if (typeof (importObj as any).setExports === "function") {
-                    (importObj as any).setExports(instance.exports);
-                  }
+                  (importObj as any).setInstance?.(instance);
                   // (#3049 C1) Deferred top-level init (host lane): run the
-                  // exported __module_init now that setExports has wired the
+                  // exported __module_init now that setInstance has wired the
                   // runtime. Same try as instantiate + test(), so a top-level
                   // throw keeps its pre-defer classification.
                   const moduleInit = (instance.exports as any).__module_init;

@@ -14,7 +14,7 @@ async function run(src: string): Promise<any> {
     imports["wasm:js-string"],
     imports.string_constants,
   );
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return (instance.exports as any).test();
 }
 

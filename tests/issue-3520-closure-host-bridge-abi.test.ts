@@ -106,12 +106,12 @@ async function instantiate(source: string): Promise<{
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool) as Record<string, unknown> & {
     env?: Record<string, unknown>;
-    setExports?: (value: WebAssembly.Exports) => void;
+    setInstance?: (value: WebAssembly.Instance) => void;
   };
   imports.env = imports.env ?? {};
   imports.env.hostTick = (value: number) => value;
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  imports.setExports?.(instance.exports);
+  imports.setInstance?.(instance);
   return { exports: instance.exports as Record<string, unknown>, result };
 }
 

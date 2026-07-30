@@ -11,7 +11,7 @@
 // (compileObjectKeysOrValues at object-ops.ts:2051).
 //
 // What's required for it to work: the JS host MUST call
-// `imports.setExports(instance.exports)` after instantiation so the runtime
+// `imports.setInstance(instance)` after instantiation so the runtime
 // `__for_in_keys` helper can dispatch through `__struct_field_names`. This
 // is documented in the runtime contract but easy to miss.
 //
@@ -37,7 +37,7 @@ async function runTest(source: string): Promise<number> {
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
   // CRITICAL: provide exports back to runtime so __struct_field_names can
   // dispatch through __for_in_keys for WasmGC struct enumeration.
-  if (imports.setExports) imports.setExports(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return (instance.exports as { test: () => number }).test();
 }
 

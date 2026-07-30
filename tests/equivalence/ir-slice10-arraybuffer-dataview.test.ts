@@ -43,9 +43,7 @@ async function compileAndRun(
   }
   const imports = buildImports(r.imports, ENV_STUB.env, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  if (typeof (imports as any).setExports === "function") {
-    (imports as any).setExports(instance.exports);
-  }
+  (imports as any).setInstance?.(instance);
   const fn = instance.exports[fnName] as (...a: unknown[]) => unknown;
   return fn(...args);
 }

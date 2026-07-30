@@ -464,7 +464,7 @@ export async function runProbe({ quiet = false } = {}) {
   await WebAssembly.compile(r.binary); // validate (throws on invalid)
   const io = r.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(r.binary, io);
-  io.__setExports?.(instance.exports);
+  io.__setInstance?.(instance);
   const exp = instance.exports;
   const REQUIRED = [
     "probeNodeCount",

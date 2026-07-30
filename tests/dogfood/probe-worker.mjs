@@ -69,12 +69,12 @@ async function main() {
   let instance;
   try {
     ({ instance } = await WebAssembly.instantiate(r.binary, io));
-    io.__setExports?.(instance.exports);
+    io.__setInstance?.(instance);
   } catch (e) {
     parentPort.postMessage({ kind: "error", phase: "instantiate", message: String(e?.message ?? e) });
     return;
   }
-  const exp = wrapExports(instance.exports, { signatures: r.exportSignatures });
+  const exp = wrapExports(instance, { signatures: r.exportSignatures });
 
   const callName = call ?? "parse";
   const fn = exp[callName];

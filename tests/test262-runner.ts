@@ -4159,7 +4159,7 @@ async function runOriginalHarnessVariant(
         // instance === null, making the #2962 native exception render
         // unreachable and collapsing ~8,600 standalone failures onto the
         // opaque "wasm exception during module init" label. The exec path
-        // below already calls the exported __module_init after setExports.
+        // below already calls the exported __module_init after setInstance.
         ...(target ? { target } : {}),
         ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
       });
@@ -4232,7 +4232,7 @@ async function runOriginalHarnessVariant(
       const instantiateStarted = performance.now();
       ({ instance } = await WebAssembly.instantiate(result.binary, imports));
       instantiateMs = performance.now() - instantiateStarted;
-      imports.setExports?.(instance.exports);
+      imports.setInstance?.(instance);
 
       const executeStarted = performance.now();
       const moduleInit = (instance.exports as Record<string, any>).__module_init;
@@ -4539,7 +4539,7 @@ export async function runSyntheticTest262File(
       // (#2095) standalone lane for the baseline validator (default host/gc).
       // (#3049 C1 / #3123) Host lane defers top-level init (export
       // `__module_init`, no wasm `(start)` section) so top-level code runs
-      // AFTER `setExports` has wired the runtime — aligned with
+      // AFTER `setInstance` has wired the runtime — aligned with
       // `scripts/compiler-fork-worker.mjs` (#1251 both-paths rule). The
       // wasi/linear lanes keep their own `_start` model and are untouched.
       // (#2860 F3) The STANDALONE lane joins the defer rule (mirrors the
@@ -4547,7 +4547,7 @@ export async function runSyntheticTest262File(
       // instantiate with instance === null, so the #2962 native exception
       // render was unreachable and standalone failures collapsed onto the
       // opaque "wasm exception during module init" label. The exec path
-      // below already calls the exported __module_init after setExports.
+      // below already calls the exported __module_init after setInstance.
       // MODULE-GOAL tests are EXCLUDED: the multi-module (FIXTURE) link
       // already synthesizes per-module init plumbing, and adding the
       // deferred-export flag there emitted a SECOND `__module_init` export in
@@ -4717,12 +4717,10 @@ export async function runSyntheticTest262File(
     const instantiateStart = performance.now();
     ({ instance } = await WebAssembly.instantiate(result.binary, imports));
     instantiateMs = performance.now() - instantiateStart;
-    // Provide exports back to the runtime so __sget_* getters are discoverable
-    if (typeof importResult.setExports === "function") {
-      importResult.setExports(instance.exports as any);
-    }
+    // Provide the branded instance so callbacks and host bridges are discoverable.
+    importResult.setInstance?.(instance);
     // (#3049 C1) Deferred top-level init (host lane): run the exported
-    // `__module_init` now that `setExports` has wired the runtime. Inside the
+    // `__module_init` now that `setInstance` has wired the runtime. Inside the
     // same try as instantiate + test(), so a top-level throw keeps the exact
     // classification it had when it surfaced from the `(start)` section
     // (runtime-negative → pass, else fail — see the catch below).

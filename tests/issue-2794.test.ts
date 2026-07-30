@@ -29,8 +29,8 @@ async function compileRun(source: string): Promise<{ exp: any; raw: Record<strin
   expect(r.success, (r.errors ?? []).map((e: any) => e.message).join("\n")).toBe(true);
   const io: any = r.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(r.binary as BufferSource, io);
-  io.__setExports?.(instance.exports);
-  const exp = wrapExports(instance.exports, { signatures: (r as any).exportSignatures });
+  io.__setInstance?.(instance);
+  const exp = wrapExports(instance, { signatures: (r as any).exportSignatures });
   return { exp, raw: instance.exports as Record<string, any> };
 }
 

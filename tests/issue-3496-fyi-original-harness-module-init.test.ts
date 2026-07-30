@@ -157,7 +157,7 @@ describe("#3496 — FYI harness initialization with module fixtures", () => {
       const imports = buildImports(result.imports, undefined, result.stringPool);
       const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
       if (typeof imports.setExports === "function") {
-        imports.setExports(instance.exports as Record<string, Function>);
+        imports.setInstance?.(instance);
       }
       expect((instance.exports.score as () => number)()).toBe(1);
     },

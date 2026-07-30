@@ -47,7 +47,7 @@ async function wasmValue(source: string, args: readonly number[], seed: number):
       env: built.env,
       string_constants: built.string_constants,
     });
-    built.setExports?.(instance.exports as Record<string, Function>);
+    built.setInstance?.(instance);
     const main = (instance.exports as Record<string, unknown>).main;
     if (typeof main !== "function") return undefined;
     return (main as (...a: number[]) => number)(...args);

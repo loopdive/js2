@@ -10,7 +10,7 @@ pr: 3799
 last_merged_pr: 3798
 sprint: current
 created: 2026-07-21
-updated: 2026-07-29
+updated: 2026-07-30
 priority: critical
 horizon: l
 complexity: L
@@ -2936,3 +2936,23 @@ The PR report must include the source/unit/class/binding denominators, a
 collision matrix, deterministic-order proof, old-vs-new telemetry diff, and
 the byte-identity result for the non-collision corpus. A passing runtime sample
 without distinct ABI IDs/slots is vacuous and does not close R1.
+
+## Branded instance API prerequisite
+
+The C33 data-struct bridge is split behind a behavior-neutral host wiring
+prerequisite. `buildImports().setInstance(instance)` validates the
+`WebAssembly.Instance` internal slot through captured intrinsics, then performs
+the same export wiring as the retained `setExports(instance.exports)` API.
+Canonical Test262, benchmark, fuzz, npm-compat, generated runner-bundle,
+dogfood, equivalence, stress, and website harnesses use the branded path.
+The remaining shared instance-owning test helpers do the same, and pass the
+instance rather than its exports record to `wrapExports`. The npm callback
+counter keeps one documented raw overlay only after branded wiring has
+established the trusted helper identities. `setExports` remains supported for
+legacy callback, closure, vec, and string families.
+
+The brand and export-view ownership checks capture both `Reflect.apply` and
+`Object.prototype.hasOwnProperty` at module initialization. Regression coverage
+poisons `Function.prototype.call` during raw compatibility wiring and replaces
+`Reflect.apply` after import; neither mutation can bypass the instance brand or
+redirect the metadata ownership checks.

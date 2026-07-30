@@ -341,9 +341,7 @@ async function compileModule(source: string, fast: boolean): Promise<WasmModule 
 
     const imports = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    if ((imports as any).setExports) {
-      (imports as any).setExports(instance.exports as Record<string, Function>);
-    }
+    imports.setInstance?.(instance);
 
     return {
       exports: instance.exports as Record<string, Function>,

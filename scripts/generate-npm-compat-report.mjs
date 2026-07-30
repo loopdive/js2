@@ -194,6 +194,23 @@ function currentRevision() {
 function instrumentImports(importObject, { callbacks = true } = {}) {
   const importCalls = new Map();
   const callbackCalls = new Map();
+  const observedExports = (exports) => {
+    const wrapped = Object.create(null);
+    for (const [name, value] of Object.entries(exports)) {
+      // Compiler-authored physical aliases are identity-bearing capability
+      // evidence. Keep those exact while observing ordinary export callbacks.
+      wrapped[name] =
+        typeof value === "function" && !name.startsWith("$")
+          ? new Proxy(value, {
+              apply(target, thisArg, args) {
+                callbackCalls.set(name, (callbackCalls.get(name) ?? 0) + 1);
+                return Reflect.apply(target, thisArg, args);
+              },
+            })
+          : value;
+    }
+    return wrapped;
+  };
   if (importObject.__startImportCounting && importObject.__takeImportCounts && !callbacks) {
     importObject.__startImportCounting();
     return {
@@ -230,19 +247,22 @@ function instrumentImports(importObject, { callbacks = true } = {}) {
           importObject.__setExports(exports);
           return;
         }
-        const wrapped = {};
-        for (const [name, value] of Object.entries(exports)) {
-          wrapped[name] =
-            typeof value === "function"
-              ? new Proxy(value, {
-                  apply(target, thisArg, args) {
-                    callbackCalls.set(name, (callbackCalls.get(name) ?? 0) + 1);
-                    return Reflect.apply(target, thisArg, args);
-                  },
-                })
-              : value;
+        importObject.__setExports(observedExports(exports));
+      },
+    });
+  }
+  if (importObject.__setInstance) {
+    Object.defineProperty(instrumented, "__setInstance", {
+      value(instance) {
+        // Establish every branded/identity-bearing helper from the physical
+        // instance before installing the separate observational export view.
+        importObject.__setInstance(instance);
+        if (callbacks && importObject.__setExports) {
+          // Deliberate raw compatibility call: the branded instance has
+          // already established authority; this second view only instruments
+          // callback counts without replacing identity-bearing helpers.
+          importObject.__setExports(observedExports(instance.exports));
         }
-        importObject.__setExports(wrapped);
       },
     });
   }
@@ -673,10 +693,10 @@ export function ${resultFloorExport}(input, options) {
   const instance = await WebAssembly.instantiate(compiledModule, importObject);
   const instantiateMs = performance.now() - instantiateStart;
   const wireStart = performance.now();
-  importObject.__setExports?.(instance.exports);
+  importObject.__setInstance?.(instance);
   const wireMs = performance.now() - wireStart;
   const wrapStart = performance.now();
-  const exp = wrapExports(instance.exports, {
+  const exp = wrapExports(instance, {
     signatures: result.exportSignatures,
   });
   const wrapMs = performance.now() - wrapStart;
@@ -913,8 +933,8 @@ export function ${op.name}(first, second) {
   }
   const importObject = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
-  const exp = wrapExports(instance.exports, { signatures: result.exportSignatures });
+  importObject.__setInstance?.(instance);
+  const exp = wrapExports(instance, { signatures: result.exportSignatures });
   if (typeof exp[op.name] !== "function") return null;
 
   const cjsEntryPath = entryModulePath.replace(/\/clsx\.mjs$/, "/clsx.js");
@@ -959,8 +979,8 @@ export function ${op.name}(first, second) {
     string_constants16: buildStringConstants16(floorResult.stringPool),
   };
   const { instance: floorInstance } = await WebAssembly.instantiate(floorResult.binary, floorImports);
-  floorImports.__setExports?.(floorInstance.exports);
-  const floorExports = wrapExports(floorInstance.exports, { signatures: floorResult.exportSignatures });
+  floorImports.__setInstance?.(floorInstance);
+  const floorExports = wrapExports(floorInstance, { signatures: floorResult.exportSignatures });
   const constantFloor = measureJsHostPerf(
     `${op.name}_constant_floor`,
     () => floorExports[op.name]().length,
@@ -1078,8 +1098,8 @@ async function perfCookieJsHost() {
   if (inspectBoundaries) {
     const { instrumented, importCalls, callbackCalls } = instrumentImports(importObject);
     const { instance: probeInstance } = await WebAssembly.instantiate(result.binary, instrumented);
-    instrumented.__setExports?.(probeInstance.exports);
-    const probeExports = wrapExports(probeInstance.exports, {
+    instrumented.__setInstance?.(probeInstance);
+    const probeExports = wrapExports(probeInstance, {
       signatures: result.exportSignatures,
     });
     const snapshot = (jsToWasmExportCalls) => ({
@@ -1103,8 +1123,8 @@ async function perfCookieJsHost() {
     boundaryCensus.identicalInput = snapshot(1);
   }
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
-  const exp = wrapExports(instance.exports, {
+  importObject.__setInstance?.(instance);
+  const exp = wrapExports(instance, {
     signatures: result.exportSignatures,
   });
   if (typeof exp.parseCookie !== "function") return null;

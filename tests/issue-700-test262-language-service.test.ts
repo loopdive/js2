@@ -115,7 +115,7 @@ describe("#700 Test262 Language Service integration", () => {
 
         const imports = buildImports(incrementalResult.imports, undefined, incrementalResult.stringPool);
         const { instance } = await WebAssembly.instantiate(incrementalResult.binary, imports);
-        imports.setExports?.(instance.exports);
+        imports.setInstance?.(instance);
         expect((instance.exports.run as (value: number) => number)(7)).toBe(index === 0 ? 14 : 21);
       }
     } finally {

@@ -34,8 +34,8 @@ async function run(src: string): Promise<any> {
   expect(result.success).toBe(true);
   const importObject: any = result.importObject ?? {};
   const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-  importObject.__setExports?.(instance.exports);
-  return wrapExports(instance.exports, { signatures: result.exportSignatures });
+  importObject.__setInstance?.(instance);
+  return wrapExports(instance, { signatures: result.exportSignatures });
 }
 
 async function runStandalone(src: string): Promise<WebAssembly.Instance> {

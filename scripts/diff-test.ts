@@ -186,7 +186,7 @@ export async function runJs2wasm(file: string): Promise<{
   }
   // (#2796) `deferTopLevelInit` makes the compiler export `__module_init` and
   // skip the wasm `start` section, so the HOST lane runs top-level code AFTER
-  // `setExports` wires `__struct_field_names` / `__sget_*`. Without this the
+  // `setInstance` wires `__struct_field_names` / `__sget_*`. Without this the
   // host lane ran top-level enumeration (`for…in` / `Object.keys` over a
   // runtime-shaped object) during `WebAssembly.instantiate`, before any export
   // was reachable — so a top-level `for…in` enumerated zero keys, a HARNESS
@@ -226,7 +226,7 @@ export async function runJs2wasm(file: string): Promise<{
   // execution. With `deferTopLevelInit` (#2796) the compiled top-level
   // statements are NOT invoked by the wasm `start` section during
   // instantiation; the harness calls the exported `__module_init()` explicitly
-  // AFTER `setExports`, so struct-introspection exports are wired when top-level
+  // AFTER `setInstance`, so struct-introspection exports are wired when top-level
   // code runs (symmetric with the standalone `_start` model).
   const lines: string[] = [];
   const origLog = console.log;
@@ -240,8 +240,8 @@ export async function runJs2wasm(file: string): Promise<{
   try {
     const built = buildImports(r.imports, {}, r.stringPool);
     const { instance } = await instantiateWasm(r.binary, built.env, built.string_constants);
-    built.setExports?.(instance.exports as Record<string, Function>);
-    // (#2796) Run the deferred top-level code now that `setExports` has wired
+    built.setInstance?.(instance);
+    // (#2796) Run the deferred top-level code now that `setInstance` has wired
     // the struct-introspection exports. A program with NO top-level statements
     // emits no `__module_init` export, so this is a no-op for those.
     const moduleInit = (instance.exports as Record<string, unknown>).__module_init;

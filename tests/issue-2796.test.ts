@@ -51,7 +51,7 @@ async function runDeferred(src: string): Promise<string[]> {
   try {
     const imports = buildImports(result.imports, {}, result.stringPool);
     const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
-    imports.setExports?.(instance.exports as Record<string, () => unknown>);
+    imports.setInstance?.(instance);
     const moduleInit = (instance.exports as Record<string, unknown>).__module_init;
     if (typeof moduleInit === "function") (moduleInit as () => void)();
   } finally {
@@ -72,7 +72,7 @@ async function runStartSection(src: string): Promise<string[]> {
   try {
     const imports = buildImports(result.imports, {}, result.stringPool);
     const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
-    imports.setExports?.(instance.exports as Record<string, () => unknown>);
+    imports.setInstance?.(instance);
   } finally {
     console.log = origLog;
   }
@@ -108,7 +108,7 @@ describe("#2796 — top-level for…in enumerates own keys when the runtime is f
     if (!result.success) throw new Error("compile failed");
     const imports = buildImports(result.imports, {}, result.stringPool);
     const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
-    imports.setExports?.(instance.exports as Record<string, () => unknown>);
+    imports.setInstance?.(instance);
     expect(typeof (instance.exports as Record<string, unknown>).__module_init).toBe("function");
   });
 

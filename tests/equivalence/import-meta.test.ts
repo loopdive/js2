@@ -16,7 +16,7 @@ async function compileWithMetaUrl(source: string, importMetaUrl?: string) {
   }
   const runtimeResult = buildRuntimeImports(result.imports ?? [], { importMetaUrl }, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, runtimeResult);
-  if (runtimeResult.setExports) runtimeResult.setExports(instance.exports as Record<string, Function>);
+  runtimeResult.setInstance?.(instance);
   return instance.exports as Record<string, Function>;
 }
 

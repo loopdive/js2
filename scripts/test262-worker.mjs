@@ -1141,7 +1141,7 @@ async function doCompile(
   }
   // (#3049 C1 / #3123) Host lane (no target) defers top-level init:
   // `__module_init` is exported instead of wired to the wasm `(start)`
-  // section, and the exec path below calls it right after `setExports` so
+  // section, and the exec path below calls it right after `setInstance` so
   // top-level code runs against a fully-wired runtime. Aligned with
   // compiler-fork-worker.mjs + tests/test262-runner.ts (#1251 both-paths
   // rule). Wasi/linear targets keep their own `_start` init model.
@@ -1877,13 +1877,11 @@ process.on("message", async (msg) => {
       return;
     }
 
-    // Wire up setExports for callback support
-    if (typeof importObj.setExports === "function") {
-      importObj.setExports(instance.exports);
-    }
+    // Wire the branded instance for callback and host-bridge support.
+    importObj.setInstance?.(instance);
 
     // (#3049 C1) Deferred top-level init (host lane): run the exported
-    // `__module_init` now that `setExports` has wired the runtime. A throw
+    // `__module_init` now that `setInstance` has wired the runtime. A throw
     // here keeps the classification the same code had when it surfaced from
     // the `(start)` section during instantiate: runtime-negative → pass,
     // anything else → an honest runtime fail (never malformed-wasm

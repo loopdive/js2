@@ -75,7 +75,7 @@ async function runWasm(
       env: built.env,
       string_constants: built.string_constants,
     });
-    built.setExports?.(instance.exports as Record<string, Function>);
+    built.setInstance?.(instance);
     const main = (instance.exports as Record<string, unknown>).main;
     if (typeof main !== "function") return { error: "no main export", phase: "runtime" };
     const value = (main as (...a: number[]) => number)(...program.args);

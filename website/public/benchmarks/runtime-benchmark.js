@@ -81,7 +81,7 @@ async function measureEntry(entry, runtimeHelpers, manifestUrl) {
   );
   const wasmBytes = new Uint8Array(await (await fetch(wasmUrl, { cache: "no-store" })).arrayBuffer());
   const wasmResult = await runtimeHelpers.instantiateWasm(wasmBytes, imports.env, imports.string_constants);
-  if (imports.setExports) imports.setExports(wasmResult.instance.exports);
+  imports.setInstance?.(wasmResult.instance);
   const wasmFn = wasmResult.instance.exports?.[exportName];
   if (typeof wasmFn !== "function") {
     throw new Error(`Wasm export ${exportName} missing for ${entry.name}`);

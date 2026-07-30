@@ -51,7 +51,7 @@ describe("#3505 — host compileMulti harness callable initialization", () => {
     expect(score()).toBe(0);
     expect(moduleInit).toBeTypeOf("function");
 
-    imports.setExports?.(instance.exports as Record<string, Function>);
+    imports.setInstance?.(instance);
     moduleInit!();
 
     // 11 proves dependency-before-entry order and one execution of each body.

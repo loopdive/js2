@@ -7,7 +7,7 @@ async function run(src: string): Promise<any> {
   if (!r.success) throw new Error("CE: " + r.errors.map((e) => e.message).join("; "));
   const imps = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imps);
-  if (imps.setExports) imps.setExports(instance.exports as Record<string, Function>);
+  imps.setInstance?.(instance);
   return (instance.exports as any).test();
 }
 

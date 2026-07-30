@@ -262,8 +262,8 @@ async function compileAcorn(log) {
   const module = await WebAssembly.compile(result.binary);
   const io = result.importObject ?? {};
   const instance = await WebAssembly.instantiate(module, io);
-  io.__setExports?.(instance.exports);
-  const exports = wrapExports(instance.exports, { signatures: result.exportSignatures });
+  io.__setInstance?.(instance);
+  const exports = wrapExports(instance, { signatures: result.exportSignatures });
   if (typeof exports.parse !== "function") throw new Error("compiled Acorn has no callable parse export");
 
   const oracle = await import(pathToFileURL(entryModulePath).href);

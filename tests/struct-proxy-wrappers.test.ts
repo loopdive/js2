@@ -16,7 +16,7 @@ async function instantiate(src: string) {
   if (!r.success) throw new Error("CE: " + r.errors.map((e) => e.message).join("\n"));
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports as any);
-  if (imports.setExports) imports.setExports(instance.exports as any);
+  imports.setInstance?.(instance);
   return instance.exports as Record<string, Function>;
 }
 

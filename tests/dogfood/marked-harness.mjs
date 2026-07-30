@@ -166,8 +166,8 @@ export async function runHarness({ quiet = false } = {}) {
     try {
       const importObject = result.importObject ?? {};
       const { instance } = await WebAssembly.instantiate(result.binary, importObject);
-      importObject.__setExports?.(instance.exports);
-      const exp = wrapExports(instance.exports, { signatures: result.exportSignatures });
+      importObject.__setInstance?.(instance);
+      const exp = wrapExports(instance, { signatures: result.exportSignatures });
       report.diff.exports = Object.keys(exp).slice(0, 40);
       const parseFn =
         typeof exp.marked === "function" ? exp.marked : typeof exp.parse === "function" ? exp.parse : null;

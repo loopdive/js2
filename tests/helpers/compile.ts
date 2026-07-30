@@ -113,9 +113,9 @@ export async function compileAndRunInstance(source: string): Promise<{
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as unknown as WebAssembly.Imports);
   // (#3032) The lazy-generator thunk contract requires consumers of
-  // buildImports to wire setExports — a lazy fn-expression generator's first
+  // buildImports to wire setInstance — a lazy fn-expression generator's first
   // resume re-enters the module via the __call_fn_0 export.
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return { exports: instance.exports as any, instance };
 }
 
@@ -160,7 +160,7 @@ export async function compileAndRunResultObject(
 
 /**
  * Cluster H (2 files — issue-1442/1444): cluster F plus a
- * `setExports` wire-up after instantiation (host-closure callback support).
+ * `setInstance` wire-up after instantiation (host-closure callback support).
  */
 export async function compileAndRunTestSyncSetExports(source: string): Promise<any> {
   const result = await compile(source, { fileName: "test.ts" });
@@ -170,14 +170,14 @@ export async function compileAndRunTestSyncSetExports(source: string): Promise<a
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const mod = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(mod, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return (instance.exports as any).test();
 }
 
 /**
  * Cluster I (2 files — issue-1494/1502): optional extra host deps threaded
  * into {@link buildImports}, a `WebAssembly.validate` guard (with WAT in the
- * message), and a `setExports` wire-up; returns the exports.
+ * message), and a `setInstance` wire-up; returns the exports.
  */
 export async function compileAndRunRuntimeDeps(
   source: string,
@@ -194,9 +194,7 @@ export async function compileAndRunRuntimeDeps(
   }
   const runtimeResult = buildImports(result.imports ?? [], deps, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, runtimeResult);
-  if (runtimeResult.setExports) {
-    runtimeResult.setExports(instance.exports as Record<string, Function>);
-  }
+  runtimeResult.setInstance?.(instance);
   return instance.exports as Record<string, Function>;
 }
 
@@ -401,6 +399,6 @@ export async function compileAndRunVecSetExports(source: string): Promise<any> {
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const mod = new WebAssembly.Module(result.binary);
   const instance = new WebAssembly.Instance(mod, imports);
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return (instance.exports as any).test();
 }

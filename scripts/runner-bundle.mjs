@@ -62587,6 +62587,16 @@ function wrapWithContainment(fn, intent, domRoot) {
   }
   return fn;
 }
+var runtimeReflectApply = Reflect.apply;
+var runtimeInstanceExportsGetter = Object.getOwnPropertyDescriptor(WebAssembly.Instance.prototype, "exports")?.get;
+function brandedInstanceExports(value) {
+  if (!runtimeInstanceExportsGetter) return void 0;
+  try {
+    return runtimeReflectApply(runtimeInstanceExportsGetter, value, []);
+  } catch {
+    return void 0;
+  }
+}
 function buildImports(manifest, deps, stringPool, options) {
   const env = {};
   let wasmExports;
@@ -62642,6 +62652,13 @@ function buildImports(manifest, deps, stringPool, options) {
   };
   result.setExports = (exports) => {
     wasmExports = exports;
+  };
+  result.setInstance = (instance) => {
+    const exports = brandedInstanceExports(instance);
+    if (exports === void 0) {
+      throw new TypeError("setInstance: expected a genuine WebAssembly.Instance");
+    }
+    result.setExports(exports);
   };
   return result;
 }
@@ -64420,9 +64437,7 @@ async function runTest262File(filePath, category, timeoutMs = TEST_TIMEOUT_MS) {
     const instantiateStart = performance.now();
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     instantiateMs = performance.now() - instantiateStart;
-    if (typeof importResult.setExports === "function") {
-      importResult.setExports(instance.exports);
-    }
+    importResult.setInstance?.(instance);
     const testFn = instance.exports.test;
     if (typeof testFn !== "function") {
       const totalMs2 = performance.now() - totalStart;

@@ -143,7 +143,7 @@ async function instantiate(result: CompileResult): Promise<Record<string, WebAss
     imports.string_constants,
     imports.string_constants16,
   );
-  imports.setExports?.(instance.exports as Record<string, Function>);
+  imports.setInstance?.(instance);
   return instance.exports as Record<string, WebAssembly.ExportValue>;
 }
 

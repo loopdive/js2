@@ -169,7 +169,7 @@ async function prepareArtifacts(entry) {
   // — it's not a measurement, just a sanity gate.
   const imports = buildImports(result.imports, {}, result.stringPool);
   const { instance } = await instantiateWasm(wasmBinary, imports.env, imports.string_constants);
-  if (imports.setExports) imports.setExports(instance.exports);
+  imports.setInstance?.(instance);
   const wasmFn = instance.exports[entry.exportName];
   if (typeof wasmFn !== "function") throw new Error(`Missing wasm export ${entry.exportName}`);
   smokeTestInProcess(wasmFn);
