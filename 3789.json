@@ -1,8 +1,9 @@
 {
   "id": "3789",
   "assignee": "ttraenkler/codex-ir-dynamic-param-slots",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3789-ir-dynamic-param-slots",
   "claimed_at": "2026-07-30T01:45:29Z",
-  "updated_at": "2026-07-30T01:45:29Z"
+  "updated_at": "2026-07-30T02:55:13Z",
+  "released_at": "2026-07-30T02:55:13Z"
 }
