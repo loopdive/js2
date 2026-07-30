@@ -1429,6 +1429,33 @@ export function compileIdentifierCall(
             }
           }
 
+          // (#1400 / #3189 trap ratchet) `emitNullCheckThrow` DOWNGRADES itself
+          // whenever a guarded-cast backup is live: a null then means "the cast
+          // failed", not "the value was null", so it throws only if the ORIGINAL
+          // pre-cast value was also null and otherwise falls through (#789).
+          // That downgrade is only sound when some LATER arm handles the
+          // wrong-struct-type case. Here that arm is the #1712 host-call
+          // fallback — and it is gated on `calleeMayBeHostCallable`. When the
+          // callee arrived as externref (so a guarded cast ran) but the fallback
+          // is gated OFF, nothing catches the failed cast and the `struct.get`
+          // below dereferences null: an UNCATCHABLE Wasm trap.
+          //
+          // `var g = f; … g(n - 1)` inside a function scope is exactly that
+          // shape — an alias of a function DECLARATION is not a closure struct
+          // of the matched shape, and it is not host-callable either. It cost
+          // five test262 files (`tco-non-eval-function`, `tagged-template/
+          // tco-call`, the three `called-as-function` files) a `fail` →
+          // `null_deref` reclassification, which trips the #3189 uncatchable-
+          // trap ratchet in the merge_group even though none of them passed
+          // before. Drop the backup so the check below is STRICT: a failed cast
+          // with no fallback arm throws a CATCHABLE TypeError, which is both
+          // what the spec wants for a receiver-less call and what those tests
+          // assert. The path this replaces trapped unconditionally, so no
+          // previously-passing program can observe the difference.
+          if (!hostCallFallback) {
+            (fctx as unknown as { __lastGuardedCastBackup?: number }).__lastGuardedCastBackup = undefined;
+          }
+
           // Extract funcref from the closure struct (field 0) — null-check → TypeError (#728)
           // (#2873) Fetched via the CAST struct type (the wrapper root on the
           // externref path) — field 0 (funcref) is the root's own field, so the

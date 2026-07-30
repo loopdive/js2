@@ -45,6 +45,7 @@ import {
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
 } from "./registry/types.js";
+import { emitNullCheckThrow } from "./property-access.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts, registerCompileStringLiteral } from "./shared.js";
 import {
   coerceType,
@@ -1328,17 +1329,43 @@ export function compileTaggedTemplateExpression(
       // Normalize erased shared closures to the canonical root. Private/named
       // funcs retain their concrete self carrier.
       const closureLocal = allocLocal(fctx, `__tt_tag_${fctx.locals.length}`, closureRefType);
+      let tagWasGuardedCast = false;
       if (tagResult?.kind === "externref") {
         fctx.body.push({ op: "any.convert_extern" });
         emitGuardedRefCast(fctx, selfTypeIdx);
+        tagWasGuardedCast = true;
       } else if (
         tagResult &&
         (tagResult.kind === "ref" || tagResult.kind === "ref_null") &&
         tagResult.typeIdx !== selfTypeIdx
       ) {
         emitGuardedRefCast(fctx, selfTypeIdx);
+        tagWasGuardedCast = true;
       }
       fctx.body.push({ op: "local.set", index: closureLocal });
+
+      // (#1400 / #3189 trap ratchet) A GUARDED cast nulls out when the tag is
+      // not a closure of the matched shape — `getF()\`${n}\`` in test262's
+      // tagged-template/tco-call.js, where the tag is a CALL RESULT rather than
+      // a closure value. Both uses of `closureLocal` below go through a bare
+      // `ref.as_non_null`, which turns that null into an UNCATCHABLE Wasm trap
+      // ("dereferencing a null pointer") instead of the TypeError JS specifies
+      // for calling a non-function. Unlike the callable-param dispatch in
+      // call-identifier.ts there is no host-call fallback arm here, so check
+      // once, up front, and throw a CATCHABLE TypeError.
+      //
+      // The backup is dropped first so `emitNullCheckThrow` emits its STRICT
+      // form: with a guarded-cast backup live it would only throw when the
+      // pre-cast value was ALSO null (#789) and otherwise fall through — which
+      // is precisely the fall-through that reaches the trapping
+      // `ref.as_non_null`. Only emitted when a guarded cast actually ran, so
+      // modules without one are byte-identical.
+      if (tagWasGuardedCast) {
+        (fctx as unknown as { __lastGuardedCastBackup?: number }).__lastGuardedCastBackup = undefined;
+        fctx.body.push({ op: "local.get", index: closureLocal });
+        emitNullCheckThrow(ctx, fctx, closureRefType, expr.tag);
+        fctx.body.push({ op: "drop" });
+      }
 
       // Push closure ref as self param (first arg of lifted function)
       fctx.body.push({ op: "local.get", index: closureLocal });
