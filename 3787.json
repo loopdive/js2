@@ -1,8 +1,9 @@
 {
   "id": "3787",
   "assignee": "ttraenkler/codex-ir-string-fromcharcode",
-  "status": "in-progress",
+  "status": "done",
   "branch": "codex/3787-ir-string-fromcharcode",
   "claimed_at": "2026-07-30T00:39:56Z",
-  "updated_at": "2026-07-30T00:39:56Z"
+  "updated_at": "2026-07-30T01:44:39Z",
+  "released_at": "2026-07-30T01:44:39Z"
 }
