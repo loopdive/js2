@@ -1,9 +1,8 @@
 {
   "id": "3756",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-28T12:19:55Z",
-  "updated_at": "2026-07-28T12:19:55Z",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/dev-acorn-throughput",
+  "status": "in-progress",
+  "branch": "issue-3756-host-lane-value-ops",
+  "claimed_at": "2026-07-30T23:52:14Z",
+  "updated_at": "2026-07-30T23:52:14Z"
 }
