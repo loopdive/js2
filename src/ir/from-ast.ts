@@ -163,6 +163,8 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 
+const VEC_NEW_SIZED_PREFIX = "__vec_new_sized_";
+
 function unsupportedVoidCallExpression(detail: string): never {
   throw new IrUnsupportedError("void-call-expression", "build", detail);
 }
@@ -1061,9 +1063,198 @@ function thenArmTerminates(stmt: ts.Statement): boolean {
   return false;
 }
 
+interface DenseArrayReductionPlan {
+  readonly accumulatorDeclaration: ts.VariableStatement;
+  readonly fillLoop: ts.ForStatement;
+  readonly fillValue: ts.Expression;
+  readonly accumulatorName: string;
+  readonly returnStatement: ts.ReturnStatement;
+}
+
+function referencesIdentifier(expr: ts.Expression, name: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === name) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(expr);
+  return found;
+}
+
+/**
+ * Eliminate a local dense array that is filled and then consumed exactly once
+ * by an i32 sum reduction. The array never escapes and both loops are pure, so
+ * accumulating the generated value in the fill loop preserves iteration order
+ * while avoiding a large, immediately-dead WasmGC allocation.
+ */
+function denseArrayReductionPlan(stmts: readonly ts.Statement[]): DenseArrayReductionPlan | null {
+  if (stmts.length !== 5) return null;
+  const [arrayStatement, fillStatement, accumulatorStatement, reductionStatement, returnStatement] = stmts;
+  if (
+    !arrayStatement ||
+    !fillStatement ||
+    !accumulatorStatement ||
+    !reductionStatement ||
+    !returnStatement ||
+    !ts.isVariableStatement(arrayStatement) ||
+    !ts.isForStatement(fillStatement) ||
+    !ts.isVariableStatement(accumulatorStatement) ||
+    !ts.isForStatement(reductionStatement) ||
+    !ts.isReturnStatement(returnStatement)
+  ) {
+    return null;
+  }
+
+  const arrayDeclaration = arrayStatement.declarationList.declarations[0];
+  if (
+    arrayStatement.declarationList.declarations.length !== 1 ||
+    !arrayDeclaration ||
+    !arrayDeclaration.initializer ||
+    !ts.isArrayLiteralExpression(arrayDeclaration.initializer)
+  ) {
+    return null;
+  }
+  const fillPlan = denseFillPlanForLiteral(arrayDeclaration.initializer);
+  if (!fillPlan || fillPlan.loop !== fillStatement) return null;
+  const fillBody = ts.isBlock(fillStatement.statement)
+    ? fillStatement.statement.statements[0]
+    : fillStatement.statement;
+  if (!fillBody || !ts.isExpressionStatement(fillBody) || !ts.isBinaryExpression(fillBody.expression)) return null;
+  const fillValue = fillBody.expression.right;
+  if (!isNestedBitwiseResult(fillValue)) return null;
+
+  const accumulatorDeclaration = accumulatorStatement.declarationList.declarations[0];
+  if (
+    accumulatorStatement.declarationList.declarations.length !== 1 ||
+    !accumulatorDeclaration ||
+    !ts.isIdentifier(accumulatorDeclaration.name) ||
+    !accumulatorDeclaration.initializer ||
+    !ts.isNumericLiteral(accumulatorDeclaration.initializer) ||
+    Number(accumulatorDeclaration.initializer.text) !== 0
+  ) {
+    return null;
+  }
+  const accumulatorName = accumulatorDeclaration.name.text;
+  if (referencesIdentifier(fillValue, accumulatorName)) return null;
+
+  const reductionInit = reductionStatement.initializer;
+  if (
+    !reductionInit ||
+    !ts.isVariableDeclarationList(reductionInit) ||
+    reductionInit.declarations.length !== 1 ||
+    !reductionInit.declarations[0]?.initializer ||
+    !ts.isIdentifier(reductionInit.declarations[0].name) ||
+    !ts.isNumericLiteral(reductionInit.declarations[0].initializer) ||
+    Number(reductionInit.declarations[0].initializer.text) !== 0
+  ) {
+    return null;
+  }
+  const reductionIndex = reductionInit.declarations[0].name.text;
+  const reductionCondition = reductionStatement.condition;
+  const reductionIncrement = reductionStatement.incrementor;
+  if (
+    !reductionCondition ||
+    !ts.isBinaryExpression(reductionCondition) ||
+    reductionCondition.operatorToken.kind !== ts.SyntaxKind.LessThanToken ||
+    !ts.isIdentifier(reductionCondition.left) ||
+    reductionCondition.left.text !== reductionIndex ||
+    !ts.isPropertyAccessExpression(reductionCondition.right) ||
+    !ts.isIdentifier(reductionCondition.right.expression) ||
+    reductionCondition.right.expression.text !== fillPlan.arrayName ||
+    reductionCondition.right.name.text !== "length" ||
+    !reductionIncrement ||
+    (!ts.isPrefixUnaryExpression(reductionIncrement) && !ts.isPostfixUnaryExpression(reductionIncrement)) ||
+    reductionIncrement.operator !== ts.SyntaxKind.PlusPlusToken ||
+    !ts.isIdentifier(reductionIncrement.operand) ||
+    reductionIncrement.operand.text !== reductionIndex
+  ) {
+    return null;
+  }
+
+  const reductionBody = ts.isBlock(reductionStatement.statement)
+    ? reductionStatement.statement.statements[0]
+    : reductionStatement.statement;
+  if (!reductionBody || !ts.isExpressionStatement(reductionBody) || !ts.isBinaryExpression(reductionBody.expression)) {
+    return null;
+  }
+  const assignment = reductionBody.expression;
+  const reduced = peelExpr(assignment.right);
+  if (
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isIdentifier(assignment.left) ||
+    assignment.left.text !== accumulatorName ||
+    !ts.isBinaryExpression(reduced) ||
+    reduced.operatorToken.kind !== ts.SyntaxKind.BarToken ||
+    i32LiteralValue(reduced.right) !== 0
+  ) {
+    return null;
+  }
+  const addition = peelExpr(reduced.left);
+  if (
+    !ts.isBinaryExpression(addition) ||
+    addition.operatorToken.kind !== ts.SyntaxKind.PlusToken ||
+    !ts.isIdentifier(addition.left) ||
+    addition.left.text !== accumulatorName ||
+    !ts.isElementAccessExpression(addition.right) ||
+    !ts.isIdentifier(addition.right.expression) ||
+    addition.right.expression.text !== fillPlan.arrayName ||
+    !ts.isIdentifier(addition.right.argumentExpression) ||
+    addition.right.argumentExpression.text !== reductionIndex
+  ) {
+    return null;
+  }
+
+  const returned = returnStatement.expression ? peelExpr(returnStatement.expression) : null;
+  const returnIsAccumulator =
+    returned !== null &&
+    (ts.isIdentifier(returned)
+      ? returned.text === accumulatorName
+      : ts.isBinaryExpression(returned) &&
+        returned.operatorToken.kind === ts.SyntaxKind.BarToken &&
+        ts.isIdentifier(returned.left) &&
+        returned.left.text === accumulatorName &&
+        i32LiteralValue(returned.right) === 0);
+  if (!returnIsAccumulator) return null;
+
+  return {
+    accumulatorDeclaration: accumulatorStatement,
+    fillLoop: fillStatement,
+    fillValue,
+    accumulatorName,
+    returnStatement,
+  };
+}
+
 function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void {
   if (stmts.length < 1) {
     throw new Error(`ir/from-ast: empty statement list in ${cx.funcName}`);
+  }
+  const denseReduction = denseArrayReductionPlan(stmts);
+  if (denseReduction) {
+    lowerVarDecl(denseReduction.accumulatorDeclaration, cx);
+    lowerForStatement(denseReduction.fillLoop, cx, (bodyCx) => {
+      const accumulator = bodyCx.scope.get(denseReduction.accumulatorName);
+      if (!accumulator || accumulator.kind !== "slot") {
+        throw new Error(`ir/from-ast: fused dense reduction accumulator must use slot storage (${cx.funcName})`);
+      }
+      const value = lowerAsI32(denseReduction.fillValue, bodyCx, "wrap");
+      const accumulatorRead = bodyCx.builder.emitSlotRead(accumulator.slotIndex);
+      const accumulatorI32 =
+        accumulator.i32Storage === true
+          ? accumulatorRead
+          : bodyCx.builder.emitUnary("i32.trunc_sat_f64_s", accumulatorRead, IR_I32);
+      const sum = bodyCx.builder.emitBinary("i32.add", accumulatorI32, value, IR_I32);
+      bodyCx.builder.emitSlotWrite(
+        accumulator.slotIndex,
+        accumulator.i32Storage === true ? sum : bodyCx.builder.emitUnary("f64.convert_i32_s", sum, IR_F64),
+      );
+    });
+    lowerTail(denseReduction.returnStatement, cx);
+    return;
   }
   for (let i = 0; i < stmts.length - 1; i++) {
     const s = stmts[i]!;
@@ -2303,6 +2494,18 @@ function isFusedI32Lowerable(e: ts.Expression, cx: LowerCtx): boolean {
   return isWrapI32Lowerable(e, promotedI32Probe(cx)) || isI32PureExprIR(e, cx.i32PureNames);
 }
 
+/**
+ * A nested bitwise result is already the exact 32-bit pattern the enclosing
+ * bitwise operator's ToInt32 conversion consumes. This deliberately includes
+ * `>>>`: its JavaScript NUMBER result may be above INT32_MAX, so it is not a
+ * generally signed-i32-valued expression, but converting that uint32 result
+ * back through ToInt32 preserves the same 32 bits.
+ */
+function isNestedBitwiseResult(e: ts.Expression): boolean {
+  const inner = peelExpr(e);
+  return ts.isBinaryExpression(inner) && isIrBitwiseOperatorToken(inner.operatorToken.kind);
+}
+
 /** Invariant R — read a promoted slot and widen to the f64 every consumer expects. */
 function readPromotedI32Slot(slotIndex: number, cx: LowerCtx): IrValueId {
   return cx.builder.emitUnary("f64.convert_i32_s", cx.builder.emitSlotRead(slotIndex), IR_F64);
@@ -2316,7 +2519,7 @@ function readPromotedI32Slot(slotIndex: number, cx: LowerCtx): IrValueId {
  * `lower.ts` applies its usual `emitJsToInt32`.
  */
 function lowerBitwiseOperand(e: ts.Expression, parent: ts.BinaryExpression | null, cx: LowerCtx): IrValueId {
-  if (isFusedI32Lowerable(e, cx)) return lowerAsI32(e, cx, "wrap");
+  if (isFusedI32Lowerable(e, cx) || isNestedBitwiseResult(e)) return lowerAsI32(e, cx, "wrap");
   const v = lowerExpr(e, cx, IR_F64);
   // Taking the fused path means we bypassed `lowerBinary`'s operand-shape
   // gates (string / dynamic / packed). Reproduce its verdict EXACTLY for a
@@ -2370,7 +2573,9 @@ function lowerAsI32(expr: ts.Expression, cx: LowerCtx, mode: "canon" | "wrap"): 
 
   if (ts.isBinaryExpression(inner)) {
     const k = inner.operatorToken.kind;
-    if (isBitwiseToken(k)) return lowerBitwiseAsI32(inner, cx);
+    // In wrap-only contexts a `>>>` result is consumed as its raw 32-bit
+    // pattern, so it can use the same native emitter as signed bitwise ops.
+    if (jsBitwiseBinop(k) !== null) return lowerBitwiseAsI32(inner, cx);
     if (
       mode === "wrap" &&
       (k === ts.SyntaxKind.PlusToken || k === ts.SyntaxKind.MinusToken) &&
@@ -2407,8 +2612,10 @@ function lowerAsI32(expr: ts.Expression, cx: LowerCtx, mode: "canon" | "wrap"): 
 
 /**
  * Lower a bitwise binary expression, narrowing its IR result type to i32.
- * `>>>` is excluded by `isBitwiseToken` (its uint32 VALUE can exceed 2^31-1,
- * so an i32-narrowed result would be a different number).
+ * Callers only request an i32 result where the value is consumed as a 32-bit
+ * pattern. That includes nested `>>>`: its standalone JavaScript value remains
+ * unsigned f64, but an enclosing bitwise operation immediately applies
+ * ToInt32 and consumes exactly these bits.
  */
 function lowerBitwiseAsI32(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   const k = expr.operatorToken.kind;
@@ -3467,6 +3674,121 @@ function arrayLiteralWideningEscapes(expr: ts.ArrayLiteralExpression, cx: LowerC
   return false;
 }
 
+function isPureDenseFillRhs(expr: ts.Expression, arrayName: string): boolean {
+  if (ts.isParenthesizedExpression(expr)) return isPureDenseFillRhs(expr.expression, arrayName);
+  if (
+    ts.isNumericLiteral(expr) ||
+    ts.isStringLiteral(expr) ||
+    expr.kind === ts.SyntaxKind.TrueKeyword ||
+    expr.kind === ts.SyntaxKind.FalseKeyword ||
+    expr.kind === ts.SyntaxKind.NullKeyword
+  ) {
+    return true;
+  }
+  if (ts.isIdentifier(expr)) return expr.text !== arrayName;
+  if (ts.isPrefixUnaryExpression(expr)) {
+    return (
+      (expr.operator === ts.SyntaxKind.PlusToken ||
+        expr.operator === ts.SyntaxKind.MinusToken ||
+        expr.operator === ts.SyntaxKind.TildeToken ||
+        expr.operator === ts.SyntaxKind.ExclamationToken) &&
+      isPureDenseFillRhs(expr.operand, arrayName)
+    );
+  }
+  if (!ts.isBinaryExpression(expr)) return false;
+  const operator = expr.operatorToken.kind;
+  if (operator >= ts.SyntaxKind.FirstAssignment && operator <= ts.SyntaxKind.LastAssignment) return false;
+  if (operator === ts.SyntaxKind.CommaToken) return false;
+  return isPureDenseFillRhs(expr.left, arrayName) && isPureDenseFillRhs(expr.right, arrayName);
+}
+
+interface DenseFillPlan {
+  readonly arrayName: string;
+  readonly indexName: string;
+  readonly bound: ts.Expression;
+  readonly loop: ts.ForStatement;
+}
+
+function denseFillPlanForLiteral(expr: ts.ArrayLiteralExpression): DenseFillPlan | null {
+  const declaration = expr.parent;
+  if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return null;
+  const declarationList = declaration.parent;
+  const declarationStatement = declarationList.parent;
+  const block = declarationStatement.parent;
+  if (
+    !ts.isVariableDeclarationList(declarationList) ||
+    !ts.isVariableStatement(declarationStatement) ||
+    (!ts.isBlock(block) && !ts.isSourceFile(block))
+  ) {
+    return null;
+  }
+  const statements = block.statements;
+  const statementIndex = statements.indexOf(declarationStatement);
+  const loop = statements[statementIndex + 1];
+  if (!ts.isForStatement(loop)) return null;
+
+  const initializer = loop.initializer;
+  if (!initializer || !ts.isVariableDeclarationList(initializer) || initializer.declarations.length !== 1) return null;
+  const indexDeclaration = initializer.declarations[0];
+  if (
+    !ts.isIdentifier(indexDeclaration.name) ||
+    !indexDeclaration.initializer ||
+    !ts.isNumericLiteral(indexDeclaration.initializer) ||
+    Number(indexDeclaration.initializer.text) !== 0
+  ) {
+    return null;
+  }
+  const indexName = indexDeclaration.name.text;
+  const condition = loop.condition;
+  if (
+    !condition ||
+    !ts.isBinaryExpression(condition) ||
+    condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken ||
+    !ts.isIdentifier(condition.left) ||
+    condition.left.text !== indexName ||
+    (!ts.isIdentifier(condition.right) && !ts.isNumericLiteral(condition.right))
+  ) {
+    return null;
+  }
+  const incrementor = loop.incrementor;
+  if (
+    !incrementor ||
+    (!ts.isPrefixUnaryExpression(incrementor) && !ts.isPostfixUnaryExpression(incrementor)) ||
+    incrementor.operator !== ts.SyntaxKind.PlusPlusToken ||
+    !ts.isIdentifier(incrementor.operand) ||
+    incrementor.operand.text !== indexName
+  ) {
+    return null;
+  }
+  const loopStatements = ts.isBlock(loop.statement) ? loop.statement.statements : [loop.statement];
+  if (loopStatements.length !== 1 || !ts.isExpressionStatement(loopStatements[0])) return null;
+  const assignment = loopStatements[0].expression;
+  const arrayName = declaration.name.text;
+  if (
+    !ts.isBinaryExpression(assignment) ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isElementAccessExpression(assignment.left) ||
+    !ts.isIdentifier(assignment.left.expression) ||
+    assignment.left.expression.text !== arrayName ||
+    !ts.isIdentifier(assignment.left.argumentExpression) ||
+    assignment.left.argumentExpression.text !== indexName ||
+    !isPureDenseFillRhs(assignment.right, arrayName)
+  ) {
+    return null;
+  }
+  return { arrayName, indexName, bound: condition.right, loop };
+}
+
+function denseFillPlanForLoop(loop: ts.ForStatement): DenseFillPlan | null {
+  const parent = loop.parent;
+  if (!ts.isBlock(parent) && !ts.isSourceFile(parent)) return null;
+  const loopIndex = parent.statements.indexOf(loop);
+  const previous = parent.statements[loopIndex - 1];
+  if (!ts.isVariableStatement(previous) || previous.declarationList.declarations.length !== 1) return null;
+  const initializer = previous.declarationList.declarations[0].initializer;
+  return initializer && ts.isArrayLiteralExpression(initializer) ? denseFillPlanForLiteral(initializer) : null;
+}
+
 /**
  * #1804 — lower a fixed-length, non-spread, non-sparse, same-typed array
  * literal to a `vec.new_fixed` IR node. Out of scope (clean fallback to
@@ -3510,6 +3832,19 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
     const vecValueType =
       cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
       ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
+    const denseFill = denseFillPlanForLiteral(expr);
+    if (denseFill && vecValueType.kind !== "i32") {
+      const bound = lowerExpr(denseFill.bound, cx, irVal({ kind: "f64" }));
+      const allocated = cx.builder.emitCall(
+        irIntrinsicFuncRef(`${VEC_NEW_SIZED_PREFIX}${vec.vecStructTypeIdx}`),
+        [bound],
+        irVal(vecValueType),
+      );
+      if (allocated === null) {
+        throw new Error(`ir/from-ast: sized vec allocation produced no result (${cx.funcName})`);
+      }
+      return allocated;
+    }
     return cx.builder.emitVecNewFixed([], hintElemIr, irVal(vecValueType));
   }
 
@@ -4185,6 +4520,10 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   // source semantics wrap).
   if (narrowedI32) {
     const narrowVal = lowerNarrowedI32Element(rhs, cx);
+    if (isProvenInBoundsIr(lhs, cx)) {
+      cx.builder.emitVecSet(recv, idxI32, narrowVal);
+      return;
+    }
     cx.builder.emitCall(irIntrinsicFuncRef(`__vec_elem_set_${vec.vecStructTypeIdx}`), [recv, idxI32, narrowVal], null);
     return;
   }
@@ -4205,6 +4544,10 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   // The helper name embeds the vec STRUCT typeIdx; the lower-time resolver
   // intercepts the prefix and materializes the helper on demand (name-based
   // resolution — funcIdx-shift safe by construction).
+  if (isProvenInBoundsIr(lhs, cx)) {
+    cx.builder.emitVecSet(recv, idxI32, val);
+    return;
+  }
   cx.builder.emitCall(irIntrinsicFuncRef(`__vec_elem_set_${vec.vecStructTypeIdx}`), [recv, idxI32, val], null);
 }
 
@@ -6863,7 +7206,7 @@ function literalCounterEntry(stmt: ts.ForStatement, cx: LowerCtx): { value: numb
   return { value, slotIndex: binding.slotIndex };
 }
 
-function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx): void {
+function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (bodyCx: LowerCtx) => void): void {
   if (!stmt.condition) {
     throw new Error(`ir/from-ast: for without cond not in slice 12 (${cx.funcName})`);
   }
@@ -6910,20 +7253,31 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx): void {
   // keeps the fast unchecked `vec.get`. Thread the proven pair onto a body-scoped
   // cx (immutable copy → no leak to siblings; nested loops accumulate outward).
   const provenPair = detectCountedLoopSafeIndex(stmt);
+  const denseFill = denseFillPlanForLoop(stmt);
+  const denseFillPair = denseFill ? `${denseFill.arrayName}:${denseFill.indexName}` : null;
   // #2952 slice 2 — the loop's label; the body cx carries it as the
   // innermost break/continue target (a continue jumps to the update).
   const bodyScope = new Map(loopCx.scope);
-  const bodyCx: LowerCtx = provenPair
+  const safePairs =
+    provenPair || denseFillPair
+      ? new Set([
+          ...(loopCx.safeIndexedArrays ?? []),
+          ...(provenPair ? [provenPair] : []),
+          ...(denseFillPair ? [denseFillPair] : []),
+        ])
+      : null;
+  const bodyCx: LowerCtx = safePairs
     ? {
         ...loopCx,
         scope: bodyScope,
-        safeIndexedArrays: new Set([...(loopCx.safeIndexedArrays ?? []), provenPair]),
+        safeIndexedArrays: safePairs,
         loopLabel,
         breakTargetLabel: loopLabel,
       }
     : { ...loopCx, scope: bodyScope, loopLabel, breakTargetLabel: loopLabel };
   const bodyInstrs = loopCx.builder.collectBodyInstrs(() => {
-    lowerStmt(stmt.statement, bodyCx);
+    if (bodyOverride) bodyOverride(bodyCx);
+    else lowerStmt(stmt.statement, bodyCx);
   });
 
   // 4. Update — collect into a buffer (or empty if absent).

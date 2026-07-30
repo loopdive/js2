@@ -8,6 +8,7 @@ import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { fillHostFnctorMethodDrivers, maxReservedHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
+import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import type { TypeFact } from "../checker/oracle.js";
 import {
@@ -2032,15 +2033,26 @@ function planIrOverlay(
     let hasIndexedCarrier = false;
     let hasBooleanProjection = false;
     let allProjectionsAreBoolean = true;
+    let allPositionsAreExplicitNumbers = true;
     for (const parameter of declaration.parameters) {
-      if (effectiveIrParamTypeNode(parameter)) continue;
+      const explicitType = effectiveIrParamTypeNode(parameter);
+      if (explicitType) {
+        if (explicitType.kind !== ts.SyntaxKind.NumberKeyword) allPositionsAreExplicitNumbers = false;
+        continue;
+      }
+      allPositionsAreExplicitNumbers = false;
       const projection = resolveImplicitParamType(parameter);
       if (!projection) return false;
       if (projection.kind === "object") hasIndexedCarrier = true;
       if (projection.kind === "bool") hasBooleanProjection = true;
       else allProjectionsAreBoolean = false;
     }
-    return hasIndexedCarrier || (hasBooleanProjection && allProjectionsAreBoolean);
+    const returnType = effectiveIrReturnTypeNode(declaration);
+    const hasExactScalarNumberAbi =
+      allPositionsAreExplicitNumbers &&
+      returnType?.kind === ts.SyntaxKind.NumberKeyword &&
+      detectArrayReduceFusion(ctx, declaration.body).length > 0;
+    return hasExactScalarNumberAbi || hasIndexedCarrier || (hasBooleanProjection && allProjectionsAreBoolean);
   };
   const identityPlan = irOverlayIdentity.planIrOverlayByIdentity(
     ast.sourceFile,

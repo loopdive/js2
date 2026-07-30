@@ -130,6 +130,7 @@ export type IrFallbackReason =
   | "class-member-unsupported"
   | "external-call" // calls a non-local identifier (parseInt, etc.)
   | "call-graph-closure" // local caller/callee not claimed
+  | "array-presize-legacy" // counted push retains legacy allocation-site capacity proof
   | "recursive-type-evidence" // recursive SCC failed conservative ABI certification
   | "type-resolution-failure" // overrideMap couldn't be built (set externally)
   // #1370 Phase A — class method / constructor of a shape the IR selector
@@ -1387,6 +1388,91 @@ function collectDirectMutationNames(body: ts.Block): ReadonlySet<string> {
   return names;
 }
 
+/**
+ * Keep canonical empty-array push loops on the legacy frontend until the IR
+ * owns an equivalent allocation-site capacity proof.
+ *
+ * Legacy codegen preallocates the backing WasmGC array for this shape. Dense
+ * indexed fills have their own sized IR allocation; counted `.push` still
+ * needs this routing guard.
+ */
+function legacyPresizedArrayLoop(body: ts.Block): ts.ForStatement | null {
+  const statements = body.statements;
+  for (let statementIndex = 0; statementIndex + 1 < statements.length; statementIndex++) {
+    const declarationStatement = statements[statementIndex];
+    const loop = statements[statementIndex + 1];
+    if (!ts.isVariableStatement(declarationStatement) || !ts.isForStatement(loop)) continue;
+    if (declarationStatement.declarationList.declarations.length !== 1) continue;
+    const arrayDeclaration = declarationStatement.declarationList.declarations[0];
+    if (
+      !ts.isIdentifier(arrayDeclaration.name) ||
+      !arrayDeclaration.initializer ||
+      !ts.isArrayLiteralExpression(arrayDeclaration.initializer) ||
+      arrayDeclaration.initializer.elements.length !== 0
+    ) {
+      continue;
+    }
+    const arrayName = arrayDeclaration.name.text;
+
+    const initializer = loop.initializer;
+    if (!initializer || !ts.isVariableDeclarationList(initializer) || initializer.declarations.length !== 1) {
+      continue;
+    }
+    const indexDeclaration = initializer.declarations[0];
+    if (
+      !ts.isIdentifier(indexDeclaration.name) ||
+      !indexDeclaration.initializer ||
+      !ts.isNumericLiteral(indexDeclaration.initializer) ||
+      Number(indexDeclaration.initializer.text) !== 0
+    ) {
+      continue;
+    }
+    const indexName = indexDeclaration.name.text;
+
+    const condition = loop.condition;
+    if (
+      !condition ||
+      !ts.isBinaryExpression(condition) ||
+      condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken ||
+      !ts.isIdentifier(condition.left) ||
+      condition.left.text !== indexName
+    ) {
+      continue;
+    }
+
+    const incrementor = loop.incrementor;
+    if (
+      !incrementor ||
+      (!ts.isPrefixUnaryExpression(incrementor) && !ts.isPostfixUnaryExpression(incrementor)) ||
+      incrementor.operator !== ts.SyntaxKind.PlusPlusToken ||
+      !ts.isIdentifier(incrementor.operand) ||
+      incrementor.operand.text !== indexName
+    ) {
+      continue;
+    }
+
+    const loopStatements = ts.isBlock(loop.statement) ? loop.statement.statements : [loop.statement];
+    if (loopStatements.length !== 1 || !ts.isExpressionStatement(loopStatements[0])) continue;
+    const expression = loopStatements[0].expression;
+
+    // #1001 counted push: the legacy matcher requires a finite literal count.
+    const literalCount = ts.isNumericLiteral(condition.right) ? Number(condition.right.text) : 0;
+    if (
+      literalCount > 0 &&
+      literalCount <= 1_000_000 &&
+      ts.isCallExpression(expression) &&
+      expression.arguments.length === 1 &&
+      ts.isPropertyAccessExpression(expression.expression) &&
+      expression.expression.name.text === "push" &&
+      ts.isIdentifier(expression.expression.expression) &&
+      expression.expression.expression.text === arrayName
+    ) {
+      return loop;
+    }
+  }
+  return null;
+}
+
 function whyNotIrClaimable(
   fn: IrClaimableSubject,
   typeMap: TypeMap | undefined,
@@ -1598,6 +1684,10 @@ function whyNotIrClaimable(
 
   const body = fn.body;
   if (!body) return "body-shape-rejected";
+  const presizedArrayLoop = legacyPresizedArrayLoop(body);
+  if (presizedArrayLoop) {
+    return "array-presize-legacy";
+  }
   if (prepareFunctionBodySelection(fn, scope, body)) return "string-builder-candidate";
   // (#2856 C1) Reset the early-return context for this function's walk.
   earlyReturnLoopDepth = 0;

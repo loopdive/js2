@@ -17,6 +17,106 @@ async function compileAndRun(source: string, exportName: string, args: number[] 
 }
 
 describe("#1198 pre-size dense arrays — matching patterns", () => {
+  it("fuses a pure dense fill followed by an i32 sum reduction", async () => {
+    const src = `
+      export function run(n: number): number {
+        const values: number[] = [];
+        for (let i = 0; i < n; i++) {
+          values[i] = ((i * 17) ^ (i >>> 3)) & 1023;
+        }
+        let sum = 0;
+        for (let i = 0; i < values.length; i++) {
+          sum = (sum + values[i]) | 0;
+        }
+        return sum | 0;
+      }
+    `;
+    const compiled = await compile(src, { fileName: "array-sum.ts", emitWat: true });
+    expect(compiled.success, compiled.errors?.[0]?.message).toBe(true);
+    expect(compiled.irCompiledFuncs ?? [], JSON.stringify(compiled.irOutcomes)).toContain("run");
+    expect(compiled.wat).not.toContain("$__vec_new_sized_");
+    expect(compiled.wat).not.toContain("$__vec_elem_set_");
+
+    const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
+    const { instance } = await WebAssembly.instantiate(compiled.binary, imports as any);
+    const run = instance.exports.run as (n: number) => number;
+    expect(run(2000)).toBe(1_018_392);
+    expect(run(0)).toBe(0);
+    expect(run(-1)).toBe(0);
+    expect(run(2.5)).toBe(51);
+  });
+
+  it("keeps allocation-site presizing and direct stores when the array remains observable", async () => {
+    const src = `
+      export function run(n: number): number {
+        const values: number[] = [];
+        for (let i = 0; i < n; i++) {
+          values[i] = ((i * 17) ^ (i >>> 3)) & 1023;
+        }
+        return values.length;
+      }
+    `;
+    const compiled = await compile(src, { fileName: "array-fill-length.ts", emitWat: true });
+    expect(compiled.success, compiled.errors?.[0]?.message).toBe(true);
+    expect(compiled.irCompiledFuncs ?? [], JSON.stringify(compiled.irOutcomes)).toContain("run");
+    expect(compiled.wat).toContain("$__vec_new_sized_");
+    expect(compiled.wat).not.toContain("$__vec_elem_set_");
+
+    const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
+    const { instance } = await WebAssembly.instantiate(compiled.binary, imports as any);
+    const run = instance.exports.run as (n: number) => number;
+    expect(run(2000)).toBe(2000);
+    expect(run(0)).toBe(0);
+    expect(run(-1)).toBe(0);
+    expect(run(2.5)).toBe(3);
+  });
+
+  it("keeps the fused run body when a legacy timing wrapper calls it", async () => {
+    const src = `
+      /** @param {number} n @returns {number} */
+      export function run(n) {
+        const values = [];
+        for (let i = 0; i < n; i++) values[i] = ((i * 17) ^ (i >>> 3)) & 1023;
+        let sum = 0;
+        for (let i = 0; i < values.length; i++) sum = (sum + values[i]) | 0;
+        return sum | 0;
+      }
+      /** @param {number} n @returns {number} */
+      export function warm(n) {
+        const started = performance.now();
+        const result = run(n);
+        return result + performance.now() - started;
+      }
+    `;
+    const compiled = await compile(src, {
+      fileName: "array-sum-warm.js",
+      emitWat: true,
+      target: "wasi",
+      nativeStrings: true,
+      trackIrOutcomes: true,
+    });
+    expect(compiled.success, compiled.errors?.[0]?.message).toBe(true);
+    expect(compiled.irCompiledFuncs ?? [], JSON.stringify(compiled.irOutcomes)).toContain("run");
+  });
+
+  it("keeps nested unsigned-shift bits native inside another bitwise operation", async () => {
+    const src = `
+      export function mix(x: number): number {
+        return ((x >>> 0) ^ 0x12345678) | 0;
+      }
+    `;
+    const compiled = await compile(src, { fileName: "nested-unsigned-shift.ts", emitWat: true });
+    expect(compiled.success, compiled.errors?.[0]?.message).toBe(true);
+    expect(compiled.wat).toContain("i32.shr_u");
+
+    const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
+    const { instance } = await WebAssembly.instantiate(compiled.binary, imports as any);
+    const mix = instance.exports.mix as (x: number) => number;
+    for (const x of [-1, -2147483648, 0, 2147483647]) {
+      expect(mix(x)).toBe(((x >>> 0) ^ 0x12345678) | 0);
+    }
+  });
+
   it("literal-N counted index-assign: const a = []; for (let i = 0; i < 10; i++) a[i] = i*2;", async () => {
     const src = `
       export function run(): number {

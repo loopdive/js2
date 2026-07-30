@@ -51,7 +51,12 @@ import {
   emitToNumber as emitCoercionToNumber,
 } from "../codegen/coercion-engine.js";
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
-import { ensureVecElemSet, VEC_ELEM_SET_PREFIX } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand element-store helper
+import {
+  ensureVecElemSet,
+  ensureVecNewSized,
+  VEC_ELEM_SET_PREFIX,
+  VEC_NEW_SIZED_PREFIX,
+} from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
   ensureNativeStringHelpers,
@@ -3323,6 +3328,14 @@ function makeResolver(
       if (ref.binding.kind === "intrinsic" && ref.binding.symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
         const vecTypeIdx = Number(ref.binding.symbol.slice(VEC_ELEM_SET_PREFIX.length));
         const helperIdx = Number.isInteger(vecTypeIdx) ? ensureVecElemSet(ctx, vecTypeIdx) : null;
+        if (helperIdx === null) {
+          throw new Error(`ir/integration: cannot materialize ${ref.name} (not a recognisable vec struct)`);
+        }
+        return bindCallableProvider(ref, helperIdx);
+      }
+      if (ref.binding.kind === "intrinsic" && ref.binding.symbol.startsWith(VEC_NEW_SIZED_PREFIX)) {
+        const vecTypeIdx = Number(ref.binding.symbol.slice(VEC_NEW_SIZED_PREFIX.length));
+        const helperIdx = Number.isInteger(vecTypeIdx) ? ensureVecNewSized(ctx, vecTypeIdx) : null;
         if (helperIdx === null) {
           throw new Error(`ir/integration: cannot materialize ${ref.name} (not a recognisable vec struct)`);
         }

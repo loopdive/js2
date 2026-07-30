@@ -130,6 +130,7 @@ const DEFERRED: ReadonlySet<IrFallbackReason> = new Set([
   "type-parameters",
   "non-export-modifier",
   "unnamed",
+  "array-presize-legacy",
 ]);
 
 // #1923 — post-claim demotion kinds (IrIntegrationError.kind). These are

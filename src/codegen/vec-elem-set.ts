@@ -29,6 +29,54 @@ import { ensureExnTag } from "./registry/imports.js";
 
 /** Reserved name prefix; the suffix is the vec STRUCT typeIdx. */
 export const VEC_ELEM_SET_PREFIX = "__vec_elem_set_";
+export const VEC_NEW_SIZED_PREFIX = "__vec_new_sized_";
+
+/**
+ * Ensure a one-shot sized-vector allocator for a canonical dense-fill loop.
+ *
+ * Signature: `(f64 upperBound) -> (ref null $vec_<t>)`.
+ * The loop `for (let i = 0; i < upperBound; i++)` executes
+ * `max(ceil(upperBound), 0)` iterations for finite practical bounds, so that
+ * value is both the required capacity and the post-loop JavaScript length.
+ */
+export function ensureVecNewSized(ctx: CodegenContext, vecTypeIdx: number): number | null {
+  const name = `${VEC_NEW_SIZED_PREFIX}${vecTypeIdx}`;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+
+  const vecDef = ctx.mod.types[vecTypeIdx];
+  if (!vecDef || vecDef.kind !== "struct" || vecDef.fields.length !== 2) return null;
+  if (vecDef.fields[0]?.name !== "length" || vecDef.fields[1]?.name !== "data") return null;
+  const dataField = vecDef.fields[1]!.type;
+  if (dataField.kind !== "ref" && dataField.kind !== "ref_null") return null;
+  const arrTypeIdx = dataField.typeIdx;
+  const arrDef = ctx.mod.types[arrTypeIdx];
+  if (!arrDef || arrDef.kind !== "array") return null;
+
+  const resultType: ValType = { kind: "ref_null", typeIdx: vecTypeIdx };
+  const sigIdx = addFuncType(ctx, [{ kind: "f64" }], [resultType], `$${name}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  const fn: WasmFunction = {
+    name,
+    typeIdx: sigIdx,
+    locals: [{ name: "$length", type: { kind: "i32" } }],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "f64.ceil" },
+      { op: "f64.const", value: 0 },
+      { op: "f64.max" },
+      { op: "i32.trunc_sat_f64_s" },
+      { op: "local.tee", index: 1 },
+      { op: "local.get", index: 1 },
+      { op: "array.new_default", typeIdx: arrTypeIdx },
+      { op: "struct.new", typeIdx: vecTypeIdx },
+    ],
+    exported: false,
+  };
+  pushDefinedFunc(ctx, funcIdx, fn);
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
+}
 
 /**
  * Ensure the element-store helper for the vec struct at `vecTypeIdx` exists
