@@ -2,9 +2,7 @@
   "id": "3795",
   "assignee": "ttraenkler/codex",
   "status": "in-progress",
-  "branch": "codex/pending-ir-dynamic-member-set",
-  "reserved_at": "2026-07-30T09:12:14Z",
-  "claimed_at": "2026-07-30T09:12:14Z",
-  "updated_at": "2026-07-30T09:12:14Z",
-  "pr_scan": "ok"
+  "branch": "codex/3795-ir-dynamic-member-set",
+  "claimed_at": "2026-07-30T09:14:05Z",
+  "updated_at": "2026-07-30T09:14:05Z"
 }
