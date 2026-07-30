@@ -56,7 +56,10 @@ export function registerModuleGlobal(
         throw new TypeError(`module global ${name} has no allocator object at index ${sameFileIdx}`);
       }
       if (ts.isVariableDeclaration(declaration)) {
-        ctx.programAbiGlobals?.observeModuleValue(declaration, name, existingGlobal);
+        // The ABI sidecar keys bindings by DECLARATION and requires the display
+        // name to match its allocator's actual spelling, which is the suffixed
+        // one whenever this binding lost the race for the bare name.
+        ctx.programAbiGlobals?.observeModuleValue(declaration, abiDisplayName(existingGlobal.name), existingGlobal);
       }
     }
     return;
@@ -81,8 +84,9 @@ export function registerModuleGlobal(
       : wasmType;
   const globalIdx = nextModuleGlobalIdx(ctx);
   const bareNameTaken = ctx.moduleGlobals.has(name);
+  const displayName = bareNameTaken ? `${name}_${ctx.moduleGlobalDeclarations.size}` : name;
   const global: GlobalDef = {
-    name: bareNameTaken ? `__mod_${name}_${ctx.moduleGlobalDeclarations.size}` : `__mod_${name}`,
+    name: `__mod_${displayName}`,
     type: globalType,
     mutable: true,
     init,
@@ -92,10 +96,15 @@ export function registerModuleGlobal(
   if (declaration) {
     ctx.moduleGlobalDeclarations.set(declaration, globalIdx);
     if (ts.isVariableDeclaration(declaration)) {
-      ctx.programAbiGlobals?.observeModuleValue(declaration, name, global);
+      ctx.programAbiGlobals?.observeModuleValue(declaration, displayName, global);
     }
   }
   registeredThisFile?.set(name, globalIdx);
+}
+
+/** Recover the ABI display name from an allocator global's `__mod_`-prefixed spelling. */
+function abiDisplayName(globalName: string): string {
+  return globalName.startsWith("__mod_") ? globalName.slice("__mod_".length) : globalName;
 }
 
 /** Allocate and structurally observe one retained top-level TDZ flag. */
