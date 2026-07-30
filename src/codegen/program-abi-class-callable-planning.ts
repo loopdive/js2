@@ -7,7 +7,7 @@ import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncHandle, FuncTypeDef, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
-import { definedFuncAt, definedFuncHandleOf, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt, definedFuncHandleOf, isImportFuncIdx, pushDefinedFunc } from "./func-space.js";
 import {
   planProgramAbiSupportCallable,
   planProgramAbiUnitCallable,
@@ -75,7 +75,23 @@ export function setProgramAbiInheritedClassCallableAlias(
   physicalName: string,
   funcIdx: FuncHandle,
 ): void {
-  ctx.programAbiClassCallables?.observeInheritedAlias(childDeclaration, physicalName, funcIdx);
+  // (#1400) The inherited-member scan in class-bodies.ts walks `ctx.funcMap`
+  // for `${ancestor}_*` keys. When the ancestor is a BUILTIN the matches are
+  // host IMPORT handles, not defined functions — ESLint's
+  // `class LazyLoadingRuleMap extends Map` inherits `Map_has`, measured at
+  // handle 615 against numImportFuncs 650. `observeInheritedAlias` requires an
+  // exact defined function and threw `missing-required-locator`, failing the
+  // whole graph in ~4s.
+  //
+  // A host import has no defined-function record and therefore no source unit
+  // to be canonical against, so it is legitimately outside the structural
+  // registry's inventory — the same "not ours" case the observer already
+  // handles by returning undefined when no canonical unit matches. Keep the
+  // funcMap alias (the child must still dispatch to the parent's import, which
+  // is the pre-ABI behaviour) and skip only the structural observation.
+  if (!isImportFuncIdx(ctx, funcIdx)) {
+    ctx.programAbiClassCallables?.observeInheritedAlias(childDeclaration, physicalName, funcIdx);
+  }
   ctx.funcMap.set(physicalName, funcIdx);
 }
 
