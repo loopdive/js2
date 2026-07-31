@@ -26,7 +26,7 @@ origin: "2026-07-31: #3178 recorded the hypothesis that private methods never RE
 ## The recorded hypothesis was wrong
 
 #3178 carried: _"private methods never reach the admission gate at
-`class-bodies.ts:1176`; the likely mechanism is `__priv_` mangling."_
+`class-bodies.ts:1176`; the likely mechanism is `\_\_priv_` mangling."\_
 **Falsified by instrumenting the gate.** Compiling a class with one public and
 one private generator, standalone lane:
 
@@ -61,6 +61,13 @@ for — `{ [k]*(){} }`, `{ "m"*(){} }` — are object-literal members and can ne
 be `PrivateIdentifier`s. So the fix is safe **by construction**, not merely by
 testing; the intended exclusions are unreachable by the new arm. A regression
 test pins them anyway.
+
+**Host-lane safety is also by construction, but by a different mechanism than
+#3893's** — a reader will look for a `!noJsHostTarget(ctx)` guard here and not
+find one. Two independent gates already prevent it: on the host lane
+`isNativeGeneratorCandidate` returns `false` at `if (!ts.isFunctionDeclaration(decl))`
+long before reaching this arm, and the `class-bodies.ts` call site is itself
+behind `noJsHost &&`.
 
 ## Verification — import set + no-import instantiation
 
@@ -100,6 +107,40 @@ __gen_next, __get_caught_exception`.
 
 It also matches the independent baseline observation that class rows leak **with
 and without** a parameter default: this is a name-kind bail, not a param bail.
+
+## Sizing — what this fix claims, and what it does NOT
+
+**It does not claim the 388 class-path `dflt` rows.** Split by filename:
+
+| subset                                     |    rows | covered here?                           |
+| ------------------------------------------ | ------: | --------------------------------------- |
+| `private-gen-meth-dflt-*`                  | **252** | yes — the name-kind bail                |
+| public `gen-meth-dflt-*` (+ `async-gen-*`) | **136** | **no** — see the fourth mechanism below |
+
+Across the whole 1,907, class-path rows are **1,196**, of which **510** are
+`private-gen*`. So this fix's ceiling is the private share, not the class share,
+and even that is reduced by the rest-in-pattern overlap below. **All of these
+are `compile_error` rows: the prize is host-free instantiation, not passes.**
+
+## A FOURTH mechanism, found while sizing this one — rest inside the pattern
+
+The public `gen-meth-dflt-*` filenames are dominated by `ary-ptrn-rest` /
+`obj-ptrn-rest`, a shape none of the probes above covered. Measured on this
+branch (i.e. **with** the private-name fix applied):
+
+| shape                                    | result                        |
+| ---------------------------------------- | ----------------------------- |
+| `class { *m([a]) {} }`                   | native                        |
+| `class { *m([a] = [1]) {} }`             | native                        |
+| **`class { *m([a, ...r]) {} }`**         | **LEAKS**                     |
+| **`class { *m([a, ...r] = [1]) {} }`**   | **LEAKS**                     |
+| **`class { *m({a, ...r} = {a:1}) {} }`** | **LEAKS**                     |
+| **`class { *#m([a, ...r] = [1]) {} }`**  | **LEAKS** — survives this fix |
+
+**REST inside a binding pattern** makes a class generator method leak, with or
+without a whole-param default, public or private. It is orthogonal to the
+name-kind bail and is **unowned**. This is why the 136 public rows are not
+claimable here, and why some of the 252 private rows will not flip either.
 
 ## Follow-up recorded for #3178 — the `object/*` 102 rows are a THIRD family
 
