@@ -292,6 +292,18 @@ describe("#3880 claim-issue.mjs — an unscanned id is never handed out as clean
     rmSync(fx.root, { recursive: true, force: true });
   });
 
+  it("refuses to allocate when the MAIN id scan fails, rather than treating it as empty", () => {
+    // The most dangerous silent-empty in the allocator: with main contributing
+    // nothing, max+1 is computed from open PRs ∪ reservations alone and hands
+    // out a long-taken id. A failed read is not an empty one.
+    const r = run(fx, ["--allocate", "--no-pr-scan", "--allow-unscanned"], { CLAIM_REMOTE: "no-such-remote" });
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/cannot READ .* to scan existing issue ids|found NONE/);
+    expect(lastLine(r.stderr)).toMatch(/^claim-issue: FAILED —/);
+    expect(r.stdout.trim()).toBe("");
+    expect(listRecords(fx)).toEqual([]); // nothing burned
+  });
+
   it("refuses --no-pr-scan before reserving, so no id is burned", () => {
     const r = run(fx, ["--allocate", "--no-pr-scan"]);
     expect(r.code).toBe(2);

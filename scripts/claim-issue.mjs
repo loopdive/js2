@@ -656,13 +656,43 @@ function contiguousMax(idSet) {
   return max;
 }
 
+// (#3880/#3636) A FAILED main scan must never read as an EMPTY one.
+//
+// This returned an empty Set when `ls-tree` failed, which is the most dangerous
+// silent-empty in the whole allocator: with main contributing nothing,
+// contiguousMax() is computed from open PRs ∪ reservations alone and hands out a
+// drastically low, long-taken id — and nothing in the output says the scan
+// failed. It is the same defect as the tri-state read fix above, on the other
+// read path; fixing one and not the other is not fixing the property.
+//
+// Note the asymmetry that makes `die` correct rather than cautious: an
+// unreadable main cannot be distinguished from a main with no issues, and
+// guessing "no issues" is precisely the guess that collides.
 function idsFromMain() {
   const out = new Set();
   const ls = git(["ls-tree", "-r", "--name-only", MAIN_REF, "plan/issues/"]);
-  if (!ls.ok) return out;
+  if (!ls.ok) {
+    die(
+      6,
+      `cannot READ ${MAIN_REF} to scan existing issue ids: ${why(ls)}\n` +
+        `Refusing to allocate: an unreadable main is NOT an empty one, and treating it as empty hands out an id ` +
+        `that has been taken for thousands of commits. Fetch ${MAIN_REMOTE} and re-run.`,
+    );
+  }
   for (const f of ls.out.split("\n")) {
     const m = f.match(ISSUE_ID_RE);
     if (m) out.add(Number(m[1]));
+  }
+  // A successful read that finds NOTHING is also suspect — plan/issues/ has
+  // thousands of files. Floor it rather than trusting `truncated`-style
+  // metadata alone: an empty result from a valid-but-wrong ref looks identical
+  // to a healthy read of an empty tree.
+  if (out.size === 0) {
+    die(
+      6,
+      `scanned ${MAIN_REF} for issue ids and found NONE — plan/issues/ is never empty.\n` +
+        "Refusing to allocate against an id universe that is almost certainly a bad ref rather than the truth.",
+    );
   }
   return out;
 }
