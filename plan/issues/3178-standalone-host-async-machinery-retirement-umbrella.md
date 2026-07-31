@@ -16,7 +16,29 @@ task_type: architecture
 area: codegen, standalone
 language_feature: generators, async-generators, promises, async-functions
 goal: standalone-mode
-related: [1781, 2860, 3164, 3132, 3032, 2903, 2906, 2865, 2895, 1326, 2959, 2040, 3386, 3387, 3388, 3389, 3390, 3391, 3538, 3542]
+related:
+  [
+    1781,
+    2860,
+    3164,
+    3132,
+    3032,
+    2903,
+    2906,
+    2865,
+    2895,
+    1326,
+    2959,
+    2040,
+    3386,
+    3387,
+    3388,
+    3389,
+    3390,
+    3391,
+    3538,
+    3542,
+  ]
 children: [3386, 3387, 3388, 3389, 3390, 3391, 3538, 3542]
 origin: "2026-07-12 architect (arch-standalone-family-plans): plan/log/standalone-gap-map.md finding — 4,456 leaky passes ride host-import shims, ~90% the generator/async-gen/Promise host machinery. This umbrella is the substrate spec + measured slice ranking the family builds on."
 ---
@@ -214,6 +236,42 @@ Sequencing: S1 ∥ S2 ∥ S5/S6 are independent. S3 after S1 (same
 `isNativeGeneratorCandidate` seam; S1's fn-expr registration is the pattern S3
 extends). S7 last. S1+S2 alone retire ~4,000 of 4,467 — **the family's 90%.**
 
+### Measured 2026-07-31 — the `class/dstr` bucket is PRIVATE generator methods
+
+The 768 `class/dstr` rows are `private-gen-meth-*` (`*#m()`), and the bail is
+localised by a **one-token** diff. Same tree, same commit, bare standalone
+compile, import-set probe:
+
+| arm       | env imports | arm        | env imports |
+| --------- | ----------: | ---------- | ----------: |
+| `*m()`    |       **0** | `*#m()`    |       **4** |
+| `*m([a])` |       **0** | `*#m([a])` |       **8** |
+
+`-dflt`, `-rest` and `-static` variants are all env=8 with an identical set;
+the real test262 files emit 7 of the same `__gen_*` family, so the synthetic
+arm is a faithful minimal reproduction rather than a separate phenomenon.
+
+**The discriminator is narrower than "private generator method"** — four
+negative arms bound it: `#m()` → 0, `#m([a])` → 0, `#v = 1` → 0, and
+**`async *#m()` → 0**. So it is **sync private generator methods specifically**.
+The private ASYNC generator is already host-free, which makes it the useful
+upper bound: whatever admits that path is what the sync path is missing.
+
+**Root cause — HYPOTHESIS, not verified.** The class generator-method admission
+gate is `src/codegen/class-bodies.ts:1176`
+(`noJsHost && !isAsyncMethod && isNativeGeneratorCandidate(ctx, member)`).
+Neither that site nor `generators-native.ts` filters private names at all, so
+the likely mechanism is that private methods are collected on a different path
+and never reach the gate (note the `__priv_` mangling at
+`class-bodies.ts:583`) — which would also explain the async exemption, since
+that takes the async-frame route. **Next probe: does a private generator method
+reach `:1176` at all?** Do not treat this paragraph as a diagnosis.
+
+Public class generator members are host-free in all six probed shapes (plain,
+`this`-using, array-destructuring param, default param, `async *`, class-field
+generator expression) — recorded as the _contrast_ that localises this, not as
+a separate result.
+
 ### S3 design notes (capturing generators — the opus-review part)
 
 `generatorCapturesOuterScope` (generators-native.ts:2001) bails any generator
@@ -275,6 +333,27 @@ re-measure this residual once #3132 lands before deciding whether a separate
 issue is still warranted.
 
 ## Validation (applies to every slice)
+
+> **Do NOT validate a slice with `runTest262File` status — it can read `pass`
+> both before and after the fix.** Measured 2026-07-31 on the
+> `private-gen-meth-*` rows: a **bare** `compile(src, { target: "standalone" })`
+> of the real test262 file emits **7 `env::__gen_*` imports**
+> (`result.imports = 7`), which `standaloneHostImportError`
+> (`tests/test262-runner.ts:3622`) turns into `compile_error` by construction —
+> yet `runTest262File(file, …, "standalone")` on the **same three files**
+> reported `pass`. The two paths disagree about the same input, so the runner's
+> status is not a usable before/after signal for an import-retirement slice.
+>
+> **Acceptance is the IMPORT SET from a bare standalone compile**, per the leak
+> probe below. This is the #2916 framing ("imports are the deliverable, rows are
+> secondary") arriving for a second, independent reason — a slice can retire the
+> whole family and still show a zero row-delta locally.
+>
+> The divergence itself is **unexplained**. The strict guard rejects any
+> non-empty `result.imports`, so the harness-_assembled_ compile must emit zero
+> where the bare compile emits seven; that could not be verified directly
+> because `assembleOriginalHarness` is not exported from the runner. Recorded as
+> an open oddity, not a diagnosis — do not build on it.
 
 - Leak probe: affected construct compiles standalone with ZERO family
   `env::` imports AND `WebAssembly.instantiate(binary, {})` succeeds.

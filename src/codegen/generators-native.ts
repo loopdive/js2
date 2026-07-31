@@ -1557,12 +1557,12 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
   if (!decl.body) return false;
   for (const param of decl.parameters) {
     // (#3386) Binding-pattern params are admitted: the closure's lifted body
-    // eagerly destructures them (emitClosureParamDestructuring, running before
-    // the factory emit — call-time per §10.2.11) and the factory packs the
-    // bound values into the spill fields; pattern legality itself is decided
-    // by `buildNativeGeneratorPlan` (which `isNativeGeneratorCandidate` calls
-    // last). Whole-param defaults/optionals and rest still bail — the closure
-    // trampoline's argc/default machinery is not threaded here (#2581-adjacent).
+    // eagerly destructures them (emitClosureParamDestructuring, before the
+    // factory emit — call-time per §10.2.11) and the factory packs the bound
+    // values into spill fields; pattern legality is decided by
+    // `buildNativeGeneratorPlan`. (#3893) Whole-param defaults are admitted in
+    // the no-JS-host lane too — closures.ts emits them in the lifted body =
+    // the factory, again where §10.2.11 wants them. Optional/rest still bail.
     if (
       !ts.isIdentifier(param.name) &&
       !ts.isArrayBindingPattern(param.name) &&
@@ -1570,7 +1570,7 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
     ) {
       return false;
     }
-    if (param.initializer || param.questionToken || param.dotDotDotToken) return false;
+    if (param.questionToken || param.dotDotDotToken || (param.initializer && !noJsHostTarget(ctx))) return false;
   }
   if (bodyUsesArguments(decl.body)) return false;
   if (fnExprBodyReferencesThis(decl.body)) return false;

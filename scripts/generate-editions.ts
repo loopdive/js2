@@ -392,7 +392,7 @@ interface Frontmatter {
  */
 const FRONTMATTER_WINDOW_BYTES = 65536;
 
-function parseFrontmatter(filePath: string): Frontmatter {
+export function parseFrontmatter(filePath: string): Frontmatter {
   let content: string;
   try {
     const fd = readFileSync(filePath);
@@ -455,7 +455,7 @@ function parseFrontmatter(filePath: string): Frontmatter {
  * Determine the ES edition year for a test file based on frontmatter.
  * Returns 5 for ES5, 2015..2025 for ES2015+, 0 for unknown.
  */
-function classifyEdition(fm: Frontmatter, filePath: string): number {
+export function classifyEdition(fm: Frontmatter, filePath: string): number {
   // Priority 1: explicit es5id → ES5
   if (fm.es5id) return 5;
 

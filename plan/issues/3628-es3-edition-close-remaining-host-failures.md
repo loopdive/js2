@@ -1,10 +1,12 @@
 ---
 id: 3628
 title: "≤ES3 edition: close the remaining 43 host-lane failures (230/273 → 273/273)"
-status: ready
+status: done
+completed: 2026-07-31
 sprint: current
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-07-31
+assignee: ttraenkler/dev-es3-editions
 priority: high
 horizon: m
 complexity: M
@@ -19,6 +21,14 @@ origin: "2026-07-25 lead measurement: ES3 is the oldest edition and the closest 
 ---
 
 # #3628 — ≤ES3 edition: close the remaining 43 host-lane failures
+
+> **CLOSED BY MEASUREMENT, 2026-07-31 — the bucket is 273/273, 0 fail, 0 CE.**
+> No code was written for this issue. All four owning defects landed
+> independently (#3486, #2666 via PR #3741, #2899, #2900) and the last of them
+> closed the gap on 2026-07-28. Full evidence, controls and provenance in
+> [Closing measurement](#closing-measurement-2026-07-31-host-lane) at the
+> bottom — including the two claims in this file that did **not** survive
+> re-checking.
 
 ## Why this issue exists
 
@@ -139,14 +149,19 @@ as #3617 predicted.
 - [x] #3486 fixed; ≤ES3 bucket re-measured. **11 flipped, not 41** — the
       "confirm the 41 flip" wording was a forecast dressed as a count and is
       corrected above. 230/273 → 241/273.
-- [ ] #2666 fixed (`RequireObjectCoercible` before `ToPropertyKey` in the
-      read-modify-write member paths); re-measure — expected ~30, **to be
-      measured, not assumed.**
-- [ ] #2899 and #2900 re-verified against current main (both are marked `done`
-      while their tests still fail — see each issue).
-- [ ] ≤ES3 reaches 273/273, or every residual failure has a named owning issue
-      and a recorded reason.
-- [ ] Re-measure with a **force-fetched** baseline (#3629).
+- [x] #2666 fixed (`RequireObjectCoercible` before `ToPropertyKey` in the
+      read-modify-write member paths) — landed 2026-07-28 as PR **#3741**
+      _"fix(#2666): guard nullish member bases before key coercion"_.
+      **Measured, not assumed: 30 of 30 flipped.** All 44 `S11.13.2_A7.*` and
+      all 12 `*_A6_T*` inc/dec files read `pass`.
+- [x] #2899 and #2900 re-verified against current main — **both now pass.** The
+      "marked `done` while their tests still fail" note was true when written
+      (2026-07-25) and is **no longer true**; each was genuinely fixed.
+      `13.2-30-s.js` also passes a host-lane re-run on the current tree.
+- [x] ≤ES3 reaches **273/273** — zero residual failures, so no residual needs an
+      owning issue.
+- [x] Re-measured with a **force-fetched** baseline (#3629): all 47,837 records
+      dated 2026-07-31.
 
 ## Method note (for whoever re-measures)
 
@@ -157,3 +172,126 @@ path heuristic match. A first attempt here that omitted the `esid` and
 no-frontmatter rules reported **1,545** failures instead of 43 — a 20× error.
 **Validate any re-implementation against the published 273/43 before trusting
 it.**
+
+**Better: do not re-implement at all.** `classifyEdition` and `parseFrontmatter`
+are now `export`ed from `scripts/generate-editions.ts` (this issue's only source
+change), so a measurement driver can import the real classifier. The 20× error
+above is unreachable that way.
+
+## Closing measurement (2026-07-31, host lane)
+
+**Lane:** host (JS-host / `gc`). **Two independent instruments, both with
+controls.**
+
+### Instrument 1 — baseline classification (authoritative)
+
+The real `classifyEdition` / `parseFrontmatter` imported from
+`scripts/generate-editions.ts` (no re-implementation), applied to the
+force-fetched `test262-current.jsonl`, deduped by file with the same
+worst-status precedence the generator uses.
+
+**Provenance — stated, not assumed.** Baseline blob
+`loopdive/js2wasm-baselines@6cd657e6` (2026-07-31T06:14Z), produced by
+`promote-baseline` from `loopdive/js2` main
+`ff6dd1141f958afb3a5fab314ca9fe78653a3678` (2026-07-31 05:51Z). Verified
+`git merge-base --is-ancestor ff6dd114 origin/main` → **true**, 21 commits
+behind `origin/main` `e2e5ad707cd9446bc1b71fe5279336c1e36793d8`. All 47,837
+records carry a single run date (31.7.2026), i.e. one run, not a partial
+per-SHA reuse. This post-dates PR #3741 (2026-07-28T16:02Z) by three days.
+
+| bucket                                  |  scored |    pass |  fail |    ce | skip |
+| --------------------------------------- | ------: | ------: | ----: | ----: | ---: |
+| ≤ES3 — now `UNCLASSIFIED_LEGACY` (`-2`) | **273** | **273** | **0** | **0** |    0 |
+
+- **Denominator gate passed:** 273 scored reproduces the published figure
+  exactly, so the classifier is the same one that produced `230/273`.
+- **Positive control on the instrument:** the same driver, same run, reports the
+  ES5 bucket as 8,931 scored / 6,615 pass / **2,264 fail / 52 ce**. The query
+  _can_ return non-zero, so `fail: 0` is a measurement and not a broken filter.
+- **Reclassification drift ruled out** (the count alone cannot distinguish
+  "fixed" from "the tests moved buckets"): all 44 `S11.13.2_A7.*`, all 12
+  `S11.3.1/S11.3.2/S11.4.4/S11.4.5_A6_T*`, `13.2-30-s.js` and
+  `eval-gtbndng-indirect-update-dflt.js` are still **in** bucket `-2` and each
+  now reads `pass`.
+
+### Permanent repro (#2093)
+
+This issue is closed by **measurement**, so its permanent repro is the
+conformance corpus itself, not a new unit test — these are the exact files that
+carried the 43 failures and now pass. Re-run any of them host-lane through
+`runTest262File` to re-check the claim:
+
+- `test262/test/language/expressions/compound-assignment/S11.13.2_A7.1_T4.js`
+  (and `_A7.2`…`_A7.11`, `_T1`…`_T4` — 44 files; the #3486 + #2666 cluster)
+- `test262/test/language/expressions/prefix-increment/S11.4.4_A6_T2.js`
+- `test262/test/language/expressions/prefix-decrement/S11.4.5_A6_T2.js`
+- `test262/test/language/expressions/postfix-increment/S11.3.1_A6_T2.js`
+- `test262/test/language/expressions/postfix-decrement/S11.3.2_A6_T2.js`
+- `test262/test/language/statements/function/13.2-30-s.js` (#2899)
+- `test262/test/language/module-code/eval-gtbndng-indirect-update-dflt.js` (#2900)
+- controls: `test262/test/language/arguments-object/mapped/mapped-arguments-nonconfigurable-1.js`
+  (in-bucket, must pass) and
+  `test262/test/annexB/built-ins/escape/prop-desc.js` (must fail — proves the
+  harness discriminates)
+
+### Instrument 2 — `runTest262File` spot-check on the current tree
+
+The baseline is 21 commits behind `origin/main`, so 10 files were re-run
+host-lane on the branch tree. Status only — this runner's error _category_ and
+_location_ are known artifacts.
+
+- 7 subjects (5 from the defect family, plus each singleton) — **9/10 matched
+  expectation**.
+- **POS controls** (two in-bucket files unrelated to the defect family) —
+  passed.
+- **NEG control** (`annexB/built-ins/escape/prop-desc.js`, a baseline `fail`) —
+  **failed as required**, so the harness discriminates.
+- **The one mismatch, and why it is discarded.**
+  `eval-gtbndng-indirect-update-dflt.js` (#2900) reported `compile_error`
+  locally against a baseline `pass`. Control: three _other_ fixture-importing
+  module tests that the baseline marks `pass` — `instn-iee-bndng-var.js`,
+  `eval-gtbndng-indirect-trlng-comma.js` (both `compile_error`) and
+  `instn-star-props-nrml.js` (`fail`). **None** reproduces its baseline verdict,
+  and the errors are TS-parse artifacts (_"… can only be used in TypeScript
+  files"_), so the single-file local path cannot execute the fixture-importing
+  module class at all (62 such files exist). The instrument is invalid for that
+  class; the baseline stands.
+
+### Attribution — final, and what did not survive
+
+Commit `ad2dd54d544333` is titled _"41 of 43 host failures are one defect"_.
+**That headline is wrong and was already corrected inside this file on
+2026-07-25**: the 41 shared an error _message_, not a root cause. Anyone
+starting from the commit subject rather than the file will size this issue
+wrongly.
+
+|  count | cluster                                         | owning issue | landed                    |
+| -----: | ----------------------------------------------- | ------------ | ------------------------- |
+| **11** | custom-exception `.constructor` identity        | #3486        | 2026-07-25 (PR #3630)     |
+| **30** | `RequireObjectCoercible` before `ToPropertyKey` | #2666        | **2026-07-28 (PR #3741)** |
+|      1 | `13.2-30-s.js`                                  | #2899        | 2026-07-25                |
+|      1 | `eval-gtbndng-indirect-update-dflt.js`          | #2900        | 2026-07-25                |
+
+#2666 — the dominant cluster — was still open when this issue was written and
+closed three days later. Nothing here needed new code.
+
+### The stated motivation does not survive either — and that is the useful part
+
+This issue opened with _"finishing ≤ES3 gives the project a fully-closed edition
+to point at."_ **#3639 landed in between and removed that claim's basis.** The
+bucket is no longer labelled an edition: `classifyEdition` now returns
+`UNCLASSIFIED_LEGACY`, because the bucket is a **273-test metadata residue**
+(frontmatter present, no edition marker), not a measurement of ES3. ES3's own
+hardest surface is scored in _other_ buckets by frontmatter vintage — `eval`
+(347 tests), `with` (181), the `Function` constructor (509), ~37 % combined.
+
+So the honest statement of this result is **"a 273-test residue bucket is now
+clean"**, not "ES3 is complete." Do not publish the latter.
+
+### Follow-up filed
+
+The committed `website/public/benchmarks/results/test262-editions.json` still
+publishes this bucket as `"≤ ES3": 230/273, 84 %` — the pre-fix number _and_ the
+pre-#3639 label. It has not moved since 2026-07-25 while
+`benchmarks/results/test262-current.json` refreshes every ~4 h. Root-caused and
+filed separately rather than hand-edited, because the artifact is CI-owned.
