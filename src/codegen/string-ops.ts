@@ -718,28 +718,28 @@ export function compileNativeTemplateExpression(
       // the AnyString supertype, so a ref_null is fine to pass straight through.
       // (No marshaling instructions emitted — value stays on the stack.)
     } else if (spanType && spanType.kind === "f64" && toStrIdx !== undefined) {
+      // (#3912) This and the i32/i64 arms unbox UNCONDITIONALLY — never via
+      // `standaloneNativeStrings`. `__str_from_extern` marshals a genuine JS-host
+      // string through `__str_from_mem`, but since #3912 keys the formatter's
+      // provider on `ctx.nativeStrings`, `number_toString` is NATIVE in every mode
+      // this function runs in: its externref is a `$AnyString` merely widened by
+      // `extern.convert_any`. The host bridge silently yields EMPTY for that box —
+      // which is how `` `v${3}` `` evaluated to "v". The right question is not "is
+      // a JS host available?" but "did this externref come from the native
+      // formatter?", and here it always did. The dynamic-externref / struct arms
+      // below KEEP the bridge: those really do carry host strings.
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
-      if (standaloneNativeStrings) {
-        emitNativeStringRefFromExternref(ctx, fctx);
-      } else if (fromExternIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
-      }
+      emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i32" && toStrIdx !== undefined) {
+      // (#3912) native-formatter box — see the f64 arm above.
       fctx.body.push({ op: "f64.convert_i32_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
-      if (standaloneNativeStrings) {
-        emitNativeStringRefFromExternref(ctx, fctx);
-      } else if (fromExternIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
-      }
+      emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i64" && toStrIdx !== undefined) {
+      // (#3912) native-formatter box — see the f64 arm above.
       fctx.body.push({ op: "f64.convert_i64_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
-      if (standaloneNativeStrings) {
-        emitNativeStringRefFromExternref(ctx, fctx);
-      } else if (fromExternIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
-      }
+      emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && (spanType.kind === "f64" || spanType.kind === "i32" || spanType.kind === "i64")) {
       reportError(ctx, span.expression, "Template literal numeric substitution requires number_toString");
       fctx.body.push({ op: "drop" });

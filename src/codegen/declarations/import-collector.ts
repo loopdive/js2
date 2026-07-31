@@ -44,7 +44,7 @@ import {
   parseRegExpLiteral,
 } from "../index.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
-import { emitNativeNumberFormat } from "../number-format-native.js";
+import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { addImport, addStringConstantGlobal } from "../registry/imports.js";
@@ -1376,10 +1376,11 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectPrimitiveMethodImports finalize ──
-  // #1759: under WASI/standalone, template interpolation and String(number)
-  // need a pure-Wasm default Number::toString helper. Do not emit the JS-host
-  // env.number_toString import there; emit the native helper below instead.
-  const needsNativeNumberToString = state.primitiveNeeded.has("number_toString") && (ctx.wasi || ctx.standalone);
+  const nativeNumberFormat = usesNativeNumberFormat(ctx);
+  // #1759/#3912: wherever strings are natively represented, template interpolation
+  // and String(number) need the pure-Wasm Number::toString, NOT env.number_toString.
+  // All three gates below read that ONE predicate, so they cannot re-diverge.
+  const needsNativeNumberToString = state.primitiveNeeded.has("number_toString") && nativeNumberFormat;
   if (state.primitiveNeeded.has("number_toString") && !needsNativeNumberToString) {
     const t = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
     addImport(ctx, "env", "number_toString", { kind: "func", typeIdx: t });
@@ -1389,8 +1390,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // `number_toString(value)`, silently producing decimal output for any radix.
   // #1335 Phase 1: standalone/WASI emits the safe-integer radix formatter in
   // pure Wasm instead of requesting the JS host import.
-  const needsNativeNumberToStringRadix =
-    state.primitiveNeeded.has("number_toString_radix") && (ctx.wasi || ctx.standalone);
+  const needsNativeNumberToStringRadix = state.primitiveNeeded.has("number_toString_radix") && nativeNumberFormat;
   if (state.primitiveNeeded.has("number_toString_radix") && !needsNativeNumberToStringRadix) {
     const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
     addImport(ctx, "env", "number_toString_radix", { kind: "func", typeIdx: t });
@@ -1411,7 +1411,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // the toFixed/toExponential helpers, so emitNativeNumberFormat emits those
   // first. The defined funcs participate in the late-import index-shift fixup
   // like emitNativeParseNumber's.
-  if (ctx.wasi || ctx.standalone) {
+  if (nativeNumberFormat) {
     const fmtNative = new Set<string>();
     for (const n of [
       "number_toString",

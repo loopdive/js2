@@ -1,7 +1,7 @@
 ---
 id: 3912
 title: "CRITICAL: fast mode (the whole gc-native lane) cannot stringify a number — 6 of 9 number→string ops trap at runtime; import-collector gates number_toString and the string family on different conditions"
-status: ready
+status: in-progress
 created: 2026-07-31
 updated: 2026-07-31
 priority: critical
@@ -14,12 +14,17 @@ goal: performance
 sprint: current
 horizon: l
 es_edition: multi
-related: [3902, 3904, 3909, 3907]
+related: [3902, 3904, 3909, 3907, 3917]
 ---
 
 # #3912 — fast mode cannot stringify a number
 
-## Status: open — **independently reproduced twice**, with a conclusive control
+## Status: IMPLEMENTED — 8 of 9 operations pass; see "Implementation (landed on branch)" below
+
+The prescribed fix is implemented and measured. Read
+**"Implementation (landed on branch)"** near the end before anything else in
+this file — several statements above it were written before the root cause of
+the *remaining* failures was known, and are corrected there.
 
 ## Problem
 
@@ -274,6 +279,201 @@ saying the same.
 
 **Cheap discriminator:** validation-time failure ⇒ index shift (#3909);
 runtime trap ⇒ representation mismatch (this issue).
+
+## Implementation (landed on branch `issue-3917-fast-native-number-format`)
+
+Base: `claude/performance-benchmark-optimization-4ebyuz` @ `30c88194`. Two
+changes, exactly as prescribed. Result under `fast: true`: **3 of 9 → 8 of 9**.
+
+### (a) The gate — one predicate for both families
+
+New `usesNativeNumberFormat(ctx)` in `src/codegen/number-format-native.ts`
+(`ctx.wasi || ctx.standalone || ctx.nativeStrings`), consumed at all three
+number-format sites in `collectPrimitiveMethodImports`'s finalize block
+(`src/codegen/declarations/import-collector.ts`): the `number_toString` gate,
+the `number_toString_radix` gate, and the `emitNativeNumberFormat` block. One
+predicate, so the two families can never drift apart again.
+
+The disjunction is spelled out rather than reduced to bare `ctx.nativeStrings`
+on purpose: `wasi`/`standalone` only *default* `nativeStrings` on
+(`options?.nativeStrings ?? …` in `create-context.ts`), so
+`{ standalone: true, nativeStrings: false }` is expressible and must still get
+the native formatter — it has no JS host at all. Standalone/WASI behaviour is
+therefore byte-identical; only the previously-missing `nativeStrings` cell moves.
+
+### (b) The consumer — templates must not use the host bridge
+
+In `compileNativeTemplateExpression` (`src/codegen/string-ops.ts`) the three
+numeric span arms (f64 / i32 / i64) now call `emitNativeStringRefFromExternref`
+**unconditionally** instead of choosing on `standaloneNativeStrings`. The
+dynamic-externref and struct arms below keep `__str_from_extern` — those really
+do carry host strings.
+
+Without (b), (a) alone makes `` `v${3}` `` evaluate to `"v"`: the native
+formatter returns a `$AnyString` merely widened by `extern.convert_any`, and
+`__str_from_extern` (which marshals a genuine JS string via `__str_from_mem`)
+silently yields EMPTY for that box. The old condition asked "is a JS host
+available?" when the deciding question is "did this externref come from the
+native formatter?".
+
+**Host-import effect, measured.** `` `v${n}` `` in `fast` goes from 6 imports to
+5 — `env.number_toString` is gone, everything else unchanged; `standalone` stays
+at 0 and `host` stays at 6 (still `env.number_toString`, i.e. the gate widened
+rather than inverted). Strictly fewer host calls in the "no host calls" lane.
+
+**Follow-up left on the table (not a regression, pre-existing).** The bridge
+setup a few lines above the span loop still keys on
+`hasNonStringSpan && !standaloneNativeStrings`, so a `fast` template whose only
+non-string spans are numeric still registers `__str_from_mem` / `__str_to_mem` /
+`__str_extern_len` even though no arm calls them any more. Those three imports
+were already there before this change (the numeric arm used to call them —
+wrongly), so this is dead weight rather than new leakage. Narrowing that
+condition to "has a span that actually needs the bridge" is a separate, safe
+tidy-up worth doing while touching this function again.
+
+### Measured result
+
+Nine operations, all integer-valued, all bound to `const` variables, all
+returning a number (`.length` / `.charCodeAt`):
+
+| operation | host | fast | standalone | standalone+fast |
+| --- | --- | --- | --- | --- |
+| `n.toString()` | ok | **ok** | ok | ok |
+| `String(n)` | ok | **ok** | ok | ok |
+| `n.toFixed(2)` | ok | **ok** | ok | ok |
+| `n.toString(16)` | ok | **ok** | ok | ok |
+| `[1,22,333].join(",")` | ok | **ok** | ok | ok |
+| `` `v${n}` `` | ok | **ok** | ok | ok |
+| `"v" + n` | ok | ok | ok | ok |
+| `[10,9,1].sort()` | ok | **ok** | ok | ok |
+| `JSON.stringify({a:42})` | ok | **TRAP** | **"null"** | **"null"** |
+
+Bold = changed by this fix, except `JSON.stringify`, which is unchanged (below).
+Regression test: `tests/issue-3912-fast-number-stringify.test.ts` (37 cases).
+
+### Behaviour change to be aware of: fast mode now uses the native formatter
+
+`fast` modules now get the WasmGC `number_toFixed` / `toPrecision` /
+`toExponential` instead of the host's. `number-format-native.ts`'s own header
+documents a precision limit — digit extraction is f64, so results are exact to
+~15-16 significant decimal digits, and V8's bignum expansion of the exact binary
+value (`(7.7).toFixed(20)` → `"7.70000000000000017764"`) is NOT reproduced.
+Standalone/WASI already accept that; fast mode now does too.
+
+Measured, integer receivers (the only ones readable until #3907 lands), host vs
+fast vs standalone — **no divergence**:
+
+| expression | all three | node |
+| --- | --- | --- |
+| `(7).toFixed(20)` | `7.00000000000000000000` | same |
+| `(123).toPrecision(18)` | `123.000000000000000` | same |
+| `(1234).toExponential(15)` | `1.234000000000000e+3` | same |
+
+The deep-fractional-digit case that WOULD diverge cannot be tested under `fast`
+today: `const n = 7.7` truncates to `7` at its binding (#3907), so the input
+never reaches the formatter. Re-check it when #3907 lands. This is a known,
+bounded consequence of representation consistency, not a surprise.
+
+### CORRECTION to "Two signatures, probably one cause"
+
+That section asked whether one change fixes all six. **It does — for the five
+number-format signatures.** `join`'s `illegal cast` and the four
+`dereferencing a null pointer` cases in the number family were the *same*
+host-provider/native-consumer mismatch presenting differently depending on
+whether the consumer cast the box (illegal cast) or guarded the cast and
+dereferenced the guard's null fallback (null deref). The gate change fixes both.
+
+`JSON.stringify` is not one of them — see below.
+
+### `JSON.stringify` is a THIRD bug, not this one
+
+Measured **byte-identically before and after** this change (same trap, same
+message, every shape), so it is neither caused nor cured here. It is not #3907
+either — `{a: 42}` is integer-only, so i32 narrowing cannot explain it.
+
+It is the same *class* as this issue (a between-family gate mismatch) in a
+*different family*: `src/codegen/expressions/call-namespace-static.ts` gates the
+native JSON codec on `ctx.standalone || ctx.wasi`, so a `fast` module gets the
+HOST `env.JSON_stringify` — a real JS string — while its native-strings
+consumers expect a `$AnyString`. Traced to the instruction, from the emitted WAT
+of `const o = {a:42}; const s = JSON.stringify(o); return s.length;` under
+`fast`:
+
+```wat
+call $JSON_stringify              ;; host import -> externref (a real JS string)
+any.convert_extern
+local.tee 3
+ref.test (ref $AnyString)         ;; 0 — it is a host string, not a native one
+(if (result (ref null $AnyString))
+  (then local.get 3  ref.cast null (ref null $AnyString))
+  (else ref.null $AnyString))     ;; <- TAKEN
+local.tee 1
+struct.get $AnyString 0           ;; <- TRAPS: dereferencing a null pointer
+```
+
+**A second, independent JSON defect surfaced while measuring it**, and it is
+masked by the same constant-folding trap as #3917: under `standalone` and
+`wasi`, `JSON.stringify({a: 42})` written INLINE folds statically and yields the
+correct `{"a":42}`, but through a **variable** —
+`const o = {a: 42}; JSON.stringify(o)` — it yields **`"null"`**. Same for
+`{a: 1, b: 2}` and `{a: "x"}`. That is a silent wrong answer in the standalone
+lane on `main` today, unrelated to `fast`. Both need their own issue ids.
+
+### Gate audit (acceptance criterion 4)
+
+Between-family mismatches found so far: **two**.
+
+1. number-format vs string — this issue, fixed.
+2. JSON codec vs string — open, described above.
+
+`string_compare` (`import-collector.ts`, same block) already keys on
+`ctx.nativeStrings` and is consistent. The audit is not exhaustive: it covered
+the finalize block plus every `ctx.standalone || ctx.wasi` gate reachable from a
+number→string operation. A systematic sweep of all `wasi || standalone` gates
+against their consumers' `nativeStrings` assumptions is worth its own task.
+
+### What is verified, on what base, and what is NOT
+
+Verified on this branch (base `30c88194`, which does NOT contain #3907's fix):
+
+- the 8 integer-valued operations above, in `fast`, `standalone` and
+  `standalone+fast`;
+- `fast` imports no `env.number_*` formatter; `host` still imports
+  `env.number_toString` (the gate widened, it did not invert);
+- `tests/issue-3912-fast-number-stringify.test.ts` — 37/37;
+- 17 further local test files chosen because they are the ones this change can
+  reach — `native-strings`, `native-strings-standalone`, `issue-1537`,
+  `issue-1321-standalone`, `issue-1335-standalone`, `issue-2163-tostring-standalone`,
+  `issue-2176-template-literal-interp`, `issue-2510-tagged-template-standalone`,
+  `issue-2195-js-mode-template-process`, `issue-1342-json`,
+  `issue-1636-json-stringify`, `issue-2671-json-replacer`,
+  `issue-2097-standalone-highwater` (the host-import floor), `issue-1471`,
+  `issue-1776`, `issue-2058-any-plus-string`,
+  `issue-2029-tagged-template-capture-local-index`. **258 pass, 1 fail**, and
+  that one (`issue-1776 › preserves object reference identity in dynamic
+  equality (standalone)`) fails identically on pristine `HEAD` — A/B'd on the
+  same checkout by restoring the three source files from `git show HEAD:` and
+  re-running. Pre-existing, not this change.
+- repo gates: tsc, prettier, biome lint, func-budget, loc-budget,
+  oracle-ratchet, coercion-sites, pushraw, stack-balance.
+
+**Why that file list and not a blanket suite run:** the configuration this
+change can affect is exactly `nativeStrings && !standalone && !wasi` — i.e.
+`fast`, or an explicit `nativeStrings: true`. Standalone/WASI take the identical
+`standaloneNativeStrings` branch they took before and see an unchanged predicate;
+host mode never enters `compileNativeTemplateExpression` at all. So the blast
+radius is one configuration, and the files above are the ones that exercise it.
+
+NOT verified here, deliberately:
+
+- **non-integer** formatting (`String(3.5)`, `` `v${3.5}` ``, `(3.14159).toFixed(2)`)
+  under `fast`. Those are still wrong on this branch and this fix cannot make
+  them right: `mapTsTypeToWasm` lowers every `number` to i32 under `fast`, so
+  the value is truncated at its BINDING, before any formatter runs. That is
+  #3907 (and #3917, which is the same defect seen through the formatter). The
+  9-operation table must be re-run on top of #3907 with non-integer values.
+- test262 `built-ins/Number` / `built-ins/JSON` — not runnable locally at this
+  scale; left to the merge-queue re-validation.
 
 ## Provenance
 
