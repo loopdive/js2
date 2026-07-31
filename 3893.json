@@ -1,9 +1,8 @@
 {
   "id": "3893",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-31T10:16:21Z",
-  "updated_at": "2026-07-31T10:16:21Z",
-  "pr_scan": "ok"
+  "assignee": "ttraenkler/dev-es3-editions",
+  "status": "in-progress",
+  "branch": "issue-3893-gen-param-default",
+  "claimed_at": "2026-07-31T10:32:53Z",
+  "updated_at": "2026-07-31T10:32:53Z"
 }
