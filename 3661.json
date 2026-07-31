@@ -1,9 +1,8 @@
 {
   "id": "3661",
-  "assignee": "ttraenkler/codex-regexp-completion",
-  "status": "released",
-  "branch": "issue-3661-regexp-string-set-algebra",
-  "claimed_at": "2026-07-26T02:56:12Z",
-  "updated_at": "2026-07-26T03:34:14Z",
-  "released_at": "2026-07-26T03:34:14Z"
+  "assignee": "ttraenkler/dev-es5-descriptors",
+  "status": "in-progress",
+  "branch": "issue-3661-descriptor-enforcement",
+  "claimed_at": "2026-07-30T23:59:16Z",
+  "updated_at": "2026-07-30T23:59:16Z"
 }
