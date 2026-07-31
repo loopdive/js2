@@ -1,8 +1,9 @@
 {
   "id": "3647",
   "assignee": "ttraenkler/dev-enumerable",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3647-property-is-enumerable",
   "claimed_at": "2026-07-31T09:56:30Z",
-  "updated_at": "2026-07-31T09:56:30Z"
+  "updated_at": "2026-07-31T12:49:04Z",
+  "released_at": "2026-07-31T12:49:04Z"
 }
