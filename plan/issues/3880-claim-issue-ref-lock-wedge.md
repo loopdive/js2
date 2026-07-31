@@ -29,6 +29,52 @@ related: [2531, 3879]
 - **#3420's claim ref is permanently out of sync** — the work merged (PR #3864) while
   the record still shows a different agent's stale entry.
 
+## Fifth occurrence — first on `--release`, and the strongest single argument for priority
+
+2026-07-31, one agent handing #2916 back to the queue. **Three release attempts,
+zero effect** — `2916.json` still read `status: in-progress` afterwards.
+
+| # | attempt | outcome |
+| --- | --- | --- |
+| 1 | `--release 2916` | **Node crash** mid-run. The caller nearly recorded success: the shell reported `EXIT=0`, which was `tail`'s status from a pipe, not the script's. |
+| 2 | `--release 2916` | **exit 1**, cause captured verbatim: `error: cannot lock ref 'refs/claim-issue/base': is at 9619a610… but expected c5faa81c…` |
+| 3 | `--release 2916` after manually force-updating the mirror (`+issue-assignments:refs/claim-issue/base`) | **wedged >560 s**, killed |
+
+Three firsts in this one episode:
+
+1. **First failure observed on `--release`.** Prior evidence covered `claim` and
+   `--allocate`; this extends the fault to a **third entry point**, so it is the
+   shared-ref layer rather than any one code path.
+2. **First verbatim capture of the lock error**, naming
+   `refs/claim-issue/base` — the shared mirror every agent fetches into — as the
+   contended resource.
+3. **First case where a manual mirror force-update did not rescue the retry.**
+   That workaround had previously worked; here the retry wedged anyway.
+
+### Why this is the argument for prioritising, not just more evidence
+
+**This issue's own acceptance criterion says "a failed release/allocate can never
+be mistaken for success by its caller." Occurrence 1 is exactly that failure,
+and it was caught only because the caller read the record back instead of
+trusting the exit code.** Had it not been, #2916 would now sit falsely claimed by
+a departed agent.
+
+So the tool built to prevent stranding **nearly caused a stranding, then wedged
+while trying to undo it.** The eventual mitigation was to bypass the tool
+entirely: a `Claim status: STALE` note written into the issue file, because
+hand-editing a shared ref that other lanes read trades a bookkeeping problem for
+a corruption risk. **When the claim ref cannot be corrected, the durable record
+has to carry the truth instead** — which means the claim ref is currently not
+authoritative for anything.
+
+**Note on occurrence 1's near-miss** (this is a caller-side hazard worth fixing
+in the docs as well as the tool): `cmd | tail -2; echo $?` reports the *pipe's*
+last stage, so a crashed script reads as success. Use `cmd > file 2>&1; echo $?`,
+`${PIPESTATUS[0]}`, or run bare — and verify the **effect** (read the record
+back), not the exit code. Two agents hit this same trap within an hour on
+2026-07-31, one of whom had it written in their own memory at the time; vigilance
+did not prevent it, so the rule needs to be mechanical.
+
 ## Root cause
 
 The failure is `cannot lock ref 'refs/remotes/origin/issue-assignments': is at X but

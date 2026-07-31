@@ -21,6 +21,30 @@ origin: "2026-07-01 — sr-tail2 escalation: leaky-PASS conversion cluster, subs
 
 # #2916 — Standalone native `instanceof` operator + `isPrototypeOf` residual
 
+> ## ⚠ Claim status: the `issue-assignments` record for #2916 is STALE — this issue is UNCLAIMED and AVAILABLE
+>
+> `origin/issue-assignments:2916.json` reads
+> `assignee: ttraenkler/dev-es5-coercion`, `status: in-progress`. **That is
+> wrong.** The work was handed off deliberately; the release simply could not be
+> executed.
+>
+> Release failed **three times** on 2026-07-31:
+> 1. Node crash mid-run (the caller nearly read `tail`'s exit status as success)
+> 2. exit 1 — `cannot lock ref 'refs/claim-issue/base': is at 9619a610… but expected c5faa81c…`
+> 3. wedged >560 s after force-updating the mirror ref by hand, then killed
+>
+> This is **#3880** (`claim-issue.mjs` ref-lock wedge). The record was **not**
+> hand-edited: rewriting a shared ref that other lanes read trades a bookkeeping
+> problem for a corruption risk. This note is the durable correction — the issue
+> file is where a gating human or agent looks; the claim ref is advisory and was
+> known-unreliable that day.
+>
+> **Take this issue freely.** Groundwork (measured scope, counted baseline,
+> tiered acceptance, confirmed #2580 M3 dependency, both leak sites) landed in
+> **PR #3881**. Nothing is in flight and nothing is half-implemented — the
+> deliberate stopping point was *before* the Slice B/C substrate, because a
+> stranded `OrdinaryHasInstance` tri-state is how a wrong `true` ships.
+
 ## Problem (verified on `main` `f350ba855`, 2026-07-01)
 
 Under `--target standalone` the dynamic `instanceof` operator leaks an
