@@ -1,8 +1,9 @@
 {
   "id": "3635",
   "assignee": "ttraenkler/dev-ci-3584",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3635-artifact-retention",
   "claimed_at": "2026-07-31T15:02:55Z",
-  "updated_at": "2026-07-31T15:02:55Z"
+  "updated_at": "2026-07-31T17:41:16Z",
+  "released_at": "2026-07-31T17:41:16Z"
 }
