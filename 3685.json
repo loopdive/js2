@@ -1,8 +1,9 @@
 {
   "id": "3685",
   "assignee": "ttraenkler/dev-acorn-codegen",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3685-receiver-proof-widening",
   "claimed_at": "2026-07-31T00:49:56Z",
-  "updated_at": "2026-07-31T00:49:56Z"
+  "updated_at": "2026-07-31T01:20:00Z",
+  "released_at": "2026-07-31T01:20:00Z"
 }
