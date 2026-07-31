@@ -271,6 +271,30 @@ more than 50 regressions. These thresholds are not arbitrary — they
 were tuned over the first 30 sprints by observing CI noise and finding
 the level at which signal beat noise reliably.
 
+#### `runTest262File` cannot answer a host-import question
+
+**The standalone lane has one instrument trap worth stating as a rule**, because
+it fails silently and in the flattering direction — two agents hit it
+independently on 2026-07-31, and one published a result off it:
+
+> **`runTest262File(..., "standalone")` status cannot answer a host-import
+> question.** It _supplies_ the host imports, so a module that still leaks
+> `env::__*` runs fine and scores `pass`. A pre/post A/B across a fix that
+> demonstrably removed the leak produced **byte-identical** output — 3 pass, 1
+> fail, on both sides.
+>
+> Validate on the **import set of a bare standalone compile**
+> (`compile(src, { target: "standalone" })`), and instantiate with **no import
+> object** — a leaking module then fails with
+> `Import #0 "env": module is not an object or function`. That is also what
+> makes a kill-switch test real.
+
+The CI worker _does_ apply the host-free gate, which is why the baseline's
+`compile_error` rows are trustworthy even though the local runner cannot see the
+same defect. Note also that `compile(src, { standalone: true })` is rejected
+outright (#86): it silently ran the gc-host lane, producing vacuous "standalone"
+coverage. The option is `target: "standalone"`.
+
 ### Equivalence test suite
 
 `tests/equivalence/` contains 178 hand-written tests, each comparing a
@@ -352,7 +376,7 @@ question: who decides what?
   modify an existing one. The architect proposes; the human decides
   whether to adopt the change.
 - **Merge conflicts in `src/**`.** Any conflict in compiler source
-  during a `merge origin/main into branch` is escalated by the agent
+during a `merge origin/main into branch` is escalated by the agent
   to the senior-developer (Opus) for resolution; the human reviews
   the resolution if it is non-mechanical.
 - **Changes to `.github/workflows/`, `.claude/`, or `plan/method/`.**
@@ -682,4 +706,4 @@ retrospectives, ADRs, and issue files are the secondary evidence
 that the methodology is a methodology and not an accident. Both are
 in the repository. Both are reviewable.
 
-— *The js2wasm team*
+— _The js2wasm team_

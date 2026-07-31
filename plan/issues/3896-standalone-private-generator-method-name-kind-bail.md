@@ -142,6 +142,26 @@ without a whole-param default, public or private. It is orthogonal to the
 name-kind bail and is **unowned**. This is why the 136 public rows are not
 claimable here, and why some of the 252 private rows will not flip either.
 
+### Shape space for that slice — enumerated from the population, not imagined
+
+Three over-claims this session all came from probing shapes someone thought of
+rather than enumerating the space. So the rest family is enumerated from the
+**actual filenames** in the 1,907:
+
+- **363 rows** name a rest binding; **333 (91.7 %) are host-`pass`** — the
+  highest known-achievable ratio measured in this harvest.
+- **44 distinct rest shapes.** The large uniform buckets (20 rows each) are
+  `ary-ptrn-rest-{id,id-direct,id-elision,id-exhausted,ary-rest,ary-elem,ary-elision,ary-empty,obj-id,obj-prop-id}`
+  and `obj-ptrn-rest-{getter,skip-non-enumerable,val-obj}`; plus
+  `ary-ptrn-rest-id-iter-step-err` (28) and two 12-row `*-err` variants.
+- **It spans every declaration form** — class public 152 · class private 120 ·
+  objlit 40 · fn-expr/decl 36 · async-gen 7 · other 8. The most cross-cutting
+  mechanism found so far.
+
+The 120 class-private rest rows **overlap this issue's 252**, which is the
+concrete reason #3896's yield must be stated as "≤252, reduced by overlap"
+until the rest slice lands.
+
 ## Follow-up recorded for #3178 — the `object/*` 102 rows are a THIRD family
 
 Asked while here: are the 102 leaking `object/*` rows the bail's _intended_
