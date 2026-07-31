@@ -1,8 +1,8 @@
 {
   "id": "3647",
-  "assignee": "ttraenkler/dev-es5-coercion",
+  "assignee": "ttraenkler/dev-enumerable",
   "status": "in-progress",
-  "branch": "issue-3647-propertyisenumerable",
-  "claimed_at": "2026-07-31T09:07:59Z",
-  "updated_at": "2026-07-31T09:07:59Z"
+  "branch": "issue-3647-property-is-enumerable",
+  "claimed_at": "2026-07-31T09:56:30Z",
+  "updated_at": "2026-07-31T09:56:30Z"
 }
