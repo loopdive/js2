@@ -69,9 +69,9 @@ all reported as failures.**
 
 > **CORRECTION, measured later the same day.** This section originally said
 > "zero effect — `2916.json` still read `status: in-progress` afterwards". That
-> is **false**. The record has read `status: "released"`, `released_at:
-2026-07-31T08:55:03Z` ever since: **one of the three "failed" attempts had in
-> fact written it.** What made it _look_ unreleased was the dispatch gate, which
+> is **false**. The record has read `status: "released"` with a `released_at` of
+> 08:55:03Z ever since: **one of the three "failed" attempts had in fact written
+> it.** What made it _look_ unreleased was the dispatch gate, which
 > tested `assignee` alone and so reported a `released` record as CLAIMED (see the
 > `isHeld` section). The original sentence is left visible rather than deleted
 > because the mistake is the point: an agent inferred "no effect" from three
@@ -543,6 +543,35 @@ clobber the invoking repo's real index, and an inherited `GIT_DIR` would have
 aimed cache-repo commands at the wrong repository. All git calls in both the
 script and the tests now run under a sanitised environment, with `GIT_INDEX_FILE`
 re-added only where it is intended.
+
+## The same failure, arriving through version control — and the session's thesis
+
+Late in this issue's own fix work, the `idsFromMain` fix (see "Fix" item 11) went
+missing from the branch. Not to a conflict — to a **lineage split**. The branch's
+remote head was advanced by `auto-refresh-prs`; another agent, believing the
+author absent after ~50 minutes of a quiet head, built on that refreshed head,
+while my commit sat on the pre-refresh base. Neither lineage contained the other.
+No conflict, no error, a clean-looking tree, and a PR that would have merged
+without the fix.
+
+> **My push failing is the only reason I noticed. Had it succeeded, I'd have
+> reported the fix landed and it would simply not have been there.**
+
+That is the same shape as every other failure catalogued here, arriving through
+git rather than through a tool's output: a **correct-looking report about work
+that isn't there**. The remedies are the same two that the rest of this issue
+argues for — verify by reading the record at the tip (`git show <pushed-sha>:file`),
+not the exit code; and treat "no error" as no evidence.
+
+Two secondary lessons from the same incident:
+
+- **A quiet branch is not an absent author.** The takeover condition was "wait
+  ten minutes, re-check the head, take it if unchanged" — but the head was
+  unchanged precisely _because_ the author's pushes were timing out on the very
+  latency #3880 is about. The failure mode fed the misdiagnosis.
+- **Under contention, preserve before you argue.** Pushing the orphaned commit to
+  a separate `rescue-*` branch made it recoverable by anyone with zero clobber
+  risk, and cost nothing, before any question of ownership was settled.
 
 ## Explicitly NOT fixed here
 
