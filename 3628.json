@@ -1,8 +1,9 @@
 {
   "id": "3628",
   "assignee": "ttraenkler/dev-es3-editions",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3628-es3-editions",
   "claimed_at": "2026-07-31T08:30:47Z",
-  "updated_at": "2026-07-31T08:30:47Z"
+  "updated_at": "2026-07-31T09:52:53Z",
+  "released_at": "2026-07-31T09:52:53Z"
 }
