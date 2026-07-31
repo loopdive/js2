@@ -1,9 +1,8 @@
 {
   "id": "3559",
   "assignee": "ttraenkler/dev-eslint-graph",
-  "status": "released",
+  "status": "in-progress",
   "branch": "issue-3559-cross-fctx-capture",
-  "claimed_at": "2026-07-31T08:19:44Z",
-  "updated_at": "2026-07-31T10:08:14Z",
-  "released_at": "2026-07-31T10:08:14Z"
+  "claimed_at": "2026-07-31T10:49:42Z",
+  "updated_at": "2026-07-31T10:49:42Z"
 }
