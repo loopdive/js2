@@ -1,8 +1,11 @@
 {
   "id": "3896",
   "assignee": "ttraenkler/dev-es3-editions",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/dev-claim-reliability",
+  "status": "done",
   "branch": "issue-3178-privgen-probe",
   "claimed_at": "2026-07-31T12:22:07Z",
-  "updated_at": "2026-07-31T12:22:07Z"
+  "updated_at": "2026-07-31T13:30:58Z",
+  "write_id": "1409-k8csr8t0",
+  "released_at": "2026-07-31T13:30:58Z"
 }
