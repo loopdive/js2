@@ -1,8 +1,9 @@
 {
   "id": "3661",
   "assignee": "ttraenkler/dev-es5-descriptors",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-3661-descriptor-enforcement",
   "claimed_at": "2026-07-30T23:59:16Z",
-  "updated_at": "2026-07-30T23:59:16Z"
+  "updated_at": "2026-07-31T01:05:00Z",
+  "released_at": "2026-07-31T01:05:00Z"
 }
