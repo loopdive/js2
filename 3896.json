@@ -1,9 +1,8 @@
 {
   "id": "3896",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-31T11:41:53Z",
-  "updated_at": "2026-07-31T11:41:53Z",
-  "pr_scan": "ok"
+  "assignee": "ttraenkler/dev-es3-editions",
+  "status": "in-progress",
+  "branch": "issue-3178-privgen-probe",
+  "claimed_at": "2026-07-31T12:22:07Z",
+  "updated_at": "2026-07-31T12:22:07Z"
 }
