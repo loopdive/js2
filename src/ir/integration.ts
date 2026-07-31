@@ -218,7 +218,12 @@ import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance } from "./verify-alloc.js";
 import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType } from "./types.js";
-import { definedFuncAt, definedFuncHandleOf, replaceDefinedFuncAt } from "../codegen/func-space.js"; // (#1916 S2) positional read/write chokepoints
+import {
+  definedFuncAt,
+  definedFuncHandleOf,
+  nativeStrHelperHandle,
+  replaceDefinedFuncAt,
+} from "../codegen/func-space.js"; // (#1916 S2) positional read/write chokepoints
 import {
   classifyIrFailure,
   IrInvariantError,
@@ -2889,15 +2894,16 @@ function computeStringBackend(ctx: CodegenContext): StringBackendIndices {
   const nativeHelpers = new Map<string, number>();
   const hostImports = new Map<string, number>();
 
-  // Native helpers are stored as defined functions in `ctx.mod.functions`
-  // with a stable `name` field; convert their local index to absolute via
-  // `numImportFuncs`.
+  // Native helpers are defined functions; resolve each to a handle.
+  // (#3909) `nativeStrHelperHandle` prefers the STABLE-regime handle over the
+  // positional `numImportFuncs + i` scan this used to do inline — a live index
+  // baked here has to be chased by every later shifter, and the shift guard
+  // (`idx >= importsBefore`) silently stops chasing it once the import count
+  // climbs past it. See the helper's doc comment for the measured failure.
   if (ctx.nativeStrings) {
-    for (let i = 0; i < ctx.mod.functions.length; i++) {
-      const f = ctx.mod.functions[i]!;
-      if (f.name === "__str_concat" || f.name === "__str_equals" || f.name === "__str_concat_owned") {
-        nativeHelpers.set(f.name, ctx.numImportFuncs + i);
-      }
+    for (const name of ["__str_concat", "__str_equals", "__str_concat_owned"]) {
+      const h = nativeStrHelperHandle(ctx, name);
+      if (h !== undefined) nativeHelpers.set(name, h);
     }
   } else {
     // wasm:js-string imports live in `ctx.funcMap` keyed by op name (see
@@ -3758,18 +3764,13 @@ function makeResolver(
       if (ref.binding.kind === "intrinsic" && ref.binding.symbol === IR_STRING_COMPARE_FN) {
         if (ctx.nativeStrings) {
           ensureNativeStringHelpers(ctx);
-          const helperIdx = ctx.nativeStrHelpers.get("__str_compare");
-          if (helperIdx === undefined) {
+          if (!ctx.nativeStrHelpers.has("__str_compare")) {
             throw new Error(`ir/integration: cannot materialize ${ref.name} (native __str_compare unavailable)`);
           }
-          // Re-resolve by name against the post-shift function table (the
-          // helper map's captured index can predate later import inserts).
-          for (let i = 0; i < ctx.mod.functions.length; i++) {
-            if (ctx.mod.functions[i]!.name === "__str_compare") {
-              return bindCallableProvider(ref, ctx.numImportFuncs + i);
-            }
-          }
-          return bindCallableProvider(ref, helperIdx);
+          // (#3909) Stable handle first, post-shift name scan only as fallback
+          // — a baked live index stops being shifted once the import count
+          // climbs past it (see `nativeStrHelperHandle`).
+          return bindCallableProvider(ref, nativeStrHelperHandle(ctx, "__str_compare")!);
         }
         const hostIdx = ctx.funcMap.get("string_compare");
         if (hostIdx === undefined) {
@@ -3787,20 +3788,12 @@ function makeResolver(
       if (idx !== undefined) return bindCallableProvider(ref, idx);
       // Slice 6 part 4 (#1183): native-string helpers (`__str_charAt`,
       // `__str_concat`, `__str_equals`, `__str_flatten`, etc.) are
-      // registered in `ctx.nativeStrHelpers`, not `ctx.funcMap`. The
-      // helper map captures funcIdx at registration time and does NOT
-      // get re-shifted by late-import passes, so we re-resolve by name
-      // against the post-shift `ctx.mod.functions` (parallel to
-      // `computeStringBackend`'s rationale for the host string ops).
-      for (let i = 0; i < ctx.mod.functions.length; i++) {
-        if (ctx.mod.functions[i]!.name === adapterName) {
-          return bindCallableProvider(ref, ctx.numImportFuncs + i);
-        }
-      }
-      // Last fallback: the (potentially stale) helpers map. Used when
-      // a name doesn't appear in `ctx.mod.functions` because it's a
-      // host import rather than a defined helper.
-      const helperIdx = ctx.nativeStrHelpers.get(adapterName);
+      // registered in `ctx.nativeStrHelpers`, not `ctx.funcMap`.
+      // (#3909) Resolution order is stable handle → post-shift name scan →
+      // whatever the map holds; the old order put the name scan first, which
+      // downgraded an unshiftable stable handle to a live index that the
+      // shifters stop tracking once the import count passes it.
+      const helperIdx = nativeStrHelperHandle(ctx, adapterName);
       if (helperIdx !== undefined) return bindCallableProvider(ref, helperIdx);
       throw new IrInvariantError("unknown-function-ref", "lower", `ir/integration: unknown function ref "${ref.name}"`);
     },
@@ -4012,12 +4005,10 @@ function makeResolver(
     },
     emitStringCharAt(): readonly Instr[] {
       if (ctx.nativeStrings) {
-        for (let i = 0; i < ctx.mod.functions.length; i++) {
-          if (ctx.mod.functions[i]!.name === "__str_charAt") {
-            return [{ op: "call", funcIdx: ctx.numImportFuncs + i }];
-          }
-        }
-        throw new Error("ir/integration: __str_charAt helper not registered");
+        // (#3909) stable handle first — see `nativeStrHelperHandle`.
+        const h = nativeStrHelperHandle(ctx, "__str_charAt");
+        if (h === undefined) throw new Error("ir/integration: __str_charAt helper not registered");
+        return [{ op: "call", funcIdx: h }];
       }
       const idx = ctx.funcMap.get("string_charAt");
       if (idx === undefined) throw new Error("ir/integration: string_charAt import not registered");

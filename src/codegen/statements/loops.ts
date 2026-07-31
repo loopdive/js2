@@ -75,7 +75,7 @@ import {
 import { collectPatternBindingNames } from "./tdz.js";
 import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
-import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
+import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 
 /**
  * Compile a loop body, saving/restoring block-scoped shadows (#817) so that
@@ -1245,15 +1245,12 @@ function compileForOfString(ctx: CodegenContext, fctx: FunctionContext, stmt: ts
   //
   // The IR path (#1183) sidesteps this by walking
   // `ctx.mod.functions[i].name` at lowering time. Mirroring that here
-  // for the legacy path:
-  let flattenIdx: number | undefined;
-  let substringIdx: number | undefined;
-  for (let i = 0; i < ctx.mod.functions.length; i++) {
-    const name = ctx.mod.functions[i]!.name;
-    if (name === "__str_flatten") flattenIdx = ctx.numImportFuncs + i;
-    else if (name === "__str_substring") substringIdx = ctx.numImportFuncs + i;
-    if (flattenIdx !== undefined && substringIdx !== undefined) break;
-  }
+  // for the legacy path.
+  //
+  // (#3909) That scan is now the SECOND choice — `nativeStrHelpers` holds
+  // unshiftable stable handles since #1916 S3. See `nativeStrHelperHandle`.
+  const flattenIdx = nativeStrHelperHandle(ctx, "__str_flatten");
+  const substringIdx = nativeStrHelperHandle(ctx, "__str_substring");
   if (flattenIdx === undefined || substringIdx === undefined) {
     reportError(ctx, stmt, "for-of on string: __str_flatten/__str_substring helpers not available");
     return;

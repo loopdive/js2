@@ -78,7 +78,7 @@ import { lowerIrFunctionToWasm, type IrLowerResolver } from "../ir/lower.js";
 import type { StdlibMathBuiltin } from "../stdlib/math.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { mintDefinedFunc, nativeStrHelperHandle, pushDefinedFunc } from "./func-space.js";
 
 const F64: IrType = irVal({ kind: "f64" });
 
@@ -478,21 +478,44 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
 }
 
 /**
- * (#3256 Tier-1) Resolve a native-string runtime helper's CURRENT absolute
- * funcIdx by name against `ctx.mod.functions` (post-shift — the
- * `nativeStrHelpers` map bakes registration-time indices that late-import
- * passes do not re-shift; mirrors `computeStringBackend` / `makeResolver`'s
- * rationale in src/ir/integration.ts). Falls back to the helpers map for
- * names that aren't defined functions. Returns null when unknown.
+ * (#3256 Tier-1) Resolve a native-string runtime helper's funcIdx.
+ *
+ * (#3909) Ordering matters, and it is the opposite of what the original
+ * comment assumed. `ctx.nativeStrHelpers` entries are minted by
+ * `mintDefinedFunc`, so since #1916 S3 they are **STABLE-regime handles**
+ * (`>= STABLE_FUNC_BASE`): layout-independent ids that no shifter touches and
+ * that `resolveLayout` maps to a concrete index once, at emit. A stable handle
+ * is therefore the *authoritative* identity and can never go stale.
+ *
+ * The `ctx.numImportFuncs + i` name scan below yields a **LIVE-regime**
+ * absolute index instead — a number that is only correct until the next import
+ * lands, after which it depends on every shifter (`shiftLateImportIndices`,
+ * `reconcileNativeStrFinalizeShift`, dead-elim's renumber) covering it. Running
+ * that scan *first* silently downgraded an already-correct stable handle to a
+ * fragile live index.
+ *
+ * That downgrade is #3909: in a module with enough import churn (JSON.stringify
+ * + a regex + one more string feature is the minimal trigger — the regex adds
+ * `RegExp_new`/`string_match`, JSON adds `JSON_stringify` and the
+ * `__str_from_mem`/`__str_to_mem`/`__str_extern_len` bridge), the baked live
+ * index for `__str_substring` ended up exactly one below the real slot. The
+ * self-hosted `__str_trimStart` body then called `__str_compare` — arity 2, not
+ * 3 — and the module failed validation with
+ * "call[0] expected type (ref null 6), found i32.trunc_sat_f64_s of type i32".
+ * Single-feature modules never reached the desync, which is why it looked like
+ * a three-feature interaction.
+ *
+ * So: funcMap first (unchanged), then any STABLE handle, and only then the
+ * live-regime name scan — which remains as the fallback for helpers registered
+ * before stable minting (a live entry in `nativeStrHelpers` really can be
+ * stale, which is the case the scan was written for). That ordering lives in
+ * the shared `nativeStrHelperHandle` (src/codegen/func-space.ts), which every
+ * helper-by-name resolver now goes through.
  */
 function resolveNativeStrHelper(ctx: CodegenContext, helperName: string): number | null {
   const idx = ctx.funcMap.get(helperName);
   if (idx !== undefined) return idx;
-  for (let i = 0; i < ctx.mod.functions.length; i++) {
-    if (ctx.mod.functions[i]!.name === helperName) return ctx.numImportFuncs + i;
-  }
-  const helperIdx = ctx.nativeStrHelpers.get(helperName);
-  return helperIdx === undefined ? null : helperIdx;
+  return nativeStrHelperHandle(ctx, helperName) ?? null;
 }
 
 /** Shared lowering + registration glue for both driver paths. */

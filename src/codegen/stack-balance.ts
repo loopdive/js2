@@ -1878,10 +1878,15 @@ function fixCallArgTypesInBody(
       pos--;
     }
 
-    // Apply insertions in reverse order (so positions don't shift)
+    // (#3910) Apply HIGHEST position first — any other order shifts the
+    // not-yet-applied ones. The old loop drained back-to-front under "reverse
+    // order (so positions don't shift)", which assumed an ASCENDING build order;
+    // the producer scan above walks BACKWARD, so back-to-front WAS ascending and
+    // every call with 2+ mismatched args stacked its 2nd coercion on the 1st arg.
+    // Trace: plan/issues/3910-regex-plus-string-constants-global-get.md.
     if (insertions.length > 0) {
-      for (let k = insertions.length - 1; k >= 0; k--) {
-        const { afterPos, instrs } = insertions[k]!;
+      insertions.sort((a, b) => b.afterPos - a.afterPos);
+      for (const { afterPos, instrs } of insertions) {
         body.splice(afterPos + 1, 0, ...instrs);
         recordFixup("call-arg-coerce", `coerced a call argument (${instrs.length} instr(s))`); // #1918
         ci += instrs.length;

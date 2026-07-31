@@ -1,9 +1,10 @@
 ---
 id: 3910
 title: "A module combining a regex literal with string constants mis-resolves a global.get in `run`"
-status: ready
+status: done
 created: 2026-07-31
 updated: 2026-07-31
+completed: 2026-07-31
 priority: medium
 feasibility: medium
 reasoning_effort: medium
@@ -62,3 +63,105 @@ Filed separately from #3909 (the `__str_trimStart` multi-feature validation
 failure) because the two have different symptoms and different index spaces,
 but they surfaced together and may share a root cause. Whoever picks up one
 should read the other.
+
+## Resolution
+
+### It is NOT an index shift, and NOT a global-index problem at all
+
+The reported symptom — "the wrong global index is read" — is a misreading of
+the validator message. Both string globals involved are `(ref null $AnyString)`
+and both `global.get`s target the correct global. What is wrong is the
+**coercion**: one of the two arguments reaches the host import unconverted.
+
+Nor is a string constant required. The minimal repro has **no user string
+literal at all**:
+
+```ts
+export function run(s: string): number {
+  const re = /o/;
+  return re.test(s) ? 1 : 0;
+}
+```
+
+compiled with `fast: true` (native strings) fails with
+
+```
+call[1] expected type externref, found global.get of type (ref null 7)
+```
+
+A regex literal *always* materialises two native-string globals of its own —
+the pattern and the (possibly empty) flags — and feeds them to
+`RegExp_new(externref, externref)`. That is the whole trigger. "Regex + string
+constants" was a coincidence of the reporter's repro; "three features" was a
+coincidence of #3909's repro, which is a genuinely different bug.
+
+### Root cause: `insertions` are applied in ascending position order
+
+`fixCallArgTypesInBody` (`src/codegen/stack-balance.ts`) walks **backward**
+from a call to find arguments whose produced type does not match the callee's
+parameter type, queueing `{ afterPos, instrs }` for each. Because the walk runs
+backward, the queue comes out in **descending** `afterPos` order. It was then
+drained back-to-front:
+
+```ts
+// Apply insertions in reverse order (so positions don't shift)
+for (let k = insertions.length - 1; k >= 0; k--) { … body.splice(afterPos + 1, …) }
+```
+
+which iterates it in **ascending** order — exactly the order that shifts every
+position not yet applied. The comment's premise ("reverse order ⇒ positions
+don't shift") only holds if the queue is ascending, and it never is.
+
+Traced on the repro (`JS2_DEBUG` instrumentation, since removed):
+
+```
+insertions=[{afterPos:1,[extern.convert_any]},{afterPos:0,[extern.convert_any]}]
+after=[global.get $pattern, extern.convert_any, extern.convert_any,
+       global.get $flags, call $RegExp_new, …]
+```
+
+Both coercions landed on the **pattern**; the **flags** got none. The later
+`fixupExternConvertAny` repair pass then removed the second (correctly — it saw
+an already-`externref` operand), which is why the emitted WAT showed a single,
+innocent-looking `extern.convert_any` and hid the real shape.
+
+So the defect is: **any call with two or more mismatched arguments mis-places
+every coercion after the first.** One-mismatch calls — the overwhelming
+majority — were unaffected, which is why this survived.
+
+### Fix
+
+`src/codegen/stack-balance.ts` — sort `insertions` descending by `afterPos` and
+apply highest-first. The backward walk already produces that order; sorting
+makes the invariant explicit so a future change to the walk cannot silently
+resurrect the bug.
+
+### Blast radius
+
+A sweep over 455 three-feature fast-mode modules, the four benchmark suites and
+the playground/examples corpus found ~60 call sites with 2+ queued coercions
+(`csv-parse`, `replaceAll` with 3, several DOM examples). Benchmark results are
+byte-identical before/after; every Wasm **validation** failure in the 455-combo
+corpus disappears.
+
+### Residual, out of scope: fast-mode regex never reaches the host correctly
+
+With the module now valid, fast-mode regex fails one layer down at runtime:
+`RegExp_new` receives the two native-string GC structs as opaque externrefs and
+V8 reports `Invalid flags supplied to RegExp constructor '[object Object]'`.
+`compileRegExpLiteral` does not route its arguments through the
+`__str_flatten` + `__str_to_extern` bridge the way `console.log` does
+(`src/codegen/expressions/builtins.ts:86-97`), and `RegExp_test` has the same
+gap for its subject string. That is a **representation** defect (runtime, not
+validation) in the #3912 family, pre-existing and independent — before this fix
+the module did not even validate. Worth its own issue.
+
+The regression test therefore asserts the validation property
+(`WebAssembly.validate`) plus the emitted argument shape, not a `run()` result.
+
+### Tests
+
+`tests/issue-3909-3910-index-and-argcoerce.test.ts` — the bare regex literal,
+the reported regex + string-constant form, and a structural assertion that each
+`global.get` feeding `RegExp_new` carries its own `extern.convert_any`. All
+three fail on the unfixed compiler.
