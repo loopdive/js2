@@ -1,8 +1,9 @@
 {
   "id": "3584",
   "assignee": "ttraenkler/dev-ci-3584",
-  "status": "in-progress",
+  "status": "done",
   "branch": "issue-3584-workflow-token",
   "claimed_at": "2026-07-31T12:13:34Z",
-  "updated_at": "2026-07-31T12:13:34Z"
+  "updated_at": "2026-07-31T17:27:03Z",
+  "released_at": "2026-07-31T17:27:03Z"
 }
