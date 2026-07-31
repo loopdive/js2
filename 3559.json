@@ -1,8 +1,8 @@
 {
   "id": "3559",
-  "assignee": "",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-23T21:30:09Z",
-  "updated_at": "2026-07-23T21:30:09Z"
+  "assignee": "ttraenkler/dev-eslint-graph",
+  "status": "in-progress",
+  "branch": "issue-3559-cross-fctx-capture",
+  "claimed_at": "2026-07-31T08:19:44Z",
+  "updated_at": "2026-07-31T08:19:44Z"
 }
