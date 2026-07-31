@@ -1,8 +1,11 @@
 {
   "id": "3893",
   "assignee": "ttraenkler/dev-es3-editions",
-  "status": "in-progress",
+  "requested_by": "ttraenkler/dev-claim-reliability",
+  "status": "done",
   "branch": "issue-3893-gen-param-default",
   "claimed_at": "2026-07-31T10:32:53Z",
-  "updated_at": "2026-07-31T10:32:53Z"
+  "updated_at": "2026-07-31T13:30:39Z",
+  "write_id": "97447-603iciss",
+  "released_at": "2026-07-31T13:30:39Z"
 }
