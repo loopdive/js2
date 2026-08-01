@@ -14,6 +14,8 @@ goal: es5
 related: [3977, 2875, 3217, 3254, 1470]
 loc-budget-allow:
   - src/codegen/array-object-proto.ts
+coercion-sites-allow:
+  - src/codegen/array-object-proto.ts
 assignee: ttraenkler/es5-string
 ---
 
@@ -161,3 +163,21 @@ suites (`string-methods`, `tostring-valueof`, `wrapper-string-concat`,
   does not reach `__extern_method_call`, so the transferred arm never fires.
 - `concat` (variadic), `repeat`/`padStart`/`padEnd`, `localeCompare`,
   `substr` — same wiring shape, not yet added.
+
+## Coercion-ratchet note (added while draining CI on PR #12)
+
+`check:coercion-sites` failed: this change adds `__any_to_string` x2 and
+`__to_primitive` x1 in `src/codegen/array-object-proto.ts` (root cause 3 — the
+missing §7.1.1.1 pre-reduction, without which `$__any_to_string` takes the
+`"[object Object]"` terminal on an object receiver).
+
+Granted via `coercion-sites-allow` rather than rewritten, because the same
+pre-reduction already exists in the substring body — this follows in-tree
+precedent rather than hand-rolling a fresh ToString/ToPrimitive matrix, which
+is what the gate is actually guarding against.
+
+**That is a stopgap, not an endorsement.** The gate's preferred fix is routing
+through the single coercion engine (#1917 / #2108,
+`plan/log/analysis-2026-06/03-coercion-engine-spec.md` §5). Before this issue
+merges, decide explicitly: route through the engine, or keep the allowance and
+record why. Do not let the allowance become the silent default.
