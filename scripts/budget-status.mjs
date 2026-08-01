@@ -82,7 +82,13 @@ function argValue(name, fallback = "") {
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith("--") ? args[i + 1] : fallback;
 }
 const AS = argValue("--as", process.env.JS2WASM_AGENT || "");
-const ROLE = (argValue("--role", process.env.JS2WASM_ROLE || "developer") || "developer").toLowerCase();
+// `--role` has a default, so unlike --model its absence is not self-announcing:
+// an architect passing only `--as` would get developer scope applied silently,
+// with exclusions printed against a role it never claimed. Track WHERE the value
+// came from so the report can say "assumed" rather than implying it was asked for.
+const ROLE_RAW = argValue("--role", process.env.JS2WASM_ROLE || "");
+const ROLE_DEFAULTED = !ROLE_RAW;
+const ROLE = (ROLE_RAW || "developer").toLowerCase();
 const MODEL_RAW = argValue("--model", process.env.JS2WASM_MODEL || "");
 const LIMIT = Math.max(1, Number(argValue("--limit", "5")) || 5);
 
@@ -541,6 +547,7 @@ const filtersApplied = {
   claim: claims.state === "ok",
   scope: wantPicks,
   role: ROLE_KNOWN ? ROLE : `${ROLE} (unknown role — fell back to "any", scope filter effectively OFF)`,
+  role_defaulted: ROLE_DEFAULTED,
   model: MODEL ? MODEL : false,
   identity: AS || false,
 };
@@ -650,8 +657,12 @@ function describeClaimRef() {
 function describeFilters() {
   const parts = [];
   parts.push(claims.state === "ok" ? "claim=on (live)" : "claim=OFF");
-  parts.push(ROLE_KNOWN ? `role=${ROLE}` : `role=${ROLE} UNKNOWN → scope filter effectively OFF`);
-  parts.push(MODEL ? `model=${MODEL}` : "model=OFF (no --model/--as lane given — task lane NOT filtered)");
+  parts.push(
+    ROLE_KNOWN
+      ? `role=${ROLE}${ROLE_DEFAULTED ? " (DEFAULT — no --role/$JS2WASM_ROLE given; scope filtered as a developer)" : ""}`
+      : `role=${ROLE} UNKNOWN → scope filter effectively OFF`,
+  );
+  parts.push(MODEL ? `model=${MODEL}` : "model=OFF (no --model/$JS2WASM_MODEL given — task lane NOT filtered)");
   parts.push(AS ? `as=${AS}` : "as=OFF (own claims cannot be distinguished from others')");
   return parts.join(", ");
 }

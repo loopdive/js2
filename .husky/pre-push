@@ -11,6 +11,30 @@
 #
 # Skip the entire hook with: git push --no-verify  (only do this when you
 # *know* you are not pushing private content to public).
+#
+# ---------------------------------------------------------------------------
+# FALSE-NEGATIVE PUSHES: a non-zero exit does NOT mean the push failed.
+# ---------------------------------------------------------------------------
+# If you wrap a push in a watchdog — `timeout 120 git push fork <branch>` —
+# the timeout can kill the CLIENT *after* the remote has already accepted and
+# updated the ref. You then see exit 124 (or a SIGTERM) and conclude the push
+# did not land, when it did. Re-pushing, re-branching, or "recovering" from
+# that false negative is how branches get duplicated.
+#
+# Observed on this repo 2026-07-31: exit 124 on a push whose ref had already
+# updated on the remote.
+#
+# RULE: confirm a push by reading the REMOTE's state, never by the exit code.
+#
+#     git ls-remote fork refs/heads/<branch>
+#
+# and compare the printed sha to `git rev-parse HEAD`. Equal ⇒ the push
+# landed, whatever the exit code said. This is the same
+# read-the-record-not-the-report discipline the issue-id tooling uses.
+#
+# The corollary also holds: exit 0 from a pipeline (`git push … | tail`)
+# reports the LAST command's status, not the push's. Don't pipe a command
+# whose exit status you need.
 
 remote="$1"
 remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
@@ -277,6 +301,13 @@ if command -v node > /dev/null 2>&1 && [ -d plan/issues ]; then
   # (5b) committed-tree graph integrity. This catches the PR-quality failure
   # where an uncommitted sibling issue file makes the working tree look valid,
   # but the pushed commit has a dangling depends_on.
+  #
+  # This scans the WHOLE issue tree on purpose — duplicate-id and dangling
+  # depends_on detection both need a complete index, so scoping it to the files
+  # the push touches would silently weaken it. It stays affordable because the
+  # checker reads every blob in a single `git cat-file --batch` (#3964); it
+  # previously spawned one `git show` per file (~3,500 serial subprocesses) and
+  # took minutes-to-tens-of-minutes on every push.
   if [ -f scripts/check-committed-issue-integrity.mjs ]; then
     if ! node scripts/check-committed-issue-integrity.mjs HEAD > /tmp/.prepush_issues_committed 2>&1; then
       echo ""

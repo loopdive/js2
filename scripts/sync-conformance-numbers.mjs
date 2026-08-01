@@ -19,12 +19,23 @@
  * Modes:
  *   (default)  Rewrite anchor blocks in place. Exits 0 on success, 1 on
  *              malformed inputs (missing anchors, bad JSON, etc).
- *   --check    Do not write. Exit non-zero if any file would change.
- *              Used by CI to fail PRs that would drift the numbers.
+ *   --check    Do not write. Exit non-zero if any file would change, and
+ *              print the ACTUAL line diff of the offending anchor block,
+ *              classified as either a changed conformance line or a
+ *              whitespace/formatting-only difference. See #3947: the old
+ *              message said only `DRIFT <file>`, which reads as "the
+ *              conformance number is stale" and sent two separate
+ *              investigations after a figure that had not moved — the real
+ *              difference was two blank lines.
  *
  * Idempotent: re-running with no JSON change produces a clean diff.
  *
- * See issue #1522.
+ * The generated block is deliberately emitted with a blank line on either
+ * side of the body (see `replaceAnchorBlock`) so that prettier's markdown
+ * formatter and this script agree byte-for-byte. Do not "tidy" those blank
+ * lines away — that reintroduces #3947.
+ *
+ * See issues #1522 and #3947.
  */
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -155,8 +166,95 @@ function renderStandaloneBlock(report) {
 }
 
 /**
+ * Extract the anchor block region (start anchor through end anchor,
+ * inclusive) from `text`. Returns null when the anchors are absent.
+ */
+function blockRegion(text, start = START, end = END) {
+  const s = text.indexOf(start);
+  const e = text.indexOf(end);
+  if (s === -1 || e === -1 || e < s) return null;
+  return text.slice(s, e + end.length);
+}
+
+/**
+ * Minimal LCS line diff, rendered unified-style. Only ever run over a single
+ * anchor block (a handful of lines), so the O(n*m) table is free.
+ *
+ * Blank lines are rendered as `(blank line)` on purpose: the #3947 failure
+ * was a blank-line-only difference, which is invisible in a diff that prints
+ * an empty string for it.
+ */
+function diffLines(oldText, newText) {
+  const a = oldText.split("\n");
+  const b = newText.split("\n");
+  const n = a.length;
+  const m = b.length;
+  const lcs = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const show = (s) => (s.trim() === "" ? "(blank line)" : s);
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      out.push(`  ${show(a[i])}`);
+      i++;
+      j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      out.push(`- ${show(a[i])}`);
+      i++;
+    } else {
+      out.push(`+ ${show(b[j])}`);
+      j++;
+    }
+  }
+  while (i < n) out.push(`- ${show(a[i++])}`);
+  while (j < m) out.push(`+ ${show(b[j++])}`);
+  return out;
+}
+
+/**
+ * Classify why a file would change, so the failure message can name the
+ * ACTUAL cause instead of an assumed one (#3947).
+ *
+ *   kind: "content"    — the generated line itself differs (e.g. the
+ *                        conformance number really is stale). `oldLine` /
+ *                        `newLine` carry the two values.
+ *   kind: "formatting" — the generated line is byte-identical; only the
+ *                        surrounding whitespace inside the anchors differs.
+ *
+ * Either way `diff` is the real line diff of the block, so a reader never has
+ * to guess.
+ */
+function classifyChange(orig, next, body, start = START, end = END) {
+  const before = blockRegion(orig, start, end);
+  const after = blockRegion(next, start, end);
+  const startIdx = orig.indexOf(start);
+  const endIdx = orig.indexOf(end);
+  const oldInner = startIdx === -1 || endIdx === -1 ? "" : orig.slice(startIdx + start.length, endIdx);
+  const oldLine = oldInner.trim();
+  const newLine = body.trim();
+  return {
+    kind: oldLine === newLine ? "formatting" : "content",
+    oldLine,
+    newLine,
+    diff: before !== null && after !== null ? diffLines(before, after) : [],
+  };
+}
+
+/**
  * Replace the contents between `start` and `end` in `text` with `body`.
  * Returns the new text. Throws if the anchor pair is missing or malformed.
+ *
+ * The blank line on either side of `body` is REQUIRED, not cosmetic (#3947):
+ * prettier's markdown formatter inserts exactly those two blank lines, so
+ * emitting them here is what stops `prettier --write` and this script from
+ * mutually undoing each other. Verified against prettier 3.8 on all four
+ * target files, including README.md's two adjacent anchor pairs.
  */
 function replaceAnchorBlock(text, body, label, start = START, end = END) {
   const startIdx = text.indexOf(start);
@@ -180,7 +278,7 @@ function replaceAnchorBlock(text, body, label, start = START, end = END) {
   }
   const before = text.slice(0, startIdx + start.length);
   const after = text.slice(endIdx);
-  return `${before}\n${body}\n${after}`;
+  return `${before}\n\n${body}\n\n${after}`;
 }
 
 function processFile(relPath, report, { check }) {
@@ -197,7 +295,7 @@ function processFile(relPath, report, { check }) {
   if (!check) {
     writeFileSync(abs, next, "utf8");
   }
-  return { path: relPath, changed: true };
+  return { path: relPath, changed: true, detail: classifyChange(orig, next, body) };
 }
 
 /**
@@ -222,7 +320,7 @@ function processStandaloneFile(relPath, report, { check }) {
   if (!check) {
     writeFileSync(abs, next, "utf8");
   }
-  return { path: relPath, changed: true };
+  return { path: relPath, changed: true, detail: classifyChange(orig, next, body, SA_START, SA_END) };
 }
 
 function main() {
@@ -260,7 +358,10 @@ function main() {
 
   const changed = results.filter((r) => r.changed);
   for (const r of results) {
-    const marker = r.changed ? (check ? "DRIFT" : "wrote") : "ok";
+    // #3947: never label a --check difference "DRIFT" unqualified. Under a
+    // script named sync-conformance-NUMBERS that reads as "the number is
+    // stale", which is a cause the script has NOT established.
+    const marker = r.changed ? (check ? "DIFFERS" : "wrote") : "ok";
     console.log(`[sync-conformance] ${marker}  ${r.path}`);
   }
 
@@ -268,9 +369,39 @@ function main() {
     process.exit(1);
   }
   if (check && changed.length > 0) {
+    // Print the ACTUAL diff and the ACTUAL classification. The two failure
+    // modes have completely different triage paths, and guessing wrong costs
+    // far more than printing three extra lines (#3947).
+    for (const r of changed) {
+      const d = r.detail;
+      console.error("");
+      if (!d) {
+        console.error(`[sync-conformance] ${r.path}: generated block differs.`);
+        continue;
+      }
+      if (d.kind === "content") {
+        console.error(
+          `[sync-conformance] ${r.path}: the generated line CHANGED — the committed value does not match ` +
+            `benchmarks/results/test262-current.json.`,
+        );
+        console.error(`[sync-conformance]   committed: ${d.oldLine}`);
+        console.error(`[sync-conformance]   generated: ${d.newLine}`);
+      } else {
+        console.error(
+          `[sync-conformance] ${r.path}: generated block differs — WHITESPACE/FORMATTING ONLY. ` +
+            `The generated line is byte-identical, so nothing about the conformance figures has changed. ` +
+            `(Usual cause: a markdown formatter reflowed the block. See #3947.)`,
+        );
+      }
+      for (const line of d.diff) {
+        console.error(`[sync-conformance]   ${line}`);
+      }
+    }
+    console.error("");
     console.error(
-      `[sync-conformance] --check failed: ${changed.length} file(s) would change. ` +
-        `Run \`pnpm run sync:conformance\` and commit the result.`,
+      `[sync-conformance] --check failed: ${changed.length} file(s) would change (block diff above). ` +
+        `Run \`pnpm run sync:conformance\` and commit the result — it rewrites the whole anchor block, ` +
+        `so it repairs a formatting-only difference just as it repairs a changed value.`,
     );
     process.exit(1);
   }
