@@ -596,6 +596,7 @@ const T262_EDITION_SCOPE_RANK = new Map([
   ["ES2024", 13],
   ["ES2025", 14],
   ["ES2026", 15],
+  ["ES2027", 16],
 ]);
 const T262_EDITION_RELEASE_YEAR = new Map([
   ["ES1", 1997],
@@ -614,6 +615,7 @@ const T262_EDITION_RELEASE_YEAR = new Map([
   ["ES2024", 2024],
   ["ES2025", 2025],
   ["ES2026", 2026],
+  ["ES2027", 2027],
 ]);
 const T262_PUBLISHED_EDITION_RELEASE_MONTH = 6;
 
@@ -628,7 +630,7 @@ const T262_PUBLISHED_EDITION_RELEASE_MONTH = 6;
 // the following year. Bumping this constant alongside the generator's
 // CURRENT_DRAFT_EDITION is the single intentional switch that turns a draft year
 // into a published notch.
-const T262_CURRENT_DRAFT_EDITION_YEAR = 2026;
+const T262_CURRENT_DRAFT_EDITION_YEAR = 2027;
 
 function t262IsEditionScope(edition) {
   return (

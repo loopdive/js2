@@ -6,26 +6,60 @@ import type { CodegenContext } from "../context/types.js";
 export interface TransferredNativeReceiverEntry {
   typeIdx: number;
   funcTypeIdx: number;
+  /** Declared USER parameter count (closure params minus the `thisValue` slot). */
+  declaredUserArity: number;
 }
 
 /**
- * Native-prototype closures carry an internal receiver before user arguments.
- * Keep the residual arity-2 bridge exact to the substring metadata singleton.
+ * (#3992) Native-prototype METHOD closures carry an internal receiver param
+ * ahead of their user arguments: the lifted signature is
+ * `(self, thisValue, arg0 … arg{n-1})`. `__call_fn_method_N`'s generic dispatch,
+ * by contrast, fills every closure param from the argument vector and publishes
+ * the receiver only through the `__current_this` global. So a transferred /
+ * borrowed native-proto method — the test262 shape
+ * `obj.m = String.prototype.m; obj.m(…)` — had its arguments shifted one slot
+ * left (`thisValue` received `arg0`) and answered a silently WRONG value
+ * (measured: `null`), rather than throwing.
+ *
+ * The correction is a property of the closure SHAPE, not of a member name, so
+ * this collector keys on `nativeProtoReceiverClosureStructTypes` — the set the
+ * closure factory already populates for every `kind === "method"` proto closure
+ * (`native-proto.ts`). It formerly pinned `arity === 2` + `name === "substring"`,
+ * which is why exactly one member worked; `charAt` needed a SECOND, separately
+ * hard-coded arm (`buildTransferredCharAtApplyArm`) for the identical reason.
+ * Both were per-member clones of one shape rule: every unlisted member stayed
+ * silently wrong, and a third clone per member does not scale.
+ *
+ * A closure is eligible at call arity `N` iff it declares AT LEAST `N + 1`
+ * params (the extra slot being `thisValue`). `>=` rather than `===` covers
+ * UNDER-APPLICATION, which is the norm here rather than the exception: several
+ * members carry an uncounted optional trailing arg (`indexOf`/`lastIndexOf`/
+ * `includes`/`startsWith`/`endsWith` all get 2 slots via
+ * `STRING_PROTO_METHOD_PARAM_SLOTS` while spec `length` is 1), so the ordinary
+ * `s.indexOf(x)` call site supplies one fewer argument than the closure
+ * declares. Missing trailing args are padded with the reflective ABI's
+ * omitted-arg convention (`ref.null.extern`), which the member bodies already
+ * test for alongside the #2106 undefined sentinel.
+ *
+ * OVER-application is deliberately NOT claimed here: at arity > declared the
+ * generic dispatch already owns the closure, and re-routing it would change
+ * behaviour beyond the receiver bug this fixes.
  */
-export function collectTransferredSubstringReceivers(
+export function collectTransferredNativeProtoReceivers(
   ctx: CodegenContext,
   arity: number,
 ): TransferredNativeReceiverEntry[] {
-  if (arity !== 2) return [];
   const entries: TransferredNativeReceiverEntry[] = [];
+  if (!ctx.nativeProtoReceiverClosureStructTypes) return entries;
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
-    if (
-      info.paramTypes.length === 3 &&
-      ctx.nativeProtoReceiverClosureStructTypes?.has(typeIdx) &&
-      ctx.builtinFnMetaByTypeIdx?.get(typeIdx)?.name === "substring"
-    ) {
-      entries.push({ typeIdx, funcTypeIdx: info.funcTypeIdx });
-    }
+    if (info.paramTypes.length < arity + 1) continue;
+    if (!ctx.nativeProtoReceiverClosureStructTypes.has(typeIdx)) continue;
+    // Only the per-(brand, member) META subtype carries the field-3 exact-identity
+    // discriminator that the call arm re-checks after its structural `ref.test`.
+    // The shared base wrapper is also in the set but has no such field, and
+    // dispatching on it would capture every structurally equal closure.
+    if (!ctx.builtinFnMetaByTypeIdx?.has(typeIdx)) continue;
+    entries.push({ typeIdx, funcTypeIdx: info.funcTypeIdx, declaredUserArity: info.paramTypes.length - 1 });
   }
   return entries;
 }
@@ -47,19 +81,36 @@ export function resolveClosureBaseWrapperTypeIdx(
 }
 
 /**
- * Build the special method-call arm that supplies `(self, thisVal, start, end)`.
- * The structural ref.test is only a family guard, so immutable bfnid is checked
- * before invocation. The saved current-this value is restored before return.
+ * Build the method-call arm that supplies `(self, thisVal, arg0 … arg{n-1})`.
+ * The structural `ref.test` is only a family guard (WasmGC canonicalizes
+ * structurally equal metadata structs), so the immutable field-3 bfnid is
+ * re-checked for exact identity before invocation. The saved `__current_this`
+ * is restored before returning, matching the generic dispatch's nesting
+ * discipline.
+ *
+ * Local convention inside `__call_fn_method_N` (see `emitClosureMethodCallExportN`):
+ * `0` = thisVal, `1` = closure, `2 … arity+1` = the user args. `arity` is the
+ * USER arity — one less than the closure's declared param count.
+ *
+ * Stack balance: each arm pushes exactly one externref (the `call_ref` result)
+ * and immediately sinks it into `resultSaveLocal`, so the arm is stack-neutral
+ * up to its own `return`; the enclosing `if` is `blockType: empty`.
  */
-export function buildTransferredSubstringCallInstrs(
+export function buildTransferredNativeProtoCallInstrs(
   entries: TransferredNativeReceiverEntry[],
-  anyLocal: number,
-  resultSaveLocal: number,
-  prevThisLocal: number,
-  currentThisGlobalIdx: number,
+  arity: number,
+  slots: { anyLocal: number; resultSaveLocal: number; prevThisLocal: number; currentThisGlobalIdx: number },
 ): Instr[] {
+  const { anyLocal, resultSaveLocal, prevThisLocal, currentThisGlobalIdx } = slots;
   const body: Instr[] = [];
   for (const entry of entries) {
+    // Supplied args come from locals 2 … arity+1; any trailing slot the closure
+    // declares but the call site omitted is padded with the reflective ABI's
+    // omitted-arg null (see the collector's note on under-application).
+    const userArgs: Instr[] = [];
+    for (let k = 0; k < entry.declaredUserArity; k++) {
+      userArgs.push(k < arity ? { op: "local.get", index: 2 + k } : { op: "ref.null.extern" });
+    }
     body.push(
       { op: "local.get", index: anyLocal },
       { op: "ref.test", typeIdx: entry.typeIdx },
@@ -76,11 +127,13 @@ export function buildTransferredSubstringCallInstrs(
             op: "if",
             blockType: { kind: "empty" },
             then: [
+              // self
               { op: "local.get", index: anyLocal },
               { op: "ref.cast", typeIdx: entry.typeIdx },
+              // thisValue — the receiver the generic dispatch would have dropped
               { op: "local.get", index: 0 },
-              { op: "local.get", index: 2 },
-              { op: "local.get", index: 3 },
+              // user args, shifted one slot right of the generic dispatch
+              ...userArgs,
               { op: "local.get", index: anyLocal },
               { op: "ref.cast", typeIdx: entry.typeIdx },
               { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: 0 },

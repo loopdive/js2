@@ -809,6 +809,77 @@ const union = a.union(b); // not yet`,
     noCompile: true,
   },
 
+  // ── ES2026 ──────────────────────────────────────────────────────────────
+  // The 7 proposals published in the 17th edition (June 2026). Status below is
+  // MEASURED, not assumed: all 7 compile, but only Error.isError and Upsert
+  // also produce the right answer at runtime — the other five reach codegen and
+  // then hit a missing runtime helper (`X is not a function`) or return an empty
+  // result. Those are marked `none` + `noCompile` so the page does not show
+  // plausible WAT for a feature that throws when you run it.
+  {
+    name: "Error.isError",
+    edition: "ES2026",
+    badge: "full",
+    description: "Cross-realm-safe branded check for Error objects",
+    js: `const real = Error.isError(new TypeError("boom"));
+const fake = Error.isError({ name: "TypeError" });`,
+  },
+  {
+    name: "Upsert (Map.getOrInsert)",
+    edition: "ES2026",
+    badge: "full",
+    description: "Insert-if-absent then read, in one Map lookup",
+    js: `const counts = new Map<string, number>();
+counts.getOrInsert("a", 0);`,
+  },
+  {
+    name: "Array.fromAsync",
+    edition: "ES2026",
+    badge: "none",
+    host: true,
+    description: "Build an array from an async iterable",
+    js: `const rows = await Array.fromAsync(stream); // not yet`,
+    explain: "Compiles, but the returned promise resolves to an empty array — async iteration drain is not wired up.",
+    noCompile: true,
+  },
+  {
+    name: "Math.sumPrecise",
+    edition: "ES2026",
+    badge: "none",
+    description: "Exactly-rounded sum of a list of numbers",
+    js: `const total = Math.sumPrecise([0.1, 0.2, 0.3]); // not yet`,
+    explain: "Compiles, but throws `sumPrecise is not a function` — the runtime helper is not implemented.",
+    noCompile: true,
+  },
+  {
+    name: "Iterator sequencing (Iterator.concat)",
+    edition: "ES2026",
+    badge: "none",
+    host: true,
+    description: "Concatenate iterators lazily",
+    js: `const all = Iterator.concat(a.values(), b.values()).toArray(); // not yet`,
+    explain: "Compiles, but yields an empty sequence — Iterator.concat is not implemented in the runtime.",
+    noCompile: true,
+  },
+  {
+    name: "Uint8Array to/from Base64",
+    edition: "ES2026",
+    badge: "none",
+    description: "Base64 and hex codecs on Uint8Array",
+    js: `const bytes = Uint8Array.fromBase64("SGVsbG8="); // not yet`,
+    explain: "Compiles, but throws `fromBase64 is not a function` — the codec is not reachable at runtime.",
+    noCompile: true,
+  },
+  {
+    name: "JSON.parse source text access",
+    edition: "ES2026",
+    badge: "none",
+    description: "Preserve exact number source through parse/stringify",
+    js: `const big = JSON.rawJSON("12345678901234567890"); // not yet`,
+    explain: "Compiles, but JSON.stringify of a rawJSON box returns undefined.",
+    noCompile: true,
+  },
+
   // ── Legacy / Deprecated ─────────────────────────────────────────────────
   {
     name: "var hoisting",
