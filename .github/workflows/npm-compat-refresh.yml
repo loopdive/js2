@@ -1,0 +1,185 @@
+name: Refresh npm-compat
+
+# `benchmarks/results/npm-compat*.json` are COMMITTED artifacts that
+# `website/npm-compat.html` renders directly. Before this workflow nothing
+# regenerated them, so changing `scripts/generate-npm-compat-report.mjs` and
+# merging it left the page serving the previous JSON — green CI, no signal
+# anywhere. That shipped stale twice in one session (#3958 rendered `39/null`;
+# #3977 kept showing `lit` as `not-integrated` after its suite landed), which is
+# the case for a mechanism rather than for remembering. See #3988.
+#
+# Deliberately push-only. The artifact is DATA, not a correctness gate, so there
+# is nothing for a PR run to decide — and a full generation is expensive (it
+# re-runs the React and lit upstream suites and re-measures three perf lanes),
+# which is exactly the cost that made the manual step get skipped.
+on:
+  push:
+    branches: [main]
+  # Backstop: a main busy enough to keep cancelling in-progress runs (see the
+  # concurrency block) could otherwise starve the refresh indefinitely. This
+  # guarantees an upper bound on staleness regardless of merge rate.
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-compat-refresh-${{ github.ref }}
+  # Only the newest main matters: a cancelled run is always superseded by one
+  # that will publish a strictly fresher artifact. Unlike benchmark-refresh
+  # (7-12 min) this job is tens of minutes, so letting pushes queue would pile
+  # up runs whose output is obsolete before they finish.
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    # `github-actions[bot]` guard breaks the trigger loop: this job's own
+    # `[skip ci]` commit is a push to main. `[skip ci]` suppresses workflows on
+    # that commit, but the actor check is what makes the loop impossible rather
+    # than merely unlikely.
+    if: github.repository == 'loopdive/js2' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    environment: baseline-promote
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve immutable source revision
+        id: refs
+        shell: bash
+        run: echo "source_sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      # Single job, unlike benchmark-refresh's measure/promote split. That split
+      # exists because it also runs on PRs, where untrusted code must never
+      # reach write credentials. This workflow never runs on a PR, so everything
+      # it executes is already main's own trusted code.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.refs.outputs.source_sha }}
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Regenerate the npm-compat artifacts
+        # No `--only`: a focused run never writes, because a partial file would
+        # drop the other packages. Refreshing anything means regenerating all of
+        # it (#3988).
+        run: pnpm run generate:npm-compat
+
+      # Refuse to publish an empty or truncated artifact. A generator that exits
+      # 0 having written nothing useful would otherwise blank the dashboard, and
+      # the page has no other source of truth to fall back on.
+      - name: Sanity-check the generated artifact
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("fs");
+            const path = "benchmarks/results/npm-compat.json";
+            const report = JSON.parse(fs.readFileSync(path, "utf8"));
+            const packages = report.packages ?? report;
+            if (!Array.isArray(packages) || packages.length < 20) {
+              throw new Error(`${path} has ${packages?.length ?? "no"} packages; refusing to publish`);
+            }
+            if (!packages.every((entry) => entry.name && entry.compile)) {
+              throw new Error(`${path} has entries missing name/compile; refusing to publish`);
+            }
+            console.log(`ok: ${packages.length} packages`);
+          '
+
+      # (#3915) DO NOT DISCARD AN IN-FLIGHT merge_group VALIDATION. Any push to
+      # main — INCLUDING a `[skip ci]` one — makes GitHub rebuild every queued
+      # merge group on the new base and throw away the validation running under
+      # it. `[skip ci]` suppresses workflows on the commit; it does not make the
+      # push inert to the queue. Same gate the two sibling bots use.
+      - name: Gate the main push on the merge queue
+        id: queue_gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          LAST_REFRESH="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
+          # `|| RC=$?`, not a bare call then `RC=$?`: the default step shell is
+          # `bash -e {0}`, so a bare non-zero exit aborts the step before the
+          # next line runs and the DEFER path would look like a step failure.
+          RC=0
+          node scripts/main-push-queue-gate.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --last-refresh "$LAST_REFRESH" \
+            --stale-after-hours 12 \
+            --reason "landing npm-compat artifacts" || RC=$?
+          if [ "$RC" -eq 10 ]; then
+            echo "decision=defer" >> "$GITHUB_OUTPUT"
+          else
+            # 0 = proceed. Anything else is a gate malfunction, and a broken
+            # gate must never freeze the artifact — fail OPEN, loudly.
+            [ "$RC" -eq 0 ] || echo "::warning title=main-push-queue-gate::gate exited ${RC}; failing open"
+            echo "decision=proceed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Promote the refreshed artifacts to main
+        # A deferred refresh is not a failure: the next push to main (or the 6h
+        # cron) regenerates and promotes, and the staleness floor in the gate
+        # bounds how long a permanently busy queue can hold the artifact back.
+        if: steps.queue_gate.outputs.decision != 'defer'
+        env:
+          MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
+          SOURCE_SHA: ${{ steps.refs.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
+            echo "::error::MAIN_DEPLOY_KEY is empty in the baseline-promote environment."
+            exit 1
+          fi
+
+          eval "$(ssh-agent -s)"
+          echo "$MAIN_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
+          git fetch deploykey main
+
+          # A run measuring an older main must not overwrite a newer one's
+          # artifact. The scheduled trigger makes this reachable in normal
+          # operation, not just as a race.
+          remote_sha="$(git rev-parse deploykey/main)"
+          if [ "$remote_sha" != "$SOURCE_SHA" ]; then
+            echo "Main advanced from ${SOURCE_SHA} to ${remote_sha}; a newer run owns promotion."
+            exit 0
+          fi
+
+          git add -f -- \
+            benchmarks/results/npm-compat.json \
+            benchmarks/results/npm-compat-perf.json \
+            benchmarks/results/npm-compat-history.json \
+            website/public/benchmarks/results/npm-compat.json \
+            website/public/benchmarks/results/npm-compat-perf.json \
+            website/public/benchmarks/results/npm-compat-history.json
+
+          if git diff --cached --quiet; then
+            echo "npm-compat artifacts are already current."
+            exit 0
+          fi
+
+          git commit -m "chore(ci): refresh npm-compat artifacts [skip ci]"
+          if ! git push deploykey HEAD:main; then
+            git fetch deploykey main
+            advanced_sha="$(git rev-parse deploykey/main)"
+            if [ "$advanced_sha" != "$SOURCE_SHA" ]; then
+              echo "Main advanced during promotion; the newer run will publish its own snapshot."
+              exit 0
+            fi
+            echo "::error::push to main failed while main was unchanged."
+            exit 1
+          fi
