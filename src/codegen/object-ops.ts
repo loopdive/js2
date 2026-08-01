@@ -41,6 +41,11 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { compileNativeStringLiteral, compileStringLiteral } from "./string-ops.js";
 import { getVecInfo } from "./type-coercion.js";
 import {
+  isSideEffectFreeReceiver,
+  maybeEmitVecLengthDefine,
+  tryEmitVecLengthDefineForDefineProperties,
+} from "./array-length-define.js";
+import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
   tryConstantFoldToBoolean,
@@ -48,6 +53,15 @@ import {
 } from "./object-descriptor-analysis.js";
 
 export { tryConstantFoldToBoolean } from "./object-descriptor-analysis.js";
+
+/**
+ * (#3984) A/B kill switch for the array-`length` `defineProperties` routing fix.
+ * Read ONCE at module-collection time so a single process can host both arms of a
+ * paired measurement without re-importing the compiler. Unset in all normal builds
+ * and in CI; it exists so the fix's attribution can be proven by REMOVAL rather
+ * than inferred from a before/after pass count.
+ */
+const kill3984 = (): boolean => process.env.JS2WASM_KILL_3984 === "1";
 
 /**
  * (#2580 B-acc) ES §6.1.7 — a canonical *array index* is a String that is a
@@ -404,15 +418,6 @@ function parseCanonicalArrayIndex(key: string): number | undefined {
 }
 
 /**
- * A receiver expression is safe to re-compile for the length-growth side
- * effect only when evaluating it has no observable side effects. Identifiers
- * and `this` qualify; calls, indexing, and arbitrary member chains do not.
- */
-function isSideEffectFreeReceiver(objArg: ts.Expression): boolean {
-  return ts.isIdentifier(objArg) || objArg.kind === ts.SyntaxKind.ThisKeyword;
-}
-
-/**
  * #1130 PR-0: emit array-index-exotic `length` growth.
  *
  * `Object.defineProperty(arr, "n", desc)` on an array exotic object with
@@ -517,310 +522,6 @@ function maybeEmitVecLengthGrowth(
       { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 },
     ],
   });
-}
-
-/**
- * (#2668 Slice C) Is the descriptor `value` expression coercible to a Number
- * with **no object ToPrimitive step** (no valueOf/toString call)? Only then can
- * the inline array-`length` ArraySetLength path compute ToNumber directly. A
- * string- or object-valued descriptor needs the full host ToNumber engine and
- * its spec-mandated field read-order, which is DEFERRED — those fall through to
- * the generic descriptor path unchanged.
- */
-function isNumericCoercibleValueType(ctx: CodegenContext, expr: ts.Expression | undefined): boolean {
-  if (!expr) return false;
-  const F = ts.TypeFlags;
-  // String is included: StringToNumber (§7.1.4.1) has NO observable side effects
-  // (no user valueOf/toString call), so a string-valued length descriptor
-  // coerces with the same "no object ToPrimitive" guarantee as a numeric one.
-  // Object/symbol/bigint/any values still need the full host ToNumber engine.
-  const ALLOWED =
-    F.Number |
-    F.NumberLiteral |
-    F.Boolean |
-    F.BooleanLiteral |
-    F.Undefined |
-    F.Null |
-    F.Never |
-    F.Enum |
-    F.EnumLiteral |
-    F.String |
-    F.StringLiteral;
-  const DISALLOWED =
-    F.Object |
-    F.Any |
-    F.Unknown |
-    F.ESSymbol |
-    F.UniqueESSymbol |
-    F.BigInt |
-    F.BigIntLiteral |
-    F.TypeParameter |
-    F.Void |
-    F.NonPrimitive;
-  const ok = (t: ts.Type): boolean => {
-    if (t.isUnion()) return t.types.every(ok);
-    const f = t.flags;
-    if (f & DISALLOWED) return false;
-    return (f & ALLOWED) !== 0;
-  };
-  try {
-    return ok(ctx.checker.getTypeAtLocation(expr));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * (#2668 Slice C) Array exotic `[[DefineOwnProperty]]` for the `length`
- * property — `Object.defineProperty(arr, "length", desc)`, ES §10.4.2.1
- * `ArraySetLength`.
- *
- * Array `length` is an intrinsic data property: `writable:true` (by default),
- * `enumerable:false`, `configurable:false`. This handles the spec-mandated
- * *rejections* plus the simple length set on the valid path:
- *
- *   - get/set accessor descriptor on `length`  → **TypeError** (length is data).
- *   - `configurable:true` / `enumerable:true`   → **TypeError** (illegal change
- *     of a non-configurable property's attributes).
- *   - `value` whose ToUint32 ≠ ToNumber (NaN / ±Infinity / fractional /
- *     negative / > 2^32−1 / non-numeric)         → **RangeError**.
- *   - a valid uint32 `value`                     → set `vec.length` (field 0).
- *
- * SCOPE (host-mode-first, tight per #2668): DEFERRED — per-index
- * configurability on shrink (deleting a non-configurable index → TypeError),
- * non-writable "frozen" length blocking later index adds, and object/string
- * ToPrimitive value coercion (needs the full host ToNumber + read-order). Those
- * shapes return `false` (fall through to the generic path, unchanged behaviour).
- *
- * Returns a {@link ValType} when it fully handled the define (the caller returns
- * immediately, leaving the receiver on the stack as the call result), or
- * `false` when this is not an array-`length` define it should own.
- */
-function maybeEmitVecLengthDefine(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  objArg: ts.Expression,
-  propArg: ts.Expression,
-  descArg: ts.Expression,
-): ValType | false {
-  // Gate: `"length"` string-literal key, object-literal descriptor, and a
-  // side-effect-free receiver that resolves to a WasmGC vec struct.
-  if (!ts.isStringLiteral(propArg) || propArg.text !== "length") return false;
-  if (!ts.isObjectLiteralExpression(descArg)) return false;
-  if (!isSideEffectFreeReceiver(objArg)) return false;
-  const objTsType = ctx.checker.getTypeAtLocation(objArg);
-  const wasmType = resolveWasmType(ctx, objTsType);
-  if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return false;
-  const vecTypeIdx = (wasmType as { typeIdx?: number }).typeIdx;
-  if (vecTypeIdx === undefined) return false;
-  const vecInfo = getVecInfo(ctx, vecTypeIdx);
-  if (vecInfo === null) return false;
-  const arrTypeIdx = vecInfo.arrTypeIdx;
-
-  // Parse the descriptor literal's fields. Any computed / spread / non-identifier
-  // member → defer (we can't statically classify it).
-  let hasGet = false;
-  let hasSet = false;
-  let hasValue = false;
-  let valueExpr: ts.Expression | undefined;
-  let configPresent = false;
-  let configLiteral: boolean | undefined;
-  let enumPresent = false;
-  let enumLiteral: boolean | undefined;
-  const boolLiteral = (e: ts.Expression | undefined): boolean | undefined =>
-    e?.kind === ts.SyntaxKind.TrueKeyword ? true : e?.kind === ts.SyntaxKind.FalseKeyword ? false : undefined;
-  for (const p of descArg.properties) {
-    if (!(ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p) || ts.isMethodDeclaration(p))) {
-      return false; // spread / accessor-shorthand / unknown member
-    }
-    if (!ts.isIdentifier(p.name)) return false; // computed / string key
-    const name = p.name.text;
-    const init = ts.isPropertyAssignment(p) ? p.initializer : undefined;
-    switch (name) {
-      case "get":
-        hasGet = true;
-        break;
-      case "set":
-        hasSet = true;
-        break;
-      case "value":
-        hasValue = true;
-        valueExpr = init;
-        break;
-      case "configurable":
-        configPresent = true;
-        configLiteral = boolLiteral(init);
-        break;
-      case "enumerable":
-        enumPresent = true;
-        enumLiteral = boolLiteral(init);
-        break;
-      default:
-        break; // `writable` (freeze deferred) and unknown names ignored
-    }
-  }
-
-  // A `configurable`/`enumerable` attribute we can't statically read as a
-  // boolean literal → defer (can't decide whether it's an illegal change).
-  if ((configPresent && configLiteral === undefined) || (enumPresent && enumLiteral === undefined)) {
-    return false;
-  }
-  const illegalAttr = configLiteral === true || enumLiteral === true;
-
-  const emitThrowResult = (emit: () => void): ValType => {
-    // Receiver is side-effect-free, but compile+drop it to mirror the spec's
-    // "evaluate O" step and keep the call expression well-formed.
-    const t = compileExpression(ctx, fctx, objArg);
-    if (t) fctx.body.push({ op: "drop" });
-    emit();
-    fctx.body.push({ op: "unreachable" });
-    return { kind: "externref" };
-  };
-
-  // length is a DATA property — an accessor descriptor is rejected first.
-  if (hasGet || hasSet) {
-    return emitThrowResult(() => emitThrowTypeError(ctx, fctx, "Cannot redefine property: length"));
-  }
-
-  if (hasValue) {
-    // Only the no-ToPrimitive value shapes are handled inline.
-    if (!valueExpr || !isNumericCoercibleValueType(ctx, valueExpr)) return false;
-
-    const vecLocal = allocLocal(fctx, `__deflen_vec_${fctx.locals.length}`, {
-      kind: "ref_null",
-      typeIdx: vecTypeIdx,
-    });
-    const nlLocal = allocLocal(fctx, `__deflen_nl_${fctx.locals.length}`, { kind: "f64" });
-
-    // Receiver → vec ref local (side-effect-free recompile is safe).
-    const recvType = compileExpression(ctx, fctx, objArg);
-    if (!recvType || (recvType.kind !== "ref" && recvType.kind !== "ref_null")) {
-      if (recvType) fctx.body.push({ op: "drop" });
-      return false;
-    }
-    fctx.body.push({ op: "local.set", index: vecLocal });
-
-    // numberLen = ToNumber(value).
-    const vt = compileExpression(ctx, fctx, valueExpr, { kind: "f64" });
-    if (vt === null) {
-      fctx.body.push({ op: "f64.const", value: NaN });
-    } else if (vt.kind === "i32") {
-      fctx.body.push({ op: "f64.convert_i32_s" });
-    } else if (vt.kind !== "f64") {
-      coerceType(ctx, fctx, vt, { kind: "f64" });
-    }
-    fctx.body.push({ op: "local.set", index: nlLocal });
-
-    // valid = nl >= 0 && nl <= 4294967295 && floor(nl) === nl  (NaN ⇒ false).
-    fctx.body.push({ op: "local.get", index: nlLocal });
-    fctx.body.push({ op: "f64.const", value: 0 });
-    fctx.body.push({ op: "f64.ge" });
-    fctx.body.push({ op: "local.get", index: nlLocal });
-    fctx.body.push({ op: "f64.const", value: 4294967295 });
-    fctx.body.push({ op: "f64.le" });
-    fctx.body.push({ op: "i32.and" });
-    fctx.body.push({ op: "local.get", index: nlLocal });
-    fctx.body.push({ op: "f64.floor" });
-    fctx.body.push({ op: "local.get", index: nlLocal });
-    fctx.body.push({ op: "f64.eq" });
-    fctx.body.push({ op: "i32.and" });
-    // if (!valid) throw RangeError
-    fctx.body.push({ op: "i32.eqz" });
-    const throwRangeInstrs = ((): Instr[] => {
-      const saved = fctx.body;
-      const out: Instr[] = [];
-      fctx.body = out;
-      try {
-        emitThrowRangeError(ctx, fctx, "RangeError: Invalid array length");
-      } finally {
-        fctx.body = saved;
-      }
-      return out;
-    })();
-    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwRangeInstrs });
-
-    // A valid value combined with an illegal attribute change (configurable:true
-    // / enumerable:true) is still a TypeError — but only AFTER the RangeError
-    // value check (spec order). The throw is unconditional (attrs are literals).
-    if (illegalAttr) {
-      emitThrowTypeError(ctx, fctx, "Cannot redefine property: length");
-      fctx.body.push({ op: "unreachable" });
-      return { kind: "externref" };
-    }
-
-    // newLen = ToUint32(value)  (value is a validated non-negative integer).
-    const newLenLocal = allocLocal(fctx, `__deflen_new_${fctx.locals.length}`, { kind: "i32" });
-    fctx.body.push({ op: "local.get", index: nlLocal });
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    fctx.body.push({ op: "local.set", index: newLenLocal });
-
-    // GROW: when newLen exceeds the backing `$data` capacity, reallocate so the
-    // logical length never exceeds the physical array (mirrors
-    // `maybeEmitVecLengthGrowth` + the indexed-assignment grow path — the vec
-    // invariant length <= array.len(data) must hold). Guarded against absurd
-    // allocations (`nl <= 16M`): a valid-but-huge uint32 length (sparse arrays,
-    // out of Slice C scope) only updates the length field. Shrinks keep the
-    // backing capacity untouched (reads are length-bounded).
-    const dataLocal = allocLocal(fctx, `__deflen_data_${fctx.locals.length}`, {
-      kind: "ref_null",
-      typeIdx: arrTypeIdx,
-    });
-    const oldCapLocal = allocLocal(fctx, `__deflen_ocap_${fctx.locals.length}`, { kind: "i32" });
-    const newDataLocal = allocLocal(fctx, `__deflen_ndata_${fctx.locals.length}`, {
-      kind: "ref_null",
-      typeIdx: arrTypeIdx,
-    });
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-    fctx.body.push({ op: "local.set", index: dataLocal });
-    fctx.body.push({ op: "local.get", index: dataLocal });
-    fctx.body.push({ op: "array.len" });
-    fctx.body.push({ op: "local.tee", index: oldCapLocal });
-    fctx.body.push({ op: "local.get", index: newLenLocal });
-    fctx.body.push({ op: "i32.lt_s" }); // oldCap < newLen?
-    fctx.body.push({ op: "local.get", index: nlLocal });
-    fctx.body.push({ op: "f64.const", value: 16777216 });
-    fctx.body.push({ op: "f64.le" }); // nl <= 16M (allocation guard)
-    fctx.body.push({ op: "i32.and" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: newLenLocal },
-        { op: "array.new_default", typeIdx: arrTypeIdx },
-        { op: "local.set", index: newDataLocal },
-        { op: "local.get", index: newDataLocal },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: dataLocal },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: oldCapLocal },
-        { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
-        { op: "local.get", index: vecLocal },
-        { op: "local.get", index: newDataLocal },
-        { op: "ref.as_non_null" },
-        { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
-      ],
-    });
-
-    // vec.length = newLen
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    fctx.body.push({ op: "local.get", index: newLenLocal });
-    fctx.body.push({ op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 0 });
-
-    // defineProperty returns O.
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    coerceType(ctx, fctx, { kind: "ref_null", typeIdx: vecTypeIdx }, { kind: "externref" });
-    return { kind: "externref" };
-  }
-
-  // No value: only the illegal attribute-change rejection is handled inline.
-  if (illegalAttr) {
-    return emitThrowResult(() => emitThrowTypeError(ctx, fctx, "Cannot redefine property: length"));
-  }
-
-  // Nothing actionable (e.g. `{configurable:false}` / `{writable:false}`) —
-  // defer to the generic descriptor path (unchanged behaviour).
-  return false;
 }
 
 // ── Compile-time primitive type check for Object methods ─────────────
@@ -3623,28 +3324,17 @@ export function compileObjectDefineProperties(
             : undefined;
         if (propName === undefined) continue;
 
-        // Synthesize: Object.defineProperty(obj, propName, descriptor)
-        const syntheticPropAccess = ts.factory.createPropertyAccessExpression(
-          ts.factory.createIdentifier("Object"),
-          "defineProperty",
-        );
-        const syntheticCall = ts.factory.createCallExpression(syntheticPropAccess, undefined, [
-          ts.factory.createIdentifier(`__defprops_obj_placeholder_${objLocal}`),
-          ts.factory.createStringLiteral(propName),
-          prop.initializer,
-        ]);
-        ts.setTextRange(syntheticCall, expr);
-        (syntheticCall as any).parent = expr.parent;
-
-        // Instead of recursing through compileCallExpression (which would need
-        // the synthetic identifier to resolve), directly call compileObjectDefineProperty
-        // with the obj already on stack via local.get.
-
-        // Build a mini call that reuses our saved obj local:
-        // We need to compile the descriptor value per property.
-        // The simplest approach: push obj local, then delegate to the externref
-        // defineProperty path for each property.
+        // (#3984) Removed here: a synthetic `Object.defineProperty(...)` call node
+        // that was built, text-ranged, re-parented — and never read. Its comment
+        // claimed this loop "directly call[s] compileObjectDefineProperty"; it never
+        // did. That false claim is how the array-`length` routing gap below stayed
+        // invisible. The loop expands each descriptor inline, as the code below shows.
         const descExpr = prop.initializer;
+
+        // (#3984) Route array-`length` defines to ArraySetLength — the inline
+        // expansion below has no notion of the vec's length field and would
+        // silently leave the length unchanged. See array-length-define.ts.
+        if (!kill3984() && tryEmitVecLengthDefineForDefineProperties(ctx, fctx, objArg, propName, descExpr)) continue;
 
         // Parse the individual descriptor
         let valueExpr: ts.Expression | undefined;
