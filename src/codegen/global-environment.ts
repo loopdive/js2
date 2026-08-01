@@ -37,7 +37,7 @@ export function emitGlobalEnvironmentKey(ctx: CodegenContext, fctx: FunctionCont
 export function ensureGlobalEnvironmentOperation(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  name: "__extern_get" | "__extern_set" | "__delete_property" | "__hasOwnProperty",
+  name: "__extern_get" | "__extern_set" | "__delete_property" | "__hasOwnProperty" | "__extern_has",
 ): number | undefined {
   const externref: ValType = { kind: "externref" };
   const signature =
@@ -45,7 +45,7 @@ export function ensureGlobalEnvironmentOperation(
       ? { params: [externref, externref, externref], results: [] }
       : name === "__extern_get"
         ? { params: [externref, externref], results: [externref] }
-        : name === "__delete_property" || name === "__hasOwnProperty"
+        : name === "__delete_property" || name === "__hasOwnProperty" || name === "__extern_has"
           ? { params: [externref, externref], results: [{ kind: "i32" } satisfies ValType] }
           : { params: [], results: [] };
   const idx = ensureLateImport(ctx, name, signature.params, signature.results);
@@ -75,6 +75,91 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
   emitGlobalEnvironmentKey(ctx, fctx, name);
   fctx.body.push({ op: "call", funcIdx: getIdx });
   return { kind: "externref" };
+}
+
+/**
+ * (#3985) Capture the GlobalEnvironmentRecord's HasBinding answer for `name`
+ * BEFORE the RHS is compiled, returning the global-object temp plus the i32
+ * result temp.
+ *
+ * §13.15.2 (`AssignmentExpression : LeftHandSideExpression = Assignment`)
+ * resolves the LHS Reference in step 1.a — *before* `GetValue` of the RHS in
+ * step 1.e. Computing HasBinding after the RHS would let an RHS that adds the
+ * property to the global object change the binding decision, which is the exact
+ * mis-lowering that regressed `S11.13.1_A6_T3` for the dynamic-`with` gate (see
+ * `emitCaptureWithHasBinding` in `with-scope.ts`).
+ *
+ * The predicate is `__extern_has` (§7.3.12 HasProperty — own **and** prototype
+ * chain), NOT `__hasOwnProperty`: §9.1.1.4.1 `GlobalEnvironmentRecord.HasBinding`
+ * delegates to the object Environment Record, whose HasBinding is HasProperty.
+ * The global object inherits from `Object.prototype`, so `toString = 1` in
+ * strict code resolves and must not throw.
+ *
+ * Returns `undefined` when the global environment could not be materialised;
+ * the caller must then fall back rather than emit a half-formed sequence.
+ */
+export function emitCaptureGlobalEnvironmentHasBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+): { objLocalIdx: number; hasLocalIdx: number } | undefined {
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) return undefined;
+  const objLocalIdx = allocLocal(fctx, `__genv_obj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: objLocalIdx });
+
+  const hasIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_has");
+  if (hasIdx === undefined) return undefined;
+
+  fctx.body.push({ op: "local.get", index: objLocalIdx });
+  emitGlobalEnvironmentKey(ctx, fctx, name);
+  fctx.body.push({ op: "call", funcIdx: hasIdx });
+  const hasLocalIdx = allocLocal(fctx, `__genv_has_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.set", index: hasLocalIdx });
+  return { objLocalIdx, hasLocalIdx };
+}
+
+/**
+ * (#3985) §6.2.5.6 PutValue steps 6.a–6.b, the STRICT arm for an identifier
+ * whose Reference the compiler could not resolve statically.
+ *
+ *   if (HasBinding) Set(globalObj, name, value)
+ *   else            throw ReferenceError(`<name> is not defined`)
+ *
+ * `hasLocalIdx` / `objLocalIdx` come from
+ * {@link emitCaptureGlobalEnvironmentHasBinding} (captured before the RHS);
+ * `valueLocalIdx` holds the already-evaluated RHS as an `externref`, so the
+ * RHS's side effects are observable *before* the throw, per §13.15.2 step 1.e.
+ *
+ * Leaves nothing on the stack — the caller pushes the assignment's result.
+ * Returns `false` when the set operation could not be registered.
+ */
+export function emitStrictUnresolvableGlobalWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  objLocalIdx: number,
+  hasLocalIdx: number,
+  valueLocalIdx: number,
+): boolean {
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined) return false;
+
+  const savedThen = pushBody(fctx);
+  fctx.body.push({ op: "local.get", index: objLocalIdx });
+  emitGlobalEnvironmentKey(ctx, fctx, name);
+  fctx.body.push({ op: "local.get", index: valueLocalIdx });
+  fctx.body.push({ op: "call", funcIdx: setIdx });
+  const thenArm = fctx.body;
+  popBody(fctx, savedThen);
+
+  const savedElse = pushBody(fctx);
+  emitThrowReferenceError(ctx, fctx, `${name} is not defined`);
+  const elseArm = fctx.body;
+  popBody(fctx, savedElse);
+
+  fctx.body.push({ op: "local.get", index: hasLocalIdx });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: thenArm, else: elseArm });
+  return true;
 }
 
 /** Delete a global-object property; an absent property succeeds. */
