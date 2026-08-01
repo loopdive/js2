@@ -42,9 +42,7 @@ async function compileStandalone(source: string) {
 
 describe("#4034 standalone prelude does not fabricate array usage", () => {
   it("keeps an arith-only module small instead of pulling the whole runtime", async () => {
-    const { size, hasVecBridge, hasExnRender } = await compileStandalone(
-      "export function run(n){return n;}",
-    );
+    const { size, hasVecBridge, hasExnRender } = await compileStandalone("export function run(n){return n;}");
 
     // Was 21,043 bytes before the fix. The bound is deliberately loose — this
     // guards the cascade, not a byte count.
@@ -73,16 +71,12 @@ describe("#4034 standalone prelude does not fabricate array usage", () => {
   });
 
   it("still emits the vec host bridge when an array crosses the module boundary", async () => {
-    const literal = await compileStandalone(
-      "export function run(){return [1,2,3];}",
-    );
+    const literal = await compileStandalone("export function run(){return [1,2,3];}");
     expect(literal.hasVecBridge).toBe(true);
 
     // A `split` result returned to the caller is a real array crossing the
     // boundary — the case the suppression must NOT swallow.
-    const split = await compileStandalone(
-      "export function run(){return 'a,b'.split(',');}",
-    );
+    const split = await compileStandalone("export function run(){return 'a,b'.split(',');}");
     expect(split.hasVecBridge).toBe(true);
   });
 
