@@ -80,6 +80,8 @@ tests/dogfood/.eslint/
 tests/dogfood/.prettier/
 tests/dogfood/.react/
 tests/dogfood/.react-upstream-suite/
+tests/dogfood/.lit-upstream-suite/
+tests/dogfood/.lit-implementation/
 tests/dogfood/.npm-compat/
 tests/dogfood/report/
 /check-*.ts
