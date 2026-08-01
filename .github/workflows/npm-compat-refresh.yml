@@ -15,9 +15,15 @@ name: Refresh npm-compat
 on:
   push:
     branches: [main]
-  # Backstop: a main busy enough to keep cancelling in-progress runs (see the
-  # concurrency block) could otherwise starve the refresh indefinitely. This
-  # guarantees an upper bound on staleness regardless of merge rate.
+  # Backstop for a quiet main (no pushes ⇒ no push-triggered refresh) and for a
+  # run lost to a deferred merge-queue gate.
+  #
+  # It is NOT a backstop against starvation by a busy main, which is what the
+  # original comment here claimed. A cron run lands in the same concurrency
+  # group as every push run, so under `cancel-in-progress: true` it was
+  # cancelled just like the rest — the "guaranteed upper bound on staleness" was
+  # never guaranteed by anything. That is now handled where it belongs, by not
+  # cancelling in-progress runs at all.
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
@@ -27,11 +33,21 @@ permissions:
 
 concurrency:
   group: npm-compat-refresh-${{ github.ref }}
-  # Only the newest main matters: a cancelled run is always superseded by one
-  # that will publish a strictly fresher artifact. Unlike benchmark-refresh
-  # (7-12 min) this job is tens of minutes, so letting pushes queue would pile
-  # up runs whose output is obsolete before they finish.
-  cancel-in-progress: true
+  # MUST be false. This job takes ~24 min; main merges more often than that. With
+  # `cancel-in-progress: true` every run was killed mid-flight by the next push —
+  # 6 of the first 7 runs were `cancelled` and the artifact never moved off its
+  # first snapshot. The original reasoning ("a cancelled run is always superseded
+  # by one publishing a strictly fresher artifact") only holds when the job is
+  # SHORTER than the merge interval; here the superseding run is cancelled too,
+  # forever. The 6h cron was supposed to backstop that and cannot: it lands in
+  # this same concurrency group and is cancelled by the next push like anything
+  # else.
+  #
+  # `false` is not "let runs pile up": GitHub keeps at most ONE pending run per
+  # group and cancels older pending ones, so this is bounded at one running plus
+  # one queued — finish the current measurement, coalesce everything that arrived
+  # while it ran.
+  cancel-in-progress: false
 
 jobs:
   refresh:
@@ -150,36 +166,74 @@ jobs:
           git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
           git fetch deploykey main
 
-          # A run measuring an older main must not overwrite a newer one's
-          # artifact. The scheduled trigger makes this reachable in normal
-          # operation, not just as a race.
-          remote_sha="$(git rev-parse deploykey/main)"
-          if [ "$remote_sha" != "$SOURCE_SHA" ]; then
-            echo "Main advanced from ${SOURCE_SHA} to ${remote_sha}; a newer run owns promotion."
+          # Do NOT gate on "did main advance". It always advances — the job runs
+          # ~24 min and main merges faster than that — so the sha-equality guard
+          # this replaces deferred EVERY completed run to "a newer run", while
+          # `cancel-in-progress` was killing those newer runs. The two composed
+          # into a livelock: the artifact sat on its first snapshot for 9 hours
+          # while both mechanisms each pointed at the other.
+          #
+          # The invariant that actually matters is FRESHNESS: never overwrite a
+          # newer artifact with an older measurement. Compare `generatedAt`, not
+          # commit shas. A measurement taken a few commits behind head is still
+          # vastly better than one taken hours behind — that is the entire point
+          # of the job.
+          # Read the remote copy via `git show`, NOT `git checkout -- <path>`:
+          # the working tree currently holds the freshly generated artifact and
+          # a checkout would overwrite the very thing we are about to publish.
+          git show deploykey/main:benchmarks/results/npm-compat.json > /tmp/remote-npm-compat.json 2>/dev/null || true
+          REMOTE_STAMP="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("/tmp/remote-npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
+          OURS_STAMP="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
+          if [ -n "$REMOTE_STAMP" ] && [ -n "$OURS_STAMP" ] && [[ "$REMOTE_STAMP" > "$OURS_STAMP" ]]; then
+            echo "main already carries a fresher artifact (${REMOTE_STAMP} > ${OURS_STAMP}); nothing to publish."
             exit 0
           fi
 
-          git add -f -- \
-            benchmarks/results/npm-compat.json \
-            benchmarks/results/npm-compat-perf.json \
-            benchmarks/results/npm-compat-history.json \
-            website/public/benchmarks/results/npm-compat.json \
-            website/public/benchmarks/results/npm-compat-perf.json \
+          ARTIFACTS=(
+            benchmarks/results/npm-compat.json
+            benchmarks/results/npm-compat-perf.json
+            benchmarks/results/npm-compat-history.json
+            website/public/benchmarks/results/npm-compat.json
+            website/public/benchmarks/results/npm-compat-perf.json
             website/public/benchmarks/results/npm-compat-history.json
+          )
 
-          if git diff --cached --quiet; then
-            echo "npm-compat artifacts are already current."
-            exit 0
-          fi
+          # Stash the generated artifacts OUTSIDE the work tree, then replay them
+          # onto whatever main is now. The commit cannot be built on SOURCE_SHA:
+          # main has advanced during the ~24 min measurement, so a push from that
+          # base is a guaranteed non-fast-forward. This is the step that actually
+          # makes a long-running measurement publishable.
+          STAGE="$(mktemp -d)"
+          for f in "${ARTIFACTS[@]}"; do
+            mkdir -p "${STAGE}/$(dirname "$f")"
+            cp "$f" "${STAGE}/$f"
+          done
 
-          git commit -m "chore(ci): refresh npm-compat artifacts [skip ci]"
-          if ! git push deploykey HEAD:main; then
+          for attempt in 1 2 3 4 5; do
             git fetch deploykey main
-            advanced_sha="$(git rev-parse deploykey/main)"
-            if [ "$advanced_sha" != "$SOURCE_SHA" ]; then
-              echo "Main advanced during promotion; the newer run will publish its own snapshot."
+            # `-f`: the work tree still holds the regenerated artifacts, which
+            # differ from main's committed copies, so a plain checkout would
+            # refuse with "local changes would be overwritten". Discarding them
+            # is safe — STAGE holds the only copy that matters.
+            git checkout -q -f -B npm-compat-publish deploykey/main
+            for f in "${ARTIFACTS[@]}"; do
+              mkdir -p "$(dirname "$f")"
+              cp "${STAGE}/$f" "$f"
+            done
+            git add -f -- "${ARTIFACTS[@]}"
+
+            if git diff --cached --quiet; then
+              echo "npm-compat artifacts are already current on main."
               exit 0
             fi
-            echo "::error::push to main failed while main was unchanged."
-            exit 1
-          fi
+
+            git commit -q -m "chore(ci): refresh npm-compat artifacts [skip ci]"
+            if git push deploykey HEAD:main; then
+              echo "Published npm-compat artifacts measured at ${SOURCE_SHA}."
+              exit 0
+            fi
+            echo "push rejected (main advanced mid-promotion); replaying onto the new head — attempt ${attempt}/5."
+          done
+
+          echo "::error::could not publish npm-compat artifacts after 5 replay attempts."
+          exit 1
