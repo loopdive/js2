@@ -126,6 +126,43 @@ than sampled:
 it** — so it does not under-match, and the 634 is quotable as a *population*
 rather than a sample. Files outside it compile byte-identically and cannot move.
 
+### The one regression the routing exposed — and why it existed
+
+Re-running the **complete** at-risk population (not a sample) returned
+**633/634**, with `built-ins/Object/defineProperties/15.2.3.7-5-b-122` failing.
+
+That file had been **passing for the wrong reason**. Its descriptor object's
+`value` is a **setter-only accessor**, so ToPropertyDescriptor must read
+`[[Get]]` as `undefined` — and the old static path defined `undefined` because
+it parsed no descriptor fields *at all*, which happens to be what the test
+asserts. Routing to the real ToPropertyDescriptor made the read actually happen,
+and it came back **`null`**.
+
+Root cause: `__defineProperties`' `getField` appends `__nullish_to_null`. That
+normalization is correct for the **absent `get`/`set` halves**, which is what it
+was added for (#2106 S1 — keep the appliers' legacy null convention). It is
+wrong for `value`: it conflates two distinct JS values, `undefined` becomes
+`null`, and `typeof null` is `"object"` — precisely the observed
+`Expected SameValue («"object"», «"undefined"»)`.
+
+Absence needs no null convention on this path: the read only runs inside the
+`hasField("value")` branch, and the accumulator reset already defaults `L_VALUE`
+to the undefined singleton. `getField` therefore grows a `nullishToNull` opt-out
+and the `value` read passes `false`. `get`/`set` and the boolean attributes are
+untouched.
+
+**Deliberately scoped to the PLURAL native**, the one this change newly
+exercises. `__defineProperty_desc` carries the same normalization at its own
+`getField("value")` — a real defect too, but files may likewise be passing for
+the wrong reason there, so it needs its own measurement and is left as a
+follow-up rather than changed blind.
+
+**This is the lesson generalised:** a fix that makes a previously-dead code path
+live will surface latent defects *underneath* it, and some currently-green files
+are green only because the dead path returned a plausible constant. That is why
+the verification set has to be the population you are protecting, not just the
+one you are repairing.
+
 ### Kill-switch (attribution)
 
 Reverting only this change (file-copy A/B — never `git stash`, per the shared
