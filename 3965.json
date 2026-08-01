@@ -1,10 +1,11 @@
 {
   "id": "3965",
   "assignee": "ttraenkler/dev-budget-pick",
-  "requested_by": "ttraenkler/dev-budget-pick",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3965-budget-pick-claim-filter",
   "claimed_at": "2026-08-01T07:21:30Z",
-  "updated_at": "2026-08-01T07:21:30Z",
-  "write_id": "91969-cpemxwes"
+  "updated_at": "2026-08-01T09:54:13Z",
+  "write_id": "32605-8zntri54",
+  "released_at": "2026-08-01T09:54:13Z"
 }
