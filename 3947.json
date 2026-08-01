@@ -1,8 +1,11 @@
 {
   "id": "3947",
   "assignee": "ttraenkler/dev-fmt-gate",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3947-conformance-gate-prettier",
   "claimed_at": "2026-08-01T00:40:44Z",
-  "updated_at": "2026-08-01T00:40:44Z"
+  "updated_at": "2026-08-01T09:49:22Z",
+  "write_id": "14458-kbyecwqv",
+  "released_at": "2026-08-01T09:49:22Z"
 }
