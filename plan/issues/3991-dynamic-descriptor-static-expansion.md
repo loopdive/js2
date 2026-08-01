@@ -2,7 +2,8 @@
 id: 3991
 title: "Object.defineProperties/create static expansion silently defines `undefined` for a non-literal descriptor"
 sprint: current
-status: in-progress
+status: done
+completed: 2026-08-01
 priority: high
 horizon: m
 feasibility: hard
@@ -225,6 +226,32 @@ remaining ~318 files of the 347 live.
 ## Acceptance criteria
 
 - [x] Non-literal descriptor values route to the dynamic ToPropertyDescriptor path
-- [x] +29 / −0 measured on the standalone lane, all flips confirmed solo
-- [x] Complete at-risk population enumerated and re-run, not sampled
+- [x] **+29 / −0** measured on the standalone lane, all flips confirmed solo (29/29)
+- [x] Complete at-risk population enumerated and re-run, not sampled — **634/634 pass**
 - [x] Attribution proven by kill-switch removal
+- [x] The one exposed regression root-caused and fixed, not excused
+- [x] God-file **shrunk** (`object-ops.ts` 4789 → 4737) instead of taking a
+      `loc-budget-allow:` grant; `object-runtime-descriptors.ts` held at its 2851 baseline
+
+## Landed
+
+Merged to `main` in PR #3982 as `4180affcc` (2026-08-01T20:37:58Z), verified on
+`upstream/main` by merge-commit ancestry, and by reading the landed source rather
+than the narrative: `src/codegen/descriptor-shape.ts` exists, the routing fix is
+at its line 97, and `getField("value", false)` / the `nullishToNull` opt-out are
+in `object-runtime-descriptors.ts`.
+
+**Why this status flip is a separate commit.** The merge queue took the PR at
+`c4d2748cb`; the two commits I pushed afterwards — the `status: done` flip and a
+catch-up merge of `main` — were never part of the merged SHA. No code was lost
+(the diff `c4d2748cb..059671e9e` is this file alone), but the issue would have
+been left at `in-progress` on a merged PR, which is exactly the orphaning the
+status lifecycle warns about. Worth noting as a process observation: setting
+`status: done` in the implementation PR only works if that commit is in the SHA
+the queue actually merges, so the flip belongs in the *first* push of the PR,
+not a late one.
+
+Follow-ups filed from this work: **#4010** (M2 — the disjoint receiver side
+tables, where ~318 of the 347 remaining files live), **#4014** (`arr.hasOwnProperty("data")`
+leaks the vec's internal field), **#4015** (the same `value` undefined→null
+normalization still present in the SINGULAR `__defineProperty_desc`).
