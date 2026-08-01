@@ -1,10 +1,11 @@
 {
   "id": "3571",
   "assignee": "ttraenkler/sendev-p3-uncurry",
-  "requested_by": "ttraenkler/sendev-p3-uncurry",
-  "status": "in-progress",
+  "requested_by": "claude.ai@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-3571-p3-standalone-uncurry",
   "claimed_at": "2026-08-01T11:42:31Z",
-  "updated_at": "2026-08-01T11:42:31Z",
-  "write_id": "70672-544kzwdo"
+  "updated_at": "2026-08-01T12:51:10Z",
+  "write_id": "31933-0zus3l4c",
+  "released_at": "2026-08-01T12:51:10Z"
 }
