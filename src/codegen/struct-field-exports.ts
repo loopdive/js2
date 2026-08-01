@@ -867,6 +867,19 @@ function emitStructFieldNamesExport(
   // string_constants global to push the comma-separated field names — which
   // forces a `string_constants::a,b,c` host import that fails to instantiate
   // under wasmtime (#1174). Skip emission in nativeStrings mode.
+  //
+  // (#3912) NOTE — this predicate conflates "native strings" with "no JS host",
+  // and `fast` is the config where they come apart (nativeStrings + a live JS
+  // host). The consequence is real and measured: without this export the host's
+  // `_wasmToPlain` cannot enumerate an object's fields, so under `fast`
+  // `JSON.stringify({a: 42})` returns `"{}"` rather than `{"a":42}`. It was
+  // invisible before #3912 only because reading the result trapped first.
+  //
+  // It is NOT fixed here because the fix is not the predicate: switching to
+  // `ctx.wasi || ctx.standalone` makes this body emit under native strings,
+  // where the string-constant globals it reads do not exist — the module then
+  // fails to build ("Codegen error: global index out of range"). Making the CSV
+  // a native string is a separate piece of work; see the follow-up issue.
   if (ctx.nativeStrings) return;
 
   const mod = ctx.mod;

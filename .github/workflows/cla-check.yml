@@ -90,7 +90,7 @@ jobs:
       - uses: actions/setup-node@v6
         if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'
         with:
-          node-version: 25
+          node-version: "24"
 
       - name: Evaluate / record CLA acceptance
         if: github.event_name == 'pull_request_target' || github.event_name == 'issue_comment'

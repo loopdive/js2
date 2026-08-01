@@ -1557,6 +1557,47 @@ export function ensureStrToCharVecHelper(ctx: CodegenContext): { funcIdx: number
   return { funcIdx, vecTypeIdx: nstrVecTypeIdx };
 }
 
+/**
+ * (#3912) Can the `__str_to_extern` / `__str_from_extern` bridge be emitted in
+ * this module at all?
+ *
+ * ## Why this is NOT `ctx.nativeStrings`
+ *
+ * The bridge is the only way to convert between a WasmGC `$AnyString` and a
+ * REAL JS string, and it does that by copying UTF-16 code units through linear
+ * memory using three **JS-host imports** — `__str_from_mem`, `__str_to_mem`,
+ * `__str_extern_len` (see `ensureNativeStringExternBridge` below). There is no
+ * pure-Wasm way to manufacture a JS string, so the bridge is *inherently*
+ * host-dependent even though it is part of the NATIVE string subsystem.
+ *
+ * That makes "strings are native here" (`ctx.nativeStrings`) exactly the wrong
+ * question — it is true in six lanes, three of which have no usable host:
+ *
+ *     nativeStrings = fast || wasi || standalone || strictNoHostImports || utf8Storage
+ *
+ * `wasi` / `standalone` have no JS runtime at all, and `strictNoHostImports`
+ * has one but **forbids** host imports — the strict gate DROPS them, and
+ * because `ensureNativeStringExternBridge` bakes the three funcidxs into
+ * compiled helper bodies before the drop, the result is not a clean refusal but
+ * a hard `absoluteFuncIndex: unresolved call target` codegen error.
+ *
+ * So the real question is "is there a JS host AND are host imports allowed?".
+ * Callers that can degrade (hand the host an externref some other way, or skip
+ * the marshal) MUST consult this first.
+ *
+ * ## Known pre-existing violation, deliberately not fixed here
+ *
+ * `console.log(<string>)` reaches the bridge unguarded, so it already fails to
+ * compile under `strictNoHostImports` on `main` today with this exact error
+ * (verified directly). Fixing that needs a decision about what `console.log`
+ * should *do* with no host — it cannot both refuse to marshal and still call
+ * the host console — so it is left alone rather than guessed at. This predicate
+ * exists so that decision has a name to hang on.
+ */
+export function hostStringBridgeUsable(ctx: CodegenContext): boolean {
+  return !ctx.wasi && !ctx.standalone && !ctx.strictNoHostImports;
+}
+
 export function ensureNativeStringExternBridge(ctx: CodegenContext): void {
   ensureNativeStringHelpers(ctx);
   if (ctx.nativeStrExternBridgeEmitted) return;

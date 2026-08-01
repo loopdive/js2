@@ -6819,32 +6819,28 @@ function compileArrayDefaultToStringSort(
   elemType: ValType,
 ): ValType | null {
   const isNumeric = elemType.kind === "f64" || elemType.kind === "i32";
-  // (#3902) `number_toString` is NOT native everywhere `nativeStrings` is on.
-  // `import-collector.ts` gates the two helpers this function needs on DIFFERENT
-  // conditions: `string_compare` is skipped when `ctx.nativeStrings` (the native
-  // `__str_compare` replaces it), but `number_toString` is only emitted natively
-  // under `ctx.wasi || ctx.standalone`. In plain `nativeStrings` mode — which
-  // `fast: true` turns on, i.e. the whole `gc-native` benchmark lane — the
-  // module therefore gets the JS-HOST `env.number_toString` import, which
-  // returns a genuine JS string. `stringifyTail`'s native branch then did
-  // `any.convert_extern` + `ref.cast $AnyString` on it, and an externally-owned
-  // host string is not an internal GC ref, so every `arr.sort()` over a numeric
-  // array TRAPPED at runtime with `illegal cast`. That is exactly why
-  // `array/sort-i32` published no gc-native bar at all: the harness caught the
-  // trap in warmup and silently dropped the lane.
+  // (#3902 → #3912) This used to carry a host-import DETECTION probe:
   //
-  // Detect the mismatch from the resolved index (an index below the imported
-  // function count IS an import) rather than re-deriving import-collector's
-  // policy here, and fall back to the all-host string comparison — correct
-  // ToString ordering, and no new class of dependency, since the module already
-  // imports `number_toString` in exactly this configuration. Making
-  // `number_toString` native under `nativeStrings` is the real fix and is
-  // deliberately out of scope here: it changes number formatting for every
-  // fast-mode program (see the follow-up noted in #3902).
-  const numToStrExisting = ctx.funcMap.get("number_toString");
-  const importedFuncCount = ctx.mod.imports.filter((im) => im.desc.kind === "func").length;
-  const numToStrIsHostImport = numToStrExisting !== undefined && numToStrExisting < importedFuncCount;
-  const native = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && !(isNumeric && numToStrIsHostImport);
+  //     const numToStrExisting = ctx.funcMap.get("number_toString");
+  //     const importedFuncCount = ctx.mod.imports.filter(…).length;
+  //     const numToStrIsHostImport = numToStrExisting < importedFuncCount;
+  //
+  // …because `import-collector.ts` gated the two helpers this function needs on
+  // DIFFERENT conditions: `string_compare` was skipped under `ctx.nativeStrings`
+  // (the native `__str_compare` replaces it), while `number_toString` went
+  // native only under `ctx.wasi || ctx.standalone`. In plain `nativeStrings`
+  // mode — i.e. `fast: true`, the whole gc-native lane — the module got the
+  // JS-HOST `env.number_toString`, whose genuine JS string then failed
+  // `stringifyTail`'s `any.convert_extern` + `ref.cast $AnyString` with an
+  // `illegal cast` trap on every numeric `arr.sort()`.
+  //
+  // #3912 removed the mismatch at its source: `number_toString` is now native
+  // wherever strings are native (`usesNativeNumberFormat`), so
+  // `numToStrIsHostImport` can no longer be true while `ctx.nativeStrings` is —
+  // the probe was dead code. Removed here, together with #3902's temporary
+  // `coercion-sites-allow` for this file, exactly as #3902's frontmatter
+  // instructed. `native` is now the plain question it always meant to ask.
+  const native = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0;
   // (#3579) HOST default sort only supports numeric or externref (boxed-any /
   // js-string) elements. A ref/ref_null (struct) element cannot flow into the
   // `string_compare(externref, externref)` host import, so bail to the caller's

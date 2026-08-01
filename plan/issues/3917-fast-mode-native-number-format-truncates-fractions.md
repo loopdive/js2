@@ -1,9 +1,10 @@
 ---
 id: 3917
 title: "CRITICAL: the native number formatter truncates non-integers under `fast` — String(3.5) is \"3\", toFixed(2) is \"3.00\"; already wrong on main for standalone+fast and wasi+fast"
-status: ready
+status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
+completed: 2026-08-01
 priority: critical
 feasibility: medium
 reasoning_effort: max
@@ -20,7 +21,33 @@ blocked_by: []
 
 # #3917 — native number formatting truncates fractions under `fast`
 
-## Status: open — **blocks #3912**
+## Status: DONE — fixed by #3907, confirmed by measurement on 2026-08-01
+
+**It was the same defect as #3907, exactly as "Likely family" below guessed.**
+`fast` narrowed every TypeScript `number` to a Wasm i32, so a non-integer lost
+its fraction on the way into the formatter. #3907 removed `ctx.fast` from the
+unconditional `numericHint` narrowing; nothing in the formatter itself needed
+changing.
+
+Re-measured on `main` at `5824539` (post-#3907), every value bound to a
+**variable**, each case returning a number:
+
+| case | expected | `standalone+fast` | `wasi+fast` | `fast` |
+| --- | --- | --- | --- | --- |
+| `String(3.5).length` | 3 | **3 ✓** | **3 ✓** | 3 ✓ (with #3912) |
+| `String(0.25).length` | 4 | **4 ✓** | **4 ✓** | 4 ✓ |
+| `(3.14159).toFixed(2).length` | 4 | **4 ✓** | **4 ✓** | 4 ✓ |
+| `` `v${3.5}`.length `` | 4 | **4 ✓** | **4 ✓** | 4 ✓ |
+| `toPrecision(3)` / `toExponential(2)` | — | ✓ | ✓ | ✓ |
+
+(Previously 1, 1, `"3.00"`, `"v3"`.) The `fast` column additionally required
+#3912, which is what routes plain `fast` onto the native formatter at all.
+
+**This no longer blocks #3912** — #3912 landed on 2026-08-01 with these cases
+passing. The "Why this blocks #3912" section below is kept as the historical
+record of why the first attempt was correctly abandoned.
+
+## Original report (historical)
 
 ## Problem
 
@@ -100,6 +127,32 @@ So #3912 must land *with* or *after* this issue, not before it.
 3. The root cause is stated as a traced fact, and checked against #3907 — if
    they share a mechanism, say so and fix once.
 4. Full test262 run over `built-ins/Number` and `built-ins/JSON`.
+
+## Resolution — fixed by #3907, permanent repro in #3912's suite
+
+Closed as **fixed by #3907**, which removed the `ctx.fast ⇒ i32` narrowing in
+`src/checker/type-mapper.ts`. That narrowing made every TypeScript `number` an
+i32 under `fast`, so a fraction was truncated before it ever reached the
+formatter — which is exactly why trap 2 above holds: the `number_toString` body
+was never the defect. Re-measured against current main, not assumed.
+
+**Permanent regression coverage: `tests/issue-3912-fast-number-stringify.test.ts`.**
+Its non-integer block is this issue's repro, and it satisfies acceptance
+criterion 2 by construction — every case binds to a **variable**, never a
+literal, so constant folding cannot mask a recurrence:
+
+| case | source |
+| --- | --- |
+| `String(3.5)` | `const n = 3.5; return String(n).length;` |
+| `` template `v${3.5}` `` | ``const n = 3.5; return `v${n}`.length;`` |
+| `parseFloat(String(n))` | `const n = 3.5; return parseFloat(String(n));` |
+
+Each returns a **number** rather than a string, so a wrong representation
+cannot be confused with export-boundary marshalling — the same discipline that
+made #3912's 52-case differential probe trustworthy.
+
+Acceptance criterion 4 (full test262 over `built-ins/Number` and
+`built-ins/JSON`) is owned by CI on #3912's PR, not run locally.
 
 ## Provenance
 
