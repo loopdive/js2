@@ -457,6 +457,30 @@ PR is part of finishing the task, not a separate request.
 - Group per the docs-only rule immediately below — "always open a PR" means
   every finished task ends in *a* PR, not that every task gets its *own* PR.
 
+**Every open PR must REACH the merge queue — verify it, do not assume it**
+(project-lead decision, 2026-08-01). Opening the PR is not the end of the task;
+a PR that never enters the queue is as invisible as one that was never opened.
+Before standing down, check `mergeStateStatus`:
+
+- **`CLEAN`, not draft, no `hold`** → `auto-enqueue.yml` owns it. Nothing to do
+  but confirm it lands in the queue.
+- **`UNSTABLE`** → it will **never** be auto-enqueued. `auto-enqueue` takes only
+  `{CLEAN, HAS_HOOKS}`; `UNSTABLE` is deliberately excluded (#3878/#3904),
+  so a PR with every REQUIRED check green can sit forever because one
+  non-required check is red. Re-run the failed job to get back to `CLEAN`.
+- **`BEHIND`/`DIRTY`** → merge `origin/main` in and push.
+- **`hold` label from `github-actions[bot]`** → a real merged-baseline
+  regression. Diagnose the cited run first; never just remove the label.
+
+**This does NOT license enqueueing from a dev/agent, and it never licenses
+RE-enqueueing.** The single enqueuer is the server-side workflow (#2786); every
+re-add rebuilds the merge group and CANCELS the in-flight `merge_group` run,
+which cost ~3.5h of cancellation churn on 2026-06-20. "Always get PRs into the
+queue" is satisfied by making them *enqueueable* and confirming they were taken
+— see the shepherd's one-shot backstop rules under "PR-queue shepherd" for the
+only sanctioned manual enqueue, which is one-shot, PAT-authenticated, and never
+repeated.
+
 **Docs-only changes go in ONE open PR — check before opening a second.** If a
 docs-only PR is already open (issue files under `plan/issues/`, `plan/` notes,
 `docs/`, README-level edits), **push your docs commits onto that PR's branch
