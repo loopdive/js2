@@ -86,6 +86,8 @@ env:
 # Read-only: this workflow diffs a shallow checkout and reports job status.
 permissions:
   contents: read
+  # stub-guard reads the PR's current head SHA to detect a superseded run.
+  pull-requests: read
 
 concurrency:
   group: test262-pr-stub-${{ github.event.pull_request.number }}
@@ -326,22 +328,67 @@ jobs:
   stub-guard:
     name: test262 PR stub — verdict published
     needs: [detect, cheap-gate, merge-report, regression-gate]
-    # `!cancelled()`, deliberately NOT `always()`:
-    #   - a job-level TIMEOUT on `detect` cancels that JOB, not the RUN, so
-    #     `cancelled()` is false and this guard RUNS — the case we must report;
-    #   - a CONCURRENCY cancel cancels the RUN, so `cancelled()` is true and
-    #     this guard does NOT run — correct: a newer push superseded this SHA
-    #     and there is nothing to report.
-    # Evidence the two are distinguishable, from run 30645425429 (the 5m01s
-    # timeout on PR #3919): after `detect` was killed the three downstream jobs
-    # still had their `if:` EVALUATED — they concluded `skipped`, timestamped
-    # after detect's death. A run in the cancelling state would have cancelled
-    # them outright instead.
-    if: ${{ !cancelled() }}
+    # `always()`, and the superseded-SHA check is INSIDE the job. This was
+    # `!cancelled()` and the reasoning behind that was wrong — retracted here
+    # rather than left to be inherited.
+    #
+    # The retracted claim: "a job-level timeout cancels the JOB, not the RUN, so
+    # `cancelled()` is false and the guard fires", cited to run 30645425429
+    # where the three downstream jobs concluded `skipped` after `detect` was
+    # killed. **That citation proves nothing.** Those jobs carry
+    # `if: needs.detect.outputs.stub_required == 'true'` with no status
+    # function, so the IMPLICIT `success()` applies: a non-success `needs` skips
+    # them without the expression ever being evaluated. The outcome is identical
+    # whether or not the run was cancelling, so it cannot discriminate.
+    # Worse, that run's own RUN-level conclusion is `cancelled`
+    # (`gh api repos/loopdive/js2/actions/runs/30645425429 --jq .conclusion`),
+    # which is at least consistent with `cancelled()` being TRUE on a job
+    # timeout — in which case `!cancelled()` would SKIP this guard in exactly
+    # the case it exists for, and the whole non-silence guarantee would be
+    # empty. Nobody has measured which it is.
+    #
+    # So do not depend on the answer. `always()` fires unconditionally — the
+    # guarantee then holds BY CONSTRUCTION rather than by an unverified reading
+    # of `cancelled()` semantics. The cost of `always()` is that this job also
+    # runs when the RUN was cancelled by the concurrency group (a newer push
+    # superseded this SHA), which is noise; the first step below suppresses
+    # exactly that case by asking whether the SHA we were built for is still the
+    # PR head. That test is direct evidence about the thing we actually care
+    # about, instead of an inference from a status function.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Under `always()` this job also runs on a concurrency cancel. That is the
+      # only case worth suppressing, and it is directly observable: a newer push
+      # means the PR's head has moved off the SHA this run was built for.
+      #
+      # FAIL-LOUD on doubt. If the lookup itself fails we do NOT suppress — an
+      # unreadable head SHA must not be treated as "superseded, nothing to see".
+      # The cost of that asymmetry is a spurious red on an abandoned SHA; the
+      # cost of the other one is the silence this whole job exists to end.
+      - name: Skip if this SHA has been superseded
+        id: superseded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          current=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha' 2>/dev/null) || current=""
+          echo "event head : $EVENT_SHA"
+          echo "current head: ${current:-<lookup failed>}"
+          if [ -n "$current" ] && [ -n "$EVENT_SHA" ] && [ "$current" != "$EVENT_SHA" ]; then
+            echo "-> superseded by a newer push; nothing to report for this SHA."
+            echo "superseded=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "superseded=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
       - name: Assert detect published a verdict
+        if: steps.superseded.outputs.superseded != 'true'
         env:
           DETECT_RESULT: ${{ needs.detect.result }}
           DETECT_DEGRADED: ${{ needs.detect.outputs.degraded }}
