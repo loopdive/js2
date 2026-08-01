@@ -322,7 +322,7 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { resolveNamedThisCallTarget } from "../named-this-call.js";
+import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
@@ -6581,41 +6581,11 @@ function compileCallExpression(
           closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
         }
 
-        // (#3976) `.apply(thisArg[, argsArray])` on a stable named declaration
-        // whose body reads `this` fell through to the legacy path below, which
-        // evaluates `thisArg` and DROPS it — a silent wrong answer, not a
-        // refusal (`f.apply(o)` returned a `this` that was not `o`; the
-        // 200-test language/function-code/10.4.3 family, failing in BOTH
-        // lanes). `.apply(t, [a, b])` is exactly `.call(t, a, b)` whenever the
-        // argument array is statically flattenable, so reshape to the `.call`
-        // form and re-enter rather than duplicating the receiver-install
-        // lowering. Same reshape idiom as the #1596 and #2193 arms above.
-        //
-        // Deliberately gated on the trampoline actually resolving: this must
-        // only change shapes that are wrong today, never re-route an `.apply`
-        // that already lowers correctly. `resolveNamedThisCallTarget` reserves
-        // nothing on any of its reject paths and caches per target function, so
-        // the probe here and the resolve after re-entry share one trampoline.
-        if (!isCall && !closureInfo && funcIdx !== undefined && expr.arguments.length > 0) {
-          let flattened: readonly ts.Expression[] | undefined;
-          if (expr.arguments.length === 1) {
-            flattened = [];
-          } else if (expr.arguments.length === 2 && ts.isArrayLiteralExpression(expr.arguments[1]!)) {
-            flattened = flattenStaticArrayElements(expr.arguments[1]!);
-          }
-          if (
-            flattened !== undefined &&
-            resolveNamedThisCallTarget(ctx, fctx, innerExpr, funcIdx, expr.arguments[0]!, flattened) !== undefined
-          ) {
-            const asCall = ts.factory.createCallExpression(
-              ts.factory.createPropertyAccessExpression(innerExpr, "call"),
-              undefined,
-              [expr.arguments[0]!, ...flattened],
-            );
-            ts.setTextRange(asCall, expr);
-            (asCall as { parent?: ts.Node }).parent = expr.parent;
-            return compileCallExpression(ctx, fctx, asCall as ts.CallExpression);
-          }
+        // (#3976) `.apply(thisArg, …)` dropped the receiver; reshape it onto
+        // the receiver-correct `.call` path (see named-this-call.ts).
+        if (!isCall && !closureInfo && funcIdx !== undefined) {
+          const asCall = tryReshapeApplyToNamedThisCall(ctx, fctx, expr, innerExpr, funcIdx);
+          if (asCall !== undefined) return compileCallExpression(ctx, fctx, asCall);
         }
 
         // (#3796) A stable named FunctionDeclaration whose own body reads

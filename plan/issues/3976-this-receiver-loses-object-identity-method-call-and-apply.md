@@ -15,6 +15,10 @@ area: codegen
 language_feature: this-binding
 goal: core-semantics
 related: [3507, 3220, 3396, 2015]
+loc-budget-allow:
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  - src/codegen/expressions/calls.ts::compileCallExpression
 origin: "2026-08-01, working the es5-standalone-90% goal: the 200-test language/function-code/10.4.3 family fails in BOTH lanes (116 standalone / 114 host); minimised to a 6-line identity control set."
 ---
 
