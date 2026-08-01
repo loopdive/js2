@@ -1,9 +1,10 @@
 ---
 id: 3963
-title: "CI: actions/setup-node@v6 intermittently fails to resolve Node 25 from the manifest — parks unrelated PRs and costs a diagnosis cycle each time"
-status: ready
+title: "CI: every workflow requested Node 25, which actions/node-versions does not ship — all 27 pins fell back to a direct nodejs.org download, and that fallback parks unrelated PRs when it fails"
+status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
+completed: 2026-08-01
 priority: high
 feasibility: easy
 reasoning_effort: medium
@@ -17,15 +18,15 @@ es_edition: n/a
 related: [2547, 3597]
 ---
 
-# #3963 — `setup-node@v6` Node-25 manifest flake parks unrelated PRs
+# #3963 — Node 25 is absent from the setup-node manifest; every pin was on the fallback path
 
-## Status: open — observed twice in one session, on two different workflows
+## Status: done — root cause corrected by measurement, fix applied repo-wide
 
-## Problem
+## Problem as first observed
 
-`actions/setup-node@v6` intermittently fails to resolve **Node 25** from the
-version manifest, and the direct-download fallback does not save it. The step
-fails in ~1.6 seconds and the job dies before running anything:
+`actions/setup-node@v6` failed to resolve **Node 25**, and the direct-download
+fallback did not save it. The step died in ~1.6 seconds and the job never ran
+anything:
 
 ```
 Attempting to download 25...
@@ -40,6 +41,42 @@ Confirmed occurrences, 2026-07-31, both on PRs whose code was fine:
 | #3917 | `cross-backend-parity` | re-run passed with **no code change** |
 | #3914 | `test262 js-host shard 10/66` | **auto-parked** with a `hold` label |
 
+## Root cause — the original diagnosis was wrong in a load-bearing way
+
+This issue was first written as "`setup-node` **intermittently** fails to
+resolve Node 25 from the manifest." That is not what happens. Reading the
+manifest settles it:
+
+```
+$ curl -sS https://raw.githubusercontent.com/actions/node-versions/main/versions-manifest.json
+majors present: 26, 24, 22, 20, 18, 16, 14, 13, 12, 10, 8, 6
+total entries: 363
+entries matching 25.x: 0
+```
+
+**Node 25 is not in `actions/node-versions` at all** — not one build, at any
+patch level. So the manifest lookup did not fail intermittently; it failed
+**deterministically, on every single job**, and the "Not found in manifest"
+line in the log above is the normal steady state rather than the anomaly.
+
+What that means:
+
+1. **Every** `node-version: 25` job in this repo — 27 pins across 18 files —
+   was silently running on the **direct-download fallback**, fetching Node
+   from `nodejs.org` on every run instead of taking a cached tool-cache hit.
+2. The intermittency lives in **that fallback**, which is an unconditional
+   network dependency on a third-party host. The two observed failures are
+   that download failing, not the manifest lookup failing.
+3. This was invisible because the fallback usually succeeds. The repo had a
+   network dependency on every CI job and no signal until the day it flaked.
+
+**The originally-proposed fix would not have worked.** This issue previously
+recommended pinning a full `25.x.y` rather than the bare major, on the theory
+that manifest coverage of recent versions was inconsistent. `25.7.0` — the
+exact version two workflows already pinned — **is also not in the manifest**;
+it was on the fallback path too. Pinning harder within an absent major does
+not move a job off the fallback.
+
 ## Why this is worse than an ordinary flake
 
 **It parks PRs rather than merely failing them.** When it hits a test262 shard
@@ -53,7 +90,7 @@ normally marks a real merged-baseline regression. So every occurrence costs a
 **human-grade diagnosis cycle**, and a wrongly-held PR **strands** until someone
 does it — the auto-enqueue backstop skips held PRs.
 
-Two knock-on effects seen today:
+Two knock-on effects seen at the time:
 
 1. `merge shard reports` also failed, at *"Fail if required test262 shards did
    not succeed"* — downstream of the missing shard, not an independent
@@ -64,41 +101,72 @@ Two knock-on effects seen today:
 The auto-park comment's own footnote (#3597) anticipates this: *"If it is a
 setup/infra step rather than a verdict step, the verdict never ran and this park
 may be spurious — confirm against the run before removing `hold`."* That
-footnote is what makes each incident resolvable — but it is a manual check.
+footnote is what made each incident resolvable — but it is a manual check.
 
-## Fix options
+## Fix applied
 
-1. **Pin a Node version that is reliably in the manifest.** Simplest and most
-   likely correct. Node 25 is recent enough that manifest coverage appears
-   inconsistent. Check whether the pin can be a full `25.x.y` rather than the
-   bare major, which is what the failing invocations request.
-2. **Retry the setup step.** `nick-fields/retry` or an equivalent around the
-   `setup-node` action. Treats the symptom but is robust to the next version
-   having the same problem.
-3. **Both** — pin, and retry as a belt-and-braces.
+Every Node pin moves from the absent major **25** to **24**, which the manifest
+does carry (`24.18.1` stable, plus `24.18.0` / `24.17.0` / `24.16.0`). That
+puts every job back on a tool-cache hit and removes the per-job `nodejs.org`
+dependency entirely.
 
-Option 1 alone would probably have prevented both incidents today.
+| what | from | to | why this form |
+| --- | --- | --- | --- |
+| `.github/actions/setup-node-pnpm` default | `"25"` | `"24"` | the shared choke point — covers `test262-sharded` (the #3914 failure) and 11 other workflows |
+| `benchmark-refresh.yml` `NODE_VERSION` | `"25.7.0"` | `"24.18.1"` | full pin required: the job asserts `node --version \| grep -Fx "v${NODE_VERSION}"` |
+| 26 remaining `node-version:` pins in 17 workflows | `25` / `"25"` / `"25.7.0"` | `"24"` | bare major resolves *within* the manifest to the newest matching stable, so it stays current without going stale |
+
+**Bare-major is not the defect.** The failure mode was "this major is absent
+from the manifest", not "setup-node cannot resolve a bare major" — `24` resolves
+fine, which is why the 9 workflows already on `24` were never implicated. Only
+`benchmark-refresh.yml` needs a full pin, because it independently asserts the
+exact version string.
+
+No retry wrapper was added. Retries were option 2 in the original writeup, on
+the assumption the flake was irreducible; once the jobs are on the tool cache
+there is no per-run network call left to retry. If a manifest-covered version
+ever starts flaking, revisit.
+
+### Why 24 is safe here
+
+- `package.json` declares `engines: { node: ">=20" }`.
+- Local development and the full local test suite run on **v22.22.2**, below 24
+  — so nothing in the repo can require a ≥25 feature.
+- 9 workflows (`publish-npm`, `auto-enqueue`, `auto-park-merge-group-failures`,
+  `approve-fork-runs`, `passive-stack-retarget`) were **already** on 24.
+- `benchmark-refresh.yml` already sets `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true`,
+  so its JS actions were running on the Node 24 runtime regardless.
 
 ## Acceptance criteria
 
-1. `setup-node` no longer fails on manifest resolution across a full CI run.
-2. The chosen approach is applied to **every** workflow that sets up Node,
-   not just the two observed — this hit `cross-backend-parity` and a test262
-   shard, which are different workflows, so the exposure is repo-wide.
-3. The issue records which workflows were changed.
+1. ✅ `setup-node` no longer resolves against an absent major — verified against
+   the live manifest rather than by re-running CI and hoping.
+2. ✅ Applied to **every** workflow that sets up Node — 27 sites across 18
+   files; `grep -rn "node-version.*25\|NODE_VERSION.*25" .github/` returns
+   nothing.
+3. ✅ Workflows changed are recorded in the table above; all 34 workflow files
+   plus the composite action re-parse as valid YAML after the edit.
 
-## Worth considering alongside
+## Worth considering alongside — still open
 
 Since a setup-step failure can never produce a verdict, `auto-park` could
 plausibly **decline to park** when the failing step is a known
 setup/infrastructure step rather than a verdict step — it already identifies
 the failing step by name (#3597), which is the hard part. That would remove the
-manual diagnosis cycle entirely for this class. Filed here as a suggestion, not
-a requirement; the parking behaviour is deliberately conservative and changing
-it deserves its own judgement.
+manual diagnosis cycle for this whole class, not just for Node setup.
+
+Left unfixed here deliberately: the parking behaviour is conservative on
+purpose, and narrowing it deserves its own judgement rather than riding along
+on a version bump.
 
 ## Provenance
 
-Both incidents diagnosed during the #3898-#3908 performance-benchmark batch.
+Both incidents diagnosed during the #3898–#3908 performance-benchmark batch.
 The #3914 park was cleared after confirming against the cited run that the
 verdict never ran; the diagnosis is recorded in that PR's thread.
+
+The manifest check that corrected the root cause was run only because the fix
+required knowing *which* `25.x` to pin — the intended answer ("whichever is
+newest in the manifest") turned out not to exist, which is what exposed the
+real shape of the bug. Worth remembering: the original writeup was internally
+coherent and cited real logs, and was still wrong about the mechanism.

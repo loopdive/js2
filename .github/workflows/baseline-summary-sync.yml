@@ -56,7 +56,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 25
+          node-version: "24"
 
       - name: Fetch latest baselines (sparse)
         run: |

@@ -5,7 +5,7 @@ inputs:
   node-version:
     description: Node.js version used by the job.
     required: false
-    default: "25"
+    default: "24"
 
 runs:
   using: composite
