@@ -48,7 +48,13 @@ const OUTPUT_PATH = join(ROOT, "website", "public", "benchmarks", "results", "te
 // (#2910) Landing-page feature catalog + its reconciled row counts.
 const FEATURE_EXAMPLES_PATH = join(ROOT, "website", "public", "feature-examples.json");
 const FEATURE_T262_MAP_PATH = join(ROOT, "scripts", "feature-t262-features.json");
-const CURRENT_DRAFT_EDITION = 2026;
+// The edition that is still a DRAFT — i.e. one year past the newest edition the
+// ECMA General Assembly has ratified. ES2026 (17th edition) was published in
+// June 2026, so the draft is now ES2027. Bumping this in lockstep with
+// `T262_CURRENT_DRAFT_EDITION_YEAR` in website/components/t262-charts.js is the
+// single intentional switch that promotes a draft year to a published notch on
+// the landing-page timeline (see #1777).
+const CURRENT_DRAFT_EDITION = 2027;
 
 // ---------------------------------------------------------------------------
 // Feature → Edition mapping (from issue #959 spec)
@@ -248,7 +254,6 @@ const FEATURE_EDITION: Record<string, number> = {
   ShadowRealm: 2023,
 
   // ES2024
-  "Array.fromAsync": 2024,
   "ArrayBuffer.prototype.transfer": 2024,
   "regexp-v-flag": 2024,
   "Promise.withResolvers": 2024,
@@ -262,36 +267,62 @@ const FEATURE_EDITION: Record<string, number> = {
   "promise-with-resolvers": 2024,
   "align-detached-buffer-semantics-with-web-reality": 2024,
 
-  // ES2025
+  // ES2025 — the 10 proposals published in the 16th edition (June 2025).
   "set-methods": 2025,
   "iterator-helpers": 2025,
   "regexp-duplicate-named-groups": 2025,
   Float16Array: 2025,
   "Math.f16round": 2025,
   "import-defer": 2025,
-  "explicit-resource-management": 2025,
   "source-phase-imports": 2025,
   "import-attributes": 2025,
+  "json-modules": 2025,
   "regexp-modifiers": 2025,
+  "Promise.try": 2025,
+  "promise-try": 2025,
+  "RegExp.escape": 2025,
 
-  // ES2026 draft / current-standard additions in the default test262 scope
-  "Promise.try": 2026,
-  "promise-try": 2026,
-  "RegExp.escape": 2026,
+  // ES2026 — the 7 proposals published in the 17th edition (June 2026).
+  // Source of truth for the year is the "Expected Publication Year" column of
+  // tc39/proposals `finished-proposals.md`, NOT the date test262 moved the tag
+  // from its "Proposed" to its "Standard language features" section: that move
+  // is a periodic housekeeping batch and lags ratification by a full edition
+  // (e.g. `Array.fromAsync` is ES2026 but only moved on 2026-03-10, while the
+  // 2026-07-02 batch was the ES2027 cohort).
+  "Array.fromAsync": 2026,
   "Error.isError": 2026,
-  "Math.sumPrecise": 2026,
-  "Atomics.pause": 2026,
-  "json-parse-with-source": 2026,
-  "immutable-arraybuffer": 2026,
   "iterator-sequencing": 2026,
-  "joint-iteration": 2026,
-  "await-dictionary": 2026,
-  caller: 2026,
-  "legacy-regexp": 2026,
-  IsHTMLDDA: 2026,
-  __proto__: 2026,
-  __getter__: 2026,
-  __setter__: 2026,
+  "json-parse-with-source": 2026,
+  "Math.sumPrecise": 2026,
+  "uint8array-base64": 2026,
+  upsert: 2026,
+
+  // ES2027 — stage 4, ratified after the ES2026 cut-off, so still the DRAFT
+  // edition (see CURRENT_DRAFT_EDITION). Not a published-edition claim.
+  "Atomics.pause": 2027,
+  "explicit-resource-management": 2027,
+  "joint-iteration": 2027,
+  Temporal: 2027,
+
+  // Still stage-3 proposals. Records whose runner scope is `proposal` are
+  // bucketed to -1 before edition classification ever runs; these entries only
+  // catch a tagged test that arrives without that scope, and park it in the
+  // draft tail rather than inflating a published edition.
+  "immutable-arraybuffer": 2027,
+  "await-dictionary": 2027,
+
+  // Annex B. NOT draft-edition features — these are legacy web-compat surface
+  // that has been in the spec for years. They are parked in the draft bucket
+  // only to preserve the pre-#3639 behaviour of keeping them out of a published
+  // edition's numerator; the `/annexB/` path heuristic below cannot reach them
+  // because a `features:` tag wins at priority 3. Giving Annex B its own bucket
+  // is follow-up work.
+  caller: 2027,
+  "legacy-regexp": 2027,
+  IsHTMLDDA: 2027,
+  __proto__: 2027,
+  __getter__: 2027,
+  __setter__: 2027,
 };
 
 // (#3639) Sentinels for buckets that are NOT editions. A test lands in one of
@@ -316,6 +347,7 @@ const EDITION_NAMES: Record<number, string> = {
   2024: "ES2024",
   2025: "ES2025",
   2026: "ES2026",
+  2027: "ES2027",
   [-1]: "Proposals",
   [UNCLASSIFIED_LEGACY]: "Unclassified (legacy)",
   [UNCLASSIFIED_UNTAGGED]: "Unclassified (untagged)",
@@ -335,6 +367,7 @@ const EDITION_ORDER = [
   2024,
   2025,
   2026,
+  2027,
   -1,
   UNCLASSIFIED_LEGACY,
   UNCLASSIFIED_UNTAGGED,

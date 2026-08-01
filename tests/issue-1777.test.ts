@@ -28,10 +28,10 @@ import {
   // @ts-expect-error — plain JS web-component module, no .d.ts
 } from "../website/components/t262-charts.js";
 
-describe("#1777 ES2026 draft edition is not a published notch", () => {
-  it("treats ES2026 as an edition scope (it is a real row)", () => {
-    expect(t262IsEditionScope("ES2026")).toBe(true);
-    expect(t262IsEditionScope("ES2025")).toBe(true);
+describe("#1777 the draft edition is not a published notch", () => {
+  it("treats the draft year and the published year as edition scopes (both are real rows)", () => {
+    expect(t262IsEditionScope(`ES${T262_CURRENT_DRAFT_EDITION_YEAR}`)).toBe(true);
+    expect(t262IsEditionScope(`ES${T262_CURRENT_DRAFT_EDITION_YEAR - 1}`)).toBe(true);
   });
 
   it("never reports the draft edition year as the latest published edition", () => {
@@ -49,14 +49,27 @@ describe("#1777 ES2026 draft edition is not a published notch", () => {
   });
 
   it("picks the edition before the draft as the latest published, given draft-bearing rows", () => {
-    const rows = [{ edition: "ES2024" }, { edition: "ES2025" }, { edition: "ES2026" }];
+    // Derived from the constant, not hardcoded: these fixtures used to name
+    // ES2024/25/26 literally while taking the date from the constant, so they
+    // broke the moment the draft year was bumped (2026 -> 2027 when ES2026 was
+    // ratified). Expressing the rows relative to the draft keeps the invariant
+    // under test — "latest published is the edition before the draft" — instead
+    // of a snapshot of one particular year.
+    const rows = [
+      { edition: `ES${T262_CURRENT_DRAFT_EDITION_YEAR - 2}` },
+      { edition: `ES${T262_CURRENT_DRAFT_EDITION_YEAR - 1}` },
+      { edition: `ES${T262_CURRENT_DRAFT_EDITION_YEAR}` },
+    ];
     const midDraftYear = new Date(Date.UTC(T262_CURRENT_DRAFT_EDITION_YEAR, 5, 4));
     const resolved = t262ResolveLatestPublishedEdition(rows, midDraftYear);
-    expect(resolved?.edition).toBe("ES2025");
+    expect(resolved?.edition).toBe(`ES${T262_CURRENT_DRAFT_EDITION_YEAR - 1}`);
   });
 
   it("classifies the draft edition into the proposal/current-standard tail", () => {
-    const rows = [{ edition: "ES2025" }, { edition: "ES2026" }];
+    const rows = [
+      { edition: `ES${T262_CURRENT_DRAFT_EDITION_YEAR - 1}` },
+      { edition: `ES${T262_CURRENT_DRAFT_EDITION_YEAR}` },
+    ];
     const midDraftYear = new Date(Date.UTC(T262_CURRENT_DRAFT_EDITION_YEAR, 5, 4));
     const latest = t262ResolveLatestPublishedEdition(rows, midDraftYear);
     const publishedLimitRank = T262_EDITION_SCOPE_RANK.get(latest?.edition ?? "") ?? Number.MAX_SAFE_INTEGER;
