@@ -391,3 +391,51 @@ issue is still warranted.
 - host_free_pass ≥ 24,500 (from 20,885) — i.e. the family's ~90% banked.
 - `registerGeneratorHostImports` (the index.ts:11798 registration) is dead in
   standalone compiles of the test262 corpus (S7 assert).
+
+## 2026-08-01 harvest note — acceptance is NOT measurable from the published baseline
+
+`/harvest-errors` against `loopdive/js2wasm-baselines` run `20260801-090441`
+(gitHash `c601e89b`) turned up a **blocker for closing this umbrella**: the
+acceptance criteria above are all phrased in terms of **leaky passes**
+(`host_free_pass`, "appear in <100 official-scope leaky passes"), but the
+published `test262-standalone-current.jsonl` **cannot express that measurement**:
+
+| Lane | records | carry `imports` | **passing** records carrying `imports` |
+| --- | --- | --- | --- |
+| default (JS-host) | 47,834 | 41,276 | 26,553 |
+| **standalone** | 48,088 | 2,679 | **0** |
+
+No passing standalone record carries an `imports` field, so leaky-pass counts
+per import name are unobtainable from the artifact. Whoever closes this
+umbrella needs the standalone promotion to emit `imports` on **passing**
+records first (or a purpose-built S7 assert per the third bullet), otherwise
+the first two acceptance bullets can be neither verified nor refuted.
+
+### What the published artifact *can* show (different population — do not compare)
+
+The #2961 leak guard names the leaking imports when it **refuses**. Across
+**2,125 official failing** standalone records:
+
+| Import | Records |
+| --- | --- |
+| `env::__gen_next` | 753 |
+| `env::__gen_result_value` | 672 |
+| `env::__gen_create_buffer` | 637 |
+| `env::__get_caught_exception` | 637 |
+| `env::__gen_result_done` | 630 |
+| `env::Promise_then2` | 378 |
+| `env::__create_generator` | 371 |
+| `env::__js_array_new` | 348 |
+| `env::__js_array_push` | 320 |
+| `env::SharedArrayBuffer_new` | 313 |
+| `env::__create_async_generator` | 266 |
+| `env::__gen_return` | 257 |
+| `env::__gen_yield_star` | 205 |
+
+**These are refusals among FAILING tests, not leaky passes.** They are a
+different population from the 1,739 / 2,408 / 2,262 / 4,106 baselines above and
+must not be read as progress against them. `__make_callback` does not appear in
+the top 25 refusal names. Non-generator families also show up in the same guard
+output and belong elsewhere: `__js_array_*` / `__array_concat_any` → #3531,
+`SharedArrayBuffer_new` → #674 / #1354.
+
