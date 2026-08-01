@@ -209,6 +209,27 @@ total.** They are excluded. Reporting them would have inflated the result to
 +29 and, worse, would have claimed movement in a bucket whose entire purpose is
 to prove nothing moved.
 
+### Re-measured after the LOC-gate refactor
+
+The `#3102` LOC-regrowth ratchet rejected the first shape (the builder sat
+inline in `object-runtime.ts`, +94 lines over an 8,322 budget). Rather than take
+a `loc-budget-allow:` grant, the builder was moved into its own subsystem
+module, `src/codegen/object-runtime-strict-set.ts`, leaving a 3-line call site —
+which is what the gate is actually asking for. The gate now passes with **no
+allowance**.
+
+Because that is a refactor of measured code, the AFTER arm was **re-run from
+scratch** against the same BEFORE arm: **244 pass / 337 — identical**, and the
+per-file diff is identical (`fam +23/−0`, plus the same floored 24th, and the
+same 5 already-de-bunked control flakes). The refactor is behaviour-identical.
+
+One discarded run is worth recording: the first re-measure was started
+concurrently with the local quality-gate sweep and returned **119 rows instead
+of 337**. Under load, vitest kills pool-timed-out tests without writing a jsonl
+row, so the run silently truncates its own denominator — and 52/119 would have
+looked like a catastrophic regression. It was discarded on the row count alone,
+before any pass ratio was computed, and re-run on an idle box.
+
 ### Which 24 flipped, and why the other 13 did not
 
 The 24: all **22** `language/expressions/compound-assignment/11.13.2-{34..55}-s.js`,

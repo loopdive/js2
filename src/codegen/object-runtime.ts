@@ -101,6 +101,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { emitSelfHostedFunc } from "./stdlib-selfhost.js"; // (#3160) self-hosted object-runtime slice
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js"; // (#3160) TS-source builtins
 import { buildObjectDescriptorHelpers } from "./object-runtime-descriptors.js";
+import { buildStrictSetHelper } from "./object-runtime-strict-set.js"; // (#3983) strict [[Set]] TypeError
 import { exposedClosedStructFieldName, isOpenDescriptorShape } from "./property-descriptor-shape.js";
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
@@ -2532,7 +2533,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "local.get", index: 7 },
       { op: "call", funcIdx: objInsertIdx },
     ];
-    const externSetIdx = registerNative(
+    registerNative(
       "__extern_set",
       [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
       [],
@@ -2547,11 +2548,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       ],
       body,
     );
-    // (#3983) `__extern_set_strict` is NO LONGER an alias of `__extern_set`.
-    // It is registered as a distinct native helper AFTER `__reflect_set` below,
-    // because it is defined in terms of `__reflect_set`'s [[Set]] boolean. See
-    // the `__extern_set_strict` block following `__reflect_set`.
-    void externSetIdx;
+    // (#3983) `__extern_set_strict` is no longer an alias of this one.
   }
 
   // ── __reflect_set(externref obj, externref key, externref value) -> i32 ──
@@ -2685,98 +2682,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
 
-  // ── __extern_set_strict(externref obj, externref key, externref value) -> () ─
-  //
-  // (#3983) The STRICT [[Set]] / PutValue path (§6.2.5.6 steps 3.d–e): when
-  // [[Set]] returns **false** and the Reference is strict, PutValue throws a
-  // TypeError. Until now standalone aliased this name straight onto
-  // `__extern_set`, whose refusals are all silent `return`s — so *every* strict
-  // write that the spec requires to throw silently did nothing instead:
-  //
-  //   - assignment to an own accessor with `set: undefined`
-  //   - assignment to an own data property with `writable: false`
-  //   - any data write to a frozen object
-  //   - a NEW key on a non-extensible object
-  //
-  // The front end already distinguishes the two references — `member-set-dispatch`
-  // and `compilePropertyAssignmentExternSet` pick `__extern_set_strict` vs
-  // `__extern_set` from `isStrictContext` — so the whole gap was that both names
-  // resolved to the same silent function. Host/gc mode has always carried the
-  // spec-correct catchable TypeError via the JS sidecar; this closes standalone.
-  //
-  // WHY layered over `__reflect_set` rather than a second copy of the flag
-  // walk: `__reflect_set` already computes exactly the [[Set]] boolean this
-  // needs, over the same `$PropEntry` flags, and delegates the *successful*
-  // write back to `__extern_set` (so a permitted write still runs the accessor
-  // driver / insert path once, not twice). Re-deriving the predicate here would
-  // be a second thing to keep in sync with the descriptor semantics.
-  //
-  // WHY the non-`$Object` receiver short-circuits to `__extern_set` instead of
-  // throwing: `__reflect_set` answers **false** for any receiver that is not a
-  // `$Object` — arrays (`$Vec`), closures, native strings, `$Proxy` and genuine
-  // host externrefs all take that arm. `__extern_set` routes those into the
-  // #3468 closure / #3537 vec expando side tables, which is real, working
-  // behaviour. Throwing on `__reflect_set === 0` unconditionally would turn
-  // `"use strict"; a[0] = 1` on an array into a TypeError — so the receiver test
-  // is load-bearing, not defensive.
-  //
-  // Deliberately NOT covered here: a non-writable data property inherited from
-  // the PROTOTYPE. `__obj_find` walks the own table only, so `__reflect_set`
-  // returns true and the write lands as a new own property (pre-existing
-  // behaviour, unchanged by this block). Fixing that needs a proto-chain walk in
-  // `__reflect_set` and is scoped separately so this change cannot regress the
-  // ordinary shadowing write.
-  //
-  // params: 0=obj 1=key 2=value
-  {
-    const strictExternSetIdx = ctx.funcMap.get("__extern_set")!;
-    const reflectSetIdx = ctx.funcMap.get("__reflect_set")!;
-    emitWasiErrorConstructor(ctx, "TypeError", 1);
-    const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
-    const exnTagIdx = ensureExnTag(ctx);
-    const message = "TypeError: Cannot assign to read only property";
-    addStringConstantGlobal(ctx, message);
-    const body: Instr[] = [
-      // Non-$Object receiver → the ordinary (side-table aware) write, no throw.
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: objectTypeIdx },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "local.get", index: 1 },
-          { op: "local.get", index: 2 },
-          { op: "call", funcIdx: strictExternSetIdx },
-          { op: "return" },
-        ],
-      },
-      // $Object receiver: perform the write and observe the [[Set]] boolean.
-      { op: "local.get", index: 0 },
-      { op: "local.get", index: 1 },
-      { op: "local.get", index: 2 },
-      { op: "call", funcIdx: reflectSetIdx },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          ...stringConstantExternrefInstrs(ctx, message),
-          { op: "call", funcIdx: typeErrorCtorIdx },
-          { op: "throw", tagIdx: exnTagIdx },
-        ],
-      },
-    ];
-    registerNative(
-      "__extern_set_strict",
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [],
-      [],
-      body,
-    );
-  }
+  // (#3983) __extern_set_strict — strict [[Set]]/PutValue TypeError. MUST follow
+  // `__extern_set` + `__reflect_set` (the body bakes their funcIdx); see module.
+  buildStrictSetHelper(ctx, { registerNative, objectTypeIdx });
 
   // ── __delete_property(externref obj, externref key) -> i32 ───────────────
   //
@@ -8304,10 +8212,7 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__extern_is_array",
   "__extern_get",
   "__extern_set",
-  // (#3983) A distinct native helper, NOT an alias of `__extern_set` — it is
-  // `__reflect_set` plus the §6.2.5.6 strict-PutValue TypeError. (Was aliased
-  // from #2017 until #3983.)
-  "__extern_set_strict",
+  "__extern_set_strict", // (#3983) distinct helper: __reflect_set + strict-PutValue TypeError
   "__reflect_set",
   "__to_primitive",
   "__extern_toString",
