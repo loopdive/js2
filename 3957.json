@@ -1,11 +1,10 @@
 {
   "id": "3957",
-  "assignee": "",
+  "assignee": "ttraenkler/sendev-descriptors",
   "requested_by": "ttraenkler/sendev-descriptors",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-01T01:45:41Z",
-  "updated_at": "2026-08-01T01:45:41Z",
-  "write_id": "67254-ihlsg6z3",
-  "pr_scan": "ok"
+  "status": "in-progress",
+  "branch": "issue-3957-standalone-defineproperties-generic-properties",
+  "claimed_at": "2026-08-01T01:46:41Z",
+  "updated_at": "2026-08-01T01:46:41Z",
+  "write_id": "82529-t6r4ppxw"
 }
