@@ -1,11 +1,8 @@
 {
   "id": "3947",
-  "assignee": "",
-  "requested_by": "ttraenkler/dev-claim-reliability",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-07-31T17:43:51Z",
-  "updated_at": "2026-07-31T17:43:51Z",
-  "write_id": "95194-b4km8y7h",
-  "pr_scan": "ok"
+  "assignee": "ttraenkler/dev-fmt-gate",
+  "status": "in-progress",
+  "branch": "issue-3947-conformance-gate-prettier",
+  "claimed_at": "2026-08-01T00:40:44Z",
+  "updated_at": "2026-08-01T00:40:44Z"
 }
