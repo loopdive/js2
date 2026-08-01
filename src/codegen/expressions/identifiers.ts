@@ -43,6 +43,8 @@ import { getOrRegisterErrorStructType, isWasiErrorName } from "../registry/error
 import { allocLocal } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
+import { annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
+import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import { emitTaCtorValue } from "../dataview-native.js";
 import { taCtorKindOf } from "../registry/types.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "./helpers.js";
@@ -556,28 +558,23 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   if (cancelRanges && cancelRanges.length > 0) {
     const pos = id.getStart();
     const insideDeclaringBlock = cancelRanges.some((r) => pos >= r.start && pos < r.end);
-    if (!insideDeclaringBlock) {
-      const msg = `${name} is not defined`;
-      if (noJsHost(ctx)) {
-        emitThrowReferenceError(ctx, fctx, msg);
-        fctx.body.push({ op: "unreachable" });
-        return { kind: "externref" };
-      }
-      const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
-      flushLateImportShifts(ctx, fctx);
-      if (throwRefErrIdx !== undefined) {
-        addStringConstantGlobal(ctx, msg);
-        const strIdx = ctx.stringGlobalMap.get(msg)!;
-        fctx.body.push({ op: "global.get", index: strIdx });
-        fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-        fctx.body.push({ op: "unreachable" });
-      } else {
-        const tagIdx = ensureExnTag(ctx);
-        fctx.body.push({ op: "ref.null.extern" });
-        fctx.body.push({ op: "throw", tagIdx });
-      }
-      return { kind: "externref" };
-    }
+    if (!insideDeclaringBlock) return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+  }
+
+  // (#3980, Annex B B.3.3) The `fctx.annexBCancelled` map above is per-
+  // FunctionContext, so it is invisible inside NESTED function bodies — yet that
+  // is exactly where the 96 `annexB/language/*-skip-early-err-*` reads live
+  // (`assert.throws(ReferenceError, function () { f; })`). It also only sees a
+  // `function` whose direct parent is a `Block` shadowed by a sibling `let`.
+  // `collectAnnexBCancelSites` is the position-based, whole-SourceFile
+  // counterpart: it covers the `if`-clause and `switch` case/default declaration
+  // positions plus lexical loop heads and destructuring `catch` parameters, and
+  // it answers for a read ANYWHERE in the module. Memoized per SourceFile and
+  // short-circuiting on the (near-universally) empty site list, so non-Annex-B
+  // modules are byte-identical.
+  const annexBSites = collectAnnexBCancelSites(id.getSourceFile());
+  if (annexBSites.length > 0 && annexBReadIsUnbound(annexBSites, id)) {
+    return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
 
   // (#2552 Phase 2) A bare value READ of an Annex B B.3.3 block-nested function
