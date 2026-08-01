@@ -113,14 +113,45 @@ dependency entirely.
 | what | from | to | why this form |
 | --- | --- | --- | --- |
 | `.github/actions/setup-node-pnpm` default | `"25"` | `"24"` | the shared choke point — covers `test262-sharded` (the #3914 failure) and 11 other workflows |
-| `benchmark-refresh.yml` `NODE_VERSION` | `"25.7.0"` | `"24.18.1"` | full pin required: the job asserts `node --version \| grep -Fx "v${NODE_VERSION}"` |
-| 26 remaining `node-version:` pins in 17 workflows | `25` / `"25"` / `"25.7.0"` | `"24"` | bare major resolves *within* the manifest to the newest matching stable, so it stays current without going stale |
+| `benchmark-refresh.yml` `NODE_VERSION` | `"25.7.0"` | `"24.18.1"` | **exact** — reproducibility block; the job asserts `node --version \| grep -Fx "v${NODE_VERSION}"` |
+| `landing-four-lane-backend.yml` ×2 | `"25.7.0"` | `"24.18.1"` | **exact** — reproducibility block; guarded by `tests/issue-3498-landing-four-lane-backend-benchmark.test.ts` |
+| 24 remaining `node-version:` pins in 16 workflows | `25` / `"25"` | `"24"` | bare major resolves *within* the manifest to the newest matching stable, so it stays current without going stale |
 
 **Bare-major is not the defect.** The failure mode was "this major is absent
 from the manifest", not "setup-node cannot resolve a bare major" — `24` resolves
-fine, which is why the 9 workflows already on `24` were never implicated. Only
-`benchmark-refresh.yml` needs a full pin, because it independently asserts the
-exact version string.
+fine, which is why the 9 workflows already on `24` were never implicated.
+
+**But bare-major is wrong for the two benchmark workflows**, and a repo gate
+caught that. The first pass flattened every pin to `"24"`, including
+`landing-four-lane-backend.yml`; `correctness-support-sanitizers` failed on
+`tests/issue-3498-…:233`, which asserts the exact Node string. That assertion is
+not incidental — it sits in a block that also pins `runs-on: ubuntu-24.04`,
+`timeout-minutes: 90`, `RUST_TOOLCHAIN_VERSION: "1.94.1"`, `WASMTIME_VERSION:
+"46.0.1"` and `rust-version = "1.94"` in the cold-host `Cargo.toml`. These are
+**measurement-reproducibility pins**: a benchmark whose Node version drifts
+between runs silently changes its own numbers. Both benchmark workflows
+therefore keep an exact pin; only the non-measuring workflows take the bare
+major.
+
+The initial sweep grepped `.github/` for version assertions but not `tests/`,
+which is why the exact-pin requirement was found by CI rather than before it.
+
+### Benchmark-baseline implication — deliberate, not incidental
+
+Moving the two benchmark workflows from Node 25.7.0 to 24.18.1 **changes the
+measured JS baseline**, because the JS lane's numbers are V8's. This is a real
+consequence and is accepted rather than overlooked:
+
+- Those workflows were on the fallback-download path too, so they carried the
+  same parking risk as everything else — leaving them on 25.7.0 would have left
+  the fragility in place precisely where a failure is most expensive.
+- Reproducibility is preserved *going forward*: 24.18.1 is exact and
+  manifest-resolved, which is strictly more reproducible than an exact version
+  fetched over the network from a third-party host on every run.
+- Cross-version comparisons against numbers published before this change are
+  not valid. The same-run A/B that `benchmark-refresh` uses for its PR verdict
+  is unaffected, since both sides of that A/B run on the same runner with the
+  same pinned toolchain.
 
 No retry wrapper was added. Retries were option 2 in the original writeup, on
 the assumption the flake was irreducible; once the jobs are on the tool cache
@@ -146,6 +177,11 @@ ever starts flaking, revisit.
    nothing.
 3. ✅ Workflows changed are recorded in the table above; all 34 workflow files
    plus the composite action re-parse as valid YAML after the edit.
+4. ✅ The two measurement-reproducibility workflows keep **exact** pins, and
+   their guards travel with them: `tests/issue-3498-…` updated and re-run
+   green, plus `docs/ci-policy.md` §6 and
+   `docs/benchmarks/landing-four-lane-backend.md`, which both name the pinned
+   Node version in prose.
 
 ## Worth considering alongside — still open
 

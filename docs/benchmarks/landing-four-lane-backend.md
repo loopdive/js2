@@ -138,7 +138,7 @@ leak ownership. Exit zero without a sanitizer signature is clean; nonzero with
 a recognized ASan/UBSan signature is a finding; every other result aborts as
 infrastructure failure.
 
-The manual workflow pins `ubuntu-24.04`, Node `25.7.0`, Rust/Cargo `1.94.1`, and
+The manual workflow pins `ubuntu-24.04`, Node `24.18.1`, Rust/Cargo `1.94.1`, and
 Wasmtime `46.0.1`, invokes `--benchmark --canonical-ubuntu`, has no performance
 threshold, and uploads the complete output directory. The cold-host manifest
 declares the compatible `rust-version = "1.94"`, while the capture runner
