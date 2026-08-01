@@ -742,8 +742,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     selfTypeIdx: number;
     closureArity: number;
   }[] = [];
-  // (#3992) Every native-proto METHOD closure of this user arity — not just the
-  // one member that used to be hard-coded here. See the collector's note.
+  // (#3992) Every native-proto METHOD closure of this arity — see the collector.
   const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
@@ -805,16 +804,8 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   body.push({ op: "local.get", index: 0 });
   body.push({ op: "global.set", index: currentThisGlobalIdx });
 
-  body.push(
-    ...buildTransferredNativeProtoCallInstrs(
-      nativeProtoReceiverEntries,
-      arity,
-      anyLocal,
-      resultSaveLocal,
-      prevThisLocal,
-      currentThisGlobalIdx,
-    ),
-  );
+  const npArgs = { anyLocal, resultSaveLocal, prevThisLocal, currentThisGlobalIdx };
+  body.push(...buildTransferredNativeProtoCallInstrs(nativeProtoReceiverEntries, arity, npArgs));
 
   let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" }];
   // (#3673 round 10) per-entry callBody capture for the arity-bucketed

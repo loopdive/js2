@@ -54,7 +54,7 @@ import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
-import { runtimeToPrimitiveInstrs } from "./coercion-engine.js"; // (#3992) ToString(this) = ToPrimitive-first
+import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
 
 /**
  * `Array.prototype`'s own enumerable+non-enumerable method names (ES2024
@@ -794,48 +794,6 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
 }
 
 /**
- * (#3992) `S = ? ToString(this)` for a reflective `String.prototype.<member>`
- * body: `this` is closure-param 1 (externref).
- *
- * §22.1.3 says `ToString(thisValue)`, and ToString on an OBJECT is
- * `ToPrimitive(input, string)` first — that is what consults `toString` /
- * `valueOf` (§7.1.1 OrdinaryToPrimitive). The four generic bodies below used to
- * skip straight to `$__any_to_string`, which stringifies an object receiver
- * structurally: `new Object(true)` came out as `"[object Object]"` instead of
- * `"true"`, and `{ toString(){ return "AB"; } }` never had its `toString`
- * called at all.
- *
- * That was invisible until #3992 fixed the transferred-method dispatch, because
- * every such call previously answered `null` before reaching the body. The two
- * members that DID work (`charAt`, `substring`) are exactly the two whose
- * bespoke bodies already did the ToPrimitive step — a third divergence of the
- * same rule. Centralising it here keeps the remaining bodies from re-deriving
- * it a fourth time.
- *
- * Emits instructions only — no `ensure*` — so the caller keeps ownership of
- * late-import ordering (every caller has already run `ensureStringRocUndefinedNative`,
- * which brings up the object runtime that owns `__to_primitive`). Returns
- * `null` when `__to_primitive` is unavailable (host/gc lowering), and the
- * caller then keeps its previous byte-identical sequence.
- */
-function stringProtoToStringInstrs(
-  ctx: CodegenContext,
-  paramIdx: number,
-  anyToStrIdx: number,
-  flattenIdx: number,
-): Instr[] | null {
-  const toPrimitive = runtimeToPrimitiveInstrs(ctx, "string");
-  if (toPrimitive === null) return null;
-  return [
-    { op: "local.get", index: paramIdx },
-    ...toPrimitive,
-    { op: "any.convert_extern" },
-    { op: "call", funcIdx: anyToStrIdx },
-    { op: "call", funcIdx: flattenIdx },
-  ];
-}
-
-/**
  * (#2875 slice 1) Native body for a reflective `String.prototype.<member>`
  * closure. `this` is closure-param 1 (externref); user args at 2.. (externref-
  * boxed). Implements §22.1.3.x steps: `? RequireObjectCoercible(this)` →
@@ -896,14 +854,10 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // dedicated body: `? RequireObjectCoercible(this)` → `? ToString(this)` →
   // the native `__str_trim*` helper. Routed here so it never reads the absent
   // arg-2 slot the char/search bodies unbox (these closures have arity 0).
-  // (#3992) The case-conversion family (§22.1.3.{26,27,28,29}) has the same
-  // no-arg string-returning shape, so it shares this body instead of getting a
-  // fourth per-member clone. Its members were the single largest transferred-
-  // receiver gap once #3992 fixed the dispatch: they reached the body for the
-  // first time and refused, so wiring them here is what turns that into a pass.
-  if (NO_ARG_STRING_MEMBER_HELPER[member] !== undefined) {
-    return emitStringTrimMemberBody(ctx, fctx, member);
-  }
+  // (#3992) The case-conversion family (§22.1.3.{26,27,28,29}) shares that
+  // shape, so it shares this body rather than getting a fourth per-member
+  // clone — see NO_ARG_STRING_MEMBER_HELPER in string-proto-tostring.ts.
+  if (NO_ARG_STRING_MEMBER_HELPER[member] !== undefined) return emitStringTrimMemberBody(ctx, fctx, member);
   if (member === "charAt") {
     return emitTransferredCharAtProtoMemberBody(
       ctx,
@@ -942,15 +896,7 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
 
   // (2) S = ? ToString(this) (ToPrimitive-first — see the helper), flattened.
   // Store the flat string in a local.
-  const toStr = stringProtoToStringInstrs(ctx, 1, anyToStrIdx, flattenIdx);
-  if (toStr) {
-    fctx.body.push(...toStr);
-  } else {
-    fctx.body.push({ op: "local.get", index: 1 });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
-    fctx.body.push({ op: "call", funcIdx: flattenIdx });
-  }
+  emitStringProtoToStringFlat(ctx, fctx, 1, anyToStrIdx, flattenIdx);
   const flatLocal = allocLocal(fctx, `__str_pm_flat_${fctx.locals.length}`, flatStringType(ctx));
   fctx.body.push({ op: "local.set", index: flatLocal });
 
@@ -1195,15 +1141,7 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
   // §22.1.3.{6,7,8,9,23} apply ToString to BOTH, so both go through the shared
   // ToPrimitive-first sequence (#3992).
   const flattenExtern = (paramIdx: number, label: string): number => {
-    const toStr = stringProtoToStringInstrs(ctx, paramIdx, anyToStrIdx, flattenIdx);
-    if (toStr) {
-      fctx.body.push(...toStr);
-    } else {
-      fctx.body.push({ op: "local.get", index: paramIdx });
-      fctx.body.push({ op: "any.convert_extern" });
-      fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
-      fctx.body.push({ op: "call", funcIdx: flattenIdx });
-    }
+    emitStringProtoToStringFlat(ctx, fctx, paramIdx, anyToStrIdx, flattenIdx);
     const local = allocLocal(fctx, `${label}_${fctx.locals.length}`, flatStringType(ctx));
     fctx.body.push({ op: "local.set", index: local });
     return local;
@@ -1290,15 +1228,7 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
   // §22.1.3.{6,7,8,9,23} apply ToString to BOTH, so both go through the shared
   // ToPrimitive-first sequence (#3992).
   const flattenExtern = (paramIdx: number, label: string): number => {
-    const toStr = stringProtoToStringInstrs(ctx, paramIdx, anyToStrIdx, flattenIdx);
-    if (toStr) {
-      fctx.body.push(...toStr);
-    } else {
-      fctx.body.push({ op: "local.get", index: paramIdx });
-      fctx.body.push({ op: "any.convert_extern" });
-      fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
-      fctx.body.push({ op: "call", funcIdx: flattenIdx });
-    }
+    emitStringProtoToStringFlat(ctx, fctx, paramIdx, anyToStrIdx, flattenIdx);
     const local = allocLocal(fctx, `${label}_${fctx.locals.length}`, flatStringType(ctx));
     fctx.body.push({ op: "local.set", index: local });
     return local;
@@ -1314,29 +1244,6 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
   fctx.body.push({ op: "call", funcIdx: boxBoolIdx });
   return { kind: "externref" };
 }
-
-/**
- * (#3217 / #3992) The reflective `String.prototype` members that take NO
- * arguments and return a STRING, mapped to the standalone-native helper that
- * implements them — the SAME helpers the direct `"x".trim()` / `"x".toLowerCase()`
- * path uses in `string-ops.ts`.
- *
- * (#1470) `toLocale{Lower,Upper}Case` fold onto the non-locale helpers: absent
- * ECMA-402, §22.1.3.{27,29} are defined to match `to{Lower,Upper}Case` except
- * for locale-sensitive mappings, and a standalone module carries no ICU tables.
- * The direct path already makes exactly this substitution, so routing the
- * reflective body to the same helper keeps the two paths in agreement rather
- * than inventing a second answer.
- */
-const NO_ARG_STRING_MEMBER_HELPER: Readonly<Record<string, string>> = {
-  trim: "__str_trim",
-  trimStart: "__str_trimStart",
-  trimEnd: "__str_trimEnd",
-  toLowerCase: "__str_toLowerCase",
-  toUpperCase: "__str_toUpperCase",
-  toLocaleLowerCase: "__str_toLowerCase",
-  toLocaleUpperCase: "__str_toUpperCase",
-};
 
 /**
  * (#3217) Native body for a reflective no-argument string-returning
@@ -1386,15 +1293,7 @@ function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
 
   // (2) S = ? ToString(this) (ToPrimitive-first, #3992); FLATTEN;
   // __str_trim*(S) → native string; → externref.
-  const toStr = stringProtoToStringInstrs(ctx, 1, anyToStrIdx, flattenIdx);
-  if (toStr) {
-    fctx.body.push(...toStr);
-  } else {
-    fctx.body.push({ op: "local.get", index: 1 });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
-    fctx.body.push({ op: "call", funcIdx: flattenIdx });
-  }
+  emitStringProtoToStringFlat(ctx, fctx, 1, anyToStrIdx, flattenIdx);
   fctx.body.push({ op: "call", funcIdx: trimIdx });
   fctx.body.push({ op: "extern.convert_any" });
   return { kind: "externref" };

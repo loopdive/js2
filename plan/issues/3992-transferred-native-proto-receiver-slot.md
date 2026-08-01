@@ -105,6 +105,16 @@ required; shipping the dispatch alone would have been a downgrade.
    as the direct path in `string-ops.ts` already does (#1470) — so the two paths
    agree rather than inventing a second answer.
 
+The shared `ToString` lowering and the no-arg member table live in a new
+`src/codegen/string-proto-tostring.ts`, not in the `array-object-proto`
+dispatcher — same rationale as `char-at-transfer.ts` and
+`string-proto-substring.ts`: the dispatcher stays a dispatcher. This was
+prompted by the LOC-regrowth ratchet (#3102) flagging +99 lines on that
+god-file; the response was to extract rather than to grant a
+`loc-budget-allow:`, and both touched god-files now sit **below** their
+budgets (`array-object-proto` 2620 → 2519 / 2521; `closure-exports` 1678 →
+1669 / 1675).
+
 ## Measurement
 
 Instrument validated first: the standalone baseline reproduces **43,106 official

@@ -99,11 +99,9 @@ export function resolveClosureBaseWrapperTypeIdx(
 export function buildTransferredNativeProtoCallInstrs(
   entries: TransferredNativeReceiverEntry[],
   arity: number,
-  anyLocal: number,
-  resultSaveLocal: number,
-  prevThisLocal: number,
-  currentThisGlobalIdx: number,
+  slots: { anyLocal: number; resultSaveLocal: number; prevThisLocal: number; currentThisGlobalIdx: number },
 ): Instr[] {
+  const { anyLocal, resultSaveLocal, prevThisLocal, currentThisGlobalIdx } = slots;
   const body: Instr[] = [];
   for (const entry of entries) {
     // Supplied args come from locals 2 … arity+1; any trailing slot the closure
