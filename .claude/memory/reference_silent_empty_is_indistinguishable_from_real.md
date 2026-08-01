@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
-  modified: 2026-07-26T11:36:24.976Z
+  modified: 2026-08-01T08:36:08.270Z
 ---
 
 **The benign-looking outcome is indistinguishable from the broken one, and
@@ -22,7 +22,7 @@ clean.
 | 5 | `regressions-allow` reader | gate refused, no mention | **never read** (rebase-mode only) |
 | 6 | merge_group regression gate | a park = "your change regressed" | baseline cloned **at step time**; verdict depends on wall-clock (#3648) |
 | 7 | `mergeable` field | PR looks healthy, `cla-check` green | wedged at `null`; **`pull_request` workflows never fired** |
-| 8 | a CI watcher | "0 pending ⇒ checks finished" | only 2 checks had **started** |
+| 8 | a CI watcher | "0 pending ⇒ checks finished" | only 2 checks had **started** — **RECURRED 2026-08-01**: the required jobs had not been **created**, so the pending list enumerated only jobs that *exist* and was empty for that reason. Cure: floor the required-check COUNT and pin the watcher to the expected SHA |
 | 9 | `__vec_len` discriminator | `typeof … === "number"` true | not-a-vec default is `i32.const 0` — vacuously true |
 | 10 | a corpus sweep | "0 spurious firings" | a concurrent arm had swapped in an instrumented harness |
 
