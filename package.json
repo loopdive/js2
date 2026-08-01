@@ -158,6 +158,7 @@
     "dogfood:three": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package three",
     "dogfood:lit": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package lit",
     "dogfood:lit-upstream-suite": "npx tsx tests/dogfood/lit-upstream-suite.mjs",
+    "dogfood:react-dom-upstream-suite": "npx tsx tests/dogfood/react-dom-upstream-suite.mjs",
     "dogfood:tailwindcss": "npx tsx tests/dogfood/npm-compat-catalog-harness.mjs --package tailwindcss",
     "generate:npm-compat": "npx tsx scripts/generate-npm-compat-report.mjs",
     "benchmark:acorn": "npx tsx scripts/generate-npm-compat-report.mjs --only acorn --no-write",
