@@ -15,8 +15,8 @@ import { addUnionImports } from "./registry/imports.js";
 import { buildClosureRefTestArms, collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
 import {
-  buildTransferredSubstringCallInstrs,
-  collectTransferredSubstringReceivers,
+  buildTransferredNativeProtoCallInstrs,
+  collectTransferredNativeProtoReceivers,
   resolveClosureBaseWrapperTypeIdx,
 } from "./closures/transferred-native-proto.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
@@ -742,7 +742,8 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     selfTypeIdx: number;
     closureArity: number;
   }[] = [];
-  const substringReceiverEntries = collectTransferredSubstringReceivers(ctx, arity);
+  // (#3992) Every native-proto METHOD closure of this arity — see the collector.
+  const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
     if (info.paramTypes.length > arity) continue;
@@ -767,7 +768,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
       });
     }
   }
-  if (entries.length === 0 && substringReceiverEntries.length === 0) return;
+  if (entries.length === 0 && nativeProtoReceiverEntries.length === 0) return;
 
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
@@ -803,15 +804,8 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   body.push({ op: "local.get", index: 0 });
   body.push({ op: "global.set", index: currentThisGlobalIdx });
 
-  body.push(
-    ...buildTransferredSubstringCallInstrs(
-      substringReceiverEntries,
-      anyLocal,
-      resultSaveLocal,
-      prevThisLocal,
-      currentThisGlobalIdx,
-    ),
-  );
+  const npArgs = { anyLocal, resultSaveLocal, prevThisLocal, currentThisGlobalIdx };
+  body.push(...buildTransferredNativeProtoCallInstrs(nativeProtoReceiverEntries, arity, npArgs));
 
   let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" }];
   // (#3673 round 10) per-entry callBody capture for the arity-bucketed
