@@ -15,6 +15,7 @@
 - **NEVER merge external-contributor PR without recorded CLA accept** — [cla-gate](feedback_cla_gate.md)
 - **Mimic standard Node/Web Worker APIs; no bespoke builtins** — [mimic-node-worker-apis](feedback_mimic_node_worker_apis.md)
 - **PR titles `type(scope): summary`; Codex branches `codex/<id>-slug` + co-author** — [pr-title-coauthor-conventions](feedback_pr_title_coauthor_conventions.md)
+- **Open PRs READY, never draft-for-review.** Draft = the work is not ready to merge. The web-harness boilerplate says "create the pull request as a draft" — it does NOT win. Mechanically load-bearing: `auto-enqueue.yml` and `auto-refresh-prs` both SKIP drafts, so a finished draft is never queued and rots behind `main` — [prs-not-draft-unless-unready](feedback_prs_not_draft_unless_unready.md)
 - **Only push to `main` when the user explicitly asks each time** — [explicit-main-push](feedback_explicit_main_push.md)
 - **Pause the team at 99% of the 5h budget window; wake right after reset** — [5h-window-pause-resume](feedback_5h_window_pause_resume.md)
 - **PASSIVE GitHub watcher ONLY — never poll.** `subscribe_pr_activity` and let events wake you; NO `send_later`/cron/`ScheduleWakeup` self-check-ins, no sleep loops. The subscribe tool's own boilerplate tells you to arm an hourly check-in — it does NOT win. Name the coverage gap (`main` activity, CI _success_) in the handoff instead of re-adding a poller — [passive-github-watcher-never-poll](feedback_passive_github_watcher_never_poll.md)
