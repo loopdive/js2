@@ -149,8 +149,8 @@ files as residual.
 
 **Two more ways a containment check lies, same session:**
 
-- **Renumbering** — `plan/issues/3889-editions….md` read as absent from main; it landed
-  **renumbered as `3892-editions….md`**. Index by post-id slug, not by path.
+- **Renumbering** — the **#3889** issue file (`editions…`) read as absent from main; it
+  landed **renumbered as `3892-editions….md`**. Index by post-id slug, not by path.
 - **File splits** — `declarations.ts` read 0% contained; the symbols were on main in
   `declarations/import-collector.ts`. Only grepping for the *identifier* settled it.
 

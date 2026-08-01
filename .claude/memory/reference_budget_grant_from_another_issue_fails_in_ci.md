@@ -24,7 +24,7 @@ and the ceiling applies.
 The tool **prints the attribution**:
 
 ```
-granted by plan/issues/3017-….md, plan/issues/3420-….md
+granted by plan/issues/<id>-<slug>.md, plan/issues/<id2>-<slug2>.md
 ```
 
 That line is the warning, not a receipt. Measured 2026-07-31 on PR #3871:
@@ -89,9 +89,15 @@ measured in one session:
 
    **Your own verification goes stale against your own later commits.** An agent ran
    the issue-integrity gate, passed, then added a commit whose prose contained a
-   **glob-shaped path** (`plan/issues/2916-*.md`) — which that gate resolves as a
-   link to a nonexistent file. "I ran the gate" was **true and stale at the same
-   time**. **Re-run gates after every edit, not once per branch.**
+   **glob-shaped path** (`plan/issues/<id>-*.md`, for #2916) — which that gate
+   resolves as a link to a nonexistent file. "I ran the gate" was **true and stale
+   at the same time**. **Re-run gates after every edit, not once per branch.**
+
+   The gate's link regex is `plan\/issues\/(\d+[a-z]?-[^)\s"'#]+\.md)`, so **any
+   prose that spells a literal `plan/issues/<digits>-….md` is a link to it**, even
+   inside a code fence and even when the elision is obviously a placeholder. Write
+   placeholders with a non-numeric stand-in (`plan/issues/<id>-<slug>.md`) and keep
+   the real issue number in the surrounding prose.
 2. `git checkout origin/main -- <paths>` **stages** the reverted version — the next
    `git add` silently reverts your own committed work.
 3. `git fetch origin main` leaves `origin/main` **stale** (hit 3× in one session).
