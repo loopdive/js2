@@ -60,7 +60,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "24.18.1"
+          node-version: "25.7.0"
 
       - name: Install pinned Rust
         shell: bash
@@ -116,7 +116,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "24.18.1"
+          node-version: "25.7.0"
 
       - name: Install pinned Rust
         shell: bash

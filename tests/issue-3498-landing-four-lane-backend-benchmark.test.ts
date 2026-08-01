@@ -230,7 +230,7 @@ describe("#3498 landing four-lane backend benchmark", () => {
     expect(workflow).toContain('"scripts/wasmtime-bench-child-js.mjs"');
     expect(workflow.match(/timeout-minutes: 90/g)).toHaveLength(2);
     expect(workflow.match(/runs-on: ubuntu-24\.04/g)).toHaveLength(2);
-    expect(workflow.match(/node-version: "24\.18\.1"/g)).toHaveLength(2);
+    expect(workflow.match(/node-version: "25\.7\.0"/g)).toHaveLength(2);
     expect(workflow).toContain('RUST_TOOLCHAIN_VERSION: "1.94.1"');
     expect(
       workflow.match(/rustup toolchain install "\$RUST_TOOLCHAIN_VERSION" --profile minimal --no-self-update/g),

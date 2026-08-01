@@ -20,7 +20,8 @@ related: [2547, 3597]
 
 # #3963 — Node 25 is absent from the setup-node manifest; every pin was on the fallback path
 
-## Status: done — root cause corrected by measurement, fix applied repo-wide
+## Status: done — root cause corrected by measurement; fix deliberately
+## narrowed to the workflows that cannot perturb a committed baseline
 
 ## Problem as first observed
 
@@ -103,60 +104,84 @@ setup/infra step rather than a verdict step, the verdict never ran and this park
 may be spurious — confirm against the run before removing `hold`."* That
 footnote is what made each incident resolvable — but it is a manual check.
 
-## Fix applied
+## Fix applied — narrowed to workflows that cannot perturb a baseline
 
-Every Node pin moves from the absent major **25** to **24**, which the manifest
-does carry (`24.18.1` stable, plus `24.18.0` / `24.17.0` / `24.16.0`). That
-puts every job back on a tool-cache hit and removes the per-job `nodejs.org`
-dependency entirely.
+Seven workflows move from the absent major **25** to **24**, which the manifest
+does carry (`24.18.1` stable, plus `24.18.0` / `24.17.0` / `24.16.0`). Those
+jobs are back on a tool-cache hit with no per-job `nodejs.org` dependency.
 
-| what | from | to | why this form |
-| --- | --- | --- | --- |
-| `.github/actions/setup-node-pnpm` default | `"25"` | `"24"` | the shared choke point — covers `test262-sharded` (the #3914 failure) and 11 other workflows |
-| `benchmark-refresh.yml` `NODE_VERSION` | `"25.7.0"` | `"24.18.1"` | **exact** — reproducibility block; the job asserts `node --version \| grep -Fx "v${NODE_VERSION}"` |
-| `landing-four-lane-backend.yml` ×2 | `"25.7.0"` | `"24.18.1"` | **exact** — reproducibility block; guarded by `tests/issue-3498-landing-four-lane-backend-benchmark.test.ts` |
-| 24 remaining `node-version:` pins in 16 workflows | `25` / `"25"` | `"24"` | bare major resolves *within* the manifest to the newest matching stable, so it stays current without going stale |
+| workflow | from | to |
+| --- | --- | --- |
+| `cross-backend-parity.yml` | `25` | `"24"` |
+| `cla-check.yml` | `25` | `"24"` |
+| `diff-test.yml` | `25` | `"24"` |
+| `native-messaging-smoke.yml` | `25` | `"24"` |
+| `porffor-direct-ab.yml` ×2 | `25` | `"24"` |
+| `porffor-source-canary.yml` | `25` | `"24"` |
+| `vacuity-canary.yml` | `25` | `"24"` |
+
+`cross-backend-parity` is one of the two workflows that actually parked a PR
+(#3917), so the fix covers a real observed incident.
 
 **Bare-major is not the defect.** The failure mode was "this major is absent
 from the manifest", not "setup-node cannot resolve a bare major" — `24` resolves
 fine, which is why the 9 workflows already on `24` were never implicated.
 
-**But bare-major is wrong for the two benchmark workflows**, and a repo gate
-caught that. The first pass flattened every pin to `"24"`, including
-`landing-four-lane-backend.yml`; `correctness-support-sanitizers` failed on
-`tests/issue-3498-…:233`, which asserts the exact Node string. That assertion is
-not incidental — it sits in a block that also pins `runs-on: ubuntu-24.04`,
-`timeout-minutes: 90`, `RUST_TOOLCHAIN_VERSION: "1.94.1"`, `WASMTIME_VERSION:
-"46.0.1"` and `rust-version = "1.94"` in the cold-host `Cargo.toml`. These are
-**measurement-reproducibility pins**: a benchmark whose Node version drifts
-between runs silently changes its own numbers. Both benchmark workflows
-therefore keep an exact pin; only the non-measuring workflows take the bare
-major.
+### What is deliberately NOT changed, and why
 
-The initial sweep grepped `.github/` for version assertions but not `tests/`,
-which is why the exact-pin requirement was found by CI rather than before it.
+**Conformance and benchmark results are Node-version-bound.** This is the
+finding that narrowed the fix, and it was learned the hard way: the first
+version of this change moved *every* pin, including the test262 shards, and the
+`merge_group` re-validation failed with
 
-### Benchmark-baseline implication — deliberate, not incidental
+```
+pass           31086 → 31035    -51
+compile_error    652 →  1829  +1177
+skip            1278 →   108  -1170
+```
 
-Moving the two benchmark workflows from Node 25.7.0 to 24.18.1 **changes the
-measured JS baseline**, because the JS lane's numbers are V8's. This is a real
-consequence and is accepted rather than overlooked:
+`skip` −1170 and `compile_error` +1177 are mirror images — ~1170 previously
+skipped tests were suddenly compiled, the quarantine list wall-to-wall
+`Temporal/…: skip → compile_error`. Alongside it, `compile_timeout` 127 → 171
+and aggregate compile time +0.9%.
 
-- Those workflows were on the fallback-download path too, so they carried the
-  same parking risk as everything else — leaving them on 25.7.0 would have left
-  the fragility in place precisely where a failure is most expensive.
-- Reproducibility is preserved *going forward*: 24.18.1 is exact and
-  manifest-resolved, which is strictly more reproducible than an exact version
-  fetched over the network from a third-party host on every run.
-- Cross-version comparisons against numbers published before this change are
-  not valid. The same-run A/B that `benchmark-refresh` uses for its PR verdict
-  is unaffected, since both sides of that A/B run on the same runner with the
-  same pinned toolchain.
+The attribution took a wrong turn worth recording. The first hypothesis was a
+fail-open in `classifyTestScope` (`const relPath = getTest262RelativePath(...)
+?? ""`, which disables all three path-based skip rules). That is a real
+fail-open, but it was **not** firing: both call sites `readFileSync(filePath)`
+immediately, so `filePath` cannot be undefined. What settled it was PR #3964 —
+an unrelated PR that passed the same `check for test262 regressions` gate in
+`merge_group` during the same window, **on Node 25**, because it merged before
+this change. Same gate, same window, one clean and one showing a 1170-test
+selection flip.
 
-No retry wrapper was added. Retries were option 2 in the original writeup, on
-the assumption the flake was irreducible; once the jobs are on the tool cache
-there is no per-run network call left to retry. If a manifest-covered version
-ever starts flaking, revisit.
+So these keep Node 25:
+
+| kept on 25 | why |
+| --- | --- |
+| `.github/actions/setup-node-pnpm` default | used by exactly two workflows, `ci.yml` and `test262-sharded.yml` — both run test262 |
+| `test262-sharded.yml` | produces the committed baseline and every PR/merge_group verdict |
+| `refresh-baseline.yml`, `test262-canary.yml`, `test262-differential.yml`, `test262-cache-prune.yml` | regenerate, compare, or cache test262 results |
+| `baseline-floor-staleness-alert.yml`, `baseline-summary-sync.yml`, `deploy-pages.yml`, `issue-tests.yml` | read or publish baseline-derived data |
+| `benchmark-refresh.yml`, `landing-four-lane-backend.yml` | committed **benchmark** baselines — same principle: the JS lane measures V8, so moving the Node major silently moves the numbers |
+
+Moving the test262 shards to 24 is still the right end state, but it requires
+**regenerating `test262-current.jsonl` under Node 24 first**; otherwise every
+future PR compares Node-24 results against a Node-25 baseline. That sequencing
+is deferred, not done — see below.
+
+**Correction to an earlier claim in this issue:** the composite action was
+described as "the shared choke point — covers `test262-sharded` and 11 other
+workflows". That is wrong. Only **two** files reference it (`ci.yml`,
+`test262-sharded.yml`); the "12" was a count of matching *grep lines*, not
+files.
+
+### Still open — the test262 shard keeps the flake
+
+The workflow that parked #3914 is **not** fixed by this change. It stays on the
+absent-25 pin and therefore on the fallback download, so the same park can recur
+there. Closing it needs the baseline regeneration above. This is a deliberate
+deferral, recorded so the gap is not mistaken for closed.
 
 ### Why 24 is safe here
 
@@ -170,18 +195,23 @@ ever starts flaking, revisit.
 
 ## Acceptance criteria
 
-1. ✅ `setup-node` no longer resolves against an absent major — verified against
-   the live manifest rather than by re-running CI and hoping.
-2. ✅ Applied to **every** workflow that sets up Node — 27 sites across 18
-   files; `grep -rn "node-version.*25\|NODE_VERSION.*25" .github/` returns
-   nothing.
+1. ✅ `setup-node` no longer resolves against an absent major **in the workflows
+   this change touches** — verified against the live manifest rather than by
+   re-running CI and hoping. Independently corroborated by a runner log:
+   `Found in cache @ /opt/hostedtoolcache/node/24.18.0/x64`, i.e. a tool-cache
+   hit with no `nodejs.org` download.
+2. ⚠️ **NOT met as originally written.** The criterion said "applied to *every*
+   workflow that sets up Node". Doing that broke the test262 `merge_group`
+   verdict, because conformance results are Node-version-bound. Ten
+   baseline-producing or baseline-consuming workflows therefore stay on 25, and
+   the criterion is consciously not satisfied rather than quietly restated. The
+   remaining exposure is tracked under "Still open" above.
 3. ✅ Workflows changed are recorded in the table above; all 34 workflow files
    plus the composite action re-parse as valid YAML after the edit.
-4. ✅ The two measurement-reproducibility workflows keep **exact** pins, and
-   their guards travel with them: `tests/issue-3498-…` updated and re-run
-   green, plus `docs/ci-policy.md` §6 and
-   `docs/benchmarks/landing-four-lane-backend.md`, which both name the pinned
-   Node version in prose.
+4. ✅ Measurement baselines are left alone. `benchmark-refresh.yml` and
+   `landing-four-lane-backend.yml` keep `25.7.0`, and their guards are
+   unmodified: `tests/issue-3498-…`, `tests/benchmark-lifecycle.test.ts`,
+   `docs/ci-policy.md` §6 and `docs/benchmarks/landing-four-lane-backend.md`.
 
 ## Worth considering alongside — still open
 

@@ -579,7 +579,7 @@ rewrite and is unrelated to this rule.
 
 `benchmark-refresh.yml` measures the PR base and synthetic merge candidate
 sequentially in one `ubuntu-24.04` job. Both checkouts use the same physical
-runner and the same pinned Node 24.18.1, pnpm 10.30.2, Rust 1.94.1, Wasmtime
+runner and the same pinned Node 25.7.0, pnpm 10.30.2, Rust 1.94.1, Wasmtime
 46.0.1 toolchain. This same-run A/B is the regression baseline; committed
 timings from a different runner are not used for the PR verdict.
 

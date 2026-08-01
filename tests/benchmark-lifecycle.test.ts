@@ -24,7 +24,7 @@ import {
 
 const SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567";
 const TOOL_VERSIONS = {
-  node: "v24.18.1",
+  node: "v25.7.0",
   platform: "linux",
   arch: "x64",
   pnpm: "10.30.2",
