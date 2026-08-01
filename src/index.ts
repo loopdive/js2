@@ -670,9 +670,19 @@ function withImportObject(result: CompileResult): CompileResult {
     configurable: true,
     get() {
       if (cached) return cached;
-      // Failed compile or zero-import (standalone / wasi) output needs no host
-      // runtime — return an empty, harmless import object.
-      if (!result.success || result.imports.length === 0) {
+      // Failed compile or genuinely import-free (standalone / wasi) output needs
+      // no host runtime — return an empty, harmless import object.
+      //
+      // (#4029) `result.imports` counts FUNCTION imports only. A module with no
+      // host function imports can still declare imported string-constant
+      // GLOBALS, built from `result.stringPool` — a two-file graph whose whole
+      // content is `add(a, b)` has 0 imports and 4 string constants. Taking the
+      // short-circuit there handed back `{}` for a module that declares the
+      // `string_constants` namespace, so instantiating through this convenience
+      // path died with "Import #0 module=\"string_constants\": module is not an
+      // object or function". That is why tests/multi-file.test.ts was 9 failed /
+      // 1 passed on a clean checkout. Require BOTH to be empty.
+      if (!result.success || (result.imports.length === 0 && result.stringPool.length === 0)) {
         cached = {};
         return cached;
       }
