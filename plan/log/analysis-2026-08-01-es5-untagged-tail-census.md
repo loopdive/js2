@@ -219,7 +219,7 @@ is 103 reachable gated → 34 flipped (33 %). Expect a similar discount.
 | 8 | Prototype-chain / `constructor` identity | 93 | 62 SA-only | |
 | 9 | Extensibility/integrity MOP on built-ins | 50 | **48 SA-only** | Clean. `Object.isExtensible(Array.prototype)`, `isSealed(Error.prototype)` — built-ins lack an `[[Extensible]]` slot. |
 | 10 | Built-in props as real own properties (Overlay B) | 30 | **30 SA-only** | Smallest clean win. |
-| — | **Do not schedule**: dynamic-code (144) + `with` (173) | 317 | | Blocked on #2928, #1387/#671. |
+| — | **Do not schedule**: dynamic-code (144) + `with` (173) | 317 | | ⚠ **See the correction below — these are TWO separate blockers, not one.** |
 | — | **Unpriced**: unclassified tail | 202 | 70 SA-only | Needs individual reading. |
 
 ## Tooling note for the next census
@@ -234,3 +234,70 @@ agent's worktree under `.tmp/`: row/pass validation, scope classifier with
 controls and a miss floor, body-shape features, host-lane join, dependency
 partition with the non-circularity control, the ordered mechanism classifier,
 descriptor decomposition, lane controls, and the overlays/ceiling computation.
+
+---
+
+## ⚠ CORRECTION (2026-08-01, later the same day) — `with` is NOT blocked on eval
+
+Measured by `L-strwith` **by body**, on both fresh baselines (standalone
+43,106/25,755; host 43,489/30,581 @21:13), 0 corpus files unreadable, detector
+carrying one positive control (`statements/with/12.10-0-1.js`) and two negative
+controls (`String.prototype.startsWith`, `Array.prototype.with` — a naive
+`with\s*\(` regex false-positives on both).
+
+**The table above files `with` under "Blocked on #2928, #1387/#671", which reads
+as "blocked on eval". That is wrong.** Only **13 of 175** `with` files are also
+eval/Function-dependent. **162 are attributable to `with` alone.**
+
+**So the decision is TWO investments, not one:**
+
+| | files | needs |
+| --- | ---: | --- |
+| eval / `Function` (#2928) | ~144 | real eval capability — the Acorn interpreter provider, minutes to compile, currently unaffordable per shard. A packaging/perf problem (#2527) as much as semantics. |
+| object environment records with first-class Reference identity | ~162 | a **front-end substrate**, on the same footing as the 795-file descriptor MOP |
+
+Funding the first does **not** deliver the second.
+
+**Why the second is genuinely a substrate — probed, not inferred.** Plain
+`with (scope) { out = x; }` **already works** in standalone (returns 42,
+correct), so `with` is neither refused wholesale nor a no-op — which is what
+"blocked" implied on first read. The largest sub-mechanism is **45 files**
+(`scope.x === N. Actual: NaN` 30 + `innerScope.x === N` 15), all
+`compound-assignment/S11.13.2_A5.*`; their bodies assert that **PutValue uses the
+initially-created Reference even after a getter side effect deletes the
+binding**, with the surrounding function environment record unchanged. A partial
+`with` cannot pass those — they are precisely the tests that distinguish a
+shortcut from a real environment record.
+
+**The by-path undercount, confirming §4 of the refutations above:**
+
+| cut | run | non-pass |
+| --- | ---: | ---: |
+| by path (`language/statements/with/`) | 146 | **107** |
+| by **body** | 217 | **175** |
+
+A directory census undercounts by **39 % — 68 files**, living in
+`compound-assignment` (33), `statements/function` (12), prefix/postfix inc-dec
+(12), `identifier-resolution` (3), `assignment` (2), `try` (1).
+
+**168 of 175 also fail in the HOST lane** (7 standalone-only) — matching this
+census's 173/6/167 within rounding. This is a shared front-end defect, not
+standalone codegen.
+
+**Recommendation (unchanged in direction, corrected in basis): do not fund `with`
+as a conformance lever.** 175 files for an environment-record substrate is a
+worse ratio than the descriptor MOP, and 96 % of it also fails in host — so if it
+is ever funded it should be scoped as shared front-end scope-analysis work owned
+by whoever owns environment records, not as a standalone-gap item.
+
+**Split out separately:** the **16 `null_deref` crashes** inside the 175 (13 of
+them `__str_concat` ← `__module_init`). A crash is not a semantics gap, and this
+may be the same compile-stage family as the 15 `String/prototype` `_A10` files.
+
+Remaining shape of the 175 (49 distinct normalised signatures, so a long tail):
+45 Reference/PutValue identity · 15 an explicit refusal (*"with statement
+requires a proven closed object-literal shape before codegen"*) · 16 `null_deref`
+· ~10 `p1 === null` binding resolution · 5 "Scope chain disturbed" · rest tail.
+
+**The ceiling of 95.4 % is UNCHANGED.** What changed is that reaching it requires
+two funded programmes rather than one.
