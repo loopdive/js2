@@ -1,10 +1,11 @@
 {
   "id": "3990",
   "assignee": "ttraenkler/L-tail",
-  "requested_by": "ttraenkler/L-tail",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-3990-es5-untagged-tail-census",
   "claimed_at": "2026-08-01T17:50:17Z",
-  "updated_at": "2026-08-01T17:50:17Z",
-  "write_id": "76676-40i2hbgl"
+  "updated_at": "2026-08-01T17:52:47Z",
+  "write_id": "39437-ggtjsagn",
+  "released_at": "2026-08-01T17:52:47Z"
 }
