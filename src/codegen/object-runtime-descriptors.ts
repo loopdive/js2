@@ -1087,13 +1087,13 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       ...keyRef(key),
       { op: "call", funcIdx: hasOwnIdx },
     ];
-    const getField = (key: string, nullishToNull = true): Instr[] => [
+    const getField = (key: string): Instr[] => [
       { op: "local.get", index: L_RAW_DESC },
       ...keyRef(key),
       { op: "call", funcIdx: externGetIdx },
-      // (#2106 S1) normalize missing/undefined fields to the legacy null convention.
-      // (#3991) `value` opts OUT — there `undefined` is a real value, and null is not it.
-      ...(nullishToNull && ctx.funcMap.has("__nullish_to_null")
+      // (#2106 S1) normalize missing/undefined descriptor fields back to the
+      // legacy null convention so downstream null-keyed logic is unchanged.
+      ...(ctx.funcMap.has("__nullish_to_null")
         ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
         : []),
     ];
@@ -1398,7 +1398,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
                   { op: "i32.const", value: 1 },
                   { op: "local.set", index: L_HAS_DATA },
                   ...setFlag(HOST_FLAG_HAS_VALUE),
-                  ...getField("value", false),
+                  ...getField("value"),
                   { op: "local.set", index: L_VALUE },
                 ],
               },
