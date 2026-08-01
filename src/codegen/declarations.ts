@@ -22,7 +22,7 @@ import { collectShapes } from "../shape-inference.js";
 // (#3623) Total classification of top-level ExpressionStatements, so the
 // allow-list's fall-through leaves evidence instead of silently dropping an
 // observable statement (the #1268/#2671/#2992/#3366/#3468/#3592/#3615 class).
-import { classifyTopLevelExpressionStatement } from "./module-init-collection.js";
+import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from "./module-init-collection.js";
 import { ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
@@ -1890,7 +1890,11 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // the intrinsic global object. The property write itself already uses
         // the normal native-object/externref bridge, so the stored value keeps
         // one representation across all source files in the shared realm.
-        if (targetName && (targetName === "globalThis" || ctx.moduleGlobals.has(targetName))) {
+        // (#3956) `this.p = v` and a sloppy implicit-global `p = v` create the
+        // SAME realm state — see `createsGlobalObjectBinding` for why each was
+        // silently dropped here (the #3623 mechanism, arms eight and nine).
+        const namedGlobal = targetName === "globalThis" || (!!targetName && ctx.moduleGlobals.has(targetName));
+        if (namedGlobal || createsGlobalObjectBinding(expr.left, ctx.sloppyImplicitGlobals)) {
           ctx.moduleInitStatements.push(stmt);
         }
       }

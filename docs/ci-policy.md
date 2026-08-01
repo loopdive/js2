@@ -29,13 +29,26 @@ The string in the left column is the **exact** GitHub check name that must
 appear in the branch-protection "Required status checks" list. Names are
 case-sensitive and whitespace-sensitive.
 
+**Re-verify this table against the live ruleset rather than trusting the date
+on it** — it drifted once already (`linear-tests` was listed here as required
+for months while the ruleset had six contexts without it, #3934):
+
+```sh
+gh api repos/loopdive/js2/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
+```
+
+Enforcement lives in a repo **ruleset**, not classic branch protection — the
+classic endpoint (`gh api repos/loopdive/js2/branches/main/protection`) answers
+`404 Branch not protected`, which is not the same as "unprotected". Verified
+2026-08-01; the ruleset returned exactly the six rows below.
+
 | Check name                          | Workflow file                           | What it gates                                                                                                                                                                                                                                                                                |
 | ----------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `.github/workflows/test262-sharded.yml` | fast pre-flight: lint + typecheck on the PR branch (cheap reject before running the test262 matrix)                                                                                                                                                                                          |
 | `merge shard reports`               | `.github/workflows/test262-sharded.yml` | aggregates the 57 test262 shards into a single pass/fail signal — the authoritative aggregate conformance gate. Hosts the HARD inline guards: the host catastrophic-regression guard (#1668), the **standalone net-regression guard (#1897)**, and the stale-baseline guard (#1668) — see §3 |
 | `quality`                           | `.github/workflows/ci.yml`              | lint, format check, typecheck, IR fallback budget (#1376), planning-artifact regen, issue integrity (#1616) **incl. the stale-base dup-ID gate against a simulated merge with `main` (#2530)**                                                                                               |
 | `equivalence-gate`                  | `.github/workflows/ci.yml`              | merges the equivalence shards and fails if the shard baseline regresses                                                                                                                                                                                                                      |
-| `linear-tests`                      | `.github/workflows/ci.yml`              | runs the linear-backend (`tests/linear-*.test.ts`), C-ABI (`tests/c-abi.test.ts`), and SIMD (`tests/simd*.test.ts`) suites — the 20 files that previously had no CI job, so every linear-memory lowering change landed ungated (#2139)                                                       |
 | `check for test262 regressions`     | `.github/workflows/test262-sharded.yml` | full rolling-baseline test262 diff; required so pass→fail regressions cannot merge just because the aggregate hard guards stayed below threshold                                                                                                                                             |
 | `cla-check`                         | `.github/workflows/cla-check.yml`       | self-hosted CLA-acceptance gate (#1660): internal authors and bots are exempt; external humans must have affirmative CLA acceptance recorded                                                                                                                                                 |
 
@@ -46,6 +59,8 @@ A failure here surfaces in the PR Checks tab but does not block merge.
 
 | Check name                                                 | Workflow file                                 | Why it isn't required                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `linear-tests`                                             | `.github/workflows/ci.yml`                    | Runs the linear-backend (`tests/linear-*.test.ts`), C-ABI (`tests/c-abi.test.ts`) and SIMD (`tests/simd*.test.ts`) suites — the 20 files that had no CI job before #2139. **Documented as required until 2026-08-01 while never being in the ruleset (#3934).** `ci.yml`'s own `changes` job already treats it as optional (it skips it on docs-only PRs). If it should gate, promote it deliberately — ruleset and this document together.                                                                                          |
+| `test262 PR stub — detect relevance`                       | `.github/workflows/test262-pr-stub.yml`       | Decides which workflow owns the three test262-sharded context names on this PR. Not required — but note a non-green NON-required check still blocks merge indirectly by making the PR `UNSTABLE`; see §1's "Reading a PR's check state".                                                                                                                                                                                                                                                                                          |
 | `test262 js-host/standalone shard 1..57` (114 matrix jobs) | `.github/workflows/test262-sharded.yml`       | Individual shard results feed into `merge shard reports`, which is the required check. Individual shard failures are visible for diagnosis but the aggregated signal is what gates.                                                                                                                                                                                                                                                                                                                                               |
 | `differential gate (branch vs main)`                       | `.github/workflows/test262-differential.yml`  | Branch-vs-main HEAD comparison with src-tree-hash caching (#1246). Useful diagnostic signal, but the sharded `merge shard reports` is the authoritative gate. Kept running for visibility into per-PR deltas.                                                                                                                                                                                                                                                                                                                     |
 | `measure-and-gate`                                         | `.github/workflows/benchmark-refresh.yml`     | Same-run benchmark regression gate. Currently informational at the branch-protection level, but the workflow itself fails on substantial PR regressions (§6 below). Promote to required once the expanded suite has a longer stable signal window.                                                                                                                                                                                                                                                                                |
@@ -53,6 +68,35 @@ A failure here surfaces in the PR Checks tab but does not block merge.
 | `cross-backend-parity`                                     | `.github/workflows/cross-backend-parity.yml`  | #2711 — runs the #1854 cross-backend differential harness (WasmGC/host vs linear/standalone) over the builtin corpus; red on a host↔standalone divergence. Advisory: deliberately NOT in the required list and deliberately does NOT run in `merge_group`, so it cannot block or wedge the queue. **Do not promote to required while it skips `merge_group`** — a required check that never runs in the queue blocks it permanently (see §below on test262-sharded skip). Per-method gaps it documents: child issues #2715–#2721. |
 | `porffor-source-native-canary`                             | `.github/workflows/porffor-source-canary.yml` | #3478 — explicitly initializes only the pinned optional Porffor gitlink, then compares real-source JavaScript, production linear-Wasm, and sanitizer-instrumented Porffor-C under both allocator policies. Advisory and absent from `merge_group`, so the optional submodule cannot become a required queue dependency.                                                                                                                                                                                                           |
 | `semantic-sanitizers`                                      | `.github/workflows/porffor-direct-ab.yml`     | #3482 — relevant PRs must execute all four native rows: both plain direct-Porffor rows must reproduce their pinned UBSan misalignment finding, while both JS2 rows must remain sanitizer-clean with exact output. Expected direct safety failures are evidence, not skips. Advisory and absent from `merge_group`; its separate optimized job runs only by `workflow_dispatch`, uploads complete evidence without a performance threshold, and never auto-updates results.                                                        |
+
+### Reading a PR's check state — three facts that have each caused a wrong call
+
+**1. A SKIPPED required check SATISFIES the requirement.** A job skipped by its
+own `if:` still publishes a check run, with conclusion `skipped`, and branch
+protection accepts it. On a docs-only PR `equivalence-gate` skips via `ci.yml`'s
+`changes` path filter and the PR still reports `CLEAN`. So **do not verify
+readiness by counting six `SUCCESS` conclusions in `statusCheckRollup`** — you
+will not find them, and you will wrongly conclude the PR is not ready. Read
+`mergeStateStatus`, which already accounts for this.
+
+The distinction that matters: a **workflow-level** skip (a `paths:` filter that
+stops the run from existing) produces **no check run at all**, so the context
+stays "Expected" forever and the PR is genuinely BLOCKED — that is what
+`.github/workflows/test262-pr-stub.yml` exists to prevent. A **job-level** `if:`
+skip inside a run that did start is satisfied, not missing.
+
+**2. A non-green NON-required check is not harmless.** It drives
+`mergeStateStatus` to `UNSTABLE`, and `scripts/enqueue-green-prs.mjs` enqueues
+only `{CLEAN, HAS_HOOKS}` — `UNSTABLE` is deliberately excluded. A PR can
+therefore have every required check green and never be enqueued, indefinitely,
+with nothing naming the cause (#3878, #3904, #3919/#3934). Re-run the failed job
+(`gh run rerun <run-id> -R loopdive/js2 --failed`) to get back to `CLEAN`.
+
+**3. `auto-refresh-prs` SKIPS DRAFTS.** `.github/workflows/auto-refresh-prs.yml`
+filters to `BEHIND`, non-draft, non-`hold` PRs, so a **draft PR is never
+rebased** and silently rots against a moving `main` — PR #3919 was 177 commits
+behind. Marking a PR draft is not a pause button; it opts the PR out of branch
+maintenance. Take a PR out of draft before expecting any automation to touch it.
 
 ---
 
@@ -601,13 +645,21 @@ change. The job then explicitly dispatches `deploy-pages.yml`, because
 
 ## 7. Mapping: required check → workflow → why
 
+**Six contexts, verified against the live ruleset on 2026-08-01. Re-run this
+rather than trusting the date** (this table said seven — it carried
+`linear-tests`, which the ruleset has never contained, #3934):
+
+```sh
+gh api repos/loopdive/js2/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]'
+```
+
 | Required check                      | Workflow              | What it protects against                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR.                                                                                                                                                                                                                                                                                                   |
 | `merge shard reports`               | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
 | `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                                                                                    |
 | `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
-| `linear-tests`                      | `ci.yml`              | linear-memory backend regressions: the 20 `tests/linear-*.test.ts` / `tests/c-abi.test.ts` / `tests/simd*.test.ts` files that no CI job executed before #2139, which is why the #1974–#1977 linear-backend bug class shipped silently.                                                                                                                                                                                                                                                |
 | `check for test262 regressions`     | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds.                                                                                                                                                                                                                                                                                                                                                                   |
 | `cla-check`                         | `cla-check.yml`       | CLA acceptance for external contributors while preserving internal and bot exemptions.                                                                                                                                                                                                                                                                                                                                                                                                |
 
@@ -637,6 +689,17 @@ Usage:
 The script is idempotent: re-running it re-applies the canonical state.
 Drift between repo settings and this file should be reconciled by running
 the script, not by editing settings manually.
+
+**Caveat — the script is NOT what is currently enforcing (#3934).** Enforcement
+on `main` today comes from a repo **ruleset**
+(`gh api repos/loopdive/js2/rules/branches/main`), while this script targets the
+**classic** branch-protection API — which for `main` answers `404 Branch not
+protected`. The script's required-checks array also still lists `linear-tests`,
+which the live ruleset does not require. That array is deliberately left as-is
+here: editing it would be a change to *enforcement policy* (promote or drop a
+gate), not a documentation fix, and belongs in its own reviewed change. Until
+someone reconciles the two, **read the ruleset, not this script**, when you need
+to know what actually gates a merge.
 
 ---
 

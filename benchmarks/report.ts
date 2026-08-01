@@ -59,10 +59,63 @@ function speedup(row: GroupedRow, base: Strategy, target: Strategy): string {
   const b = measured(row, base);
   const t = measured(row, target);
   if (!b || !t) return "—";
+  // #3898 — a ratio against an implausible lane is not a measurement.
+  if (b.implausible || t.implausible) return "⚠ implausible";
   const ratio = b.medianMs / t.medianMs;
   if (ratio > 1) return `${ratio.toFixed(2)}x faster`;
   if (ratio < 1) return `${(1 / ratio).toFixed(2)}x slower`;
   return "1.00x";
+}
+
+// ---------------------------------------------------------------------------
+// Plausibility guard (#3898)
+// ---------------------------------------------------------------------------
+
+/**
+ * Floor on the cost of one primitive string/array operation, in nanoseconds.
+ *
+ * At 3 GHz a clock cycle is ~0.33 ns. No `indexOf` over a 10,000-character
+ * haystack, and no `toLowerCase` of a 23-character string, completes in under
+ * three cycles. A lane reporting below this floor is not doing the work its
+ * benchmark claims — in #3898 the cause was TurboFan hoisting a loop-invariant
+ * call out of the JS baseline's loop and running it once, which made the
+ * published "js2wasm is 16,000x slower" bars pure artifacts.
+ */
+export const MIN_PLAUSIBLE_NS_PER_OP = 1;
+
+/**
+ * Mark every lane whose implied per-operation cost is impossible. Mutates
+ * `results` in place and returns the offending lanes.
+ *
+ * The floor is `max(MIN_PLAUSIBLE_NS_PER_OP, def.minNsPerOp)`: the universal
+ * physical bound, raised where the benchmark knows more about its own operation.
+ * `string/indexOf` is why the second term exists — its hoisted baseline reported
+ * 1.56 ns/op, which clears 1 ns yet is still ~20x faster than the honest cost.
+ *
+ * Only benchmarks that declare `opsPerCall` are checked; the guard cannot know
+ * the operation count otherwise.
+ *
+ * Failed rows (#3904) are exempt. They carry `medianMs === 0` by construction,
+ * so an unguarded check would compute 0 ns/op and report every broken lane as a
+ * hoisted one — turning a precise "compile error in gc-native" into a wrong
+ * "the loop was eliminated". A lane that never ran has no per-op cost to judge.
+ */
+export function flagImplausibleLanes(results: BenchmarkResult[]): BenchmarkResult[] {
+  const flagged: BenchmarkResult[] = [];
+  for (const r of results) {
+    if (!isMeasured(r)) continue;
+    if (!r.opsPerCall) continue;
+    const nsPerOp = r.nsPerOp ?? (r.medianMs * 1e6) / r.opsPerCall;
+    r.nsPerOp = nsPerOp;
+    const floor = Math.max(MIN_PLAUSIBLE_NS_PER_OP, r.minNsPerOp ?? 0);
+    if (nsPerOp < floor) {
+      r.implausible = true;
+      flagged.push(r);
+    } else if (r.implausible) {
+      delete r.implausible;
+    }
+  }
+  return flagged;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +131,28 @@ export function generateMarkdown(results: BenchmarkResult[]): string {
   lines.push(`Node: ${process.version}`);
   lines.push(`Platform: ${process.platform} ${process.arch}\n`);
 
+  // Plausibility warnings (#3898) — surfaced above the numbers, not buried.
+  const implausible = results.filter((r) => r.implausible);
+  if (implausible.length > 0) {
+    lines.push("## ⚠ Implausible lanes — NOT valid comparisons\n");
+    lines.push(
+      "The following lanes report a per-operation cost below their physical " +
+        "floor. The engine almost certainly hoisted or eliminated the " +
+        "benchmark's inner loop, so any speedup computed against them is an " +
+        "artifact (see #3898).\n",
+    );
+    lines.push("| Benchmark | Strategy | median | ops/call | ns/op | floor |");
+    lines.push("|-----------|----------|--------|----------|-------|-------|");
+    for (const r of implausible) {
+      const floor = Math.max(MIN_PLAUSIBLE_NS_PER_OP, r.minNsPerOp ?? 0);
+      lines.push(
+        `| ${r.name} | ${r.strategy} | ${fmtMs(r.medianMs)} | ${r.opsPerCall} | ` +
+          `${r.nsPerOp?.toFixed(3)} | ${floor} |`,
+      );
+    }
+    lines.push("");
+  }
+
   // Summary table
   lines.push("## Summary\n");
   lines.push("| Benchmark | JS | Host-call | GC-native | Linear | Winner |");
@@ -85,8 +160,12 @@ export function generateMarkdown(results: BenchmarkResult[]): string {
   for (const row of rows) {
     const cols = STRATEGIES.map((s) => {
       const r = row.results.get(s);
+      // Three distinct states, and conflating any two of them is a bug that has
+      // already shipped once: "—" not applicable (#3904), "FAILED" ran and broke
+      // (#3904), "⚠" measured but the number is impossible (#3898).
       if (!r) return "—"; // deliberately skipped / not applicable
-      return isMeasured(r) ? fmtMs(r.medianMs) : "FAILED";
+      if (!isMeasured(r)) return "FAILED";
+      return r.implausible ? `⚠ ${fmtMs(r.medianMs)}` : fmtMs(r.medianMs);
     });
     const w = winner(row) ?? "—";
     lines.push(`| ${row.name} | ${cols.join(" | ")} | ${w} |`);
@@ -102,6 +181,25 @@ export function generateMarkdown(results: BenchmarkResult[]): string {
     lines.push("|-----------|----------|-------|-------|");
     for (const f of failures) {
       lines.push(`| ${f.name} | ${f.strategy} | ${f.failedPhase ?? "?"} | ${f.error ?? "(no message)"} |`);
+    }
+  }
+
+  // (#3898) Per-operation costs — the sanity check that catches a collapsed
+  // loop. Failed rows have no timings to divide, so they stay out of this table
+  // entirely; they are already accounted for in "Failed strategies" above.
+  const withOps = rows.filter((row) => Array.from(row.results.values()).some((r) => isMeasured(r) && r.opsPerCall));
+  if (withOps.length > 0) {
+    lines.push("\n## Cost per operation (ns)\n");
+    lines.push("| Benchmark | ops/call | JS | Host-call | GC-native | Linear |");
+    lines.push("|-----------|----------|-----|-----------|-----------|--------|");
+    for (const row of withOps) {
+      const ops = Array.from(row.results.values()).find((r) => isMeasured(r) && r.opsPerCall)?.opsPerCall;
+      const cols = STRATEGIES.map((s) => {
+        const r = measured(row, s);
+        if (!r?.nsPerOp) return "—";
+        return (r.implausible ? "⚠ " : "") + r.nsPerOp.toFixed(2);
+      });
+      lines.push(`| ${row.name} | ${ops} | ${cols.join(" | ")} |`);
     }
   }
 
@@ -162,6 +260,25 @@ export function generateMarkdown(results: BenchmarkResult[]): string {
 
 export function saveResults(results: BenchmarkResult[], outDir: string): void {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+  // #3898 — refuse to publish a lane that reports impossible per-op costs.
+  const flagged = flagImplausibleLanes(results);
+  if (flagged.length > 0) {
+    process.stderr.write(
+      `\n!! ${flagged.length} benchmark lane(s) report an impossible per-operation cost\n` +
+        `   and are NOT valid comparisons (#3898):\n` +
+        flagged
+          .map(
+            (r) =>
+              `     ${r.name} [${r.strategy}] — ${r.nsPerOp?.toFixed(3)} ns/op over ${r.opsPerCall} ops ` +
+              `(floor ${Math.max(MIN_PLAUSIBLE_NS_PER_OP, r.minNsPerOp ?? 0)} ns)\n`,
+          )
+          .join("") +
+        `   The inner loop was almost certainly hoisted or eliminated. Fix the\n` +
+        `   benchmark input so it varies with the loop induction variable.\n\n`,
+    );
+    process.exitCode = 1;
+  }
 
   // JSON
   const jsonPath = `${outDir}/${timestamp}.json`;

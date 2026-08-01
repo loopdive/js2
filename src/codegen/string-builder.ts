@@ -34,6 +34,7 @@ import { allocLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { compileExpression } from "./shared.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { nativeStrHelperHandle } from "./func-space.js";
 
 /**
  * #1761 — presize info for a string-builder whose final length is provably a
@@ -1151,17 +1152,21 @@ export function getBuilderInfo(fctx: FunctionContext, name: string): StringBuild
 }
 
 /**
- * Resolve a module-defined function's current absolute Wasm function index by
- * walking `ctx.mod.functions`. Returns -1 if the function is not present.
+ * Resolve a native-string helper to a function handle. Returns -1 when the
+ * helper is not registered.
  *
- * This bypasses `ctx.nativeStrHelpers` and `ctx.funcMap`, both of which can
- * hold stale indices if a `addImport` call bumped `numImportFuncs` without
- * shifting previously-registered module-function entries. Used at emit time
- * by the #1210 string-builder to ensure the call instruction targets the
- * actual current location of the helper.
+ * Historically this deliberately bypassed `ctx.nativeStrHelpers` and
+ * `ctx.funcMap` (both could hold stale indices when `addImport` bumped
+ * `numImportFuncs` without shifting previously-registered entries) in favour of
+ * a positional `numImportFuncs + i` scan.
+ *
+ * (#3909) That preference is now backwards: `nativeStrHelpers` holds
+ * STABLE-regime handles that no shifter touches, while the positional scan
+ * yields a LIVE index whose correctness depends on every later shifter — and
+ * the shift guard stops tracking it once the import count climbs past it.
+ * `nativeStrHelperHandle` prefers the stable handle and keeps the scan as the
+ * fallback for helpers not yet on stable minting.
  */
 function lookupModuleFuncByName(ctx: CodegenContext, name: string): number {
-  const idx = ctx.mod.functions.findIndex((f) => f.name === name);
-  if (idx < 0) return -1;
-  return ctx.numImportFuncs + idx;
+  return nativeStrHelperHandle(ctx, name) ?? -1;
 }

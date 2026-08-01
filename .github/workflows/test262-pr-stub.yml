@@ -34,13 +34,31 @@ name: Test262 PR stub
 #   source of truth that test262-sharded.yml's `&test262-paths` allowlist
 #   mirrors.
 #     - test262 path(s) changed -> the REAL test262-sharded.yml runs and owns
-#       the three contexts. This stub emits NOTHING for those names (no mask):
-#       the three stub jobs `skipped`, and a skipped job does not publish its
-#       context.
+#       the three contexts. This stub reports none of those names SUCCESS: the
+#       three stub jobs `skipped`.
 #     - NO test262 path changed -> the real workflow will NOT trigger. This stub
 #       emits the three contexts GREEN so the PR can reach mergeable + enqueue.
-#   The two producers are therefore never both active on one PR -> masking is
-#   impossible, while a path-excluded PR is no longer wedged BLOCKED.
+#   Only one producer ever reports SUCCESS for a name on a given PR, and a
+#   path-excluded PR is no longer wedged BLOCKED.
+#
+# CORRECTION (#3934, measured 2026-08-01) — "a skipped job does not publish its
+# context" was WRONG, and this file asserted it for a long time:
+#   A job skipped by its own `if:` DOES publish a check run, with conclusion
+#   `skipped`. Read the record: on 61d58e077c94 (a src-touching PR) BOTH
+#   producers published all three names — this workflow's three as `skipped`
+#   (run 30677373432) and test262-sharded.yml's three as `success` (run
+#   30677373444). Two consequences to know before editing this file:
+#     1. A `skipped` required check SATISFIES branch protection. So the
+#        conservative fail-safe below (`stub_required=false` under any doubt)
+#        does NOT leave a path-excluded PR BLOCKED, contrary to what its own
+#        comment claimed — it leaves the three contexts `skipped`, which is
+#        mergeable, and the merge queue still runs the authoritative validation
+#        on the merged state. The fail-safe is cheap; keep it.
+#     2. OPEN QUESTION, deliberately not relied on anywhere here: whether a
+#        `skipped` run of a name satisfies the requirement while a same-named
+#        run is RED. Nobody has measured it. Do not build on either answer.
+#   What actually strands a PR is in the #3934 block on the `detect` job below —
+#   it is `detect`'s OWN conclusion, not the three contexts.
 #
 # Correctness of the green stub: a path-excluded PR cannot affect test262
 # conformance by definition (it changed zero compiler/test262 paths). The merge
@@ -65,6 +83,10 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Read-only: this workflow diffs a shallow checkout and reports job status.
+permissions:
+  contents: read
+
 concurrency:
   group: test262-pr-stub-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -76,78 +98,174 @@ jobs:
   detect:
     name: test262 PR stub — detect relevance
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # #3934 — WHAT ACTUALLY STRANDED PRs, and why this budget is now 15 min.
+    #
+    # The old budget was 5 minutes and it was being HIT: 7 of the last 100 runs
+    # of this workflow died at ~5m00s, all on 2026-07-31 (#3904 4m55s, #3900
+    # 4m58s, #3901 5m00s, #3907 5m01s, #3919 5m01s...). GitHub reports a job
+    # timeout as conclusion `cancelled` with a bare "The operation was
+    # canceled." — indistinguishable from a concurrency cancel except by
+    # DURATION (a concurrency cancel lands whenever a newer push does; a
+    # timeout sits at ~5m00s).
+    #
+    # The stranding mechanism — measured on PR #3919, sha 76ec23dc, run
+    # 30645425429, NOT what the issue first assumed:
+    #   The three required contexts were NOT missing. They published as
+    #   `skipped`, which SATISFIES branch protection. The only non-success
+    #   conclusion on that SHA was THIS JOB's own `cancelled` check run — and
+    #   this job is NOT a required check. A red/cancelled NON-required check
+    #   drives mergeStateStatus to UNSTABLE, and scripts/enqueue-green-prs.mjs
+    #   enqueues only {CLEAN, HAS_HOOKS} (UNSTABLE is deliberately excluded).
+    #   So the PR sat fully green on the merits, never enqueued, with nothing
+    #   naming the cause, until a human pushed a new SHA.
+    #
+    # The fix is therefore NOT "a bigger budget" — a bigger budget still
+    # degrades to the same silent UNSTABLE, just less often. This job is
+    # restructured so a slow step CANNOT kill the job:
+    #   - every fallible step is individually bounded AND continue-on-error;
+    #   - the verdict step runs under `if: always()` and always exits 0;
+    #   - so `detect` concludes `success` and publishes a verdict even when
+    #     checkout or the diff dies.
+    # 15 minutes is now a RUNNER-HUNG backstop over a job whose real work is
+    # tens of seconds — reaching it means the runner itself wedged, and the
+    # stub-guard job below exists to say so out loud when it does.
+    timeout-minutes: 15
     outputs:
       # 'true'  -> no test262-relevant path changed; the real workflow will not
       #            trigger, so this stub must emit the three contexts green.
       # 'false' -> a test262-relevant path changed (or detection was uncertain);
       #            the real workflow owns the contexts and this stub stays silent.
       stub_required: ${{ steps.detect.outputs.stub_required }}
+      # 'true' -> the verdict is the FAIL-SAFE, not a measurement: something
+      #           went wrong and we could not compute relevance. Safe (the
+      #           contexts publish `skipped`, which satisfies), but surfaced by
+      #           the stub-guard job so it is never silent.
+      degraded: ${{ steps.detect.outputs.degraded }}
     steps:
-      - name: Checkout
+      - name: Checkout (merge ref + its two parents only)
+        id: checkout
+        continue-on-error: true
+        timeout-minutes: 5
         uses: actions/checkout@v5
         with:
-          # Need base + head reachable to diff the PR's changed files.
-          fetch-depth: 0
+          # `fetch-depth: 2` is load-bearing (#3934) — this was `0`.
+          # fetch-depth 0 fetches EVERY ref on this repo: 6,145 of them
+          # (1,985 heads, 235 tags, the rest refs/pull/*), with a connectivity
+          # check measured at 47.8 s, to answer a question that needs exactly
+          # two commits. That is the cost centre that blew the 5-minute budget.
+          # Depth 2 on refs/pull/N/merge carries both parents:
+          #   HEAD^1 = base tip, HEAD^2 = PR head
+          # which are the SAME two commits the old `git diff BASE_SHA HEAD_SHA`
+          # compared — so the relevance verdict is unchanged, only the fetch is.
+          fetch-depth: 2
       - name: Detect test262-relevant changes
         id: detect
+        # Runs even if checkout failed or timed out — writing a verdict is this
+        # job's entire contract, and a step-level failure must not skip it.
+        if: always()
+        timeout-minutes: 3
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
         run: |
-          set -euo pipefail
+          # NOTE: `set -u -o pipefail` but NOT `-e`. This step must always reach
+          # a write to $GITHUB_OUTPUT and exit 0; an unexpected non-zero from a
+          # git plumbing call must degrade, not abort.
+          set -uo pipefail
+
           # CONSERVATIVE FAIL-SAFE — bias toward SILENT (stub_required=false):
           # we only emit the green contexts (stub_required=true) when the diff
           # SUCCEEDS and the matcher POSITIVELY reports zero test262-relevant
-          # paths. On any doubt (missing SHA, failed/empty diff) we stay silent
-          # and assume the real workflow runs. The asymmetry is the safe one:
-          #   - false "real workflow runs" (when it actually didn't) leaves the
-          #     PR BLOCKED — annoying but not unsafe, and the native paths
-          #     filter makes this combination impossible in practice;
+          # paths. On any doubt we stay silent and assume the real workflow
+          # runs. The asymmetry is the safe one:
+          #   - false "real workflow runs" (when it actually didn't) publishes
+          #     the three contexts `skipped`, which satisfies branch protection
+          #     (measured, see the CORRECTION block at the top of this file) and
+          #     leaves the authoritative validation to the merge queue;
           #   - false "stub emits green" (when the real workflow DID run) would
-          #     MASK the authoritative producer — unsafe. So never risk it.
-          stub_required=false
+          #     report SUCCESS for a name the authoritative producer owns —
+          #     unsafe. So never risk it.
+          degrade() {
+            echo "::warning::test262 PR stub: $1 — assuming the real workflow runs (stub silent)"
+            echo "stub_required=false" >> "$GITHUB_OUTPUT"
+            echo "degraded=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          if [ "$CHECKOUT_OUTCOME" != "success" ]; then
+            degrade "checkout did not succeed (outcome=$CHECKOUT_OUTCOME)"
+          fi
           if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
-            echo "::warning::missing base/head SHA — assuming real workflow runs (stub silent)"
-            echo "stub_required=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            degrade "missing base/head SHA on the event payload"
           fi
-          # Ensure base is present for the diff (fetch-depth:0 should cover it,
-          # but a force-push history rewrite could leave base unreachable).
-          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            git fetch --no-tags --quiet origin "$BASE_SHA" 2>/dev/null || true
-          fi
-          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null); then
-            echo "::warning::diff failed — assuming real workflow runs (stub silent)"
-            echo "stub_required=false" >> "$GITHUB_OUTPUT"
-            exit 0
+
+          # Preferred source: the merge ref's own parents, already local at
+          # depth 2 — no network, no ref walk.
+          p1=$(git rev-parse -q --verify 'HEAD^1' 2>/dev/null || true)
+          p2=$(git rev-parse -q --verify 'HEAD^2' 2>/dev/null || true)
+          changed=""
+          diff_source=""
+          if [ -n "$p1" ] && [ "$p2" = "$HEAD_SHA" ]; then
+            diff_source="merge-ref parents ${p1}..${p2}"
+            changed=$(git diff --name-only "$p1" "$p2" 2>/dev/null) || changed=""
+          elif git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null \
+            && git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            # Fallback: both event SHAs happen to be local (e.g. checkout
+            # resolved the head ref rather than the merge ref).
+            diff_source="event SHAs ${BASE_SHA}..${HEAD_SHA}"
+            changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null) || changed=""
+          else
+            # Neither pair is available. Do NOT widen the fetch to recover —
+            # that is the cost centre this change removed. Degrade instead:
+            # it is the cheap, safe answer.
+            degrade "neither the merge ref's parents (HEAD^2=${p2:-none}, want $HEAD_SHA) nor both event SHAs are present in the shallow clone"
           fi
           if [ -z "$changed" ]; then
-            echo "::warning::empty diff — assuming real workflow runs (stub silent)"
-            echo "stub_required=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            degrade "empty or failed diff from $diff_source"
           fi
-          echo "--- changed files ---"
+          if [ ! -r scripts/test262-paths-match.sh ]; then
+            degrade "scripts/test262-paths-match.sh is not readable in this checkout"
+          fi
+
+          echo "--- changed files (via $diff_source) ---"
           printf '%s\n' "$changed"
-          match=$(printf '%s\n' "$changed" | bash scripts/test262-paths-match.sh)
-          echo "test262-paths-match.sh -> $match"
-          if [ "$match" = "true" ]; then
-            # A test262-relevant path changed: the real test262-sharded.yml runs
-            # and owns the three required contexts. Stay silent (no mask).
-            echo "-> real test262-sharded.yml owns the required contexts; stub silent."
-            echo "stub_required=false" >> "$GITHUB_OUTPUT"
-          else
-            # No test262-relevant path: the real workflow will not trigger. Emit
-            # the three required contexts green so the PR can reach mergeable.
-            echo "-> no test262-relevant path changed; stub will report required contexts green."
-            echo "stub_required=true" >> "$GITHUB_OUTPUT"
-          fi
+          match=$(printf '%s\n' "$changed" | bash scripts/test262-paths-match.sh) || match=""
+          echo "test262-paths-match.sh -> ${match:-<no verdict>}"
+          case "$match" in
+            true)
+              # A test262-relevant path changed: the real test262-sharded.yml
+              # runs and owns the three required contexts. Stay silent.
+              echo "-> real test262-sharded.yml owns the required contexts; stub silent."
+              echo "stub_required=false" >> "$GITHUB_OUTPUT"
+              echo "degraded=false" >> "$GITHUB_OUTPUT"
+              ;;
+            false)
+              # No test262-relevant path: the real workflow will not trigger.
+              # Emit the three required contexts green so the PR can merge.
+              echo "-> no test262-relevant path changed; stub will report required contexts green."
+              echo "stub_required=true" >> "$GITHUB_OUTPUT"
+              echo "degraded=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              degrade "the path matcher printed no true/false verdict"
+              ;;
+          esac
+          exit 0
 
   # The three jobs below carry the EXACT required-check context names from
   # test262-sharded.yml. They run ONLY on the path-excluded arm
   # (stub_required == 'true'); otherwise they `skipped` and the real workflow
-  # owns the names. A `skipped` job does NOT publish its context, so on the src
-  # arm GitHub only ever sees the real (authoritative) producer.
+  # owns the names. On the src arm this workflow therefore never reports those
+  # names SUCCESS — it publishes them `skipped` (see the CORRECTION block at the
+  # top: a skipped job DOES publish a check run), so the only SUCCESS for a name
+  # comes from the authoritative producer.
+  #
+  # NOTE (#3934): these three `if:`s are ALSO an implicit "detect succeeded"
+  # gate — a `needs` job that dies takes the `== 'true'` comparison to false and
+  # these skip. That is safe (skipped satisfies branch protection), but it means
+  # a dead `detect` produces NO signal here at all. The stub-guard job at the
+  # bottom of this file exists to make that case say something.
 
   cheap-gate:
     name: cheap gate (main-ancestor + lint)
@@ -190,3 +308,84 @@ jobs:
           echo "   required context 'check for test262 regressions' is reported green."
           echo "-> The merge queue still runs the full regression gate on the"
           echo "   merge_group ref before anything lands on main."
+
+  # #3934 — THE NON-SILENCE NET.
+  #
+  # `detect` is restructured so a slow step cannot kill it, but no job is immune
+  # to its own job-level budget or to a runner dying. When that happens `detect`
+  # concludes `cancelled`/`failure` — a NON-required check going non-green ->
+  # mergeStateStatus UNSTABLE -> scripts/enqueue-green-prs.mjs (ENQUEUEABLE =
+  # {CLEAN, HAS_HOOKS}) skips the PR forever. That is the exact state PR #3919
+  # sat in, and what made it invisible is that a bare `cancelled` names nothing.
+  #
+  # This job cannot RETRACT that UNSTABLE (that needs checks:write, which a fork
+  # PR's token does not have). What it can do — and what "no longer silent"
+  # means concretely — is publish a named, failing check that states the
+  # consequence and the one-line remediation. The PR is already UNSTABLE from
+  # the dead `detect`, so this adds explanation, not blockage.
+  stub-guard:
+    name: test262 PR stub — verdict published
+    needs: [detect, cheap-gate, merge-report, regression-gate]
+    # `!cancelled()`, deliberately NOT `always()`:
+    #   - a job-level TIMEOUT on `detect` cancels that JOB, not the RUN, so
+    #     `cancelled()` is false and this guard RUNS — the case we must report;
+    #   - a CONCURRENCY cancel cancels the RUN, so `cancelled()` is true and
+    #     this guard does NOT run — correct: a newer push superseded this SHA
+    #     and there is nothing to report.
+    # Evidence the two are distinguishable, from run 30645425429 (the 5m01s
+    # timeout on PR #3919): after `detect` was killed the three downstream jobs
+    # still had their `if:` EVALUATED — they concluded `skipped`, timestamped
+    # after detect's death. A run in the cancelling state would have cancelled
+    # them outright instead.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Assert detect published a verdict
+        env:
+          DETECT_RESULT: ${{ needs.detect.result }}
+          DETECT_DEGRADED: ${{ needs.detect.outputs.degraded }}
+          STUB_REQUIRED: ${{ needs.detect.outputs.stub_required }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          echo "detect.result                = $DETECT_RESULT"
+          echo "detect.outputs.stub_required = ${STUB_REQUIRED:-<unset>}"
+          echo "detect.outputs.degraded      = ${DETECT_DEGRADED:-<unset>}"
+
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo
+            echo "The job 'test262 PR stub — detect relevance' concluded '$DETECT_RESULT'"
+            echo "instead of publishing a relevance verdict."
+            echo
+            echo "WHAT THIS COSTS (#3934, measured on PR #3919 / run 30645425429):"
+            echo "  * The three required contexts it feeds are NOT missing — they publish"
+            echo "    'skipped', which SATISFIES branch protection. This PR is green on the merits."
+            echo "  * But 'detect' is itself a check, and a non-green NON-required check drives"
+            echo "    mergeStateStatus to UNSTABLE. scripts/enqueue-green-prs.mjs enqueues only"
+            echo "    {CLEAN, HAS_HOOKS} — UNSTABLE is deliberately excluded — so auto-enqueue"
+            echo "    will NEVER pick this PR up. It will sit green and unmerged indefinitely."
+            echo
+            echo "REMEDIATION (re-run this workflow; it is a flake, not a code problem):"
+            echo "  gh run rerun $RUN_ID -R $REPO --failed"
+            echo
+            echo "TRIAGE: if 'detect' ran for ~15m00s it hit its job budget — see the #3934"
+            echo "block in .github/workflows/test262-pr-stub.yml. Any other duration means the"
+            echo "runner died some other way, and the budget is not the thing to change."
+            echo "::error title=test262 PR stub: detect died — this PR is UNSTABLE and will never auto-enqueue::detect concluded '$DETECT_RESULT'. Required contexts are satisfied (skipped), but the non-green detect check makes the PR UNSTABLE and auto-enqueue only takes CLEAN/HAS_HOOKS. Re-run: gh run rerun $RUN_ID -R $REPO --failed"
+            exit 1
+          fi
+
+          if [ "${DETECT_DEGRADED:-}" = "true" ]; then
+            # Safe, but never silent. The verdict was the fail-safe rather than a
+            # measurement: the three contexts publish 'skipped' (satisfying) and the
+            # merge queue re-validates on the merged state — so this does NOT fail the
+            # guard. It is recorded so a REPEATED degrade is visible instead of looking
+            # like a normal run.
+            echo "::warning title=test262 PR stub: relevance verdict was the fail-safe, not a measurement::detect could not compute relevance and fell back to stub_required=false. The PR still merges (contexts publish 'skipped') and the merge queue runs the authoritative test262 validation on the merged state. Reason is in the detect job's warning."
+            echo "guard: PASS (degraded fail-safe verdict, recorded above)"
+            exit 0
+          fi
+
+          echo "guard: PASS (detect published stub_required=${STUB_REQUIRED:-<unset>})"
