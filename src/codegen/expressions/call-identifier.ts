@@ -44,7 +44,8 @@ import {
   ensureExtrasArgvGlobal,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
-import { compileStringLiteral, emitBoolToString } from "../string-ops.js";
+import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref } from "../string-ops.js";
+import { usesNativeNumberFormat } from "../number-format-native.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import {
   defaultValueInstrs,
@@ -85,6 +86,30 @@ import {
   tryEmitArrayToStringNative,
   tryEmitInlineDynamicCall,
 } from "./calls.js";
+
+/**
+ * (#3912) Report the representation of `String(<number>)`'s result truthfully.
+ *
+ * `number_toString` is declared `(f64) -> externref`, but under native strings
+ * that externref is a `$AnyString` widened by `extern.convert_any`, NOT a JS
+ * string. Reporting it as a bare `externref` pushed the question downstream,
+ * where consumers had to re-discover the representation with a dynamic
+ * `ref.test $AnyString` — and a consumer that cannot do that (a JS-host import
+ * argument such as `parseFloat`/`Number`) silently received an opaque WasmGC
+ * struct instead of a string.
+ *
+ * This mirrors the `unwrapToNative` unwrap already done on the
+ * `(n).toString()` path in `call-receiver-method.ts`, so the two spellings of
+ * the same operation now agree on their result type.
+ */
+function emitStringBuiltinNumberResult(ctx: CodegenContext, fctx: FunctionContext): ValType {
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && ctx.anyStrTypeIdx >= 0 && usesNativeNumberFormat(ctx)) {
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+    return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  }
+  return { kind: "externref" };
+}
 
 /**
  * (#742) Identifier-callee call dispatch — extracted verbatim from
@@ -334,6 +359,29 @@ export function compileIdentifierCall(
           if (strType.kind !== "externref") {
             coerceType(ctx, fctx, strType, { kind: "externref" });
           }
+        } else if (
+          // (#3912) NATIVE STRING → HOST IMPORT. `fast` is the one config with a
+          // JS host AND native strings, so `nativeParse` is false (the host
+          // `env.parseInt` is used) while the argument is a `ref $AnyString`.
+          // The generic `coerceType(..., externref)` below only widens the GC
+          // ref (`extern.convert_any`), handing the host an opaque WasmGC struct
+          // — V8 throws `Cannot convert object to primitive value`. Marshal the
+          // code units out instead, exactly as console.log's string arm does.
+          //
+          // This cell is broken on `main` TODAY for every native string:
+          // `parseInt("42")` with a plain LITERAL traps under `fast`. #3912 only
+          // makes it reachable from one more producer, because `n.toString()`
+          // stops accidentally returning a host string. Fixing it here keeps
+          // #3912 a strict improvement; the general native→host argument
+          // boundary (`Number(s)`, `JSON.stringify(s)`) is tracked separately.
+          !nativeParse &&
+          ctx.nativeStrings &&
+          arg0Type !== null &&
+          (arg0Type.kind === "ref" || arg0Type.kind === "ref_null") &&
+          isStringType(arg0TsType) &&
+          emitNativeStringToHostExternref(ctx, fctx)
+        ) {
+          // marshalled in the condition — nothing further to emit
         } else if (arg0Type && arg0Type.kind !== "externref") {
           // Host mode (or a native-string ref) — preserve the original boxing,
           // which keeps boolean identity so the host `String(true)` → "true".
@@ -713,7 +761,7 @@ export function compileIdentifierCall(
         if (toStrIdx !== undefined) {
           fctx.body.push({ op: "f64.convert_i32_s" });
           fctx.body.push({ op: "call", funcIdx: toStrIdx });
-          return { kind: "externref" };
+          return emitStringBuiltinNumberResult(ctx, fctx);
         }
       }
 
@@ -722,7 +770,7 @@ export function compileIdentifierCall(
         const toStrIdx = ctx.funcMap.get("number_toString");
         if (toStrIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: toStrIdx });
-          return { kind: "externref" };
+          return emitStringBuiltinNumberResult(ctx, fctx);
         }
       }
 

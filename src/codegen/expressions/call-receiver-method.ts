@@ -69,6 +69,7 @@ import {
 } from "../index.js";
 import { LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
 import { compilePropertyIntrospection } from "../object-ops.js";
 import { ensureObjVecBuilders, ensureObjectRuntime, reserveBindDynHelper } from "../object-runtime.js";
@@ -1901,7 +1902,18 @@ export function compileReceiverMethodCall(
     // ref ("any.convert_extern expected externref, found native ref"). Unwrap
     // once at the call site and report the native string type so consumers
     // see a native receiver directly. JS-host mode keeps the externref.
-    const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && (ctx.standalone || ctx.wasi);
+    //
+    // (#3912) The old third conjunct was `(ctx.standalone || ctx.wasi)` — the
+    // SAME between-family mismatch this issue fixes in `import-collector.ts`,
+    // one layer down. `fast` sets `nativeStrings` but neither of those, so
+    // `.toString()` reported a bare `externref` that in fact wrapped an
+    // `$AnyString`. Consumers then had to re-discover the representation
+    // dynamically (`ref.test $AnyString`), and any consumer that could NOT —
+    // notably a JS-host import argument like `parseInt` — silently received an
+    // opaque WasmGC struct. Since #3912 makes the formatter native whenever
+    // `usesNativeNumberFormat`, "are strings native here?" is the whole
+    // question, so the target-specific conjunct is gone.
+    const unwrapToNative = ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0 && usesNativeNumberFormat(ctx);
     if (radixLocalIdx !== undefined) {
       const radixFuncIdx = ctx.funcMap.get("number_toString_radix");
       if (radixFuncIdx !== undefined) {

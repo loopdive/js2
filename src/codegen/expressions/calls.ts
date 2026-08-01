@@ -1832,7 +1832,18 @@ export function tryEmitJsonStringifyPrimitive(
     const nullType = compileStringLiteral(ctx, fctx, "null", arg);
     const nullBody = fctx.body;
     fctx.body = savedBody;
-    const resultType = (ctx.standalone || ctx.wasi ? nullType : ({ kind: "externref" } as ValType)) ?? {
+    // (#3912) BOTH arms must agree on the string representation. The `else` arm
+    // is `compileStringLiteral("null")`, which yields a NATIVE `$AnyString` ref
+    // exactly when `ctx.nativeStrings`; the `then` arm is `number_toString`,
+    // whose externref wraps a native string exactly when the formatter is native
+    // — which, since #3912's gate change, is also `ctx.nativeStrings`. The old
+    // `ctx.standalone || ctx.wasi` predicate therefore disagreed with the
+    // literal under `fast` (nativeStrings without either target): the arms had
+    // different types and `JSON.stringify(<number>)` emitted an INVALID MODULE
+    // — a validation failure, not merely a trap — across the whole gc-native
+    // lane. `ctx.nativeStrings` is the one question both arms actually ask.
+    const nativeStringArms = ctx.nativeStrings && ctx.anyStrTypeIdx >= 0;
+    const resultType = (nativeStringArms ? nullType : ({ kind: "externref" } as ValType)) ?? {
       kind: "externref",
     };
 
@@ -1858,7 +1869,7 @@ export function tryEmitJsonStringifyPrimitive(
       then: [
         { op: "local.get", index: valLocal },
         { op: "call", funcIdx: numToStrIdx },
-        ...(ctx.standalone || ctx.wasi
+        ...(nativeStringArms
           ? ([{ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx }] satisfies Instr[])
           : []),
       ],
