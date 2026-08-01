@@ -8,11 +8,7 @@ import { ts } from "../ts-api.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
-import {
-  isHostConstructibleBuiltin,
-  isNativeCollectionBuiltin,
-  isPrimitiveWrapperSubclassUnsupported,
-} from "./builtin-tags.js";
+import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
 // `arguments` methods route through the same native producer as fn
@@ -60,10 +56,13 @@ import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./re
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   emitStandaloneArrayConstructor, // (#2917) native `class Sub extends Array`
-  emitStandaloneObjectConstructor, // (#3238) native `class Sub extends Object`
   emitStandaloneVecBuiltinConstructor, // (#3239) native `class Sub extends <TypedArray|SharedArrayBuffer>`
   STANDALONE_VEC_BUILTIN_PARENTS,
 } from "./object-runtime.js";
+import {
+  emitStandaloneObjectConstructor, // (#3238) native `class Sub extends Object`
+  resolveStandaloneSubclassBuiltinCtor, // (#3972) the identity/collection/wrapper arms
+} from "./standalone-subclass-ctors.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   cacheParamDefaultArgc,
@@ -322,10 +321,11 @@ function externrefParams(count: number): ValType[] {
  * forwarder and `compileSuperCall`'s explicit-`super(...)` arm (previously
  * copy-paste twins; per-builtin slices of #2917 extend THIS ladder only).
  *
- * Arms: Error family (#1536c, real `$Error_struct`) → `Object` (#3238, fresh
- * native plain object) → `Array` (#2917, real `$__vec_externref` honoring
- * Array(...) argument semantics) → TypedArray/SharedArrayBuffer (#3239,
- * identity-only empty vec). All helpers register PER-ARITY and return the
+ * Arms: Error family (#1536c, real `$Error_struct`) → `Object` (#3238) →
+ * `Array` (#2917, real `$__vec_externref` honoring Array(...) argument
+ * semantics) → TypedArray/SharedArrayBuffer (#3239, identity-only empty vec) →
+ * the #3972 groups (identity carrier / real `$Map` / real wrapper box; see
+ * standalone-subclass-ctors.ts). All helpers register PER-ARITY and return the
  * DEFINED funcIdx (no import → no index shift).
  *
  * Returns:
@@ -335,8 +335,7 @@ function externrefParams(count: number): ValType[] {
  *     would leak `env::__new_<Parent>`); the legacy first-arg-as-instance
  *     fallback applies instead.
  *   - `undefined` — no native arm (gc/host mode, or a parent with no native
- *     ctor yet — Date/RegExp/Function/…): caller falls back to
- *     `ensureLateImport` exactly as before.
+ *     ctor yet): caller falls back to `ensureLateImport` exactly as before.
  */
 function resolveStandaloneBuiltinSuperCtorIdx(
   ctx: CodegenContext,
@@ -357,7 +356,11 @@ function resolveStandaloneBuiltinSuperCtorIdx(
   if (STANDALONE_VEC_BUILTIN_PARENTS.has(parentName)) {
     return emitStandaloneVecBuiltinConstructor(ctx, `__new_${parentName}`, arity) ?? null;
   }
-  return undefined;
+  // (#3972) ArrayBuffer/DataView/Date/Function/Promise/RegExp/WeakRef (identity
+  // carrier), Map/Set/WeakMap/WeakSet (real brand-stamped `$Map`), and
+  // Number/Boolean (real `$Object` wrapper box) — see
+  // standalone-subclass-ctors.ts for the per-group carrier rationale and scope.
+  return resolveStandaloneSubclassBuiltinCtor(ctx, parentName, arity);
 }
 
 /**
@@ -654,64 +657,60 @@ export function collectClassDeclaration(
           // unsatisfiable `env::__new_Set` import (defect A), and the synthetic
           // `<Class>_<method>` accessor desyncs across the late-import shift
           // (defect B — the #2043 invalid-Wasm class, e.g. `MySet_has`/`_size`
-          // baking a `-1` global / a stale call funcIdx). The base collections
-          // ARE served by the WasmGC-native runtime (#1103a/#2162), but a true
-          // native *subclass* (native `$Map`-backed construction + direct
-          // `[[SetData]]` set-algebra + native iteration + `instanceof`
-          // discrimination — the Set/prototype/*/subclass-receiver-methods rows)
-          // is the collection-runtime substrate, tracked separately. Until then,
-          // refuse loudly (clean compile error, never invalid Wasm / never a
-          // leaked host import — the #1888 dual-mode invariant). gc/host mode is
-          // unaffected: the externClass host path handles the subclass there.
-          if (parentStructTypeIdx === undefined && ctx.nativeStrings && isNativeCollectionBuiltin(parentClassName)) {
+          // baking a `-1` global / a stale call funcIdx).
+          //
+          // (#3972) NARROWED to property/accessor declarations, deliberately NOT
+          // deleted, and narrowed to the shape MEASURED to be broken rather than
+          // a guessed one. Defect A is fixed at the root:
+          // `emitStandaloneCollectionSuperCtor` gives `super()` a DEFINED `$Map`
+          // constructor, so `class Sub extends Set {}` emits no import at all —
+          // and with no late import there is no reorder, so defect B cannot
+          // arise from construction either. A bare subclass plus an inherited
+          // `s.add(1)` also stays host-free (the brand-stamped `$Map` is what
+          // makes the value-representation dispatch succeed), so declared
+          // methods and explicit constructors are allowed. A declared FIELD or
+          // ACCESSOR still traps, which is a family-wide defect the earlier
+          // Array/TypedArray rungs ship unguarded.
+          //
+          // Full rationale, the two measurements that set this boundary, and the
+          // terminal fix: see standalone-subclass-ctors.ts (the note above
+          // `resolveStandaloneSubclassBuiltinCtor`). Do NOT widen this back to
+          // "any non-empty body" and do NOT drop it while the field defect
+          // stands. gc/host mode is unaffected: the externClass host path
+          // handles the subclass there.
+          const declaresFieldOrAccessor = decl.members.some(
+            (m) => ts.isPropertyDeclaration(m) || ts.isGetAccessorDeclaration(m) || ts.isSetAccessorDeclaration(m),
+          );
+          if (
+            parentStructTypeIdx === undefined &&
+            ctx.nativeStrings &&
+            isNativeCollectionBuiltin(parentClassName) &&
+            declaresFieldOrAccessor
+          ) {
             reportError(
               ctx,
               decl,
-              `Codegen error: 'class ${className} extends ${parentClassName}' is not yet ` +
-                `supported in --target standalone (#2620). The base ${parentClassName} is served ` +
-                `by the WasmGC-native collection runtime, but a native SUBCLASS (with [[SetData]]/` +
-                `[[MapData]] direct access for the set-algebra methods) is not implemented yet — ` +
-                `routing it through the host path would leak an env::__new_${parentClassName} import ` +
-                `or emit invalid Wasm. Use ${parentClassName} directly, or recompile without ` +
-                `--target standalone.`,
+              `Codegen error: 'class ${className} extends ${parentClassName}' with a declared ` +
+                `property or accessor is not yet supported in --target standalone (#2620/#3972). ` +
+                `Construction and inherited methods are native now — an empty-bodied ` +
+                `'class ${className} extends ${parentClassName} {}', declared methods, and an ` +
+                `explicit constructor all compile and run host-free — but instance FIELD storage on ` +
+                `an externref-backed builtin subclass is not implemented, and would trap at runtime ` +
+                `rather than fail here. Drop the field/accessor, use ${parentClassName} directly, or ` +
+                `recompile without --target standalone.`,
             );
             // Skip the externref-backed marking so the host-leak/invalid-Wasm
             // path is never entered; the queued error fails the compile.
             break;
           }
-          // (#2029) A subclass of a primitive-wrapper builtin Number/Boolean
-          // under nativeStrings (`--target standalone`/`wasi`) cannot take the
-          // host-constructible path below either: Number/Boolean ARE in
-          // `BUILTIN_PARENTS_HOST_CONSTRUCTIBLE`, so `super()`/`new Sub()` would
-          // lower to `call $__new_Number`/`$__new_Boolean` — but those standalone
-          // internals take an **f64** arg while the synthetic `<Class>_new`
-          // forwarder passes its externref local, so the module fails to
-          // validate (`<Class>_new: call param types must match` → invalid Wasm
-          // at instantiate). No native primitive-wrapper *subclass* box exists
-          // standalone yet (a value-rep follow-up). Refuse loudly (clean compile
-          // error, never invalid Wasm — the #1888 dual-mode invariant). String
-          // is excluded: its `__new_String(externref)->externref` matches the
-          // forwarder and already works standalone. gc/host mode is unaffected
-          // (the externClass host path handles the subclass there).
-          if (
-            parentStructTypeIdx === undefined &&
-            ctx.nativeStrings &&
-            isPrimitiveWrapperSubclassUnsupported(parentClassName)
-          ) {
-            reportError(
-              ctx,
-              decl,
-              `Codegen error: 'class ${className} extends ${parentClassName}' is not yet ` +
-                `supported in --target standalone (#2029). The primitive-wrapper subclass native ` +
-                `box is not implemented yet — routing it through the host path would emit invalid ` +
-                `Wasm (the standalone __new_${parentClassName} internal takes f64, not the ` +
-                `subclass instance externref). Use ${parentClassName} directly, or recompile ` +
-                `without --target standalone.`,
-            );
-            // Skip the externref-backed marking so the invalid-Wasm path is
-            // never entered; the queued error fails the compile.
-            break;
-          }
+          // (#2029 → RESOLVED by #3972) A Number/Boolean subclass used to be
+          // refused here for an ABI mismatch (the standalone `__new_Number`
+          // internal takes an f64, the `<Class>_new` forwarder passes an
+          // externref → invalid Wasm). `emitStandaloneWrapperSuperCtor` removes
+          // the mismatch at the root, so the refusal is RETIRED rather than
+          // narrowed — unlike the #2620 collection refusal above, which still
+          // guards a real gap. See standalone-subclass-ctors.ts.
+          //
           // (#1366a) Detect built-in parent that is host-constructible (Error
           // family). Such subclasses get an externref-backed instance: the
           // constructor returns externref and `super(...)` lowers to

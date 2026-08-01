@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: fab8c15e-42ba-4dae-b2f8-dc6dcc1155b9
+  modified: 2026-07-31T07:05:31.959Z
 ---
 
 `gh pr edit <N> --remove-label <L>` (and `--add-label`) can **silently no-op**:
@@ -31,6 +32,17 @@ Verified 2026-06-20 removing `hold` from `loopdive/js2` PR #1787 — `gh pr edit
 reported success but left `["hold"]`; the REST DELETE removed it and it stayed
 removed (no automation was re-adding it; the gh bug was the whole story). Relevant
 when un-parking a held PR before enqueue.
+
+**It is not only labels — TITLE and BODY silently fail the same way (2026-07-31).**
+`gh pr edit <N> --title/--body` returned the identical Projects-classic deprecation
+GraphQL error and left **both unchanged**; caught only by reading the PR back. A body
+that didn't update is indistinguishable from one that did.
+
+```bash
+gh api -X PATCH repos/<owner>/<repo>/pulls/<N> -f title=... -f body=...
+```
+
+**Rule: always read back after any `gh pr edit`,** or use the REST PATCH directly.
 
 **Automation hazard (2026-07-16, PR #3111):** any bot whose dedupe/state check
 is keyed on a label that gets *added* via `gh pr edit` silently breaks — the

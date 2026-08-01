@@ -208,12 +208,14 @@ bodies and assertions are upstream's — nothing is transcribed or reworded.
 
 Three rules keep the number honest:
 
-1. **Admission is conservative and counted.** A test is admitted only if it
-   needs nothing but React itself. Anything reaching for ReactDOM, `act`, the
-   console-assertion helpers, `jest.*`, a `document`, `__DEV__` or async
-   scheduling is rejected _with its reason recorded_, and the rejection tally is
-   reported next to the pass count — so the admitted slice is never mistaken for
-   the whole suite.
+1. **Everything runs; the SCORE is what is guarded.** All 272 upstream tests
+   that upstream does not itself `.skip` are compiled and executed, including
+   the ones reaching for ReactDOM, `act`, `jest.*` or a `document`. Those are
+   expected to fail — a failure that is run and counted is more honest than a
+   test filtered out before it runs. What they are not is _compiler evidence_:
+   the native oracle fails them too, so they land in `harness-incompatible` and
+   sit outside the pass rate. The report prints all three numbers (run, scored,
+   infra-blocked) so neither can hide the other.
 2. **The `expect` shim implements only the matchers the admitted tests use**
    (`SUPPORTED_MATCHERS`); a test using anything else is rejected rather than
    scored against an approximation of Jest. The same shim source runs on both
@@ -224,6 +226,52 @@ Three rules keep the number honest:
 
 Failures stay in the corpus. The vitest wrapper enforces a pass FLOOR, not a
 target, so a regression is caught while the remaining frontier stays visible.
+
+## lit upstream suite (#3977)
+
+```bash
+pnpm run dogfood:lit-upstream-suite
+DOGFOOD_LIT_UPSTREAM=1 pnpm exec vitest run tests/dogfood/lit-upstream-suite.test.ts
+```
+
+Same shape as React's, with two differences that matter.
+
+**The `lit` tarball contains no implementation.** `lit/index.js` is a four-line
+barrel re-exporting `lit-element` and `lit-html`, which ship as separate
+packages that the `lit` tarball does not include. The old package-entry card
+compiled that barrel — 201 bytes — and reported "compiles + validates", which
+was true of the barrel and said nothing about lit. So this suite pins the
+**three published packages that actually carry the code** (`lit-html@3.3.3`,
+`@lit/reactive-element@2.1.2`, `lit-element@4.2.2`, each sha1-verified) and
+compiles those. The monorepo tag `lit@3.3.3` carries exactly those versions,
+checked at setup time, so there is zero skew between the tests and the
+implementation under test. Imports resolve through a real `node_modules` layout
+so each package's own `exports` map decides which file is served — not a path
+this harness guessed.
+
+**The implementation is compiled ALONE first, before any test.** React's
+harness halves a batch that fails validation. Applied to lit that is not merely
+slow, it is wrong-headed: lit-html's implementation is itself invalid (#3978),
+so every batch containing it is invalid and halving bottoms out at one test and
+still fails. Each file's bundle is therefore compiled with no test code
+attached; if that module is invalid the file is recorded under
+`compile.implementationInvalid` with the validator's own message and its tests
+skip compilation entirely. They still run natively and are still scored as
+failures — never dropped — but no time is spent subdividing toward a floor that
+does not exist. That check is also the only thing that could have shown that
+js2wasm cannot compile lit's published bytes at all, which no per-test number
+would have surfaced.
+
+Otherwise the rules are the React ones: 583 of 587 upstream tests are admitted
+(the 4 rejections are upstream's own `.skip`), the DOM-dependent ~90 % runs and
+lands in `harness-incompatible` via the native oracle, and lit's repo-internal
+`test-utils` — which ship in no tarball — resolve to a stub that throws, so
+those tests still run and fail on both sides instead of vanishing. The `assert`
+shim covers the 26 chai members lit's tests actually use, surveyed across all
+58 files; `equal` is `==` and `strictEqual` is `===`, because lit depends on the
+difference.
+
+The suite found #3978, #3979 and #3980.
 
 ## acorn official suite (#3729)
 
