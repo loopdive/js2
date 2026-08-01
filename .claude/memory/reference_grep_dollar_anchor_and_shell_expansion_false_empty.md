@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
-  modified: 2026-07-31T18:05:09.090Z
+  modified: 2026-08-01T10:50:53.026Z
 ---
 
 **Symptom:** you grep a file for a string you can see in it, and get a
@@ -162,6 +162,38 @@ turns a real check into a vacuous one silently.
 
 Same family as reading `MERGED` + a matching `headRefOid` as proof your commit
 landed: both are true statements about the wrong object.
+
+## Eighth — YOUR OWN `head`/`tail` truncation, generalised into a claim
+
+**Five times in one session (2026-08-01), across two actors.** Not a tool defect — a
+self-inflicted window, then a conclusion drawn from the visible fragment.
+
+| truncation | claim it produced | truth |
+|---|---|---|
+| `git stash list \| head -12` | "the stack is 12 entries" | **16** |
+| `gh pr create … \| tail -5` | silence read as "it ran" | **no PR created**; the error was eaten |
+| `head -70` of a stash's file list | "`stash@{10}` is CI workflows and planning artifacts" | the **largest** entry, 406 lines of real compiler source, never analysed |
+| `tail -140` of an analyzer log | a verdict for rows the log never covered | — |
+| a **stalled** analyzer run | six rows marked SUPERSEDED | the pass **never analysed them at all** |
+
+> **Each time the visible fragment looked representative, and each time the unseen part
+> was the part that mattered.** The fix is never a better instrument — it is reading the
+> whole record before claiming, or stating explicitly which rows the evidence covers.
+
+**Rules:**
+
+- Never pipe a command whose **exit status or error** you need — `| tail` returns *tail's*
+  status and swallows stderr. Redirect to a file and read it.
+- Before quoting a count from a listing, check you did not window it. Print the total
+  separately (`wc -l`) from the sample.
+- If a tool run **stalls or is killed**, the rows it never reached are **unverified** —
+  they are not "fine". Filling a verdict column and putting the caveat in prose below
+  reads as hedging, not as *no data*.
+
+Related shape: a **containment ratio is not a verdict** — one entry read "PARTIAL, 86%"
+where every missing line was a comment. Split residue into **code vs prose** and read the
+code. And a prose heuristic that covers only `md|json|txt` makes **YAML count as code**,
+inflating residue enormously.
 
 ## Sibling shape — a CHECKER that passes over ZERO inputs
 

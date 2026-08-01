@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
-  modified: 2026-08-01T08:36:08.270Z
+  modified: 2026-08-01T10:10:12.701Z
 ---
 
 **The benign-looking outcome is indistinguishable from the broken one, and
@@ -128,6 +128,35 @@ not.** Verify the *content* after a cherry-pick, not that it applied.
 
 In both cases the honest signal came from elsewhere — a CI `ENOENT` on a missing
 fixture is what revealed the partial merge.
+
+## `/workspace` IS A SHALLOW CLONE — ancestry checks there fail toward "unique"
+
+**Measured 2026-08-01.** `git rev-parse --is-shallow-repository` → **true** (642 commits
+reachable from `origin/main`, 5 boundary points). So `git merge-base` returns nothing and
+`git merge-tree` says **`fatal: refusing to merge unrelated histories`** — for **14 of 16**
+stash entries, including one whose base commit is *titled* "Merge remote-tracking branch
+'origin/main' into …".
+
+> That is the **clone's horizon**, not a fact about the work. Any ancestry-based triage
+> reads those 14 as *"not superseded / unique unmerged work"* — the alarming answer,
+> produced by a tool that simply cannot see.
+
+Use **server-side** queries instead (`gh api .../compare/A...B`,
+`commits?path=<f>&sha=main`) or grep `main` for a distinctive identifier. Validate the
+replacement two-sided before trusting it: a commit known to be on main must read
+SUPERSEDED, and a known-unmerged branch must read NOT-superseded with exactly its own
+files as residual.
+
+**Two more ways a containment check lies, same session:**
+
+- **Renumbering** — `plan/issues/3889-editions….md` read as absent from main; it landed
+  **renumbered as `3892-editions….md`**. Index by post-id slug, not by path.
+- **File splits** — `declarations.ts` read 0% contained; the symbols were on main in
+  `declarations/import-collector.ts`. Only grepping for the *identifier* settled it.
+
+**And a ratio is not a verdict.** One entry read "PARTIAL, 86% of added lines on main" —
+all 26 missing lines were **comments**. Split missing lines into **code vs prose** and read
+the code; that turned every ambiguous case into a confident one.
 
 ## The cures, in order of power
 
