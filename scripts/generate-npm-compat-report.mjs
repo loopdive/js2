@@ -1494,22 +1494,33 @@ if (selectedPackages.has("prettier")) {
 }
 
 if (selectedPackages.has("react")) {
-  console.log("[npm-compat] react — package entry + upstream public-API vectors...");
+  console.log("[npm-compat] react — package entry + React's own upstream unit tests...");
   const reactReport = await runReact({ quiet: true });
   const reactSuite = await runReactUpstreamSuite({ quiet: true });
   packages.push(
     await buildPackageEntry({
       name: "react",
       version: reactReport.react.version,
-      issue: null,
+      issue: 3958,
       entryFile: reactReport.react.entryModule.replace(/^package\//, ""),
       shape: "cjs-project",
       report: reactReport,
+      // (#3958) These are React's REAL upstream tests now, not the five
+      // hand-transcribed vectors this card used to report. The denominator is
+      // `scored`, NOT the admitted count: a test the harness cannot reproduce
+      // natively says nothing about the compiler and is excluded from the
+      // score. `admitted` / `upstreamTestsSeen` ride along so the card can say
+      // out loud that this is a slice of React's suite — 20% of it — rather
+      // than letting "39/53" read as the whole thing.
       tests: {
-        kind: "upstream-api-vectors",
+        kind: "upstream-suite",
         passed: reactSuite.results?.passed ?? null,
-        total: reactSuite.results?.total ?? null,
+        total: reactSuite.results?.scored ?? null,
         passRatePct: reactSuite.summary?.passRatePct ?? null,
+        admitted: reactSuite.extraction?.admitted ?? null,
+        upstreamTestsSeen: reactSuite.extraction?.upstreamTestsSeen ?? null,
+        harnessIncompatible: reactSuite.results?.harnessIncompatible ?? null,
+        sourceIssue: 3958,
       },
       perf: null,
     }),

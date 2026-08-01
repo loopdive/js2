@@ -225,61 +225,6 @@ export interface ObjectRuntimeTypes {
  * instead of `__obj_hash`, 146 invalid-Wasm test262 binaries). So we end any
  * pending batch first; registration then happens in a clean, final regime.
  */
-/**
- * (#3238) Standalone/WASI-native `class Sub extends Object` construction.
- *
- * `super()` / the implicit default derived constructor of an `Object` subclass
- * lowers the parent creation to a `__new_Object` host import (see the two
- * `ensureLateImport(ctx, "__new_<Parent>", …)` sites in class-bodies.ts). In
- * standalone mode there is no JS host to satisfy it, so the import leaks even
- * though the module still passes — the sole remaining host import of the
- * `subclass-Object` conformance cluster.
- *
- * Per §20.1.1.1 `Object ( [ value ] )`: when NewTarget is a subclass (neither
- * undefined nor the `%Object%` intrinsic itself), the `value` argument is
- * IGNORED and the result is `OrdinaryCreateFromConstructor(NewTarget,
- * "%Object.prototype%")` — a fresh ordinary object whose [[Prototype]] is the
- * subclass's prototype. The caller already re-points the prototype and brand
- * via `emitSetSubclassProto` / `emitSetSubclassUserBrand`, so constructing a
- * fresh native plain object here (and letting those run) is spec-correct.
- * Argument side effects are still evaluated at the call site (then passed as
- * this function's — ignored — params), preserving §13.3.7.1
- * ArgumentListEvaluation ordering.
- *
- * Emits an in-module `__new_Object : (externref × argCount) -> externref` whose
- * body ignores its params and tail-returns `call __new_plain_object`.
- * Host/gc mode never calls this — it keeps the import.
- *
- * (#2917) PER-ARITY registration — funcMap key `__new_Object@<argCount>`, one
- * defined function per distinct call-site arity, funcIdx RETURNED to the
- * caller. A single plain-name registration keyed off the FIRST caller's arity
- * mis-called from every later site with a different arity: the extra args
- * stayed on the operand stack and (validly!) became the enclosing forwarder's
- * return value — `class B extends A`, `A extends Array` returned its first
- * ctor arg instead of the new instance. Idempotent per key.
- */
-export function emitStandaloneObjectConstructor(ctx: CodegenContext, argCount: number): number | undefined {
-  const key = `__new_Object@${argCount}`;
-  const existing = ctx.funcMap.get(key);
-  if (existing !== undefined) return existing;
-
-  // Guarantee the native plain-object substrate is registered (registers
-  // `__new_plain_object` as a DEFINED func; idempotent).
-  ensureObjectRuntime(ctx);
-  const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
-  if (newPlainObjectIdx === undefined) return undefined; // defensive: substrate unavailable
-
-  const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
-  const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }], `${key}_type`);
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(key, funcIdx);
-  // Ignore the (already side-effect-evaluated) constructor arguments and return
-  // a fresh native plain object. `return_call` keeps the tail position so no
-  // extra frame is retained.
-  const body: Instr[] = [{ op: "return_call", funcIdx: newPlainObjectIdx }];
-  pushDefinedFunc(ctx, funcIdx, { name: key, typeIdx, locals: [], body, exported: false });
-  return funcIdx;
-}
 
 /**
  * (#3239) The TypedArray family + `SharedArrayBuffer`, all of whose subclass
