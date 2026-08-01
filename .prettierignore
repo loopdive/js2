@@ -25,3 +25,38 @@ tests/dogfood/corpus/
 website/dashboard/data.js
 website/dashboard/data/
 website/public/graph-data.json
+
+# Markdown: prettier has NO authority here, so make that explicit (#3947).
+#
+# `format:check` is `prettier --check 'src/**/*.ts' 'tests/**/*.ts'
+# 'scripts/**/*.ts'` — it checks ZERO markdown. So running `prettier --write`
+# on a .md file is all risk and no benefit: nothing verifies the result, and
+# prettier rewrites the WHOLE file rather than the part you edited. Measured
+# on origin/main, 2026-08-01:
+#   docs/ci-policy.md   5 +/6 -  — and one of those is CONTENT DAMAGE, not
+#                                  restyling: a backtick span adjacent to
+#                                  **bold** makes prettier mis-parse the
+#                                  emphasis run and DELETE the spaces between
+#                                  words (`src/**`stays both-lane` —`target:).
+#                                  Third occurrence of this mangling, second
+#                                  file (cf. 7327b3ac).
+#   README.md          17 +/12 -  (tables realigned, *em* -> _em_ in prose)
+#   ROADMAP.md         18 +/16 -  (same)
+#   CLAUDE.md           1 +/1 -   — also CONTENT DAMAGE: it de-indents the
+#                                  continuation line of a list item ("404
+#                                  Branch not / protected") to column 0,
+#                                  which drops the following fenced code
+#                                  block out of the list item.
+# Ignoring them turns `prettier --write <doc>` into a no-op instead of a
+# silent rewrite, which closes the class without asking anyone to remember
+# which files are gated.
+#
+# CLAUDE.md is INCLUDED in this ignore, and that does NOT make the #3947
+# sync-vs-prettier agreement vacuous. The agreement is asserted by
+# tests/issue-3947.test.ts, which calls prettier's PROGRAMMATIC `format()` on
+# the generated block in a temp fixture — and `format()` does not consult
+# .prettierignore. That test is the stronger detector anyway: it isolates the
+# anchor block from unrelated CLAUDE.md prose drift (which is exactly what
+# started confounding the manual `prettier --write CLAUDE.md` check), and it
+# runs in CI on every PR rather than when someone remembers.
+**/*.md

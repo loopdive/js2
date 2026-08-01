@@ -947,11 +947,29 @@ function settle(res, what) {
 }
 
 // --- read-only modes --------------------------------------------------------
+//
+// `--list --json` (#3965) is the machine-readable form, added so other tools
+// can reuse THIS read path instead of growing their own. The one that grew its
+// own — pre-dispatch-gate's `git show origin/issue-assignments:<id>.json` — is
+// a remote-TRACKING read: it answers from whatever the last `git fetch` left
+// behind, so it is stale by construction and silently empty when the local ref
+// was never fetched. Everything routed through here instead gets the tri-state
+// hardening for free: an unreadable ref exits 6, it never degrades to "no
+// claims", and "no claims" therefore means what it says.
 function doList() {
+  const wantJson = flags.has("--json");
+  const emit = (payload, verdict) => {
+    if (wantJson) console.log(JSON.stringify(payload, null, 2));
+    ok(verdict);
+  };
+
   const sha = tipShaOrDie("list assignments");
   if (!sha) {
-    console.log(`No assignments yet (ref ${ASSIGN_REF} does not exist).`);
-    ok("no assignments ref yet");
+    if (!wantJson) console.log(`No assignments yet (ref ${ASSIGN_REF} does not exist).`);
+    emit(
+      { ref_read: "absent", ref: ASSIGN_REF, tip: "", total_records: 0, held_count: 0, held: [] },
+      "no assignments ref yet",
+    );
     return;
   }
   const files = entryFiles(sha);
@@ -962,6 +980,29 @@ function doList() {
   if (!entries) die(6, `could not read assignment entries at ${sha.slice(0, 12)}`);
   const rows = [...entries.values()].filter(isHeld);
   rows.sort((a, b) => Number(a.id) - Number(b.id) || String(a.slice || "").localeCompare(String(b.slice || "")));
+
+  if (wantJson) {
+    emit(
+      {
+        ref_read: "ok",
+        ref: ASSIGN_REF,
+        tip: sha,
+        total_records: entries.size,
+        held_count: rows.length,
+        held: rows.map((e) => ({
+          id: String(e.id),
+          slice: e.slice || "",
+          assignee: e.assignee,
+          status: e.status,
+          branch: e.branch || "",
+          claimed_at: e.claimed_at || "",
+        })),
+      },
+      `${rows.length} active claim(s)`,
+    );
+    return;
+  }
+
   if (!rows.length) {
     console.log("No active claims.");
     ok("0 active claims");

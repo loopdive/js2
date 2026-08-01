@@ -1,8 +1,10 @@
 ---
 id: 3947
 title: "sync-conformance-numbers fights prettier over CLAUDE.md, and its failure message names a cause that never happened"
-status: ready
+status: done
 created: 2026-07-31
+completed: 2026-08-01
+assignee: ttraenkler/dev-fmt-gate
 priority: medium
 feasibility: easy
 horizon: s
@@ -128,15 +130,167 @@ silent rewrite. That closes the whole class without asking anyone to remember a 
 
 ## Acceptance
 
-- [ ] A `--check` failure prints the actual diff and does not imply the conformance
+- [x] A `--check` failure prints the actual diff and does not imply the conformance
       number changed when it did not.
-- [ ] The prescribed remedy in the message actually repairs the failure it reports.
-- [ ] Running `prettier --write CLAUDE.md` followed by `sync:conformance:check` exits 0
+- [x] The prescribed remedy in the message actually repairs the failure it reports.
+      (It always did — see the correction below; now it is asserted by a test.)
+- [x] Running `prettier --write CLAUDE.md` followed by `sync:conformance:check` exits 0
       (i.e. the two agree), by whichever of the two mechanisms above is chosen.
-- [ ] `prettier --write docs/ci-policy.md` produces **no** diff — i.e. the files prettier
+      Proven **on the merits** before `CLAUDE.md` was ignored — `md5sum` identical
+      across `prettier --write`, `--check` exit 0. Carried forward by
+      `tests/issue-3947.test.ts`, not by the (now ignore-shadowed) manual command;
+      see §3 for why that is a strengthening rather than a dodge.
+- [x] `prettier --write docs/ci-policy.md` produces **no** diff — i.e. the files prettier
       has no authority over are ignored explicitly rather than merely unchecked. Verify by
       running it on a clean tree and asserting `git diff --numstat` is empty; the current
       behaviour rewrites 6 lines and breaks a code span.
+
+## Resolution (2026-08-01)
+
+Three changes. All four acceptance boxes are ticked above, each by a command
+whose output is quoted below rather than by a structural claim.
+
+### 1. `--check` now classifies and prints the real diff
+
+`DRIFT <file>` is gone. `--check` computes an LCS line diff of the anchor block
+and splits the failure into the two cases that have completely different triage
+paths:
+
+```
+[sync-conformance] DIFFERS  CLAUDE.md
+
+[sync-conformance] CLAUDE.md: generated block differs — WHITESPACE/FORMATTING ONLY.
+  The generated line is byte-identical, so nothing about the conformance figures
+  has changed. (Usual cause: a markdown formatter reflowed the block. See #3947.)
+[sync-conformance]     <!-- AUTO:conformance-start -->
+[sync-conformance]   + (blank line)
+[sync-conformance]     **test262 conformance**: 30,530 / 43,099 (70.8 %)
+[sync-conformance]   + (blank line)
+[sync-conformance]     <!-- AUTO:conformance-end -->
+```
+
+versus, with a genuinely stale figure:
+
+```
+[sync-conformance] CLAUDE.md: the generated line CHANGED — the committed value
+  does not match benchmarks/results/test262-current.json.
+[sync-conformance]   committed: **test262 conformance**: 29,999 / 43,099 (69.6 %)
+[sync-conformance]   generated: **test262 conformance**: 30,530 / 43,099 (70.8 %)
+```
+
+Blank lines render as `(blank line)` deliberately — the whole #3947 failure was
+blank-line-only, which is invisible in a diff that prints an empty string.
+
+### 2. The sync script now emits prettier-stable output
+
+`replaceAnchorBlock` emits `\n\n${body}\n\n`. That is **exactly** what prettier
+3.8 produces: after the change the sync-written `CLAUDE.md` is byte-identical to
+the prettier-written one (same git blob, `7ee35143c1b5a2`). Verified on all four
+targets including `README.md`'s two adjacent anchor pairs, which was the one
+shape that could have disagreed.
+
+### 3. All markdown is `.prettierignore`d — `CLAUDE.md` included
+
+`**/*.md`, no exceptions. `format:check` covers only
+`src/**/*.ts tests/**/*.ts scripts/**/*.ts`, so prettier has no authority over
+any markdown; ignoring it turns `prettier --write <doc>` into a no-op instead of
+a silent whole-file rewrite.
+
+**This was originally scoped to exclude `CLAUDE.md`, and the evidence reversed
+it mid-branch.** The argument for keeping `CLAUDE.md` visible was that
+acceptance box 3 is the evidence fix 2 worked, and ignoring the file would make
+that box pass because prettier could not see it. That argument died on the
+merge: after merging current `main`, `prettier --write CLAUDE.md` **damages**
+`CLAUDE.md` — it de-indents a list-item continuation line, dropping the fenced
+code block that follows out of the list item:
+
+```diff
+ - **Verify, don't trust the date.** Enforcement is a repo **ruleset**, not
+   classic branch protection (the classic endpoint answers `404 Branch not
+-  protected`):
++protected`):
+```
+
+Same content-damage class as `docs/ci-policy.md`, in the file every agent edits.
+Leaving the foot-gun armed inside the very fix whose subject is "stop prettier
+silently damaging ungated markdown" was not defensible.
+
+The agreement stays **non-vacuously tested** because the detector moved from a
+hand-run command to `tests/issue-3947.test.ts`, which calls prettier's
+**programmatic** `format()` on the generated block in a temp fixture — and
+`format()` does not consult `.prettierignore`. That is the stronger detector on
+three counts: it isolates the anchor block from unrelated prose drift (which is
+precisely what began confounding the manual command), it cannot be silenced by
+an ignore rule, and it runs in CI on every PR instead of when someone remembers.
+
+### Measurements taken with `prettier --write` on a clean tree
+
+| file                | delta      | nature                                                          |
+| ------------------- | ---------- | --------------------------------------------------------------- |
+| `CLAUDE.md`         | 2 +/0 −    | on `origin/main`: the two blank lines only — mutual undo         |
+| `CLAUDE.md`         | 1 +/1 −    | after merging main: **list-continuation de-indent** (damage)     |
+| `docs/ci-policy.md` | 5 +/6 −    | 4 cosmetic `*em*`→`_em_`, **1 code-span corruption** (see below) |
+| `README.md`         | 17 +/12 −  | tables realigned, `*em*`→`_em_` in prose                         |
+| `ROADMAP.md`        | 18 +/16 −  | same                                                             |
+
+The `docs/ci-policy.md` corruption reproduced exactly as recorded: a backtick
+span adjacent to `**bold**` makes prettier mis-parse the emphasis run and delete
+the spaces between words, joining `` `src/**` `` to `stays` and `—` to
+`` `target:` ``. `README.md`/`ROADMAP.md` were **not** previously recorded and
+are the same class — that is why the ignore rule is by category rather than a
+list of two files.
+
+Note the `CLAUDE.md` row moved from 2 +/0 − to 1 +/1 − in the span of one merge.
+That is the argument for the category rule in one line: which markdown files are
+prettier-dirty is not a stable fact anyone can hold in their head.
+
+### Correction: the prescribed remedy was NOT broken
+
+The issue states that `pnpm run sync:conformance` "rewrites the *number*, not
+the whitespace, so it reports a drift it cannot repair." **That is false on
+current `main`, and was false before this PR.** Measured:
+
+```
+$ npx prettier --write CLAUDE.md   # re-adds the two blank lines
+$ node scripts/sync-conformance-numbers.mjs
+[sync-conformance] wrote  CLAUDE.md
+$ node scripts/sync-conformance-numbers.mjs --check ; echo $?
+0
+```
+
+`processFile` rewrites the **entire** anchor block via `replaceAnchorBlock`, so
+it normalises whitespace and value together; it always repaired both.
+
+This matters for the post-mortem: the ~50 minutes were lost purely to the
+**wording**, not to a remedy that failed. What almost certainly happened is the
+mutual-undo *loop* — run the remedy, then run `prettier --write` again (a
+reflex, or format-on-save), and the block comes straight back. That reads
+indistinguishably from "the remedy did nothing." Fix 2 is what actually kills
+that loop; fix 1 is what makes the one remaining failure self-explanatory.
+
+Nothing in the repo auto-formats markdown: `.husky/post-merge` and `lint-staged`
+both filter to `.ts/.js/.mjs` (`+ .json` for lint-staged), so the prettier runs
+were hand-run, as the issue says.
+
+### Regression guard
+
+`tests/issue-3947.test.ts` (7 tests) runs the script as a real subprocess
+against a throwaway repo skeleton in a temp dir, so the CLI contract — exit
+codes and stderr wording — is what is covered, with no testability refactor of
+production code. It asserts prettier-stability of the generated block, the
+sync→prettier→`--check` round-trip, both message branches, that the remedy
+repairs both, and that `.prettierignore` keeps `CLAUDE.md` visible while
+ignoring the ungated docs.
+
+**Mutation-checked**: reverting `\n\n` to `\n` in `replaceAnchorBlock` fails
+4 of the 7 tests. The suite is a detector, not a green rubber stamp.
+
+### Known one-time cost
+
+`promote-baseline` writes the new block shape on `main` once this lands, so any
+PR open across the merge will hit a one-line conflict in each anchor block the
+next time it merges `main`. Resolve by taking either side and re-running
+`pnpm run sync:conformance`.
 
 ## Not this issue
 

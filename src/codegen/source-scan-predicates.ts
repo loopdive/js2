@@ -93,6 +93,74 @@ export function recordSloppyImplicitGlobalNames(
   for (const name of collectSloppyImplicitGlobalNames(sourceFile, oracle, inferModuleStrict)) target.add(name);
 }
 
+/**
+ * (#3956) Property names a TOP-LEVEL write through the global object creates as
+ * global-object properties — `this.p1 = 1` / `globalThis.p1 = 1` in script code.
+ *
+ * These are the OTHER way to create a global binding, and per §9.1.1.4.1
+ * HasBinding on the global environment record they are just as resolvable by a
+ * bare identifier as the `p1 = 1` form {@link collectSloppyImplicitGlobalNames}
+ * already covers. Without them, a bare `p1` read after `this.p1 = 1` resolved to
+ * nothing and fell through to codegen's auto-allocated-local fallback, silently
+ * reading `0`/`undefined` instead of the value that was written.
+ *
+ * Deliberately narrow, because a false positive here turns a currently-silent
+ * wrong answer into a thrown `ReferenceError`:
+ *   - TOP-LEVEL statements only — a `this.x = …` inside a function is a write to
+ *     that function's receiver, not to the global object.
+ *   - Root must be `this` or a non-shadowed `globalThis`, reached only through
+ *     parens / casts, with exactly one member step (`this.p1`, `this["p1"]`);
+ *     a deeper chain like `this.o.k` writes into `o`, not the global object.
+ *   - Static property names only (identifier or string literal); a computed key
+ *     is not knowable here.
+ *   - No strict-mode gate: unlike an unresolvable bare assignment, a write
+ *     through the global object is legal and creates the property in strict
+ *     code too.
+ *
+ * The read path consults this set only AFTER locals, captures, module globals
+ * and functions have all missed, so a name that also has a real binding can
+ * never be diverted here.
+ */
+export function collectGlobalObjectPropertyNames(
+  sourceFile: ts.SourceFile,
+  moduleGlobals: ReadonlySet<string>,
+): Set<string> {
+  const names = new Set<string>();
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    let cur = e;
+    while (
+      ts.isParenthesizedExpression(cur) ||
+      ts.isAsExpression(cur) ||
+      ts.isNonNullExpression(cur) ||
+      ts.isTypeAssertionExpression(cur)
+    ) {
+      cur = cur.expression;
+    }
+    return cur;
+  };
+  const isGlobalObjectReceiver = (e: ts.Expression): boolean => {
+    const cur = unwrap(e);
+    if (cur.kind === ts.SyntaxKind.ThisKeyword) return true;
+    return ts.isIdentifier(cur) && cur.text === "globalThis" && !moduleGlobals.has("globalThis");
+  };
+  for (const stmt of sourceFile.statements) {
+    if (!ts.isExpressionStatement(stmt)) continue;
+    const expr = unwrap(stmt.expression);
+    if (!ts.isBinaryExpression(expr) || expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) continue;
+    const lhs = unwrap(expr.left);
+    if (ts.isPropertyAccessExpression(lhs)) {
+      if (!isGlobalObjectReceiver(lhs.expression)) continue;
+      if (ts.isPrivateIdentifier(lhs.name)) continue;
+      names.add(lhs.name.text);
+    } else if (ts.isElementAccessExpression(lhs)) {
+      if (!isGlobalObjectReceiver(lhs.expression)) continue;
+      const key = unwrap(lhs.argumentExpression);
+      if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) names.add(key.text);
+    }
+  }
+  return names;
+}
+
 /** Script `var` binding names, including declarations nested in top-level control flow. */
 export function recordScriptVarBindingNames(target: Set<string>, sourceFile: ts.SourceFile): void {
   const recordName = (name: ts.BindingName): void => {

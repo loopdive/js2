@@ -1317,17 +1317,29 @@ class PerfBenchmarkChart extends HTMLElement {
         // with `status: "failed"` and zero timings — render it as a named,
         // zero-length "failed" bar so a broken lane is visible instead of
         // silently indistinguishable from an inapplicable one.
+        //
+        // (#3898) A third state: the lane ran and produced a number, but
+        // `report.ts` proved that number physically impossible (below its
+        // per-operation floor) and marked it `implausible`. Publishing it as a
+        // speedup is the exact failure this issue is about — the page showed
+        // "16,598x slower" for a JS baseline that TurboFan had hoisted out of
+        // its own loop. Render it as a named "unverified" bar instead of a
+        // ratio. If the JS baseline itself is implausible, it is the
+        // denominator of every bar in the chart, so no bar here is meaningful.
+        const baselineBad = jsRow.implausible === true;
         ratios = filtered
           .filter((row) => row?.strategy && row.strategy !== "js" && (row.medianMs > 0 || row.status === "failed"))
-          .map((row) =>
-            row.status === "failed"
-              ? { name: row.strategy, ratio: 0, label: "failed" }
-              : {
-                  name: row.strategy,
-                  ratio: jsRow.medianMs / row.medianMs,
-                  label: (jsRow.medianMs / row.medianMs).toFixed(1) + "x",
-                },
-          );
+          .map((row) => {
+            if (row.status === "failed") return { name: row.strategy, ratio: 0, label: "failed" };
+            if (baselineBad || row.implausible === true) {
+              return { name: row.strategy, ratio: 0, label: "unverified" };
+            }
+            return {
+              name: row.strategy,
+              ratio: jsRow.medianMs / row.medianMs,
+              label: (jsRow.medianMs / row.medianMs).toFixed(1) + "x",
+            };
+          });
       } else if (mode === "runtime") {
         let rows = Array.isArray(json) ? json : [];
         if (benchmarkFilter) {

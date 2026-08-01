@@ -181,6 +181,7 @@ import { fillProtoIteratorDriver } from "./expressions/proto-override.js";
 import { fillAccessorDrivers } from "./accessor-driver.js";
 import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
 import {
+  collectGlobalObjectPropertyNames,
   recordSloppyImplicitGlobalNames,
   recordScriptVarBindingNames,
   sourceContainsClass,
@@ -3055,13 +3056,13 @@ function compileMultiIrOverlaySource(
 }
 
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
-  recordScriptVarBindingNames((ctx.globalObjectVarBindings ??= new Set()), sourceFile);
-  recordSloppyImplicitGlobalNames(
-    (ctx.sloppyImplicitGlobals ??= new Set()),
-    sourceFile,
-    ctx.oracle,
-    ctx.inferModuleStrictArguments ?? true,
-  );
+  const vars = (ctx.globalObjectVarBindings ??= new Set());
+  recordScriptVarBindingNames(vars, sourceFile);
+  const implicit = (ctx.sloppyImplicitGlobals ??= new Set());
+  recordSloppyImplicitGlobalNames(implicit, sourceFile, ctx.oracle, ctx.inferModuleStrictArguments ?? true);
+  // (#3956) A top-level `this.p = v` creates a global-object property that a
+  // bare `p` read resolves, exactly like the implicit `p = v` form above.
+  for (const name of collectGlobalObjectPropertyNames(sourceFile, vars)) implicit.add(name);
 }
 
 /** Pre-scan the small syntax surface that enables the linked runtime-eval ABI. */

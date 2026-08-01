@@ -269,3 +269,93 @@ scale. Fold it in and neither lands. Note also that #1103's original design
 specified per-key-type compiled hash functions; what shipped hashes by RUNTIME
 type dispatch (`__obj_hash` `ref.test`-ing `$HashedString`, plus #3673's cached
 FNV-1a). Compile-time hash specialisation is a further, smaller slice on top.
+
+## Implementation attempt 1 (2026-08-01) — design CONFIRMED, blocked on an unidentified body-rewrite
+
+Attempted end-to-end on `--target standalone`. **Reverted; the tree is back to
+#2620's clean refusal.** The WIP diff is not committed — it is reproducible from
+the four steps below, which are worth having because two of the plan's
+assumptions are now *measured* rather than assumed.
+
+### CONFIRMED — the subtyping design works
+
+`$Sub <: $Map` is declared correctly and the field types line up, verified by
+reading the emitted WAT:
+
+```wat
+(type $Map   (sub          (struct (field $buckets (mut (ref null 46))) … (field $kind i32))))
+(type $MySet (sub final $type47 (struct (field $buckets (mut (ref null 46))) … (field $kind i32))))
+```
+
+`$type47` IS `$Map`. So `ref $MySet` is a subtype of `ref $Map` and the
+`__map_*` helpers accept a subclass instance unchanged — the load-bearing claim
+of the plan above, now demonstrated rather than argued.
+
+### The real reason `parentStructTypeIdx` was undefined
+
+Not "Map has no struct" — `ensureMapRuntimeTypes` DOES `structMap.set("Map", …)`.
+The collection types are created **lazily**, so at class-collection time nothing
+has touched a Map yet and the lookup simply misses. Calling
+`ensureMapRuntimeTypes(ctx)` at the #2620 gate fixes it and is safe: it is
+idempotent (`if (ctx.mapTypeIdx >= 0) return`) and registers **types only** — the
+helper FUNCTIONS come from the separate `ensureMapHelpers`, so it cannot pull
+runtime code into a module that never uses a collection.
+
+`structFields` is NOT populated for `"Map"`, so the parent field list must be
+read off `(ctx.mod.types[ctx.mapTypeIdx] as StructTypeDef).fields`.
+
+### Steps that worked
+
+1. At the #2620 gate: `ensureMapRuntimeTypes(ctx)`, then
+   `parentStructTypeIdx = ctx.mapTypeIdx` and `parentFields` from the type def.
+   Fall through to the ordinary struct-subclass path. (~15 lines.)
+2. Export `INIT_CAP` from `map-runtime.ts`.
+3. In the `splitInit` constructor emission (`class-bodies.ts`, the
+   `newBody` loop), emit a `__map_new`-equivalent prefix for the five inherited
+   fields instead of the generic zero/null defaults — `array.new` buckets filled
+   with -1 at INIT_CAP, `array.new_default` entries, two zero counts, and the
+   parent's COLLECTION_KIND brand — then let the loop default the subclass's OWN
+   fields via `fields.slice(5)`.
+4. Identify the class via `ctx.classParentMap` + `isNativeCollectionBuiltin`
+   (walking the chain, so `class B extends A extends Set` works). **No new ctx
+   state is needed** — the plan's implied `classNativeCollectionParent` map is
+   unnecessary.
+
+### THE BLOCKER — something rewrites the constructor body after it is assigned
+
+`MySet_new`'s body is **correct at the moment it is assigned**, logged directly:
+
+```
+i32.const:-1 i32.const:8 array.new i32.const:8 array.new_default
+i32.const:0 i32.const:0 i32.const:1 struct.new local.set local.get return_call
+```
+
+Five operands for a five-field struct. But the EMITTED body carries two extra
+`i32.const 0` immediately before `struct.new`, so field 0 receives an i32 and the
+module fails to validate:
+
+```
+MySet_new failed: struct.new[0] expected type (ref null 46), found i32.const of type i32
+```
+
+Ruled out by instrumenting each and observing that **neither fires** for this
+compile:
+
+- `patchStructNewForAddedField` (`expressions/late-imports.ts`) — the
+  add-a-field-late patcher.
+- `patchStructNewWithShapeId` (`struct-field-exports.ts`, #2009) — the `$shape`
+  retro-stamp. `collidingTypeIdxs` is empty, so it returns before patching.
+
+The emitted `$MySet` type still has exactly five fields, so whatever inserts the
+two operands did **not** correspondingly extend the type — the two are out of
+sync, which is the actual defect to find. Next step for whoever picks this up:
+dump `ctx.mod.functions` for `MySet_new` immediately before emit and bisect the
+passes between constructor assignment and encoding, rather than guessing at
+splice sites (three guesses were wrong here).
+
+### Note
+
+Removing the #2620 refusal without completing this makes
+`class X extends Set {}` emit **invalid Wasm** instead of a clean compile error —
+strictly worse, and a direct violation of the #1888 dual-mode invariant the
+refusal exists to uphold. Keep the refusal in place until construction validates.

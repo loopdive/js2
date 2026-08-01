@@ -16,6 +16,45 @@ loc-budget-allow:
   - src/codegen/expressions/calls.ts
 ---
 
+> ## 🚩 STOP — DO NOT WRITE A SECOND `trim` FIX (s78-dev2, 2026-08-01)
+>
+> **The reopening below is accurate about the symptom and wrong about the
+> cause. `trim` was never left on the pre-fix terminal by a gap in THIS issue's
+> fix — this issue's fix was MASKED, and it is repaired by a change already
+> specified in #2742.**
+>
+> The #2875 reflective `String.prototype` member-body wiring
+> (`emitStringProtoMemberBody`, `src/codegen/array-object-proto.ts`) intercepts
+> **ahead of** the `receiverOverride` this issue added, so a borrowed `trim`
+> call never reached the corrected path at all.
+>
+> **Measured** (scoped test262 A/B, same box, same run, both arms from one
+> tree; 265 files; rows floored 265/265 on both arms with zero timeouts;
+> 65 `substring`/`charAt` files carried as an in-sweep control):
+>
+> - refuse the superseded #2875 wiring ⇒ **10 `trim` files flip fail→pass**
+> - **0 files regress**; the in-sweep control does **not** move
+> - every one of the 10 flips is in `trim/`
+>
+> So it is **ONE repair, not two**. Writing a second `trim` fix here would be a
+> redundant change against a path that is no longer broken, and because both
+> changes target the same legacy borrowed-receiver path they would make each
+> other's attribution unreadable.
+>
+> **Before doing any `trim` work on this issue, re-measure against a tree with
+> the #2742 wiring removal applied, and quote the surviving file list.** Do not
+> take the reopening text below at face value — it was written while the
+> masking was in effect.
+>
+> One loose end worth pinning (not a `trim` issue): this issue's stated *"known
+> limitation"* — that a dynamic `any`-typed OBJECT receiver stringifies through
+> `__any_to_string` — predicts `new Object(42)` **failing**, and it **passes**.
+> That limitation is therefore closed or mis-stated, and the doc is currently
+> misleading the next reader either way.
+>
+> Full evidence, the 2-lane decomposition, and the three-population breakdown
+> are in #2742.
+
 ## REOPENED 2026-07-31 — false-`done` on this issue's own headline method
 
 This was `status: done` (completed 2026-07-13) while **`trim`, the method it is

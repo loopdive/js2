@@ -128,6 +128,63 @@ export function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
   return ASSIGNMENT_OPERATORS.has(kind);
 }
 
+/** Strip parens / casts / non-null assertions from an assignment target. */
+function unwrapTarget(expr: ts.Expression): ts.Expression {
+  let cur = expr;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+/**
+ * (#3956) True when a TOP-LEVEL assignment target creates a property on the
+ * realm's global object — the eighth and ninth shapes this allow-list dropped
+ * silently. `collectDeclarations`' terminal arm only recognises a root
+ * identifier of `globalThis` or a module global, so both of these fell off the
+ * end and emitted NO CODE AT ALL:
+ *
+ *   this.p1 = 1;   §9.4.2 — at script top level `this` IS the global object,
+ *                  but the root unwraps to a ThisKeyword, which is not an
+ *                  Identifier, so the root-name lookup returned undefined.
+ *   p1 = 1;        §6.2.5.6 PutValue on an unresolvable reference in sloppy
+ *                  code creates a configurable global-object property, but a
+ *                  bare undeclared identifier is not a module global.
+ *
+ * The read side was already correct for the second form — the pre-scan put
+ * `p1` in `sloppyImplicitGlobals`, so the read emitted its `__hasOwnProperty`
+ * guard against a global object the dropped write never populated. That
+ * asymmetry produced the whole `ReferenceError: p1 is not defined` cluster.
+ * Both assignments have always worked INSIDE a function body; only the
+ * top-level collection dropped them.
+ *
+ * `sloppyImplicitGlobals` is the `recordSloppyImplicitGlobalNames` pre-scan
+ * set, which admits only non-strict, genuinely unresolvable bare-identifier
+ * `=` targets — so strict code, where the same assignment must throw a
+ * ReferenceError rather than create a global, is excluded by construction.
+ */
+export function createsGlobalObjectBinding(
+  target: ts.Expression,
+  sloppyImplicitGlobals: ReadonlySet<string> | undefined,
+): boolean {
+  const lhs = unwrapTarget(target);
+  if (ts.isIdentifier(lhs)) return sloppyImplicitGlobals?.has(lhs.text) === true;
+  // A `this`-rooted member chain: require at least one member step (`this = v`
+  // is not a valid target) and walk to the root the same way the caller's
+  // root-identifier helper does.
+  if (!ts.isPropertyAccessExpression(lhs) && !ts.isElementAccessExpression(lhs)) return false;
+  let cur: ts.Expression = lhs;
+  while (ts.isPropertyAccessExpression(cur) || ts.isElementAccessExpression(cur)) {
+    cur = unwrapTarget(cur.expression);
+  }
+  return cur.kind === ts.SyntaxKind.ThisKeyword;
+}
+
 /**
  * TOTAL classification of a top-level ExpressionStatement's expression.
  *

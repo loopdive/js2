@@ -14,13 +14,27 @@ export function nextBenchmarkBatchSize(
   return Math.min(maxBatchSize, Math.max(calls + 1, scaled));
 }
 
-export function timeBenchmarkBatch(fn: () => void, calls: number): number {
+/**
+ * Sink for benchmark return values (#3898).
+ *
+ * On its own this does NOT stop a JIT from collapsing a loop — the measured
+ * evidence in #3898 is that consuming the accumulator changed nothing, because
+ * the real culprit was loop-invariant code motion inside the benchmark bodies.
+ * It is still kept so the weaker dead-code-elimination risk is off the table
+ * and so the harness has a value to cross-check between lanes.
+ */
+export const benchmarkSink: { value: unknown } = { value: undefined };
+
+export function timeBenchmarkBatch(fn: () => unknown, calls: number): number {
+  let sink: unknown;
   const started = performance.now();
-  for (let call = 0; call < calls; call++) fn();
-  return performance.now() - started;
+  for (let call = 0; call < calls; call++) sink = fn();
+  const elapsed = performance.now() - started;
+  benchmarkSink.value = sink;
+  return elapsed;
 }
 
-export function calibrateBenchmarkBatchSize(fn: () => void): number {
+export function calibrateBenchmarkBatchSize(fn: () => unknown): number {
   let calls = 1;
   for (let attempt = 0; attempt < 8; attempt++) {
     // A single first probe can itself be preempted. Use the fastest of three

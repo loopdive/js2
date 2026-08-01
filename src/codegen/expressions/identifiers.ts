@@ -17,6 +17,7 @@ import {
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
+import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
 import { emitLazyClassObjectGet } from "./extern.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
@@ -1842,6 +1843,11 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     identifierHasSourceDeclaration(ctx, expr.right) &&
     userErrorParent === undefined
   ) {
+    // (#3962) Host-free answer for a plain user function constructor — the
+    // `e instanceof Test262Error` shape, 26 of the 36 ≤ES5 sole leaks of
+    // `env::__instanceof_check`. Declines to null and leaves this path unchanged.
+    const nativeCtor = noJsHost(ctx) ? tryEmitNativeUserCtorInstanceOf(ctx, fctx, expr, ctorName) : null;
+    if (nativeCtor) return nativeCtor;
     return emitDynamicInstanceOf(ctx, fctx, expr);
   }
 
