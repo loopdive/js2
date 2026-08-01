@@ -2,6 +2,23 @@
 
 TypeScript-to-WebAssembly compiler using WasmGC.
 
+## Answering style
+
+Be concise. Lead with the answer, then only the context needed to act on it.
+
+- **No repetition.** Do not restate the question, re-explain what you just did,
+  or repeat a caveat you already gave. If it was said earlier in the session, a
+  pointer is enough.
+- **No long prose.** Prefer a sentence or a short list over a paragraph, and a
+  table over a list when comparing. Cut throat-clearing and summaries of
+  summaries.
+- **Match the question's size.** A yes/no question gets a yes/no plus the one
+  fact that makes it actionable, not a status report.
+- Brevity is about redundancy, not omission. Findings that change what someone
+  would do — a real failure, an unverified assumption, work deliberately left
+  out — still get stated plainly. Say them once, in the fewest words that keep
+  them accurate.
+
 ## Running Tests
 
 - Run all tests: `npm test` (vitest — may OOM on full suite in constrained envs)
@@ -169,6 +186,28 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 | `benchmarks/results/test262-current.json`                 | main repo (committed, ~kB)  | landing-page summary, pass/total badges                                                                                    | `test262-sharded.yml` `promote-baseline` job (every push to main)      | (none)                                                                                                                                                    |
 | `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo               | PR regression-gate baseline (fetched fresh per CI run); `dev-self-merge` Step 4 bucket-by-path regression analysis (#1528) | `test262-sharded.yml` `promote-baseline` job (every push to main)      | `test262-baseline-validate.yml` spot-checks 50 random `pass` entries on every PR (#1218); fails the PR if any sampled entry no longer passes on main HEAD |
 | `benchmarks/results/playground-benchmark-sidebar.json`    | main repo (committed, ~1KB) | landing-page sidebar wasm/js perf chart; `benchmark-refresh.yml` regression diff baseline                                  | `benchmark-refresh.yml` auto-commit step on every push to main (#1216) | (none)                                                                                                                                                    |
+| `benchmarks/results/npm-compat.json` (+ `-perf`, `-history`, and the `website/public/` twins) | main repo (committed) | the whole `npm-compat.html` dashboard — every package card's compile/validate, tests and perf | `npm-compat-refresh.yml` auto-commit on every push to main, 6h cron backstop (#3988) | pre-promote check in that workflow: refuses to publish <20 packages or entries missing `name`/`compile` |
+
+**`npm-compat.json` is refreshed by CI on every merge to main
+(`npm-compat-refresh.yml`, #3988) — do NOT hand-commit it.** Until 2026-08-01
+nothing regenerated it, so changing `scripts/generate-npm-compat-report.mjs` and
+merging left `website/npm-compat.html` serving the previous JSON with green CI
+and no signal; that shipped stale twice in one day (#3958 rendered `39/null`;
+#3977 kept showing `lit` as `not-integrated` after its suite landed). The
+workflow now regenerates and auto-commits with `[skip ci]`, gated on the merge
+queue (#3915) and on a pre-promote sanity check.
+
+Two consequences worth knowing:
+
+- **You do not need to refresh it in your PR.** A generator change lands and the
+  artifact catches up on the next merge. If you _do_ commit one by hand it is
+  simply overwritten.
+- **`--only <pkg>` cannot refresh it** if you ever need a local run: a focused
+  run never writes (it would drop the other packages), so
+  `pnpm run generate:npm-compat` regenerates everything — tens of minutes,
+  because it re-runs the React and lit upstream suites and re-measures three
+  perf lanes. That cost is why the manual step got skipped and why it is now
+  CI's job.
 
 **Baseline JSONL is no longer committed to the main repo (#1528).** It lives only in `loopdive/js2wasm-baselines` and is fetched on demand by `scripts/fetch-baseline-jsonl.mjs` to `.test262-cache/test262-current.jsonl` (gitignored). Consumers (validator, `dev-self-merge` bucket analysis, regression triage, sprint wrap-up harvest) either call the helper directly or accept the cache path via fallback. This removes the ~15 MB blob from every clone and retired the dedicated `refresh-committed-baseline.yml` workflow.
 
@@ -435,6 +474,30 @@ PR is part of finishing the task, not a separate request.
 - Group per the docs-only rule immediately below — "always open a PR" means
   every finished task ends in *a* PR, not that every task gets its *own* PR.
 
+**Every open PR must REACH the merge queue — verify it, do not assume it**
+(project-lead decision, 2026-08-01). Opening the PR is not the end of the task;
+a PR that never enters the queue is as invisible as one that was never opened.
+Before standing down, check `mergeStateStatus`:
+
+- **`CLEAN`, not draft, no `hold`** → `auto-enqueue.yml` owns it. Nothing to do
+  but confirm it lands in the queue.
+- **`UNSTABLE`** → it will **never** be auto-enqueued. `auto-enqueue` takes only
+  `{CLEAN, HAS_HOOKS}`; `UNSTABLE` is deliberately excluded (#3878/#3904),
+  so a PR with every REQUIRED check green can sit forever because one
+  non-required check is red. Re-run the failed job to get back to `CLEAN`.
+- **`BEHIND`/`DIRTY`** → merge `origin/main` in and push.
+- **`hold` label from `github-actions[bot]`** → a real merged-baseline
+  regression. Diagnose the cited run first; never just remove the label.
+
+**This does NOT license enqueueing from a dev/agent, and it never licenses
+RE-enqueueing.** The single enqueuer is the server-side workflow (#2786); every
+re-add rebuilds the merge group and CANCELS the in-flight `merge_group` run,
+which cost ~3.5h of cancellation churn on 2026-06-20. "Always get PRs into the
+queue" is satisfied by making them *enqueueable* and confirming they were taken
+— see the shepherd's one-shot backstop rules under "PR-queue shepherd" for the
+only sanctioned manual enqueue, which is one-shot, PAT-authenticated, and never
+repeated.
+
 **Docs-only changes go in ONE open PR — check before opening a second.** If a
 docs-only PR is already open (issue files under `plan/issues/`, `plan/` notes,
 `docs/`, README-level edits), **push your docs commits onto that PR's branch
@@ -528,7 +591,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 30,530 / 43,098 (70.8 %)
+**test262 conformance**: 30,539 / 43,092 (70.9 %)
 
 <!-- AUTO:conformance-end -->
 
