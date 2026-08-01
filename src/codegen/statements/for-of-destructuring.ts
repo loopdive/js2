@@ -21,12 +21,8 @@ import {
   emitObjectPatternRestFromVec,
   emitStandaloneObjectRest,
 } from "../destructuring-params.js";
-import {
-  emitAssignToTarget,
-  findUnresolvableInArrayPattern,
-  findUnresolvableInObjectPattern,
-  isStrictContext,
-} from "../expressions/assignment.js";
+import { emitAssignToTarget, isStrictContext } from "../expressions/assignment.js";
+import { findUnresolvableInArrayPattern, findUnresolvableInObjectPattern } from "../expressions/unresolvable-assign.js";
 import { emitCoercedLocalSet, emitThrowTypeError } from "../expressions/helpers.js";
 import { ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "../expressions/late-imports.js";
 import { arrayIteratorOverrideGlobalIdx } from "../expressions/proto-override.js";

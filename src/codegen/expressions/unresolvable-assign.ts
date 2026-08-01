@@ -136,12 +136,6 @@ export function tryCompileUnresolvableIdentifierAssign(
   if (!isUnresolvableIdent(ctx, fctx, left)) return NOT_UNRESOLVABLE;
   const name = left.text;
   const strict = isStrictContext(left, ctx.inferModuleStrictArguments);
-  // ─── #3985 MEASUREMENT SCAFFOLD — DELETE BEFORE MERGE ──────────────────────
-  // Collection-time kill switch. Read per call (not cached) so a single process
-  // can measure both arms back to back, making the A/B an attribution-by-REMOVAL
-  // rather than a bare delta against a stored baseline.
-  if (strict && process.env.JS2WASM_DISABLE_3985 === "1") return NOT_UNRESOLVABLE;
-  // ─── end #3985 MEASUREMENT SCAFFOLD ────────────────────────────────────────
 
   // ── Sloppy arm: create/update a configurable property on the realm's global
   // object. Host and host-free targets share the same carrier (#2726).
