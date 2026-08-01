@@ -208,12 +208,14 @@ bodies and assertions are upstream's — nothing is transcribed or reworded.
 
 Three rules keep the number honest:
 
-1. **Admission is conservative and counted.** A test is admitted only if it
-   needs nothing but React itself. Anything reaching for ReactDOM, `act`, the
-   console-assertion helpers, `jest.*`, a `document`, `__DEV__` or async
-   scheduling is rejected _with its reason recorded_, and the rejection tally is
-   reported next to the pass count — so the admitted slice is never mistaken for
-   the whole suite.
+1. **Everything runs; the SCORE is what is guarded.** All 272 upstream tests
+   that upstream does not itself `.skip` are compiled and executed, including
+   the ones reaching for ReactDOM, `act`, `jest.*` or a `document`. Those are
+   expected to fail — a failure that is run and counted is more honest than a
+   test filtered out before it runs. What they are not is _compiler evidence_:
+   the native oracle fails them too, so they land in `harness-incompatible` and
+   sit outside the pass rate. The report prints all three numbers (run, scored,
+   infra-blocked) so neither can hide the other.
 2. **The `expect` shim implements only the matchers the admitted tests use**
    (`SUPPORTED_MATCHERS`); a test using anything else is rejected rather than
    scored against an approximation of Jest. The same shim source runs on both

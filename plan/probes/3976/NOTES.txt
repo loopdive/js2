@@ -1,0 +1,97 @@
+#3976 / #3571 — propertyHelper population: census + attribution harness
+=======================================================================
+
+These are the exact scripts behind every number in
+plan/issues/3976-standalone-class-elements-not-installed-as-own-properties.md
+and the 2026-08-01 section of
+plan/issues/3571-standalone-fnproto-call-bind-builtin-methods-uncurrythis.md.
+
+They live under plan/ deliberately: `format:check` and `lint` are scoped to
+src/ tests/ scripts/, so nothing here is linted, formatted or executed by CI.
+Run by hand from a worktree root.
+
+Run order
+---------
+  node   plan/probes/3976/census.mjs               # CALIBRATE + build the population
+  node   plan/probes/3976/decompose.mjs            # full-census decomposition (no sampling)
+  node   plan/probes/3976/sample.mjs 120 20260801 .tmp/p3-big.json
+  npx tsx plan/probes/3976/arm.mts A  .tmp/p3-big.json .tmp/big-A.json
+  npx tsx plan/probes/3976/arm.mts B2 .tmp/p3-big.json .tmp/big-B2.json
+  node   plan/probes/3976/diff.mjs .tmp/p3-big-meta.json A=.tmp/big-A.json B2=.tmp/big-B2.json
+  npx tsx plan/probes/3976/synt.mts                # syntactic-vs-dynamic gOPD, both lanes
+  npx tsx plan/probes/3976/synt2.mts               # is the method reachable as a VALUE?
+
+census.mjs REFUSES to be trusted unless it reproduces the published standalone
+baseline exactly (43,106 official rows / 25,460 pass @ run 20260801-010858).
+If MATCH=false, fix the scan before reading anything downstream.
+
+The arms
+--------
+  A   stock harness (baseline)
+  A2  stock harness AGAIN — drift control, must equal A row-for-row
+  B1  uncurryThis -> literal `.call(...)`      [INSTRUMENT INVALID, see below]
+  B2  uncurryThis -> primitive, no reflection  [valid]
+  P   probe: WHERE does the throw originate (entry-nullish vs property-absent)
+  U   CEILING: verifyProperty -> `return true`. VACUOUS BY CONSTRUCTION.
+  S   simulate the #3976 fix, real probes still run [CONFOUNDED, see below]
+
+ONE ARM PER PROCESS — this is not optional
+------------------------------------------
+`assembleOriginalHarness` (tests/test262-original-harness.ts) caches harness
+sources in a module-private Map, so flipping the file mid-process has no effect
+after the first read. Each arm therefore runs in its own process over the same
+file list in the same order. That makes cross-process comparability an
+ASSUMPTION, so MEASURE it: run arm A twice and diff. On 2026-08-01 that gave
+36/36 identical rows.
+
+Safety
+------
+arm.mts REPLACES this worktree's test262/harness symlink with a private real
+copy and restores it on every exit path (including process.on("exit")). It
+REFUSES to start if the symlink is already missing — that means a previous run
+died without restoring. Restore by hand with:
+
+  rm -rf test262/harness && ln -s /workspace/test262/harness test262/harness
+
+WORKTREE-SAFE IS NOT SELF-SAFE. While an arm is in flight this worktree's
+propertyHelper.js is the PATCHED one. Do not run any other compile or probe in
+the same worktree during a run — it will silently measure the patched harness.
+Serialize, or use a second worktree.
+
+Three instrument failures worth keeping
+---------------------------------------
+1. ARM B1 BROKE ITS OWN CONTROLS (6/6 -> 0/6). Rewriting the uncurried captures
+   to the literal `.call` spelling makes `Array.prototype.push.call(...)`
+   syntactically visible, and that is a DELIBERATE codegen refusal
+   (src/codegen/array-prototype-borrow.ts:1144, #1888 Slice 3/4). The stock
+   uncurried spelling EVADES the refusal. The arm was discarded as an
+   attribution instrument but the finding was kept.
+
+2. ARM S v1 WAS A SILENT NO-OP. It rebound `__hasOwnProperty = __simPresent`.
+   A function-valued `var` reassignment does not take effect in compiled
+   standalone code, so all 40 rows still failed at the own-property gate and
+   the arm read as "the fix is worth 0". Caught ONLY because the failure
+   SIGNATURE was inspected rather than the pass count. Substitute CALL SITES,
+   never rebind.
+
+3. ARM S v2 WAS CONFOUNDED. Routing the query through a helper function changed
+   the call SHAPE, and the dynamic form answers differently from the direct one
+   (see synt2.mts: `o[n]` behind a function boundary fails on BOTH lanes). Its
+   controls went 6/6 -> 2/6, so it was discarded. Do not read its 0/40.
+
+The general rule these three share: a zero from an unproven arm is
+indistinguishable from a real zero. Every arm here carries positive controls
+that exercise the thing being replaced, and a control regression INVALIDATES
+the arm rather than being noted and ignored.
+
+Reading discipline
+------------------
+* `runTest262File` status is trustworthy; its error_category and source
+  location are ARTIFACTS (reference_runtest262file_not_ci_path_status_only).
+  Classify on the message text, not the `at L#` suffix.
+* Arm U is an UPPER BOUND and must never be quoted as a flip prediction — it
+  skips descriptor correctness (writable/enumerable/configurable) entirely.
+  Its discriminator check is that it gives 32/40 on the receiver-nullish
+  sample, not 40/40, so it is not trivially green.
+* A ROUTING bound is not a CAUSAL bound. "1,810 files include the harness that
+  reports the failure" was off by ~60x from the measured attributable share.

@@ -114,9 +114,10 @@ Two secondary readings:
 
 1. **`wasm-opt -O3` absorbs essentially all of it.** Turning off all four passes
    grows the pre-optimizer binary by 2.0% (corpus A) / 6.7% (corpus B) and moves
-   the shipped `-O3` artifact by **8 bytes out of 98,605** (corpus A) and **0
-   bytes** (corpus B). On acorn, no arm measured so far moves the `-O3`
-   artifact at all.
+   the shipped `-O3` artifact by **8 bytes out of 98,605** (corpus A), **0
+   bytes** (corpus B) and **54 bytes out of 343,881** (corpus C, acorn) — all
+   54 of which come from `peephole`; the three IR passes move acorn's `-O3`
+   output by zero bytes.
 2. **…but the passes barely run.** Only 25 IR functions in all of acorn reach
    the hygiene pipeline. A pass cannot demonstrate value on code it never
    sees, so this is weak evidence for redundancy and strong evidence that the

@@ -175,9 +175,16 @@ function __recordError(error) {
 }
 `;
 
-/** Body of one admitted upstream test, as an exported Wasm function. */
+/**
+ * Body of one admitted upstream test, as an exported Wasm function.
+ *
+ * An `async` upstream body stays async — its `await`s are upstream's and
+ * rewriting them away would silently change what the test checks. The caller
+ * awaits the result on both the native and the compiled side.
+ */
 export function buildTestFunction(test, { exported = true } = {}) {
-  const keyword = exported ? "export function" : "function";
+  const asyncKeyword = test.isAsync ? "async " : "";
+  const keyword = exported ? `export ${asyncKeyword}function` : `${asyncKeyword}function`;
   return `${keyword} ${test.id}() {
   try {
 ${test.prelude}
