@@ -223,6 +223,47 @@ the same 34 / 0 / 0 / controls-held, confirming the module split did not
 quietly change behaviour. A **final arm with the kill switch deleted** and
 `upstream/main` merged confirms the shipped code reproduces arm B exactly.
 
+### Merge-queue park — a real regression the PR-level checks could not see
+
+The first PR went green at PR level, was enqueued, and was then **auto-parked**
+from the `merge_group` re-validation. One gate failed: the **#3189
+uncatchable-trap ratchet**, `oob` 50 → 52, from `15.2.3.7-6-a-150` / `-151`.
+
+Both files set `length` to 2^32−2 / 2^32−1. `maybeEmitVecLengthDefine` carries a
+deliberate 16M allocation guard: above it, it updates `vec.length` **without**
+growing the backing `$data` array, breaking the invariant
+`length <= array.len(data)` that the same function's comment states. Routing the
+plural form into it turned a clean assertion failure into an **uncatchable trap**.
+
+**A named `trap-growth-allow` was formally available** (both files were baseline
+`fail`, which is the valve's stated precondition) **and was deliberately not
+taken.** Converting a catchable failure into an uncatchable trap is a genuine
+quality regression regardless of prior status — banking a floor for it would
+have hidden a real defect.
+
+**Fixed at this call site, not in the shared helper.** The singular boundary
+twins `15.2.3.6-4-160` / `-161` cover the same two values and **currently pass**,
+so changing the helper's guard would risk two current passes to repair two
+current failures — an unmeasured trade. `tryEmitVecLengthDefineForDefineProperties`
+now declines a **valid uint32 above the 16M ceiling**; the pre-existing
+singular-path hazard is documented in-source as latent and out of scope.
+
+The predicate is narrow on purpose. A first attempt declined on **magnitude
+alone** and silently cost two of the 34 flips (`-152` / `-153`, both
+`Expected a RangeError to be thrown`): an out-of-range literal like 2^32 is an
+*invalid* length whose required outcome is a RangeError, which the helper emits
+correctly and safely — it throws without touching the array, so there is no
+invariant to break. Only the **valid-but-unbackable** band is unsafe. Caught by
+the verification set, not by inspection.
+
+Post-fix verification: both flagged files non-trapping (clean `fail`, matching
+the baseline error exactly), both singular twins still `pass`, **34/34 gains
+held**.
+
+**Second, independent confirmation of the +34:** the `merge_group` diff reported
+`Host stable-path fine-gate net: +34 (43 improvements − 9 regressions)` — a
+different instrument, on the merged state, agreeing with the paired A/B.
+
 ### Why the other 69 gated files did not flip
 
 They are gated by **D2 and D3 above**, not by this routing gap: without a

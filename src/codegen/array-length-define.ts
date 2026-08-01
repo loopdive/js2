@@ -364,8 +364,61 @@ export function tryEmitVecLengthDefineForDefineProperties(
   descExpr: ts.Expression,
 ): boolean {
   if (propName !== "length" || !ts.isObjectLiteralExpression(descExpr)) return false;
+  if (exceedsSafeGrowCeiling(descExpr)) return false;
   const handled = maybeEmitVecLengthDefine(ctx, fctx, objArg, ts.factory.createStringLiteral("length"), descExpr);
   if (!handled) return false;
   fctx.body.push({ op: "drop" });
   return true;
+}
+
+/**
+ * The largest new length {@link maybeEmitVecLengthDefine} will actually grow the
+ * backing `$data` array to. Must match its inline `f64.const 16777216` guard.
+ */
+const SAFE_GROW_CEILING = 16777216;
+
+/**
+ * (#3984) Does this descriptor set `length` to a literal ABOVE the helper's
+ * allocation guard?
+ *
+ * Above `SAFE_GROW_CEILING` the helper deliberately updates `vec.length` WITHOUT
+ * growing `$data` (sparse arrays are out of #2668 Slice C scope). That breaks the
+ * vec invariant `length <= array.len(data)` which the same function documents,
+ * and converts a clean assertion failure into an **uncatchable oob trap** — which
+ * is what the #3189 trap ratchet exists to stop. Routing
+ * `Object.defineProperties(arr, {length: {value: 2**32-1}})` into the helper grew
+ * the `oob` category 50 → 52 (`15.2.3.7-6-a-150` / `-151`) and parked the PR.
+ *
+ * **This hazard is PRE-EXISTING on the singular path and is deliberately NOT
+ * fixed in the shared helper here.** The singular boundary twins
+ * `15.2.3.6-4-160` / `-161` cover exactly these two values and currently **pass**,
+ * so changing the helper would risk regressing them and needs its own
+ * measurement. At *this* call site the prior behaviour was a clean `fail`, so
+ * declining preserves it and adds no trap. The 34 files this routing fix flips
+ * all use small lengths and are unaffected.
+ *
+ * Only a literal is inspected: a non-literal length cannot be classified
+ * statically, and that case keeps the singular path's long-standing behaviour
+ * rather than acquiring a new one.
+ *
+ * **The predicate is deliberately narrow: only a VALID uint32 above the ceiling
+ * declines.** An out-of-range literal such as `2**32` or `2**32+1` is an invalid
+ * array length whose required outcome is a **RangeError**, and the helper emits
+ * that correctly and safely — it throws without ever touching the backing array,
+ * so there is no invariant to break. A first attempt at this guard declined on
+ * magnitude alone and silently cost two of the 34 flips
+ * (`15.2.3.7-6-a-152` / `-153`, both `Expected a RangeError to be thrown`) by
+ * suppressing the throw. Only the *valid-but-unbackable* band is unsafe.
+ */
+function exceedsSafeGrowCeiling(descExpr: ts.ObjectLiteralExpression): boolean {
+  for (const p of descExpr.properties) {
+    if (!ts.isPropertyAssignment(p) || !ts.isIdentifier(p.name) || p.name.text !== "value") continue;
+    const init = p.initializer;
+    if (!ts.isNumericLiteral(init)) return false;
+    const n = Number(init.text);
+    // Valid uint32 lengths only (anything else must reach the helper's RangeError).
+    if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) return false;
+    return n > SAFE_GROW_CEILING;
+  }
+  return false;
 }
