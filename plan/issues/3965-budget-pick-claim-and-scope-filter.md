@@ -140,9 +140,17 @@ lane; an issue pinned to a lane is skipped for every other one. `Opus 5` /
 `opus-5` / `opus` all normalise to `opus`, so an agent may pass the model name
 it knows itself by.
 
+### 5. `--role` announces when it was ASSUMED
+
+`--model` absent is self-announcing, but `--role` has a default, so an architect
+passing only `--as` would have had developer scope applied **silently**, with
+exclusions printed against a role it never claimed. The report now distinguishes
+`role=developer` (asked for) from `role=developer (DEFAULT — no --role/$JS2WASM_ROLE
+given; scope filtered as a developer)`, and `--json` carries `role_defaulted`.
+
 ## Test Results
 
-`tests/issue-3965.test.ts` — 15 tests, hermetic (local bare repo standing in for
+`tests/issue-3965.test.ts` — 17 tests, hermetic (local bare repo standing in for
 the assignment ref; no network). All green.
 
 **Positive control, both directions** — one direction alone proves nothing,
@@ -172,11 +180,38 @@ budget-status: OK — 5 pick(s) returned of 138 claimable, 234 considered, 96 sk
 
 **Non-vacuity of the suite itself** (verify by reverting, not by a green run):
 
-| sabotage                                        | result           |
-| ----------------------------------------------- | ---------------- |
-| claim filter forced off (`if (false)`)          | **4 of 15 fail** |
-| lane filter forced off (`if (false)`)           | **5 of 15 fail** |
-| both restored                                   | 15 / 15 pass     |
+| sabotage                                          | result                                            |
+| ------------------------------------------------- | ------------------------------------------------- |
+| claim filter forced off (`if (false)`)            | **4 of 15 fail**                                  |
+| lane filter forced off (`if (false)`)             | **5 of 15 fail**                                  |
+| pick-row indentation changed 4 → 6 spaces         | **8 of 17 fail**, each naming "output shape changed" |
+| restored                                          | 17 / 17 pass                                      |
+
+The third row exists because the assertion helpers are themselves a silent-empty
+risk: `pickedIds` returning `[]` on an unrecognised line shape would turn every
+`not.toContain(...)` — and the `[UNVERIFIED]` loop, which iterates the same
+shape — green **and empty** rather than red, and the filter-sabotage rows above
+would not catch it. Both helpers now throw instead of returning empty, which is
+the same rule the script itself follows for `catch { return [] }`.
+
+**Quality gates, run locally with their exit codes read directly** (not inferred
+from output text — `pnpm run lint` prints "diagnostics exceed the allowed
+number, 1430 not shown", which is consistent with either verdict):
+
+| gate                                | exit |
+| ----------------------------------- | ---- |
+| `lint`                              | 0    |
+| `format:check`                      | 0    |
+| `typecheck`                         | 0    |
+| `check:ir-fallbacks`                | 0    |
+| `check:ir-only -- --policy=hybrid`  | 0    |
+| `check:dead-exports`                | 0    |
+| `check:oracle-ratchet`              | 0    |
+| `check:pushraw`                     | 0    |
+| `check:loc-budget`                  | 0    |
+| `check:issues`                      | 0    |
+| `check:issue-ids`                   | 0    |
+| `check:issue-ids:against-main`      | 0    |
 
 Read timing, which is what makes reading the ref at the moment of the call
 practical: `claim-issue.mjs --list --json` costs **~1.4 s** via the warm cache

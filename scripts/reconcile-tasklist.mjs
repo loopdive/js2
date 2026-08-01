@@ -49,16 +49,53 @@
 // the actual frontmatter flips. The check is skipped silently when `gh` is
 // unavailable/unauthenticated (CI) or `--no-merged-prs`.
 
+// ── #3969: the two ways this tool lied ────────────────────────────────────────
+// A full audit of one 26-row run found **0 true positives** — 13 phantom rows
+// and 13 real-but-misattributed. A tool with that rate trains everyone to ignore
+// it, which is worse than not having it. Two independent causes:
+//
+// A. IT READ THE LOCAL CHECKOUT. Agents work in worktrees, so the shared
+//    checkout's `origin/main` rots (measured: local 5824539805 vs remote
+//    b0a4047c) and 13 issues already `done` on main read as still open. Issue
+//    status is now read from the VERIFIED-CURRENT `origin/main` tree; when
+//    currency cannot be established the tool says so loudly instead of
+//    reporting from a stale tree. A stale read must never look like a finding.
+//
+// B. IT TREATED ANY `#N` IN A MERGED PR TITLE AS PROOF `#N` IS DONE. Four
+//    distinct bugs rode on that one assumption:
+//      1. slice-of-epic read as closure (#2949 has 17 merged PRs and is open BY
+//         DESIGN);
+//      2. incidental mention (#3715 and #3746 both attributed to PR #3729,
+//         which is the subject of neither);
+//      3. filed-by counted as fixed-by (#3775 was cited only by the PR that
+//         DISCOVERED it);
+//      4. a docs/diagnosis PR counted as a fix (three PRs CORRECTING #3756's
+//         root-cause claim read as three fixes).
+//    Now: only an id in a PR's conventional-commit SCOPE (or a trailing
+//    `(#N)` whose parens hold nothing else) counts as a claim; a mention
+//    elsewhere in the title does not. An issue claimed by MORE THAN ONE merged
+//    PR is the epic/slice shape and is reported UNKNOWN. And the issue's own
+//    acceptance checkboxes must be all-checked before it is called done.
+//
+// THE DESIGN RULE, which is the whole point: when this tool cannot tell
+// slice-of-epic from closure, it reports **unknown**, never **done**. Merely
+// suppressing noisy rows would be the same bug with a smaller symptom — a
+// quieter tool that still guesses. Measured effect on the 24-row live run:
+// 1 confident done, 11 unknown, 12 dropped, every one of them with a reason.
+
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 
 const args = new Set(process.argv.slice(2));
 const QUIET = args.has("--quiet");
 const JSON_OUT = args.has("--json");
 const APPLY = args.has("--apply");
 const NO_MERGED_PRS = args.has("--no-merged-prs");
+// Escape hatch for offline use. Like --no-claim-check in budget-status, it makes
+// "I chose not to verify" an explicit, recorded act rather than a silent one.
+const ALLOW_STALE = args.has("--allow-stale-tree");
 
 const CLAUDE_HOME = process.env.CLAUDE_HOME || join(homedir(), ".claude");
 const TASKS_ROOT = join(CLAUDE_HOME, "tasks");
@@ -119,28 +156,205 @@ function loadTasks() {
   return [...byId.values()];
 }
 
-// --- resolve a target issue id's authoritative status from its file ----------
-const issueStatusCache = new Map();
-function issueStatus(id) {
-  if (issueStatusCache.has(id)) return issueStatusCache.get(id);
-  let status = null;
-  if (existsSync(ISSUES_DIR)) {
-    // match <id>.md or <id>-slug.md (id may carry a letter suffix, e.g. 1690b)
-    const re = new RegExp(`^${id}(?:-.+)?\\.md$`, "i");
-    let file = null;
-    for (const f of readdirSync(ISSUES_DIR)) {
-      if (re.test(f)) {
-        file = join(ISSUES_DIR, f);
-        break;
-      }
-    }
-    if (file) {
-      const text = readFileSync(file, "utf8");
-      status = (text.match(/^status:\s*(\S+)/m)?.[1] || "").toLowerCase() || null;
+// ── #3969 Defect A: read issue state from a VERIFIED-CURRENT tree ─────────────
+//
+// The old code read `plan/issues/` out of the working checkout. Agents work in
+// worktrees, so the shared checkout never advances on its own and silently rots
+// behind main — measured at local `5824539805` vs remote `b0a4047c`, which made
+// 13 already-`done` issues read as open. The failure is invisible: a stale tree
+// produces a confident, well-formatted, wrong report.
+//
+// So: establish currency FIRST (`ls-remote` is sub-second even where a fetch is
+// not), then read the issue files out of that exact commit. If currency cannot
+// be established, the tool refuses to report done-ness rather than guessing.
+function git(gitArgs, opts = {}) {
+  try {
+    return {
+      ok: true,
+      out: execFileSync("git", gitArgs, {
+        cwd: REPO,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 256 * 1024 * 1024,
+        timeout: opts.timeout || 30000,
+        ...opts,
+      }).trim(),
+    };
+  } catch (e) {
+    return { ok: false, err: String((e && (e.stderr || e.message)) || e).slice(0, 300) };
+  }
+}
+
+function resolveIssueSource() {
+  const local = git(["rev-parse", "origin/main"]);
+  const remote = git(["ls-remote", "origin", "refs/heads/main"], { timeout: 60000 });
+  const remoteSha = remote.ok ? (remote.out.split("\t")[0] || "").trim() : "";
+  const localSha = local.ok ? local.out : "";
+
+  if (!remoteSha) {
+    // Could not ASK. That is not the same as "up to date" — say which it is.
+    return {
+      mode: "worktree",
+      verified: false,
+      localSha,
+      remoteSha: "",
+      note: `could not reach origin to verify currency (${remote.err || "no output"})`,
+    };
+  }
+  if (localSha && localSha === remoteSha) {
+    return { mode: "tree", verified: true, sha: localSha, localSha, remoteSha, note: "origin/main is current" };
+  }
+  // Stale. Try to become current; a targeted single-branch fetch is cheap.
+  //
+  // Fetch into a PRIVATE ref rather than relying on FETCH_HEAD: many agents run
+  // in worktrees over one shared object store, so a concurrent fetch can clobber
+  // FETCH_HEAD between our write and our read. (An earlier draft also passed
+  // `--no-write-fetch-head` and *then* read FETCH_HEAD, which cannot work at
+  // all — the hermetic stale-tree test below is what caught it.)
+  const privateRef = `refs/reconcile-tasklist/main-${process.pid}`;
+  const fetched = git(["fetch", "--no-tags", "--quiet", "origin", `+refs/heads/main:${privateRef}`], {
+    timeout: 180000,
+  });
+  if (fetched.ok) {
+    const after = git(["rev-parse", privateRef]);
+    git(["update-ref", "-d", privateRef]);
+    if (after.ok && after.out) {
+      return {
+        mode: "tree",
+        verified: true,
+        sha: after.out,
+        localSha,
+        remoteSha,
+        note: `local origin/main was STALE (${localSha.slice(0, 12) || "unknown"}); fetched ${after.out.slice(0, 12)}`,
+      };
     }
   }
-  issueStatusCache.set(id, status);
-  return status;
+  return {
+    mode: "worktree",
+    verified: false,
+    localSha,
+    remoteSha,
+    note:
+      `local origin/main ${localSha.slice(0, 12) || "unknown"} != remote ${remoteSha.slice(0, 12)} and the ` +
+      `catch-up fetch failed (${fetched.err || "unknown"})`,
+  };
+}
+
+let treeReadError = "";
+const SOURCE = resolveIssueSource();
+// A stale tree makes every done/not-done verdict unreliable, so it is refused
+// rather than degraded — unless the caller opted in explicitly.
+
+/**
+ * Every issue file, as { id -> {status, title, body} }.
+ *
+ * Read from the verified commit via one `ls-tree` + one batched `cat-file`
+ * (3,400 files; a subprocess per file would take minutes). Falls back to the
+ * worktree only when currency could not be established, and that fallback is
+ * always announced — it is never allowed to look like a clean read.
+ */
+function loadIssuesFromTree(sha) {
+  const listed = git(["ls-tree", "-r", "-z", sha, "--", "plan/issues"]);
+  if (!listed.ok) {
+    treeReadError = `ls-tree failed: ${listed.err}`;
+    return null;
+  }
+  const entries = [];
+  for (const rec of listed.out.split("\0")) {
+    if (!rec) continue;
+    // "<mode> <type> <sha>\t<path>"
+    const tab = rec.indexOf("\t");
+    if (tab < 0) continue;
+    const meta = rec.slice(0, tab).split(/\s+/);
+    const path = rec.slice(tab + 1);
+    const base = path.slice(path.lastIndexOf("/") + 1);
+    const m = base.match(/^(\d+[a-z]?)-.+\.md$/i);
+    if (!m || meta[1] !== "blob") continue;
+    entries.push({ id: m[1].toLowerCase(), blob: meta[2], file: base });
+  }
+  if (!entries.length) {
+    treeReadError = "ls-tree matched no issue blobs";
+    return null;
+  }
+  let batch;
+  try {
+    batch = execFileSync("git", ["cat-file", "--batch"], {
+      cwd: REPO,
+      input: entries.map((e) => e.blob).join("\n") + "\n",
+      // `null`, NOT "buffer": execFileSync rejects the string form with
+      // "Unknown encoding: buffer". It threw on every call, the catch turned it
+      // into a silent worktree fallback, and the report still said
+      // `verified: true` — Defect A restored, invisibly. Only making the
+      // fallback LOUD surfaced the cause.
+      encoding: null,
+      maxBuffer: 512 * 1024 * 1024,
+      timeout: 120000,
+    });
+  } catch (e) {
+    treeReadError = `cat-file --batch failed: ${String(e && e.message).slice(0, 200)}`;
+    return null;
+  }
+  // Response per blob: "<sha> blob <size>\n<size bytes>\n"
+  const byId = new Map();
+  let off = 0;
+  for (const e of entries) {
+    const nl = batch.indexOf(0x0a, off);
+    if (nl < 0) break;
+    const header = batch.toString("utf8", off, nl);
+    const size = Number(header.split(" ")[2]);
+    if (!Number.isFinite(size)) break;
+    const body = batch.toString("utf8", nl + 1, nl + 1 + size);
+    off = nl + 1 + size + 1;
+    byId.set(e.id, { id: e.id, file: e.file, body, ...parseIssue(body) });
+  }
+  return byId;
+}
+
+function parseIssue(text) {
+  return {
+    status: (text.match(/^status:\s*(\S+)/m)?.[1] || "").toLowerCase() || null,
+    title: text.match(/^title:\s*"?(.+?)"?\s*$/m)?.[1] || "",
+  };
+}
+
+function loadIssuesFromWorktree() {
+  const byId = new Map();
+  if (!existsSync(ISSUES_DIR)) return byId;
+  for (const f of readdirSync(ISSUES_DIR)) {
+    const m = f.match(/^(\d+[a-z]?)-.+\.md$/i);
+    if (!m) continue;
+    let body;
+    try {
+      body = readFileSync(join(ISSUES_DIR, f), "utf8");
+    } catch {
+      continue;
+    }
+    byId.set(m[1].toLowerCase(), { id: m[1].toLowerCase(), file: f, body, ...parseIssue(body) });
+  }
+  return byId;
+}
+
+// A tree read that fails must NOT quietly become a worktree read: the worktree
+// is the stale source this whole mechanism exists to stop trusting, so a silent
+// downgrade would restore Defect A while still reporting `verified: true`.
+let ISSUES;
+if (SOURCE.mode === "tree") {
+  const fromTree = loadIssuesFromTree(SOURCE.sha);
+  if (fromTree && fromTree.size) {
+    ISSUES = fromTree;
+  } else {
+    ISSUES = loadIssuesFromWorktree();
+    SOURCE.mode = "worktree";
+    SOURCE.verified = false;
+    SOURCE.note += ` — but the TREE READ FAILED (${treeReadError || "no entries"}), so this fell back to the worktree`;
+  }
+} else {
+  ISSUES = loadIssuesFromWorktree();
+}
+const SOURCE_UNRELIABLE = !SOURCE.verified && !ALLOW_STALE;
+
+function issueStatus(id) {
+  return ISSUES.get(String(id).toLowerCase())?.status ?? null;
 }
 
 // Extract the task's TARGET issue id: the first #NNNN in the subject. The
@@ -176,40 +390,55 @@ const PLAN_DOCS_TITLE_RE = /^\s*(?:plan|docs|chore\(plan\)|chore\(docs\)|plan\([
 // a merged-PR reference to them is not a stale-status signal.
 const AT_RISK_ISSUE_STATUSES = new Set(["ready", "in-progress", "in-review"]);
 
-// List every issue file with its id, status, and title.
+// List every issue with its id, status and title, from the resolved source.
 function listIssues() {
-  const issues = [];
-  if (!existsSync(ISSUES_DIR)) return issues;
-  for (const f of readdirSync(ISSUES_DIR)) {
-    const m = f.match(/^(\d+[a-z]?)-.+\.md$/i);
-    if (!m) continue;
-    let text;
-    try {
-      text = readFileSync(join(ISSUES_DIR, f), "utf8");
-    } catch {
-      continue;
-    }
-    const status = (text.match(/^status:\s*(\S+)/m)?.[1] || "").toLowerCase() || null;
-    const title = text.match(/^title:\s*"?(.+?)"?\s*$/m)?.[1] || "";
-    issues.push({ id: m[1].toLowerCase(), file: f, status, title });
-  }
-  return issues;
+  return [...ISSUES.values()];
 }
 
-// Fetch merged PR titles via `gh` and return the set of issue ids cited by a
-// non-plan/docs (i.e. code) PR. Returns null if `gh` is unavailable so the
-// caller can skip the check cleanly (CI, offline). The `#NNNN` reference is
-// taken from the whole title — for code PRs every cited issue is a candidate
-// (a fix PR commonly cites the primary issue plus the ones it also closes).
-function mergedPrIssueRefs() {
+/**
+ * The ids a PR title CLAIMS to close, as opposed to the ones it merely mentions.
+ *
+ * This distinction is the fix for three of Defect B's four bugs. The old code
+ * took every `#N` anywhere in the title, so:
+ *   • #3715 and #3746 were both attributed to PR #3729, the subject of neither;
+ *   • #3775 was attributed to the PR that DISCOVERED it ("filed by" read as
+ *     "fixed by");
+ *   • three PRs CORRECTING #3756's root-cause claim read as three fixes.
+ * All three are mentions sitting in the summary, not the subject.
+ *
+ * A claim is an id in the conventional-commit SCOPE (`fix(#3934):`,
+ * `fix(#3909, #3910):`) or a trailing `(#N)` whose parentheses contain nothing
+ * else. The latter is the squash-merge convention and IS a real issue ref here —
+ * verified against 200 merged PRs, where 18 of 19 trailing refs differ from the
+ * PR's own number, so it is not the PR-number/issue-id sequence collision. The
+ * "nothing else in the parens" requirement is what rejects `(unblocks #3916)`.
+ */
+export function claimedIssueIds(title) {
+  const ids = new Set();
+  const scope = String(title || "").match(/^\s*[a-z]+\(([^)]*)\)\s*:/i);
+  if (scope) for (const m of scope[1].matchAll(/#(\d+[a-z]?)/gi)) ids.add(m[1].toLowerCase());
+  const tail = String(title || "").match(/\(\s*#(\d+[a-z]?)\s*\)\s*$/i);
+  if (tail) ids.add(tail[1].toLowerCase());
+  return ids;
+}
+
+/** All acceptance-checkbox counts in an issue body. */
+export function checkboxes(body) {
+  return {
+    checked: (String(body || "").match(/^\s*[-*]\s*\[[xX]\]/gm) || []).length,
+    unchecked: (String(body || "").match(/^\s*[-*]\s*\[ \]/gm) || []).length,
+  };
+}
+
+// Fetch merged PRs (number + title) and map each issue id to the PRs that CLAIM
+// it. Returns null when `gh` is unavailable so the caller can skip cleanly.
+function mergedPrClaims() {
   let raw;
   try {
-    // -L caps the lookback; merged PRs older than the current sprint window are
-    // irrelevant (their issues were reconciled long ago). JSON keeps parsing robust.
-    raw = execSync("gh pr list --state merged -L 200 --json title", {
+    raw = execSync("gh pr list --state merged -L 200 --json number,title", {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 20000,
+      timeout: 30000,
     });
   } catch {
     return null; // gh missing / unauthenticated / network — skip silently
@@ -220,41 +449,87 @@ function mergedPrIssueRefs() {
   } catch {
     return null;
   }
-  const refs = new Map(); // issueId -> sample PR title that cited it
+  const claims = new Map(); // issueId -> [{number, title}] — CLAIMED (scope/tail)
+  const mentions = new Set(); // issueId — appears anywhere in a code PR title
   for (const pr of prs) {
     const title = pr.title || "";
     if (PLAN_DOCS_TITLE_RE.test(title)) continue; // mention-only, not a fix
-    const seen = new Set();
-    for (const m of title.matchAll(/#(\d+[a-z]?)/gi)) {
-      const id = m[1].toLowerCase();
-      if (seen.has(id)) continue;
-      seen.add(id);
-      if (!refs.has(id)) refs.set(id, title);
+    for (const m of title.matchAll(/#(\d+[a-z]?)/gi)) mentions.add(m[1].toLowerCase());
+    for (const id of claimedIssueIds(title)) {
+      if (!claims.has(id)) claims.set(id, []);
+      claims.get(id).push({ number: pr.number, title });
     }
   }
-  return refs;
+  return { claims, mentions };
 }
 
-// Build the list of at-risk issues cited by a merged code PR.
+/**
+ * Classify every at-risk issue claimed by a merged code PR into exactly one of
+ * `done` / `unknown` / `rejected` — and never silently drop one.
+ *
+ * `unknown` is load-bearing, not a rounding bucket. Suppressing the rows this
+ * tool cannot adjudicate would leave a quieter tool that still guesses, which is
+ * the same defect with a smaller symptom. So an issue it cannot call is
+ * REPORTED as uncallable, with the reason.
+ */
 function mergedPrStaleIssues() {
-  if (NO_MERGED_PRS) return { skipped: true, reason: "--no-merged-prs", flagged: [] };
-  const refs = mergedPrIssueRefs();
-  if (refs === null) return { skipped: true, reason: "gh unavailable", flagged: [] };
-  const flagged = [];
+  if (NO_MERGED_PRS) return { skipped: true, reason: "--no-merged-prs", done: [], unknown: [], rejected: [] };
+  const fetched = mergedPrClaims();
+  if (fetched === null) return { skipped: true, reason: "gh unavailable", done: [], unknown: [], rejected: [] };
+  const { claims, mentions: mentionedIds } = fetched;
+
+  // Floor the count: the mentioned-vs-claimed gap is where the old tool
+  // manufactured most of its false rows, so the report states how many it
+  // DECLINED to flag rather than leaving that difference invisible.
+  let mentionOnly = 0;
+
+  const done = [];
+  const unknown = [];
+  const rejected = [];
   for (const issue of listIssues()) {
     if (!issue.status || !AT_RISK_ISSUE_STATUSES.has(issue.status)) continue;
-    const prTitle = refs.get(issue.id);
-    if (prTitle) {
-      flagged.push({
-        id: issue.id,
-        issueStatus: issue.status,
-        prTitle: prTitle.slice(0, 90),
-        title: issue.title.slice(0, 70),
-      });
+    const row = { id: issue.id, issueStatus: issue.status, title: (issue.title || "").slice(0, 70) };
+    const claimedBy = claims.get(issue.id);
+    if (!claimedBy || !claimedBy.length) {
+      // Mentioned somewhere, perhaps, but never claimed. Not evidence of a fix —
+      // this is bugs 2/3/4 of Defect B, and dropping it here is the whole point.
+      if (mentionedIds.has(issue.id)) {
+        mentionOnly++;
+      }
+      continue;
     }
+    row.prs = claimedBy.map((p) => p.number);
+    row.prTitle = claimedBy[0].title.slice(0, 90);
+    if (claimedBy.length > 1) {
+      // The epic/slice shape: #2949 has 17 merged PRs and is open BY DESIGN.
+      // One slice landing says nothing about the epic being closed.
+      unknown.push({
+        ...row,
+        reason: `claimed by ${claimedBy.length} merged PRs (#${row.prs.join(", #")}) — slice-of-epic and closure are indistinguishable from titles alone`,
+      });
+      continue;
+    }
+    const { checked, unchecked } = checkboxes(issue.body);
+    if (unchecked > 0) {
+      rejected.push({ ...row, reason: `${unchecked} acceptance criterion/criteria still unchecked` });
+      continue;
+    }
+    if (checked === 0) {
+      // NECESSARY BUT NOT SUFFICIENT, and here it is simply absent: there are no
+      // acceptance criteria to verify against, so "done" is not established.
+      unknown.push({ ...row, reason: "no acceptance checkboxes — nothing to verify the claim against" });
+      continue;
+    }
+    done.push({ ...row, reason: `claimed by PR #${row.prs[0]}, all ${checked} acceptance criteria checked` });
   }
-  flagged.sort((a, b) => Number(parseInt(a.id, 10)) - Number(parseInt(b.id, 10)));
-  return { skipped: false, flagged };
+  const byId = (a, b) => parseInt(a.id, 10) - parseInt(b.id, 10);
+  return {
+    skipped: false,
+    done: done.sort(byId),
+    unknown: unknown.sort(byId),
+    rejected: rejected.sort(byId),
+    mentionOnly,
+  };
 }
 
 const tasks = loadTasks();
@@ -287,14 +562,31 @@ for (const t of open) {
 // #2147: ready/in-progress issues already fixed by a merged PR.
 const mergedPr = mergedPrStaleIssues();
 
+// Provenance of the issue read — which tree, and whether it was verified
+// current. Travels in every output shape: a consumer reading counts without it
+// cannot tell a clean run from one off a stale checkout (Defect A).
+const sourceReport = {
+  mode: SOURCE.mode,
+  verified: SOURCE.verified,
+  sha: SOURCE.sha || SOURCE.localSha || "",
+  local_main: SOURCE.localSha,
+  remote_main: SOURCE.remoteSha,
+  note: SOURCE.note,
+  issues_read: ISSUES.size,
+  unreliable: SOURCE_UNRELIABLE,
+};
+
 if (JSON_OUT) {
   console.log(
     JSON.stringify(
       {
         total: tasks.length,
         open: open.length,
+        issue_source: sourceReport,
         stale,
-        mergedPrFixed: mergedPr.flagged,
+        mergedPrDone: mergedPr.done,
+        mergedPrUnknown: mergedPr.unknown,
+        mergedPrRejected: mergedPr.rejected,
         mergedPrCheckSkipped: mergedPr.skipped ? mergedPr.reason : false,
       },
       null,
@@ -302,13 +594,28 @@ if (JSON_OUT) {
     ),
   );
 } else if (QUIET) {
+  // The hook line. A stale tree is announced HERE, in the one line anyone reads,
+  // because counts computed off a rotted checkout are worse than no counts.
+  const prefix = SOURCE_UNRELIABLE ? `STALE-TREE (${SOURCE.note}) — counts unreliable | ` : "";
   const staleLine = stale.length === 0 ? "0 stale" : `${stale.length} stale: ${stale.map((s) => s.id).join(",")}`;
-  const prLine =
-    mergedPr.flagged.length === 0
-      ? ""
-      : ` | ${mergedPr.flagged.length} merged-but-open: ${mergedPr.flagged.map((s) => "#" + s.id).join(",")}`;
-  console.log(staleLine + prLine);
+  const doneLine = mergedPr.done.length
+    ? ` | ${mergedPr.done.length} merged-but-open: ${mergedPr.done.map((s) => "#" + s.id).join(",")}`
+    : "";
+  const unkLine = mergedPr.unknown.length ? ` | ${mergedPr.unknown.length} unknown` : "";
+  console.log(prefix + staleLine + doneLine + unkLine);
 } else {
+  out(`\nissue source: ${SOURCE.verified ? "VERIFIED" : "UNVERIFIED"} ${SOURCE.mode} — ${SOURCE.note}`);
+  out(
+    `              ${ISSUES.size} issue file(s) read${sourceReport.sha ? ` @ ${sourceReport.sha.slice(0, 12)}` : ""}`,
+  );
+  if (SOURCE_UNRELIABLE) {
+    out(
+      `  ⚠ REFUSING to treat the merged-PR verdicts as reliable: the issue tree could not be verified current.\n` +
+        `    A stale checkout reports already-done issues as open — that is how a 26-row run scored 0 true\n` +
+        `    positives (#3969). Re-run with network, or pass --allow-stale-tree to accept the risk deliberately.`,
+    );
+  }
+
   out(
     `\nreconcile-tasklist: ${tasks.length} tasks, ${open.length} open, ${stale.length} STALE (done-but-not-completed)\n`,
   );
@@ -321,20 +628,36 @@ if (JSON_OUT) {
     out(`\nOr best-effort direct rewrite: node scripts/reconcile-tasklist.mjs --apply`);
   }
 
-  // #2147 + #2048 merged-PR cross-check report.
+  // #2147 + #2048 merged-PR cross-check, now three-way (#3969).
   if (mergedPr.skipped) {
-    out(`\nmerged-PR cross-check (#2147/#2048): skipped (${mergedPr.reason}).`);
+    out(`\nmerged-PR cross-check (#2147/#2048/#3969): skipped (${mergedPr.reason}).`);
   } else {
+    const considered = mergedPr.done.length + mergedPr.unknown.length + mergedPr.rejected.length;
     out(
-      `\nmerged-PR cross-check (#2147/#2048): ${mergedPr.flagged.length} open (ready/in-progress/in-review) issue(s) cited by a merged code PR:`,
+      `\nmerged-PR cross-check (#2147/#2048/#3969): ${considered} open issue(s) CLAIMED by a merged code PR` +
+        ` → ${mergedPr.done.length} done, ${mergedPr.unknown.length} unknown, ${mergedPr.rejected.length} rejected.`,
     );
-    for (const s of mergedPr.flagged) {
-      out(`  #${s.id}  [${s.issueStatus}]  fixed by merged PR "${s.prTitle}"`);
+    if (!considered) out(`  (none — no open issue is claimed in a merged PR's scope.)`);
+    if (mergedPr.mentionOnly) {
+      out(
+        `  + ${mergedPr.mentionOnly} open issue(s) were MENTIONED by a merged code PR but never claimed in one's` +
+          ` scope — deliberately not flagged (that gap is where the old tool invented most of its false rows).`,
+      );
     }
-    if (mergedPr.flagged.length) {
-      out(`\n  → these fixes have merged but the issue frontmatter still reads ready/in-progress/in-review.`);
-      out(`    The PO/lead should flip status: done (report-only — this script does not write frontmatter).`);
-      out(`    (in-review here = the "merged PR ⇒ done" flip never ran — #2048's doc-churn source.)`);
+
+    if (mergedPr.done.length) {
+      out(`\n  DONE — merged and every acceptance criterion checked; flip status: done:`);
+      for (const s of mergedPr.done) out(`    #${s.id}  [${s.issueStatus}]  ${s.reason}`);
+      out(`\n    (report-only — this script never writes frontmatter. The PO/lead owns the flip.)`);
+    }
+    if (mergedPr.unknown.length) {
+      out(`\n  UNKNOWN — a merged PR claims it, but done-ness CANNOT be established from here.`);
+      out(`    Reported rather than suppressed on purpose: a quieter tool that still guesses is the same bug.`);
+      for (const s of mergedPr.unknown) out(`    #${s.id}  [${s.issueStatus}]  ${s.reason}`);
+    }
+    if (mergedPr.rejected.length) {
+      out(`\n  REJECTED — claimed by a merged PR but demonstrably NOT done:`);
+      for (const s of mergedPr.rejected) out(`    #${s.id}  [${s.issueStatus}]  ${s.reason}`);
     }
   }
 }

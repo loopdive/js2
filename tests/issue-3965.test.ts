@@ -168,11 +168,33 @@ function runClaim(fx: Fixture, args: string[]): RunResult {
   return { code: r.status ?? -1, stdout, stderr, all: stdout + stderr };
 }
 
-/** Ids in the "best-fit claimable tasks" block — the actual recommendation. */
+/**
+ * Ids in the "best-fit claimable tasks" block — the actual recommendation.
+ *
+ * The parser must fail LOUDLY rather than return `[]`, for exactly the reason
+ * the script under test must not `catch { return [] }`: a formatting change to
+ * the pick line would otherwise turn every `not.toContain(...)` assertion —
+ * and the `[UNVERIFIED]` loop, which iterates the same shape — green and empty
+ * instead of red. The revert-sabotage below exercises the FILTERS, not this
+ * parser, so nothing else would catch it.
+ */
 function pickedIds(out: string): string[] {
   const start = out.indexOf("best-fit claimable tasks");
-  if (start < 0) return [];
-  return [...out.slice(start).matchAll(/^ {4}#(\d+[a-z]?)\s/gim)].map((m) => m[1]);
+  if (start < 0) throw new Error(`pickedIds: no "best-fit claimable tasks" block in output:\n${out}`);
+  const block = out.slice(start);
+  const ids = [...block.matchAll(/^ {4}#(\d+[a-z]?)\s/gim)].map((m) => m[1]);
+  // An empty result is only legitimate when the script SAID it returned none.
+  if (!ids.length && !/\(none returned/.test(block)) {
+    throw new Error(`pickedIds: matched no rows and no "(none returned" line — the output shape changed:\n${block}`);
+  }
+  return ids;
+}
+
+/** Pick rows, as raw lines — same shape guarantee as pickedIds. */
+function pickLines(out: string): string[] {
+  const lines = out.split("\n").filter((l) => /^ {4}#\d/.test(l));
+  if (!lines.length) throw new Error(`pickLines: no pick rows matched — the output shape changed:\n${out}`);
+  return lines;
 }
 
 const DEV = ["--pick", "--role", "developer", "--model", "opus"];
@@ -239,10 +261,11 @@ describe("#3965 budget-status --pick must not recommend unclaimable work", () =>
     expect(r.stdout).toMatch(/claim ref\s*:\s*UNREADABLE/);
     expect(r.stderr).toMatch(/budget-status: FAILED/);
     expect(r.stderr).toMatch(/UNFILTERED/);
-    // Rows still print (an agent may need them) but each is stamped.
-    for (const line of r.stdout.split("\n").filter((l) => /^ {4}#\d/.test(l))) {
-      expect(line).toContain("[UNVERIFIED]");
-    }
+    // Rows still print (an agent may need them) but each is stamped. pickLines
+    // throws rather than yielding an empty loop, so this cannot pass vacuously.
+    const rows = pickLines(r.stdout);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const line of rows) expect(line).toContain("[UNVERIFIED]");
     // And the machine shape says so too — a consumer reading `picks` without
     // provenance would be back to trusting an unverified list.
     const j = runBudget(fx, ["--json", "--role", "developer"], {}, "/nonexistent-claim-remote-3965.git");
@@ -339,6 +362,29 @@ describe("#3965 budget-status --pick must not recommend unclaimable work", () =>
     expect(j.skipped.find((s: any) => s.id === "9002")).toMatchObject({ stage: "claim" });
     expect(j.skipped.find((s: any) => s.id === "9004")).toMatchObject({ stage: "lane" });
     expect(j.picks.map((p: any) => p.id)).toEqual(["9001"]);
+  });
+
+  it("announces that role was ASSUMED when --role is not given", () => {
+    // --model absent is self-announcing; --role has a default, so its absence
+    // would otherwise apply developer scope silently to (say) an architect that
+    // passed only --as, with exclusions printed against a role it never claimed.
+    const assumed = runBudget(fx, ["--pick", "--as", "ttraenkler/arch-1"]);
+    expect(assumed.stdout).toMatch(/role=developer \(DEFAULT — no --role/);
+    const asked = runBudget(fx, ["--pick", "--role", "developer"]);
+    expect(asked.stdout).toMatch(/role=developer(?!\s*\(DEFAULT)/);
+
+    const j = JSON.parse(runBudget(fx, ["--json"]).stdout);
+    expect(j.filters_applied.role_defaulted).toBe(true);
+    const j2 = JSON.parse(runBudget(fx, ["--json", "--role", "architect"]).stdout);
+    expect(j2.filters_applied).toMatchObject({ role: "architect", role_defaulted: false });
+  });
+
+  it("a non-developer role sees the work a developer is filtered out of", () => {
+    const arch = runBudget(fx, ["--pick", "--role", "architect", "--model", "opus"]);
+    // #9003 (task_type: architecture) and #9005 ([ARCH] title) are the
+    // developer's exclusions; for an architect they are the job.
+    expect(pickedIds(arch.stdout)).toEqual(expect.arrayContaining(["9003", "9005"]));
+    expect(arch.stdout).not.toMatch(/skipped #9003/);
   });
 
   it("leaves the no-pick invocations alone (no claim read, exit 0)", () => {
