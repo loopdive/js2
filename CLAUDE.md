@@ -2,6 +2,23 @@
 
 TypeScript-to-WebAssembly compiler using WasmGC.
 
+## Answering style
+
+Be concise. Lead with the answer, then only the context needed to act on it.
+
+- **No repetition.** Do not restate the question, re-explain what you just did,
+  or repeat a caveat you already gave. If it was said earlier in the session, a
+  pointer is enough.
+- **No long prose.** Prefer a sentence or a short list over a paragraph, and a
+  table over a list when comparing. Cut throat-clearing and summaries of
+  summaries.
+- **Match the question's size.** A yes/no question gets a yes/no plus the one
+  fact that makes it actionable, not a status report.
+- Brevity is about redundancy, not omission. Findings that change what someone
+  would do — a real failure, an unverified assumption, work deliberately left
+  out — still get stated plainly. Say them once, in the fewest words that keep
+  them accurate.
+
 ## Running Tests
 
 - Run all tests: `npm test` (vitest — may OOM on full suite in constrained envs)
