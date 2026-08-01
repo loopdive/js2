@@ -884,8 +884,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   // Third: collect function declarations (uses resolveWasmType for real type indices)
   for (const stmt of sourceFile.statements) {
     if (ts.isFunctionDeclaration(stmt) && (stmt.name || hasExportModifier(stmt))) {
-      // Skip declare function stubs (no body, inside or matching declare)
-      if (hasDeclareModifier(stmt)) continue;
+      // Skip ambient stubs: `declare function`, and `.d.ts` implicit-declare (#1282).
+      if (hasDeclareModifier(stmt) || stmt.getSourceFile().isDeclarationFile) continue;
       // (#3419) Shadowed duplicate — a later same-name top-level declaration
       // wins; this one is never observable.
       if (stmt.name && stmt.body && lastTopLevelFnWithBody.get(stmt.name.text) !== stmt) continue;
