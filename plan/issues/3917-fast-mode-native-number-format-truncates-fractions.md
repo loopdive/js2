@@ -128,6 +128,32 @@ So #3912 must land *with* or *after* this issue, not before it.
    they share a mechanism, say so and fix once.
 4. Full test262 run over `built-ins/Number` and `built-ins/JSON`.
 
+## Resolution — fixed by #3907, permanent repro in #3912's suite
+
+Closed as **fixed by #3907**, which removed the `ctx.fast ⇒ i32` narrowing in
+`src/checker/type-mapper.ts`. That narrowing made every TypeScript `number` an
+i32 under `fast`, so a fraction was truncated before it ever reached the
+formatter — which is exactly why trap 2 above holds: the `number_toString` body
+was never the defect. Re-measured against current main, not assumed.
+
+**Permanent regression coverage: `tests/issue-3912-fast-number-stringify.test.ts`.**
+Its non-integer block is this issue's repro, and it satisfies acceptance
+criterion 2 by construction — every case binds to a **variable**, never a
+literal, so constant folding cannot mask a recurrence:
+
+| case | source |
+| --- | --- |
+| `String(3.5)` | `const n = 3.5; return String(n).length;` |
+| `` template `v${3.5}` `` | ``const n = 3.5; return `v${n}`.length;`` |
+| `parseFloat(String(n))` | `const n = 3.5; return parseFloat(String(n));` |
+
+Each returns a **number** rather than a string, so a wrong representation
+cannot be confused with export-boundary marshalling — the same discipline that
+made #3912's 52-case differential probe trustworthy.
+
+Acceptance criterion 4 (full test262 over `built-ins/Number` and
+`built-ins/JSON`) is owned by CI on #3912's PR, not run locally.
+
 ## Provenance
 
 Found by the coordinator while implementing #3912's prescribed fix. The gate
