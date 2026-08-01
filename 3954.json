@@ -1,10 +1,11 @@
 {
   "id": "3954",
   "assignee": "ttraenkler/dev-queue-tax",
-  "requested_by": "ttraenkler/dev-queue-tax",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-3954-class-expr-element-default",
   "claimed_at": "2026-08-01T08:39:30Z",
-  "updated_at": "2026-08-01T08:39:30Z",
-  "write_id": "46305-t6kugqx7"
+  "updated_at": "2026-08-01T08:44:10Z",
+  "write_id": "77353-9lneeglt",
+  "released_at": "2026-08-01T08:44:10Z"
 }
