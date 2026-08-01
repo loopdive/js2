@@ -259,6 +259,7 @@ import {
 } from "./async-scheduler.js";
 import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
+import { profileCount, profilePhase } from "../compile-profile.js";
 import {
   brandExternMethodResult,
   ensureLateImport,
@@ -304,6 +305,7 @@ import {
   finalizeUnifiedCollector,
   unifiedVisitNode,
 } from "./declarations.js";
+import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import {
@@ -5856,9 +5858,11 @@ export function generateMultiModule(
     // $AnyValue struct type is now registered lazily via ensureAnyValueType()
 
     // Phase 1: Collect extern declarations first (needed before import collectors)
-    for (const sf of multiAst.sourceFiles) {
-      collectExternDeclarations(ctx, sf);
-    }
+    profilePhase("extern-decls", () => {
+      for (const sf of multiAst.sourceFiles) {
+        collectExternDeclarations(ctx, sf);
+      }
+    });
 
     // WASI target: check for DOM-only globals and emit compile errors
     if (ctx.wasi) {
@@ -5870,25 +5874,29 @@ export function generateMultiModule(
 
     // Scan lib files for DOM extern classes + globals (only if any user code uses DOM)
     // After lib.d.ts refactoring, TS loads individual lib files (lib.es5.d.ts, etc.)
-    const anyUsesDom = multiAst.sourceFiles.some((sf) => sourceUsesLibGlobals(sf));
+    const anyUsesDom = profilePhase("lib-globals-probe", () =>
+      multiAst.sourceFiles.some((sf) => sourceUsesLibGlobals(sf)),
+    );
     if (anyUsesDom) {
-      // #2520 — gate the lib-file referenced-names filter to wasi/standalone
-      // only; under the default gc target it reorders the import/type table and
-      // exposed a latent late-import index-shift (#1787 −6). See the matching
-      // comment in generateModule above.
-      const libRefs =
-        ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
-      for (const libSf of multiAst.program.getSourceFiles()) {
-        const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
-        if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-          collectExternDeclarations(ctx, libSf, libRefs);
-          for (const sf of multiAst.sourceFiles) {
-            if (sourceUsesLibGlobals(sf)) {
-              collectDeclaredGlobals(ctx, libSf, sf);
+      profilePhase("lib-globals-scan", () => {
+        // #2520 — gate the lib-file referenced-names filter to wasi/standalone
+        // only; under the default gc target it reorders the import/type table and
+        // exposed a latent late-import index-shift (#1787 −6). See the matching
+        // comment in generateModule above.
+        const libRefs =
+          ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
+        for (const libSf of multiAst.program.getSourceFiles()) {
+          const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
+          if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
+            collectExternDeclarations(ctx, libSf, libRefs);
+            for (const sf of multiAst.sourceFiles) {
+              if (sourceUsesLibGlobals(sf)) {
+                collectDeclaredGlobals(ctx, libSf, sf);
+              }
             }
           }
         }
-      }
+      });
     }
 
     registerBuiltinExternClasses(ctx);
@@ -5896,17 +5904,21 @@ export function generateMultiModule(
 
     // Pre-pass: detect empty object literals that get properties assigned later
     // Must run before import collectors so that widened types are known
-    for (const sf of multiAst.sourceFiles) {
-      collectEmptyObjectWidening(ctx, multiAst.checker, sf);
-      // (#2837) see single-file path above.
-      collectGrowableObjectLiterals(ctx, multiAst.checker, sf);
-    }
+    profilePhase("object-widening", () => {
+      for (const sf of multiAst.sourceFiles) {
+        collectEmptyObjectWidening(ctx, multiAst.checker, sf);
+        // (#2837) see single-file path above.
+        collectGrowableObjectLiterals(ctx, multiAst.checker, sf);
+      }
+    });
 
     // Single-pass collection of all source imports for each file (#592)
-    for (const sf of multiAst.sourceFiles) {
-      collectUsedExternImports(ctx, sf);
-      collectAllSourceImports(ctx, sf);
-    }
+    profilePhase("import-collect", () => {
+      for (const sf of multiAst.sourceFiles) {
+        collectUsedExternImports(ctx, sf);
+        collectAllSourceImports(ctx, sf);
+      }
+    });
 
     // #1677 — reconcile native-string helper indices before emitting deferred
     // helpers that look them up (see single-module path).
@@ -5939,15 +5951,17 @@ export function generateMultiModule(
 
     // #1121: Numeric return-type inference (must run BEFORE collectDeclarations
     // so the inferred f64 return is baked into the function signature).
-    {
+    profilePhase("numeric-return-inference", () => {
       const merged = new Map<string, ValType>();
       for (const sf of multiAst.sourceFiles) {
         const partial = inferNumericReturnTypes(ctx, sf);
         for (const [k, v] of partial) merged.set(k, v);
       }
       ctx.numericReturnTypes = merged;
-    }
-    ctx.booleanPropertyNames = analyzeBooleanPropertyNames(ctx, multiAst.sourceFiles);
+    });
+    ctx.booleanPropertyNames = profilePhase("boolean-property-analysis", () =>
+      analyzeBooleanPropertyNames(ctx, multiAst.sourceFiles),
+    );
 
     // #1677 — final reconcile before any user function is registered.
     reconcileNativeStrFinalizeShift(ctx);
@@ -5956,42 +5970,54 @@ export function generateMultiModule(
     // module trips the ITER_OVERRIDDEN brand. Must run BEFORE collectDeclarations
     // (the module-init filter / #1719 CPR write-arm reads the brand to keep the
     // override statement in __module_init).
-    for (const sf of multiAst.sourceFiles) {
-      if (sourceOverridesArrayIterator(sf)) {
-        ctx.arrayIteratorMaybeOverridden = true;
+    profilePhase("global-environment-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        if (sourceOverridesArrayIterator(sf)) {
+          ctx.arrayIteratorMaybeOverridden = true;
+        }
+        recordSourceGlobalEnvironment(ctx, sf);
       }
-      recordSourceGlobalEnvironment(ctx, sf);
-    }
+    });
 
     // Phase 2: Collect all declarations — only entry file gets Wasm exports
     // (#2023) Whole-realm new.target detection — OR across all source files.
-    for (const sf of multiAst.sourceFiles) {
-      scanForNewTarget(ctx, sf);
-    }
+    profilePhase("new-target-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        scanForNewTarget(ctx, sf);
+      }
+    });
 
     // (#802) Whole-realm proto-mutation receiver detection — OR across all
     // source files (marked roots must be known before class collection).
-    for (const sf of multiAst.sourceFiles) {
-      scanForDynamicProto(ctx, sf);
-    }
+    profilePhase("dynamic-proto-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        scanForDynamicProto(ctx, sf);
+      }
+    });
 
     // (#2001 S1) Whole-realm array-hole detection — OR across all source files.
-    for (const sf of multiAst.sourceFiles) {
-      scanForArrayHoles(ctx, sf);
-    }
+    profilePhase("array-hole-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        scanForArrayHoles(ctx, sf);
+      }
+    });
 
-    for (const sf of multiAst.sourceFiles) {
-      const isEntry = sf === multiAst.entryFile;
-      collectDeclarations(ctx, sf, isEntry);
-    }
+    profilePhase("collect-declarations", () => {
+      for (const sf of multiAst.sourceFiles) {
+        const isEntry = sf === multiAst.entryFile;
+        collectDeclarations(ctx, sf, isEntry);
+      }
+    });
     // #2847: make initial boolean brands visible while bodies are emitted;
     // recover again at finalize for fields discovered during body compilation.
     recoverBooleanStructFieldBrands(ctx);
 
     // Shape inference: detect array-like variables and override their types
-    for (const sf of multiAst.sourceFiles) {
-      applyShapeInference(ctx, multiAst.checker, sf);
-    }
+    profilePhase("shape-inference", () => {
+      for (const sf of multiAst.sourceFiles) {
+        applyShapeInference(ctx, multiAst.checker, sf);
+      }
+    });
 
     // (#1636-S1) Eagerly register the `__current_this` module global so that
     // `ThisKeyword` resolution in free-function-closure bodies (compiled in
@@ -6032,17 +6058,29 @@ export function generateMultiModule(
       sealedVars: new Set(ctx.sealedVars),
       nonExtensibleVars: new Set(ctx.nonExtensibleVars),
     };
-    for (const sf of multiAst.sourceFiles) {
-      ctx.definedPropertyFlags = new Map(multiDeclarationOrderState.definedPropertyFlags);
-      ctx.nonWritableExternKeys = new Set(multiDeclarationOrderState.nonWritableExternKeys);
-      ctx.frozenVars = new Set(multiDeclarationOrderState.frozenVars);
-      ctx.sealedVars = new Set(multiDeclarationOrderState.sealedVars);
-      ctx.nonExtensibleVars = new Set(multiDeclarationOrderState.nonExtensibleVars);
-      compileDeclarations(ctx, sf);
-    }
+    profilePhase("bodies", () => {
+      const lastIndex = multiAst.sourceFiles.length - 1;
+      for (const [index, sf] of multiAst.sourceFiles.entries()) {
+        ctx.definedPropertyFlags = new Map(multiDeclarationOrderState.definedPropertyFlags);
+        ctx.nonWritableExternKeys = new Set(multiDeclarationOrderState.nonWritableExternKeys);
+        ctx.frozenVars = new Set(multiDeclarationOrderState.frozenVars);
+        ctx.sealedVars = new Set(multiDeclarationOrderState.sealedVars);
+        ctx.nonExtensibleVars = new Set(multiDeclarationOrderState.nonExtensibleVars);
+        // The accumulated `__module_init` is graph state, not per-source state:
+        // `collectDeclarations` has already run over every source, so the
+        // statement list this loop sees is complete and IDENTICAL on every
+        // iteration. Compile the discovery pass once at the front, the
+        // final-registry pass once at the end, and nothing in between — see
+        // `ModuleInitMode`. This is what made the 146-source ESLint graph
+        // quadratic in both time and retained function bodies.
+        const moduleInitMode: ModuleInitMode = index === lastIndex ? "full" : index === 0 ? "discover" : "skip";
+        profilePhase(sf.fileName, () => compileDeclarations(ctx, sf, undefined, undefined, moduleInitMode));
+      }
+    });
 
     // (#1602) Rebuild method-closure trampolines against final method sigs.
-    finalizeMethodTrampolines(ctx);
+    profilePhase("finalize-method-trampolines", () => finalizeMethodTrampolines(ctx));
+    profileCount("functions-after-bodies", ctx.mod.functions.length);
 
     // (#2138 M0) Compile-twice IR overlay for multi-module top-level functions.
     // Every legacy body in every source file is already present, and method
@@ -6072,16 +6110,20 @@ export function generateMultiModule(
         occupiedFunctionKeys: [...ctx.funcMap.keys()],
         occupiedFunctionNameCounts,
       };
-      for (const sourceFile of multiAst.sourceFiles) {
-        compileMultiIrOverlaySource(
-          ctx,
-          multiAst,
-          sourceFile,
-          irPlanningIdentityContext!,
-          safety,
-          hostImportedFunctions,
-        );
-      }
+      profilePhase("ir-overlay", () => {
+        for (const sourceFile of multiAst.sourceFiles) {
+          profilePhase(sourceFile.fileName, () =>
+            compileMultiIrOverlaySource(
+              ctx,
+              multiAst,
+              sourceFile,
+              irPlanningIdentityContext!,
+              safety,
+              hostImportedFunctions,
+            ),
+          );
+        }
+      });
       // A+B1 may create callback singleton trampolines after the legacy
       // finalization pass. Rebuild those late declarations against the target's
       // final signature before any fixup/validation pass observes them.
@@ -6089,17 +6131,17 @@ export function generateMultiModule(
     }
 
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
-    fixupStructNewArgCounts(ctx);
+    profilePhase("fixup-struct-new-args", () => fixupStructNewArgCounts(ctx));
 
     // Fixup pass: insert extern.convert_any after struct.new when the result
     // is stored into an externref local/global.
-    fixupStructNewResultCoercion(ctx);
+    profilePhase("fixup-struct-new-coercion", () => fixupStructNewResultCoercion(ctx));
 
     // Build per-shape default property flags table for all user-visible structs
-    buildShapePropFlagsTable(ctx);
+    profilePhase("shape-prop-flags", () => buildShapePropFlagsTable(ctx));
 
     // Collect ref.func targets so the binary emitter can add a declarative element segment
-    collectDeclaredFuncRefs(ctx);
+    profilePhase("declared-func-refs", () => collectDeclaredFuncRefs(ctx));
 
     // Resolve deferred `export default <variable>` for module globals (#1108).
     // Must run AFTER compileDeclarations — string-constant imports added during
