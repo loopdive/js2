@@ -84,7 +84,12 @@ export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.Sour
         (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
       );
       if (declaration) {
-        ctx.programAbiGlobals?.observeModuleTdz(declaration, name, existingGlobal);
+        // (#1282) Only pair the TDZ flag with the declaration that owns the
+        // VALUE global — see `hasModuleValue`. In a multi-package graph the same
+        // bare name can be declared in two modules.
+        if (ctx.programAbiGlobals?.hasModuleValue(declaration) !== false) {
+          ctx.programAbiGlobals?.observeModuleTdz(declaration, name, existingGlobal);
+        }
         return;
       }
     }
@@ -106,7 +111,10 @@ export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.Sour
       (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
     );
     if (declaration) {
-      ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
+      // (#1282) Same pairing rule as above.
+      if (ctx.programAbiGlobals?.hasModuleValue(declaration) !== false) {
+        ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
+      }
       return;
     }
   }
