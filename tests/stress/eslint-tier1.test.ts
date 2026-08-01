@@ -56,7 +56,12 @@ const ESLINT_LINTER = resolveEslintFile("lib/linter/linter.js");
 // recording matters here: an out-of-memory abort or a hung child must surface
 // as a named probe failure, never as "the compiler produced no diagnostics".
 const TIER1_HEAP_LIMIT_MB = 2048;
-const TIER1_WALL_CLOCK_BUDGET_MS = 120_000;
+// (#1282) Re-measured after the ambient-`.d.ts` fix removed the `source callable
+// validate` abort: the package entry now runs REAL codegen instead of stopping
+// at ~12 s, and reaches its next blocker at 297 s. Widened on a fresh
+// measurement, exactly as this file's own rule requires — not to make a red rung
+// green. 600 s leaves ~2x headroom for a slower CI runner.
+const TIER1_WALL_CLOCK_BUDGET_MS = 600_000;
 
 let tier1EntryCompile: Promise<CompileProjectProbeReport> | null = null;
 
@@ -117,18 +122,23 @@ describe.skipIf(ESLINT_LINTER === null)(
      * was *zero* automated signal on ESLint compilation, which is worse than a
      * red rung.
      *
-     * Frontier as of 2026-07-31, AFTER the builtin-subclass inherited-alias fix
-     * in `src/codegen/program-abi-class-callable-planning.ts`. The previous rung
-     * here was the hard codegen abort for `LazyLoadingRuleMap extends Map`
-     * (`inherited class callable ... has no exact defined function for handle
-     * 590`); that is retired, and the guard for it now lives in
-     * `tests/issue-3672.test.ts`. The package entry now walks past every
-     * `extends Map` in ESLint and stops on the NEXT structural blocker — a
-     * `function validate` whose inventory unit is neither `top-level-function`
-     * nor `synthetic-support`. Both this entry and the direct `linter.js` entry
-     * reach the identical new diagnostic. Resolution is otherwise complete —
-     * #3654 landed and there is not a single `Cannot find module` left on this
-     * entry. #3656's dynamic-destructuring invariant is gone too.
+     * Frontier as of 2026-08-01, AFTER the ambient-`.d.ts` fix (#1282) in
+     * `src/codegen/declarations.ts`. The previous two rungs are both retired:
+     * the builtin-subclass inherited-alias abort, and then
+     * `source callable validate has no consistent exact top-level or
+     * compiler-support inventory owner` — the latter caused by a bare
+     * `function validate(...)` in `json-schema/index.d.ts` being minted as a
+     * DEFINED wasm function (inside a `.d.ts`, `declare` is implicit, so the
+     * `hasDeclareModifier` guard missed it).
+     *
+     * With that gone the package entry no longer stops in the front-end at
+     * ~12 s — it runs REAL codegen for the first time, for 297 s, and reaches
+     * a genuinely different class of blocker: a module-init ORDERING defect,
+     * `module TDZ global minimatch was observed before its value global`.
+     *
+     * Resolution is otherwise complete — #3654 landed and there is not a single
+     * `Cannot find module` left on this entry. #3656's dynamic-destructuring
+     * invariant is gone too.
      */
     it('Tier 1a — package entry reaches the current frontier for `import { Linter } from "eslint"`', async () => {
       const r = await compileTier1Entry();
@@ -138,22 +148,20 @@ describe.skipIf(ESLINT_LINTER === null)(
       expect(diagnostics).not.toContain("Cannot find module");
       expect(diagnostics).not.toContain("object destructuring source must be IrType.object or IrType.class");
 
-      // Pin the frontier: one hard codegen abort, and it is the source-callable
-      // inventory-owner invariant. When that is fixed this rung goes red on
-      // purpose — advance the ladder, do not relax the assertion.
+      // Pin the frontier: one hard codegen abort, and it is the module-init
+      // ordering defect. When that is fixed this rung goes red on purpose —
+      // advance the ladder, do not relax the assertion.
       const codegenErrors = r.errors.filter((error) => error.message.startsWith("Codegen error:"));
       expect(
         codegenErrors.map((error) => error.message),
         "the ESLint package-entry frontier moved — advance this rung",
       ).toHaveLength(1);
-      expect(codegenErrors[0]?.message).toContain("source callable validate");
-      expect(codegenErrors[0]?.message).toContain(
-        "has no consistent exact top-level or compiler-support inventory owner",
-      );
+      expect(codegenErrors[0]?.message).toContain("module TDZ global minimatch");
+      expect(codegenErrors[0]?.message).toContain("was observed before its value global");
 
       // The retired rung must not come back.
       expect(diagnostics).not.toContain("inherited class callable");
-    }, 180_000);
+    }, 660_000);
 
     /**
      * Tier 1b — the binary produced by Tier 1a is structurally valid Wasm.

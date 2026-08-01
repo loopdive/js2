@@ -54,6 +54,23 @@ export class ProgramAbiGlobalRegistry {
     this.observeModuleBinding(declaration, displayName, value, "tdz");
   }
 
+  /**
+   * True when this exact declaration already owns a value global.
+   *
+   * (#1282) A TDZ flag may only be attached to the declaration that owns the
+   * VALUE global. `ctx.moduleGlobals` / `ctx.tdzLetConstNames` are keyed by BARE
+   * NAME across every module, while the declaration is resolved per source
+   * file, so in a multi-package graph two different modules can each declare
+   * `minimatch` — the value global belongs to whichever was seen first, and the
+   * TDZ would otherwise be observed against the other one. Callers use this to
+   * skip that mismatched pairing instead of tripping the ordering invariant.
+   * Deliberately a cheap map probe: the caller runs it per TDZ name per module,
+   * so it must not do the `mod.globals.includes` scan `moduleBinding` performs.
+   */
+  hasModuleValue(declaration: ts.VariableDeclaration): boolean {
+    return this.moduleBindings.has(declaration);
+  }
+
   /** Resolve one exact module declaration without consulting compatibility names. */
   moduleBinding(declaration: ts.VariableDeclaration): ProgramAbiModuleBindingObservation | undefined {
     const observation = this.moduleBindings.get(declaration);
