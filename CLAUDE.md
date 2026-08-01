@@ -169,6 +169,18 @@ TypeScript-to-WebAssembly compiler using WasmGC.
 | `benchmarks/results/test262-current.json`                 | main repo (committed, ~kB)  | landing-page summary, pass/total badges                                                                                    | `test262-sharded.yml` `promote-baseline` job (every push to main)      | (none)                                                                                                                                                    |
 | `test262-current.jsonl` (in `loopdive/js2wasm-baselines`) | separate repo               | PR regression-gate baseline (fetched fresh per CI run); `dev-self-merge` Step 4 bucket-by-path regression analysis (#1528) | `test262-sharded.yml` `promote-baseline` job (every push to main)      | `test262-baseline-validate.yml` spot-checks 50 random `pass` entries on every PR (#1218); fails the PR if any sampled entry no longer passes on main HEAD |
 | `benchmarks/results/playground-benchmark-sidebar.json`    | main repo (committed, ~1KB) | landing-page sidebar wasm/js perf chart; `benchmark-refresh.yml` regression diff baseline                                  | `benchmark-refresh.yml` auto-commit step on every push to main (#1216) | (none)                                                                                                                                                    |
+| `benchmarks/results/npm-compat.json`                      | main repo (committed)       | the whole `npm-compat.html` dashboard — every package card's compile/validate, tests and perf                              | **NOTHING — hand-run `pnpm run generate:npm-compat` only (#3988)**     | (none)                                                                                                                                                    |
+
+**`npm-compat.json` has NO refresher — change the generator and the page keeps
+serving the old JSON (#3988).** Every other row above has an owning workflow;
+this one does not, so `website/npm-compat.html` silently shows pre-change data
+until someone hand-runs `pnpm run generate:npm-compat` and commits the result.
+This has already shipped stale twice (#3958 rendered `39/null`; #3977 kept
+showing `lit` as `not-integrated` after the suite landed). `--only <pkg>` does
+**not** help: a focused run never writes (it would drop the other 21 packages),
+so refreshing anything means a full run — which also re-measures perf and
+re-runs the React and lit upstream suites. Budget tens of minutes, and refresh
+in the SAME PR as any generator change.
 
 **Baseline JSONL is no longer committed to the main repo (#1528).** It lives only in `loopdive/js2wasm-baselines` and is fetched on demand by `scripts/fetch-baseline-jsonl.mjs` to `.test262-cache/test262-current.jsonl` (gitignored). Consumers (validator, `dev-self-merge` bucket analysis, regression triage, sprint wrap-up harvest) either call the helper directly or accept the cache path via fallback. This removes the ~15 MB blob from every clone and retired the dedicated `refresh-committed-baseline.yml` workflow.
 
