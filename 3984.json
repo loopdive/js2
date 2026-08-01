@@ -1,10 +1,11 @@
 {
   "id": "3984",
   "assignee": "ttraenkler/g-arraylen",
-  "requested_by": "ttraenkler/g-arraylen",
-  "status": "in-progress",
+  "requested_by": "claude.ai@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3984-array-length-defineproperties-routing",
   "claimed_at": "2026-08-01T14:26:43Z",
-  "updated_at": "2026-08-01T14:26:43Z",
-  "write_id": "84052-ao0oqrng"
+  "updated_at": "2026-08-01T17:02:45Z",
+  "write_id": "18108-fhgab8rl",
+  "released_at": "2026-08-01T17:02:45Z"
 }
