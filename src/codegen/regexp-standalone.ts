@@ -78,7 +78,7 @@ import {
 import { emitReceiverBrandCheck } from "./receiver-brand.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
-import { compileStringLiteral } from "./string-ops.js";
+import { compileStringLiteral, emitArgAsNativeString } from "./string-ops.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -377,6 +377,146 @@ export function isStaticallyUndefinedExpr(expr: ts.Expression): boolean {
     return ts.isLiteralExpression(op) || ts.isIdentifier(op);
   }
   return false;
+}
+
+/**
+ * (#4016) The well-known symbol each `String.prototype` search-value method
+ * consults before falling back to plain string coercion (§22.1.3.11/.12/.13/
+ * .14/.19/.23 step 2 in each case).
+ */
+export type SearchValueProtocol = "match" | "matchAll" | "replace" | "search" | "split";
+
+/**
+ * (#4016) Is `argExpr` a search value that the spec resolves by plain
+ * **`ToString`**, with no `@@<protocol>` dispatch and no RegExp involved?
+ *
+ * Every one of `match`/`matchAll`/`replace`/`replaceAll`/`search`/`split`
+ * begins the same way: *if the search value is neither `undefined` nor `null`,
+ * `GetMethod(searchValue, @@<protocol>)`, and if that is not `undefined`, call
+ * it.* Only when that lookup comes back `undefined` does the method fall
+ * through to its own string path — `ToString(searchValue)` for
+ * `split`/`replace`/`replaceAll`, `RegExpCreate(ToString(searchValue), …)` for
+ * `match`/`matchAll`/`search`.
+ *
+ * The standalone lane used to treat "not a statically-known backend RegExp" as
+ * "needs a JS host" and refuse the whole call (#1474). That conflated two very
+ * different things. This predicate separates them: it answers `true` only when
+ * the argument's type **provably** cannot carry the protocol method, which is
+ * exactly the condition under which the spec's plain-`ToString` path is the
+ * whole of the semantics.
+ *
+ * Deliberately conservative in three places:
+ *   - `undefined`/`void` is NOT admitted here. Each method special-cases an
+ *     undefined search value differently (`split` returns `[S]` without
+ *     splitting; `search` builds `RegExpCreate(undefined) = //`), so the caller
+ *     decides — silently folding it in would be a spec bug, not a widening.
+ *   - a `symbol`-typed argument stays refused: §7.1.17 `ToString(symbol)`
+ *     THROWS, and this lane has no way to raise that (same carve-out as #3724).
+ *   - `any`/`unknown` stay refused, because `wellKnownSymbolMemberOf` cannot
+ *     prove absence there. The one exception is a SYNTACTIC `null` literal,
+ *     which is `any` under `strictNullChecks: false` yet is unambiguously the
+ *     null value — and `null` skips the protocol lookup by inspection.
+ */
+export function isPlainToStringSearchValue(
+  ctx: CodegenContext,
+  argExpr: ts.Expression,
+  protocol: SearchValueProtocol,
+): boolean {
+  if (isDefinitelyUndefinedExpr(ctx, argExpr)) return false;
+  if (stripStaticWrapper(argExpr).kind === ts.SyntaxKind.NullKeyword) return true;
+  const fact = ctx.oracle.typeFactOf(argExpr);
+  // ToString(symbol) throws (§7.1.17) — keep the loud refusal rather than
+  // silently stringifying. A union is rejected if ANY part could be a symbol.
+  if (fact.kind === "symbol") return false;
+  if (fact.kind === "union" && fact.parts.some((part) => part.kind === "symbol")) return false;
+  return ctx.oracle.wellKnownSymbolMemberOf(argExpr, protocol) === false;
+}
+
+/**
+ * (#4016) Is this argument the `undefined` value with certainty — either
+ * syntactically ({@link isStaticallyUndefinedExpr}) or because its type is
+ * exactly `undefined`/`void` (e.g. `function(){}()`, test262's favourite way of
+ * writing `undefined`)?
+ *
+ * Every search-value method special-cases undefined differently from the plain
+ * `ToString` path — `split(undefined)` returns `[S]` **without splitting**,
+ * while `search(undefined)` builds the EMPTY pattern rather than matching the
+ * literal text `"undefined"`. Getting this wrong is a silent wrong-answer, so
+ * it is a separate, deliberately narrow predicate: a merely NULLABLE type
+ * (`string | undefined`) is not definitely undefined and answers `false`.
+ */
+export function isDefinitelyUndefinedExpr(ctx: CodegenContext, argExpr: ts.Expression): boolean {
+  if (isStaticallyUndefinedExpr(argExpr)) return true;
+  const kind = ctx.oracle.typeFactOf(argExpr).kind;
+  return kind === "undefined" || kind === "void";
+}
+
+/**
+ * (#4016) `RegExpCreate(P, F)` (§22.2.3.3) for a NON-RegExp search value, using
+ * the runtime pattern compiler that `new RegExp(dynamicPattern)` already goes
+ * through (`ensureDynamicStandaloneRegExpCompiler`). `P` is `""` when the
+ * argument is absent/undefined and `ToString(arg)` otherwise
+ * (RegExpInitialize step 1); `F` is a compile-time constant supplied by the
+ * caller ("" for `match`/`search`, "g" for `matchAll`).
+ *
+ * Leaves nothing on the stack — the compiled struct lands in the returned
+ * local, so the caller controls evaluation ORDER (which matters: the spec
+ * runs `ToString(this)` before `RegExpCreate`).
+ */
+function emitCoercedRegExpToLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  argExpr: ts.Expression | undefined,
+  flags: string,
+): { regexpLocal: number; structTypeIdx: number } | null {
+  if (!hasStandaloneRegExpEngine(ctx)) return null;
+  ensureNativeStringHelpers(ctx);
+  const strType = nativeStringType(ctx);
+
+  const patternLocal = allocLocal(fctx, `__re_coerced_pattern_${fctx.locals.length}`, strType);
+  if (argExpr === undefined) {
+    for (const instr of nativeStringLiteralInstrs(ctx, "")) fctx.body.push(instr);
+  } else {
+    emitArgAsNativeString(ctx, fctx, argExpr);
+  }
+  fctx.body.push({ op: "local.set", index: patternLocal });
+
+  const flagsLocal = allocLocal(fctx, `__re_coerced_flags_${fctx.locals.length}`, strType);
+  for (const instr of nativeStringLiteralInstrs(ctx, flags)) fctx.body.push(instr);
+  fctx.body.push({ op: "local.set", index: flagsLocal });
+
+  const structTypeIdx = ensureStandaloneRegExpStruct(ctx);
+  const dynamicCompilerIdx = ensureDynamicStandaloneRegExpCompiler(ctx);
+  fctx.body.push({ op: "local.get", index: patternLocal });
+  fctx.body.push({ op: "local.get", index: flagsLocal });
+  fctx.body.push({ op: "call", funcIdx: dynamicCompilerIdx });
+  const regexpLocal = allocLocal(fctx, `__re_coerced_${fctx.locals.length}`, { kind: "ref", typeIdx: structTypeIdx });
+  fctx.body.push({ op: "local.set", index: regexpLocal });
+  return { regexpLocal, structTypeIdx };
+}
+
+/**
+ * (#4016) `ToString(this)` for a `String.prototype` search-value method, into a
+ * `ref $AnyString` local. Runs FIRST so the receiver's coercion is observable
+ * before the search value's (§22.1.3.12 step 3 precedes step 4's
+ * `RegExpCreate`, which is where the argument's `toString` runs).
+ */
+function emitSubjectToLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  subjExpr: ts.Expression,
+  subjectOverride?: () => ValType | null,
+): number {
+  const local = allocLocal(fctx, `__re_subject_${fctx.locals.length}`, nativeStringType(ctx));
+  if (subjectOverride) {
+    // The override's contract is "leave a `$AnyString`", but a guarded-dispatch
+    // receiver may still be typed nullable — narrow before the non-null local.
+    if (subjectOverride()?.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+  } else {
+    emitArgAsNativeString(ctx, fctx, subjExpr);
+  }
+  fctx.body.push({ op: "local.set", index: local });
+  return local;
 }
 
 function staticStringValue(ctx: CodegenContext, expr: ts.Expression): string | null | undefined {
@@ -1923,6 +2063,15 @@ function emitRegexSearchCall(
     gyLastIndex?: boolean | "runtime";
     /** Pre-evaluated native-string receiver supplied by guarded dispatch. */
     inputOverride?: () => ValType | null;
+    /**
+     * (#4016) Pre-materialised `$NativeRegExp`, supplied when the regex is NOT
+     * an expression in the source — the §22.1.3 string-coercion form builds it
+     * with `RegExpCreate(ToString(arg))` at a caller-chosen point so evaluation
+     * order stays spec-correct. When present, `regexpExpr` is used only for
+     * diagnostics and static-metadata recovery (which correctly finds nothing
+     * for a runtime-compiled pattern).
+     */
+    regexpOverride?: { regexpLocal: number; structTypeIdx: number };
   },
 ): RegexSearchEmission | null {
   ensureNativeStringHelpers(ctx);
@@ -1936,7 +2085,7 @@ function emitRegexSearchCall(
   const strTypeIdx = ctx.nativeStrTypeIdx;
 
   // --- the compiled $NativeRegExp struct ---
-  const loaded = loadStandaloneRegExpStruct(ctx, fctx, regexpExpr);
+  const loaded = options?.regexpOverride ?? loadStandaloneRegExpStruct(ctx, fctx, regexpExpr);
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
@@ -2501,7 +2650,11 @@ function emitRegexExecArrayCall(
   fctx: FunctionContext,
   regexpExpr: ts.Expression,
   inputExpr: ts.Expression,
-  options?: { gyLastIndex?: boolean | "runtime"; inputOverride?: () => ValType | null },
+  options?: {
+    gyLastIndex?: boolean | "runtime";
+    inputOverride?: () => ValType | null;
+    regexpOverride?: { regexpLocal: number; structTypeIdx: number };
+  },
 ): ValType | null {
   const emitted = emitRegexSearchCall(ctx, fctx, regexpExpr, inputExpr, options);
   if (emitted === null) return null;
@@ -2530,7 +2683,10 @@ function emitRegexExecArrayCall(
   let groupNames: ReadonlyMap<string, number> = new Map();
   let hasD = false;
   let nGroups = 0;
-  const meta = staticRegExpGroupMeta(ctx, regexpExpr);
+  // (#4016) A `regexpOverride` regex was built by `RegExpCreate(ToString(arg))`
+  // at RUNTIME, so `regexpExpr` is the search-value argument, not a regex
+  // source. Skip static recovery outright rather than relying on it to decline.
+  const meta = options?.regexpOverride ? null : staticRegExpGroupMeta(ctx, regexpExpr);
   if (meta !== null) {
     groupNames = meta.groupNames;
     hasD = (meta.flags & RE_FLAG_D) !== 0;
@@ -2659,8 +2815,9 @@ export function tryCompileStandaloneRegExpExec(
  * the match's `.index` or `-1` on no match. It is unaffected by the `g` flag and
  * never advances. Here the subject (string) is the receiver and the RegExp is
  * the argument: `"abc".search(/b/)`. The argument must be a backend-created
- * static RegExp; a string argument (which the spec coerces to `new RegExp(arg)`)
- * stays a narrowed refusal in standalone for this slice.
+ * static RegExp, or (#4016) a value the spec resolves by plain `ToString` —
+ * `"abc".search("b")`, `str.search(obj)`, `"".search()` — which is lowered as
+ * `RegExpCreate(ToString(arg), "")` through the runtime pattern compiler.
  *
  * Returns f64 (the index, or -1). `caps[0]` holds the whole-match start.
  * Never returns `VOID_RESULT`, so the type stays `ValType | null | undefined`
@@ -2678,12 +2835,26 @@ export function tryCompileStandaloneStringSearch(
   // The caller has already selected the native String method lane. Untyped
   // receivers may arrive through a proven native-string local or through the
   // receiver override's runtime brand check.
-  if (expr.arguments.length !== 1) return undefined;
-  const argExpr = expr.arguments[0]!;
+  if (expr.arguments.length > 1) return undefined;
+  const argExpr = expr.arguments[0];
+
+  // (#4016) §22.1.3.12 steps 2-4 — no `@@search` method on the search value, so
+  // the whole of the semantics is `RegExpCreate(ToString(regexp), "")` against
+  // `ToString(this)`. `"".search()` / `search(undefined)` build the empty
+  // pattern (RegExpInitialize step 1), NOT the string `"undefined"`.
+  const coercible =
+    argExpr === undefined || isStaticallyUndefinedExpr(argExpr) || isPlainToStringSearchValue(ctx, argExpr, "search");
+  if (coercible) {
+    return emitStandaloneRegExpSearchCore(ctx, fctx, expr, propAccess.expression, argExpr, receiverOverride, {
+      coercedPatternArg: argExpr === undefined || isStaticallyUndefinedExpr(argExpr) ? null : argExpr,
+    });
+  }
+
+  if (argExpr === undefined) return undefined;
   const argType = ctx.checker.getTypeAtLocation(argExpr);
   if (!isGlobalRegExpType(argType) && !isKnownBackendCreatedRegExpReceiver(ctx, argExpr)) {
-    // Not a RegExp argument — let the generic string-method path handle the
-    // string-coercion case (it refuses in standalone, citing #1474).
+    // Neither a RegExp nor a provably-plain value — could carry `@@search`.
+    // Let the generic string-method path keep the #1474 refusal.
     return undefined;
   }
 
@@ -2702,8 +2873,14 @@ function emitStandaloneRegExpSearchCore(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   subjExpr: ts.Expression,
-  regexExpr: ts.Expression,
+  regexExpr: ts.Expression | undefined,
   subjectOverride?: () => ValType | null,
+  /**
+   * (#4016) String-coercion form: build the regex with
+   * `RegExpCreate(ToString(coercedPatternArg ?? undefined), "")` instead of
+   * loading a backend-created RegExp value out of `regexExpr`.
+   */
+  coercion?: { coercedPatternArg: ts.Expression | null },
 ): ValType | null {
   if (!hasStandaloneRegExpEngine(ctx)) {
     reportStandaloneRegExpUnsupported(ctx, expr, "String.prototype.search without an enabled standalone engine");
@@ -2712,8 +2889,27 @@ function emitStandaloneRegExpSearchCore(
 
   const i32Arr = regexI32ArrayType(ctx);
 
+  let coercedOptions: Parameters<typeof emitRegexSearchCall>[4];
+  if (coercion) {
+    // Spec order: `ToString(this)` (step 3) runs BEFORE `RegExpCreate` (step 4)
+    // evaluates the search value's `toString`. Materialise both here so the
+    // shared emitter, which loads the regex first, cannot reorder them.
+    const subjectLocal = emitSubjectToLocal(ctx, fctx, subjExpr, subjectOverride);
+    const regexpOverride = emitCoercedRegExpToLocal(ctx, fctx, coercion.coercedPatternArg ?? undefined, "");
+    if (regexpOverride === null) return null;
+    coercedOptions = {
+      regexpOverride,
+      inputOverride: () => {
+        fctx.body.push({ op: "local.get", index: subjectLocal });
+        return nativeStringType(ctx);
+      },
+    };
+  } else {
+    coercedOptions = { inputOverride: subjectOverride };
+  }
+
   // emit __regex_search(...) — leaves the i32 match flag on the stack.
-  const emitted = emitRegexSearchCall(ctx, fctx, regexExpr, subjExpr, { inputOverride: subjectOverride });
+  const emitted = emitRegexSearchCall(ctx, fctx, regexExpr ?? expr, subjExpr, coercedOptions);
   if (emitted === null) return null;
 
   // matched ? f64(caps[0]) : -1
@@ -2818,6 +3014,11 @@ function staticRegExpFlags(
  * Non-global static RegExp arguments share the same result shape as `.exec`.
  * Global `match` returns an all-matches array and sticky/global lastIndex
  * details are intentionally left to the next capture-array slice.
+ *
+ * (#4016) A search value the spec resolves by plain `ToString` — `"a".match("a")`,
+ * `str.match(obj)`, `"".match()` — lowers to `RegExpCreate(ToString(arg), "")`
+ * through the runtime pattern compiler. That regex is non-global by
+ * construction, so it always takes the `.exec`-shaped arm below.
  */
 export function tryCompileStandaloneStringMatch(
   ctx: CodegenContext,
@@ -2828,8 +3029,18 @@ export function tryCompileStandaloneStringMatch(
 ): ValType | null | undefined {
   if (!ctx.standalone || propAccess.name.text !== "match") return undefined;
 
-  if (expr.arguments.length !== 1) return undefined;
-  const argExpr = expr.arguments[0]!;
+  if (expr.arguments.length > 1) return undefined;
+  const argExpr = expr.arguments[0];
+
+  const coercible =
+    argExpr === undefined || isStaticallyUndefinedExpr(argExpr) || isPlainToStringSearchValue(ctx, argExpr, "match");
+  if (coercible) {
+    return emitStandaloneRegExpMatchCore(ctx, fctx, expr, propAccess.expression, argExpr, receiverOverride, {
+      coercedPatternArg: argExpr === undefined || isStaticallyUndefinedExpr(argExpr) ? null : argExpr,
+    });
+  }
+
+  if (argExpr === undefined) return undefined;
   const argType = ctx.checker.getTypeAtLocation(argExpr);
   if (!isGlobalRegExpType(argType) && !isKnownBackendCreatedRegExpReceiver(ctx, argExpr)) {
     return undefined;
@@ -2851,17 +3062,37 @@ function emitStandaloneRegExpMatchCore(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   subjExpr: ts.Expression,
-  regexExpr: ts.Expression,
+  regexExpr: ts.Expression | undefined,
   subjectOverride?: () => ValType | null,
+  /** (#4016) String-coercion form — see {@link emitStandaloneRegExpSearchCore}. */
+  coercion?: { coercedPatternArg: ts.Expression | null },
 ): ValType | null {
-  const flags = staticRegExpFlags(ctx, regexExpr);
-  if (flags === null) {
-    reportStandaloneRegExpUnsupported(ctx, regexExpr, "String.prototype.match with dynamic RegExp flags");
+  if (!hasStandaloneRegExpEngine(ctx)) {
+    reportStandaloneRegExpUnsupported(ctx, expr, "String.prototype.match without an enabled standalone engine");
     return null;
   }
 
-  if (!hasStandaloneRegExpEngine(ctx)) {
-    reportStandaloneRegExpUnsupported(ctx, expr, "String.prototype.match without an enabled standalone engine");
+  if (coercion) {
+    // §22.1.3.11 steps 3-5: `RegExpCreate(ToString(regexp), undefined)` is
+    // NON-GLOBAL by construction, so this is always the `.exec`-shaped arm.
+    // Spec order again: `ToString(this)` precedes the search value's coercion.
+    const subjectLocal = emitSubjectToLocal(ctx, fctx, subjExpr, subjectOverride);
+    const regexpOverride = emitCoercedRegExpToLocal(ctx, fctx, coercion.coercedPatternArg ?? undefined, "");
+    if (regexpOverride === null) return null;
+    return emitRegexExecArrayCall(ctx, fctx, regexExpr ?? expr, subjExpr, {
+      regexpOverride,
+      inputOverride: () => {
+        fctx.body.push({ op: "local.get", index: subjectLocal });
+        return nativeStringType(ctx);
+      },
+    });
+  }
+
+  // Defensive: only the coercion form omits the regex expression.
+  if (regexExpr === undefined) return null;
+  const flags = staticRegExpFlags(ctx, regexExpr);
+  if (flags === null) {
+    reportStandaloneRegExpUnsupported(ctx, regexExpr, "String.prototype.match with dynamic RegExp flags");
     return null;
   }
 

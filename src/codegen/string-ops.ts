@@ -32,6 +32,8 @@ import { emitBrandCheckTypeError } from "./native-proto.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import {
   emitStandaloneRegExpToStringFromExpr,
+  isDefinitelyUndefinedExpr,
+  isPlainToStringSearchValue,
   isStaticallyUndefinedExpr,
   tryCompileStandaloneStringMatch,
   tryCompileStandaloneStringMatchAll,
@@ -413,7 +415,7 @@ function argIsStaticRegExp(ctx: CodegenContext, arg: ts.Expression): boolean {
  *
  * Leaves exactly one `ref $AnyString` on the stack.
  */
-function emitArgAsNativeString(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): void {
+export function emitArgAsNativeString(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): void {
   if (noJsHost(ctx)) {
     // §7.1.17 ToString(Symbol) throws. Guard before the engine (which would
     // otherwise route a symbol through `$__any_to_string`).
@@ -3230,11 +3232,17 @@ export function compileNativeStringMethodCall(
   // string-like separator, so these forms fell through to the host marshal
   // path, which has no standalone `string_split` and null-deref'd. Handled
   // natively here: build the one-element vec directly (no engine call).
+  // (#4016) `isDefinitelyUndefinedExpr` widens the compile-time test from the
+  // purely SYNTACTIC `undefined`/`void 0` to any expression whose type is
+  // exactly `undefined`/`void` — test262 spells an undefined separator
+  // `function(){}()` (S15.5.4.14_A1_T9), which the syntactic test misses and
+  // which would otherwise fall into the ToString arm below and split on the
+  // literal text "undefined".
   if (
     method === "split" &&
     ctx.nativeStrings &&
     ctx.anyStrTypeIdx >= 0 &&
-    (expr.arguments.length === 0 || isStaticallyUndefinedExpr(expr.arguments[0]!))
+    (expr.arguments.length === 0 || isDefinitelyUndefinedExpr(ctx, expr.arguments[0]!))
   ) {
     const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
     const vecTypeIdx = getOrRegisterVecType(ctx, `ref_${ctx.anyStrTypeIdx}`, elemType);
@@ -3244,6 +3252,16 @@ export function compileNativeStringMethodCall(
     const recvLocal = allocLocal(fctx, `__split_recv_${fctx.locals.length}`, nativeStringType(ctx));
     emitReceiver();
     fctx.body.push({ op: "local.set", index: recvLocal });
+    // (#4016) The separator's VALUE is unused (undefined never splits), but the
+    // expression that produced it is still evaluated at the call site. The
+    // syntactic forms this arm originally matched (`undefined`, `void 0`) are
+    // side-effect-free and folded away; a type-level `void` one (`f()`) is not,
+    // so evaluate and discard it. Dropping the whole expression would silently
+    // delete the call.
+    if (expr.arguments.length > 0 && !isStaticallyUndefinedExpr(expr.arguments[0]!)) {
+      const sepType = compileExpression(ctx, fctx, expr.arguments[0]!);
+      if (sepType) fctx.body.push({ op: "drop" });
+    }
     // lim = ToUint32(limit); absent / statically-undefined → unbounded (-1).
     const limLocal = allocLocal(fctx, `__split_lim_${fctx.locals.length}`, { kind: "i32" });
     if (expr.arguments.length > 1 && !isStaticallyUndefinedExpr(expr.arguments[1]!)) {
@@ -3306,6 +3324,39 @@ export function compileNativeStringMethodCall(
     const splitIdx = ctx.nativeStrHelpers.get("__str_split")!;
     fctx.body.push({ op: "call", funcIdx: splitIdx });
     // Return type is ref $vec_nstr — use same key as resolveWasmType for string[]
+    const nstrVecTypeIdx = ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`)!;
+    return { kind: "ref", typeIdx: nstrVecTypeIdx };
+  }
+
+  // (#4016) split with a separator the spec resolves by plain ToString —
+  // `s.split(123)`, `s.split(null)`, `s.split(objWithToString)`. §22.1.3.23
+  // step 2 only dispatches `@@split` when the separator HAS that method; when
+  // it provably does not, step 5's `R = ToString(separator)` is the whole of
+  // the semantics and the native `__str_split` above is exactly right. Refusing
+  // this as "needs a JS host" (#1474) conflated "not a string" with "not a
+  // RegExp".
+  //
+  // Emission mirrors the string-like arm operand-for-operand (receiver →
+  // separator → limit) so the ARGUMENT evaluation order is left-to-right, as at
+  // any call site. The only difference is `emitArgAsNativeString` (§7.1.17
+  // ToString, the #2598 engine) in place of a raw `compileExpression`, which
+  // would feed a mistyped ref to a helper expecting `ref $AnyString`.
+  if (
+    method === "split" &&
+    noJsHost(ctx) &&
+    !firstArgIsStringLike &&
+    expr.arguments.length > 0 &&
+    isPlainToStringSearchValue(ctx, expr.arguments[0]!, "split")
+  ) {
+    emitReceiver();
+    emitArgAsNativeString(ctx, fctx, expr.arguments[0]!);
+    if (expr.arguments.length > 1 && !isStaticallyUndefinedExpr(expr.arguments[1]!)) {
+      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
+    } else {
+      fctx.body.push({ op: "i32.const", value: -1 });
+    }
+    const splitIdx = ctx.nativeStrHelpers.get("__str_split")!;
+    fctx.body.push({ op: "call", funcIdx: splitIdx });
     const nstrVecTypeIdx = ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`)!;
     return { kind: "ref", typeIdx: nstrVecTypeIdx };
   }
