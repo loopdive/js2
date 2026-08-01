@@ -7,6 +7,7 @@ import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gat
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { fillHostFnctorMethodDrivers, maxReservedHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
+import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
@@ -4050,6 +4051,11 @@ export function generateModule(
         if (info.paramTypes.length > maxClosureArity) maxClosureArity = info.paramTypes.length;
       }
       maxClosureArity = Math.max(maxClosureArity, maxReservedHostFnctorMethodArity(ctx));
+      // (#3981) A standalone `new <function value>(a, b, …)` driver calls
+      // `__call_fn_method_<argc>`; without this the dispatcher for an
+      // above-5-arity construct would never be emitted and the driver would
+      // fill to its null fallback.
+      maxClosureArity = Math.max(maxClosureArity, maxReservedNativeConstructArity(ctx));
       const cap = Math.min(maxClosureArity, 8);
       for (let n = 6; n <= cap; n++) emitClosureMethodCallExportN(ctx, n);
     }
@@ -4065,6 +4071,12 @@ export function generateModule(
     // complete closure-shape and declared-arity tables, keeping recursive
     // parser descent in Wasm after the live host method lookup returns.
     fillHostFnctorMethodDrivers(ctx);
+
+    // (#3981) Fill the reserved standalone `__native_construct_<N>` drivers now
+    // that `__call_fn_method_<N>` is registered. No-op when no site reserved
+    // one (every JS-host module, and any standalone module with no
+    // `new <function value>` site).
+    fillNativeConstructDrivers(ctx);
 
     // (#1719 CPR read-drive) Fill the reserved `__drive_proto_iterator` driver
     // body now that `__call_fn_method_0` is registered. No-op when no read-drive
@@ -6292,6 +6304,21 @@ export function generateMultiModule(
     // array/class-instance arms.
     fillArrayToPrimitive(ctx);
     fillClassToPrimitive(ctx);
+
+    // (#3981) Same class of multi-file gap as the two fills immediately above.
+    // This path emits only `__call_fn_0`/`__call_fn_1`, never the
+    // `__call_fn_method_<N>` receiver dispatchers the single-module path emits
+    // at 0..5 — so a standalone `new <function value>()` reserved its
+    // `__native_construct_<N>` driver and then had nothing to fill it with,
+    // leaving the bare `unreachable` stub. That is a strictly worse outcome
+    // than the null it replaced: an uncatchable Wasm trap. Emit the dispatchers
+    // ONLY up to the arity a construct driver actually reserved, so a
+    // multi-file module without such a site stays byte-identical.
+    {
+      const constructArity = maxReservedNativeConstructArity(ctx);
+      for (let n = 0; n <= constructArity; n++) emitClosureMethodCallExportN(ctx, n);
+      fillNativeConstructDrivers(ctx);
+    }
 
     // (#1716) Emit __call_@@toPrimitive(self, hint) for runtime ToPrimitive
     // dispatch of a class's [Symbol.toPrimitive] *method* on opaque structs.
