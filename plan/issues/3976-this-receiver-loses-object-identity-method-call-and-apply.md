@@ -1,6 +1,6 @@
 ---
 id: 3976
-title: "`this` loses object identity through a method call and through `.apply()` — `o.m() === o` and `f.apply(o) === o` are both false (`.call()` is correct)"
+title: "`.apply(thisArg)` DROPS the receiver — no `this`-binding thunk is emitted, so `f.apply(o) === o` is false (`.call()` emits one and is correct)"
 status: ready
 sprint: current
 created: 2026-08-01
@@ -67,20 +67,77 @@ True blast radius is almost certainly wider than 10.4.3: any code doing
 and a silent wrong answer here is far worse than a refusal. Worth measuring
 before/after rather than assuming 200.
 
-## Likely mechanism (to confirm)
+## Root cause — CONFIRMED by WAT diff (not an identity/boxing bug)
 
-This repo already has a recognised bug family of *identity loss through a
-carrier* — #3507 (native RegExp values lose identity across function/object/array
-carriers), #3220 (native `$Promise` loses struct identity through a
-Promise-returning call carrier), #3396 (closure-env struct type A used where B).
-The receiver path looks like the same class: the object is probably being
-re-boxed / round-tripped (e.g. `extern.convert_any` → `any.convert_extern`, or
-copied into a fresh struct) when installed as `this`, producing an equal-shaped
-but non-identical reference.
+The first framing of this issue guessed "identity loss through a carrier"
+(the #3507 / #3220 family). **That is wrong — do not go looking for a boxing
+round-trip.** Emitting the WAT for the two forms shows the receiver is not
+mis-boxed, it is **never installed at all**.
 
-Start at the `.call()` lowering and diff it against `.apply()`; whatever
-`.call()` does to keep the reference intact is likely the fix for both `.apply()`
-and the method-call path.
+`f.call(o)` — correct. Codegen emits a dedicated receiver-binding thunk:
+
+```wat
+(func $__named_this_call_f_0 (param externref) (result externref)
+  (local $__previous_this externref)
+  local.get 0
+  ref.is_null
+  (if (result externref)
+    (then call 3)                  ;; null receiver → plain call
+    (else
+      global.get 4                 ;; save current `this`
+      local.set 1
+      local.get 0
+      global.set 4                 ;; install receiver as `this`
+      (try (result externref)
+        (do call 3)
+        (catch_all                 ;; restore on unwind
+          local.get 1
+          global.set 4
+          rethrow 0)))))
+```
+
+`f.apply(o)` — broken. `$main` is simply:
+
+```wat
+(func $main (result i32)
+  call 3          ;; <-- calls f DIRECTLY; `this` global never set
+  global.get 3    ;; o
+  call 2          ;; ===
+  return)
+```
+
+So `.apply()` invokes the target with whatever the `this` global already holds
+(null/undefined), and `thisArg` is silently discarded. Everything downstream
+follows from that one omission.
+
+Probing for the binding (`/__named_this|global\.set 4/` in the emitted WAT):
+
+| Shape | receiver binding emitted? | runtime result |
+| --- | --- | --- |
+| `f.call(o)` | **yes** | correct |
+| `f.apply(o)` | no | wrong |
+| `f.apply(o, [1])` | no | wrong |
+| `f.apply(o, [])` | no | wrong |
+| `var o = {m: function(){return this}}; o.m()` | no | wrong |
+
+The `.apply()` arity makes no difference — with args, with an empty array, or
+with none, the binding is absent. So the fix is not about argv spreading.
+
+### Fix direction
+
+`src/codegen/expressions/calls.ts:6380` handles `call`/`apply` through a shared
+arm (`const isCall = propAccess.name.text === "call"`), and several downstream
+special cases are explicitly `isCall`-only — e.g. the comment at the #3390 arm
+notes "`.apply` is not intercepted (rare; the corpus uses `.call`)". The
+receiver-binding thunk appears to sit behind one of those `isCall` guards.
+Locate the emitter for `__named_this_call_*` and make the `.apply()` path reach
+it, threading `thisArg` identically.
+
+**The object-literal method row is listed separately on purpose** — it may be a
+distinct mechanism (class/struct methods generally pass `this` as a parameter
+rather than through the global, and plenty of `this`-in-method tests pass
+today). It reproduces as wrong at runtime, but do not assume one fix covers
+both; confirm the method-call path independently.
 
 ## Acceptance criteria
 
