@@ -170,6 +170,7 @@ import { tryEmitJsonParseElementAccess, tryEmitJsonParsePropertyAccess } from ".
 import { reserveMemberSetDispatch } from "./member-set-dispatch.js";
 import { classMethodCandidatesForProp, reserveMemberGetDispatch } from "./member-get-dispatch.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct read dispatch
+import { emitGuardedNativeStringElementGet } from "./string-element-read.js"; // (#3973) any-typed native-string element read
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
@@ -4187,6 +4188,18 @@ export function compileElementAccess(
         fctx.body.push({ op: "call", funcIdx: charAtIdx });
         return { kind: "ref", typeIdx: ctx.nativeStrTypeIdx };
       }
+    }
+
+    // (#3973) Same read, but the receiver is only KNOWN to be a string at
+    // RUNTIME (`any`/`unknown` static type). Full rationale, spec shape and the
+    // `moduleUsesDynTaView` deferral are documented in string-element-read.ts.
+    if (
+      !ctx.moduleUsesDynTaView &&
+      isNumericIndexExpression(ctx, expr.argumentExpression, fctx) &&
+      receiverMayBeNativeStringAtRuntime(ctx, expr.expression)
+    ) {
+      const guarded = emitGuardedNativeStringElementGet(ctx, fctx, expr.expression, expr.argumentExpression);
+      if (guarded) return guarded;
     }
   }
 
