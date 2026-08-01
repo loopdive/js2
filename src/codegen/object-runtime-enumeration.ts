@@ -27,6 +27,8 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildExternGetIdxBody } from "./object-runtime.js";
+// (#3979) closure own-property bag substitution (#3468 side table).
+import { closureBagLookupSubstitutionArm } from "./own-prop-bag.js";
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -103,6 +105,15 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   // locals: 1=any(anyref) 2=o(ref null $Object) 3=arr(ordered ref $PropMap) 4=cap
   //         5=i 6=e(ref null $PropEntry) 7=vec(externref)
   {
+    // (#3979) A function object's own enumerable properties live in the #3468
+    // side-table bag; substitute it so `Object.keys(fn)` / `for (k in fn)` see
+    // them instead of answering an empty vector. Bag local appended at index 8.
+    const keysBagArm = closureBagLookupSubstitutionArm(ctx, {
+      recvLocalIdx: 0,
+      anyLocalIdx: 1,
+      bagLocalIdx: 8,
+      fallback: [{ op: "local.get", index: 7 }, { op: "return" }],
+    });
     const body: Instr[] = [
       // vec = __objvec_new()
       { op: "call", funcIdx: objVecNewIdx },
@@ -116,7 +127,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
+        then: keysBagArm ?? [{ op: "local.get", index: 7 }, { op: "return" }],
       },
       // o = cast<$Object>(any) ; arr = __obj_ordered(o) ; cap = arr.len
       { op: "local.get", index: 1 },
@@ -181,6 +192,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "vec", type: { kind: "externref" } },
+        // (#3979) closure own-property bag (local 8) — standalone/wasi only.
+        ...(keysBagArm ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[]) : []),
       ],
       body,
     );
@@ -216,6 +229,13 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object")!;
     const externHasIdx = ctx.funcMap.get("__extern_has")!;
     const externSetIdx = ctx.funcMap.get("__extern_set")!;
+    // (#3979) closure own-property bag substitution; bag local appended at 10.
+    const forinBagArm = closureBagLookupSubstitutionArm(ctx, {
+      recvLocalIdx: 0,
+      anyLocalIdx: 1,
+      bagLocalIdx: 10,
+      fallback: [{ op: "local.get", index: 7 }, { op: "return" }],
+    });
     const body: Instr[] = [
       // vec = __objvec_new() ; seen = __new_plain_object()
       { op: "call", funcIdx: objVecNewIdx },
@@ -231,7 +251,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
+        then: forinBagArm ?? [{ op: "local.get", index: 7 }, { op: "return" }],
       },
       // cur = cast<$Object>(any)
       { op: "local.get", index: 1 },
@@ -395,6 +415,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "vec", type: { kind: "externref" } },
         { name: "seen", type: { kind: "externref" } },
         { name: "keyExt", type: { kind: "externref" } },
+        // (#3979) closure own-property bag (local 10) — standalone/wasi only.
+        ...(forinBagArm ? ([{ name: "bag", type: { kind: "externref" } }] as { name: string; type: ValType }[]) : []),
       ],
       body,
     );

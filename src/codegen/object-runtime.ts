@@ -90,6 +90,10 @@ import {
   buildVecOrClosurePropSetMissArm,
   reserveVecPropHelpers,
 } from "./vec-props.js";
+// (#3979) reflective-MOP half of the same substrate — hasOwnProperty /
+// propertyIsEnumerable / delete / gOPD substitute the side-table bag for a
+// non-`$Object` receiver instead of answering "absent".
+import { bagSubstitutionArm } from "./own-prop-bag.js";
 import { ensureSymbolCarrier } from "./symbol-native.js";
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
@@ -2702,7 +2706,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   //
   // params: 0=obj(externref) 1=key(externref)
   // locals: 2=any(anyref) 3=o(ref null $Object) 4=e(ref null $PropEntry)
+  //         5=bag(externref, #3979 — appended, standalone only)
   {
+    const deleteBagArm = bagSubstitutionArm(ctx, {
+      recvLocalIdx: 0,
+      anyLocalIdx: 2,
+      bagLocalIdx: 5,
+      fallback: [{ op: "i32.const", value: 1 }, { op: "return" }],
+    });
     const body: Instr[] = [
       // (#2896) Builtin-fn metadata arm: `delete fn.name` / `delete fn.length`
       // on a builtin function value marks the instance's deleted bit (the
@@ -2720,7 +2731,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
-      // any = any.convert_extern(obj) ; if !ref.test $Object → return 1 (no-op success)
+      // any = any.convert_extern(obj) ; if !ref.test $Object → (#3979) a
+      // closure/array receiver deletes out of its own-property side-table bag
+      // (so a `verifyProperty`-style define→delete→redefine cycle over a
+      // function/array expando is coherent); otherwise return 1 (no-op success).
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 2 },
@@ -2729,7 +2743,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+        then: deleteBagArm ?? [{ op: "i32.const", value: 1 }, { op: "return" }],
       },
       // o = cast<$Object>(any) ; e = __obj_find(o, key)
       { op: "local.get", index: 2 },
@@ -2811,11 +2825,18 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       "__delete_property",
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [
-        { name: "any", type: { kind: "anyref" } },
-        { name: "o", type: objRefNull },
-        { name: "e", type: entryRefNull },
-      ],
+      deleteBagArm
+        ? [
+            { name: "any", type: { kind: "anyref" } },
+            { name: "o", type: objRefNull },
+            { name: "e", type: entryRefNull },
+            { name: "bag", type: { kind: "externref" } },
+          ]
+        : [
+            { name: "any", type: { kind: "anyref" } },
+            { name: "o", type: objRefNull },
+            { name: "e", type: entryRefNull },
+          ],
       body,
     );
   }
@@ -2976,6 +2997,28 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // __obj_find on the own props table; present iff the returned entry is
   // non-null (find already skips tombstones). Object.hasOwn shares the exact
   // own-only predicate, so both names register the same body.
+  // (#3979) Own-property BAG substitution for the reflective MOP helpers. A
+  // closure (#3468) / array (#3537) receiver keeps its named own properties in
+  // an identity-keyed side-table `$Object`; these helpers previously answered
+  // "absent" for any non-`$Object` receiver, so a function/array expando was
+  // writable+readable but invisible to hasOwnProperty / propertyIsEnumerable /
+  // gOPD / delete — and therefore invisible to ToPropertyDescriptor §6.2.5.6,
+  // which probes descriptor fields with `__hasOwnProperty`. `undefined` here
+  // means the substrate was never reserved (gc/host) ⇒ keep the original arm.
+  //
+  // FACTORY, not a shared array: `emitHasOwn` runs twice (`__hasOwnProperty`
+  // and `__object_hasOwn` share the predicate), and reusing one Instr[] across
+  // two function bodies gets it double-remapped by the finalize index walks
+  // (see reference_shared_instr_object_dce_double_remap).
+  const L_HAS_OWN_BAG = 3;
+  const hasOwnBagArm = (): Instr[] | undefined =>
+    bagSubstitutionArm(ctx, {
+      recvLocalIdx: 0,
+      anyLocalIdx: 2,
+      bagLocalIdx: L_HAS_OWN_BAG,
+      fallback: [{ op: "i32.const", value: 0 }, { op: "return" }],
+    });
+  const hasOwnBagActive = hasOwnBagArm() !== undefined;
   const emitHasOwn = (name: string): void => {
     const body: Instr[] = [
       // (#2896) Builtin-fn metadata arm: name/length are OWN properties of a
@@ -3004,7 +3047,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+        then: hasOwnBagArm() ?? [{ op: "i32.const", value: 0 }, { op: "return" }],
       },
       // e = __obj_find(cast<$Object>(any), key) ; return e != null
       { op: "local.get", index: 2 },
@@ -3018,7 +3061,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       name,
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [{ name: "any", type: { kind: "anyref" } }],
+      hasOwnBagActive
+        ? [
+            { name: "any", type: { kind: "anyref" } },
+            { name: "bag", type: { kind: "externref" } },
+          ]
+        : [{ name: "any", type: { kind: "anyref" } }],
       body,
     );
   };
@@ -3034,6 +3082,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // This replaces the standalone #1472-Phase-B refusal with a native lowering
   // over the same $Object/$PropEntry runtime; host mode keeps its JS import.
   {
+    // (#3979) same bag substitution as __hasOwnProperty; bag local appended at
+    // index 4 so `e` keeps index 3.
+    const pieBagArm = bagSubstitutionArm(ctx, {
+      recvLocalIdx: 0,
+      anyLocalIdx: 2,
+      bagLocalIdx: 4,
+      fallback: [{ op: "i32.const", value: 0 }, { op: "return" }],
+    });
     const body: Instr[] = [
       // any = any.convert_extern(obj); if !ref.test $Object → 0
       { op: "local.get", index: 0 },
@@ -3044,7 +3100,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+        then: pieBagArm ?? [{ op: "i32.const", value: 0 }, { op: "return" }],
       },
       // e = __obj_find(cast<$Object>(any), key)  (local 3)
       { op: "local.get", index: 2 },
@@ -3072,10 +3128,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       "__propertyIsEnumerable",
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [
-        { name: "any", type: { kind: "anyref" } },
-        { name: "e", type: entryRefNull },
-      ],
+      pieBagArm
+        ? [
+            { name: "any", type: { kind: "anyref" } },
+            { name: "e", type: entryRefNull },
+            { name: "bag", type: { kind: "externref" } },
+          ]
+        : [
+            { name: "any", type: { kind: "anyref" } },
+            { name: "e", type: entryRefNull },
+          ],
       body,
     );
   }
@@ -3089,10 +3151,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // confirmed an object-shaped externref; this never throws into Wasm).
   //
   // params: 0=obj(externref) 1=key(externref)
-  // locals: 2=o(ref null $Object) 3=any(anyref)
+  // locals: 2=o(ref null $Object) 3=any(anyref) 4=bag(externref, #3979)
   {
+    const externHasBagArm = bagSubstitutionArm(ctx, {
+      recvLocalIdx: 0,
+      anyLocalIdx: 3,
+      bagLocalIdx: 4,
+      fallback: [{ op: "i32.const", value: 0 }, { op: "return" }],
+    });
     const body: Instr[] = [
-      // any = any.convert_extern(obj); if !ref.test $Object → 0
+      // any = any.convert_extern(obj); if !ref.test $Object → (#3979) consult the
+      // closure/array own-property side-table bag before answering "absent".
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 3 },
@@ -3101,7 +3170,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+        then: externHasBagArm ?? [{ op: "i32.const", value: 0 }, { op: "return" }],
       },
       // o = cast<$Object>(any)
       { op: "local.get", index: 3 },
@@ -3149,10 +3218,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       "__extern_has",
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [
-        { name: "o", type: objRefNull },
-        { name: "any", type: { kind: "anyref" } },
-      ],
+      externHasBagArm
+        ? [
+            { name: "o", type: objRefNull },
+            { name: "any", type: { kind: "anyref" } },
+            { name: "bag", type: { kind: "externref" } },
+          ]
+        : [
+            { name: "o", type: objRefNull },
+            { name: "any", type: { kind: "anyref" } },
+          ],
       body,
     );
   }

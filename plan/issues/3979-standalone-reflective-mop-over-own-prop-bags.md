@@ -1,0 +1,193 @@
+---
+id: 3979
+title: "standalone: wire the reflective MOP (hasOwnProperty / gOPD / delete / in / keys) onto the #3468 + #3537 own-property bags, and widen the two #1906 defineProperties gates"
+status: in-progress
+sprint: current
+created: 2026-08-01
+priority: high
+horizon: l
+feasibility: hard
+reasoning_effort: max
+task_type: fix
+area: codegen, runtime, standalone
+language_feature: objects, property-descriptors
+goal: es5
+umbrella: 3977
+related: [3977, 1906, 2992, 3251, 3468, 3537, 3246, 3957]
+loc-budget-allow:
+  - src/codegen/object-runtime-descriptors.ts
+  - src/codegen/object-runtime.ts
+func-budget-allow:
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+origin: "2026-08-01 es5-standalone property-descriptor cluster census (#3977 lever 1, 857 ES5 standalone failures)."
+---
+
+# #3979 — reflective MOP over the own-property side-table bags (standalone)
+
+## The census that produced this (measured 2026-08-01, run `20260801-090441`)
+
+857 ES5 **standalone** failures sit in the property-descriptor cluster
+(`Object/defineProperty` 331, `defineProperties` 264, `create` 142,
+`getOwnPropertyDescriptor` 35, `Object/prototype` 22, `Array/length` 18,
+`isExtensible` 16, `preventExtensions` 15, `language/types/object` 14) — 37 % of
+the whole reachable ES5 standalone gap (#3977).
+
+**The cluster is NOT mostly standalone-specific.** Cross-lane check against the
+same-day host baseline: **347 of the 857 pass on the host lane, 510 fail on both.**
+On `built-ins/Object/defineProperty` the two lanes are within one test of each
+other (standalone 793/1131 vs host 794/1131). So most of this cluster is a
+*lane-independent* descriptor-semantics gap, and only a minority is the exotic
+receiver MOP that #2992/#3251 own.
+
+### Root-cause sub-buckets (by test SHAPE, all 857)
+
+| Sub-bucket | Tests | Class |
+| --- | --- | --- |
+| **exotic DESCRIPTOR / `Properties` object** (`Object.defineProperty(o, k, funObj)` §8.10.5 step 8.a) | **270** | mixed — see split below |
+| array-receiver index/`length` descriptor MOP | 152 | (a) blocked — #3251 S2/S3 |
+| inherited / proto-chain descriptor fields | 105 | (b) fixable — see "HasProperty" below |
+| exotic RECEIVER (String/Number/Boolean/Error/… wrapper) | 54 | (a) blocked |
+| gOPD over built-in INTRINSICS (`global`, `Date.prototype`, …) | 49 | (a) blocked — intrinsics are not property tables |
+| `arguments`-object receiver | 43 | (a) blocked |
+| attribute-semantics residue (value/writable/enumerable/configurable) | 102 | mixed |
+| other | 82 | mixed |
+
+Split of the 270 exotic-descriptor family by *what the exotic object is*:
+Date 22, Array 21, Error 20, Function 20, RegExp 18, Arguments 17, plain
+`Object` 9, Boolean 6, String 6, Number 6, inherited-accessor/data 25, rest
+"O is an Array/Arguments" receiver variants.
+
+### The measurement that made the split actionable
+
+A single probe over every receiver kind, real runner, standalone — write an
+expando, then read it back four ways (`R`ead / `H`asOwnProperty / gOP`D` /
+for-in `E`; lowercase = fails):
+
+```
+plainObj=RHDE  fnObj=Rhde  dateObj=rhde  errObj=rhde  regexpObj=rhde
+arrObj=Rhde    boolObj=RHDE strObj=RHDE  numObj=RHDE  objObj=RHDE
+```
+
+Three distinct states, not one:
+
+1. **`{}` / boxed wrappers** — fully correct.
+2. **functions (#3468) and arrays (#3537) — the value IS stored and readable,
+   but the whole REFLECTIVE half of the MOP cannot see it.** Both issues wired
+   their identity-keyed side-table `$Object` "bag" into exactly three helpers
+   (`__extern_get`, `__extern_set`, `__extern_method_call`) and stopped there.
+   `__hasOwnProperty`, `__object_hasOwn`, `__propertyIsEnumerable`,
+   `__getOwnPropertyDescriptor`, `__delete_property`, `__extern_has`,
+   `__object_keys`, `__object_keys_forin` all still open with
+   `ref.test $Object` → early-return "absent".
+3. **Date / Error / RegExp — the write is LOST outright.** No bag, no storage.
+
+State 2 is this issue. State 3 is the follow-up (see "Remaining / blocked").
+
+## Why state 2 is the load-bearing one for `Object.defineProperty`
+
+`ToPropertyDescriptor` (§6.2.5.6) probes each descriptor field with
+`__hasOwnProperty(desc, "value"|"get"|"set"|"writable"|…)`. So a descriptor
+object that is a **function or an array** read as the EMPTY descriptor even
+though `__extern_get` could see its fields — the define silently produced a
+`{value: undefined, w/e/c: false}` property. That is the entire
+`15.2.3.6-3-2xx` / `15.2.3.5-4-2xx` Function/Array-descriptor family.
+
+## What this PR does
+
+### 1. New shared substrate module `src/codegen/own-prop-bag.ts`
+
+Four builders over the EXISTING #3468/#3537 side tables (neither module is
+edited — same composition boundary #3537 established):
+
+- `ownPropBagLookupInstrs` — receiver → bag `$Object` externref, or null.
+- `bagSubstitutionArm` — the standard non-`$Object` prologue: look the bag up,
+  run the helper's original arm when there is none, otherwise **re-point the
+  helper's cached `any` local at the bag and fall through into its unchanged
+  `$Object` path**. One lookup, zero duplicated own-property logic.
+- `closureBagEnsureInstrs` / `closureBagSubstitutionArm` — write-side twin
+  (creates the bag) for the DEFINE appliers.
+- `closureBagLookupSubstitutionArm` — closure-ONLY read-side variant for the key
+  ENUMERATION helpers, where substituting a `$Vec` would hide its indices.
+
+Every builder returns `undefined` when neither side table is reserved (i.e. in
+gc/host mode), and every call site then emits its byte-identical original body
+*and* original local vector. Bag locals are always APPENDED, so no existing
+local index shifts.
+
+### 2. Reflective helpers wired to the bag
+
+`__hasOwnProperty`, `__object_hasOwn`, `__propertyIsEnumerable`,
+`__delete_property`, `__extern_has` (object-runtime.ts);
+`__getOwnPropertyDescriptor` (object-runtime-descriptors.ts, AFTER the #3251 vec
+overlay arm so index keys stay with the overlay, and wrapping the primitive arm
+as its bag-absent fallback so a nullish receiver still ToObject-throws);
+`__object_keys`, `__object_keys_forin` (object-runtime-enumeration.ts,
+closure-only).
+
+### 3. DEFINE appliers accept a closure receiver
+
+`__defineProperty_value` / `__defineProperty_accessor` previously hit a lenient
+`$Object`-gate no-op for a function receiver — `Object.defineProperty(fn, k,
+{get(){…}})` stored nothing at all. They now define into the closure's bag,
+which is exactly the table `__extern_get`/gOPD read from, and get the #2042-S4
+ValidateAndApplyPropertyDescriptor preflight they were skipping.
+
+### 4. The two #1906 `__defineProperties` fail-loud gates, widened *narrowly*
+
+The gate comment is explicit that a blanket widening trades a loud refusal for a
+**silent no-op** (because `__object_keys`/`__obj_ordered` answer an EMPTY key
+vector for a receiver they cannot enumerate). That property is preserved. Only
+three cases are admitted, each of which routes to machinery that is already
+correct, or is an exact spec no-op:
+
+- **`Properties` carries a bag** (function/array) → enumerate the bag.
+- **`Properties` is a PRIMITIVE or `undefined`** → §7.1.18 ToObject yields a
+  wrapper with no own enumerable properties, so the correct answer is "define
+  nothing, return `O`", not a throw. A non-empty STRING is the one exception —
+  its index properties are single characters, i.e. §6.2.5.6 non-object
+  descriptors — and correctly throws `Property description must be an object`.
+- **`O` is a `$Vec`** → pass through: both appliers already carry the #3251
+  overlay arm. **`O` is a closure** → define into its bag.
+- Additionally, when `O` is *some other* object we cannot define on natively
+  (a closed-struct literal shape inference never widened) **and** `Properties`
+  has nothing to define, the call is a spec no-op and answering `O` is strictly
+  more correct than throwing. A genuinely primitive `O` now throws the real
+  §20.1.2.3.1 step-1 TypeError instead of the `#1906` message.
+
+Everything else — Date/RegExp/Error/Arguments `Properties`, closed-struct
+`Properties` — keeps the loud `#1906` throw.
+
+## Investigated and deliberately NOT changed (a real bug, blocked on a mystery)
+
+§6.2.5.6 ToPropertyDescriptor probes fields with **HasProperty** (proto-walking),
+not HasOwnProperty — an inherited `value`/`get`/`enumerable` is legal. That is
+the 105-test "inherited / proto chain" sub-bucket. Switching both `hasField`
+probes to `__extern_has` **regresses the plain data-descriptor path**:
+
+```js
+var o = {}; var p = {}; p.prop = { value: 12, enumerable: true };
+Object.defineProperties(o, p);
+o.prop; // undefined with __extern_has, 12 with __hasOwnProperty
+```
+
+`__extern_has` answers 0 for an own key that `__hasOwnProperty` answers 1 for, on
+the same `$Object` descriptor. Bisected to exactly that one-call change; root
+cause not isolated. Both probes therefore stay own-only and the inherited-field
+family stays red. **Do not flip the helper without re-running the repro above.**
+
+## Remaining / blocked, and behind what
+
+| Sub-bucket | Blocked behind |
+| --- | --- |
+| Date / Error / RegExp / Arguments expando storage (state 3 above — writes are lost, so `Properties`/descriptor objects of those types cannot work) | a THIRD carrier for the same side-table pattern; a natural direct follow-on to this issue |
+| array-index / `length` descriptor attribute MOP, `verifyProperty` write/enumerate coherence | #3251 S2 (write enforcement) + S3 (ArraySetLength) — validated but unmerged on `issue-3251-s2-write-enforcement` |
+| closed-struct-literal receivers / `Properties` never widened | #2992 S6-class shape widening |
+| inherited descriptor fields | the `__extern_has` mystery above |
+| gOPD over built-in intrinsics (`global`, `Date.prototype.constructor`, …) | intrinsics are not modelled as property tables at all — out of scope of every current issue |
+| statically-typed receiver `arr.hasOwnProperty("expando")` / `fn.hasOwnProperty(k)` | the compile-time struct-field name-set path in `object-ops.ts` answers from the TS type, never consulting the runtime bag — separate from this runtime-side fix |
+
+## Validation
+
+See "Measured" below (filled in by the A/B run).
