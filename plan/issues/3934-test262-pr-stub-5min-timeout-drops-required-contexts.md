@@ -1,10 +1,12 @@
 ---
 id: 3934
-title: "`test262 PR stub` times out at 5 min and REQUIRED contexts go missing — a PR then waits on checks that will never report"
-status: ready
+title: "`test262 PR stub` times out at 5 min and silently strands the PR — the `cancelled` detect check makes it UNSTABLE, which auto-enqueue skips"
+status: done
+completed: 2026-08-01
+assignee: ttraenkler/dev-ci-3934
 sprint: current
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
 priority: high
 horizon: s
 feasibility: easy
@@ -15,7 +17,47 @@ related: [3878, 3908, 3880, 3584]
 origin: "Cluster spotted by shepherd-2 across four PRs on 2026-07-31; mechanism pinned while unparking #3907. The logs name no cause because GitHub reports a job timeout as `cancelled`."
 ---
 
-# #3934 — the test262 PR stub times out at 5 min, and takes required contexts with it
+# #3934 — the test262 PR stub times out at 5 min, and silently strands the PR
+
+## CORRECTION (2026-08-01) — the stranding mechanism is NOT the one below
+
+**Everything in this issue about the timeout is right. The consequence is
+wrong**, and the wrong version pointed the fix in the wrong direction. Read the
+record, not the report — here is the record.
+
+`check-runs` for PR #3919 at sha `76ec23dc` (the 5m01s timeout, run
+`30645425429`), every entry:
+
+```
+cancelled  test262 PR stub — detect relevance
+skipped    cheap gate (main-ancestor + lint)
+skipped    check for test262 regressions
+skipped    merge shard reports
+skipped    equivalence-gate · equivalence-shard · linear-tests · promote-benchmarks
+success    quality · cla-check · changes · CodeQL · Analyze (actions) · measure-and-gate
+```
+
+Two things follow, both contradicting the "## THE PART THAT MAKES THIS URGENT"
+section below:
+
+1. **The three required contexts were NOT missing.** They published as
+   `skipped`. A job skipped by its `if:` DOES publish a check run, and a
+   `skipped` required check **satisfies** branch protection. The claim that a
+   skipped job publishes nothing came from the stub workflow's own header
+   comment and was simply false — on `61d58e077c94` both producers published all
+   three names (stub `skipped` in run `30677373432`, real `success` in run
+   `30677373444`).
+2. **What stranded the PR was `detect`'s OWN conclusion.** `detect` is a
+   *non-required* check; a non-green non-required check drives
+   `mergeStateStatus` to `UNSTABLE`; `scripts/enqueue-green-prs.mjs` has
+   `ENQUEUEABLE = {CLEAN, HAS_HOOKS}` and deliberately excludes `UNSTABLE`. So
+   the PR was green on the merits, blocked by nothing, and skipped by
+   auto-enqueue forever — the same class as #3878 and #3904.
+
+The practical difference: "the PR is waiting on contexts that never report"
+suggests raising the budget so the contexts get produced. But the contexts were
+always produced. **A bigger budget just makes the same silent `UNSTABLE`
+rarer** — which is why the fix below is structural instead.
 
 ## The mechanism
 
@@ -157,3 +199,73 @@ condition; it does not stop the stranding. Both are needed.
   *different* source of `cancelled` on this same job. When triaging, separate the two by
   **duration**: a concurrency cancel happens whenever a newer push lands; a timeout sits
   at ~5m00s. Both surface identically in the check-run conclusion.
+
+## Resolution (2026-08-01)
+
+Fixed in `.github/workflows/test262-pr-stub.yml` in two independent layers,
+because "raise the budget" alone leaves the failure mode intact (see the
+CORRECTION at the top).
+
+**Layer 1 — the job can no longer be killed by ordinary slowness.**
+
+- `fetch-depth: 0` → **`fetch-depth: 2`**. The old full-ref fetch pulled all
+  6,145 refs (1,985 heads, 235 tags, the rest `refs/pull/*`; measured 47.8 s
+  connectivity check) to answer a two-commit question. At depth 2 the merge ref
+  carries both parents: `HEAD^1` = base tip, `HEAD^2` = PR head — **the same two
+  commits** the old `git diff BASE_SHA HEAD_SHA` compared, so the relevance
+  verdict is unchanged (acceptance #3). The step also verifies `HEAD^2` equals
+  the event's head SHA and degrades if not, rather than diffing a pair it cannot
+  vouch for.
+- Every fallible step is individually bounded **and** `continue-on-error`, and
+  the verdict step runs under `if: always()` and always exits 0. A slow checkout
+  now fails a *step*, and the job still publishes a verdict and concludes
+  `success`. The script drops `set -e` (which would have aborted before the
+  `$GITHUB_OUTPUT` write) for `set -uo pipefail` plus explicit degrade paths.
+- The job budget is 15 min — deliberately **unreachable**: the step budgets sum
+  to 8. It is now a runner-hung backstop, not a work budget.
+
+**Layer 2 — if the job dies anyway, it is loud.** New `stub-guard` job
+(`test262 PR stub — verdict published`) fails with a named annotation stating
+the consequence ("this PR is UNSTABLE and auto-enqueue takes only
+CLEAN/HAS_HOOKS") and the one-line remediation (`gh run rerun <id> --failed`).
+It is gated on `!cancelled()`, **not** `always()`, so it fires on a job-level
+timeout (which cancels the JOB, not the run) and stays quiet on a concurrency
+cancel (which cancels the RUN, and where the SHA is superseded anyway).
+Evidence the two are distinguishable: in run `30645425429` the three downstream
+jobs still had their `if:` evaluated after `detect` was killed, concluding
+`skipped` with later timestamps — a cancelling run would have cancelled them.
+
+A new `degraded` output distinguishes "measured" from "fell back to the
+fail-safe". Degradation is safe (the contexts publish `skipped`, and the merge
+queue re-validates on the merged state) so it warns rather than fails — but it
+is recorded, so a repeated degrade cannot look like a normal run.
+
+**Acceptance evidence.** `tests/issue-3934.test.ts` (41 assertions) is the
+observable check, and each one was verified to FAIL when the property is broken
+(mutation control: reverting `fetch-depth: 2` → `0` and `!cancelled()` →
+`always()` fails exactly the two corresponding tests). It asserts:
+
+- `detect` carries no `fetch-depth: 0`; the checkout step is bounded and
+  `continue-on-error`; the verdict step is `if: always()`;
+- **the sum of step budgets is strictly less than the job budget** — the
+  invariant that makes a `cancelled` conclusion unreachable by slowness;
+- `stub-guard` exists, depends on all four jobs, is gated on exactly
+  `${{ !cancelled() }}`, and actually `exit 1`s while naming the remediation;
+- the three stub job names still equal the context names `test262-sharded.yml`
+  publishes (drift on either side would let both, or neither, own a context);
+- **acceptance #3, the mirroring ratchet**: every pattern in the
+  `&test262-paths` anchor is parsed out of `test262-sharded.yml` (count floored,
+  so a silent parse failure cannot pass) and each must be `true` per
+  `scripts/test262-paths-match.sh`, while a set of excluded paths must be
+  `false` on *both* sides;
+- the documented required-check list equals the six in the live ruleset.
+
+This PR's own CI run is the live demonstration: its file set is path-excluded
+per the matcher (asserted in the test), so it takes the stub's green arm and
+exercises the rewritten `detect` end to end.
+
+**Left open, deliberately** — whether a `skipped` run of a context name
+satisfies branch protection while a *same-named* run is RED. Both producers do
+publish the same three names on a src PR (measured above), so the question is
+real, but nothing here depends on the answer and nobody has measured it. It
+wants its own issue before anyone leans on either answer.
