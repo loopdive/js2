@@ -37,6 +37,19 @@ loc-budget-allow:
   # host), the observable symptom, and why the neighbouring arms must NOT be
   # changed the same way (the dynamic-externref arms genuinely do carry host
   # strings). See "Implementation notes" in the body.
+  # `native-strings.ts` +41, of which 39 are the doc comment on the new
+  # `hostStringBridgeUsable()` predicate (the code is a 1-line return). It
+  # earns the space by being the TENTH site of this issue's conflation and the
+  # one that reached CI: `nativeStrings` is implied by FIVE options, and the
+  # `__str_*` bridge is host-dependent, so three of those lanes
+  # (`wasi`/`standalone`/`strictNoHostImports`) cannot use it. The comment
+  # states why "strings are native here" is the wrong question, names the
+  # failure mode (imports baked into helper bodies then DROPPED by the strict
+  # gate → `absoluteFuncIndex: unresolved call target`, not a clean refusal),
+  # and records the known pre-existing violation (`console.log` under strict)
+  # that is deliberately NOT fixed here. Without that, the next caller repeats
+  # the CI failure.
+  - src/codegen/native-strings.ts
   - src/codegen/string-ops.ts
   - src/codegen/expressions/call-identifier.ts
   - src/codegen/expressions/call-namespace-static.ts
@@ -484,6 +497,101 @@ do**: a returned string cannot be used to measure this area under
 therefore returns a **number** (`.length` / `.charCodeAt(i)`), which is
 observable and unambiguous. Pinning outcomes at `nativeStrings: false`, as
 #3907 did, is the other valid workaround.
+
+### Site TEN — caught by CI, not by the probe (the probe's own blind spot)
+
+The first version of this fix compared exactly **two** lanes, `fast` vs `host`.
+That was not enough, and CI found the gap: `quality` failed on
+`tests/host-import-allowlist-gate.test.ts` because
+`compile(needs-host.ts, { strictNoHostImports: true })` went from success to a
+hard codegen error.
+
+**Why the predicate reached lanes it was never measured in.**
+`create-context.ts` derives `nativeStrings` from **five** options:
+
+```ts
+nativeStrings = options?.nativeStrings ??
+  !!(fast || wasi || standalone || strictNoHostImports || utf8Storage)
+```
+
+so `usesNativeNumberFormat` (`wasi || standalone || nativeStrings`) is true in
+**six** lanes. Intent-wise that is right — strings *are* native in all of them,
+and it is a strict improvement: `strictNoHostImports` and `utf8Storage` stopped
+importing `env.number_*` entirely. What was wrong is what the *consumer* side
+then pulled in.
+
+**The failure mode, and why it is not a clean refusal.** The new boundary
+marshals call `ensureNativeStringExternBridge`, which registers
+`env.__str_from_mem` / `__str_to_mem` / `__str_extern_len` and **bakes their
+funcidxs into compiled helper bodies**. Under `strictNoHostImports` the strict
+gate then DROPS those imports — so instead of "host import not allowed" you get
+`absoluteFuncIndex: unresolved call target (funcIdx=undefined) baked into a
+compiled function body`.
+
+This is the **same conflation one level down**: the `__str_*` bridge lives in
+the *native* string subsystem but is inherently *host*-dependent, because there
+is no pure-Wasm way to manufacture a JS string — it copies UTF-16 code units
+through linear memory. So `ctx.nativeStrings` is exactly the wrong question for
+it. The fix is a named predicate in `native-strings.ts`:
+
+```ts
+hostStringBridgeUsable(ctx) = !ctx.wasi && !ctx.standalone && !ctx.strictNoHostImports
+```
+
+and the two marshal helpers **decline** (returning `false` / `null`) when it is
+false, so the caller keeps its pre-#3912 lowering.
+
+**Pre-existing, deliberately not fixed:** `console.log(<string>)` reaches the
+bridge unguarded and therefore *already* fails to compile under
+`strictNoHostImports` on `main` today, with this exact error — verified
+directly. Fixing it needs a decision about what `console.log` should *do* with
+no host (it cannot both refuse to marshal and still call the host console), so
+it is left alone rather than guessed at. The predicate gives that decision a
+name. Likewise `` `v${n}` `` under `strictNoHostImports` fails on `main` and
+still fails, on an unrelated `env.__to_bigint` drop.
+
+### Should `fast` import `env.__str_*` at all? — yes, and it already did
+
+The "no `env.number_*`" gate assertion, alone, reads as "fast stopped needing
+the host here". That would overclaim, so it is now paired with an explicit
+counter-assertion. Measured on **pristine `main`**: `` `v${n}` `` and
+`console.log(s)` under `fast` **already imported all three** bridge functions.
+#3912 routes two more programs (`JSON.stringify`, `parseInt`) onto the same
+bridge — it does not introduce the category. And it is the correct mechanism:
+the alternative, which `main` used for `parseInt`, was `extern.convert_any`,
+which hands the host an opaque WasmGC struct and produced
+`Cannot convert object to primitive value` / NaN. Pinned by
+`tests/issue-3912-native-string-lanes.test.ts`.
+
+### Lane coverage is now first-class
+
+`tests/issue-3912-native-string-lanes.test.ts` compiles seven affected shapes
+in **every** `nativeStrings`-implying lane and asserts that a lane with no
+usable host requests **no** `__str_*` import. Verified non-vacuous: with the two
+guards neutralised, both that test and the original CI test fail.
+
+Lane behaviour, `main` → this branch (`compile=` and `env` imports):
+
+| lane | `JSON.stringify(obj)` | `parseInt(str)` | `number_*` imports |
+| --- | --- | --- | --- |
+| `host` | OK → OK | OK → OK | kept (correct) |
+| `fast` | OK → OK (+`__str_*`) | OK → OK (+`__str_*`) | **dropped** |
+| `strictNoHostImports` | OK → **OK** (was FAIL mid-fix) | OK → **OK** (was FAIL mid-fix) | **dropped** |
+| `utf8Storage` | OK → OK (+`__str_*`) | OK → OK (+`__str_*`) | **dropped** |
+| `standalone` / `wasi` | OK → OK | OK → OK | unchanged |
+
+One cell still fails, identically to `main`: `` `v${n}` `` under
+`strictNoHostImports` (`env.__to_bigint`) — pre-existing and unrelated.
+
+### Test-file split — a CI constraint, not taste
+
+Vitest reports task updates over an RPC with a ~60s window. A single test file
+whose total test time exceeds it dies with
+`[vitest-worker]: Timeout calling "onTaskUpdate"` and **exits nonzero while
+reporting every assertion as passed**. The combined file hit 71–95s and failed
+under the exact flags `changed-root-tests` (#3008) uses in CI and in the
+pre-commit hook. Split into two files (53s and 23s of test time), both now exit
+0. Keep each #3912 test file comfortably under ~60s.
 
 ### Also done
 

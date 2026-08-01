@@ -22,6 +22,7 @@ import { addStringImports, flatStringType, nativeStringType, resolveIdentifierTy
 import {
   ensureAnyToStringHelper,
   ensureNativeStringExternBridge,
+  hostStringBridgeUsable,
   nativeStringLiteralInstrs,
   nativeStringTypeNullable,
   stringConstantExternrefInstrs,
@@ -144,6 +145,12 @@ function emitNativeStringRefFromExternref(ctx: CodegenContext, fctx: FunctionCon
  * can fall back rather than emit an invalid module.
  */
 export function emitNativeStringToHostExternref(ctx: CodegenContext, fctx: FunctionContext): boolean {
+  // (#3912 follow-up) The bridge needs `env.__str_{from,to}_mem` /
+  // `__str_extern_len`. Under `strictNoHostImports` those are DROPPED after
+  // being baked into helper bodies → `unresolved call target`, and under
+  // wasi/standalone there is no host at all. Decline so the caller keeps its
+  // previous lowering instead of producing an unbuildable module.
+  if (!hostStringBridgeUsable(ctx)) return false;
   ensureNativeStringExternBridge(ctx);
   flushLateImportShifts(ctx, fctx);
   const toExternIdx = ctx.nativeStrHelpers.get("__str_to_extern");
@@ -176,6 +183,11 @@ export function emitNativeStringToHostExternref(ctx: CodegenContext, fctx: Funct
  * Returns false (emitting nothing) when the bridge is unavailable.
  */
 export function emitHostExternrefToNativeString(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  // (#3912 follow-up) See `emitNativeStringToHostExternref` — same three host
+  // imports, same strict-mode drop. Decline rather than emit an unbuildable
+  // module; the caller then reports the value as a plain `externref`, exactly
+  // as it did before #3912.
+  if (!hostStringBridgeUsable(ctx)) return null;
   ensureNativeStringExternBridge(ctx);
   flushLateImportShifts(ctx, fctx);
   const fromExternIdx = ctx.nativeStrHelpers.get("__str_from_extern");

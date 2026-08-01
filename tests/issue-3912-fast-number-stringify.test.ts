@@ -132,7 +132,22 @@ const HOST_BOUNDARY_OPERATIONS: ReadonlyArray<{ name: string; body: string }> = 
   { name: "Number(String(n))", body: `const n = 42; return Number(String(n));` },
 ];
 
-const ALL_CASES = [...OPERATIONS, ...FRACTION_OPERATIONS, ...HOST_BOUNDARY_OPERATIONS];
+/**
+ * Which non-host modes each group is checked against.
+ *
+ * `standalone+fast` is only interesting for the FRACTION group — that is the
+ * exact config #3917 reported (`fast` truncated every non-integer, wrongly, in
+ * BOTH standalone and wasi). For the other groups it duplicates `standalone`,
+ * and these compiles are expensive enough that the redundancy showed up as a
+ * `[vitest-worker]: Timeout calling "onTaskUpdate"` reporter RPC failure under
+ * load. Compile-level coverage for `standalone+fast` is retained by the lane
+ * block below.
+ */
+const ALL_CASES: ReadonlyArray<{ name: string; body: string; modes: readonly Mode[] }> = [
+  ...OPERATIONS.map((c) => ({ ...c, modes: ["fast", "standalone"] as const })),
+  ...FRACTION_OPERATIONS.map((c) => ({ ...c, modes: ["fast", "standalone", "standalone+fast"] as const })),
+  ...HOST_BOUNDARY_OPERATIONS.map((c) => ({ ...c, modes: ["fast", "standalone"] as const })),
+];
 
 describe("#3912 — fast mode can stringify a number", () => {
   describe("the gate: a fast module has no host number formatter", () => {
@@ -172,7 +187,7 @@ describe("#3912 — fast mode can stringify a number", () => {
     it(`${c.name} — every mode agrees with host`, async () => {
       const expected = await runNumber(c.body, "host");
       expect(Number.isFinite(expected), `host reference for "${c.name}" should be finite`).toBe(true);
-      for (const mode of ["fast", "standalone", "standalone+fast"] as const) {
+      for (const mode of c.modes) {
         await expect(runNumber(c.body, mode), `${c.name} under ${mode}`).resolves.toBe(expected);
       }
     });
