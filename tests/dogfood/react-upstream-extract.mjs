@@ -13,12 +13,22 @@
 // out with its enclosing `describe` scope and `beforeEach` prelude. Test names,
 // bodies and assertions are upstream's — nothing is transcribed or reworded.
 //
-// A test is ADMITTED only if it needs nothing but React itself. Anything that
-// reaches for ReactDOM, `act`, the console-assertion helpers, `jest.*`, a
-// `document`, `__DEV__` or async scheduling is REJECTED with its reason
-// recorded, because running those would require React's private build and test
-// infrastructure. The rejection tally is reported alongside the pass count so
-// the admitted slice is never mistaken for the whole suite.
+// EVERY upstream test is admitted by default (`admitAll`), including the ones
+// that reach for ReactDOM, `act`, the console-assertion helpers, `jest.*`, a
+// `document` or `__DEV__`, and including `async` bodies — those compile to
+// async exports and are awaited on both sides. They are expected to fail; a
+// failure that is RUN and counted is more honest than a test filtered out
+// before it runs.
+//
+// The only STRUCTURAL rejection left is a `done`-callback signature, which
+// cannot be turned into a callable function without a scheduler to invoke it.
+// `INFRA_PATTERNS` / `SUPPORTED_MATCHERS` below are therefore no longer an
+// admission filter by default — they are the conservative mode kept behind
+// `admitAll: false` (`DOGFOOD_REACT_ADMIT_ALL=0`), still used for the prelude
+// filter, and every rejection they do make is recorded with its reason.
+//
+// What protects the pass rate is the NATIVE ORACLE, not the filter: a test the
+// oracle also fails is `harness-incompatible` and sits outside the score.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -159,9 +169,20 @@ function matcherRejection(text) {
   return null;
 }
 
-function classifyBody(fn, text, bodyText, droppedNames) {
-  if (fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return "async";
+function classifyBody(fn, text, bodyText, droppedNames, admitAll) {
+  // STRUCTURAL rejection — a `done`-callback test never resolves without a
+  // scheduler to call it, so it cannot be turned into a callable function at
+  // all. `async` bodies ARE runnable: they compile to an async export and are
+  // awaited on both sides (see `isAsync` below).
   if (fn.parameters.length > 0) return "needs-done-callback";
+
+  // CAPABILITY rejections — the test is shaped fine, the harness just cannot
+  // supply what it reaches for. `admitAll` runs them anyway: they are expected
+  // to fail, and a failure that is RUN and counted is more honest than a test
+  // that is quietly filtered out. The native oracle still sorts them into
+  // `harness-incompatible` rather than blaming the compiler.
+  if (admitAll) return null;
+
   for (const [pattern, reason] of INFRA_PATTERNS) if (pattern.test(text)) return reason;
   // Only the BODY is checked against dropped names. The surviving prelude may
   // still *declare* one (`let act;` sits above the `internal-test-utils`
@@ -177,7 +198,7 @@ function classifyBody(fn, text, bodyText, droppedNames) {
 /**
  * @returns {{ tests: Array<object>, rejected: Array<object>, rejectionCounts: Record<string, number> }}
  */
-export function extractReactUpstreamTests({ root, testFiles }) {
+export function extractReactUpstreamTests({ root, testFiles, admitAll = false }) {
   const tests = [];
   const rejected = [];
 
@@ -254,13 +275,18 @@ export function extractReactUpstreamTests({ root, testFiles }) {
 
         const bodyText = fn.body.statements.map((statement) => statement.getText(sourceFile)).join("\n");
         const preludeText = [...localScope, ...localEach].join("\n");
-        const reason = classifyBody(fn, `${preludeText}\n${bodyText}`, bodyText, localDropped);
+        const reason = classifyBody(fn, `${preludeText}\n${bodyText}`, bodyText, localDropped, admitAll);
         if (reason) {
           rejected.push({ ...record, reason });
           continue;
         }
 
-        tests.push({ ...record, prelude: preludeText, body: bodyText });
+        tests.push({
+          ...record,
+          prelude: preludeText,
+          body: bodyText,
+          isAsync: fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true,
+        });
       }
     };
 
