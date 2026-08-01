@@ -2,9 +2,40 @@
 
 import type { GlobalDef, Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import { hasDeclareModifier } from "./ast-modifiers.js";
 import type { CodegenContext } from "./context/types.js";
 import { computeElidableTopLevelTdzNames } from "./expressions/identifiers.js";
 import { localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
+
+/**
+ * Find the runtime-owning top-level declaration of `name` in `sourceFile`.
+ *
+ * AMBIENT DECLARATIONS ARE SKIPPED, and that is the whole point (#4018). This
+ * lookup is by NAME, but `ctx.tdzLetConstNames` is graph-global, so on a
+ * multi-source graph it is asked for names owned by other files — and a package
+ * that ships both an implementation and its `.d.ts` has the SAME name declared
+ * in both. `export declare const minimatch` in `minimatch/dist/esm/index.d.ts`
+ * is not a runtime binding: `collectDeclarations` skips ambient statements, so
+ * it never receives a value global. Attaching a TDZ global to it therefore
+ * tripped the sidecar's "TDZ observed before its value global" invariant and
+ * aborted the whole compile.
+ *
+ * The predicate deliberately mirrors the ambient test used by
+ * `collectDeclarations` / `statementListHasEagerClass` — a declaration that
+ * cannot receive a value observation must not receive a TDZ one. Same defect
+ * class as #1282's ambient-function skip, on the variable side.
+ */
+function findRuntimeTopLevelDeclaration(sourceFile: ts.SourceFile, name: string): ts.VariableDeclaration | undefined {
+  if (sourceFile.isDeclarationFile) return undefined;
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement) || hasDeclareModifier(statement)) continue;
+    const declaration = statement.declarationList.declarations.find(
+      (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
+    );
+    if (declaration) return declaration;
+  }
+  return undefined;
+}
 
 /**
  * Register one module-level global and expose its exact allocator object to
@@ -78,15 +109,9 @@ export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.Sour
     if (!existingGlobal || existingGlobal.name !== `__tdz_${name}`) {
       throw new TypeError(`module TDZ global ${name} has no exact allocator object at index ${existingGlobalIdx}`);
     }
-    for (const statement of sourceFile.statements) {
-      if (!ts.isVariableStatement(statement)) continue;
-      const declaration = statement.declarationList.declarations.find(
-        (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
-      );
-      if (declaration) {
-        ctx.programAbiGlobals?.observeModuleTdz(declaration, name, existingGlobal);
-        return;
-      }
+    const declaration = findRuntimeTopLevelDeclaration(sourceFile, name);
+    if (declaration) {
+      ctx.programAbiGlobals?.observeModuleTdz(declaration, name, existingGlobal);
     }
     return;
   }
@@ -100,15 +125,9 @@ export function registerModuleTdzGlobal(ctx: CodegenContext, sourceFile: ts.Sour
   ctx.mod.globals.push(flagGlobal);
   ctx.tdzGlobals.set(name, flagGlobalIdx);
 
-  for (const statement of sourceFile.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    const declaration = statement.declarationList.declarations.find(
-      (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
-    );
-    if (declaration) {
-      ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
-      return;
-    }
+  const declaration = findRuntimeTopLevelDeclaration(sourceFile, name);
+  if (declaration) {
+    ctx.programAbiGlobals?.observeModuleTdz(declaration, name, flagGlobal);
   }
 }
 

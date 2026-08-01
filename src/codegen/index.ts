@@ -1103,29 +1103,53 @@ function atomToFieldIr(a: import("../ir/propagate.js").LatticeAtom): IrType | nu
  *
  * Field names are sorted into canonical (ascending) order to match
  * the `IrObjectShape` invariant.
+ *
+ * (#4019) `onPath` carries the object types currently being expanded on this
+ * descent. A SELF-REFERENTIAL type — `interface Node { parent: Node }`, and the
+ * far more common structural equivalents throughout real npm `.d.ts` files —
+ * otherwise recurses forever through `tsTypeToFieldIr`, and the resulting
+ * `RangeError: Maximum call stack size exceeded` is caught by the codegen
+ * try/catch and reported as an opaque hard error that aborts the WHOLE compile.
+ * A larger `--stack-size` does not help, because the recursion is unbounded
+ * rather than merely deep.
+ *
+ * Re-entering a type already on the path yields `null`, the established "IR
+ * cannot represent this — fall back to legacy" signal. That is the correct
+ * answer on the merits, not just a safety valve: `IrObjectShape` is a finite,
+ * flat field list, and a cyclic type has no such finite expansion.
+ *
+ * The set is PATH-scoped (removed on the way out), so a type appearing in two
+ * sibling fields is still expanded normally; only a genuine cycle is rejected.
  */
-function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type): IrType | null {
+function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: Set<ts.Type>): IrType | null {
   if (!(tsType.flags & ts.TypeFlags.Object)) return null;
   if (tsType.getCallSignatures().length > 0) return null; // callable
   if (isExternalDeclaredClass(tsType, ctx.checker)) return null;
   if (isTupleType(tsType)) return null;
+  const path = onPath ?? new Set<ts.Type>();
+  if (path.has(tsType)) return null; // cyclic shape — no finite IR expansion
 
   const props = tsType.getProperties();
   if (props.length === 0) return null; // empty object — defer to a future slice
 
   const fields: { name: string; type: IrType }[] = [];
-  for (const prop of props) {
-    const decl = prop.valueDeclaration;
-    if (
-      decl &&
-      (ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl))
-    ) {
-      return null;
+  path.add(tsType);
+  try {
+    for (const prop of props) {
+      const decl = prop.valueDeclaration;
+      if (
+        decl &&
+        (ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl))
+      ) {
+        return null;
+      }
+      const propType = ctx.checker.getTypeOfSymbol(prop);
+      const fieldIr = tsTypeToFieldIr(ctx, propType, path);
+      if (!fieldIr) return null;
+      fields.push({ name: prop.name, type: fieldIr });
     }
-    const propType = ctx.checker.getTypeOfSymbol(prop);
-    const fieldIr = tsTypeToFieldIr(ctx, propType);
-    if (!fieldIr) return null;
-    fields.push({ name: prop.name, type: fieldIr });
+  } finally {
+    path.delete(tsType);
   }
   fields.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return { kind: "object", shape: { fields } };
@@ -1137,11 +1161,13 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type): IrType | 
  * which causes `objectIrTypeFromTsType` to bail and the function to
  * fall back to legacy.
  */
-function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type): IrType | null {
+function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type, onPath?: Set<ts.Type>): IrType | null {
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
   if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
-  if (t.flags & ts.TypeFlags.Object) return objectIrTypeFromTsType(ctx, t);
+  // (#4019) thread the in-progress descent so a self-referential shape is
+  // rejected instead of recursing until the stack dies.
+  if (t.flags & ts.TypeFlags.Object) return objectIrTypeFromTsType(ctx, t, onPath);
   return null;
 }
 
