@@ -1,10 +1,11 @@
 {
   "id": "3991",
   "assignee": "ttraenkler/L-descriptor",
-  "requested_by": "ttraenkler/L-descriptor",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3991-dynamic-descriptor-static-expansion",
   "claimed_at": "2026-08-01T18:27:56Z",
-  "updated_at": "2026-08-01T18:27:56Z",
-  "write_id": "98650-ketndzg5"
+  "updated_at": "2026-08-01T20:47:58Z",
+  "write_id": "42712-d5s6dz8m",
+  "released_at": "2026-08-01T20:47:58Z"
 }
