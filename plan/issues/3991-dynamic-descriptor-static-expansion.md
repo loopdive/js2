@@ -2,7 +2,8 @@
 id: 3991
 title: "Object.defineProperties/create static expansion silently defines `undefined` for a non-literal descriptor"
 sprint: current
-status: in-progress
+status: done
+completed: 2026-08-01
 priority: high
 horizon: m
 feasibility: hard
@@ -225,6 +226,9 @@ remaining ~318 files of the 347 live.
 ## Acceptance criteria
 
 - [x] Non-literal descriptor values route to the dynamic ToPropertyDescriptor path
-- [x] +29 / −0 measured on the standalone lane, all flips confirmed solo
-- [x] Complete at-risk population enumerated and re-run, not sampled
+- [x] **+29 / −0** measured on the standalone lane, all flips confirmed solo (29/29)
+- [x] Complete at-risk population enumerated and re-run, not sampled — **634/634 pass**
 - [x] Attribution proven by kill-switch removal
+- [x] The one exposed regression root-caused and fixed, not excused
+- [x] God-file **shrunk** (object-ops.ts 4789 → 4737) instead of taking a
+      `loc-budget-allow:` grant; the second file held at its 2851 baseline
