@@ -1,5 +1,5 @@
 ---
-id: 3972
+id: 3982
 title: "Async test failures surface the rejection reason as `[object WebAssembly.Exception]` — 1,380 host-lane fails carry no diagnosable error"
 status: ready
 sprint: current
@@ -17,7 +17,7 @@ related: [1295, 1294, 2962, 2906, 3178]
 origin: "2026-08-01 /harvest-errors of loopdive/js2wasm-baselines test262-current.jsonl (run 20260801-090441, gitHash c601e89b)"
 ---
 
-# #3972 — async rejection reasons stringify to `[object WebAssembly.Exception]`
+# #3982 — async rejection reasons stringify to `[object WebAssembly.Exception]`
 
 ## TL;DR
 

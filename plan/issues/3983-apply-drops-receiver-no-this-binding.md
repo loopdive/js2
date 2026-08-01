@@ -1,5 +1,5 @@
 ---
-id: 3976
+id: 3983
 title: "`.apply(thisArg)` DROPS the receiver — no `this`-binding thunk is emitted, so `f.apply(o) === o` is false (`.call()` emits one and is correct)"
 status: in-progress
 sprint: current
@@ -22,7 +22,7 @@ func-budget-allow:
 origin: "2026-08-01, working the es5-standalone-90% goal: the 200-test language/function-code/10.4.3 family fails in BOTH lanes (116 standalone / 114 host); minimised to a 6-line identity control set."
 ---
 
-# #3976 — `this` is not identity-equal to its receiver (method call, `.apply()`)
+# #3983 — `this` is not identity-equal to its receiver (method call, `.apply()`)
 
 ## TL;DR
 
