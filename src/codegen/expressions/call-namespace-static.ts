@@ -52,6 +52,7 @@ import {
 import { compileObjectLiteralAsExternref } from "../literals.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
+import { emitHostExternrefToNativeString, emitNativeStringToHostExternref } from "../string-ops.js";
 import { emitDefinePropertyDescRuntime, emitNonObjectArgGuard } from "../object-ops.js";
 import { ensureObjectRuntime, ensureObjVecBuilders } from "../object-runtime.js";
 import {
@@ -2028,7 +2029,22 @@ export function compileNamespaceStaticCall(
       if (funcIdx !== undefined) {
         // Compile first argument and coerce to externref
         const argType = compileExpression(ctx, fctx, expr.arguments[0]!);
-        if (argType && argType.kind !== "externref") {
+        // (#3912) A NATIVE string argument must be marshalled, not merely
+        // widened. `coerceType(..., externref)` emits `extern.convert_any`,
+        // which hands the host the opaque `$AnyString` struct — the host then
+        // stringifies it as an ordinary object, so `JSON.stringify("hi")`
+        // produced `"{}"` instead of `"\"hi\""`. Object/array arguments keep
+        // `extern.convert_any`: the host data-struct bridge walks those.
+        const argIsNativeString =
+          ctx.nativeStrings &&
+          ctx.anyStrTypeIdx >= 0 &&
+          argType !== null &&
+          (argType.kind === "ref" || argType.kind === "ref_null") &&
+          ((argType as { typeIdx?: number }).typeIdx === ctx.anyStrTypeIdx ||
+            (argType as { typeIdx?: number }).typeIdx === ctx.nativeStrTypeIdx);
+        if (argIsNativeString && emitNativeStringToHostExternref(ctx, fctx)) {
+          // marshalled to a real JS string
+        } else if (argType && argType.kind !== "externref") {
           coerceType(ctx, fctx, argType, { kind: "externref" });
         }
         if (method === "stringify") {
@@ -2064,6 +2080,22 @@ export function compileNamespaceStaticCall(
           }
         }
         fctx.body.push({ op: "call", funcIdx });
+        // (#3912) `env.JSON_stringify` hands back a REAL JS string. Under native
+        // strings every downstream consumer expects an `$AnyString`, so reporting
+        // this as a bare `externref` made them soft-cast it
+        // (`any.convert_extern; ref.test $AnyString`), miss, substitute
+        // `ref.null $AnyString`, and then trap in `struct.get $AnyString 0` —
+        // `JSON.stringify({a:42}).length` was a "dereferencing a null pointer"
+        // in the whole gc-native lane. Marshal at the boundary instead.
+        //
+        // Only `stringify` returns a string; `JSON.parse` returns an arbitrary
+        // value and keeps its externref. Standalone/WASI never reach here (they
+        // have no `env::JSON_*` import), so this is confined to the one config
+        // that pairs a JS host with native strings.
+        if (method === "stringify" && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+          const marshalled = emitHostExternrefToNativeString(ctx, fctx);
+          if (marshalled !== null) return marshalled;
+        }
         return { kind: "externref" };
       }
     }
