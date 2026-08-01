@@ -1,12 +1,19 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * Exact standalone dispatch for a transferred String.prototype.charAt closure.
+ * Exact standalone dispatch for a TRANSFERRED `String.prototype.<m>` closure —
+ * `obj.<m> = String.prototype.<m>; obj.<m>(…)`.
  *
- * The native closure ABI is `(self, thisValue, position) -> externref`, while
+ * The native closure ABI is `(self, thisValue, …args) -> externref`, while
  * `__apply_closure`'s generic method bridge installs the receiver only in
- * `__current_this` and fills every user parameter from the argument vector.
- * Keep the exception local to charAt: the builtin metadata id distinguishes its
- * closure even though WasmGC canonicalizes structurally equivalent meta types.
+ * `__current_this` and fills every user parameter from the argument vector — so
+ * the closure's `thisValue` param would receive the first user argument, or (for
+ * a 0-arity method) nothing at all. Hence the exact arms here.
+ *
+ * (#3978) This started as a charAt-only exception and is now driven by
+ * {@link TRANSFERRED_STRING_PROTO_MEMBERS}. The discriminator is the builtin
+ * metadata id (`bfnid`), NOT `ref.test`: WasmGC canonicalizes structurally
+ * equivalent meta types, so two same-shape member closures share one runtime
+ * type and only the minted id tells them apart.
  */
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
@@ -130,65 +137,138 @@ export function buildTransferredCharAtMethodArm(
   applyClosureIdx: number,
 ): Instr[] {
   if (ctx.nativeStrTypeIdx < 0) return [];
-  return [
-    { op: "local.get", index: 1 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: ctx.nativeStrTypeIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx },
-        ...nativeStringLiteralInstrs(ctx, "charAt"),
-        { op: "ref.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: externGetIdx },
-            ...(ctx.funcMap.has("__nullish_to_null")
-              ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
-              : []),
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: 2 },
-            { op: "call", funcIdx: applyClosureIdx },
-            { op: "return" },
-          ],
-        },
-      ],
-    },
-  ];
+  const out: Instr[] = [];
+  for (const member of TRANSFERRED_STRING_PROTO_MEMBERS) {
+    out.push(
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.nativeStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx },
+          ...nativeStringLiteralInstrs(ctx, member),
+          { op: "ref.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: externGetIdx },
+              ...(ctx.funcMap.has("__nullish_to_null")
+                ? ([{ op: "call", funcIdx: ctx.funcMap.get("__nullish_to_null")! }] satisfies Instr[])
+                : []),
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: applyClosureIdx },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+  return out;
 }
 
+/**
+ * (#3978) The `String.prototype` members whose TRANSFERRED (property-assigned)
+ * closure gets an exact dispatch arm:
+ *
+ *   `obj.<m> = String.prototype.<m>; obj.<m>(…)`
+ *
+ * `charAt` was the original single-member exception; the case-conversion family
+ * is added because it is the largest ES5 standalone `String.prototype` failure
+ * cluster (52 reachable tests — `S15.5.4.1[6789]_A1_T*`), and the generic
+ * `__apply_closure` bridge cannot serve it: that bridge installs the receiver
+ * only in `__current_this` and fills every declared closure parameter from the
+ * argument VECTOR, so the closure's param 1 (`this`) receives the first user
+ * argument (or nothing) instead of the receiver. The borrowed method then
+ * ToStrings the wrong value — for a 0-arg method, nothing at all.
+ *
+ * Membership requirements (why this list is not simply `STRING_PROTO_METHODS`):
+ * a member here must have a REAL reflective closure body in
+ * `emitStringProtoMemberBody` (an unwired member's body is a refusal that
+ * returns `null`, i.e. "fall through"), and its closure ABI must be
+ * `(self, this, …args) -> externref` with every user param externref.
+ * `buildTransferredStringProtoApplyArm` re-verifies both at emit time and
+ * silently omits any member that does not match, so an entry added here can
+ * never produce a wrong answer — at worst it is inert.
+ */
+const TRANSFERRED_STRING_PROTO_MEMBERS = [
+  "charAt",
+  "slice",
+  "substring",
+  "toUpperCase",
+  "toLowerCase",
+  "toLocaleUpperCase",
+  "toLocaleLowerCase",
+  "trim",
+  "trimStart",
+  "trimEnd",
+  "indexOf",
+  "lastIndexOf",
+  "charCodeAt",
+  "codePointAt",
+  "at",
+  "includes",
+  "startsWith",
+  "endsWith",
+] as const;
+
 export function buildTransferredCharAtApplyArm(ctx: CodegenContext, argOf: (index: number) => Instr[]): Instr[] {
+  const out: Instr[] = [];
+  for (const member of TRANSFERRED_STRING_PROTO_MEMBERS) {
+    out.push(...buildTransferredStringProtoApplyArm(ctx, argOf, member));
+  }
+  return out;
+}
+
+/**
+ * One exact-identity dispatch arm for a transferred `String.prototype.<member>`
+ * closure inside the `__apply_closure` bridge. Emits nothing unless the meta
+ * type, the `__proto_method_<brand>_<member>` body and the closure ABI all
+ * resolve — so an unwired member costs zero bytes and changes no behaviour.
+ */
+function buildTransferredStringProtoApplyArm(
+  ctx: CodegenContext,
+  argOf: (index: number) => Instr[],
+  member: string,
+): Instr[] {
   const metaEntry = Array.from(ctx.builtinFnMetaTypeByKey?.entries() ?? []).find(([key]) =>
-    key.endsWith(":method:charAt"),
+    key.endsWith(`:method:${member}`),
   );
   if (!metaEntry) return [];
 
   const [key, metaTypeIdx] = metaEntry;
   const closureInfo = ctx.closureInfoByTypeIdx.get(metaTypeIdx);
   const brand = key.split(":")[1];
-  const funcIdx = brand === undefined ? undefined : ctx.funcMap.get(`__proto_method_${brand}_charAt`);
+  const funcIdx = brand === undefined ? undefined : ctx.funcMap.get(`__proto_method_${brand}_${member}`);
   const funcType = closureInfo === undefined ? undefined : ctx.mod.types[closureInfo.funcTypeIdx];
   if (
     closureInfo === undefined ||
     funcIdx === undefined ||
     funcType?.kind !== "func" ||
-    closureInfo.paramTypes.length !== 2 ||
-    closureInfo.paramTypes[0]?.kind !== "externref" ||
-    closureInfo.paramTypes[1]?.kind !== "externref" ||
+    // param 0 is the `this` receiver; params 1.. are the user args. Every one
+    // must be externref (the uniform closure ABI) for the arg-vector threading
+    // below to be type-correct.
+    closureInfo.paramTypes.length < 1 ||
+    closureInfo.paramTypes.some((p) => p.kind !== "externref") ||
     closureInfo.returnType?.kind !== "externref"
   ) {
     return [];
   }
+  const userArgCount = closureInfo.paramTypes.length - 1;
 
   const selfType = funcType.params[0];
   if (!selfType || (selfType.kind !== "ref" && selfType.kind !== "ref_null")) return [];
+
+  const userArgs: Instr[] = [];
+  for (let i = 0; i < userArgCount; i++) userArgs.push(...argOf(i));
 
   return [
     { op: "local.get", index: 0 },
@@ -216,8 +296,8 @@ export function buildTransferredCharAtApplyArm(ctx: CodegenContext, argOf: (inde
             { op: "ref.cast", typeIdx: selfType.typeIdx },
             // explicit native-prototype receiver
             { op: "local.get", index: 1 },
-            // position (missing -> the ordinary undefined sentinel)
-            ...argOf(0),
+            // user args (missing -> the ordinary undefined sentinel)
+            ...userArgs,
             { op: "call", funcIdx },
             { op: "return" },
           ],

@@ -793,6 +793,32 @@ function emitStringRequireObjectCoercible(ctx: CodegenContext, fctx: FunctionCon
 }
 
 /**
+ * (#3978) The §7.1.1.1 `ToPrimitive(value, "string")` pre-reduction that turns
+ * `$__any_to_string` into a real `ToString`.
+ *
+ * `$__any_to_string` dispatches on the WasmGC type of its argument and takes the
+ * `"[object Object]"` terminal for anything that is a reference but not a
+ * string/number/boolean box. That is correct only for a plain object with no own
+ * `toString` — it is WRONG for the receivers a borrowed `String.prototype.<m>`
+ * routinely gets: a boxed primitive (`new Object(true)`, `new Boolean`,
+ * `new Number(123)`), an array, a class instance, or an object with its own
+ * `toString`. `__to_primitive` handles all of those and returns primitives
+ * unchanged, so `$__any_to_string ∘ __to_primitive` IS ToString.
+ *
+ * Stack: `[externref] → [externref]`. Empty (identity) when the object runtime
+ * is unavailable, which keeps the emitted body valid either way.
+ *
+ * ORDERING: the caller must have run `ensureObjectRuntime(ctx)` and settled any
+ * late-import batch BEFORE calling this — it bakes `__to_primitive`'s funcIdx.
+ */
+function stringProtoToPrimitiveInstrs(ctx: CodegenContext): Instr[] {
+  const toPrimIdx = ctx.funcMap.get("__to_primitive");
+  if (toPrimIdx === undefined) return [];
+  addStringConstantGlobal(ctx, "string");
+  return [...stringConstantExternrefInstrs(ctx, "string"), { op: "call", funcIdx: toPrimIdx }];
+}
+
+/**
  * (#2875 slice 1) Native body for a reflective `String.prototype.<member>`
  * closure. `this` is closure-param 1 (externref); user args at 2.. (externref-
  * boxed). Implements §22.1.3.x steps: `? RequireObjectCoercible(this)` →
@@ -835,7 +861,9 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   if (SUPERSEDED_BY_BORROWED_PATH.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
   const IN_SCOPE = new Set(["at", "charCodeAt", "codePointAt"]);
-  if (member === "substring") return emitStringSubstringMemberBody(ctx, fctx);
+  // (#3978) `slice` shares the substring body — same closure ABI, same native
+  // helper shape, only the §22.1.3 negative-index rule differs.
+  if (member === "substring" || member === "slice") return emitStringSubstringMemberBody(ctx, fctx, member);
   // (#2875 slice 3a) The number-returning search family — `indexOf` /
   // `lastIndexOf` — has a DIFFERENT closure ABI from the index accessors
   // (param 2 is the search STRING, not an integer position; the optional
@@ -855,6 +883,23 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // arg-2 slot the char/search bodies unbox (these closures have arity 0).
   const TRIM = new Set(["trim", "trimStart", "trimEnd"]);
   if (TRIM.has(member)) return emitStringTrimMemberBody(ctx, fctx, member);
+  // (#3978) The case-conversion family — `toUpperCase` / `toLowerCase` and
+  // their `toLocale*` aliases (§22.1.3.{26,28,27,29}). Same closure shape as
+  // TRIM (arity 0, string in / string out), so it routes to the same shared
+  // body with a different native helper. Without this arm every
+  // `obj.toUpperCase = String.prototype.toUpperCase; obj.toUpperCase()`
+  // borrow refused and evaluated to `null`.
+  const CASE_HELPER: Readonly<Record<string, string>> = {
+    toUpperCase: "__str_toUpperCase",
+    toLowerCase: "__str_toLowerCase",
+    // (#1470) Without ECMA-402 the locale forms ARE the default forms — the
+    // same fallback the direct `"x".toLocaleUpperCase()` path takes.
+    toLocaleUpperCase: "__str_toUpperCase",
+    toLocaleLowerCase: "__str_toLowerCase",
+  };
+  if (member in CASE_HELPER) {
+    return emitStringUnaryStringMemberBody(ctx, fctx, member, CASE_HELPER[member]!);
+  }
   if (member === "charAt") {
     return emitTransferredCharAtProtoMemberBody(
       ctx,
@@ -866,6 +911,7 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   if (!IN_SCOPE.has(member)) return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
 
   ensureNativeStringHelpers(ctx);
+  ensureObjectRuntime(ctx); // (#3978) ToString(this) needs __to_primitive — register BEFORE the import batch
   ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
   const needsNumBox = member === "charCodeAt" || member === "codePointAt";
   // Do ALL late-import-adding ops FIRST (mirrors emitArrayProtoMemberBody), so
@@ -891,9 +937,11 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
   // miss it — see emitStringRequireObjectCoercible.
   emitStringRequireObjectCoercible(ctx, fctx, member);
 
-  // (2) S = ToString(this): externref → anyref → $__any_to_string → $AnyString →
-  // flatten. Store the flat string in a local.
+  // (2) S = ToString(this) = $__any_to_string(? ToPrimitive(this, string)):
+  // externref → anyref → $__any_to_string → $AnyString → flatten. Store the flat
+  // string in a local.
   fctx.body.push({ op: "local.get", index: 1 });
+  fctx.body.push(...stringProtoToPrimitiveInstrs(ctx));
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
   fctx.body.push({ op: "call", funcIdx: flattenIdx });
@@ -1098,6 +1146,7 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
   const isLast = member === "lastIndexOf";
   const helperName = isLast ? "__str_lastIndexOf" : "__str_indexOf";
 
+  ensureObjectRuntime(ctx); // (#3978) ToString needs __to_primitive — before the import batch
   // (1) Do ALL late-import-adding ops FIRST (mirrors charCodeAt), so every helper
   // funcIdx fetched by NAME afterwards is post-shift-correct.
   //   fromIndex: unbox param 3 → i32 (null/undefined → 0 via NaN→trunc_sat).
@@ -1138,8 +1187,11 @@ function emitStringSearchNumericMemberBody(ctx: CodegenContext, fctx: FunctionCo
   }
 
   // (5) recv = flatten(ToString(this)); needle = flatten(ToString(searchString)).
+  // (#3978) Both go through `? ToPrimitive(v, "string")` first — `$__any_to_string`
+  // alone answers "[object Object]" for a boxed-primitive / own-toString operand.
   const flattenExtern = (paramIdx: number, label: string): number => {
     fctx.body.push({ op: "local.get", index: paramIdx });
+    fctx.body.push(...stringProtoToPrimitiveInstrs(ctx));
     fctx.body.push({ op: "any.convert_extern" });
     fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
     fctx.body.push({ op: "call", funcIdx: flattenIdx });
@@ -1187,6 +1239,7 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
   const helperName =
     member === "includes" ? "__str_includes" : member === "startsWith" ? "__str_startsWith" : "__str_endsWith";
 
+  ensureObjectRuntime(ctx); // (#3978) ToString needs __to_primitive — before the import batch
   // (1) Do ALL late-import-adding ops FIRST (mirrors the 3a body), so every
   // helper funcIdx fetched by NAME afterwards is post-shift-correct.
   //   position/endPosition: unbox param 3 → i32 (null/undefined → 0).
@@ -1226,8 +1279,11 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
   }
 
   // (5) recv = flatten(ToString(this)); needle = flatten(ToString(searchString)).
+  // (#3978) Both go through `? ToPrimitive(v, "string")` first — `$__any_to_string`
+  // alone answers "[object Object]" for a boxed-primitive / own-toString operand.
   const flattenExtern = (paramIdx: number, label: string): number => {
     fctx.body.push({ op: "local.get", index: paramIdx });
+    fctx.body.push(...stringProtoToPrimitiveInstrs(ctx));
     fctx.body.push({ op: "any.convert_extern" });
     fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
     fctx.body.push({ op: "call", funcIdx: flattenIdx });
@@ -1265,15 +1321,50 @@ function emitStringSearchBooleanMemberBody(ctx: CodegenContext, fctx: FunctionCo
  * flushes any pending import batch on entry) and `ensureAnyToStringHelper`.
  */
 function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, member: string): ValType | null {
+  const helperName = member === "trim" ? "__str_trim" : member === "trimStart" ? "__str_trimStart" : "__str_trimEnd";
+  return emitStringUnaryStringMemberBody(ctx, fctx, member, helperName);
+}
+
+/**
+ * (#3217 / #3978) Shared native body for every reflective `String.prototype.<m>`
+ * closure whose shape is "**arity 0, string in, string out**" — the trim family
+ * and the case-conversion family. `<helperName>` names a standalone-native
+ * `(ref $NativeString) -> ref $NativeString` helper in `ctx.nativeStrHelpers`
+ * (the SAME kernel the direct `"x".<m>()` path in string-ops.ts calls).
+ *
+ * These closures never touch an arg slot beyond `this` (reading a param-2 slot
+ * that doesn't exist emits invalid Wasm), so any spec-optional trailing
+ * argument — the `locales` of `toLocaleUpperCase`, say — is simply not read.
+ * That matches the direct path, which evaluates locale args only for side
+ * effects and then drops them; here they were already evaluated by the caller.
+ */
+function emitStringUnaryStringMemberBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  member: string,
+  helperName: string,
+): ValType | null {
   ensureNativeStringHelpers(ctx);
   ensureStringRocUndefinedNative(ctx, fctx); // (#2875) register the undefined-sentinel predicate first
-  const helperName = member === "trim" ? "__str_trim" : member === "trimStart" ? "__str_trimStart" : "__str_trimEnd";
+  // (#3978) `$__any_to_string` alone is NOT ToString: on an OBJECT receiver it
+  // takes the `"[object Object]"` terminal instead of running §7.1.1.1
+  // OrdinaryToPrimitive. That is wrong for every borrowed receiver that is an
+  // object — a boxed primitive (`new Object(true)` → `"true"`), an array, a
+  // class instance, or a plain object with its own `toString`
+  // (`String.prototype.trim.call({toString(){return " abc "}})`). Pre-reduce
+  // through the native `__to_primitive` engine helper (hint `"string"`), which
+  // returns primitives unchanged, so the composition IS ToString. This is the
+  // same pre-reduction `emitStringSubstringMemberBody` already performs.
+  // Registered BEFORE any funcIdx is baked below (`ensureObjectRuntime` may add
+  // imports, which shift defined-function indices).
+  ensureObjectRuntime(ctx);
+  const toPrimInstrs = stringProtoToPrimitiveInstrs(ctx);
 
   // Fetch helper funcIdxs. `ensureAnyToStringHelper` is the last ensure that
-  // could register a defined func, so fetch the trim helper's idx AFTER it
+  // could register a defined func, so fetch the transform helper's idx AFTER it
   // (mirrors the search body's post-ensure fetch order).
   const anyToStrIdx = ensureAnyToStringHelper(ctx);
-  const trimIdx = ctx.nativeStrHelpers.get(helperName);
+  const xformIdx = ctx.nativeStrHelpers.get(helperName);
   // (#2875) `__str_trim*` operates on a FLATTENED receiver (`ref $NativeString`)
   // — the DIRECT path (`string-ops.ts`) calls `emitFlatten()` before it. The
   // reflective glue must do the same: `$__any_to_string` on a non-string
@@ -1281,7 +1372,7 @@ function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // (cons/wrapper), and feeding that straight into `__str_trim*` mis-reads it
   // (`trim.call(false)` returned "[object Boolean]"-ish instead of "false").
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-  if (trimIdx === undefined || flattenIdx === undefined) {
+  if (xformIdx === undefined || flattenIdx === undefined) {
     return emitProtoMemberBodyRefusal(ctx, fctx, "String", member);
   }
 
@@ -1291,12 +1382,29 @@ function emitStringTrimMemberBody(ctx: CodegenContext, fctx: FunctionContext, me
   // miss it — see emitStringRequireObjectCoercible.
   emitStringRequireObjectCoercible(ctx, fctx, member);
 
-  // (2) S = ToString(this); FLATTEN; __str_trim*(S) → native string; → externref.
+  // (1b) §7.1.17 ToString REJECTS a Symbol, unlike the deliberately printable
+  // `$__any_to_string` fallback. Without this guard a Symbol receiver silently
+  // stringified (test262 `this-value-tostring-throws-symbol`). Same guard
+  // `emitStringSubstringMemberBody` already carries.
+  if (ctx.symbolTypeIdx >= 0) {
+    const symbolThrow: Instr[] = [];
+    emitBrandCheckTypeError(ctx, symbolThrow, "Cannot convert a Symbol value to a string");
+    fctx.body.push(
+      { op: "local.get", index: 1 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+      { op: "if", blockType: { kind: "empty" }, then: symbolThrow },
+    );
+  }
+
+  // (2) S = ToString(this) = $__any_to_string(? ToPrimitive(this, string));
+  //     FLATTEN; <helper>(S) → native string; → externref.
   fctx.body.push({ op: "local.get", index: 1 });
+  fctx.body.push(...toPrimInstrs);
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "call", funcIdx: anyToStrIdx });
   fctx.body.push({ op: "call", funcIdx: flattenIdx });
-  fctx.body.push({ op: "call", funcIdx: trimIdx });
+  fctx.body.push({ op: "call", funcIdx: xformIdx });
   fctx.body.push({ op: "extern.convert_any" });
   return { kind: "externref" };
 }
