@@ -41,6 +41,7 @@ import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
+import { runHarness as runLitUpstreamSuite } from "../tests/dogfood/lit-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -1312,7 +1313,7 @@ function knownBugsFor(name) {
   return map[name] ?? [];
 }
 
-async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf }) {
+async function buildPackageEntry({ name, version, issue, entryFile, shape, report, tests, perf, entryIsBarrel }) {
   return {
     name,
     version,
@@ -1321,6 +1322,11 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     shape,
     compile: report.compile,
     validation: report.validation,
+    // True when the published entry module is a re-export barrel with no
+    // implementation of its own, so `compile`/`validation` above describe the
+    // barrel rather than the package's code. Consumers must not present that
+    // as evidence the package compiles (#3977).
+    ...(entryIsBarrel ? { entryIsBarrel: true } : {}),
     tests,
     perf,
     knownBugs: knownBugsFor(name),
@@ -1527,8 +1533,52 @@ if (selectedPackages.has("react")) {
   );
 }
 
+if (selectedPackages.has("lit")) {
+  console.log("[npm-compat] lit — package entry + lit's own upstream unit tests...");
+  const litEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "lit");
+  const litReport = await runNpmCompatCatalogHarness("lit", { quiet: true });
+  const litSuite = await runLitUpstreamSuite({ quiet: true });
+  packages.push(
+    await buildPackageEntry({
+      name: "lit",
+      version: litEntry.version,
+      issue: 3977,
+      entryFile: litEntry.entryModule.replace(/^package\//, ""),
+      shape: litEntry.shape,
+      report: litReport,
+      // (#3977) The compile/validate numbers on this card come from
+      // `lit/index.js`, which is a FOUR-LINE BARREL — it re-exports
+      // `lit-element` and `lit-html` and contains no implementation, so
+      // "201 bytes, validates" was never a statement about lit. The test
+      // numbers come from the three PUBLISHED packages that actually carry
+      // lit's code, running lit's own upstream suite. `entryIsBarrel` exists
+      // so the card can say that out loud rather than letting the two numbers
+      // be read as being about the same thing.
+      entryIsBarrel: true,
+      tests: {
+        kind: "upstream-suite",
+        passed: litSuite.results?.passed ?? null,
+        total: litSuite.results?.scored ?? null,
+        passRatePct: litSuite.summary?.passRatePct ?? null,
+        admitted: litSuite.extraction?.admitted ?? null,
+        upstreamTestsSeen: litSuite.extraction?.upstreamTestsSeen ?? null,
+        harnessIncompatible: litSuite.results?.harnessIncompatible ?? null,
+        // The headline finding, and the reason the pass rate is low: most of
+        // lit's corpus sits behind an implementation module the validator
+        // rejects (#3978), so those tests never ran against Wasm at all.
+        implementationInvalidTests: litSuite.summary?.implementationInvalidTests ?? null,
+        sourceIssue: 3977,
+      },
+      perf: null,
+    }),
+  );
+}
+
 for (const entry of NPM_COMPAT_CATALOG) {
   if (!selectedPackages.has(entry.name)) continue;
+  // Handled above with its own upstream suite rather than as a bare
+  // package-entry card.
+  if (entry.name === "lit") continue;
   console.log(`[npm-compat] ${entry.name} — bounded published package-entry compile/validate...`);
   const report = await runNpmCompatCatalogHarness(entry.name, { quiet: true });
   packages.push(

@@ -44,7 +44,7 @@ import {
   parseRegExpLiteral,
 } from "../index.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
-import { emitNativeNumberFormat } from "../number-format-native.js";
+import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { addImport, addStringConstantGlobal } from "../registry/imports.js";
@@ -138,6 +138,17 @@ interface UnifiedCollectorState {
 }
 
 const CONSOLE_METHODS_SET = new Set(["log", "warn", "error", "info", "debug"]);
+
+/**
+ * (#3912) The pure-Wasm §7.1.4.1 StringToNumber helper.
+ *
+ * It shares `state.parseNeeded` with the real JS globals `parseInt` /
+ * `parseFloat`, but unlike those it is NOT a host function — `src/runtime.ts`
+ * has no `env.__str_to_number` to bind. It must therefore always be EMITTED,
+ * never imported; see the `collectParseImports` finalize block. Named once here
+ * so the producing sites and that consuming check cannot drift apart.
+ */
+const STR_TO_NUMBER_HELPER = "__str_to_number";
 
 // (#2903) Method names whose CALL can mint a HOST promise in a standalone
 // module even while the native `$Promise` chain is active — the host-routed
@@ -678,7 +689,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       // WasmGC string ref, not an externref the host `__unbox_number` can read.
       // Emit the pure-Wasm §7.1.4.1 StringToNumber helper so the call site can
       // route the string ref through it instead of the no-op host path (#1688).
-      if (ctx.nativeStrings) state.parseNeeded.add("__str_to_number");
+      if (ctx.nativeStrings) state.parseNeeded.add(STR_TO_NUMBER_HELPER);
     }
   }
   // #2160 — `Number.parseInt` / `Number.parseFloat` (§21.1.2.12-13) are the same
@@ -705,7 +716,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   ) {
     const operandType = ctx.checker.getTypeAtLocation(node.operand);
     if (operandType.flags & ts.TypeFlags.StringLike) {
-      state.parseNeeded.add(ctx.nativeStrings ? "__str_to_number" : "parseFloat");
+      state.parseNeeded.add(ctx.nativeStrings ? STR_TO_NUMBER_HELPER : "parseFloat");
     }
   }
   if (
@@ -746,7 +757,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         const leftType = ctx.checker.getTypeAtLocation(node.left);
         const rightType = ctx.checker.getTypeAtLocation(node.right);
         if (isStringType(leftType) || isStringType(rightType)) {
-          state.parseNeeded.add(ctx.nativeStrings ? "__str_to_number" : "parseFloat");
+          state.parseNeeded.add(ctx.nativeStrings ? STR_TO_NUMBER_HELPER : "parseFloat");
         }
       } catch {
         // Type resolution may fail
@@ -1376,10 +1387,13 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectPrimitiveMethodImports finalize ──
-  // #1759: under WASI/standalone, template interpolation and String(number)
-  // need a pure-Wasm default Number::toString helper. Do not emit the JS-host
-  // env.number_toString import there; emit the native helper below instead.
-  const needsNativeNumberToString = state.primitiveNeeded.has("number_toString") && (ctx.wasi || ctx.standalone);
+  const nativeNumberFormat = usesNativeNumberFormat(ctx);
+  // #1759/#3912: wherever strings are natively represented, template
+  // interpolation and String(number) need the pure-Wasm Number::toString, NOT
+  // env.number_toString — the host import hands back a real JS string, which
+  // every native consumer then mis-reads as an `$AnyString` box. All three
+  // gates below read that ONE predicate, so they cannot re-diverge.
+  const needsNativeNumberToString = state.primitiveNeeded.has("number_toString") && nativeNumberFormat;
   if (state.primitiveNeeded.has("number_toString") && !needsNativeNumberToString) {
     const t = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
     addImport(ctx, "env", "number_toString", { kind: "func", typeIdx: t });
@@ -1389,8 +1403,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // `number_toString(value)`, silently producing decimal output for any radix.
   // #1335 Phase 1: standalone/WASI emits the safe-integer radix formatter in
   // pure Wasm instead of requesting the JS host import.
-  const needsNativeNumberToStringRadix =
-    state.primitiveNeeded.has("number_toString_radix") && (ctx.wasi || ctx.standalone);
+  const needsNativeNumberToStringRadix = state.primitiveNeeded.has("number_toString_radix") && nativeNumberFormat;
   if (state.primitiveNeeded.has("number_toString_radix") && !needsNativeNumberToStringRadix) {
     const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
     addImport(ctx, "env", "number_toString_radix", { kind: "func", typeIdx: t });
@@ -1411,7 +1424,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // the toFixed/toExponential helpers, so emitNativeNumberFormat emits those
   // first. The defined funcs participate in the late-import index-shift fixup
   // like emitNativeParseNumber's.
-  if (ctx.wasi || ctx.standalone) {
+  if (nativeNumberFormat) {
     const fmtNative = new Set<string>();
     for (const n of [
       "number_toString",
@@ -1572,7 +1585,16 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     const parseNative = new Set<string>();
     for (const name of state.parseNeeded) {
       if (ctx.funcMap.has(name)) continue; // already registered (e.g. lib.d.ts) (#1109)
-      if (ctx.wasi || ctx.standalone) {
+      // (#3912) The StringToNumber helper is PURE WASM, not a JS global — the
+      // host runtime has no binding for it, so requesting it as an import
+      // yielded a stub whose result read back as NaN. It only ever enters
+      // `parseNeeded` under `ctx.nativeStrings` (see its three producing sites
+      // above), and `fast` is the config that sets `nativeStrings` without
+      // `wasi` / `standalone` — so it fell through the target-only gate here
+      // and `Number("42")` returned NaN across the whole gc-native lane. Always
+      // emit it natively; `parseInt` / `parseFloat` keep their host imports
+      // off-target, and those are real JS globals the host DOES provide.
+      if (ctx.wasi || ctx.standalone || name === STR_TO_NUMBER_HELPER) {
         parseNative.add(name);
         continue;
       }

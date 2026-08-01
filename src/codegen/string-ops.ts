@@ -22,6 +22,7 @@ import { addStringImports, flatStringType, nativeStringType, resolveIdentifierTy
 import {
   ensureAnyToStringHelper,
   ensureNativeStringExternBridge,
+  hostStringBridgeUsable,
   nativeStringLiteralInstrs,
   nativeStringTypeNullable,
   stringConstantExternrefInstrs,
@@ -117,6 +118,82 @@ function emitGuardedFuncRefCast(fctx: FunctionContext, funcTypeIdx: number): voi
 function emitNativeStringRefFromExternref(ctx: CodegenContext, fctx: FunctionContext): void {
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+}
+
+/**
+ * (#3912) Marshal a NATIVE string ref on the stack into a REAL JS string
+ * externref, for handing to a JS-host import.
+ *
+ * ## Why `coerceType(..., externref)` is NOT this
+ *
+ * `coerceType` lowers a GC ref to externref with `extern.convert_any`, which
+ * only *widens the reference* — the host still receives the opaque WasmGC
+ * `$NativeString` struct, not a string. `parseInt` then does `ToString` on it
+ * and gets `"[object Object]"`-ish behaviour; V8 actually throws
+ * `Cannot convert object to primitive value`, and `Number(...)` silently
+ * returns `NaN`. Only `__str_to_extern` (which copies the code units out
+ * through `__str_to_mem`) produces a genuine JS string.
+ *
+ * `__str_flatten` first, because a `$ConsString` rope has no contiguous
+ * backing array for `__str_to_extern` to copy.
+ *
+ * This is the exact sequence `console.log`'s string arm and the
+ * `string_<method>` host-method bridge already use; it is factored out here so
+ * the remaining native→host argument sites can share one spelling.
+ *
+ * Returns false (emitting nothing) when the bridge is unavailable, so callers
+ * can fall back rather than emit an invalid module.
+ */
+export function emitNativeStringToHostExternref(ctx: CodegenContext, fctx: FunctionContext): boolean {
+  // (#3912 follow-up) The bridge needs `env.__str_{from,to}_mem` /
+  // `__str_extern_len`. Under `strictNoHostImports` those are DROPPED after
+  // being baked into helper bodies → `unresolved call target`, and under
+  // wasi/standalone there is no host at all. Decline so the caller keeps its
+  // previous lowering instead of producing an unbuildable module.
+  if (!hostStringBridgeUsable(ctx)) return false;
+  ensureNativeStringExternBridge(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const toExternIdx = ctx.nativeStrHelpers.get("__str_to_extern");
+  if (toExternIdx === undefined) return false;
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  if (flattenIdx !== undefined) fctx.body.push({ op: "call", funcIdx: flattenIdx });
+  fctx.body.push({ op: "call", funcIdx: toExternIdx });
+  return true;
+}
+
+/**
+ * (#3912) The exact inverse: marshal a REAL JS-host string externref on the
+ * stack into a native `$AnyString` ref, for a value that a JS-host import just
+ * returned.
+ *
+ * ## When to use this, and when NOT to
+ *
+ * Use it when the externref provably came from a **host import** (`JSON_stringify`,
+ * the `string_<method>` bridge). Do NOT use it on an externref that came from
+ * the **native** number formatter — under native strings `number_toString`
+ * returns an `$AnyString` merely widened by `extern.convert_any`, and
+ * `__str_from_extern` reads it as a JS string and silently yields the EMPTY
+ * string. That confusion is the second half of #3912 (`` `v${3}` `` → `"v"`);
+ * the native-formatter case wants `emitNativeStringRefFromExternref` instead.
+ *
+ * The distinction is provenance, not ValType — both are `externref` — so it can
+ * only be made at the producing call site. That is why both directions are
+ * emitted next to the call that creates the value.
+ *
+ * Returns false (emitting nothing) when the bridge is unavailable.
+ */
+export function emitHostExternrefToNativeString(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
+  // (#3912 follow-up) See `emitNativeStringToHostExternref` — same three host
+  // imports, same strict-mode drop. Decline rather than emit an unbuildable
+  // module; the caller then reports the value as a plain `externref`, exactly
+  // as it did before #3912.
+  if (!hostStringBridgeUsable(ctx)) return null;
+  ensureNativeStringExternBridge(ctx);
+  flushLateImportShifts(ctx, fctx);
+  const fromExternIdx = ctx.nativeStrHelpers.get("__str_from_extern");
+  if (fromExternIdx === undefined) return null;
+  fctx.body.push({ op: "call", funcIdx: fromExternIdx });
+  return nativeStringType(ctx);
 }
 
 /**
@@ -718,28 +795,29 @@ export function compileNativeTemplateExpression(
       // the AnyString supertype, so a ref_null is fine to pass straight through.
       // (No marshaling instructions emitted — value stays on the stack.)
     } else if (spanType && spanType.kind === "f64" && toStrIdx !== undefined) {
+      // (#3912) This and the i32/i64 arms unbox UNCONDITIONALLY — never via
+      // `standaloneNativeStrings`. `__str_from_extern` marshals a genuine
+      // JS-host string through `__str_from_mem`, but since #3912 keys the
+      // formatter's provider on `ctx.nativeStrings`, `number_toString` is
+      // NATIVE in every mode this function runs in: its externref is an
+      // `$AnyString` merely widened by `extern.convert_any`. The host bridge
+      // silently yields EMPTY for that box — which is how `` `v${3}` ``
+      // evaluated to "v". The right question is not "is a JS host available?"
+      // but "did this externref come from the native formatter?", and here it
+      // always did. The dynamic-externref / struct arms below KEEP the bridge:
+      // those really do carry host strings.
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
-      if (standaloneNativeStrings) {
-        emitNativeStringRefFromExternref(ctx, fctx);
-      } else if (fromExternIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
-      }
+      emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i32" && toStrIdx !== undefined) {
+      // (#3912) native-formatter box — see the f64 arm above.
       fctx.body.push({ op: "f64.convert_i32_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
-      if (standaloneNativeStrings) {
-        emitNativeStringRefFromExternref(ctx, fctx);
-      } else if (fromExternIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
-      }
+      emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && spanType.kind === "i64" && toStrIdx !== undefined) {
+      // (#3912) native-formatter box — see the f64 arm above.
       fctx.body.push({ op: "f64.convert_i64_s" });
       fctx.body.push({ op: "call", funcIdx: toStrIdx });
-      if (standaloneNativeStrings) {
-        emitNativeStringRefFromExternref(ctx, fctx);
-      } else if (fromExternIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: fromExternIdx });
-      }
+      emitNativeStringRefFromExternref(ctx, fctx);
     } else if (spanType && (spanType.kind === "f64" || spanType.kind === "i32" || spanType.kind === "i64")) {
       reportError(ctx, span.expression, "Template literal numeric substitution requires number_toString");
       fctx.body.push({ op: "drop" });

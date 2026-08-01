@@ -16,30 +16,26 @@ sprint: current
 horizon: l
 es_edition: multi
 related: [3903, 3898, 3512, 3912]
-coercion-sites-allow:
-  - src/codegen/array-methods.ts
 ---
 
 <!--
-coercion-sites-allow rationale (#3902):
+coercion-sites-allow (#3902) — REMOVED by #3912, as #3902 itself instructed.
 
-The gate reports `array-methods.ts: 19 → 20 (number_toString 8→9)`. The single
-added occurrence is a **detection lookup**, not new coercion logic:
+The allowance covered ONE detection lookup in `src/codegen/array-methods.ts`:
 
     const numToStrExisting = ctx.funcMap.get("number_toString");
 
-It asks *whether the helper currently resolves to the JS-host import*, so the
-sort lowering can fall back to all-host string comparison instead of `ref.cast`-
-ing a host-owned JS string to `$AnyString`. That cast is the `illegal cast`
-runtime trap which made the gc-native lane vanish from the benchmark page
-entirely. No ToString/ToNumber/ToPrimitive/equality matrix is hand-rolled here —
-routing this through the coercion engine would be routing a *gate check*, not a
-coercion.
+which asked whether `number_toString` currently resolved to the JS-host import,
+so `compileArrayDefaultToStringSort` could fall back to all-host string
+comparison instead of `ref.cast`-ing a host-owned JS string to `$AnyString`
+(the `illegal cast` trap that made the gc-native lane vanish from the
+benchmark page).
 
-This allowance is deliberately temporary. The real fix is #3912: gate
-`number_toString` on `ctx.nativeStrings` so fast mode stops pairing native
-string helpers with a JS-host formatter. When #3912 lands, this detection
-becomes dead and the occurrence should be removed along with the allowance.
+#3912 gated `number_toString` on `usesNativeNumberFormat` (wasi || standalone
+|| nativeStrings), so the helper can no longer be a host import while
+`ctx.nativeStrings` is on. The probe became dead code and was deleted along
+with this allowance; `native` is now plain
+`ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0`.
 -->
 
 
