@@ -15,7 +15,7 @@ goal: n/a
 sprint: current
 horizon: s
 es_edition: n/a
-related: [2547, 3597]
+related: [2547, 3597, 3986, 3987]
 ---
 
 # #3963 — Node 25 is absent from the setup-node manifest; every pin was on the fallback path
@@ -176,12 +176,20 @@ workflows". That is wrong. Only **two** files reference it (`ci.yml`,
 `test262-sharded.yml`); the "12" was a count of matching *grep lines*, not
 files.
 
-### Still open — the test262 shard keeps the flake
+### Still open — the test262 shard keeps the flake (now #3987)
 
 The workflow that parked #3914 is **not** fixed by this change. It stays on the
 absent-25 pin and therefore on the fallback download, so the same park can recur
 there. Closing it needs the baseline regeneration above. This is a deliberate
 deferral, recorded so the gap is not mistaken for closed.
+
+Tracked as **#3987**, which carries the sequencing (move the pin and regenerate
+`test262-current.jsonl` atomically) and the open question of *why* results move
+with the Node major.
+
+The `classifyTestScope` fail-open that this investigation wrongly blamed is
+filed separately as **#3986** — ruled out as the cause here, but a real latent
+defect worth closing on its own.
 
 ### Why 24 is safe here
 
