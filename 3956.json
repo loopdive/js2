@@ -1,10 +1,11 @@
 {
   "id": "3956",
   "assignee": "ttraenkler/s78-sendev",
-  "requested_by": "ttraenkler/s78-sendev",
-  "status": "in-progress",
+  "requested_by": "claude.ai@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3956-global-binding-aliasing",
   "claimed_at": "2026-08-01T02:11:11Z",
-  "updated_at": "2026-08-01T02:11:11Z",
-  "write_id": "99871-8j36l1j7"
+  "updated_at": "2026-08-01T08:05:07Z",
+  "write_id": "27165-4wzf2o3s",
+  "released_at": "2026-08-01T08:05:07Z"
 }
