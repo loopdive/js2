@@ -1,7 +1,8 @@
 ---
 id: 3983
 title: Standalone strict [[Set]] never throws — `__extern_set_strict` was an alias of `__extern_set`
-status: in-progress
+status: done
+completed: 2026-08-01
 sprint: current
 priority: high
 horizon: l
@@ -167,4 +168,105 @@ Recorded because each one produced a confident, wrong answer:
 
 ## Test Results
 
-(filled in below)
+### Scoped standalone test262 A/B (the CI worker path, not `runTest262File`)
+
+Both arms: `TEST262_TARGET=standalone`, `--official-scope-only`, same
+`TEST262_PATH_FILTER` (117 family + a 220-file in-sweep control sampled from
+currently-passing files in the same directories). Arms differ only by
+`src/codegen/object-runtime.ts` (base copy vs patched copy — file copies, never
+`git stash`, `refs/stash` is one shared stack across every worktree). The
+run script rebuilds `scripts/compiler-bundle.mjs` per arm and the disk-cache key
+hashes that bundle, so the arms cannot serve each other's results.
+
+**Arm A is current `upstream/main` (e240e7525), not the committed baseline jsonl** —
+the baseline predates today's merges.
+
+| bucket                                            |  n  | flips | regressions |
+| ------------------------------------------------- | --: | ----: | ----------: |
+| descriptor-enforcement family                     | 117 | **+24** |       **0** |
+| in-sweep control (must not move)                  | 220 |   **0** |       **0** |
+
+**Net +24, zero regressions.**
+
+Floored, because the raw arms had **different denominators** (BEFORE 323 rows,
+AFTER 337 — vitest kills a pool-timed-out test without writing a jsonl row, so
+the run silently under-reports its own denominator). The aggregate pass counts
+are therefore *not* comparable and were not used. All 14 missing rows were
+accounted for individually:
+
+- 13 of the 14 **pass in AFTER**, so they cannot be regressions regardless of
+  their BEFORE status.
+- The 1 that fails in AFTER (`defineProperties/15.2.3.7-6-a-4.js`) was re-run
+  solo in the BEFORE arm and **fails there too** — not a regression.
+- `language/types/reference/8.7.2-4-s.js` was missing from BEFORE and passes in
+  AFTER; re-run solo in BEFORE it **fails**, so it is a genuine 24th flip.
+
+**The control's 5 apparent flips were instrument noise, not results.** The
+paired diff first showed `ctl +5 / −0`. Every one of the five carried
+`error_category: compile_timeout` (`timeout (10s)`) in the BEFORE arm — fork-pool
+contention, the #1589 flake class. Re-run solo in the BEFORE arm: **5 pass / 5
+total.** They are excluded. Reporting them would have inflated the result to
++29 and, worse, would have claimed movement in a bucket whose entire purpose is
+to prove nothing moved.
+
+### Which 24 flipped, and why the other 13 did not
+
+The 24: all **22** `language/expressions/compound-assignment/11.13.2-{34..55}-s.js`,
+`language/expressions/assignment/11.13.1-2-s.js`, and
+`language/types/reference/8.7.2-4-s.js`.
+
+Of the 37 gated write-path files, **13 did not flip**, each for a named reason
+that is *not* this defect:
+
+- **6** `assignment/11.13.1-4-*` — strict assignment to a read-only **built-in
+  global** (`Number.MAX_VALUE`, `Math.PI`, `Global.Infinity`, `Function.length`).
+  Those are builtin statics, not `$Object`s carrying `$PropEntry` descriptors,
+  so they never reach `__extern_set_strict`.
+- **2** `built-ins/global/10.2.1.1.3-4-1{6,8}-s.js` — same mechanism
+  (`NaN` / `undefined` value properties of the global object).
+- **2** `Function/15.3.5.4_2-{19,20}gs.js` — `Function.prototype.caller`
+  poisoning; unrelated.
+- **1** `arguments-object/10.6-14-c-4-s.js` — `arguments.callee` poisoning;
+  unrelated.
+- **1** `assignment/8.14.4-8-b_2.js` — inherited non-writable, explicitly out of
+  scope above.
+- **1** `defineProperty/15.2.3.6-4-243-2.js` — Array receiver, `g-arraylen`'s area.
+
+So the residual is fully attributed; there is no unexplained shortfall.
+
+### Unit tests
+
+`tests/issue-3983.test.ts` — 14/14 pass. Five throw-cases (setter-less accessor,
+compound-assign to a setter-less accessor, `writable:false`, frozen,
+non-extensible-new-key) and **nine must-not-throw cases** (array element, array
+past-end, array expando, closure expando, accessor *with* a setter, sealed
+object, Proxy set trap, computed key, `writable:true`). Every case also asserts
+the standalone module has **zero host imports**, so the TypeError is constructed
+natively.
+
+The throw-cases put the write inside a nested callback on purpose — the
+test262 `assert.throws(TypeError, function () { … })` shape. A write in the same
+function as a statically visible `Object.defineProperty(o,"p",{writable:false})`
+is constant-folded by the #3872 static mirror into an unconditional `throw`, so
+an inline-shaped test would pass with the runtime path completely broken.
+
+### Local gates
+
+`tsc --noEmit` · `biome lint src tests scripts --diagnostic-level=error` ·
+`prettier --check` on both changed files · `check-speculative-rollback-sites` ·
+`check-oracle-ratchet` (+0/+0) · `check-issue-ids --against-main` — all green.
+
+## Follow-ups (deliberately not folded in)
+
+1. **31 unowned non-Array define-path files** in the same signature —
+   `Object.create`/`defineProperties` descriptor-argument validation (§8.10.5
+   steps 1/7.b/8.b/9.a) and §8.12.9-step-1 redefine-over-an-inherited-property.
+   Different defect, no owner.
+2. **Inherited non-writable data property** (`__obj_find` is own-only) — 1 file
+   here, but it is the correct place to also fix inherited-accessor [[Set]].
+3. **The #3872 static mirror never un-records on a re-define.**
+   `Object.defineProperty(o,"p",{writable:false})` followed by
+   `Object.defineProperty(o,"p",{writable:true})` leaves `p` in
+   `ctx.nonWritableExternKeys`, so a subsequent write is still folded to a
+   throw. Present in **both** arms of the A/B, so this change neither causes nor
+   fixes it — but it is a real, silent, compile-time wrong answer.
