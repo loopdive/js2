@@ -210,11 +210,25 @@ describe("#3934 — the stub's job budget cannot silently strand a PR", () => {
   it("stub-guard makes a dead detect LOUD, and stays quiet on a concurrency cancel", () => {
     const guard = JOBS.get("stub-guard")!;
 
-    // `always()` would also fire when the whole RUN is cancelled (a newer push
-    // superseded this SHA) — noise on a SHA nobody is waiting for. A job-level
-    // timeout cancels the JOB, not the run, so `!cancelled()` still fires there.
-    expect(jobAttr(guard, "if")).toBe("${{ !cancelled() }}");
-    expect(jobAttr(guard, "if")).not.toContain("always()");
+    // MUST be `always()`, not `!cancelled()`. Whether `cancelled()` is true when
+    // a job dies to its own `timeout-minutes` is UNMEASURED — and run
+    // 30645425429's RUN-level conclusion is `cancelled`, which is at least
+    // consistent with it being true. If it is, `!cancelled()` would skip this
+    // guard in exactly the case it exists for, and the non-silence guarantee
+    // would be empty. `always()` makes the guarantee hold by construction.
+    expect(jobAttr(guard, "if")).toBe("${{ always() }}");
+    expect(jobAttr(guard, "if")).not.toContain("cancelled()");
+
+    // The cost of always() — also running on a concurrency cancel — must be
+    // paid by a DIRECT check (has the PR head moved off this SHA?), not by a
+    // status function whose semantics nobody has measured.
+    const steps = stepBlocks(guard);
+    const supersededStep = steps.find((s) => /id:\s*superseded\b/.test(s));
+    expect(supersededStep, "guard must self-suppress on a superseded SHA").toBeDefined();
+    expect(supersededStep!).toContain("head.sha");
+    // And it must fail loud when it cannot tell: a failed lookup must NOT be
+    // treated as "superseded, nothing to see here".
+    expect(supersededStep!).toMatch(/-n "\$current"/);
 
     const needs = jobAttr(guard, "needs")!;
     for (const dep of ["detect", "cheap-gate", "merge-report", "regression-gate"]) {
