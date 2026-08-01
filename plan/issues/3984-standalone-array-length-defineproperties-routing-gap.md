@@ -1,9 +1,10 @@
 ---
 id: 3984
 title: "Standalone: `Object.defineProperties(arr, {length: {...}})` never reaches ArraySetLength — the array length is silently left unchanged"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-01
+completed: 2026-08-01
 updated: 2026-08-01
 assignee: ttraenkler/g-arraylen
 priority: high
@@ -153,6 +154,21 @@ The receiver is recompiled by the helper rather than read from `objLocal`; that
 is safe precisely because the helper's own `isSideEffectFreeReceiver` gate
 requires it, and it keeps this call site identical to the existing one.
 
+## Follow-ups (NOT fixed here — recommend filing)
+
+- **D2 — `writable` dropped on store for array `length`, BOTH lanes.** Blocks
+  any test asserting on `length`'s writability, and is a prerequisite for the
+  "non-writable length blocks later index adds" behaviour that
+  `maybeEmitVecLengthDefine` currently lists as DEFERRED. Single-step repro in
+  the Evidence table (w1/w2 on the host lane).
+- **D3 — array `length` missing from descriptor reflection, standalone.**
+  `gOPD`/`gOPN` do not see it while `hasOwnProperty` does. Plausibly a
+  prerequisite for #3251, and the reason D2 cannot even be measured on the
+  standalone lane.
+
+Together these gate most of the 69 files this issue's fix did not flip, so they
+are the natural next lever in this family rather than more routing work.
+
 ## Acceptance criteria
 
 - `Object.defineProperties(arr, {length: {value: n}})` sets the length on the
@@ -168,5 +184,49 @@ Instrument validated before any claim: the scan reproduces standalone official
 **43,106 run / 25,460 pass (59.1%)** and the ES5+untagged goal scope
 **8,545 / 6,004 (70.3%)** exactly.
 
-**The population is GATED, not a forecast.** Results, denominators and the
-paired A/B are recorded in the "Result" section below.
+**The population is GATED, not a forecast.**
+
+### Denominators — two derivations, stated separately
+
+The dedup map sized this lever as **102 by mechanism / 100 reachable / 55
+standalone-only** within the ES5+untagged **goal scope**. This issue's own scan
+used a broader mechanism regex over the **whole standalone official scope**, and
+gets **314 by mechanism / 223 currently failing / 103 reachable** (103 = fails
+standalone *and* passes the host lane, so a standalone fix can flip it; 120 of
+the 223 fail the default lane too and are unreachable from here).
+
+These are **different denominators over different scopes, not a correction of
+one by the other.** The A/B below is reported against the 103 this issue
+actually gated. Neither figure should be read as a flip ceiling.
+
+### Paired A/B — both arms in one process, attribution by removal
+
+Arm A = kill switch on (main's behaviour), arm B = fix enabled. Same process,
+same files, only the switch differs, so the delta cannot be cross-run drift.
+
+| | |
+|---|---|
+| rows scored | A=105, B=105 vs floor 105 ✓ |
+| arm A pass | 1 / 105 |
+| arm B pass | 35 / 105 |
+| **net** | **+34** |
+| lost | **0** |
+| `compile_timeout` | **0** (none to re-run solo) |
+| in-sweep controls | **both HELD** |
+| **ratio** | **34 flipped / 103 reachable gated = 33.0%** |
+
+All 34 gains are `built-ins/Object/defineProperties/15.2.3.7-6-a-*` — exactly
+the predicted family, no scatter.
+
+The sweep was **re-run unchanged after the god-file refactor** and reproduced
+the same 34 / 0 / 0 / controls-held, confirming the module split did not
+quietly change behaviour. A **final arm with the kill switch deleted** and
+`upstream/main` merged confirms the shipped code reproduces arm B exactly.
+
+### Why the other 69 gated files did not flip
+
+They are gated by **D2 and D3 above**, not by this routing gap: without a
+descriptor record for array `length` (D3) and with `writable` dropped on store
+(D2), the `defineProperties` tests that assert on *attributes* rather than on
+the length *value* cannot pass no matter how the define is routed. That is the
+honest ceiling of this issue, and it is why D2/D3 are worth filing.

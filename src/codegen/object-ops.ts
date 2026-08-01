@@ -55,15 +55,6 @@ import {
 export { tryConstantFoldToBoolean } from "./object-descriptor-analysis.js";
 
 /**
- * (#3984) A/B kill switch for the array-`length` `defineProperties` routing fix.
- * Read ONCE at module-collection time so a single process can host both arms of a
- * paired measurement without re-importing the compiler. Unset in all normal builds
- * and in CI; it exists so the fix's attribution can be proven by REMOVAL rather
- * than inferred from a before/after pass count.
- */
-const kill3984 = (): boolean => process.env.JS2WASM_KILL_3984 === "1";
-
-/**
  * (#2580 B-acc) ES §6.1.7 — a canonical *array index* is a String that is a
  * canonical numeric string whose numeric value is an integer in `[0, 2^32-1)`.
  * Such a key is the one accessed via integer-indexed element retrieval
@@ -3334,7 +3325,7 @@ export function compileObjectDefineProperties(
         // (#3984) Route array-`length` defines to ArraySetLength — the inline
         // expansion below has no notion of the vec's length field and would
         // silently leave the length unchanged. See array-length-define.ts.
-        if (!kill3984() && tryEmitVecLengthDefineForDefineProperties(ctx, fctx, objArg, propName, descExpr)) continue;
+        if (tryEmitVecLengthDefineForDefineProperties(ctx, fctx, objArg, propName, descExpr)) continue;
 
         // Parse the individual descriptor
         let valueExpr: ts.Expression | undefined;
