@@ -6978,7 +6978,15 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
       const boxed = boxConcreteToDynamic(value, actual, sourceExpression, cx);
       if (boxed !== null) return boxed;
     }
-    throw new Error(`ir/from-ast: concrete return needs a dynamic box in ${cx.funcName}`);
+    // (#4027) The from-ast half of the #1798 return-value concern that
+    // `return-type-legacy-coupling` already covers on the verify side. This is
+    // the documented "clean 'not in slice' fallback", NOT a compiler invariant,
+    // so it must demote the function to legacy rather than abort the compile.
+    throw new IrUnsupportedError(
+      "return-type-legacy-coupling",
+      "build",
+      `ir/from-ast: concrete return needs a dynamic box in ${cx.funcName}`,
+    );
   }
   // (#2856 C3) externref value into a NUMBER (f64) declared result —
   // `return hit;` where `hit = cache.get(n)` is the externref Map_get
@@ -10673,7 +10681,14 @@ function analyseCaptures(
  */
 function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   if (!stmt.expression) {
-    throw new Error(`ir/from-ast: bare 'throw' (no expression) not in slice 9 (${cx.funcName})`);
+    // (#4027) A DELIBERATE deferral, so it must be typed: a plain `Error`
+    // classifies as `unexpected-internal-throw` and hard-fails the whole
+    // compile instead of demoting this one function to legacy.
+    throw new IrUnsupportedError(
+      "throw-statement-unsupported",
+      "build",
+      `ir/from-ast: bare 'throw' (no expression) not in slice 9 (${cx.funcName})`,
+    );
   }
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
@@ -10682,7 +10697,11 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
     // Numeric throws would need a box helper. Slice 9 defers — fall back
     // to legacy by throwing here so the function compilation aborts
     // cleanly and the legacy path takes over.
-    throw new Error(`ir/from-ast: throw of numeric type (${valTy.kind}) not in slice 9 (${cx.funcName})`);
+    throw new IrUnsupportedError(
+      "throw-statement-unsupported",
+      "build",
+      `ir/from-ast: throw of numeric type (${valTy.kind}) not in slice 9 (${cx.funcName})`,
+    );
   }
   // Reference-shaped — coerce to externref. The helper is a no-op
   // when the value is already externref or `IrType.string` in host

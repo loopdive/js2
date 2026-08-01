@@ -57,6 +57,23 @@ export type IrUnsupportedCode =
   //     `any`-typed receiver, i.e. ordinary untyped JS — stopped compiling at
   //     all (empty binary) on every target. `let` was equally affected.
   | "unboxed-number-local-unprovable"
+  // SIXTH and SEVENTH sites in the same class, found 2026-08-01 (#4027) while
+  // clearing the ESLint `linter.js` frontier. Both are in `from-ast.ts` and both
+  // documented their own demote contract before throwing a PLAIN `Error`, so
+  // `classifyIrFailure` bucketed them as `unexpected-internal-throw` and the
+  // documented demotion became a hard, whole-compile error:
+  //   - the `coerceReturnValue` dynamic-box deferral, whose comment says
+  //     "throw a clean 'not in slice' fallback … Deferring mirrors the existing
+  //     numeric-throw deferral in `lowerThrowStatement`". It is the from-ast half
+  //     of the same #1798 return-value concern `return-type-legacy-coupling`
+  //     already covers on the verify side, so it reuses that code.
+  //   - `lowerThrowStatement`'s two "not in slice 9" deferrals (a bare `throw;`
+  //     and `throw <number>`), which get `throw-statement-unsupported`.
+  // Measured: `export function f(): number { throw 42; }` under the IR path
+  // failed to compile AT ALL — four lines of ordinary TypeScript, hard-errored
+  // with `[unexpected-internal-throw]` on a message that literally reads
+  // "not in slice 9".
+  | "throw-statement-unsupported"
   | "element-store-unsupported"
   | "element-access-unsupported"
   | "return-type-legacy-coupling"
