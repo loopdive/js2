@@ -12,7 +12,7 @@ Direct AOT compilation from JavaScript and TypeScript to WebAssembly GC.
 Conformance is tracked along the two compile paths — both figures auto-update on every merge to `main`:
 
 <!-- AUTO:conformance-start -->
-**test262 conformance**: 30,536 / 43,098 (70.9 %)
+**test262 conformance**: 30,530 / 43,099 (70.8 %)
 <!-- AUTO:conformance-end -->
 
 The line above is the **JS-host path** (default `gc` target): runs alongside the js2wasm JS runtime, which supplies host imports for some built-ins.
