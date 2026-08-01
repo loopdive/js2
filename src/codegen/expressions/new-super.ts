@@ -48,6 +48,7 @@ import { tryCompileNativeWeakRefNew } from "../weakref-runtime.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { compileObjectLiteralAsExternref, resolveComputedKeyExpression } from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
+import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js"; // (#3981)
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import {
   compileStandaloneRegExpConstructor,
@@ -91,7 +92,7 @@ import { localGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
-import { emitFnctorProtoGet } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object
+import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
 import {
@@ -2102,6 +2103,95 @@ function getFuncResultType(ctx: CodegenContext, funcIdx: number): ValType | unde
 }
 
 /**
+ * (#3981) Standalone/WASI ordinary [[Construct]] for a first-class function
+ * VALUE — the host lane's `__construct_closure` bridge, lowered natively.
+ *
+ * Before this, a value-bound constructor matched no compiled class tag, every
+ * `ref.test` in the dynamic-`new` dispatch chain declined, and the arm fell
+ * through to `ref.null.extern`: `new C()` was silently **null**, with no trap
+ * and no diagnostic. That is the `cookie` package's `standalone · runtime
+ * dynamic` failure — `parseCookie` returns `new NullObject()` where
+ * `NullObject` is an IIFE-returned function expression, so every caller got
+ * null and the first property read threw "Cannot access property on null or
+ * undefined".
+ *
+ * Placement matters: this runs AFTER the class and function-declaration
+ * (fnctor) arms, so a compiled class or a `function F(){}` / `var F =
+ * function(){}` constructor keeps its existing typed-struct lowering
+ * byte-for-byte. Only a callee those arms declined reaches here.
+ *
+ * Returns `undefined` to decline (caller continues its normal dispatch).
+ */
+function tryCompileNativeConstructFromValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  calleeExpr: ts.Expression,
+  rawArgs: readonly ts.Expression[],
+): ValType | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  if (!ts.isIdentifier(calleeExpr)) return undefined;
+  // A compiled fnctor for this binding means the typed-struct path owns it.
+  if (ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
+  if (!resolvesToConstructableFunctionValue(ctx, calleeExpr)) return undefined;
+
+  // A non-flattenable spread has a RUNTIME argument count, so no fixed-arity
+  // driver fits; decline rather than construct with the wrong argument list.
+  const args = flattenCallArgs(rawArgs) ?? rawArgs;
+  if (args.some((a) => ts.isSpreadElement(a))) return undefined;
+  if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
+
+  // Register the object-model helpers the driver body calls and flush ONCE,
+  // before any emission — the driver bakes `call <funcIdx>` values that a later
+  // import insertion would otherwise shift (#608/#794).
+  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  addStringConstantGlobal(ctx, "prototype");
+  const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
+
+  // Evaluate the callee, then each argument, exactly once and in source order.
+  const calleeTy = compileExpression(ctx, fctx, calleeExpr, { kind: "externref" });
+  if (calleeTy && calleeTy.kind !== "externref") {
+    coerceType(ctx, fctx, calleeTy, { kind: "externref" });
+  } else if (calleeTy === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const calleeLocal = allocLocal(fctx, `__nc_callee_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  // The prototype. A `F.prototype = …` write that #2660 S2 recognised lives in
+  // the per-fnctor module global, NOT on the closure — so read it from there
+  // when the binding resolves, and let the driver fall back to
+  // `__extern_get(callee, "prototype")` otherwise. Without this the instance is
+  // created with a null `$proto` and every inherited read returns undefined.
+  const fnctorName = resolveUserFnctorName(ctx, calleeExpr);
+  if (fnctorName === undefined || !emitFnctorProtoGet(ctx, fctx, fnctorName)) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const protoLocal = allocLocal(fctx, `__nc_proto_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: protoLocal });
+
+  const argLocals: number[] = [];
+  for (const arg of args) {
+    const argTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (argTy && argTy.kind !== "externref") {
+      coerceType(ctx, fctx, argTy, { kind: "externref" });
+    } else if (argTy === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    const argLocal = allocLocal(fctx, `__nc_arg${argLocals.length}_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: argLocal });
+    argLocals.push(argLocal);
+  }
+
+  fctx.body.push({ op: "local.get", index: calleeLocal });
+  fctx.body.push({ op: "local.get", index: protoLocal });
+  for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx });
+  return { kind: "externref" };
+}
+
+/**
  * (#2026) Dynamic-new fallback: `new K(...)` where `K` is a value-bound
  * identifier (a class flowing through a parameter / variable of type `any`)
  * that the static resolution arms could not pin to a known class. The value in
@@ -3543,6 +3633,18 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         }
       }
     }
+  }
+
+  // (#3981) The class and fnctor arms above have declined: standalone/WASI
+  // `new <function value>(...)` now constructs natively instead of evaluating
+  // to null. Placed here, and not inside the `!className` block further down,
+  // because the checker often DOES give the callee an inferred symbol name — a
+  // JS `function F(){ this.x = 1 }` held in a `const` types `new C()` as `F`,
+  // which is not in `classSet`, so control skipped every arm and the whole
+  // expression fell out as `undefined`.
+  if (calleeIdent && !ctx.classSet.has(calleeIdent.text) && !(className && ctx.classSet.has(className))) {
+    const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, calleeIdent, expr.arguments ?? []);
+    if (nativeCtor) return nativeCtor;
   }
 
   // (#2608) `new this(...)` inside a function-constructor (fnctor) STATIC method

@@ -273,6 +273,7 @@ export function createCodegenContext(
     funcRefWrapperCache: new Map(),
     constructibleFuncRefWrapperCache: new Map(),
     constructibleClosureTypeIdxs: new Set(),
+    nativeConstructProtoKey: new Map(),
     pendingInitBody: null,
     inlinableFunctions: new Map(),
     symbolCounterGlobalIdx: -1,

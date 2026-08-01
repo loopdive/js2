@@ -2713,6 +2713,14 @@ export interface CodegenContext {
   /** #3371: exact wrapper/subtype identities which implement [[Construct]]. */
   constructibleClosureTypeIdxs: Set<number>;
   /**
+   * (#3981) Per-arity `"prototype"` key push for the reserved standalone
+   * `__native_construct_<N>` drivers. Built at the call site (reserve time) and
+   * replayed into the driver body at finalize, because the string-constant
+   * machinery belongs to the mid-compile phase while the body is filled after
+   * `__call_fn_method_<N>` exists.
+   */
+  nativeConstructProtoKey: Map<number, Instr[]>;
+  /**
    * (#3433) Per-compile memo: source file → symbols assigned an async function
    * expression via `x = async function …` / `x = async () => …` anywhere in the
    * file. Replaces the O(call-sites × file-size) full-file rescan that
