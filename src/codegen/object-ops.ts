@@ -3251,11 +3251,48 @@ export function compileObjectDefineProperties(
       return false;
     }
     if (!ts.isObjectLiteralExpression(descExpr)) {
-      // Identifier / call / property-access / etc — runtime-resolved but
-      // legitimately may be a valid object (as in `{property: Math}` or
-      // `{property: descObj}`). Expand statically; Object.defineProperty will
-      // handle validation at runtime via its own path.
-      return true;
+      // A NON-LITERAL descriptor (identifier / call / property-access / `new`
+      // expression) must go to the DYNAMIC runtime, not the static expansion.
+      //
+      // This used to `return true` on the reasoning that "Object.defineProperty
+      // will handle validation at runtime via its own path". That is false: the
+      // static expansion below does not delegate to `compileObjectDefineProperty`
+      // (see the #3984 note in the loop — the synthetic call node it appeared to
+      // build was never read). The expansion parses the descriptor's fields
+      // ITSELF, and every one of those parsers is guarded by
+      // `ts.isObjectLiteralExpression(descExpr)`. So for a non-literal
+      // descriptor it parsed NOTHING: `valueExpr` stayed `undefined`, every
+      // attribute stayed `undefined`, and the property was defined with an
+      // **undefined value and default attributes** — silently, with no refusal
+      // anything downstream could observe.
+      //
+      // That is the single largest mechanism in the standalone descriptor
+      // cluster. Measured on the 2026-08-01T17:14Z standalone baseline
+      // (goal scope = `es5id:` or none of es5id/es6id/esid): 347 of the 812
+      // descriptor-area failures pass a non-literal descriptor, and the top
+      // signature across them is literally
+      // `obj.property Expected SameValue(«undefined», «"Number"»)` — the
+      // undefined this branch wrote. The classic test262 shape it breaks is
+      //
+      //     var descObj = new Number(-9);      // or [], new Date(0), a user
+      //     descObj.get = function() {…};      // ctor instance, Math, …
+      //     Object.defineProperties(obj, {property: descObj});
+      //
+      // The dynamic `__defineProperties` native already implements
+      // ToPropertyDescriptor (§6.2.5.6) correctly over an ARBITRARY object —
+      // #3246 widened it past its old `ref.test $Object` gate specifically so
+      // function/array/wrapper descriptors work — and it reads the fields with
+      // the accessor-aware, proto-walking `__extern_get`. Routing here is
+      // therefore not a fallback; it is the only path that implements the spec
+      // algorithm. Deleting the wrong fast-path claim is the whole fix.
+      //
+      // `{property: Math}` (the case the old comment cited) is handled
+      // correctly by the native too: `Math` has no value/get/set/writable/…
+      // own properties, so ToPropertyDescriptor yields an empty descriptor and
+      // CompletePropertyDescriptor fills in `undefined` + all-false — which is
+      // what the spec requires, and what the static path only reached by
+      // accident.
+      return false;
     }
     let hasData = false;
     let hasAccessor = false;
