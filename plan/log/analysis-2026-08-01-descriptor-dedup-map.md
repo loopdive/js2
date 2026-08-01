@@ -98,17 +98,43 @@ argument for priority.
 This is a **routing gap over already-working machinery**, distinct from the #3251
 per-index overlay-substrate epic (XL, fable-pinned) — so it does not collide with it.
 
-### ⚠ Open question that must be closed before treating the routing fix as complete
+### ✅ CLOSED 2026-08-01 by `g-arraylen` — and the answer is YES, there is a second defect
 
-The three single-step probe cases covered `value`, `value:123.5` and `get`. **None touched
-`writable`.** A separate two-step probe (`{writable:false}` then `{value:0}`) was ambiguous
-between a `[[DefineOwnProperty]]` gap and a failure to **store** `writable:false` at step
-one, and was correctly withdrawn. If array `length`'s `writable` attribute is silently
-dropped on store, that is a **second defect underneath the routing gap** and would be
-invisible to the planned A/B.
+The open question was whether array `length`'s `writable` is silently dropped on store,
+which would be a defect **underneath** the routing gap and invisible to its A/B. The
+prescribed single-step probe (set `writable:false`, read straight back via `gOPD`, no
+intervening define) was run. Answer: **it is dropped on store.**
 
-**Add one single-step case: set `writable:false`, read straight back via `gOPD`, with no
-intervening define.**
+**The standalone lane could not answer it.** There `gOPD(arr,"length")` returns
+`undefined` even on a **fresh, untouched array**, so the readback instrument is itself
+broken and the result is confounded — caught by the in-sweep control, not by the pass
+count. **The question was settled on the HOST lane, where the instrument works:** control
+`c1` correctly reports `{value: 3, writable: true}` on a fresh array, and yet
+
+```js
+var a = [0, 1, 2];
+Object.defineProperty(a, "length", { writable: false });
+Object.getOwnPropertyDescriptor(a, "length").writable; // true — WRONG
+```
+
+Confirmed in source: `maybeEmitVecLengthDefine` lists `writable` among its ignored
+descriptor names, commented `// \`writable\` (freeze deferred)`.
+
+It hits `defineProperty` and `defineProperties` **identically**, so it is **not** the
+routing gap and #3984's fix does not touch it — exactly as predicted. Two follow-ups fall
+out, both unowned and neither fixed in #3984 (queued as TaskList items; ids allocated only
+when picked up, to avoid burning reservations as #3890/#3891 were):
+
+- **D2 — `writable` dropped on store for array `length`, BOTH lanes.**
+- **D3 — array `length` absent from descriptor reflection on standalone**: `gOPD` returns
+  `undefined` and `getOwnPropertyNames` omits it, while `hasOwnProperty` answers `true`.
+  Discriminators rule out the alternatives — `gOPD` works on array *indices*, on
+  plain-object properties, and on the key `"length"` when the receiver is a plain object.
+  D3 is *why* D2 cannot be measured on standalone at all: there is nowhere to store an
+  attribute for a property absent from the descriptor model.
+
+All 11 probe files were validated against **Node first** — all pass on a real engine — so
+every failure measured is a compiler defect, not a wrong assertion.
 
 ## Instrument artifacts caught during this work
 
@@ -142,15 +168,44 @@ compound-assignment and all 8 assignment files carry `flags:[onlyStrict]` and sh
 shape: a **setter-less accessor not enforced on write**; the `>>=` in
 `11.13.2-40-s.js` is incidental.
 
+### The 117 is a SIGNATURE, not a MECHANISM (`g-enforce`, 2026-08-01)
+
+`g-enforce` classified all 117 by **what each body actually does**, rather than by the
+error string they share:
+
+| mechanism | files | status |
+| --- | ---: | --- |
+| assignment / compound-assignment | **37** | #3983 — fixed |
+| Array-receiver define path | **35** | #3984 — this issue |
+| non-Array define path | **31** | **UNOWNED** (TaskList #48) |
+| `Function.prototype.caller` poisoning | **11** | — |
+| `Object.getOwnPropertyNames` arg validation | **2** | — |
+| `arguments.callee` | **1** | — |
+
+**Rule, and it directly reinforces the denominator discipline above: a shared error
+string is a SYMPTOM CLASS, not a mechanism. Only reading the bodies yields a mechanism —
+sizing a fix off this signature census overstates by ~3×.** "158 files throw the same
+message" is a starting point for triage, never an estimate of what one fix will flip.
+
 ### Measured mechanism (direct `compile()`, standalone)
 
 Descriptor attributes **are** stored and reflected correctly, and configurability **is**
 enforced on redefine — but **attributes are not consulted on the ordinary write path.**
 
-⚠ **One finding worth more than the missing throws:** sloppy-mode assignment to a
-`writable:false` property **traps with a raw `WebAssembly.Exception`**, which is *not* a
-catchable TypeError. That can take out files which never asserted anything about
-descriptors at all, so the blast radius exceeds the 117.
+⚠ **RETRACTED 2026-08-01 by `g-enforce` — do not act on this.** The original claim here
+was that sloppy-mode assignment to a `writable:false` property traps with a raw
+`WebAssembly.Exception` that is not a catchable TypeError, and that the blast radius
+therefore exceeded the 117. It **is** a catchable TypeError in-module. The observation
+came from a probe with **no try/catch**, where *any* standalone throw surfaces as an
+opaque `WebAssembly.Exception` by construction — **the instrument produced the finding,
+not the compiler.** There is no blast radius beyond the 117.
+
+**Root cause, found and fixed (#3983) — one line:**
+`ctx.funcMap.set("__extern_set_strict", externSetIdx)` aliased the **strict** `[[Set]]`
+helper onto the **sloppy** one, whose refusals are all silent `return`s, so every strict
+write ES §6.2.5.6 requires to throw did nothing. Measured **+24 / 0 regressions**; the
+control's 5 apparent flips were `compile_timeout` contention flakes (re-run solo, 5/5
+pass) — counting them would have reported +29.
 
 ## Family 3 — builtin prototype methods are not first-class receiver-taking values
 
