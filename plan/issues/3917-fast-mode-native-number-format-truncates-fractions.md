@@ -1,9 +1,10 @@
 ---
 id: 3917
 title: "CRITICAL: the native number formatter truncates non-integers under `fast` — String(3.5) is \"3\", toFixed(2) is \"3.00\"; already wrong on main for standalone+fast and wasi+fast"
-status: ready
+status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
+completed: 2026-08-01
 priority: critical
 feasibility: medium
 reasoning_effort: max
@@ -20,7 +21,33 @@ blocked_by: []
 
 # #3917 — native number formatting truncates fractions under `fast`
 
-## Status: open — **blocks #3912**
+## Status: DONE — fixed by #3907, confirmed by measurement on 2026-08-01
+
+**It was the same defect as #3907, exactly as "Likely family" below guessed.**
+`fast` narrowed every TypeScript `number` to a Wasm i32, so a non-integer lost
+its fraction on the way into the formatter. #3907 removed `ctx.fast` from the
+unconditional `numericHint` narrowing; nothing in the formatter itself needed
+changing.
+
+Re-measured on `main` at `5824539` (post-#3907), every value bound to a
+**variable**, each case returning a number:
+
+| case | expected | `standalone+fast` | `wasi+fast` | `fast` |
+| --- | --- | --- | --- | --- |
+| `String(3.5).length` | 3 | **3 ✓** | **3 ✓** | 3 ✓ (with #3912) |
+| `String(0.25).length` | 4 | **4 ✓** | **4 ✓** | 4 ✓ |
+| `(3.14159).toFixed(2).length` | 4 | **4 ✓** | **4 ✓** | 4 ✓ |
+| `` `v${3.5}`.length `` | 4 | **4 ✓** | **4 ✓** | 4 ✓ |
+| `toPrecision(3)` / `toExponential(2)` | — | ✓ | ✓ | ✓ |
+
+(Previously 1, 1, `"3.00"`, `"v3"`.) The `fast` column additionally required
+#3912, which is what routes plain `fast` onto the native formatter at all.
+
+**This no longer blocks #3912** — #3912 landed on 2026-08-01 with these cases
+passing. The "Why this blocks #3912" section below is kept as the historical
+record of why the first attempt was correctly abandoned.
+
+## Original report (historical)
 
 ## Problem
 

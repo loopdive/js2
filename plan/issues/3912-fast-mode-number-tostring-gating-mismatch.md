@@ -1,9 +1,10 @@
 ---
 id: 3912
 title: "CRITICAL: fast mode (the whole gc-native lane) cannot stringify a number — 6 of 9 number→string ops trap at runtime; import-collector gates number_toString and the string family on different conditions"
-status: ready
+status: done
 created: 2026-07-31
-updated: 2026-07-31
+updated: 2026-08-01
+completed: 2026-08-01
 priority: critical
 feasibility: medium
 reasoning_effort: max
@@ -14,7 +15,56 @@ goal: performance
 sprint: current
 horizon: l
 es_edition: multi
-related: [3902, 3904, 3909, 3907]
+related: [3902, 3904, 3909, 3907, 3917]
+loc-budget-allow:
+  # (#3102 gate) 296 lines added across 9 codegen files; **222 of them (75%)
+  # are comment**, 74 are code. That ratio is the point of the change, not an
+  # accident of style.
+  #
+  # This bug was ONE conflation — `ctx.nativeStrings` treated as "there is no
+  # JS host" — replicated at NINE independent sites. Every site was internally
+  # consistent, which is exactly why the defect survived review at each of them
+  # and why reading any single site made it look correct. Six of nine
+  # number→string operations trapped at runtime in the flagship gc-native lane.
+  #
+  # Several of the edits are one-token diffs (`ctx.wasi || ctx.standalone` →
+  # `usesNativeNumberFormat(ctx)`). A one-token diff with no explanation is
+  # precisely how this gets reintroduced — and the history proves it: the
+  # `struct-field-exports.ts` site still carries the ORIGINAL comment asserting
+  # "nativeStrings mode (auto-on for `--target wasi`) — there is no JS host",
+  # a claim that reads as reasonable and is false for `fast`. Each comment
+  # therefore names the config that breaks (`fast` = native strings + live
+  # host), the observable symptom, and why the neighbouring arms must NOT be
+  # changed the same way (the dynamic-externref arms genuinely do carry host
+  # strings). See "Implementation notes" in the body.
+  - src/codegen/string-ops.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/declarations/import-collector.ts
+  - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/calls.ts
+func-budget-allow:
+  # (#3400 gate) Same change-set, same 75%-comment ratio; these four functions
+  # are the ones that host the gate sites. Per-function code growth is small:
+  #
+  #  - `compileNamespaceStaticCall` (+31): the two JSON string-representation
+  #    BOUNDARY marshals — host result → native string, native argument → host
+  #    string. Both must be emitted at the call site because the distinction is
+  #    PROVENANCE, not ValType: a native `$AnyString` box and a real JS string
+  #    are both `externref`, and only the producing site knows which it made.
+  #    Getting this backwards is the `` `v${3}` `` → `"v"` bug.
+  #  - `compileIdentifierCall` (+23): the `parseInt`/`parseFloat` native→host
+  #    argument marshal, plus routing `String(<number>)` through the new
+  #    `emitStringBuiltinNumberResult`.
+  #  - `finalizeUnifiedCollector` (+11): the shared `usesNativeNumberFormat`
+  #    predicate replacing three divergent inline gates, plus the
+  #    `__str_to_number`-is-not-a-host-import fix.
+  #  - `compileReceiverMethodCall` (+11): comment ONLY. The code change is a
+  #    single conjunct deletion in `unwrapToNative`.
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/declarations/import-collector.ts::finalizeUnifiedCollector
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 ---
 
 # #3912 — fast mode cannot stringify a number
@@ -163,7 +213,21 @@ another. Until that is explained, it is unknown whether one change fixes all
 six or whether there are two independent bugs. Settle this before designing the
 fix.
 
-## ⚠️ IMPLEMENTATION ATTEMPTED — the answer to "does one change fix all six" is NO
+## ✅ RESOLVED (2026-08-01) — see "Implementation notes" at the end
+
+The first attempt (recorded immediately below, kept for its findings) was
+correctly abandoned because #3917 would have turned traps into silent wrong
+answers. **#3907 has since landed and fixed #3917's cause** — `fast` no longer
+narrows every `number` to i32 — so the blocker is gone. Re-measured from
+scratch on current `main`; the gate + template changes now land clean.
+
+The final implementation is **larger than the two changes prescribed here**:
+the same `nativeStrings` ⇏ `noJsHost` conflation turned out to exist at
+**nine** sites, and fixing only the gate exposed several of the others as new
+failures. Scope item 3 of this issue ("audit the *other* gate pairs … assume
+there are more until checked") is what that audit found. Details at the end.
+
+## ⚠️ FIRST ATTEMPT (superseded) — the answer to "does one change fix all six" is NO
 
 The prescribed fix was implemented and measured. **It is not landable on its
 own, and #3917 now blocks it.** Findings, so the next person starts here
@@ -274,6 +338,125 @@ saying the same.
 
 **Cheap discriminator:** validation-time failure ⇒ index shift (#3909);
 runtime trap ⇒ representation mismatch (this issue).
+
+## Implementation notes (2026-08-01) — WHY, not just what
+
+### The one-sentence root cause
+
+`ctx.nativeStrings` and "there is no JS host" were treated as the same
+condition across the codebase. They are not: **`fast` is the config where they
+come apart** — native strings *with* a live JS host. Every gate that asked
+`ctx.wasi || ctx.standalone` when it meant "are strings native here?", or asked
+`ctx.nativeStrings` when it meant "is there no host here?", had a wrong answer
+in exactly that one cell. That is why the bug was invisible to inspection of
+any single site: each site was internally consistent.
+
+### Why a wide differential probe, not code reading
+
+The gate change alone was measured to fix 8 of the 9 headline operations — and
+to **break three others** that had been working. Reading the ~25
+`number_toString` consumers would not reliably have found those. The instrument
+that did was a 52-case `fast`-vs-`host` differential probe with every value
+bound to a **variable** (constant folding hides this whole area) and every case
+returning a **number** (so a wrong string representation cannot be confused with
+export-boundary marshalling).
+
+Measured with that probe, `fast` vs `host` on current `main`:
+
+| | cases differing from host |
+| --- | --- |
+| `main` (before) | **36 of 52** |
+| after this change | **3 of 52** (only **1** is a `fast` case) |
+
+**Zero regressions**: every case that passed on `main` still passes.
+
+### The nine sites, and why each moved
+
+A shared predicate `usesNativeNumberFormat(ctx)` (`wasi || standalone ||
+nativeStrings`, in `number-format-native.ts`) now answers the question once, so
+the three import gates cannot re-diverge.
+
+1-3. `declarations/import-collector.ts` — the `number_toString`,
+   `number_toString_radix` and `emitNativeNumberFormat` gates. **The headline
+   fix.** Makes the formatter native wherever strings are native.
+4. `string-ops.ts` `compileNativeTemplateExpression` — the f64/i32/i64 numeric
+   spans now unbox **unconditionally**. `__str_from_extern` marshals a *genuine
+   JS-host* string and silently yields EMPTY for a native-string box; that is
+   why `` `v${3}` `` evaluated to `"v"`. The dynamic-externref arms keep the
+   bridge — those really do carry host strings.
+5. `call-receiver-method.ts` `unwrapToNative` — `(n).toString()` reported a bare
+   `externref` for what was really an `$AnyString`. Consumers then had to
+   re-discover the representation with a dynamic `ref.test`; a consumer that
+   *cannot* (a host-import argument) silently got an opaque struct.
+6. `call-identifier.ts` `String(<number>)` — same, via a new
+   `emitStringBuiltinNumberResult`. The two spellings of the same operation now
+   agree on their result type.
+7. `call-identifier.ts` `parseInt`/`parseFloat` argument — a native string
+   reached a **host** import through `coerceType(…, externref)`, which only
+   *widens the GC ref*. The host got an opaque WasmGC struct and V8 threw
+   `Cannot convert object to primitive value`. Now marshalled with the new
+   `emitNativeStringToHostExternref` (flatten + `__str_to_extern`), the same
+   sequence `console.log` already used. **This cell was broken on `main` for
+   every native string** — `parseInt("42")` with a plain *literal* trapped
+   under `fast`. #3912 only made it reachable from one more producer.
+8. `import-collector.ts` `__str_to_number` — a **pure-Wasm helper name** was
+   being requested as a JS-host import (`src/runtime.ts` has no
+   `env.__str_to_number`), so `Number("42")` returned **NaN** across the whole
+   gc-native lane. Now always emitted natively.
+9. `calls.ts` `tryEmitJsonStringifyPrimitive` — the `then` arm
+   (`number_toString`) and the `else` arm (`compileStringLiteral("null")`)
+   disagreed on type under `fast`, so `JSON.stringify(<number>)` emitted an
+   **invalid module** — a validation failure, not a trap.
+
+Plus two boundary marshals in `call-namespace-static.ts`: `JSON.stringify`'s
+host result is a real JS string and is now bridged **into** a native string
+(`emitHostExternrefToNativeString`), and a native-string *argument* is
+marshalled **out** to a real JS string. Both directions are emitted at the
+producing call site, because the distinction is **provenance, not ValType** —
+a native box and a host string are both `externref`, and only the call site
+knows which it made.
+
+### The one remaining `fast` failure, traced (NOT fixed here)
+
+`JSON.stringify({a: 42})` under `fast` returns **`"{}"`** instead of
+`{"a":42}`.
+
+This is **not** a number-formatting defect and it is **not new** — the object
+argument path is byte-identical to `main` (the native-string marshal above is
+guarded off for structs). `main` produced the same `"{}"`; nobody could see it
+because reading the result trapped first. This change removes the trap, which
+makes the pre-existing wrong answer **visible**.
+
+Traced to `struct-field-exports.ts:emitStructFieldNamesExport`, which begins
+`if (ctx.nativeStrings) return;` — the **ninth** instance of the same
+conflation, and its comment says so out loud: *"In nativeStrings mode (auto-on
+for `--target wasi`) there is no JS host"*. Under `fast` there **is** a host, so
+the export is not dead code: without `__struct_field_names` the host's
+`_wasmToPlain` cannot enumerate the struct's fields and returns `{}`.
+
+**Why it is not fixed here**: the fix is not the predicate. Switching it to
+`ctx.wasi || ctx.standalone` was tried and makes the body emit under native
+strings, where the string-constant globals it reads do not exist — the module
+then fails to build with `Codegen error: global index out of range`. Making
+that CSV a native string is separate work. A comment recording all of this
+sits at the site.
+
+### Also done
+
+#3902's temporary `coercion-sites-allow` for `src/codegen/array-methods.ts` is
+**removed**, along with the `ctx.funcMap.get("number_toString")` host-import
+detection probe it covered — exactly as #3902's frontmatter instructed. With
+the formatter native wherever `nativeStrings` is on, that probe could never
+fire again.
+
+### Not verified
+
+- **Full test262.** Not run locally (CI owns it). This changes number
+  formatting for every fast-mode program, so `built-ins/Number`,
+  `built-ins/JSON` and `Array/prototype/join` are the buckets to watch.
+- **`--target wasi` at runtime.** Reasoned to be unchanged (every predicate
+  keeps `wasi || standalone` true), and covered by the standalone probe
+  columns, but not executed under wasmtime.
 
 ## Provenance
 
