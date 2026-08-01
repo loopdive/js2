@@ -129,9 +129,10 @@ does not change what any one compile sees.
 
 ## Result
 
-The real ESLint `linter.js` graph now **completes**: 240 s wall, exit 0, peak
-heap 1.06 GB, structured report emitted — versus not finishing in 25 min. (240 s
-was measured under concurrent load from a test suite on the same 4-core box.)
+The real ESLint `linter.js` graph now **completes**: 238 s wall, exit 0, peak
+heap 1.07 GB, structured report emitted — versus not finishing in 25 min. Two
+runs, one solo (238 s) and one under concurrent test-suite load on the same
+4-core box (240 s), so the figure is not contention-inflated.
 
 It still stops at a hard codegen error, so this remains a budget on a compile
 that aborts at the frontier — stated here rather than papered over. The frontier
@@ -149,7 +150,7 @@ Post-fix phase attribution (146 sources, `--target gc`, `platform: node`):
 
 | phase                                                    | self     | share  |
 | -------------------------------------------------------- | -------- | ------ |
-| `module-init-pass1` (the one remaining full init compile) | 120.69 s | 51.0 % |
+| `module-init-pass1` (the one remaining full init compile) | 119.79 s | 51.0 % |
 | `bodies/code-path-analysis/code-path-state.js`           | 21.88 s  | 9.3 %  |
 | `bodies/@eslint-community/eslint-utils/index.mjs`        | 18.22 s  | 7.7 %  |
 | `bodies/languages/js/source-code/source-code.js`         | 13.58 s  | 5.7 %  |
@@ -184,6 +185,12 @@ Post-fix phase attribution (146 sources, `--target gc`, `platform: node`):
   return identical values (`84`, `9`, `30`, `50`, `1234`, `15`), each matching
   the JS-semantics answer. Emitted **bytes** legitimately differ — the base
   emits n−1 dead initializers — so behaviour, not the byte image, is the oracle.
+- **Full equivalence suite, both sides.** Run on this branch and again at the
+  base commit `bd1086b3` in a separate worktree (so no mid-run file swapping
+  could contaminate either): **12 failed / 201 passed test files, 32 failed /
+  1611 passed / 3 todo tests — on BOTH**, and `diff` of the sorted failing-test
+  lists is **empty**. All 32 are pre-existing in this container (TDZ, null
+  dereference guards, delete-sentinel, Reflect, yield-as-expression, …).
 - Multi-source suite (`multi-file`, `issue-2138-multi-module-ir-overlay`,
   `issue-3493`, `issue-3495`, `issue-3505`, `standalone-multimodule-to-primitive-fills`,
   `issue-3369-project-runner`, `issue-3520-legacy-unit-projection`):
