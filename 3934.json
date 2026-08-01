@@ -1,10 +1,11 @@
 {
   "id": "3934",
   "assignee": "ttraenkler/dev-ci-3934",
-  "requested_by": "ttraenkler/dev-ci-3934",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-3934-stub-timeout-silent-strand",
   "claimed_at": "2026-08-01T07:19:48Z",
-  "updated_at": "2026-08-01T07:19:48Z",
-  "write_id": "83467-0b4o77y1"
+  "updated_at": "2026-08-01T08:24:14Z",
+  "write_id": "92441-105qhcyh",
+  "released_at": "2026-08-01T08:24:14Z"
 }
