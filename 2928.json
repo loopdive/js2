@@ -1,10 +1,11 @@
 {
   "id": "2928",
   "assignee": "ttraenkler/s78-sendev-eval",
-  "requested_by": "ttraenkler/s78-sendev-eval",
-  "status": "in-progress",
+  "requested_by": "claude.ai@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-2928-e7-ci-provider",
   "claimed_at": "2026-08-01T01:29:02Z",
-  "updated_at": "2026-08-01T01:29:02Z",
-  "write_id": "22629-38b9o4ow"
+  "updated_at": "2026-08-01T05:41:21Z",
+  "write_id": "41365-avt2vhy0",
+  "released_at": "2026-08-01T05:41:21Z"
 }
