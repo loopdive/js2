@@ -441,6 +441,50 @@ then fails to build with `Codegen error: global index out of range`. Making
 that CSV a native string is separate work. A comment recording all of this
 sits at the site.
 
+### The `nativeStrings` export-boundary problem — REAL, SEPARATE, pre-existing
+
+#3907's author flagged this as "#3912's remaining half" and pinned its own
+outcomes at `nativeStrings: false` because of it. Measured directly, it is
+**real but it is not #3912's half** — it is an independent defect:
+
+**Under `nativeStrings`, an exported function that RETURNS a `string` hands JS
+an opaque WasmGC object, not a JS string.**
+
+| returned expression | `host` | `fast` | `fast, nativeStrings:false` | `standalone` |
+| --- | --- | --- | --- | --- |
+| `const s = "hi"; return s` | `"hi"` | **opaque object** | `"hi"` | **opaque object** |
+| `return n.toString()` | `"42"` | **opaque object** | `"42"` | **opaque object** |
+| `` return `v${n}` `` | `"v42"` | **opaque object** | `"v42"` | **opaque object** |
+
+Three facts settle its identity:
+
+1. **A plain string LITERAL does it too.** No formatter is involved, so this
+   cannot be a number-formatting defect.
+2. **`standalone` behaves identically**, and `standalone` never had #3912's
+   host/native mismatch.
+3. **The same values are correct INSIDE wasm.** `"hi".length`,
+   `n.toString().length` and `String(n).length` all return 2 in every config —
+   before and after this change. The defect is purely at the *export frontier*.
+
+So it is the **export-boundary instance of the native→host marshalling gap**
+that sites 7 and the JSON argument marshal fix elsewhere: a native string
+handed outward is never run through `__str_to_extern`. It is **not fixed here**
+because doing so changes the ABI of every exported string-returning function
+and must not apply to `standalone` (no host to marshal to) — that is its own
+change with its own risk surface.
+
+**Effect of #3912 on it**: on `main`, `return n.toString()` under `fast` gave
+`null` while a string literal gave an opaque object. It is now an opaque object
+in both cases — still wrong, but no longer wrong in two different ways. Nothing
+that worked stopped working.
+
+**Methodological consequence, and why this issue's tests look the way they
+do**: a returned string cannot be used to measure this area under
+`nativeStrings`. Every case in `tests/issue-3912-fast-number-stringify.test.ts`
+therefore returns a **number** (`.length` / `.charCodeAt(i)`), which is
+observable and unambiguous. Pinning outcomes at `nativeStrings: false`, as
+#3907 did, is the other valid workaround.
+
 ### Also done
 
 #3902's temporary `coercion-sites-allow` for `src/codegen/array-methods.ts` is
@@ -449,14 +493,50 @@ detection probe it covered — exactly as #3902's frontmatter instructed. With
 the formatter native wherever `nativeStrings` is on, that probe could never
 fire again.
 
+### Validation — A/B against pristine `main`, not just "tests pass"
+
+Both suites were run **twice** on the same checkout, reverting only `src/` to
+the parent commit in between (via `git checkout HEAD~1 -- src/` — never
+`git stash`, which is one shared stack across worktrees), so the two runs
+differ **only** by this change:
+
+| suite | baseline | with #3912 | new failures |
+| --- | --- | --- | --- |
+| `tests/equivalence` (1,646 tests) | 32 failed | 32 failed | **0** |
+| targeted 124 files — json / number / string / parse / sort / fast / coercion (1,188 tests) | 66 failed | 45 failed | **0** (21 newly passing, all from this issue's new test file) |
+
+The failure **sets** were compared by name, not just the counts. Every
+pre-existing failure (TDZ, Reflect, `void`, null-guards, closures, `yield`,
+`coercion/arithmetic-add`) is present identically on both sides.
+`tests/fast-arrays.test.ts > array find` also fails on both — it is a
+TypeScript diagnostic (`find` returns `number | undefined`) unrelated to this
+change.
+
 ### Not verified
 
 - **Full test262.** Not run locally (CI owns it). This changes number
   formatting for every fast-mode program, so `built-ins/Number`,
   `built-ins/JSON` and `Array/prototype/join` are the buckets to watch.
-- **`--target wasi` at runtime.** Reasoned to be unchanged (every predicate
-  keeps `wasi || standalone` true), and covered by the standalone probe
-  columns, but not executed under wasmtime.
+- **`--target wasi` under wasmtime.** The `wasi+fast` column was exercised in
+  the probe harness (8 of 9 operations, same as `fast`), and every predicate
+  keeps `wasi || standalone` true so the WASI lowering is unchanged by
+  construction — but no wasmtime execution was performed.
+- **Benchmarks.** The gc-native lane should now publish bars for the
+  number-formatting suites that previously vanished (see #3904), but no
+  benchmark run was done.
+
+### Follow-ups this work identified (not filed — no issue ids allocated)
+
+1. **`__struct_field_names` under `nativeStrings`** — blocks
+   `JSON.stringify(<object>)` in `fast` (returns `"{}"`). Needs the field-name
+   CSV as a native string; the current body reads string-constant globals that
+   do not exist under native strings.
+2. **Native-string export boundary** — an exported function returning a
+   `string` hands JS an opaque WasmGC object under `nativeStrings` (see above).
+3. **Native JSON codec returns `"null"` for objects in `standalone`** —
+   measured: `JSON.stringify({a: 42})` is `"null"` (length 4) in `standalone`
+   and `standalone+fast` on `main` today. Unrelated to `fast`; pre-existing and
+   untouched.
 
 ## Provenance
 
