@@ -21,6 +21,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
+import { installFrameTrap } from "../frame-trap.js";
 import {
   compileNativeGeneratorFunction,
   isNativeGeneratorCandidate,
@@ -237,6 +238,101 @@ function collectNamesMutatedInNestedFunctions(enclosingBody: ts.Node): Set<strin
   return out;
 }
 
+/**
+ * (#4075) Per-container cache of the transitive sibling-capture closure. Keyed
+ * by the container node (function body / source file) that owns the sibling
+ * set, so the Phase-0 reservation and the compile pass see the same verdict and
+ * the O(siblings²) fixpoint runs once per container rather than once per
+ * declaration — which matters on minified bundles with hundreds of siblings.
+ */
+const siblingCaptureClosureCache = new WeakMap<ts.Node, Map<string, Set<string>>>();
+
+/**
+ * The container whose statement list holds `stmt`'s sibling function
+ * declarations: its enclosing function body, or the source file at top level.
+ */
+function siblingContainerOf(stmt: ts.FunctionDeclaration): { node: ts.Node; stmts: readonly ts.Statement[] } | undefined {
+  const parent = stmt.parent;
+  if (!parent) return undefined;
+  if (ts.isSourceFile(parent)) return { node: parent, stmts: parent.statements };
+  if (ts.isBlock(parent) || ts.isModuleBlock(parent)) return { node: parent, stmts: parent.statements };
+  return undefined;
+}
+
+/**
+ * Names `stmt` must capture BECAUSE it calls (or otherwise references) a
+ * capturing sibling — the transitive closure of "captures an outer local" over
+ * the "references a sibling declaration" edge.
+ *
+ * Purely syntactic: it reads the sibling declarations' own bodies and the
+ * enclosing `fctx.localMap`, never `ctx.nestedFuncCaptures`, so it returns the
+ * same answer before and after any sibling has been compiled.
+ */
+function transitiveSiblingCaptures(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+): ReadonlySet<string> {
+  const container = siblingContainerOf(stmt);
+  if (!container || !stmt.name) return new Set();
+
+  let closure = siblingCaptureClosureCache.get(container.node);
+  if (!closure) {
+    // Last-wins per name, mirroring the Phase-0 / compile-loop duplicate rule.
+    const decls = new Map<string, ts.FunctionDeclaration>();
+    for (const s of container.stmts) {
+      if (ts.isFunctionDeclaration(s) && s.name && s.body) decls.set(s.name.text, s);
+    }
+    const ownLocalsOf = new Map<string, Set<string>>();
+    const referencedBy = new Map<string, Set<string>>();
+    closure = new Map<string, Set<string>>();
+    for (const [name, decl] of decls) {
+      const own = new Set<string>();
+      addFunctionOwnLocals(decl, own);
+      const referenced = new Set<string>();
+      for (const s of decl.body!.statements) collectReferencedIdentifiers(s, referenced, own);
+      ownLocalsOf.set(name, own);
+      referencedBy.set(name, referenced);
+      // Direct captures: outer locals of the enclosing frame. Same filters as
+      // the Phase-0 check and the capture loop below.
+      const direct = new Set<string>();
+      for (const referencedName of referenced) {
+        if (referencedName === "this" || referencedName === "super") continue;
+        if (own.has(referencedName) || decls.has(referencedName)) continue;
+        if (
+          ctx.funcMap.has(referencedName) &&
+          ctx.funcMap.get(referencedName) !== ctx.jsStringImports.get(referencedName)
+        ) {
+          continue;
+        }
+        if (fctx.localMap.has(referencedName)) direct.add(referencedName);
+      }
+      closure.set(name, direct);
+    }
+    // Propagate along sibling references to fixpoint. A name shadowed by the
+    // caller's own locals is NOT propagated — the caller binds it itself.
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const [name, referenced] of referencedBy) {
+        const into = closure.get(name)!;
+        const own = ownLocalsOf.get(name)!;
+        for (const calleeName of referenced) {
+          if (calleeName === name) continue;
+          const calleeCaps = closure.get(calleeName);
+          if (!calleeCaps) continue;
+          for (const capName of calleeCaps) {
+            if (own.has(capName) || into.has(capName)) continue;
+            into.add(capName);
+            changed = true;
+          }
+        }
+      }
+    }
+    siblingCaptureClosureCache.set(container.node, closure);
+  }
+  return closure.get(stmt.name.text) ?? new Set();
+}
+
 export function compileNestedFunctionDeclaration(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -353,6 +449,36 @@ export function compileNestedFunctionDeclaration(
   const referencedNames = new Set<string>();
   for (const s of stmt.body.statements) {
     collectReferencedIdentifiers(s, referencedNames, ownLocals);
+  }
+
+  // (#4075) TRANSITIVE captures through sibling calls.
+  //
+  // A nested function that CALLS a capturing sibling has to supply that
+  // sibling's captures at the call site (`nestedFuncCaptures` prepend in
+  // call-identifier.ts), and it does so by `local.get`-ing the DECLARING
+  // frame's slot. When the caller is itself lifted to a module-level function,
+  // that slot does not exist in its frame and the emitted index is out of
+  // range — the module fails to validate ("local index out of range").
+  //
+  // Reference example (uri-js's UMD bundle): the factory body declares
+  // `SCHEMES`/`URI_PROTOCOL`/… as locals; nested `parse`/`serialize` capture
+  // them; sibling `normalize`/`resolve`/`equal` call `parse` without
+  // mentioning those names at all, so they captured nothing and emitted
+  // `local.get 31` into a 7-slot frame.
+  //
+  // Fix: treat a referenced capturing sibling's captures as referenced here
+  // too, so they become this function's captures as well and ride in as
+  // leading params. The call site then resolves them through `localMap` to
+  // those params (`liftedCaptureNames`, call-identifier.ts).
+  //
+  // The closure is computed SYNTACTICALLY over the sibling set rather than
+  // from `ctx.nestedFuncCaptures`, because the Phase-0 reservation in
+  // `hoistFunctionDeclarations` has to reach the SAME verdict before any
+  // sibling has been compiled. If the two disagree — reservation says
+  // "capture-free", compile says "capturing" — the capturing branch never
+  // fills the reserved slot and every call to that function returns 0.
+  for (const name of transitiveSiblingCaptures(ctx, fctx, stmt)) {
+    if (!ownLocals.has(name)) referencedNames.add(name);
   }
 
   // Detect which captured variables are written inside the function body
@@ -616,6 +742,7 @@ export function compileNestedFunctionDeclaration(
       // read (#1702) falls back to `undefined` — behaviour-preserving.
       readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
     };
+    installFrameTrap(liftedFctx, funcName);
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -929,10 +1056,15 @@ export function compileNestedFunctionDeclaration(
       // read (#1702) falls back to `undefined` — behaviour-preserving.
       readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
     };
+    installFrameTrap(liftedFctx, funcName);
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
     }
+    // (#4075) Record which names arrived as leading capture params. Forwarding
+    // call sites must read OUR param for these, not the declaring function's
+    // slot number — see `liftedCaptureNames` in context/types.ts.
+    liftedFctx.liftedCaptureNames = new Set(captures.map((c) => c.name));
 
     // Register mutable captures as boxed so reads/writes use struct.get/set.
     // Also register non-mutable captures that are already boxed in the outer
@@ -1739,6 +1871,11 @@ export function hoistFunctionDeclarations(
           break;
         }
       }
+      // (#4075) A sibling that only CALLS a capturing sibling captures too —
+      // transitively. Phase 0 MUST agree with the compile pass here: reserving
+      // a capture-free slot for a function the compile pass then lifts with
+      // capture params leaves the slot empty and every call returns 0.
+      if (!capturesOuter && transitiveSiblingCaptures(ctx, fctx, stmt).size > 0) capturesOuter = true;
       if (capturesOuter) continue;
 
       // Compute the real signature (mirror the slice in

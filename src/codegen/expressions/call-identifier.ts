@@ -1993,8 +1993,23 @@ export function compileIdentifierCall(
           // behaviour to preserve. Every in-frame case is byte-identical.
           const capFrameSize = fctx.params.length + fctx.locals.length;
           const mappedCapIdx = fctx.localMap.get(cap.name);
+          // Also prefer the mapped slot when this name is one of THIS lifted
+          // function's own capture params (#4075): the declaring frame's slot
+          // number carries no meaning here even when it happens to land inside
+          // our frame, and reading it silently returns an unrelated local.
+          const ownLiftedCapture = fctx.liftedCaptureNames?.has(cap.name) === true;
           const capSourceIdx =
-            cap.outerLocalIdx < capFrameSize ? cap.outerLocalIdx : (mappedCapIdx ?? cap.outerLocalIdx);
+            cap.outerLocalIdx < capFrameSize && !ownLiftedCapture
+              ? cap.outerLocalIdx
+              : (mappedCapIdx ?? cap.outerLocalIdx);
+          if (process.env?.JS2WASM_FRAME_OPS && capSourceIdx >= capFrameSize) {
+            process.stderr.write(
+              `[js2:nested-cap] '${cap.name}' callee='${funcName}' caller='${fctx.name}' ` +
+                `outerLocalIdx=${cap.outerLocalIdx} frame=${capFrameSize} mapped=${mappedCapIdx ?? "none"} ` +
+                `capturedGlobal=${ctx.capturedGlobals.has(cap.name)} ` +
+                `boxGlobal=${ctx.capturedBoxGlobals?.has(cap.name) ?? false}\n`,
+            );
+          }
           fctx.body.push({ op: "local.get", index: capSourceIdx });
           // Coerce capture value to expected param type if they differ
           const expectedCapType = captureParamTypes?.[capIdx];

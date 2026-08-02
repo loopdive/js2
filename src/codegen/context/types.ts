@@ -543,6 +543,16 @@ export interface FunctionContext {
   /** Map from variable name → ref cell info (for mutable closure captures) */
   boxedCaptures?: Map<string, { refCellTypeIdx: number; valType: ValType }>;
   /**
+   * (#4075) Names this LIFTED nested function receives as leading synthetic
+   * capture params. For these the declaring function's slot number
+   * (`nestedFuncCaptures[i].outerLocalIdx`) is meaningless in this frame — the
+   * value lives in our own param, reachable through `localMap`. Call sites that
+   * forward captures to a nested callee consult this to pick the param instead
+   * of the declaring slot; every other name keeps the historical
+   * declaring-slot read (the #1177 revert).
+   */
+  liftedCaptureNames?: Set<string>;
+  /**
    * (#3121) Names whose local slot was PROMOTED to a module global by
    * `promoteAccessorCapturesToGlobals` (object-literal method / accessor /
    * class-body capture). The promotion deletes the name from `localMap` so
