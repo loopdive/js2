@@ -27,12 +27,15 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     // The published `js2wasm:runtime-eval` surface.
     expect(source).toContain("function __runtime_new_function(");
     expect(source).toContain("function __runtime_indirect_eval(");
+    expect(source).toContain("function __runtime_direct_eval(");
     // The interpreter entry points behind it.
     expect(source).toContain("function createDynamicFunction(");
     expect(source).toContain("function executeIndirectEval(");
+    expect(source).toContain("function executeDirectEval(");
     // Build-time positive controls must be present so the prebuild can refuse
     // a broken provider before caching it.
     expect(source).toContain("function __runtime_eval_canary(");
+    expect(source).toContain("function __runtime_direct_eval_canary(");
     expect(source).toContain("function __runtime_positive_corpus_canary(");
     // Module syntax must be stripped — the provider is ONE ordered-initializer
     // unit, not a module graph.

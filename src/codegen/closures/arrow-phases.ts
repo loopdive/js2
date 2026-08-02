@@ -75,6 +75,7 @@ export function planClosureCaptures(
   fctx: FunctionContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   body: ts.ConciseBody,
+  additionalCaptureNames?: Iterable<string>,
 ): { captures: ArrowClosureCapture[]; selfBindingName: string | undefined } {
   // 2. Analyze captured variables. Use scope-aware collection so that nested
   //    `var` declarations and parameter bindings inside the closure body shadow
@@ -136,6 +137,14 @@ export function planClosureCaptures(
   // captures.
   for (const p of arrow.parameters) {
     collectReferencedIdentifiers(p, referencedNames, ownLocals);
+  }
+  // Direct-eval source is opaque to the static identifier scan. Its lexical
+  // ancestors have already promoted all eval-visible bindings to cells; make
+  // those cells explicit captures so this closure can forward the live scope.
+  if (additionalCaptureNames) {
+    for (const name of additionalCaptureNames) {
+      if (!ownLocals.has(name)) referencedNames.add(name);
+    }
   }
 
   // Transitively add captures needed by called nested functions.

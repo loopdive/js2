@@ -10,7 +10,7 @@
 
 import { emitFunction, emitProgram } from "./emitter.js";
 import { interpEnter, makeInterpClosure, type InterpCallable } from "./loop.js";
-import { ENV_GLOBAL, EnvRec, type FuncMeta, type JSValue } from "./types.js";
+import { ENV_DECLARATIVE, ENV_GLOBAL, EnvRec, type FuncMeta, type JSValue } from "./types.js";
 
 /** Host-free Acorn entry shape. `source` uses the compiler's native string
  * carrier; both `options` and the result use the shared open-$Object carrier. */
@@ -71,4 +71,31 @@ export function executeIndirectEval(parse: DynamicParser, source: JSValue, globa
   const ast = parse(source, options);
   const env = new EnvRec(ENV_GLOBAL, null, null, null, globalObject);
   return interpEnter(emitProgram(ast), env, globalObject, []);
+}
+
+/** Execute direct eval against live caller binding cells.
+ *
+ * `names[i]` and `slots[i]` are parallel arrays produced by the AOT caller.
+ * Every slot is an `EvalBindingCell`; the declarative EnvRec therefore aliases
+ * caller storage rather than copying values into a provider-private object.
+ * The global record remains the parent so unresolved names retain the same
+ * global lookup behavior as indirect eval and dynamic Function.
+ */
+export function executeDirectEval(
+  parse: DynamicParser,
+  source: JSValue,
+  globalObject: JSValue,
+  thisArg: JSValue,
+  names: JSValue,
+  slots: JSValue[],
+): JSValue {
+  if (typeof source !== "string") return source;
+
+  const options: JSValue = {};
+  options.ecmaVersion = 2025;
+  options.sourceType = "script";
+  const ast = parse(source, options);
+  const globalEnv = new EnvRec(ENV_GLOBAL, null, null, null, globalObject);
+  const callerEnv = new EnvRec(ENV_DECLARATIVE, globalEnv, names, slots, undefined);
+  return interpEnter(emitProgram(ast), callerEnv, thisArg, []);
 }

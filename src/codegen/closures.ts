@@ -140,6 +140,11 @@ import {
   emitClosureConstruction,
   registerClosureBindingInfo,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
+import {
+  collectDirectEvalBindingNames,
+  functionMayReachDirectEval,
+  reifyCurrentDirectEvalBindings,
+} from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import {
   emitObjectMethodAsClosure,
@@ -2048,6 +2053,11 @@ export function compileLiftedClosureBody(
     // native struct → the #2681/#2686 throw).
     thisStructName: resolveLiftedMethodThisStruct(ctx, arrow),
   };
+  const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  if (reachesDirectEval) {
+    liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(arrow);
+    for (const capture of captures) liftedFctx.directEvalBindingNames.add(capture.name);
+  }
   initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
 
   // (#1384) Track liftedFctx.body in liveBodies BEFORE any emission so
@@ -2261,7 +2271,7 @@ export function compileLiftedClosureBody(
 
   // Set up `arguments` object for function expressions (not arrow functions).
   // Arrow functions don't have their own `arguments` binding in JS.
-  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && closureBodyUsesArguments(body)) {
+  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && (closureBodyUsesArguments(body) || reachesDirectEval)) {
     // Ensure __box_number is available for boxing numeric params
     const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
     if (hasNumericParam) {
@@ -2320,6 +2330,7 @@ export function compileLiftedClosureBody(
   // accesses before the declaration site throw ReferenceError (#790).
   if (ts.isBlock(body)) {
     hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
+    reifyCurrentDirectEvalBindings(ctx, liftedFctx);
   }
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
@@ -2663,7 +2674,14 @@ export function compileArrowAsClosure(
 
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
-  const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body);
+  const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  const { captures, selfBindingName } = planClosureCaptures(
+    ctx,
+    fctx,
+    arrow,
+    body,
+    reachesDirectEval ? fctx.boxedCaptures?.keys() : undefined,
+  );
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
   //    For mutable captures, the field type is a ref cell (struct { value: T })

@@ -42,10 +42,16 @@ describe("#2928 — linked runtime Function provider", () => {
         name: "__runtime_indirect_eval",
         kind: "function",
       },
+      {
+        module: "js2wasm:runtime-eval",
+        name: "__runtime_direct_eval",
+        kind: "function",
+      },
     ]);
     expect(report.executionErrors).toEqual({});
     expect(report.values).toEqual({
       provider: 3,
+      providerDirect: 84,
       create: 1,
       invokeNew: 3,
       invokeNewImmediate: 3,
@@ -57,6 +63,11 @@ describe("#2928 — linked runtime Function provider", () => {
       aotIdentityRoundTrip: 1,
       indirectEval: 42,
       indirectEvalNonString: 42,
+      directEvalMutation: 84,
+      directEvalNonString: 42,
+      nestedDirectEvalMutation: 84,
+      functionExpressionDirectEvalMutation: 84,
+      arrowDirectEvalMutation: 84,
     });
   });
 });

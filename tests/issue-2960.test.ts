@@ -13,6 +13,12 @@
 //     #2928's linked acceptance test proves execution.
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
+import {
+  RUNTIME_EVAL_IMPORT_MODULE,
+  RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
+  buildRuntimeEvalRefusalProviderSource,
+  instantiateRuntimeEvalNamespace,
+} from "../scripts/runtime-eval-provider.mjs";
 
 function importNames(bin: Uint8Array): string[] {
   return WebAssembly.Module.imports(new WebAssembly.Module(bin)).map((i) => `${i.module}::${i.name}`);
@@ -63,27 +69,29 @@ describe("#2960 — host-mode dynamic new Function routes to the meta-circular s
   });
 });
 
-describe("#2960 — standalone dynamic direct eval: warning + host-free + catchable throw", () => {
-  it("does NOT leak env::__extern_eval and warns", async () => {
+describe("#2960/#2929 — standalone dynamic direct eval links the runtime provider", () => {
+  it("uses the core-Wasm direct-eval boundary without leaking env::__extern_eval", async () => {
     const r = await compile(`export function test(): number { let s = "1"; s = s + "+1"; return eval(s) as number; }`, {
       target: "standalone",
     });
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    expect(importNames(r.binary).some((n) => n.includes("__extern_eval"))).toBe(false);
-    expect(
-      (r.errors ?? []).some(
-        (e) => (e as { severity?: string }).severity === "warning" && /dynamic eval is not supported/.test(e.message),
-      ),
-    ).toBe(true);
+    expect(importNames(r.binary)).toEqual([`${RUNTIME_EVAL_IMPORT_MODULE}::__runtime_direct_eval`]);
+    expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
   });
 
-  it("instantiates host-free and the dynamic eval throws CATCHABLY at the call site", async () => {
+  it("keeps provider refusal catchable at the call site", async () => {
     const r = await compile(
       `export function test(): number { let s = "1"; s = s + "+1"; try { return eval(s) as number; } catch (e) { return 42; } }`,
       { target: "standalone" },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    const refusal = await compile(buildRuntimeEvalRefusalProviderSource(), {
+      ...RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
+      fileName: "issue-2960-refusal-provider.ts",
+    });
+    expect(refusal.success, JSON.stringify(refusal.errors)).toBe(true);
+    const namespace = instantiateRuntimeEvalNamespace(new WebAssembly.Module(refusal.binary));
+    const { instance } = await WebAssembly.instantiate(r.binary, { [RUNTIME_EVAL_IMPORT_MODULE]: namespace });
     expect((instance.exports as { test(): number }).test()).toBe(42);
   });
 });

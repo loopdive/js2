@@ -3092,10 +3092,12 @@ function sourceUsesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
 
 function sourceProvidesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
   return sourceFile.statements.some(
-    (stmt) =>
-      ts.isFunctionDeclaration(stmt) &&
-      (stmt.name?.text === "__runtime_new_function" || stmt.name?.text === "__runtime_indirect_eval"),
+    (stmt) => ts.isFunctionDeclaration(stmt) && isRuntimeEvalBoundaryName(stmt.name?.text),
   );
+}
+
+function isRuntimeEvalBoundaryName(name: string | undefined): boolean {
+  return name === "__runtime_new_function" || name === "__runtime_indirect_eval" || name === "__runtime_direct_eval";
 }
 
 function callUsesRuntimeEvalBoundary(node: ts.CallExpression | ts.NewExpression): boolean {
@@ -3108,9 +3110,8 @@ function callUsesRuntimeEvalBoundary(node: ts.CallExpression | ts.NewExpression)
   ) {
     expr = expr.expression;
   }
-  // Direct eval remains on #2929 (constant direct eval is compiled away;
-  // dynamic direct eval is refused), so it does not enable this linked ABI.
-  if (ts.isIdentifier(expr) && expr.text === "eval") return false;
+  // Direct eval now routes through #2929's linked caller-environment ABI.
+  if (ts.isIdentifier(expr) && expr.text === "eval") return true;
   if (ts.isIdentifier(expr) && expr.text === "Function") {
     // Literal-only Function construction is compiled away by #2924.
     return node.arguments?.some((arg) => !ts.isStringLiteralLike(arg)) ?? false;
@@ -3317,9 +3318,7 @@ export function generateModule(
   }
   if (
     (ctx.standalone || ctx.wasi) &&
-    (sourceUsesRuntimeEvalBoundary(ast.sourceFile) ||
-      ctx.topLevelFunctionNames.has("__runtime_new_function") ||
-      ctx.topLevelFunctionNames.has("__runtime_indirect_eval"))
+    (sourceUsesRuntimeEvalBoundary(ast.sourceFile) || [...ctx.topLevelFunctionNames].some(isRuntimeEvalBoundaryName))
   ) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }

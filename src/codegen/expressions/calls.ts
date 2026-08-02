@@ -238,6 +238,7 @@ import {
 } from "./calls-closures.js";
 import { compileOptionalCallExpression } from "./calls-optional.js";
 import {
+  emitStandaloneDirectEvalRuntime,
   emitStandaloneIndirectEvalRuntime,
   ensureRuntimeEvalCallableCarrier,
   isFunctionCtorImmediateCall,
@@ -5919,16 +5920,15 @@ function compileCallExpression(
       if (rewritten !== undefined) return rewritten;
       const inlined = tryStaticEvalInline(ctx, fctx, expr, evalKind === "direct");
       if (inlined !== undefined) return inlined;
-      // #2928 — indirect eval is global-scoped, so standalone can route it to
-      // the linked interpreter without caller-scope reification. Direct eval
-      // still needs #2929 and retains #2960's catchable failure.
-      if (evalKind === "indirect") {
-        const runtimeEval = emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
-        if (runtimeEval !== undefined) return runtimeEval;
-      }
-      // (#2960) No-JS-host direct eval (and WASI until its linker grows the
-      // provider): refuse the unsatisfiable `__extern_eval` import with a
-      // source-located warning and a catchable call-site throw.
+      // #2928/#2929 — direct eval adds live caller cells to indirect eval's global environment.
+      const runtimeEval =
+        evalKind === "direct"
+          ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr.arguments)
+          : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
+      if (runtimeEval !== undefined) return runtimeEval;
+      // (#2960) WASI (until its linker grows the provider), or a standalone
+      // route that could not materialize its runtime ABI: refuse the
+      // unsatisfiable host import with a catchable call-site throw.
       if (noJsHost(ctx)) {
         reportError(
           ctx,

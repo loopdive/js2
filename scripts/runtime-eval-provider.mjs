@@ -100,6 +100,16 @@ const REFUSAL_PROVIDER_SOURCE = `
       ): any {
         return refuse();
       }
+
+      export function __runtime_direct_eval(
+        source: any,
+        globalObject: any,
+        thisArg: any,
+        names: any,
+        slots: any
+      ): any {
+        return refuse();
+      }
     `;
 
 /**
@@ -196,6 +206,23 @@ const PROVIDER_EXPORT_WRAPPER = `
         }
       }
 
+      export function __runtime_direct_eval(
+        source: any,
+        globalObject: any,
+        thisArg: any,
+        names: any,
+        slots: any
+      ): any {
+        try {
+          return runtimeEvalResult(
+            true,
+            executeDirectEval(parse, source, globalObject, thisArg, names, slots)
+          );
+        } catch (error) {
+          return runtimeEvalResult(false, error);
+        }
+      }
+
       export function __runtime_eval_canary(): number {
         return executeIndirectEval(parse, "1 + 2", {}) as number;
       }
@@ -208,6 +235,21 @@ const PROVIDER_EXPORT_WRAPPER = `
           {}
         );
         return fn(1, 2) as number;
+      }
+
+      export function __runtime_direct_eval_canary(): number {
+        const names: any[] = ["x"];
+        const cell: EvalBindingCell = { value: 40 };
+        const slots: any[] = [cell];
+        const result = executeDirectEval(
+          parse,
+          "x = x + 2; x",
+          {},
+          undefined,
+          names,
+          slots
+        );
+        return (result as number) + (cell.value as number);
       }
 
       export function __runtime_positive_corpus_canary(): number {
@@ -374,5 +416,6 @@ export function instantiateRuntimeEvalNamespace(providerModule) {
   return {
     __runtime_new_function: instance.exports.__runtime_new_function,
     __runtime_indirect_eval: instance.exports.__runtime_indirect_eval,
+    __runtime_direct_eval: instance.exports.__runtime_direct_eval,
   };
 }

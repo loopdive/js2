@@ -58,6 +58,7 @@ import {
 } from "./runtime-ops.js";
 import {
   ENV_DECLARATIVE,
+  EvalBindingCell,
   type EnvRec,
   EXN_ROW,
   FLAG_STRICT,
@@ -180,7 +181,13 @@ function envLookup(env: EnvRec | null, name: JSValue): JSValue {
   for (;;) {
     if (e === null) throw new ReferenceError(`${String(name)} is not defined`);
     if (e.kind === ENV_DECLARATIVE) {
-      // Declarative records (#2925/#2929) — not constructed in Phase 1.
+      const names: JSValue = e.names;
+      const slots = e.slots;
+      if (slots !== null) {
+        for (let i = 0; i < names.length; i += 1) {
+          if (names[i] === name) return (slots[i] as EvalBindingCell).value;
+        }
+      }
     } else if (name in e.backing) {
       return e.backing[name];
     }
@@ -210,7 +217,18 @@ function envAssign(env: EnvRec | null, name: JSValue, value: JSValue): void {
   let root: EnvRec | null = null;
   for (;;) {
     if (e === null) break;
-    if (e.kind !== ENV_DECLARATIVE && name in e.backing) {
+    if (e.kind === ENV_DECLARATIVE) {
+      const names: JSValue = e.names;
+      const slots = e.slots;
+      if (slots !== null) {
+        for (let i = 0; i < names.length; i += 1) {
+          if (names[i] === name) {
+            (slots[i] as EvalBindingCell).value = value;
+            return;
+          }
+        }
+      }
+    } else if (name in e.backing) {
       e.backing[name] = value;
       return;
     }
@@ -224,7 +242,17 @@ function typeofName(env: EnvRec | null, name: JSValue): JSValue {
   let e = env;
   for (;;) {
     if (e === null) return "undefined";
-    if (e.kind !== ENV_DECLARATIVE && name in e.backing) return typeof e.backing[name];
+    if (e.kind === ENV_DECLARATIVE) {
+      const names: JSValue = e.names;
+      const slots = e.slots;
+      if (slots !== null) {
+        for (let i = 0; i < names.length; i += 1) {
+          if (names[i] === name) return typeof (slots[i] as EvalBindingCell).value;
+        }
+      }
+    } else if (name in e.backing) {
+      return typeof e.backing[name];
+    }
     e = e.parent;
   }
 }

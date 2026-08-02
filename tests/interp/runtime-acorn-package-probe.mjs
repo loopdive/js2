@@ -66,6 +66,12 @@ async function main() {
         return (0, eval)(dynamic("answer + 2")) as number;
       }
 
+      export function linkedDirectEval(): number {
+        let x = 40;
+        const result: any = eval(dynamic("x = x + 2; x"));
+        return (result as number) + x;
+      }
+
       export function linkedThrow(): number {
         try {
           (0, eval)(dynamic("throw 7"));
@@ -135,6 +141,7 @@ async function main() {
           "js2wasm:runtime-eval": {
             __runtime_new_function: instance.exports.__runtime_new_function,
             __runtime_indirect_eval: instance.exports.__runtime_indirect_eval,
+            __runtime_direct_eval: instance.exports.__runtime_direct_eval,
           },
         });
         const canaries = [
@@ -145,8 +152,10 @@ async function main() {
           ["linkedSloppyThis", userInstance.exports.linkedSloppyThis],
           ["linkedStrictThis", userInstance.exports.linkedStrictThis],
           ["eval", instance.exports.__runtime_eval_canary],
+          ["directEval", instance.exports.__runtime_direct_eval_canary],
           ["positiveCorpus", instance.exports.__runtime_positive_corpus_canary],
           ["linkedEval", userInstance.exports.linkedEval],
+          ["linkedDirectEval", userInstance.exports.linkedDirectEval],
           ["linkedThrow", userInstance.exports.linkedThrow],
           ["linkedErrorThrow", userInstance.exports.linkedErrorThrow],
           ["linkedNumberBuiltin", userInstance.exports.linkedNumberBuiltin],

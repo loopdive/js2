@@ -543,6 +543,14 @@ export interface FunctionContext {
   /** Map from variable name → ref cell info (for mutable closure captures) */
   boxedCaptures?: Map<string, { refCellTypeIdx: number; valType: ValType }>;
   /**
+   * Source-visible bindings owned by a function whose lexical descendants may
+   * perform direct eval. These functions alone promote bindings to the shared
+   * boxed-cell carrier; functions without this set remain byte-identical.
+   */
+  directEvalBindingNames?: Set<string>;
+  /** Canonical `(mut externref)` cell type used at the AOT↔interpreter seam. */
+  directEvalRefCellTypeIdx?: number;
+  /**
    * (#3121) Names whose local slot was PROMOTED to a module global by
    * `promoteAccessorCapturesToGlobals` (object-literal method / accessor /
    * class-body capture). The promotion deletes the name from `localMap` so

@@ -1,9 +1,9 @@
 ---
 id: 2929
 title: "Interpreter direct eval + with + Proxy-MOP convergence"
-status: backlog
+status: in_progress
 created: 2026-07-02
-updated: 2026-07-02
+updated: 2026-08-02
 priority: medium
 horizon: xl
 feasibility: hard
@@ -13,10 +13,18 @@ task_type: feature
 area: runtime
 language_feature: eval
 goal: runtime-eval
-sprint: Backlog
+sprint: current
 parent: 1584
 depends_on: [2928, 2925, 2864]
 related: [1355, 2865]
+loc-budget-allow:
+  - src/codegen/closures.ts
+  - src/codegen/context/types.ts
+  - src/codegen/statements/nested-declarations.ts
+func-budget-allow:
+  - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
 ---
 
 # #2929 — Interpreter direct eval + `with` + Proxy-MOP convergence
@@ -68,7 +76,7 @@ and Proxy.
 
 ## Acceptance criteria
 
-- [ ] `function f(){ var x=1; eval("x=2"); return x }()` returns `2`
+- [x] `function f(){ var x=1; eval("x=2"); return x }()` returns `2`
       **standalone** (interpreter direct-eval capture).
 - [ ] `with ({a:1}) { a }` evaluates to `1` via the object-environment-record
       chain (standalone).
@@ -83,3 +91,70 @@ and Proxy.
 
 Depends on #2928 (VM core), #2925 (env-record carrier), #2864 (`$Frame`).
 Converges with #1355 (Proxy) and `with`. Umbrella: #1584. Goal: `runtime-eval`.
+
+## 2026-08-02 implementation handoff
+
+Branch `codex/2929-direct-eval-capture` implements the first acceptance slice:
+
+- an AOT function whose lexical descendants can reach direct `eval` promotes
+  eval-visible locals to the compiler's existing canonical mutable capture
+  cells;
+- direct eval passes parallel name/cell vectors through the standalone provider
+  boundary `__runtime_direct_eval(source, globalObject, thisArg, names, slots)`;
+- the provider creates a declarative `$EnvRecord` above the global record, and
+  interpreter name lookup, assignment, and `typeof` dereference those live
+  cells; and
+- writes therefore flow both ways without a copy-back pass. The standalone
+  probes cover an ordinary function, a nested function declaration, a function
+  expression, an arrow, non-string passthrough, the refusal provider, and the
+  real zero-import Acorn provider.
+
+The MVP mutation gate is green: a caller cell initialized to `40` is changed by
+dynamic direct eval to `42`, and the probe observes both the eval result and the
+subsequent AOT read (`42 + 42 = 84`). Existing indirect-eval and `new Function`
+provider routes remain green.
+
+### Test262 eval-code measurement
+
+The full standalone runtime-eval lane was measured with:
+
+```sh
+TEST262_TARGET=standalone \
+TEST262_FULL_RUNTIME_EVAL=1 \
+TEST262_PATH_FILTER=language/eval-code \
+TEST262_REPORTER=dot \
+pnpm run test:262
+```
+
+Result: **207 / 816 pass (25.4%)**, all 207 host-free.
+
+| Scope | Pass | Total | Direct | Indirect |
+| --- | ---: | ---: | ---: | ---: |
+| Current standard | 130 | 347 | 97 / 286 | 33 / 61 |
+| Annex B | 77 | 469 | 52 / 309 | 25 / 160 |
+| Combined | 207 | 816 | 149 / 595 | 58 / 221 |
+
+Non-pass outcomes were 565 runtime failures, 16 compile errors, and 28 compile
+timeouts. The leading runtime buckets were 349 assertion failures, 173 other
+errors, 24 syntax errors, 14 illegal casts, 3 type errors, 1 negative-test
+failure, and 1 null dereference; the 16 compile errors were reported as host
+import leaks.
+
+### Remaining work, in recommended order
+
+1. Implement eval declaration instantiation and strict-direct-eval isolation.
+   The current `emitProgram` path treats script declarations as globals, so new
+   `var`/lexical bindings, early errors, and global-property effects are not yet
+   spec-correct.
+2. Repair parameter-default/`arguments` cell synchronization. Reification can
+   currently race direct parameter-local writes and produces the observed
+   illegal-cast cluster.
+3. Cover methods, async/generator functions, classes, `new.target`, `super`, and
+   strict-caller `this` behavior in the interpreter emitter/runtime.
+4. Implement the object environment record for `with`, then coordinate the
+   shared ordinary-object MOP surface with #1355 before adding Proxy traps.
+5. Add generator suspend/resume opcodes on the shared #2864 frame carrier, then
+   run the JS-host/standalone differential acceptance gate.
+
+This branch is a resumable MVP slice, not closure of #2929. Only the first
+acceptance checkbox is satisfied.

@@ -22,7 +22,6 @@ import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitVariadicStringConcat, nativeStringRepr } from "../builtin-scaffold.js";
 import { emitGlobalEnvironmentObject } from "../global-environment.js";
-import { ensureExnTag } from "../registry/imports.js";
 import { hoistFunctionDeclarations } from "../statements/nested-declarations.js";
 import { hoistLetConstWithTdz, hoistVarDeclarations } from "../index.js";
 import type { InnerResult } from "../shared.js";
@@ -37,6 +36,8 @@ import { isStrictContext } from "../helpers/is-strict-function.js";
 import { foldedEvalEarlyError } from "./eval-early-errors.js";
 import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
+import { emitRuntimeEvalResultUnwrap, RUNTIME_EVAL_IMPORT_MODULE } from "./runtime-eval-provider.js";
+export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
  * Recursively resolve a compile-time-constant string from an expression.
@@ -1079,54 +1080,8 @@ const DYNAMIC_CODE_UNSUPPORTED_MSG =
   "supported in --target standalone/wasi — no runtime-eval host is available " +
   "(tracking: runtime-eval goal, bytecode interpreter #2928)";
 
-/** Core-Wasm provider namespace owned by #2928/#2527. */
-export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
-
 /**
- * Unwrap the provider's `[ok, value]` result vector. A provider-side throw uses
- * that vector because Wasm exception tags are module instances, not
- * structurally canonical values: throwing the provider's private tag directly
- * cannot be caught by the user module. Re-throwing `value` through the caller's
- * own tag restores ordinary AOT try/catch behavior. The vector is intentional:
- * unlike a source-inferred plain object, the canonical externref vec carrier is
- * structurally shared by both modules.
- */
-function emitRuntimeEvalResultUnwrap(ctx: CodegenContext, fctx: FunctionContext): ValType {
-  const envelopeLocal = allocLocal(fctx, `__runtime_eval_result_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: envelopeLocal });
-
-  const externref: ValType = { kind: "externref" };
-  const getIdx = ensureLateImport(ctx, "__extern_get_idx", [externref, { kind: "f64" }], [externref]);
-  const truthyIdx = ensureLateImport(ctx, "__is_truthy", [externref], [{ kind: "i32" }]);
-  flushLateImportShifts(ctx, fctx);
-  const liveGetIdx = ctx.funcMap.get("__extern_get_idx") ?? getIdx;
-  const liveTruthyIdx = ctx.funcMap.get("__is_truthy") ?? truthyIdx;
-  if (liveGetIdx === undefined || liveTruthyIdx === undefined) {
-    fctx.body.push({ op: "ref.null.extern" });
-    return externref;
-  }
-
-  const getField = (index: 0 | 1): Instr[] => [
-    { op: "local.get", index: envelopeLocal },
-    { op: "f64.const", value: index },
-    { op: "call", funcIdx: liveGetIdx },
-  ];
-  const value = getField(1);
-  const thrown = [...getField(1), { op: "throw", tagIdx: ensureExnTag(ctx) } satisfies Instr];
-
-  fctx.body.push(...getField(0), { op: "call", funcIdx: liveTruthyIdx });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: externref },
-    then: value,
-    else: thrown,
-  });
-  return externref;
-}
-
-/**
- * Standalone indirect eval route. Direct eval remains on #2929 because it
- * requires caller-scope reification; indirect eval is always global-scoped and
+ * Standalone indirect eval route. Indirect eval is always global-scoped and
  * can execute entirely inside the separately linked interpreter provider.
  */
 export function emitStandaloneIndirectEvalRuntime(

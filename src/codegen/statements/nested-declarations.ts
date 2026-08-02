@@ -56,6 +56,7 @@ import {
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
+import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -354,6 +355,14 @@ export function compileNestedFunctionDeclaration(
   for (const s of stmt.body.statements) {
     collectReferencedIdentifiers(s, referencedNames, ownLocals);
   }
+  const reachesDirectEval = functionMayReachDirectEval(stmt, ctx.oracle);
+  if (reachesDirectEval) {
+    // Runtime source can name any visible outer binding even though no such
+    // identifier appears in the static AST. Ancestors have already promoted
+    // their eval-visible bindings; force those cells into this lifted
+    // function's capture prefix so its direct-eval call can forward them.
+    for (const name of fctx.boxedCaptures?.keys() ?? []) referencedNames.add(name);
+  }
 
   // Detect which captured variables are written inside the function body
   const writtenInBody = new Set<string>();
@@ -616,6 +625,7 @@ export function compileNestedFunctionDeclaration(
       // read (#1702) falls back to `undefined` — behaviour-preserving.
       readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
     };
+    if (reachesDirectEval) liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -684,7 +694,7 @@ export function compileNestedFunctionDeclaration(
     // (#2743) Unmapped when strict OR the parameter list is non-simple
     // (rest/default/destructuring) — §10.2.11 FunctionDeclarationInstantiation
     // step 22.a.
-    if (stmt.body && bodyUsesArguments(stmt.body)) {
+    if (stmt.body && (bodyUsesArguments(stmt.body) || reachesDirectEval)) {
       const unmapped =
         isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
       emitArgumentsObject(ctx, liftedFctx, paramTypes, 0, unmapped);
@@ -929,6 +939,10 @@ export function compileNestedFunctionDeclaration(
       // read (#1702) falls back to `undefined` — behaviour-preserving.
       readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
     };
+    if (reachesDirectEval) {
+      liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
+      for (const capture of captures) liftedFctx.directEvalBindingNames.add(capture.name);
+    }
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -1103,7 +1117,7 @@ export function compileNestedFunctionDeclaration(
     // Set up `arguments` object if the function body references it.
     // (#2743) Unmapped when strict OR the parameter list is non-simple
     // (rest/default/destructuring) — §10.2.11 step 22.a.
-    if (stmt.body && bodyUsesArguments(stmt.body)) {
+    if (stmt.body && (bodyUsesArguments(stmt.body) || reachesDirectEval)) {
       const unmapped =
         isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
       emitArgumentsObject(ctx, liftedFctx, paramTypes, leadingParamCount, unmapped);

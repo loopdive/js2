@@ -92,6 +92,20 @@ export const ENV_OBJECT = 1; //      object record over an arbitrary $Object    
 export const ENV_GLOBAL = 2; //      global record wrapping globalThis            — Phase 1
 
 /**
+ * One mutable boxed binding shared by AOT code and the interpreter.
+ *
+ * Direct-eval functions re-use the compiler's mutable-capture cell lowering,
+ * but deliberately give every eval-visible cell the universal `JSValue` field
+ * type. The caller and separately compiled runtime-eval provider therefore
+ * emit the same one-field WasmGC struct, which Core Wasm canonicalises across
+ * the module boundary. `StName` updates the exact cell later AOT identifier
+ * reads dereference; there is no copy-back shadow environment.
+ */
+export interface EvalBindingCell {
+  value: JSValue;
+}
+
+/**
  * `$EnvRec` — one link in the lexical environment-record chain (doc §14, shared
  * with #2925/#2864 — coordinate, do not fork). Phase 1 (this slice) only ever
  * constructs the **global** record (`kind = ENV_GLOBAL`, `backing = globalThis`,

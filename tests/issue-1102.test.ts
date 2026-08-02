@@ -23,12 +23,38 @@
 //      clause fall-ins, which share one lexical scope but skip execution).
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import {
+  RUNTIME_EVAL_IMPORT_MODULE,
+  RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
+  buildRuntimeEvalRefusalProviderSource,
+  instantiateRuntimeEvalNamespace,
+} from "../scripts/runtime-eval-provider.mjs";
+
+let refusalModulePromise: Promise<WebAssembly.Module> | undefined;
+
+function refusalModule(): Promise<WebAssembly.Module> {
+  refusalModulePromise ??= compile(buildRuntimeEvalRefusalProviderSource(), {
+    ...RUNTIME_EVAL_PROVIDER_COMPILE_OPTIONS,
+    fileName: "issue-1102-refusal-provider.ts",
+  }).then((result) => {
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    return new WebAssembly.Module(result.binary);
+  });
+  return refusalModulePromise;
+}
 
 async function runStandalone(src: string): Promise<unknown> {
   const r = await compile(src, { target: "standalone" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
-  const { instance } = await WebAssembly.instantiate(r.binary, {});
+  const module = new WebAssembly.Module(r.binary);
+  const needsRuntimeEval = WebAssembly.Module.imports(module).some(
+    (entry) => entry.module === RUNTIME_EVAL_IMPORT_MODULE,
+  );
+  const imports = needsRuntimeEval
+    ? { [RUNTIME_EVAL_IMPORT_MODULE]: instantiateRuntimeEvalNamespace(await refusalModule()) }
+    : {};
+  const instance = await WebAssembly.instantiate(module, imports);
   return (instance.exports as { test(): unknown }).test();
 }
 
@@ -41,7 +67,7 @@ describe("#1102 — acceptance criteria (standalone, Tier-0 AOT)", () => {
     expect(await runStandalone(`export function test(): number { eval("var x = 42"); return x; }`)).toBe(42);
   });
 
-  it("AC3: dynamic eval → compile-time warning + catchable call-time throw", async () => {
+  it("AC3: dynamic eval → linked runtime-provider boundary", async () => {
     const r = await compile(
       `export function test(s: string): number { try { return eval(s); } catch { return -1; } }`,
       {
@@ -49,11 +75,10 @@ describe("#1102 — acceptance criteria (standalone, Tier-0 AOT)", () => {
       },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    expect(
-      (r.errors ?? []).some(
-        (e) => (e as { severity?: string }).severity === "warning" && /dynamic eval is not supported/.test(e.message),
-      ),
-    ).toBe(true);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(r.binary))).toEqual([
+      { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_direct_eval", kind: "function" },
+    ]);
+    expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
   });
 
   it('AC4: new Function("a","b","return a + b") compiles with constant args', async () => {

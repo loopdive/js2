@@ -76,6 +76,42 @@ function providerSource() {
         return ast;
       }
 
+      function makeDirectMutationEvalAst(): any {
+        const target: any = {};
+        target.type = "Identifier";
+        target.name = "x";
+        const read: any = {};
+        read.type = "Identifier";
+        read.name = "x";
+        const two: any = {};
+        two.type = "Literal";
+        two.value = 2;
+        const add: any = {};
+        add.type = "BinaryExpression";
+        add.operator = "+";
+        add.left = read;
+        add.right = two;
+        const assign: any = {};
+        assign.type = "AssignmentExpression";
+        assign.operator = "=";
+        assign.left = target;
+        assign.right = add;
+        const assignmentStatement: any = {};
+        assignmentStatement.type = "ExpressionStatement";
+        assignmentStatement.expression = assign;
+        const result: any = {};
+        result.type = "Identifier";
+        result.name = "x";
+        const resultStatement: any = {};
+        resultStatement.type = "ExpressionStatement";
+        resultStatement.expression = result;
+        const ast: any = {};
+        ast.type = "Program";
+        ast.sourceType = "script";
+        ast.body = [assignmentStatement, resultStatement];
+        return ast;
+      }
+
       function makeFunctionAst(): any {
         const left: any = {};
         left.type = "Identifier";
@@ -215,6 +251,7 @@ function providerSource() {
           return makeStrictThisFunctionAst();
         }
         if (source === "answer + 2") return makeEvalAst();
+        if (source === "x = x + 2; x") return makeDirectMutationEvalAst();
         if (source === "aotIdentity(globalValue)") {
           return makeReverseIdentityEvalAst();
         }
@@ -257,6 +294,23 @@ function providerSource() {
         }
       }
 
+      export function __runtime_direct_eval(
+        source: any,
+        globalObject: any,
+        thisArg: any,
+        names: any,
+        slots: any
+      ): any {
+        try {
+          return runtimeEvalResult(
+            true,
+            executeDirectEval(parse, source, globalObject, thisArg, names, slots)
+          );
+        } catch (error) {
+          return runtimeEvalResult(false, error);
+        }
+      }
+
       export function providerCanary(): number {
         const fn = createDynamicFunction(
           parse,
@@ -265,6 +319,21 @@ function providerSource() {
           globalThis
         );
         return fn(1, 2) as number;
+      }
+
+      export function providerDirectCanary(): number {
+        const names: any[] = ["x"];
+        const cell: EvalBindingCell = { value: 40 };
+        const slots: any[] = [cell];
+        const result = executeDirectEval(
+          parse,
+          "x = x + 2; x",
+          globalThis,
+          undefined,
+          names,
+          slots
+        );
+        return (result as number) + (cell.value as number);
       }
     `,
   ].join("\n");
@@ -355,6 +424,41 @@ const USER_SOURCE = `
   export function indirectEvalNonString(): number {
     return (0, eval)(dynamicAny(42)) as number;
   }
+
+  export function directEvalMutation(): number {
+    let x = 40;
+    const result: any = eval(dynamic("x = x + 2; x"));
+    return (result as number) + x;
+  }
+
+  export function directEvalNonString(): number {
+    return eval(dynamicAny(42)) as number;
+  }
+
+  export function nestedDirectEvalMutation(): number {
+    let x = 40;
+    function inner(source: string): any {
+      return eval(source);
+    }
+    const result: any = inner(dynamic("x = x + 2; x"));
+    return (result as number) + x;
+  }
+
+  export function functionExpressionDirectEvalMutation(): number {
+    let x = 40;
+    const inner: any = function (source: string): any {
+      return eval(source);
+    };
+    const result: any = inner(dynamic("x = x + 2; x"));
+    return (result as number) + x;
+  }
+
+  export function arrowDirectEvalMutation(): number {
+    let x = 40;
+    const inner: any = (source: string): any => eval(source);
+    const result: any = inner(dynamic("x = x + 2; x"));
+    return (result as number) + x;
+  }
 `;
 
 function describeDiagnostic(diagnostic) {
@@ -397,10 +501,12 @@ async function main() {
         "js2wasm:runtime-eval": {
           __runtime_new_function: runtimeInstance.exports.__runtime_new_function,
           __runtime_indirect_eval: runtimeInstance.exports.__runtime_indirect_eval,
+          __runtime_direct_eval: runtimeInstance.exports.__runtime_direct_eval,
         },
       });
       for (const [name, fn] of [
         ["provider", runtimeInstance.exports.providerCanary],
+        ["providerDirect", runtimeInstance.exports.providerDirectCanary],
         ["create", userInstance.exports.create],
         ["invokeNew", userInstance.exports.invokeNew],
         ["invokeNewImmediate", userInstance.exports.invokeNewImmediate],
@@ -412,6 +518,11 @@ async function main() {
         ["aotIdentityRoundTrip", userInstance.exports.aotIdentityRoundTrip],
         ["indirectEval", userInstance.exports.indirectEval],
         ["indirectEvalNonString", userInstance.exports.indirectEvalNonString],
+        ["directEvalMutation", userInstance.exports.directEvalMutation],
+        ["directEvalNonString", userInstance.exports.directEvalNonString],
+        ["nestedDirectEvalMutation", userInstance.exports.nestedDirectEvalMutation],
+        ["functionExpressionDirectEvalMutation", userInstance.exports.functionExpressionDirectEvalMutation],
+        ["arrowDirectEvalMutation", userInstance.exports.arrowDirectEvalMutation],
       ]) {
         try {
           report.values[name] = fn();
