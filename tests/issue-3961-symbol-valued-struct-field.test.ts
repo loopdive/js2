@@ -112,14 +112,15 @@ describe("#3961 — symbol-valued struct fields retain identity", () => {
     expect(exports.probe()).toBe(1);
   });
 
-  it("keeps mixed dynamic and array call sites on a dynamic parameter ABI", async () => {
+  it("keeps recursive dynamic and array call sites on a dynamic parameter ABI", async () => {
     const { exports } = await run(`
-      function read(value: any): number {
+      function read(value: any, depth: number): number {
+        if (depth > 0) return read(value, depth - 1);
         return Array.isArray(value) ? value.length : value.answer;
       }
       export function probe(): number {
         const dynamic: any = { answer: 7 };
-        return read(dynamic) * 10 + read([1, 2]);
+        return read(dynamic, 1) * 10 + read([1, 2], 1);
       }
     `);
 
