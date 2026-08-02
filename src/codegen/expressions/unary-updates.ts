@@ -152,12 +152,27 @@ function resolveStaticPropGlobalForUpdate(
 }
 
 /**
- * #2019: emit `++`/`--` against a static-property module global. Reads the
- * global, applies ToNumeric (so non-numeric externref backing values follow
- * §13.4), computes old±1, writes it back, and leaves the spec result on the
- * stack (old value for postfix, new value for prefix). Always yields f64.
+ * #2019: emit `++`/`--` against a Wasm global slot. Reads the global, applies
+ * ToNumeric (so non-numeric externref backing values follow §13.4), computes
+ * old±1, writes it back **coerced to the global's declared type**, and leaves
+ * the spec result on the stack (old value for postfix, new value for prefix).
+ * Always yields f64.
+ *
+ * (#4079) Originally static-property-only. The plain module-global and
+ * captured-global paths below each hand-rolled the same read/compute/store
+ * with their OWN type-case list, and every one of those lists handled
+ * `externref` and `ref`/`ref_null` but forgot **`i32`** — so a boolean-backed
+ * global fell through to the f64 arm and emitted `global.get` (i32) straight
+ * into `f64.add`:
+ *
+ *     var x = false; x++;
+ *     -> f64.add[0] expected type f64, found global.get of type i32
+ *
+ * which kills the module at instantiate. This function already had the i32
+ * arm right, so the fix is to stop having eight copies of the decision and
+ * route them all here.
  */
-function compileStaticPropIncDec(
+function compileGlobalIncDec(
   ctx: CodegenContext,
   fctx: FunctionContext,
   globalIdx: number,
@@ -463,7 +478,7 @@ function compileMemberIncDec(
     {
       const staticGlobalIdx = resolveStaticPropGlobalForUpdate(ctx, fctx, operand.expression, propName);
       if (staticGlobalIdx !== undefined) {
-        return compileStaticPropIncDec(ctx, fctx, staticGlobalIdx, f64Op, mode);
+        return compileGlobalIncDec(ctx, fctx, staticGlobalIdx, f64Op, mode);
       }
     }
 
@@ -1146,16 +1161,9 @@ function compilePrefixUpdate(
             fctx.body.push({ op: "f64.add" });
             return { kind: "f64" };
           }
-          fctx.body.push({ op: "global.get", index: ppModIdx });
-          fctx.body.push({ op: "f64.const", value: 1 });
-          fctx.body.push({ op: "f64.add" });
-          const ppTmp = allocLocal(fctx, `__pp_mod_${fctx.locals.length}`, {
-            kind: "f64",
-          });
-          fctx.body.push({ op: "local.tee", index: ppTmp });
-          fctx.body.push({ op: "global.set", index: ppModIdx });
-          fctx.body.push({ op: "local.get", index: ppTmp });
-          return { kind: "f64" };
+          // (#4079) f64 OR i32 backing slot — the shared helper owns the
+          // read/store coercion so the i32 case cannot be forgotten again.
+          return compileGlobalIncDec(ctx, fctx, ppModIdx, "f64.add", "prefix");
         }
         // Check captured globals for prefix ++
         const ppCapIdx = ctx.capturedGlobals.get(ppOperand.text);
@@ -1182,16 +1190,8 @@ function compilePrefixUpdate(
             fctx.body.push({ op: "f64.add" });
             return { kind: "f64" };
           }
-          fctx.body.push({ op: "global.get", index: ppCapIdx });
-          fctx.body.push({ op: "f64.const", value: 1 });
-          fctx.body.push({ op: "f64.add" });
-          const ppTmp = allocLocal(fctx, `__pp_cap_${fctx.locals.length}`, {
-            kind: "f64",
-          });
-          fctx.body.push({ op: "local.tee", index: ppTmp });
-          fctx.body.push({ op: "global.set", index: ppCapIdx });
-          fctx.body.push({ op: "local.get", index: ppTmp });
-          return { kind: "f64" };
+          // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
+          return compileGlobalIncDec(ctx, fctx, ppCapIdx, "f64.add", "prefix");
         }
       }
       // ++obj.prop or ++obj[idx] — delegate to member increment helper
@@ -1360,16 +1360,8 @@ function compilePrefixUpdate(
             fctx.body.push({ op: arithOp });
             return { kind: "f64" };
           }
-          fctx.body.push({ op: "global.get", index: mmModIdx });
-          fctx.body.push({ op: "f64.const", value: 1 });
-          fctx.body.push({ op: arithOp });
-          const mmTmp = allocLocal(fctx, `__mm_mod_${fctx.locals.length}`, {
-            kind: "f64",
-          });
-          fctx.body.push({ op: "local.tee", index: mmTmp });
-          fctx.body.push({ op: "global.set", index: mmModIdx });
-          fctx.body.push({ op: "local.get", index: mmTmp });
-          return { kind: "f64" };
+          // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
+          return compileGlobalIncDec(ctx, fctx, mmModIdx, arithOp, "prefix");
         }
         // Check captured globals for prefix --
         const mmCapIdx = ctx.capturedGlobals.get(mmOperand.text);
@@ -1396,16 +1388,8 @@ function compilePrefixUpdate(
             fctx.body.push({ op: arithOp });
             return { kind: "f64" };
           }
-          fctx.body.push({ op: "global.get", index: mmCapIdx });
-          fctx.body.push({ op: "f64.const", value: 1 });
-          fctx.body.push({ op: arithOp });
-          const mmTmp = allocLocal(fctx, `__mm_cap_${fctx.locals.length}`, {
-            kind: "f64",
-          });
-          fctx.body.push({ op: "local.tee", index: mmTmp });
-          fctx.body.push({ op: "global.set", index: mmCapIdx });
-          fctx.body.push({ op: "local.get", index: mmTmp });
-          return { kind: "f64" };
+          // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
+          return compileGlobalIncDec(ctx, fctx, mmCapIdx, arithOp, "prefix");
         }
       }
       // --obj.prop or --obj[idx] — delegate to member decrement helper
@@ -1482,13 +1466,8 @@ function compilePostfixUnary(
           coerceType(ctx, fctx, postModGlobalDef.type, { kind: "f64" });
           return { kind: "f64" };
         }
-        // Postfix: return old value, store new value
-        fctx.body.push({ op: "global.get", index: postModIdx });
-        fctx.body.push({ op: "global.get", index: postModIdx });
-        fctx.body.push({ op: "f64.const", value: 1 });
-        fctx.body.push({ op: arithOp });
-        fctx.body.push({ op: "global.set", index: postModIdx });
-        return { kind: "f64" };
+        // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
+        return compileGlobalIncDec(ctx, fctx, postModIdx, arithOp, "postfix");
       }
       // Check captured globals for postfix ++/--
       const postCapIdx = ctx.capturedGlobals.get(postOperand.text);
@@ -1515,12 +1494,8 @@ function compilePostfixUnary(
           coerceType(ctx, fctx, postCapGlobalDef.type, { kind: "f64" });
           return { kind: "f64" };
         }
-        fctx.body.push({ op: "global.get", index: postCapIdx });
-        fctx.body.push({ op: "global.get", index: postCapIdx });
-        fctx.body.push({ op: "f64.const", value: 1 });
-        fctx.body.push({ op: arithOp });
-        fctx.body.push({ op: "global.set", index: postCapIdx });
-        return { kind: "f64" };
+        // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
+        return compileGlobalIncDec(ctx, fctx, postCapIdx, arithOp, "postfix");
       }
       // Graceful fallback: emit 0 for unknown postfix increment/decrement
       fctx.body.push({ op: "f64.const", value: 0 });
