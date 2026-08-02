@@ -1,10 +1,11 @@
 {
   "id": "4010",
   "assignee": "ttraenkler/M-substrate",
-  "requested_by": "ttraenkler/M-substrate",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-4010-unify-receiver-side-tables",
   "claimed_at": "2026-08-01T20:53:08Z",
-  "updated_at": "2026-08-01T20:53:08Z",
-  "write_id": "9647-3ons1nsa"
+  "updated_at": "2026-08-02T06:03:02Z",
+  "write_id": "20510-unsvdn84",
+  "released_at": "2026-08-02T06:03:02Z"
 }
