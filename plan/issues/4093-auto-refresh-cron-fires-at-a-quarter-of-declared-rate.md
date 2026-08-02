@@ -117,3 +117,48 @@ trigger differs. Verified in the workflow source:
 Never on a timer and never in a polling loop — that re-implements the cron and
 burns runner capacity ([[feedback_passive_github_watcher_never_poll]]). Always
 record a `reason`.
+
+### ⚠⚠ A MANUAL DISPATCH CANCELS AN IN-FLIGHT SCHEDULED RUN — check first
+
+Discovered by the shepherd on first use of the grant, and it is a hard
+precondition, not a nicety. The workflow carries:
+
+```yaml
+concurrency:
+  group: auto-refresh-prs
+  cancel-in-progress: true
+```
+
+So a `workflow_dispatch` issued while a scheduled run is executing **kills that
+scheduled run**. The compensation destroys the thing it is compensating for.
+
+**Required precondition before dispatching: confirm no run is in flight.**
+
+This is the *same hazard family* as the `npm-compat-refresh` livelock recorded
+in CLAUDE.md — "never `cancel-in-progress` a job longer than its own trigger
+interval". The twist here is nastier, because the interference is **between the
+manual and scheduled triggers of one workflow**:
+
+- dispatching on a **timer** (explicitly forbidden by the grant) could cancel
+  *every* scheduled run as it starts, starving the cron completely;
+- and it would be **invisible** — the manual runs all report `success`, the
+  cancelled scheduled runs just report `cancelled`, and the only wrong quantity
+  is once again the **cadence**, which nothing checks.
+
+Anyone implementing work item 2 (compensation) must treat this concurrency
+group as part of the problem, not as neutral infrastructure. A merge-triggered
+refresh would collide with the same group.
+
+### First use of the grant — worked, recorded as the reference pattern
+
+2026-08-02T11:37:07Z, conditions checked before firing: two PRs (#4028, #4002)
+sitting `BEHIND`, last scheduled run 33 min prior against a declared 20, **and
+no run in flight**. Result confirmed by content, not by the workflow's green:
+
+```
+91c942b4  11:37:15Z  js2-merge-queue-bot[bot]  Merge branch 'main' into ...
+```
+
+Eight seconds after dispatch. Both PRs moved `BEHIND → BLOCKED` — branches
+updated and CI re-running, which is the intended end state. One dispatch, not a
+loop.
