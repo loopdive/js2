@@ -26,7 +26,7 @@ import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from 
 import { ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
-import { collectClassDeclaration, compileClassBodies } from "./class-bodies.js";
+import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import {
   collectBindingPatternNames,
   collectReferencedIdentifiers,
@@ -1957,6 +1957,8 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
  * placeholder for a later IR overlay. R2 passes the exact same names through
  * `preserveSkippedBodies` after their IR bodies have already been prepared and
  * installed, so declaration compilation leaves those bodies untouched.
+ * `classBodyRouting` applies the same exact transaction to top-level static
+ * methods only; nested declarations and class expressions remain direct-owned.
  *
  * The funcIdx/typeIdx slot itself is untouched in both modes. Skipped
  * functions are deliberately NOT registered as direct-front-end inlinables:
@@ -1969,6 +1971,7 @@ export function compileDeclarations(
   sourceFile: ts.SourceFile,
   skipBodies?: ReadonlySet<string>,
   preserveSkippedBodies?: ReadonlySet<string>,
+  classBodyRouting?: ClassBodyCompileRouting,
 ): string[] | undefined {
   const skippedNames: string[] | undefined = skipBodies ? [] : undefined;
   // Build a map from function name → index within ctx.mod.functions
@@ -2161,7 +2164,13 @@ export function compileDeclarations(
           ctx.deferredClassBodies.add(stmt.name.text);
         } else {
           try {
-            compileClassBodies(ctx, stmt, funcByName);
+            compileClassBodies(
+              ctx,
+              stmt,
+              funcByName,
+              undefined,
+              stmt.parent === sourceFile ? classBodyRouting : undefined,
+            );
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             reportError(ctx, stmt, `Internal error compiling class '${stmt.name.text}': ${msg}`);

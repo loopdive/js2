@@ -33,8 +33,8 @@ describe("string support", () => {
     expect(result.wat).toContain("string_constants");
     expect(result.wat).toContain('(import "string_constants"');
     expect(result.wat).toContain("(global");
-    // Should have wasm:js-string imports
-    expect(result.wat).toContain("wasm:js-string");
+    // Pure literals need only immutable globals; unused string callables are eliminated.
+    expect(result.wat).not.toContain("wasm:js-string");
 
     // String pool should contain the value
     expect(result.stringPool).toContain("world");
