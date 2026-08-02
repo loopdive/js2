@@ -22,6 +22,7 @@ import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./ide
 import type { JsTag } from "./js-tag.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
+import type { IrAsyncPlan, PreparedIrAsyncRuntime } from "./async-plan.js";
 
 // ---------------------------------------------------------------------------
 // Symbolic references
@@ -2853,6 +2854,18 @@ export interface IrFunction extends IrFunctionIdentity {
    *   - `"regular"`: no special treatment (default if absent).
    */
   readonly funcKind?: "regular" | "generator" | "async";
+  /**
+   * Canonical, target-neutral suspension graph for a genuinely asynchronous
+   * function. It is produced before backend selection and contains no AST,
+   * Wasm indices, or concrete host adapter spellings.
+   */
+  readonly asyncPlan?: IrAsyncPlan;
+  /**
+   * Lookup-only backend attachment added after runtime-manifest freeze. This
+   * is deliberately separate from `asyncPlan` so plan hashes stay target
+   * independent while Program ABI sealing can see exact adapter callables.
+   */
+  readonly asyncRuntime?: PreparedIrAsyncRuntime;
   /**
    * Slice 7a (#1169f) — for `funcKind === "generator"` functions only,
    * the slot index (in `slots`) of the `__gen_buffer` Wasm-local. The

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irIntrinsicFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
+import { irImportFuncRef, irIntrinsicFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
+import { createIrAsyncPlan, type IrAsyncPlan, type PreparedIrAsyncRuntime } from "./async-plan.js";
+import { ASYNC_HOST_ADAPTERS, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
 import {
   forEachInstrDeep,
@@ -72,6 +74,7 @@ function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
 function valueTypesOf(fn: IrFunction): ReadonlyMap<IrValueId, IrType> {
   const result = new Map<IrValueId, IrType>();
   for (const param of fn.params) result.set(param.value, param.type);
+  for (const value of fn.asyncPlan?.values ?? []) result.set(value.value, value.type);
   for (const block of fn.blocks) {
     for (let index = 0; index < block.blockArgs.length; index++) {
       const type = block.blockArgTypes[index];
@@ -109,11 +112,11 @@ function sameProvider(left: IrIntrinsicProvider, right: IrIntrinsicProvider): bo
   );
 }
 
-function attachProviders(
-  fn: IrFunction,
+function attachProvidersToBuffer(
+  buffer: readonly IrInstr[],
   providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>,
-): IrFunction {
-  const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(buffer, mapInstr);
+): readonly IrInstr[] {
+  const mapBuffer = (nestedBuffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(nestedBuffer, mapInstr);
   const mapInstr = (instr: IrInstr): IrInstr => {
     const nested = mapNestedBuffers(instr, mapBuffer);
     if (nested.kind !== "intrinsic") return nested;
@@ -128,9 +131,15 @@ function attachProviders(
     }
     return { ...nested, provider: attachment };
   };
+  return mapBuffer(buffer);
+}
 
+function attachProviders(
+  fn: IrFunction,
+  providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>,
+): IrFunction {
   const blocks = mapArray(fn.blocks, (block) => {
-    const instrs = mapBuffer(block.instrs);
+    const instrs = attachProvidersToBuffer(block.instrs, providers);
     return instrs === block.instrs ? block : { ...block, instrs };
   });
   return blocks === fn.blocks ? fn : { ...fn, blocks };
@@ -147,10 +156,22 @@ export function prepareIrRuntimeManifest(input: {
   readonly policy: RuntimeManifestPolicy;
 }): PreparedIrRuntimeManifest | undefined {
   const uses: Array<{ readonly instr: IrInstrIntrinsic; readonly argumentTypes: readonly IrType[] }> = [];
+  const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
   for (const fn of input.functions) {
+    if (fn.asyncPlan) {
+      if (fn.funcKind !== "async") {
+        throw new Error(`IR async plan owner ${fn.name} is not marked funcKind=async`);
+      }
+      if (fn.asyncPlan.ownerUnitId !== fn.unitId) {
+        throw new Error(`IR async plan owner mismatch for ${fn.name}: ${fn.asyncPlan.ownerUnitId} != ${fn.unitId}`);
+      }
+      asyncPlans.set(fn.unitId, createIrAsyncPlan(fn.asyncPlan));
+    } else if (fn.asyncRuntime) {
+      throw new Error(`IR async runtime attachment for ${fn.name} has no semantic async plan`);
+    }
     const valueTypes = valueTypesOf(fn);
-    for (const block of fn.blocks) {
-      for (const root of block.instrs) {
+    const collectBuffer = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
         forEachInstrDeep(root, (instr) => {
           if (instr.kind !== "intrinsic") return;
           const argumentTypes = instr.args.map((arg) => {
@@ -161,11 +182,16 @@ export function prepareIrRuntimeManifest(input: {
           uses.push({ instr, argumentTypes });
         });
       }
-    }
+    };
+    for (const block of fn.blocks) collectBuffer(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) collectBuffer(state.body);
   }
-  if (uses.length === 0) return undefined;
+  if (uses.length === 0 && asyncPlans.size === 0) return undefined;
 
   const builder = new RuntimeManifestBuilder(input.policy);
+  for (const plan of asyncPlans.values()) {
+    for (const intent of plan.runtimeIntents) builder.requestFeature(intent);
+  }
   for (const { instr, argumentTypes } of uses) {
     const definition = INTRINSIC_DEFINITIONS[instr.id];
     if (!instr.resultType || !irTypeEquals(instr.resultType, definition.signature.result)) {
@@ -191,8 +217,37 @@ export function prepareIrRuntimeManifest(input: {
   for (const use of manifest.intrinsicUses) {
     providers.set(use.id, builder.resolveProvider(INTRINSIC_DEFINITIONS[use.id].feature));
   }
+  const attachAsyncRuntime = (fn: IrFunction): IrFunction => {
+    const plan = asyncPlans.get(fn.unitId);
+    if (!plan) return fn;
+    const capabilities = new Set<AsyncHostCapabilityId>();
+    for (const intent of plan.runtimeIntents) {
+      for (const capability of builder.resolveProvider(intent).hostCapabilities) capabilities.add(capability);
+    }
+    const runtime: PreparedIrAsyncRuntime = Object.freeze({
+      kind: "host-wasmgc",
+      adapters: Object.freeze(
+        ASYNC_HOST_ADAPTERS.filter((adapter) => capabilities.has(adapter.capability)).map((adapter) =>
+          Object.freeze({
+            capability: adapter.capability,
+            target: irImportFuncRef(adapter.module, adapter.field, adapter.field),
+          }),
+        ),
+      ),
+      states: Object.freeze(
+        plan.states.map((state) => {
+          const body = attachProvidersToBuffer(state.body, providers);
+          return body === state.body ? state : Object.freeze({ ...state, body });
+        }),
+      ),
+    });
+    if (fn.asyncRuntime && JSON.stringify(fn.asyncRuntime) !== JSON.stringify(runtime)) {
+      throw new Error(`IR async runtime attachment for ${fn.name} differs from the frozen manifest`);
+    }
+    return { ...fn, asyncPlan: plan, asyncRuntime: runtime };
+  };
   return Object.freeze({
-    functions: Object.freeze(input.functions.map((fn) => attachProviders(fn, providers))),
+    functions: Object.freeze(input.functions.map((fn) => attachAsyncRuntime(attachProviders(fn, providers)))),
     manifest,
     providers,
   });

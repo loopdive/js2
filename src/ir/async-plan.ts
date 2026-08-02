@@ -14,9 +14,22 @@
  * consume an IrAsyncPlan.
  */
 
-import { ASYNC_RUNTIME_FEATURES, isAsyncRuntimeFeature, type AsyncRuntimeFeature } from "./async-runtime-providers.js";
+import {
+  ASYNC_RUNTIME_FEATURES,
+  isAsyncRuntimeFeature,
+  type AsyncHostCapabilityId,
+  type AsyncRuntimeFeature,
+} from "./async-runtime-providers.js";
 import type { IrUnitId } from "./identity.js";
-import { collectUses, forEachInstrDeep, irTypeEquals, type IrInstr, type IrType, type IrValueId } from "./nodes.js";
+import {
+  collectUses,
+  forEachInstrDeep,
+  irTypeEquals,
+  type IrFuncRef,
+  type IrInstr,
+  type IrType,
+  type IrValueId,
+} from "./nodes.js";
 
 export type IrAsyncStateId = number & { readonly __brand: "IrAsyncStateId" };
 export type IrAsyncHandlerId = number & { readonly __brand: "IrAsyncHandlerId" };
@@ -153,6 +166,23 @@ export interface IrAsyncPlan {
   readonly states: readonly IrAsyncState[];
   readonly handlers: readonly IrAsyncHandler[];
   readonly runtimeIntents: readonly IrAsyncRuntimeIntent[];
+}
+
+/**
+ * Backend attachment created only after the semantic runtime manifest freezes.
+ * The plan above stays target-neutral; this lookup-only record gives prepared
+ * component sealing exact symbolic dependencies for the selected adapter.
+ */
+export interface PreparedIrAsyncHostAdapter {
+  readonly capability: AsyncHostCapabilityId;
+  readonly target: IrFuncRef;
+}
+
+export interface PreparedIrAsyncRuntime {
+  readonly kind: "host-wasmgc";
+  readonly adapters: readonly PreparedIrAsyncHostAdapter[];
+  /** State bodies with post-freeze intrinsic provider attachments. */
+  readonly states: readonly IrAsyncState[];
 }
 
 export type IrAsyncPlanInvariantCode =
