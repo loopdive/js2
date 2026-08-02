@@ -2,10 +2,10 @@
 horizon: xl
 id: 4045
 title: "Same-named top-level functions in different modules share one slot and silently compute the wrong answer"
-status: ready
+status: in-progress
 created: 2026-08-02
 updated: 2026-08-02
-assignee: unassigned
+assignee: ttraenkler/claude
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -137,3 +137,76 @@ needs an audit, not a guess.
   real fix rather than as a standalone regression.
 - Fix the misleading `#2043 late-import index-shift` attribution on the
   local-index-out-of-range message, which this defect also triggers.
+
+## Partial fix landed (2026-08-02) — direct calls now resolve per module
+
+The full 282-set/1,780-get re-key was **not** needed for the direct-call case.
+Two facts made a much smaller fix correct:
+
+1. **The slots already exist.** Registration mints a distinct slot per
+   declaration — the emitted module genuinely carries two `$shared` functions.
+   Only the *name → index* map collided.
+2. **Bodies compile one source at a time**, so a per-source binding is enough;
+   it does not have to be globally unique.
+
+So:
+
+- `generateMultiModule` snapshots each source's own binding for colliding names
+  immediately after that source's `collectDeclarations` call (the one moment it
+  is observable), and re-applies it before that source's bodies compile.
+  Iterating in the same order leaves the map in the same last-wins end state, so
+  everything after the loop sees what it saw before.
+- `compileDeclarations` built `funcByName` by a last-wins scan of
+  `ctx.mod.functions`, which installed every body into the surviving slot. It now
+  defers to `ctx.funcMap` for any name whose target slot carries that same name —
+  a strict no-op for non-colliding names and for names bound to imports.
+
+**No `funcMap.get` site changed**, including the ~117 internal-helper lookups in
+`object-runtime.ts`.
+
+### Measured
+
+| | before | after |
+| --- | --- | --- |
+| repro `run(3)` | 12 | **906** (node: 906) |
+| emitted binary | 343 B (one body emitted twice) | 1,018 B (both bodies) |
+| equivalence suite | — | 32 failed / 1611 passed, **empty diff vs base** |
+
+The ESLint graph's `local index out of range — 65 (valid: [0, 8))` binary-emit
+failure is **gone**.
+
+## Still open — why this issue stays in-progress
+
+Fixing direct calls exposed the **same collision one layer up**, in the ABI
+sidecar:
+
+```text
+Codegen error: allocator locator for
+  …eslint-visitor-keys@3.4.3…:top-level-function:0:function-value-trampoline:0
+is already owned by
+  …eslint-visitor-keys@5.0.1…:top-level-function:0:function-value-trampoline:0
+```
+
+Two *different versions* of `eslint-visitor-keys` coexist in the graph, and
+their function-value trampolines now both claim one allocator locator — because
+both functions are now genuinely reachable, where previously one was silently
+discarded. The trampoline/ABI layer still assumes one owner per name-derived
+locator.
+
+Remaining work:
+
+- Per-module identity for **function-value trampolines** and any other
+  name-derived ABI locator (this error).
+- Indirect references — `ref.func`, closures, exports — are **not** covered by
+  the per-source rebinding and have not been audited.
+- The interim "refuse loudly" criterion above is now less urgent for direct
+  calls but still applies to whatever remains uncovered.
+
+## Test coverage — and its honest limit
+
+`tests/issue-4045-cross-module-function-name-collision.test.ts`, 4 rungs, all
+passing. Against the unfixed base **only one fails**: the 40-local rung. The
+other three pass there because a small `shared` is **inlined** at its call site,
+so each caller gets the right code regardless of which slot the name denotes.
+The collision is only observable once a body is too large to inline. That is
+recorded in the test file so the small rungs are not mistaken for evidence.

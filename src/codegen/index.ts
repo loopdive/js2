@@ -6044,10 +6044,43 @@ export function generateMultiModule(
       reserveObjVecArrType(ctx);
     }
 
+    // (#4045) `ctx.funcMap` is keyed by BARE function name, so two modules that
+    // each declare a top-level `function shared()` collide: registration mints a
+    // distinct Wasm slot for each (verified — the emitted module really does
+    // carry two `$shared` functions), but the name→index map keeps only the LAST
+    // one. Every call in every module then reached that one body, and the
+    // compile reported `success: true` with ZERO errors while computing the
+    // wrong answer. On the resolved ESLint graph 55 names collide across 146
+    // sources (`posix.js` + `windows.js` alone share ~20), and a body compiled
+    // for one local frame installed against another's is also what surfaced as
+    // `local index out of range` at binary emit.
+    //
+    // The slots already exist and bodies are compiled ONE SOURCE AT A TIME, so
+    // the fix does not need the 282-set/1780-get re-key the full issue describes:
+    // snapshot each source's own binding here, then re-apply it before that
+    // source's bodies compile. Every `funcMap.get` site — including the ~117
+    // internal-helper lookups in `object-runtime.ts` — is untouched.
+    const collidingFuncNames = collectMultiIrFunctionNameCollisions(multiAst.sourceFiles);
+    const ownFuncIdxBySource = new Map<ts.SourceFile, Map<string, number>>();
+
     profilePhase("collect-declarations", () => {
       for (const sf of multiAst.sourceFiles) {
         const isEntry = sf === multiAst.entryFile;
         collectDeclarations(ctx, sf, isEntry);
+        if (collidingFuncNames.size === 0) continue;
+        // Immediately after THIS source's collect pass, `funcMap` still holds
+        // this source's index for every name it declares — a later source has
+        // not overwritten it yet. That is the only moment the per-source binding
+        // is observable without changing `collectDeclarations`.
+        const own = new Map<string, number>();
+        for (const stmt of sf.statements) {
+          if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
+          const name = stmt.name.text;
+          if (!collidingFuncNames.has(name)) continue;
+          const idx = ctx.funcMap.get(name);
+          if (idx !== undefined) own.set(name, idx);
+        }
+        if (own.size > 0) ownFuncIdxBySource.set(sf, own);
       }
     });
     // #2847: make initial boolean brands visible while bodies are emitted;
@@ -6116,6 +6149,15 @@ export function generateMultiModule(
         // `ModuleInitMode`. This is what made the 146-source ESLint graph
         // quadratic in both time and retained function bodies.
         const moduleInitMode: ModuleInitMode = index === lastIndex ? "full" : index === 0 ? "discover" : "skip";
+        // (#4045) Point every colliding name at THIS source's own slot for the
+        // duration of its body compilation, so its calls resolve to its own
+        // function instead of whichever module happened to register last.
+        // Iterating in the same order as the collect loop leaves the map in the
+        // same last-wins end state it had before, so exports and the finalizers
+        // that run after this loop observe exactly what they observed before.
+        for (const [name, idx] of ownFuncIdxBySource.get(sf) ?? []) {
+          ctx.funcMap.set(name, idx);
+        }
         profilePhase(sf.fileName, () => compileDeclarations(ctx, sf, undefined, undefined, moduleInitMode));
       }
     });

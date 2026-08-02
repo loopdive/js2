@@ -2007,6 +2007,22 @@ export function compileDeclarations(
   for (let i = 0; i < ctx.mod.functions.length; i++) {
     funcByName.set(ctx.mod.functions[i]!.name, i);
   }
+  // (#4045) That scan is last-wins by NAME, so when two modules each declare a
+  // top-level `function shared()` — two real, distinct slots — every body lands
+  // in whichever slot happens to come last, leaving the other permanently empty
+  // and every caller pointed at one body.
+  //
+  // `ctx.funcMap` is the authority on which slot a name currently denotes, and
+  // the multi-source driver rebinds it to the source being compiled. Defer to it.
+  // The `fn.name === name` guard keeps this a strict no-op for every
+  // non-colliding name (there the two agree by construction) and skips names
+  // bound to imports, which own no defined slot.
+  for (const [name, handle] of ctx.funcMap) {
+    const fn = definedFuncAt(ctx, handle);
+    if (!fn || fn.name !== name) continue;
+    const position = ctx.mod.functions.indexOf(fn);
+    if (position >= 0) funcByName.set(name, position);
+  }
   const siblingFunctionLists = new WeakSet<object>();
 
   function statementListHasEagerClass(stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[]): boolean {
