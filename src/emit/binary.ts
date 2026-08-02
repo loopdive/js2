@@ -522,6 +522,19 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     const definedNameCounts = new Map<string, number>();
     for (const f of mod.functions) definedNameCounts.set(f.name, (definedNameCounts.get(f.name) ?? 0) + 1);
 
+    // (#4075) `JS2WASM_EMIT_DUMP=1` writes one line per defined function
+    // (position, name, param+local frame size) to stderr before encoding. A
+    // local-index breach is a mismatch between a body and its frame, so the
+    // actionable question is "which function has a frame that index WOULD fit"
+    // — answerable only against the whole table. Inert unless set.
+    if (typeof process !== "undefined" && process.env?.JS2WASM_EMIT_DUMP) {
+      const lines = mod.functions.map((f, position) => {
+        const params = resolveParamCount(f.typeIdx);
+        return `[js2:emit] ${position}\t${params >= 0 ? params + f.locals.length : "?"}\t${f.name}`;
+      });
+      process.stderr.write(`${lines.join("\n")}\n`);
+    }
+
     for (const [functionPosition, f] of mod.functions.entries()) {
       if (valCtx) {
         // (#4030/#4045) Include the position and frame size. A bare name is not
@@ -1030,17 +1043,20 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.select);
       break;
     case "local.get":
-      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
+      // (#4075) name the opcode: a local breach needs the SITE, not just the frame.
+      if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_get);
       enc.u32(instr.index);
       break;
     case "local.set":
-      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
+      // (#4075) name the opcode: a local breach needs the SITE, not just the frame.
+      if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_set);
       enc.u32(instr.index);
       break;
     case "local.tee":
-      if (valCtx && valCtx.maxLocals >= 0) vIdx("local", instr.index, valCtx.maxLocals);
+      // (#4075) name the opcode: a local breach needs the SITE, not just the frame.
+      if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_tee);
       enc.u32(instr.index);
       break;

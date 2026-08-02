@@ -89,3 +89,62 @@ cheap and would show its neighbours' provenance.
   already misleading once (it fired for #4045's collision).
 - A reduced fixture reproduces the breach without ESLint.
 - ESLint's Tier 1a entry emits a binary.
+
+## Further evidence gathered (2026-08-02)
+
+### The exact site
+
+```text
+local (local.get) index out of range — 65 (valid: [0, 8))
+at function 've' (position 1666, 6 declared locals)
+```
+
+So it is a **`local.get 65`** — a READ of a local that does not exist in this
+frame — not a write and not a computed index.
+
+### `ve`'s neighbourhood (`JS2WASM_EMIT_DUMP=1`, position → frame size → name)
+
+```text
+1662   2   ye
+1663   3   me
+1664  46   xe
+1665   3   __fn_tramp_t_cached
+1666   8   ve      <-- references local 65
+1667  19   ge
+1668  30   Ae
+1669  42   Ee
+1670   2   __get_member_nextPos
+```
+
+Every neighbour is a two-letter minified name, so `ve` comes from a **minified
+dependency** in the graph (`esquery.min.js` is the likeliest — it is an ESLint
+dependency and is shipped minified). That also explains why no *declaration*
+named `ve` was found by an AST scan of the resolved sources: the scan looked at
+declaration forms, and these names are also introduced by patterns it did not
+cover (object-literal properties, class expressions, and the CJS rewrite, which
+runs before analysis).
+
+**No neighbour has a frame ≥ 66**, so the body is not simply the adjacent
+function's. Module-wide, **322 of 8,225** defined functions have a frame large
+enough to own local 65 — too many to guess from; the origin has to be traced,
+not inferred.
+
+### A separate finding worth its own triage
+
+The emitted table still contains **61 duplicated defined-function names** after
+the #4045 fixes, e.g. `TokenTranslator_init`, `TokenTranslator_new`, `_format`,
+`_globToRegExp`, `analyzeScope`, `assertArg`, `__sget_`, `__sset_`,
+`__async_resume_fanon_410`. #4045 covered top-level *function declarations*;
+these are class members, synthesized helpers and async resume points, which are
+named by other schemes. `ve` is **not** among them — which is exactly why the
+name-sharing check ruled the collision reading out here — but the duplicates are
+a latent instance of the same hazard and should be triaged separately.
+
+### Narrowed next step
+
+Instrument the producer, not the emitter: record which pass last wrote
+`mod.functions[1666].body`. Candidates worth checking first, in order —
+`replaceDefinedFuncAt`, the `pendingMethodTrampolines` finalize rebuild, and
+`fillMethodTrampolines`/`finalizeMethodTrampolines`, since all three overwrite an
+existing slot's body after it was first compiled and are therefore the paths that
+can pair a body with a foreign frame.
