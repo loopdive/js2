@@ -7,17 +7,17 @@ package running natively under Node (zero version skew — any divergence is a
 compiler bug, never an oracle mismatch). Runtime results remain explicitly
 unavailable for package entries that do not yet have that API-level proof.
 
-The npm-compat catalog adds another fifteen packages through one data-driven,
+The npm-compat catalog adds another sixteen packages through one data-driven,
 bounded package-entry harness:
 
-`hono`, `lodash`, `axios`, `react-dom`, `webpack`, `uuid`, `typescript`,
+`hono`, `lodash`, `axios`, `react-dom`, `jsdom`, `webpack`, `uuid`, `typescript`,
 `redux`, `jest`, `styled-components`, `moment`, `stylelint`,
 `three`, `lit`, and `tailwindcss`.
 
 Every catalog entry pins the canonical npm tarball sha1/integrity and the exact
 published entry file. The package's locked dependency graph is installed so a
 compile failure is not manufactured by omitting declared dependencies. None of
-these fifteen npm tarballs ships its upstream unit-test sources. Their cards
+these sixteen npm tarballs ships its upstream unit-test sources. Their cards
 therefore say “upstream suite — not shipped; adapter pending”; they do not
 substitute harness-authored smoke vectors or imply that validation is a test
 pass. Matching upstream source suites can be pinned and adapted package by
