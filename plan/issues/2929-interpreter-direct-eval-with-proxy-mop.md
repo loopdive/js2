@@ -94,13 +94,16 @@ Converges with #1355 (Proxy) and `with`. Umbrella: #1584. Goal: `runtime-eval`.
 
 ## 2026-08-02 implementation handoff
 
-Branch `codex/2929-direct-eval-capture` implements the first acceptance slice:
+Branch `codex/2929-direct-eval-capture` implements a resumable direct-eval
+interpreter checkpoint:
 
 - an AOT function whose lexical descendants can reach direct `eval` promotes
   eval-visible locals to the compiler's existing canonical mutable capture
   cells;
-- direct eval passes parallel name/cell vectors through the standalone provider
-  boundary `__runtime_direct_eval(source, globalObject, thisArg, names, slots, callerStrict)`;
+- direct eval passes current-activation state, lexical captures, outer captures,
+  strictness, and mapped-parameter metadata through the standalone provider
+  boundary
+  `__runtime_direct_eval(source, globalObject, thisArg, activationState, activationSeedNames, activationSeedSlots, lexicalNames, lexicalSlots, outerNames, outerSlots, callerStrict, mappedParamNames)`;
 - the provider creates a declarative `$EnvRecord` above the global record, and
   interpreter name lookup, assignment, and `typeof` dereference those live
   cells; and
@@ -124,16 +127,46 @@ The follow-on declaration/strictness slice is also present on the same branch:
   `let`/`const` bindings receive a private TDZ environment;
 - `InitName` initializes those predeclared lexical cells without weakening
   ordinary assignment's TDZ and strict-unresolvable checks; and
-- nested block functions use private strict-eval cells so their closure can be
-  initialized without leaking after the eval returns. Full block-environment
-  semantics and Annex B conflict handling remain follow-up work.
+- nested block functions use real block lexical environments, so their closures
+  retain the correct environment without leaking after the block exits.
+
+Three further MVP slices are included:
+
+- **Activation persistence.** Each AOT activation owns a persistent eval overlay
+  with capacity for 64 eval-created names. Sloppy top-level eval `var` and
+  eligible Annex B block-function bindings survive later direct-eval calls in
+  the same activation, while strict eval and lexical declarations remain
+  isolated. Current-activation names, lexical captures, and outer captures are
+  represented separately, so a new current-function `var` cannot overwrite an
+  outer capture.
+- **Mapped arguments.** Sloppy simple parameters and `arguments[index]` share
+  the same backing cells across direct eval. The dispatcher preserves the raw
+  source-level argument count while widening to declared arity, and the local
+  snapshot restores the exact boxed capture map. Parameter-to-arguments and
+  arguments-to-parameter canaries return `202` and `303`, respectively.
+- **Block, Annex B, and class MVP.** Nested blocks create lexical environment
+  records with TDZ, closure capture, and cleanup on normal exit, `break`,
+  `continue`, and exceptions. Sloppy block functions implement bounded B.3.3
+  outer-binding behavior, including lexical-conflict and skipped-block cases.
+  Classes support declarations and expressions, default/explicit constructors,
+  and ordinary noncomputed instance/static methods. Class bodies are strict and
+  calling a class without `new` throws `TypeError`. Inheritance, fields, private
+  names, accessors, computed names, and `super` fail loudly.
+
+Class construction and method calls are green while the class remains inside
+the interpreter. Returning an interpreted class through the provider and then
+constructing it in a separately compiled AOT module still loses constructor
+arguments/prototype state. That is the deferred generic external-callable /
+cross-module rec-group ABI seam, not an interpreter class-semantics success;
+this checkpoint does not claim it.
 
 The real Acorn provider remains a zero-import standalone artifact. Its runtime
-canaries now cover sloppy caller mutation, strict-source and strict-caller var
+canaries cover sloppy caller mutation, strict-source and strict-caller var
 isolation, lexical isolation and TDZ, strict early errors, indirect strict var
-isolation, and declaration-plan/environment construction. The focused Node
-environment suite is 9/9, including a guard that nested block declarations are
-not mistaken for top-level eval lexicals.
+isolation, declaration-plan/environment construction, activation persistence,
+mapped arguments, block shadowing/TDZ/closure capture, abrupt-completion
+cleanup, Annex B block functions, and the bounded class surface above. The
+focused Node environment suite is 18/18.
 
 ### Test262 eval-code measurement
 
@@ -198,23 +231,20 @@ coverage remains 130/347 and Annex B remains 77/469.
 
 ### Remaining work, in recommended order
 
-1. Split direct-eval caller cells into current-activation bindings versus outer
-   captures, and add a persistent overlay for sloppy eval-created `var`
-   bindings. The current flat vector can update an outer capture when the spec
-   requires a new current-function var, and newly created names do not persist
-   across later eval calls.
-2. Repair parameter-default/`arguments` cell synchronization. Reification can
-   currently race direct parameter-local writes and produces the observed
-   illegal-cast cluster.
-3. Add real block lexical environments, class declarations, and the remaining
-   Annex B B.3.3.3 conflict/initialization rules. The current strict block-
-   function cell is intentionally an isolation approximation, not a general
-   block-scope implementation.
-4. Cover methods, async/generator functions, `new.target`, `super`, and strict-
-   caller `this` behavior in the interpreter emitter/runtime.
-5. Implement the object environment record for `with`, then coordinate the
+1. Complete dynamic mapped-arguments descriptor semantics: deleting or
+   redefining an indexed property must sever the parameter alias exactly when
+   required. The current MVP covers ordinary indexed reads/writes and direct
+   parameter mutation, not every descriptor transition.
+2. Extend lexical lowering to per-iteration loop environments, catch-parameter
+   lexical bindings, and `switch`; extend classes with inheritance, fields,
+   private names, accessors, computed names, and `super`.
+3. Cover methods, async/generator functions, `new.target`, `super`, and strict-
+   caller `this` behavior in the interpreter emitter/runtime. Freeze the
+   external callable/constructor and rec-group ABI with the packaging owner
+   before claiming classes returned across a module boundary.
+4. Implement the object environment record for `with`, then coordinate the
    shared ordinary-object MOP surface with #1355 before adding Proxy traps.
-6. Add generator suspend/resume opcodes on the shared #2864 frame carrier, then
+5. Add generator suspend/resume opcodes on the shared #2864 frame carrier, then
    run the JS-host/standalone differential acceptance gate.
 
 This branch is a resumable MVP slice, not closure of #2929. Only the first

@@ -141,6 +141,7 @@ import {
   registerClosureBindingInfo,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
 import {
+  collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
   functionMayReachDirectEval,
   reifyCurrentDirectEvalBindings,
@@ -2056,7 +2057,12 @@ export function compileLiftedClosureBody(
   const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
   if (reachesDirectEval) {
     liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(arrow);
-    for (const capture of captures) liftedFctx.directEvalBindingNames.add(capture.name);
+    liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(arrow);
+    liftedFctx.directEvalOuterBindingNames = new Set<string>();
+    for (const capture of captures) {
+      liftedFctx.directEvalBindingNames.add(capture.name);
+      liftedFctx.directEvalOuterBindingNames.add(capture.name);
+    }
   }
   initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
 

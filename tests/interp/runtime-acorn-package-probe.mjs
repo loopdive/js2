@@ -78,6 +78,55 @@ async function main() {
         return (result as number) + x;
       }
 
+      export function linkedDirectVarPersistence(): number {
+        eval(dynamic("var x = 1; x"));
+        return eval(dynamic("x = x + 1; x")) as number;
+      }
+
+      export function linkedNestedDirectVarPersistence(): number {
+        let x = 40;
+        function acornVarEval(first: string, second: string): any {
+          eval(first);
+          return eval(second);
+        }
+        const result: any = acornVarEval(
+          dynamic("var x = 1; x"),
+          dynamic("x = x + 1; x")
+        );
+        return (result as number) * 100 + x;
+      }
+
+      export function linkedDirectMappedParameterAssignment(): number {
+        function acornMappedParameter(a: number): number {
+          eval(dynamic("a = 2"));
+          return a * 100 + (arguments[0] as number);
+        }
+        return acornMappedParameter(1);
+      }
+
+      export function linkedDirectMappedArgumentsAssignment(): number {
+        function acornMappedArguments(a: number): number {
+          eval(dynamic("arguments[0] = 3"));
+          return a * 100 + (arguments[0] as number);
+        }
+        return acornMappedArguments(1);
+      }
+
+      export function linkedDirectDefaultParameter(): number {
+        function acornDefaultParameter(a: number = 5): number {
+          return eval(dynamic("a")) as number;
+        }
+        return acornDefaultParameter();
+      }
+
+      export function linkedDirectParameterWriteBeforeEval(): number {
+        function acornParameterWrite(a: number): number {
+          a = 6;
+          return eval(dynamic("a")) as number;
+        }
+        return acornParameterWrite(1);
+      }
+
       export function linkedDirectStrictSourceVarIsolation(): number {
         let x = 40;
         const result: any = eval(dynamic("'use strict'; var x = 1; x"));
@@ -104,6 +153,99 @@ async function main() {
         } catch (error) {
           return error && error.name === "ReferenceError" ? 1 : 2;
         }
+      }
+
+      export function linkedDirectNestedLexicalShadow(): number {
+        return eval(dynamic("let y = 1; { let y = 2; y; } y")) as number;
+      }
+
+      export function linkedDirectBlockClosureCapture(): number {
+        return eval(
+          dynamic("var f; { let y = 3; f = function () { return y; }; } f()")
+        ) as number;
+      }
+
+      export function linkedDirectNestedLexicalTdz(): number {
+        try {
+          eval(dynamic("{ x; let x = 1; }"));
+          return 0;
+        } catch (error) {
+          return error && error.name === "ReferenceError" ? 1 : 2;
+        }
+      }
+
+      export function linkedDirectBlockBreakCleanup(): number {
+        return eval(
+          dynamic("var r = 0; while (true) { let y = 1; r = y; break; } typeof y === 'undefined' ? r : -1")
+        ) as number;
+      }
+
+      export function linkedDirectBlockCatchCleanup(): number {
+        return eval(
+          dynamic("var r = 0; try { { let y = 1; throw 7; } } catch (error) { r = error; } typeof y === 'undefined' ? r : -1")
+        ) as number;
+      }
+
+      export function linkedDirectStrictBlockFunctionLifetime(): number {
+        const result: any = eval(
+          dynamic("'use strict'; { function f() { return 1; } f(); } typeof f")
+        );
+        return result === "undefined" ? 1 : 2;
+      }
+
+      export function linkedDirectSloppyBlockFunction(): number {
+        return eval(dynamic("{ function f() { return 2; } } f()")) as number;
+      }
+
+      export function linkedDirectSloppyBlockFunctionPersistence(): number {
+        eval(dynamic("{ function f() { return 4; } } 0"));
+        return eval(dynamic("f()")) as number;
+      }
+
+      export function linkedDirectBlockFunctionLexicalConflict(): number {
+        return eval(dynamic("let f = 3; { function f() { return 2; } } f")) as number;
+      }
+
+      export function linkedDirectBlockFunctionOuterLexicalConflict(): number {
+        return eval(dynamic("{ let f = 3; { function f() { return 2; } } f; }")) as number;
+      }
+
+      export function linkedDirectBlockFunctionSkippedInit(): number {
+        const result: any = eval(dynamic("if (false) { function f() {} } f"));
+        return result === undefined ? 1 : 2;
+      }
+
+      export function linkedDirectClassBasic(): number {
+        return eval(
+          dynamic("class C { constructor(x) { this.x = x; } value() { return this.x; } static two() { return 2; } } var c = new C(5); c.value() + C.two()")
+        ) as number;
+      }
+
+      export function linkedDirectClassInstanceMethod(): number {
+        return eval(dynamic("class C { value() { return 4; } } new C().value()")) as number;
+      }
+
+      export function linkedDirectClassConstructorField(): number {
+        return eval(dynamic("class C { constructor(x) { this.x = x; } } new C(5).x")) as number;
+      }
+
+      export function linkedDirectClassBlockLifetime(): number {
+        const result: any = eval(
+          dynamic("{ class C { static value() { return 3; } } C.value(); } typeof C")
+        );
+        return result === "undefined" ? 1 : 2;
+      }
+
+      export function linkedDirectClassCallGuard(): number {
+        return eval(
+          dynamic("class C {} try { C(); } catch (error) { error.name === 'TypeError' ? 1 : 2 }")
+        ) as number;
+      }
+
+      export function linkedDirectClassExpression(): number {
+        return eval(
+          dynamic("var C = class Named { value() { return 4; } }; new C().value()")
+        ) as number;
       }
 
       export function linkedDirectStrictEarlyError(): number {
@@ -208,10 +350,39 @@ async function main() {
           ["linkedEval", userInstance.exports.linkedEval],
           ["linkedDirectEval", userInstance.exports.linkedDirectEval],
           ["linkedDirectSloppyVarMutation", userInstance.exports.linkedDirectSloppyVarMutation],
+          ["linkedDirectVarPersistence", userInstance.exports.linkedDirectVarPersistence],
+          ["linkedNestedDirectVarPersistence", userInstance.exports.linkedNestedDirectVarPersistence],
+          ["linkedDirectMappedParameterAssignment", userInstance.exports.linkedDirectMappedParameterAssignment],
+          ["linkedDirectMappedArgumentsAssignment", userInstance.exports.linkedDirectMappedArgumentsAssignment],
+          ["linkedDirectDefaultParameter", userInstance.exports.linkedDirectDefaultParameter],
+          ["linkedDirectParameterWriteBeforeEval", userInstance.exports.linkedDirectParameterWriteBeforeEval],
           ["linkedDirectStrictSourceVarIsolation", userInstance.exports.linkedDirectStrictSourceVarIsolation],
           ["linkedDirectStrictCallerVarIsolation", userInstance.exports.linkedDirectStrictCallerVarIsolation],
           ["linkedDirectLexicalIsolation", userInstance.exports.linkedDirectLexicalIsolation],
           ["linkedDirectLexicalTdz", userInstance.exports.linkedDirectLexicalTdz],
+          ["linkedDirectNestedLexicalShadow", userInstance.exports.linkedDirectNestedLexicalShadow],
+          ["linkedDirectBlockClosureCapture", userInstance.exports.linkedDirectBlockClosureCapture],
+          ["linkedDirectNestedLexicalTdz", userInstance.exports.linkedDirectNestedLexicalTdz],
+          ["linkedDirectBlockBreakCleanup", userInstance.exports.linkedDirectBlockBreakCleanup],
+          ["linkedDirectBlockCatchCleanup", userInstance.exports.linkedDirectBlockCatchCleanup],
+          ["linkedDirectStrictBlockFunctionLifetime", userInstance.exports.linkedDirectStrictBlockFunctionLifetime],
+          ["linkedDirectSloppyBlockFunction", userInstance.exports.linkedDirectSloppyBlockFunction],
+          [
+            "linkedDirectSloppyBlockFunctionPersistence",
+            userInstance.exports.linkedDirectSloppyBlockFunctionPersistence,
+          ],
+          ["linkedDirectBlockFunctionLexicalConflict", userInstance.exports.linkedDirectBlockFunctionLexicalConflict],
+          [
+            "linkedDirectBlockFunctionOuterLexicalConflict",
+            userInstance.exports.linkedDirectBlockFunctionOuterLexicalConflict,
+          ],
+          ["linkedDirectBlockFunctionSkippedInit", userInstance.exports.linkedDirectBlockFunctionSkippedInit],
+          ["linkedDirectClassBasic", userInstance.exports.linkedDirectClassBasic],
+          ["linkedDirectClassInstanceMethod", userInstance.exports.linkedDirectClassInstanceMethod],
+          ["linkedDirectClassConstructorField", userInstance.exports.linkedDirectClassConstructorField],
+          ["linkedDirectClassBlockLifetime", userInstance.exports.linkedDirectClassBlockLifetime],
+          ["linkedDirectClassCallGuard", userInstance.exports.linkedDirectClassCallGuard],
+          ["linkedDirectClassExpression", userInstance.exports.linkedDirectClassExpression],
           ["linkedDirectStrictEarlyError", userInstance.exports.linkedDirectStrictEarlyError],
           ["linkedIndirectStrictVarIsolation", userInstance.exports.linkedIndirectStrictVarIsolation],
           ["linkedThrow", userInstance.exports.linkedThrow],

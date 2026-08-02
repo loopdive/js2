@@ -100,6 +100,16 @@ export const Op = {
 /** The number of distinct opcodes (0..OP_COUNT-1). */
 export const OP_COUNT = 40;
 
+/** Private CallBuiltin ids used by #2929 lexical-environment mechanics. They
+ * remain scalar exports instead of fields on the frozen `Builtin` object so
+ * separately compiled callable rec-groups keep their existing shape. */
+export const BUILTIN_PUSH_LEXICAL_ENV = 17;
+export const BUILTIN_SAVE_ENV = 18;
+export const BUILTIN_RESTORE_ENV = 19;
+export const BUILTIN_ASSIGN_OUTER_NAME = 20;
+export const BUILTIN_DEFINE_CLASS_METHOD = 21;
+export const BUILTIN_FINALIZE_CLASS = 22;
+
 // ── Encoding (doc §"Encoding" / ADR-0019) ────────────────────────────────────
 //
 // One instruction = one base i32 word:  `op | (a << 8) | (b << 20)`

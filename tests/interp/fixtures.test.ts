@@ -83,7 +83,7 @@ describe("#3101 encoder — packing + operand fields", () => {
     const slot = enc.emitJump(Op.Jump);
     enc.emit0(Op.LdaUndef);
     const target = enc.here();
-    enc.patch(slot);
+    enc.patch(slot, enc.here());
     expect(enc.code[slot]).toBe(target);
   });
 });
@@ -164,6 +164,11 @@ describe("#3101 comparison desugarings (>, >=, !=, !== via the minimal ISA)", ()
 });
 
 describe("#3101 control flow + completion values", () => {
+  it("predeclares strict script var, function, lexical, and class bindings", () =>
+    expectValue(
+      '"use strict"; var a=1; let b=2; const c=3; function f(){return 4;} class C { static value(){return 5;} } a+b+c+f()+C.value()',
+      15,
+    ));
   it("if/else takes the right branch", () => expectValue("if (2 > 1) 'yes'; else 'no'", "yes"));
   it("if with false test and no else completes undefined", () => expectValue("1; if (false) 2;", undefined));
   it("while accumulates", () => expectValue("var n=5, f=1; while(n>1){f*=n;n--;} f", 120));

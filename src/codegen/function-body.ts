@@ -69,6 +69,7 @@ import {
 } from "./linear-uint8-signatures.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, emitLinearU8ArenaReset } from "./linear-uint8-arena.js";
 import {
+  collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
   functionMayReachDirectEval,
   reifyCurrentDirectEvalBindings,
@@ -349,6 +350,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // can capture those bindings through a narrower, non-canonical cell type.
   if (functionMayReachDirectEval(decl, ctx.oracle)) {
     fctx.directEvalBindingNames = collectDirectEvalBindingNames(decl);
+    fctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(decl);
   }
 
   // Register params as locals

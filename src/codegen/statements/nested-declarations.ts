@@ -56,7 +56,11 @@ import {
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
-import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
+import {
+  collectDirectEvalActivationBindingNames,
+  collectDirectEvalBindingNames,
+  functionMayReachDirectEval,
+} from "../direct-eval-environment.js";
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -625,7 +629,10 @@ export function compileNestedFunctionDeclaration(
       // read (#1702) falls back to `undefined` — behaviour-preserving.
       readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
     };
-    if (reachesDirectEval) liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
+    if (reachesDirectEval) {
+      liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
+      liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(stmt);
+    }
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -941,7 +948,12 @@ export function compileNestedFunctionDeclaration(
     };
     if (reachesDirectEval) {
       liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
-      for (const capture of captures) liftedFctx.directEvalBindingNames.add(capture.name);
+      liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(stmt);
+      liftedFctx.directEvalOuterBindingNames = new Set<string>();
+      for (const capture of captures) {
+        liftedFctx.directEvalBindingNames.add(capture.name);
+        liftedFctx.directEvalOuterBindingNames.add(capture.name);
+      }
     }
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {

@@ -77,7 +77,7 @@ function providerSource() {
         return ast;
       }
 
-      function makeDirectMutationEvalAst(): any {
+      function makeDirectMutationEvalAst(amount: number): any {
         const target: any = {};
         target.type = "Identifier";
         target.name = "x";
@@ -86,7 +86,7 @@ function providerSource() {
         read.name = "x";
         const two: any = {};
         two.type = "Literal";
-        two.value = 2;
+        two.value = amount;
         const add: any = {};
         add.type = "BinaryExpression";
         add.operator = "+";
@@ -110,6 +110,34 @@ function providerSource() {
         ast.type = "Program";
         ast.sourceType = "script";
         ast.body = [assignmentStatement, resultStatement];
+        return ast;
+      }
+
+      function makeDirectVarEvalAst(): any {
+        const id: any = {};
+        id.type = "Identifier";
+        id.name = "x";
+        const one: any = {};
+        one.type = "Literal";
+        one.value = 1;
+        const declarator: any = {};
+        declarator.type = "VariableDeclarator";
+        declarator.id = id;
+        declarator.init = one;
+        const declaration: any = {};
+        declaration.type = "VariableDeclaration";
+        declaration.kind = "var";
+        declaration.declarations = [declarator];
+        const result: any = {};
+        result.type = "Identifier";
+        result.name = "x";
+        const resultStatement: any = {};
+        resultStatement.type = "ExpressionStatement";
+        resultStatement.expression = result;
+        const ast: any = {};
+        ast.type = "Program";
+        ast.sourceType = "script";
+        ast.body = [declaration, resultStatement];
         return ast;
       }
 
@@ -252,9 +280,13 @@ function providerSource() {
           return makeStrictThisFunctionAst();
         }
         if (source === "answer + 2") return makeEvalAst();
-        if (source === "x = x + 2; x") return makeDirectMutationEvalAst();
+        if (source === "x = x + 2; x") return makeDirectMutationEvalAst(2);
+        if (source === "x = x + 1; x") return makeDirectMutationEvalAst(1);
+        if (source === "var x = 1; x") return makeDirectVarEvalAst();
+        if (source.indexOf("x = x + 1") >= 0) return makeDirectMutationEvalAst(1);
+        if (source.indexOf("var x = 1") >= 0) return makeDirectVarEvalAst();
         if (source === "'use strict';\\nx = x + 2; x") {
-          return makeDirectMutationEvalAst();
+          return makeDirectMutationEvalAst(2);
         }
         if (source === "aotIdentity(globalValue)") {
           return makeReverseIdentityEvalAst();
@@ -302,16 +334,40 @@ function providerSource() {
         source: any,
         globalObject: any,
         thisArg: any,
-        names: any,
-        slots: any,
-        callerStrict: boolean
+        activationState: any,
+        activationSeedNames: any,
+        activationSeedSlots: any,
+        lexicalNames: any,
+        lexicalSlots: any,
+        outerNames: any,
+        outerSlots: any,
+        callerStrict: boolean,
+        mappedParamNames: any
       ): any {
+        const liveNames: any[] = [];
+        const liveSlots: any[] = [];
         try {
-          return runtimeEvalResult(
-            true,
-            executeDirectEval(parse, source, globalObject, thisArg, names, slots, callerStrict)
+          restoreDirectEvalActivationState(activationState, liveNames, liveSlots);
+          const evalResult = executeDirectEval(
+            parse,
+            source,
+            globalObject,
+            thisArg,
+            liveNames,
+            liveSlots,
+            activationSeedNames,
+            activationSeedSlots,
+            lexicalNames,
+            lexicalSlots,
+            outerNames,
+            outerSlots,
+            callerStrict,
+            mappedParamNames
           );
+          snapshotDirectEvalActivationState(activationState, liveNames);
+          return runtimeEvalResult(true, evalResult);
         } catch (error) {
+          snapshotDirectEvalActivationState(activationState, liveNames);
           return runtimeEvalResult(false, error);
         }
       }
@@ -335,11 +391,61 @@ function providerSource() {
           "x = x + 2; x",
           globalThis,
           undefined,
+          [],
+          [],
           names,
           slots,
-          false
+          [],
+          [],
+          [],
+          [],
+          false,
+          []
         );
         return (result as number) + (cell.value as number);
+      }
+
+      export function providerVarCanary(): number {
+        const activationNames: any[] = [];
+        const activationSlots: any[] = [];
+        const createdVarNames: any[] = [];
+        const createdVarSlots: any[] = [];
+        const outerNames: any[] = ["x"];
+        const outerCell: EvalBindingCell = { value: 40 };
+        const outerSlots: any[] = [outerCell];
+        executeDirectEval(
+          parse,
+          "var x = 1; x",
+          globalThis,
+          undefined,
+          createdVarNames,
+          createdVarSlots,
+          activationNames,
+          activationSlots,
+          [],
+          [],
+          outerNames,
+          outerSlots,
+          false,
+          []
+        );
+        const result = executeDirectEval(
+          parse,
+          "x = x + 1; x",
+          globalThis,
+          undefined,
+          createdVarNames,
+          createdVarSlots,
+          activationNames,
+          activationSlots,
+          [],
+          [],
+          outerNames,
+          outerSlots,
+          false,
+          []
+        );
+        return (result as number) * 100 + (outerCell.value as number);
       }
     `,
   ].join("\n");
@@ -443,11 +549,34 @@ const USER_SOURCE = `
 
   export function nestedDirectEvalMutation(): number {
     let x = 40;
-    function inner(source: string): any {
+    function innerMutation(source: string): any {
       return eval(source);
     }
-    const result: any = inner(dynamic("x = x + 2; x"));
+    const result: any = innerMutation(dynamic("x = x + 2; x"));
     return (result as number) + x;
+  }
+
+  export function directEvalVarPersistence(): number {
+    eval(dynamic("var x = 1; x"));
+    return eval(dynamic("x = x + 1; x")) as number;
+  }
+
+  export function directEvalVarCreate(): number {
+    eval(dynamic("var x = 1; x"));
+    return 7;
+  }
+
+  export function nestedDirectEvalVarPersistence(): number {
+    let x = 40;
+    function innerVar(first: string, second: string): any {
+      eval(first);
+      return eval(second);
+    }
+    const result: any = innerVar(
+      dynamic("var x = 1; x"),
+      dynamic("x = x + 1; x")
+    );
+    return (result as number) * 100 + x;
   }
 
   export function functionExpressionDirectEvalMutation(): number {
@@ -482,6 +611,7 @@ async function main() {
   });
   const user = await compile(USER_SOURCE, {
     fileName: "runtime-eval-user.ts",
+    inferModuleStrictArguments: false,
     skipSemanticDiagnostics: true,
     target: "standalone",
   });
@@ -513,6 +643,7 @@ async function main() {
       for (const [name, fn] of [
         ["provider", runtimeInstance.exports.providerCanary],
         ["providerDirect", runtimeInstance.exports.providerDirectCanary],
+        ["providerVar", runtimeInstance.exports.providerVarCanary],
         ["create", userInstance.exports.create],
         ["invokeNew", userInstance.exports.invokeNew],
         ["invokeNewImmediate", userInstance.exports.invokeNewImmediate],
@@ -527,6 +658,9 @@ async function main() {
         ["directEvalMutation", userInstance.exports.directEvalMutation],
         ["directEvalNonString", userInstance.exports.directEvalNonString],
         ["nestedDirectEvalMutation", userInstance.exports.nestedDirectEvalMutation],
+        ["directEvalVarPersistence", userInstance.exports.directEvalVarPersistence],
+        ["directEvalVarCreate", userInstance.exports.directEvalVarCreate],
+        ["nestedDirectEvalVarPersistence", userInstance.exports.nestedDirectEvalVarPersistence],
         ["functionExpressionDirectEvalMutation", userInstance.exports.functionExpressionDirectEvalMutation],
         ["arrowDirectEvalMutation", userInstance.exports.arrowDirectEvalMutation],
       ]) {

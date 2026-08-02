@@ -29,8 +29,16 @@
 // and reports coverage (they are named follow-ups in the issue).
 
 import { Builtin, Encoder, type JumpSlot } from "./encoder.js";
-import { FLAG_SCRIPT, FLAG_STRICT, type FuncMeta, type JSValue } from "./types.js";
-import { Op } from "./opcodes.js";
+import { FLAG_CLASS_CONSTRUCTOR, FLAG_SCRIPT, FLAG_STRICT, type FuncMeta, type JSValue } from "./types.js";
+import {
+  BUILTIN_ASSIGN_OUTER_NAME,
+  BUILTIN_DEFINE_CLASS_METHOD,
+  BUILTIN_FINALIZE_CLASS,
+  BUILTIN_PUSH_LEXICAL_ENV,
+  BUILTIN_RESTORE_ENV,
+  BUILTIN_SAVE_ENV,
+  Op,
+} from "./opcodes.js";
 
 /** Thrown when the emitter meets a Phase-1-out-of-scope ESTree node/operator. */
 export class UnsupportedNodeError extends Error {
@@ -49,10 +57,16 @@ type Node = any;
 interface LoopCtx {
   label: string | null;
   breaks: JumpSlot[];
-  continues: JumpSlot[];
+  /** Jump slots for control contexts; lexical-scope markers reuse the same
+   * existing carrier for their active binding-name strings. */
+  continues: any[];
   /** True for loops (continue is legal); false for a plain labeled block. */
   isLoop: boolean;
 }
+
+/** Internal marker stored in the existing control-context stack for an active
+ * lexical block. It cannot collide with an ECMAScript identifier label. */
+const LEXICAL_SCOPE_LABEL = "\u0000lexical-env";
 
 /**
  * Emits one function/script body. Construct with the params + body, then call
@@ -78,6 +92,10 @@ class FunctionEmitter {
   private regTop = 1; // regs[0] reserved for `this`
   private maxReg = 1;
   private readonly loops: LoopCtx[] = [];
+  /** Logical length of `loops`. Self-compiled growable class-field vectors do
+   * not reliably retain `.pop()` shrinkage, so stale physical slots are
+   * overwritten and ignored beyond this pointer. */
+  private loopTop = 0;
   /** In a script/eval body, the register holding the running completion value. */
   private completionReg = -1;
   /** Hoisted var/let/const binding names (collected before emission). */
@@ -219,35 +237,45 @@ class FunctionEmitter {
     return this.enc.finish(this.maxReg, paramCount, this.name, flags);
   }
 
-  /** Recursively collect var/function/let/const binding names (function-scoped;
-   *  does NOT descend into nested function bodies — those are separate scopes). */
+  /** Collect root declarations plus nested `var`s. Nested lexical and function
+   * declarations are installed by `emitBlock` instead of being flattened into
+   * the eval/function environment. */
   private collectHoist(stmts: Node[]): void {
-    for (const s of stmts) this.collectHoistStatement(s);
+    for (const s of stmts) {
+      if (s.type === "VariableDeclaration") {
+        for (const d of s.declarations) {
+          this.collectHoistPattern(d.id, this.isScript && s.kind !== "var");
+        }
+      } else if (s.type === "FunctionDeclaration") {
+        if (s.id) this.hoistedFuncs.push(s);
+      } else if (s.type === "ClassDeclaration") {
+        if (s.id) this.collectHoistPattern(s.id, this.isScript);
+      } else {
+        this.collectNestedVarHoist(s);
+      }
+    }
   }
-  private collectHoistStatement(s: Node): void {
-    // Dynamic ESTree string discriminants deliberately use equality chains.
-    // A standalone switch over a dynamic/native-string field does not share
-    // the statically typed string switch representation.
+  private collectNestedVarHoist(s: Node): void {
     if (s.type === "VariableDeclaration") {
-      for (const d of s.declarations) this.collectHoistPattern(d.id, this.isScript && s.kind !== "var");
-    } else if (s.type === "FunctionDeclaration") {
-      if (s.id) this.hoistedFuncs.push(s);
+      if (s.kind === "var") for (const d of s.declarations) this.collectHoistPattern(d.id, false);
+    } else if (s.type === "FunctionDeclaration" || s.type === "ClassDeclaration") {
+      return;
     } else if (s.type === "IfStatement") {
-      this.collectHoistStatement(s.consequent);
-      if (s.alternate) this.collectHoistStatement(s.alternate);
+      this.collectNestedVarHoist(s.consequent);
+      if (s.alternate) this.collectNestedVarHoist(s.alternate);
     } else if (s.type === "BlockStatement") {
-      this.collectHoist(s.body);
+      for (const inner of s.body) this.collectNestedVarHoist(inner);
     } else if (s.type === "WhileStatement" || s.type === "DoWhileStatement") {
-      this.collectHoistStatement(s.body);
+      this.collectNestedVarHoist(s.body);
     } else if (s.type === "ForStatement") {
-      if (s.init && s.init.type === "VariableDeclaration") this.collectHoistStatement(s.init);
-      this.collectHoistStatement(s.body);
+      if (s.init && s.init.type === "VariableDeclaration") this.collectNestedVarHoist(s.init);
+      this.collectNestedVarHoist(s.body);
     } else if (s.type === "TryStatement") {
-      this.collectHoistStatement(s.block);
-      if (s.handler) this.collectHoistStatement(s.handler.body);
-      if (s.finalizer) this.collectHoistStatement(s.finalizer);
+      this.collectNestedVarHoist(s.block);
+      if (s.handler) this.collectNestedVarHoist(s.handler.body);
+      if (s.finalizer) this.collectNestedVarHoist(s.finalizer);
     } else if (s.type === "LabeledStatement") {
-      this.collectHoistStatement(s.body);
+      this.collectNestedVarHoist(s.body);
     }
   }
   private collectHoistPattern(id: Node, lexical: boolean): void {
@@ -299,8 +327,16 @@ class FunctionEmitter {
       this.emitVarDecl(s);
     } else if (s.type === "FunctionDeclaration") {
       return; // already hoisted + initialised
+    } else if (s.type === "ClassDeclaration") {
+      if (!s.id) throw new UnsupportedNodeError("anonymous class declaration", "ClassDeclaration");
+      this.emitClass(s);
+      if (this.isActiveBlockLexical(s.id.name) || (this.isScript && this.scriptBindingsPredeclared)) {
+        this.initializeName(s.id.name);
+      } else {
+        this.storeName(s.id.name);
+      }
     } else if (s.type === "BlockStatement") {
-      for (const inner of s.body) this.emitStatement(inner);
+      this.emitBlock(s);
     } else if (s.type === "IfStatement") {
       this.resetCompletion();
       this.emitIf(s);
@@ -335,14 +371,139 @@ class FunctionEmitter {
     }
   }
 
+  /** Emit one lexical block. Only blocks that declare let/const/class/function
+   * need an EnvRec; declaration-free blocks retain the previous bytecode shape. */
+  private emitBlock(s: Node): void {
+    const lexicalNames: string[] = [];
+    const functions: Node[] = [];
+    const annexBFunctionNames: string[] = [];
+    for (const inner of s.body) {
+      if (inner.type === "VariableDeclaration" && inner.kind !== "var") {
+        for (const declaration of inner.declarations) {
+          if (declaration.id.type !== "Identifier") {
+            throw new UnsupportedNodeError(`destructuring (${declaration.id.type})`, declaration.id.type);
+          }
+          lexicalNames.push(declaration.id.name);
+        }
+      } else if (inner.type === "FunctionDeclaration") {
+        if (inner.id) {
+          lexicalNames.push(inner.id.name);
+          functions.push(inner);
+          let outerLexicalConflict = this.isActiveBlockLexical(inner.id.name);
+          if (!outerLexicalConflict) {
+            for (const rootLexical of this.hoistedLexicals) {
+              if (rootLexical === inner.id.name) {
+                outerLexicalConflict = true;
+                break;
+              }
+            }
+          }
+          if (!this.strictMode && !outerLexicalConflict) annexBFunctionNames.push(inner.id.name);
+        }
+      } else if (inner.type === "ClassDeclaration" && inner.id) {
+        lexicalNames.push(inner.id.name);
+      }
+    }
+
+    if (lexicalNames.length === 0) {
+      for (const inner of s.body) this.emitStatement(inner);
+      return;
+    }
+
+    const blockMark = this.mark();
+    const namesReg = this.allocReg();
+    const saveReg = this.allocReg();
+    this.enc.emitConst(Op.LdaConst, this.enc.internConst(lexicalNames));
+    this.enc.emitReg(Op.Star, namesReg);
+    this.enc.emitCallBuiltin(BUILTIN_PUSH_LEXICAL_ENV, namesReg, 1);
+    this.enc.emitReg(Op.Star, saveReg);
+    const scopeCtx: LoopCtx = {
+      label: LEXICAL_SCOPE_LABEL,
+      breaks: [saveReg],
+      continues: lexicalNames,
+      isLoop: false,
+    };
+    if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
+    else this.loops.push(scopeCtx);
+    this.loopTop += 1;
+
+    for (const fn of functions) {
+      this.emitClosure(fn);
+      const closureReg = this.allocReg();
+      this.enc.emitReg(Op.Star, closureReg);
+      this.enc.emitReg(Op.Ldar, closureReg);
+      this.initializeName(fn.id.name);
+      let annexB = false;
+      for (const name of annexBFunctionNames) {
+        if (name === fn.id.name) {
+          annexB = true;
+          break;
+        }
+      }
+      if (annexB && this.isScript) {
+        const nameReg = this.allocReg();
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst(fn.id.name));
+        this.enc.emitReg(Op.Star, nameReg);
+        this.enc.emitCallBuiltin(BUILTIN_ASSIGN_OUTER_NAME, closureReg, 2);
+      }
+    }
+    for (const inner of s.body) this.emitStatement(inner);
+
+    this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, saveReg, 1);
+    this.loopTop -= 1;
+    this.release(blockMark);
+  }
+
+  private isActiveBlockLexical(name: string): boolean {
+    for (let i = this.loopTop - 1; i >= 0; i -= 1) {
+      const ctx = this.loops[i]!;
+      if (ctx.label !== LEXICAL_SCOPE_LABEL) continue;
+      for (let j = ctx.continues.length - 1; j >= 0; j -= 1) {
+        if (ctx.continues[j] === name) return true;
+      }
+    }
+    return false;
+  }
+
+  private lexicalEnvDepth(): number {
+    let depth = 0;
+    for (let i = 0; i < this.loopTop; i += 1) {
+      const ctx = this.loops[i]!;
+      if (ctx.label === LEXICAL_SCOPE_LABEL) depth += 1;
+    }
+    return depth;
+  }
+
+  /** Emit one exact environment restoration before an abrupt jump. The first
+   * exited scope's save register already points at the requested target depth. */
+  private restoreEnvToDepth(depth: number): void {
+    let currentDepth = 0;
+    for (let i = 0; i < this.loopTop; i += 1) {
+      const ctx = this.loops[i]!;
+      if (ctx.label !== LEXICAL_SCOPE_LABEL) continue;
+      if (currentDepth === depth) {
+        this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, ctx.breaks[0]!, 1);
+        return;
+      }
+      currentDepth += 1;
+    }
+  }
+
   private emitVarDecl(s: Node): void {
     for (const d of s.declarations) {
       if (d.id.type !== "Identifier") throw new UnsupportedNodeError(`destructuring (${d.id.type})`, d.id.type);
       if (d.init) {
         this.emitExpr(d.init);
-        if (this.isScript && this.scriptBindingsPredeclared && s.kind !== "var") this.initializeName(d.id.name);
-        else this.storeName(d.id.name);
-      } else if (this.isScript && this.scriptBindingsPredeclared && s.kind !== "var") {
+        if (
+          s.kind !== "var" &&
+          (this.isActiveBlockLexical(d.id.name) || (this.isScript && this.scriptBindingsPredeclared))
+        ) {
+          this.initializeName(d.id.name);
+        } else this.storeName(d.id.name);
+      } else if (
+        s.kind !== "var" &&
+        (this.isActiveBlockLexical(d.id.name) || (this.isScript && this.scriptBindingsPredeclared))
+      ) {
         this.enc.emit0(Op.LdaUndef);
         this.initializeName(d.id.name);
       }
@@ -356,11 +517,11 @@ class FunctionEmitter {
     this.emitStatement(s.consequent);
     if (s.alternate) {
       const toEnd = this.enc.emitJump(Op.Jump);
-      this.enc.patch(toElse);
+      this.enc.patch(toElse, this.enc.here());
       this.emitStatement(s.alternate);
-      this.enc.patch(toEnd);
+      this.enc.patch(toEnd, this.enc.here());
     } else {
-      this.enc.patch(toElse);
+      this.enc.patch(toElse, this.enc.here());
     }
   }
 
@@ -371,7 +532,8 @@ class FunctionEmitter {
     const exit = this.enc.emitJump(Op.JumpIfFalse);
     this.emitStatement(s.body);
     this.enc.emitJumpTo(Op.Jump, top);
-    this.enc.patch(exit);
+    this.enc.patch(exit, this.enc.here());
+    this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
     this.popLoop(ctx, /*continueTarget*/ top);
   }
 
@@ -382,6 +544,7 @@ class FunctionEmitter {
     const testPc = this.enc.here();
     this.emitExpr(s.test);
     this.enc.emitJumpTo(Op.JumpIfTrue, top);
+    this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
     this.popLoop(ctx, /*continueTarget*/ testPc);
   }
 
@@ -402,7 +565,8 @@ class FunctionEmitter {
     const updatePc = this.enc.here();
     if (s.update) this.emitExprStatementDiscard(s.update);
     this.enc.emitJumpTo(Op.Jump, top);
-    if (exit !== -1) this.enc.patch(exit);
+    if (exit !== -1) this.enc.patch(exit, this.enc.here());
+    this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
     this.popLoop(ctx, /*continueTarget*/ updatePc);
     this.release(outer);
   }
@@ -417,13 +581,22 @@ class FunctionEmitter {
     // Side-table model: the loop wraps execution and, on a throw whose PC is
     // covered by a row, writes the caught value into handlerReg and jumps to
     // handlerPC. finally is Phase-1 best-effort (see below).
+    const tryMark = this.mark();
+    let handlerEnvReg = -1;
+    if (s.handler) {
+      handlerEnvReg = this.allocReg();
+      this.enc.emitCallBuiltin(BUILTIN_SAVE_ENV, 0, 0);
+      this.enc.emitReg(Op.Star, handlerEnvReg);
+    }
     const start = this.enc.here();
     this.emitStatement(s.block);
     const end = this.enc.here();
-    const overCatch = this.enc.emitJump(Op.Jump); // normal completion skips the catch
+    const overCatchMarker = 1800000000 - start;
+    this.enc.emitJumpMarker(Op.Jump, overCatchMarker); // normal completion skips the catch
 
     if (s.handler) {
       const handlerPc = this.enc.here();
+      this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, handlerEnvReg, 1);
       // Bind the caught value: the loop has already stored it into handlerReg.
       let handlerReg: number;
       if (s.handler.param) {
@@ -445,7 +618,7 @@ class FunctionEmitter {
     // NORMAL completion path (below). Full finally-on-exceptional-path (run the
     // finalizer, then re-raise) is the documented cut-point / follow-up; the
     // exception is preserved either way (loud, never silent-wrong — invariant L1).
-    this.enc.patch(overCatch);
+    this.enc.patchTargetMarker(overCatchMarker, this.enc.here());
 
     if (s.finalizer) {
       // Phase-1 finally: run the finalizer on the NORMAL completion path. Full
@@ -456,6 +629,7 @@ class FunctionEmitter {
       // the differential harness and tracked as a follow-up.
       this.emitStatement(s.finalizer);
     }
+    this.release(tryMark);
   }
 
   private emitLabeled(s: Node): void {
@@ -468,6 +642,7 @@ class FunctionEmitter {
       // Labeled non-loop: only labeled break is meaningful.
       const ctx = this.pushLoop(label, false);
       this.emitStatement(inner);
+      this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
       this.popLoop(ctx, -1);
     }
   }
@@ -481,7 +656,8 @@ class FunctionEmitter {
       const exit = this.enc.emitJump(Op.JumpIfFalse);
       this.emitStatement(s.body);
       this.enc.emitJumpTo(Op.Jump, top);
-      this.enc.patch(exit);
+      this.enc.patch(exit, this.enc.here());
+      this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
       this.popLoop(ctx, top);
     } else if (s.type === "DoWhileStatement") {
       const ctx = this.pushLoop(label, true);
@@ -490,6 +666,7 @@ class FunctionEmitter {
       const testPc = this.enc.here();
       this.emitExpr(s.test);
       this.enc.emitJumpTo(Op.JumpIfTrue, top);
+      this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
       this.popLoop(ctx, testPc);
     } else {
       const outer = this.mark();
@@ -508,7 +685,8 @@ class FunctionEmitter {
       const updatePc = this.enc.here();
       if (s.update) this.emitExprStatementDiscard(s.update);
       this.enc.emitJumpTo(Op.Jump, top);
-      if (exit !== -1) this.enc.patch(exit);
+      if (exit !== -1) this.enc.patch(exit, this.enc.here());
+      this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
       this.popLoop(ctx, updatePc);
       this.release(outer);
     }
@@ -516,19 +694,27 @@ class FunctionEmitter {
 
   // ── break / continue ─────────────────────────────────────────────────────────
   private pushLoop(label: string | null, isLoop: boolean): LoopCtx {
-    const ctx: LoopCtx = { label, breaks: [], continues: [], isLoop };
-    this.loops.push(ctx);
+    const markerSeed = this.enc.here() + 1;
+    const ctx: LoopCtx = {
+      label,
+      // [retained lexical depth, deferred break marker, deferred continue marker]
+      breaks: [-this.lexicalEnvDepth() - 1, 2000000000 - markerSeed * 2, 1999999999 - markerSeed * 2],
+      continues: [],
+      isLoop,
+    };
+    if (this.loopTop < this.loops.length) this.loops[this.loopTop] = ctx;
+    else this.loops.push(ctx);
+    this.loopTop += 1;
     return ctx;
   }
   private popLoop(ctx: LoopCtx, continueTarget: number): void {
-    this.loops.pop();
-    const end = this.enc.here();
-    for (const b of ctx.breaks) this.enc.patch(b, end);
-    if (continueTarget >= 0) for (const c of ctx.continues) this.enc.patch(c, continueTarget);
+    this.loopTop -= 1;
+    if (continueTarget >= 0) this.enc.patchTargetMarker(ctx.breaks[2]!, continueTarget);
   }
   private findLoop(label: string | null, needLoop: boolean): LoopCtx {
-    for (let i = this.loops.length - 1; i >= 0; i -= 1) {
+    for (let i = this.loopTop - 1; i >= 0; i -= 1) {
       const ctx = this.loops[i]!;
+      if (ctx.label === LEXICAL_SCOPE_LABEL) continue;
       if (label === null) {
         if (!needLoop || ctx.isLoop) return ctx;
       } else if (ctx.label === label) {
@@ -539,11 +725,13 @@ class FunctionEmitter {
   }
   private emitBreak(s: Node): void {
     const ctx = this.findLoop(s.label ? s.label.name : null, false);
-    ctx.breaks.push(this.enc.emitJump(Op.Jump));
+    this.restoreEnvToDepth(-ctx.breaks[0]! - 1);
+    this.enc.emitJumpMarker(Op.Jump, ctx.breaks[1]!);
   }
   private emitContinue(s: Node): void {
     const ctx = this.findLoop(s.label ? s.label.name : null, true);
-    ctx.continues.push(this.enc.emitJump(Op.Jump));
+    this.restoreEnvToDepth(-ctx.breaks[0]! - 1);
+    this.enc.emitJumpMarker(Op.Jump, ctx.breaks[2]!);
   }
 
   // ── expressions (each leaves its value in acc, restores regTop) ──────────────
@@ -569,6 +757,7 @@ class FunctionEmitter {
     else if (node.type === "ConditionalExpression") this.emitConditional(node);
     else if (node.type === "SequenceExpression") this.emitSequence(node);
     else if (node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression") this.emitClosure(node);
+    else if (node.type === "ClassExpression") this.emitClass(node);
     else if (node.type === "TemplateLiteral") this.emitTemplate(node);
     else throw new UnsupportedNodeError(`expression ${node.type}`, node.type);
   }
@@ -596,18 +785,30 @@ class FunctionEmitter {
   }
 
   private emitLoadName(name: string): void {
+    if (this.isActiveBlockLexical(name)) {
+      this.enc.emitConst(Op.LdName, this.enc.internConst(name));
+      return;
+    }
     const r = this.names.get(name);
     if (r !== undefined) this.enc.emitReg(Op.Ldar, r);
     else this.enc.emitConst(Op.LdName, this.enc.internConst(name));
   }
   private storeName(name: string): void {
     // acc holds the value; leaves acc unchanged (assignment-expression value).
+    if (this.isActiveBlockLexical(name)) {
+      this.enc.emitConst(Op.StName, this.enc.internConst(name));
+      return;
+    }
     const r = this.names.get(name);
     if (r !== undefined) this.enc.emitReg(Op.Star, r);
     else this.enc.emitConst(Op.StName, this.enc.internConst(name));
   }
 
   private initializeName(name: string): void {
+    if (this.isActiveBlockLexical(name)) {
+      this.enc.emitConst(Op.InitName, this.enc.internConst(name));
+      return;
+    }
     const r = this.names.get(name);
     if (r !== undefined) this.enc.emitReg(Op.Star, r);
     else this.enc.emitConst(Op.InitName, this.enc.internConst(name));
@@ -621,6 +822,7 @@ class FunctionEmitter {
    * self-compile subset.
    */
   private isBoundName(name: string): boolean {
+    if (this.isActiveBlockLexical(name)) return true;
     for (const bound of this.boundNames) {
       if (bound === name) return true;
     }
@@ -1033,12 +1235,12 @@ class FunctionEmitter {
       this.emitExpr(node.left);
       const end = this.enc.emitJump(Op.JumpIfFalse); // false → result is left (in acc)
       this.emitExpr(node.right);
-      this.enc.patch(end);
+      this.enc.patch(end, this.enc.here());
     } else if (op === "||") {
       this.emitExpr(node.left);
       const end = this.enc.emitJump(Op.JumpIfTrue); // true → result is left (in acc)
       this.emitExpr(node.right);
-      this.enc.patch(end);
+      this.enc.patch(end, this.enc.here());
     } else if (op === "??") {
       // left ?? right: if left is null/undefined → right, else left.
       const m = this.mark();
@@ -1051,9 +1253,9 @@ class FunctionEmitter {
       const toRight = this.enc.emitJump(Op.JumpIfTrue);
       this.enc.emitReg(Op.Ldar, rLeft); // acc = left
       const toEnd = this.enc.emitJump(Op.Jump);
-      this.enc.patch(toRight);
+      this.enc.patch(toRight, this.enc.here());
       this.emitExpr(node.right);
-      this.enc.patch(toEnd);
+      this.enc.patch(toEnd, this.enc.here());
       this.release(m);
     } else {
       throw new UnsupportedNodeError(`logical operator '${op}'`, "LogicalExpression");
@@ -1063,15 +1265,27 @@ class FunctionEmitter {
   private emitUnary(node: Node): void {
     const op: string = node.operator;
     const arg = node.argument;
-    if (op === "typeof" && arg.type === "Identifier" && this.names.get(arg.name) === undefined) {
-      // typeof <possibly-undeclared global> must NOT throw ReferenceError.
-      const m = this.mark();
-      this.enc.emitConst(Op.LdaConst, this.enc.internConst(arg.name));
-      const r = this.allocReg();
-      this.enc.emitReg(Op.Star, r);
-      this.enc.emitCallBuiltin(Builtin.TypeofName, r, 1);
-      this.release(m);
-      return;
+    if (op === "typeof" && arg.type === "Identifier") {
+      // A missing numeric Map value is not a stable `undefined` discriminator
+      // in the standalone compiler. Use the explicit fixed-register mirror;
+      // active block bindings are EnvRec-backed even when they shadow a root
+      // register. TypeofName also preserves lexical-TDZ throws.
+      let fixedRegister = false;
+      for (const name of this.boundNames) {
+        if (name === arg.name) {
+          fixedRegister = true;
+          break;
+        }
+      }
+      if (this.isActiveBlockLexical(arg.name) || !fixedRegister) {
+        const m = this.mark();
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst(arg.name));
+        const r = this.allocReg();
+        this.enc.emitReg(Op.Star, r);
+        this.enc.emitCallBuiltin(Builtin.TypeofName, r, 1);
+        this.release(m);
+        return;
+      }
     }
     if (op === "typeof") {
       this.emitExpr(arg);
@@ -1108,9 +1322,9 @@ class FunctionEmitter {
     const toElse = this.enc.emitJump(Op.JumpIfFalse);
     this.emitExpr(node.consequent);
     const toEnd = this.enc.emitJump(Op.Jump);
-    this.enc.patch(toElse);
+    this.enc.patch(toElse, this.enc.here());
     this.emitExpr(node.alternate);
-    this.enc.patch(toEnd);
+    this.enc.patch(toEnd, this.enc.here());
   }
 
   private emitSequence(node: Node): void {
@@ -1145,6 +1359,79 @@ class FunctionEmitter {
       this.release(rAcc); // both temps released; loop reuses the slots
     }
     this.release(m);
+  }
+
+  /** Emit one strict class constructor/method closure. */
+  private emitClassClosure(params: Node[], body: Node, name: string, classConstructor: boolean): void {
+    const child = new FunctionEmitter(params, body, name, false, false, true, false);
+    const meta = child.emit();
+    if (classConstructor) meta.flags = meta.flags | FLAG_CLASS_CONSTRUCTOR;
+    const m = this.mark();
+    this.enc.emitConst(Op.LdaConst, this.enc.internConst(meta));
+    const r = this.allocReg();
+    this.enc.emitReg(Op.Star, r);
+    this.enc.emitCallBuiltin(Builtin.MakeClosure, r, 1);
+    this.release(m);
+  }
+
+  /** Build the bounded MVP class carrier on the ordinary interpreted closure
+   * seam. Inheritance, fields, private names, accessors, and computed keys stay
+   * explicit unsupported nodes until their runtime protocols land. */
+  private emitClass(node: Node): void {
+    if (node.superClass) throw new UnsupportedNodeError("class inheritance", "ClassDeclaration");
+    const elements: Node[] = node.body.body;
+    let constructorMethod: Node = null;
+    for (const element of elements) {
+      if (element.type !== "MethodDefinition") {
+        throw new UnsupportedNodeError(`class element ${element.type}`, element.type);
+      }
+      if (element.computed) throw new UnsupportedNodeError("computed class method", "MethodDefinition");
+      if (element.kind === "get" || element.kind === "set") {
+        throw new UnsupportedNodeError(`class ${element.kind}`, "MethodDefinition");
+      }
+      if (element.kind === "constructor") constructorMethod = element;
+    }
+
+    const className = node.id && node.id.name ? node.id.name : "";
+    const classMark = this.mark();
+    if (constructorMethod !== null) {
+      this.emitClassClosure(constructorMethod.value.params, constructorMethod.value.body, className, true);
+    } else {
+      const emptyBody: Node = {};
+      emptyBody.body = [];
+      this.emitClassClosure([], emptyBody, className, true);
+    }
+    const constructorReg = this.allocReg();
+    this.enc.emitReg(Op.Star, constructorReg);
+    const prototypeReg = this.allocReg();
+    this.enc.emitCallBuiltin(Builtin.ObjectLiteral, prototypeReg, 0);
+    this.enc.emitReg(Op.Star, prototypeReg);
+
+    for (const element of elements) {
+      if (element.kind === "constructor") continue;
+      let methodName = "";
+      if (element.key.type === "Identifier") methodName = element.key.name;
+      else if (element.key.type === "Literal") methodName = String(element.key.value);
+      else throw new UnsupportedNodeError(`class method key ${element.key.type}`, element.key.type);
+
+      const base = this.regTop;
+      for (let i = 0; i < 5; i += 1) this.allocReg();
+      this.enc.emitReg(Op.Ldar, constructorReg);
+      this.enc.emitReg(Op.Star, base);
+      this.enc.emitReg(Op.Ldar, prototypeReg);
+      this.enc.emitReg(Op.Star, base + 1);
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(methodName));
+      this.enc.emitReg(Op.Star, base + 2);
+      this.emitClassClosure(element.value.params, element.value.body, methodName, false);
+      this.enc.emitReg(Op.Star, base + 3);
+      this.enc.emit0(element.static ? Op.LdaTrue : Op.LdaFalse);
+      this.enc.emitReg(Op.Star, base + 4);
+      this.enc.emitCallBuiltin(BUILTIN_DEFINE_CLASS_METHOD, base, 5);
+      this.release(base);
+    }
+
+    this.enc.emitCallBuiltin(BUILTIN_FINALIZE_CLASS, constructorReg, 2);
+    this.release(classMark);
   }
 
   /** Build a nested FuncMeta for a function/arrow node and leave a closure in acc. */

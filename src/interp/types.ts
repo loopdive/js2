@@ -45,6 +45,7 @@ export const FLAG_SCRIPT = 8; //      E1 addition: this FuncMeta is a Script/eva
 //                                    body, so the final expression statement's
 //                                    completion value is returned (§ completion
 //                                    semantics) rather than dropped.
+export const FLAG_CLASS_CONSTRUCTOR = 16; // class constructors reject ordinary Call
 
 /**
  * `$FuncMeta` — the immutable metadata for one interpreted function (or the

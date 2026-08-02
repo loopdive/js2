@@ -105,9 +105,15 @@ const REFUSAL_PROVIDER_SOURCE = `
         source: any,
         globalObject: any,
         thisArg: any,
-        names: any,
-        slots: any,
-        callerStrict: boolean
+        activationState: any,
+        activationSeedNames: any,
+        activationSeedSlots: any,
+        lexicalNames: any,
+        lexicalSlots: any,
+        outerNames: any,
+        outerSlots: any,
+        callerStrict: boolean,
+        mappedParamNames: any
       ): any {
         return refuse();
       }
@@ -212,16 +218,40 @@ const PROVIDER_EXPORT_WRAPPER = `
         source: any,
         globalObject: any,
         thisArg: any,
-        names: any,
-        slots: any,
-        callerStrict: boolean
+        activationState: any,
+        activationSeedNames: any,
+        activationSeedSlots: any,
+        lexicalNames: any,
+        lexicalSlots: any,
+        outerNames: any,
+        outerSlots: any,
+        callerStrict: boolean,
+        mappedParamNames: any
       ): any {
+        const liveNames: any[] = [];
+        const liveSlots: any[] = [];
         try {
-          return runtimeEvalResult(
-            true,
-            executeDirectEval(parse, source, globalObject, thisArg, names, slots, callerStrict)
+          restoreDirectEvalActivationState(activationState, liveNames, liveSlots);
+          const evalResult = executeDirectEval(
+            parse,
+            source,
+            globalObject,
+            thisArg,
+            liveNames,
+            liveSlots,
+            activationSeedNames,
+            activationSeedSlots,
+            lexicalNames,
+            lexicalSlots,
+            outerNames,
+            outerSlots,
+            callerStrict,
+            mappedParamNames
           );
+          snapshotDirectEvalActivationState(activationState, liveNames);
+          return runtimeEvalResult(true, evalResult);
         } catch (error) {
+          snapshotDirectEvalActivationState(activationState, liveNames);
           return runtimeEvalResult(false, error);
         }
       }
@@ -249,9 +279,16 @@ const PROVIDER_EXPORT_WRAPPER = `
           "x = x + 2; x",
           {},
           undefined,
+          [],
+          [],
           names,
           slots,
-          false
+          [],
+          [],
+          [],
+          [],
+          false,
+          []
         );
         return (result as number) + (cell.value as number);
       }
@@ -273,7 +310,12 @@ const PROVIDER_EXPORT_WRAPPER = `
         });
         const declarationGlobal: any = {};
         const declarationGlobalEnv = new EnvRec(ENV_GLOBAL, null, null, null, declarationGlobal);
-        const declarationEnv = prepareEvalEnvironment(declarationAst, declarationGlobalEnv, true);
+        const declarationEnv = prepareEvalEnvironment(
+          declarationAst,
+          declarationGlobalEnv,
+          declarationGlobalEnv,
+          true
+        );
         if (declarationEnv.kind !== ENV_DECLARATIVE) return -2005;
         const declarationNames: any = declarationEnv.names;
         if (declarationNames.length !== 1) return -2006;

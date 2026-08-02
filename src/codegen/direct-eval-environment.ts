@@ -99,6 +99,52 @@ export function collectDirectEvalBindingNames(decl: ts.FunctionLikeDeclaration):
   return names;
 }
 
+/** Collect bindings whose lifetime is the whole current activation.
+ *
+ * This is intentionally narrower than `collectDirectEvalBindingNames`: nested
+ * block/catch lexicals are call-site environment entries, while parameters,
+ * the function body's top-level declarations, and recursively nested `var`
+ * declarations belong to the persistent function activation. */
+export function collectDirectEvalActivationBindingNames(decl: ts.FunctionLikeDeclaration): Set<string> {
+  const names = new Set<string>();
+  if (!ts.isArrowFunction(decl)) names.add("arguments");
+  for (const param of decl.parameters) addBindingName(param.name, names);
+  if (!decl.body || !ts.isBlock(decl.body)) return names;
+
+  for (const statement of decl.body.statements) {
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) addBindingName(declaration.name, names);
+    } else if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+      if (statement.name) names.add(statement.name.text);
+    }
+  }
+
+  const visitVarScoped = (node: ts.Node): void => {
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node) ||
+      ts.isConstructorDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node)
+    ) {
+      return;
+    }
+    if (ts.isVariableDeclaration(node)) {
+      const list = node.parent;
+      if (ts.isVariableDeclarationList(list) && (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+        addBindingName(node.name, names);
+      }
+    }
+    forEachChild(node, visitVarScoped);
+  };
+  for (const statement of decl.body.statements) visitVarScoped(statement);
+  return names;
+}
+
 function boxTopAsExternref(ctx: CodegenContext, fctx: FunctionContext, type: ValType): void {
   if (type.kind !== "externref") coerceType(ctx, fctx, type, { kind: "externref" });
 }
@@ -112,12 +158,30 @@ export function reifyCurrentDirectEvalBindings(ctx: CodegenContext, fctx: Functi
   const cellTypeIdx = fctx.directEvalRefCellTypeIdx ?? getOrRegisterRefCellType(ctx, { kind: "externref" });
   fctx.directEvalRefCellTypeIdx = cellTypeIdx;
   if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+  if (!fctx.directEvalActivationBindings) fctx.directEvalActivationBindings = new Map();
 
   for (const name of names) {
     const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
-    const existing = fctx.boxedCaptures.get(name);
-    if (existing?.refCellTypeIdx === cellTypeIdx && existing.valType.kind === "externref") continue;
+    const existingMetadata = fctx.boxedCaptures.get(name);
+    const currentLocalType = getLocalType(fctx, localIdx);
+    // A rolled-back speculative promotion may have restored localMap while an
+    // older snapshot implementation left the boxed metadata re-pointed. Never
+    // trust cell metadata unless the live local actually carries that cell.
+    const existing =
+      existingMetadata &&
+      (currentLocalType?.kind === "ref" || currentLocalType?.kind === "ref_null") &&
+      currentLocalType.typeIdx === existingMetadata.refCellTypeIdx
+        ? existingMetadata
+        : undefined;
+    if (existing?.refCellTypeIdx === cellTypeIdx && existing.valType.kind === "externref") {
+      if (fctx.directEvalActivationBindingNames?.has(name)) {
+        if (!fctx.directEvalActivationBindings.has(name)) {
+          fctx.directEvalActivationBindings.set(name, localIdx);
+        }
+      }
+      continue;
+    }
 
     let valueType: ValType | undefined;
     if (existing) {
@@ -145,6 +209,11 @@ export function reifyCurrentDirectEvalBindings(ctx: CodegenContext, fctx: Functi
     fctx.body.push({ op: "struct.new", typeIdx: cellTypeIdx }, { op: "local.set", index: cellLocal });
     fctx.localMap.set(name, cellLocal);
     fctx.boxedCaptures.set(name, { refCellTypeIdx: cellTypeIdx, valType: { kind: "externref" } });
+    if (fctx.directEvalActivationBindingNames?.has(name)) {
+      if (!fctx.directEvalActivationBindings.has(name)) {
+        fctx.directEvalActivationBindings.set(name, cellLocal);
+      }
+    }
   }
 }
 
@@ -153,20 +222,40 @@ export interface DirectEvalBinding {
   cellLocal: number;
 }
 
+export interface DirectEvalBindingLayers {
+  /** Persistent current-function environment, including eval-created vars. */
+  activation: DirectEvalBinding[];
+  /** Fresh lexical shadows visible at this particular call site. */
+  lexical: DirectEvalBinding[];
+  /** Canonical cells captured from outer function activations. */
+  outer: DirectEvalBinding[];
+}
+
 /** Snapshot the cells visible at one direct-eval call site, after promoting any
  * binding allocated since the entry pre-pass (e.g. a block shadow). */
-export function currentDirectEvalBindings(ctx: CodegenContext, fctx: FunctionContext): DirectEvalBinding[] {
+export function currentDirectEvalBindings(ctx: CodegenContext, fctx: FunctionContext): DirectEvalBindingLayers {
   reifyCurrentDirectEvalBindings(ctx, fctx);
   const names = fctx.directEvalBindingNames;
   const cellTypeIdx = fctx.directEvalRefCellTypeIdx;
-  if (!names || cellTypeIdx === undefined) return [];
-  const out: DirectEvalBinding[] = [];
+  const activation: DirectEvalBinding[] = [];
+  const lexical: DirectEvalBinding[] = [];
+  const outer: DirectEvalBinding[] = [];
+  if (!names || cellTypeIdx === undefined) return { activation, lexical, outer };
+
+  for (const [name, cellLocal] of fctx.directEvalActivationBindings ?? []) {
+    activation.push({ name, cellLocal });
+  }
+
   for (const name of names) {
     const cellLocal = fctx.localMap.get(name);
     const boxed = fctx.boxedCaptures?.get(name);
     if (cellLocal !== undefined && boxed?.refCellTypeIdx === cellTypeIdx && boxed.valType.kind === "externref") {
-      out.push({ name, cellLocal });
+      if (fctx.directEvalOuterBindingNames?.has(name)) {
+        outer.push({ name, cellLocal });
+      } else if (fctx.directEvalActivationBindings?.get(name) !== cellLocal) {
+        lexical.push({ name, cellLocal });
+      }
     }
   }
-  return out;
+  return { activation, lexical, outer };
 }

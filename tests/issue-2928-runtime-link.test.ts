@@ -52,6 +52,7 @@ describe("#2928 — linked runtime Function provider", () => {
     expect(report.values).toEqual({
       provider: 3,
       providerDirect: 84,
+      providerVar: 240,
       create: 1,
       invokeNew: 3,
       invokeNewImmediate: 3,
@@ -66,6 +67,9 @@ describe("#2928 — linked runtime Function provider", () => {
       directEvalMutation: 84,
       directEvalNonString: 42,
       nestedDirectEvalMutation: 84,
+      directEvalVarPersistence: 2,
+      directEvalVarCreate: 7,
+      nestedDirectEvalVarPersistence: 240,
       functionExpressionDirectEvalMutation: 84,
       arrowDirectEvalMutation: 84,
     });

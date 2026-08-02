@@ -548,6 +548,19 @@ export interface FunctionContext {
    * boxed-cell carrier; functions without this set remain byte-identical.
    */
   directEvalBindingNames?: Set<string>;
+  /**
+   * Direct-eval bindings that belong to this activation rather than a captured
+   * outer environment. The corresponding cells seed one persistent name/slot
+   * vector per Wasm invocation, so sloppy eval-created `var` bindings survive
+   * later eval calls in the same activation.
+   */
+  directEvalActivationBindingNames?: Set<string>;
+  /** Names whose canonical cells are capture parameters from outer scopes. */
+  directEvalOuterBindingNames?: Set<string>;
+  /** Stable activation binding name → canonical cell local. */
+  directEvalActivationBindings?: Map<string, number>;
+  /** Hidden caller-owned canonical cells for eval-created activation vars. */
+  directEvalActivationStateCellLocals?: number[];
   /** Canonical `(mut externref)` cell type used at the AOT↔interpreter seam. */
   directEvalRefCellTypeIdx?: number;
   /**

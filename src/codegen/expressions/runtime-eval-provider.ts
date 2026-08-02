@@ -10,11 +10,17 @@ import { isStrictContext } from "../helpers/is-strict-function.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjVecBuilders } from "../object-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
+import { getOrRegisterRefCellType } from "../registry/types.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
 /** Core-Wasm provider namespace owned by #2928/#2527. */
 export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
+
+/** Caller-owned spare cells available to names introduced by sloppy eval.
+ * This is deliberately generous for the separate-module MVP; combined-module
+ * packaging can replace it with a growable canonical carrier. */
+const DIRECT_EVAL_STATE_BINDING_CAPACITY = 64;
 
 /**
  * Unwrap the provider's `[ok, value]` result vector. A provider-side throw uses
@@ -40,7 +46,7 @@ export function emitRuntimeEvalResultUnwrap(ctx: CodegenContext, fctx: FunctionC
     return externref;
   }
 
-  const getField = (index: 0 | 1): Instr[] => [
+  const getField = (index: 0 | 1 | 2): Instr[] => [
     { op: "local.get", index: envelopeLocal },
     { op: "f64.const", value: index },
     { op: "call", funcIdx: liveGetIdx },
@@ -59,10 +65,11 @@ export function emitRuntimeEvalResultUnwrap(ctx: CodegenContext, fctx: FunctionC
 }
 
 /**
- * Standalone direct eval route. The caller supplies two parallel `$ObjVec`s:
- * source names and canonical mutable capture cells. The provider wraps those
- * cells in a declarative EnvRec, so interpreter stores immediately update the
- * bindings read by subsequent AOT instructions (and vice versa).
+ * Standalone direct eval route. The caller supplies three name/cell vector
+ * pairs: a persistent current-activation environment, fresh call-site lexical
+ * shadows, and captured outer bindings. The provider links those records in
+ * that order, so eval-created sloppy vars persist without overwriting an outer
+ * capture and interpreter stores still update canonical AOT cells directly.
  */
 export function emitStandaloneDirectEvalRuntime(
   ctx: CodegenContext,
@@ -81,7 +88,9 @@ export function emitStandaloneDirectEvalRuntime(
   // late-index repair straightforward.
   ensureObjVecBuilders(ctx);
   const bindings = currentDirectEvalBindings(ctx, fctx);
-  for (const binding of bindings) addStringConstantGlobal(ctx, binding.name);
+  for (const layer of [bindings.activation, bindings.lexical, bindings.outer]) {
+    for (const binding of layer) addStringConstantGlobal(ctx, binding.name);
+  }
 
   const externref: ValType = { kind: "externref" };
   const sourceLocal = allocLocal(fctx, `__runtime_direct_eval_source_${fctx.locals.length}`, externref);
@@ -102,20 +111,106 @@ export function emitStandaloneDirectEvalRuntime(
   const objVecNewIdx = ctx.funcMap.get("__objvec_new")!;
   const objVecPushIdx = ctx.funcMap.get("__objvec_push")!;
 
-  const namesLocal = allocLocal(fctx, `__runtime_direct_eval_names_${fctx.locals.length}`, externref);
-  const slotsLocal = allocLocal(fctx, `__runtime_direct_eval_slots_${fctx.locals.length}`, externref);
-  fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: namesLocal });
-  fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: slotsLocal });
-  for (const binding of bindings) {
+  const bindingPushInstrs = (namesLocal: number, slotsLocal: number, layer: typeof bindings.activation): Instr[] => {
+    const instrs: Instr[] = [];
+    for (const binding of layer) {
+      instrs.push(
+        { op: "local.get", index: namesLocal },
+        ...stringConstantExternrefInstrs(ctx, binding.name),
+        { op: "call", funcIdx: objVecPushIdx },
+        { op: "local.get", index: slotsLocal },
+        { op: "local.get", index: binding.cellLocal },
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: objVecPushIdx },
+      );
+    }
+    return instrs;
+  };
+
+  const freshLayer = (label: string, layer: typeof bindings.activation): [number, number] => {
+    const namesLocal = allocLocal(fctx, `__runtime_direct_eval_${label}_names_${fctx.locals.length}`, externref);
+    const slotsLocal = allocLocal(fctx, `__runtime_direct_eval_${label}_slots_${fctx.locals.length}`, externref);
     fctx.body.push(
-      { op: "local.get", index: namesLocal },
-      ...stringConstantExternrefInstrs(ctx, binding.name),
-      { op: "call", funcIdx: objVecPushIdx },
-      { op: "local.get", index: slotsLocal },
-      { op: "local.get", index: binding.cellLocal },
+      { op: "call", funcIdx: objVecNewIdx },
+      { op: "local.set", index: namesLocal },
+      { op: "call", funcIdx: objVecNewIdx },
+      { op: "local.set", index: slotsLocal },
+      ...bindingPushInstrs(namesLocal, slotsLocal, layer),
+    );
+    return [namesLocal, slotsLocal];
+  };
+  const stateCellTypeIdx = fctx.directEvalRefCellTypeIdx ?? getOrRegisterRefCellType(ctx, externref);
+  fctx.directEvalRefCellTypeIdx = stateCellTypeIdx;
+  if (fctx.directEvalActivationStateCellLocals === undefined) {
+    fctx.directEvalActivationStateCellLocals = [];
+    for (let i = 0; i < DIRECT_EVAL_STATE_BINDING_CAPACITY * 2; i += 1) {
+      fctx.directEvalActivationStateCellLocals.push(
+        allocLocal(fctx, `__runtime_direct_eval_state_cell_${i}_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: stateCellTypeIdx,
+        }),
+      );
+    }
+  }
+  const activationStateCellLocals = fctx.directEvalActivationStateCellLocals;
+  for (const cellLocal of activationStateCellLocals) {
+    fctx.body.push(
+      { op: "local.get", index: cellLocal },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "ref.null.extern" },
+          { op: "struct.new", typeIdx: stateCellTypeIdx },
+          { op: "local.set", index: cellLocal },
+        ],
+      },
+    );
+  }
+  const activationStatePoolLocal = allocLocal(
+    fctx,
+    `__runtime_direct_eval_activation_state_pool_${fctx.locals.length}`,
+    externref,
+  );
+  fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: activationStatePoolLocal });
+  for (const cellLocal of activationStateCellLocals) {
+    fctx.body.push(
+      { op: "local.get", index: activationStatePoolLocal },
+      { op: "local.get", index: cellLocal },
+      { op: "ref.as_non_null" },
       { op: "extern.convert_any" },
       { op: "call", funcIdx: objVecPushIdx },
     );
+  }
+  const [activationNamesLocal, activationSlotsLocal] = freshLayer("activation_seed", bindings.activation);
+  const [lexicalNamesLocal, lexicalSlotsLocal] = freshLayer("lexical", bindings.lexical);
+  const [outerNamesLocal, outerSlotsLocal] = freshLayer("outer", bindings.outer);
+
+  // Preserve the compiler's mapped-arguments decision at the interpreter
+  // boundary. Each vector index corresponds to arguments[index] and carries
+  // the canonical parameter binding name, or null when that index is
+  // unmapped. The provider can then mirror writes in execution order without
+  // inventing a cross-module GC class or copying parameter values.
+  const mappedParamNamesLocal = allocLocal(
+    fctx,
+    `__runtime_direct_eval_mapped_param_names_${fctx.locals.length}`,
+    externref,
+  );
+  fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: mappedParamNamesLocal });
+  const mappedArgsInfo = fctx.mappedArgsInfo;
+  if (mappedArgsInfo) {
+    for (let i = 0; i < mappedArgsInfo.paramCount; i += 1) {
+      const paramName = fctx.params[mappedArgsInfo.paramOffset + i]?.name;
+      const isMapped = paramName !== undefined && !mappedArgsInfo.unmappedIndices?.has(i);
+      fctx.body.push({ op: "local.get", index: mappedParamNamesLocal });
+      if (isMapped) {
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, paramName));
+      } else {
+        fctx.body.push({ op: "ref.null.extern" });
+      }
+      fctx.body.push({ op: "call", funcIdx: objVecPushIdx });
+    }
   }
 
   fctx.body.push({ op: "local.get", index: sourceLocal });
@@ -127,21 +222,46 @@ export function emitStandaloneDirectEvalRuntime(
     coerceType(ctx, fctx, thisType, externref);
   }
   fctx.body.push(
-    { op: "local.get", index: namesLocal },
-    { op: "local.get", index: slotsLocal },
+    { op: "local.get", index: activationStatePoolLocal },
+    { op: "local.get", index: activationNamesLocal },
+    { op: "local.get", index: activationSlotsLocal },
+    { op: "local.get", index: lexicalNamesLocal },
+    { op: "local.get", index: lexicalSlotsLocal },
+    { op: "local.get", index: outerNamesLocal },
+    { op: "local.get", index: outerSlotsLocal },
     { op: "i32.const", value: isStrictContext(call, ctx.inferModuleStrictArguments) ? 1 : 0 },
+    { op: "local.get", index: mappedParamNamesLocal },
   );
 
   const evalIdx = ensureLateImport(
     ctx,
     "__runtime_direct_eval",
-    [externref, externref, externref, externref, externref, { kind: "i32" }],
+    [
+      externref,
+      externref,
+      externref,
+      externref,
+      externref,
+      externref,
+      externref,
+      externref,
+      externref,
+      externref,
+      { kind: "i32" },
+      externref,
+    ],
     [externref],
     RUNTIME_EVAL_IMPORT_MODULE,
   );
   flushLateImportShifts(ctx, fctx);
   if (evalIdx === undefined) {
     fctx.body.push(
+      { op: "drop" },
+      { op: "drop" },
+      { op: "drop" },
+      { op: "drop" },
+      { op: "drop" },
+      { op: "drop" },
       { op: "drop" },
       { op: "drop" },
       { op: "drop" },

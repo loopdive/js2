@@ -9,6 +9,7 @@
 // the caller. That keeps the self-compile surface E2 inherits minimal.
 
 import { emitProgram } from "./emitter.js";
+import { prepareEvalEnvironment, programIsStrict } from "./eval-environment.js";
 import { interpEnter } from "./loop.js";
 import { ENV_GLOBAL, EnvRec, type FuncMeta, type JSValue } from "./types.js";
 
@@ -49,8 +50,10 @@ export interface RunScriptOptions {
  */
 export function runScript(ast: JSValue, options: RunScriptOptions = {}): JSValue {
   const globalObject = options.globalObject !== undefined ? options.globalObject : Object.create(globalThis);
-  const meta: FuncMeta = emitProgram(ast);
-  const env = createGlobalEnv(globalObject);
+  const strictScript = programIsStrict(ast);
+  const globalEnv = createGlobalEnv(globalObject);
+  const env = prepareEvalEnvironment(ast, globalEnv, globalEnv, strictScript);
+  const meta: FuncMeta = emitProgram(ast, strictScript, true);
   // Script `this` is the global object (indirect-eval semantics).
   return interpEnter(meta, env, globalObject, []);
 }

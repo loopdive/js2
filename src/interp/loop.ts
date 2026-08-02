@@ -34,7 +34,19 @@
 //     (`Object.create(globalThis)`) is E1's stand-in for the module globalThis
 //     `$Object` (#369). None of these three change the opcode semantics.
 
-import { Builtin, OP_MASK, Op, OPERAND_MASK, WIDE_FLAG } from "./opcodes.js";
+import {
+  Builtin,
+  BUILTIN_ASSIGN_OUTER_NAME,
+  BUILTIN_DEFINE_CLASS_METHOD,
+  BUILTIN_FINALIZE_CLASS,
+  BUILTIN_PUSH_LEXICAL_ENV,
+  BUILTIN_RESTORE_ENV,
+  BUILTIN_SAVE_ENV,
+  OP_MASK,
+  Op,
+  OPERAND_MASK,
+  WIDE_FLAG,
+} from "./opcodes.js";
 import {
   buildArrayLiteral,
   buildObjectLiteral,
@@ -56,14 +68,16 @@ import {
   anyTypeof,
   isTruthy,
 } from "./runtime-ops.js";
-import { EVAL_TDZ } from "./eval-environment.js";
+import { createLexicalEnvironment, EVAL_TDZ } from "./eval-environment.js";
 import {
   ENV_DECLARATIVE,
-  EvalBindingCell,
-  type EnvRec,
+  ENV_GLOBAL,
   EXN_ROW,
+  FLAG_CLASS_CONSTRUCTOR,
   FLAG_STRICT,
   Frame,
+  type EvalBindingCell,
+  type EnvRec,
   type FuncMeta,
   type JSValue,
   type Regs,
@@ -132,6 +146,9 @@ export function makeInterpClosure(meta: FuncMeta, envRec: EnvRec | null): Interp
     a6?: JSValue,
     a7?: JSValue,
   ): JSValue {
+    if ((meta.flags & FLAG_CLASS_CONSTRUCTOR) !== 0) {
+      throw new TypeError("Class constructor cannot be invoked without 'new'");
+    }
     const receiver = (meta.flags & FLAG_STRICT) !== 0 ? this : normalizeSloppyThis(envRec, this);
     return interpEnter(meta, envRec, receiver, [a0, a1, a2, a3, a4, a5, a6, a7]);
   };
@@ -209,11 +226,65 @@ function normalizeSloppyThis(env: EnvRec | null, receiver: JSValue): JSValue {
   let globalBacking: JSValue = undefined;
   for (;;) {
     if (e === null) break;
-    if (e.kind !== ENV_DECLARATIVE) globalBacking = e.backing;
+    if (e.kind === ENV_GLOBAL) globalBacking = e.backing;
     e = e.parent;
   }
   return globalBacking;
 }
+
+/** Return one binding cell owned by a declarative record. */
+function ownEnvCell(env: EnvRec, name: JSValue): EvalBindingCell | null {
+  if (env.kind !== ENV_DECLARATIVE || env.slots === null) return null;
+  const names: JSValue = env.names;
+  for (let i = 0; i < names.length; i += 1) {
+    if (names[i] === name) return env.slots[i] as EvalBindingCell;
+  }
+  return null;
+}
+
+/** Mirror a write to a mapped parameter into its live arguments object. The
+ * activation record's otherwise-unused `backing` field carries a vector whose
+ * indices match arguments indices and whose values are parameter names. */
+function mirrorMappedParameterWrite(env: EnvRec, name: JSValue, value: JSValue): void {
+  const mappedNames: JSValue = env.backing;
+  if (mappedNames === undefined || mappedNames === null) return;
+  const argumentsCell = ownEnvCell(env, "arguments");
+  if (argumentsCell === null) return;
+  for (let i = 0; i < mappedNames.length; i += 1) {
+    if (mappedNames[i] === name) anySet(argumentsCell.value, i, value);
+  }
+}
+
+function mappedArgumentKeyMatches(key: JSValue, index: number): boolean {
+  return key === index || key === String(index);
+}
+
+/** Mirror a write through the actual mapped arguments object back into the
+ * canonical parameter cell. Object identity prevents an unrelated array write
+ * from touching the activation. */
+function mirrorMappedArgumentsWrite(env: EnvRec | null, object: JSValue, key: JSValue, value: JSValue): void {
+  let e = env;
+  for (;;) {
+    if (e === null) return;
+    if (e.kind === ENV_DECLARATIVE && e.backing !== undefined && e.backing !== null) {
+      const argumentsCell = ownEnvCell(e, "arguments");
+      if (argumentsCell !== null && argumentsCell.value === object) {
+        const mappedNames: JSValue = e.backing;
+        for (let i = 0; i < mappedNames.length; i += 1) {
+          const paramName = mappedNames[i];
+          if (paramName !== undefined && paramName !== null && mappedArgumentKeyMatches(key, i)) {
+            const paramCell = ownEnvCell(e, paramName);
+            if (paramCell !== null) paramCell.value = value;
+            return;
+          }
+        }
+        return;
+      }
+    }
+    e = e.parent;
+  }
+}
+
 function envAssign(env: EnvRec | null, name: JSValue, value: JSValue, strict: boolean): void {
   let e = env;
   let root: EnvRec | null = null;
@@ -228,6 +299,7 @@ function envAssign(env: EnvRec | null, name: JSValue, value: JSValue, strict: bo
             const cell = slots[i] as EvalBindingCell;
             if (cell.value === EVAL_TDZ) throw new ReferenceError(`${String(name)} is not initialized`);
             cell.value = value;
+            mirrorMappedParameterWrite(e, name, value);
             return;
           }
         }
@@ -437,9 +509,11 @@ function run(bottom: Frame): JSValue {
             break;
           case Op.SetProp:
             acc = anySet(regs[b], consts[a], acc);
+            mirrorMappedArgumentsWrite(frame.envRec, regs[b], consts[a], acc);
             break;
           case Op.SetElem:
             acc = anySet(regs[b], regs[a], acc);
+            mirrorMappedArgumentsWrite(frame.envRec, regs[b], regs[a], acc);
             break;
 
           // ── variables (env-record chain, doc §14) ──
@@ -454,7 +528,6 @@ function run(bottom: Frame): JSValue {
           case Op.InitName:
             envInitialize(frame.envRec, consts[a], acc);
             break;
-
           // ── calls ──
           case Op.Call: {
             const base = a;
@@ -463,6 +536,9 @@ function run(bottom: Frame): JSValue {
             if (isInterpClosure(callee)) {
               const binding = INTERP_BINDINGS.get(callee as object)!;
               const cm = binding.meta;
+              if ((cm.flags & FLAG_CLASS_CONSTRUCTOR) !== 0) {
+                throw new TypeError("Class constructor cannot be invoked without 'new'");
+              }
               const cregs: Regs = new Array(cm.regCount);
               for (let i = 0; i < cm.regCount; i += 1) cregs[i] = undefined;
               cregs[0] = (cm.flags & FLAG_STRICT) !== 0 ? regs[base] : normalizeSloppyThis(binding.envRec, regs[base]); // receiver → this
@@ -688,6 +764,29 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
       return Math.ceil(Number(regs[base]));
     case Builtin.MathRound:
       return Math.round(Number(regs[base]));
+    case BUILTIN_PUSH_LEXICAL_ENV: {
+      const parent = frame.envRec;
+      frame.envRec = createLexicalEnvironment(parent, regs[base]);
+      return parent;
+    }
+    case BUILTIN_SAVE_ENV:
+      return frame.envRec;
+    case BUILTIN_RESTORE_ENV:
+      frame.envRec = regs[base] as EnvRec | null;
+      return undefined;
+    case BUILTIN_ASSIGN_OUTER_NAME:
+      envAssign(frame.envRec === null ? null : frame.envRec.parent, regs[base + 1], regs[base], false);
+      return regs[base];
+    case BUILTIN_DEFINE_CLASS_METHOD: {
+      const classConstructor = regs[base];
+      const target = isTruthy(regs[base + 4]) ? classConstructor : regs[base + 1];
+      anySet(target, regs[base + 2], regs[base + 3]);
+      return classConstructor;
+    }
+    case BUILTIN_FINALIZE_CLASS:
+      anySet(regs[base + 1], "constructor", regs[base]);
+      anySet(regs[base], "prototype", regs[base + 1]);
+      return regs[base];
     default:
       throw new InterpInternalError(`unknown builtin id ${builtinId}`);
   }
