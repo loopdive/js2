@@ -88,8 +88,8 @@ import {
   type IrEffects,
 } from "./effects.js";
 import { IrInvariantError } from "./outcomes.js";
-import { irImportFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
-import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import { IR_STRING_ITERATOR_CHAR_AT_FN, type IrStringConcatMode, type IrStringEncoding } from "./string-runtime.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
   IrBoxedLowering,
@@ -248,12 +248,17 @@ export interface IrLowerResolver {
    * Emit the Wasm op sequence that materializes a string literal.
    *   - host strings → register a `string_constants.<value>` global import
    *                    and emit `[global.get]`.
-   *   - native       → inline `i32.const len`, `i32.const 0`, code-unit
-   *                    `i32.const`s, `array.new_fixed`, `struct.new`.
+   *   - native       → read prepared immutable storage or call an exact
+   *                    prepared oversized-literal materializer.
    */
   // #1588: `alloc` lets the resolver read the string.const encoding decision.
   // Optional — resolvers/callers that omit it get the i16 path (byte-identical).
-  emitStringConst?(value: string, alloc?: AllocSiteId, storage?: IrGlobalRef): readonly Instr[];
+  emitStringConst?(
+    value: string,
+    alloc?: AllocSiteId,
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ): readonly Instr[];
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
   emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
@@ -1730,7 +1735,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "string.const": {
-        emitter.emitStringConst(instr.value, instr.alloc, out, instr.storage);
+        emitter.emitStringConst(instr.value, instr.alloc, out, instr.storage, instr.materializer);
         return;
       }
       case "string.concat": {
@@ -2850,7 +2855,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // iteration yields code points: a well-formed surrogate pair is ONE
         // 2-code-unit element. The cursor advances by the element's `len`
         // (1, or 2 for a pair) below instead of a fixed +1.
-        const charAtIdx = resolver.resolveFunc(irRuntimeFuncRef("__str_charAt_cp"));
+        const charAtIdx = resolver.resolveFunc(instr.provider ?? irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN));
         // The AnyString struct's `len` field is at index 0 (matches
         // `nativeStringType` in src/codegen/native-strings.ts).
         // We recover the typeIdx from the SSA value's IrType — must be
