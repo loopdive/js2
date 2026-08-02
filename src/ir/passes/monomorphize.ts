@@ -492,6 +492,7 @@ function tupleKey(types: readonly IrType[]): string {
 function irTypeKey(t: IrType): string {
   if (t.kind === "val") return `v:${valTypeKey(t.val)}`;
   if (t.kind === "string") return "s";
+  if (t.kind === "vec") return `vec:${irTypeKey(t.elementType)}${t.nullable ? "?" : ""}`;
   if (t.kind === "object") {
     return `o:{${t.shape.fields.map((f) => `${f.name}:${irTypeKey(f.type)}`).join(",")}}`;
   }
@@ -705,6 +706,7 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "raw.wasm":
       return [];
     case "call":
+    case "intrinsic":
       return instr.args;
     case "global.set":
       return [instr.value];

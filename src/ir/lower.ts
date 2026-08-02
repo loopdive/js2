@@ -66,6 +66,7 @@ import {
   type IrFunction,
   type IrGlobalRef,
   type IrInstr,
+  type IrInstrIntrinsic,
   type IrLabelId,
   type IrObjectShape,
   type IrStringLengthProvider,
@@ -346,6 +347,26 @@ export interface IrLoweredBody<S, Slot> {
   readonly locals: readonly IrLoweredValue<Slot>[];
   readonly results: readonly (readonly Slot[])[];
   readonly exported: boolean;
+}
+
+function emitPreparedIntrinsic<S>(
+  instr: IrInstrIntrinsic,
+  out: S,
+  emitter: BackendEmitter<S>,
+  resolver: IrLowerResolver,
+  emitValue: (value: IrValueId, out: S) => void,
+  funcName: string,
+): void {
+  for (const arg of instr.args) emitValue(arg, out);
+  if (!instr.provider) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: semantic intrinsic ${instr.id} has no frozen provider (${funcName})`,
+    );
+  }
+  if (instr.provider.kind === "backend-op") emitter.emitUnary(instr.provider.opcode, out);
+  else emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
 }
 
 /**
@@ -1008,6 +1029,30 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   };
 
+  const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVecLowering | null => {
+    if (type.kind === "vec") {
+      const elementValType = lowerIrTypeToValType(type.elementType, resolver, func.name);
+      if (type.layout) {
+        return {
+          valueType: {
+            kind: type.nullable ? "ref_null" : "ref",
+            typeIdx: resolver.resolveType(type.layout.carrierType),
+          },
+          vecStructTypeIdx: resolver.resolveType(type.layout.carrierType),
+          lengthFieldIdx: type.layout.lengthFieldIndex,
+          dataFieldIdx: type.layout.dataFieldIndex,
+          arrayTypeIdx: resolver.resolveType(type.layout.dataType),
+          elementValType,
+        };
+      }
+      // Transitional IR fixtures may predate final Program-ABI preparation.
+      // Production prepared components fail closed on the missing layout.
+      return resolver.resolveVecForElement?.(elementValType, alloc) ?? null;
+    }
+    const valType = asVal(type);
+    return valType ? (resolver.resolveVec?.(valType) ?? null) : null;
+  };
+
   // #3733 — best-effort constant-value peek, same defensive shape as
   // `tryTypeOf`. Used by the `js.bitor`/`js.bitxor` zero-operand fast path
   // below to recognise the `x | 0` / `x ^ 0` ToInt32-coercion idiom without
@@ -1222,6 +1267,10 @@ export function lowerIrFunctionBody<S, Slot>(
         // primitive — byte-identical {op:"call"} on WasmGC, OP.CALL on bytecode.
         for (const a of instr.args) emitValue(a, out);
         emitter.emitCall(resolver.resolveFunc(instr.target), out);
+        return;
+      }
+      case "intrinsic": {
+        emitPreparedIntrinsic(instr, out, emitter, resolver, emitValue, func.name);
         return;
       }
       case "global.get":
@@ -2139,9 +2188,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "vec.len": {
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: vec.len vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.len (${func.name})`);
         emitValue(instr.vec, out);
         emitter.emitVecLen(vec, out);
@@ -2152,9 +2199,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "vec.get": {
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: vec.get vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.get (${func.name})`);
         // Stack: dataArray, index → element
         emitValue(instr.vec, out);
@@ -2164,9 +2209,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "vec.set": {
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: vec.set vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set (${func.name})`);
         emitValue(instr.vec, out);
         emitter.emitVecDataPtr(vec, out);
@@ -2176,9 +2219,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "vec.set_length": {
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: vec.set_length vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set_length (${func.name})`);
         emitValue(instr.vec, out);
         emitValue(instr.length, out);
@@ -2191,7 +2232,10 @@ export function lowerIrFunctionBody<S, Slot>(
         if (!elemVT) {
           throw new Error(`ir/lower: vec.new_fixed elementType must be a val IrType (${func.name})`);
         }
-        const vec = resolver.resolveVecForElement?.(elemVT, instr.alloc);
+        const vec = resolveVecType(
+          instr.resultType ?? { kind: "vec", elementType: instr.elementType, nullable: false },
+          instr.alloc,
+        );
         if (!vec) {
           throw new Error(`ir/lower: resolver cannot lower vec for vec.new_fixed (${func.name})`);
         }
@@ -2337,9 +2381,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // implement it inside emitInstrTree for code-organization parity
         // with the other instrs. The lowerer in `emitBlockBody` calls
         // `emitInstrTree` for void-producing instrs as a unit.
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: forof.vec vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for forof.vec (${func.name})`);
 
         // #1584 (a0-tail): this arm structurally embeds an `Instr[]` loop body
@@ -3412,6 +3454,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [];
     case "call":
       return instr.args;
+    case "intrinsic":
+      return instr.args;
     case "global.get":
       return [];
     case "global.set":
@@ -3708,6 +3752,18 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     }
     return sty;
   }
+  if (t.kind === "vec") {
+    const elementValType = lowerIrTypeToValType(t.elementType, resolver, funcName);
+    if (t.layout) {
+      return {
+        kind: t.nullable ? "ref_null" : "ref",
+        typeIdx: resolver.resolveType(t.layout.carrierType),
+      };
+    }
+    const vec = resolver.resolveVecForElement?.(elementValType);
+    if (!vec) throw new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
+    return vec.valueType ?? { kind: t.nullable ? "ref_null" : "ref", typeIdx: vec.vecStructTypeIdx };
+  }
   if (t.kind === "object") {
     // Object IrTypes always lower to a (ref $struct) — mutability of the
     // backing reference is decided by the caller (locals/params get a
@@ -3804,6 +3860,7 @@ function describeShape(shape: IrObjectShape): string {
 function describeIrTypeShallow(t: IrType): string {
   if (t.kind === "val") return t.val.kind;
   if (t.kind === "string") return "string";
+  if (t.kind === "vec") return `vec<${describeIrTypeShallow(t.elementType)}>${t.nullable ? "?" : ""}`;
   if (t.kind === "object") return `object{${describeShape(t.shape)}}`;
   if (t.kind === "closure") {
     const ps = t.signature.params.map(describeIrTypeShallow).join(",");

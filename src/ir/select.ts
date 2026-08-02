@@ -66,6 +66,11 @@ import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imp
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
+import {
+  isNumericArrayTypeNode,
+  mutableParameterHasIrSlot,
+  parameterUsesNumericVecAbi,
+} from "./select-vector-slots.js";
 import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
@@ -82,6 +87,7 @@ import type {
 } from "./module-bindings.js";
 import type { LatticeType, TypeMap } from "./propagate.js";
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
+import type { IntrinsicId } from "./intrinsics.js";
 
 /**
  * #1169q telemetry — record why a top-level FunctionDeclaration didn't make
@@ -201,30 +207,32 @@ function takeShapeRejectDetail(): string | undefined {
 export type IrMathMethodPlan =
   | {
       readonly arity: 1;
+      readonly intrinsic: IntrinsicId;
       readonly op: "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
     }
-  | { readonly arity: 1 | 2; readonly helper: `Math_${string}` };
+  | { readonly arity: 1 | 2; readonly intrinsic: IntrinsicId };
 
 /**
  * Exact-arity Math surface shared by selection, call-graph closure, and the
- * AST→IR builder. Direct Wasm unary operations stay direct; transcendental
- * functions call the already-registered self-hosted `Math_<method>` helper.
- * Keeping arity in this table prevents selector/builder drift and preserves
- * ambient-Math identity checks at each consumer.
+ * AST→IR builder. Every accepted method becomes a versioned semantic
+ * intrinsic. `op` remains only as a selector compatibility signal for the
+ * five methods that never require a callable provider; provider selection is
+ * performed after middle-end transforms. Keeping arity here prevents
+ * selector/builder drift and preserves ambient-Math identity checks.
  */
 export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = {
-  abs: { arity: 1, op: "f64.abs" },
-  sqrt: { arity: 1, op: "f64.sqrt" },
-  floor: { arity: 1, op: "f64.floor" },
-  ceil: { arity: 1, op: "f64.ceil" },
-  trunc: { arity: 1, op: "f64.trunc" },
-  sin: { arity: 1, helper: "Math_sin" },
-  cos: { arity: 1, helper: "Math_cos" },
-  exp: { arity: 1, helper: "Math_exp" },
-  log: { arity: 1, helper: "Math_log" },
-  log2: { arity: 1, helper: "Math_log2" },
-  pow: { arity: 2, helper: "Math_pow" },
-  atan2: { arity: 2, helper: "Math_atan2" },
+  abs: { arity: 1, intrinsic: "math.abs", op: "f64.abs" },
+  sqrt: { arity: 1, intrinsic: "math.sqrt", op: "f64.sqrt" },
+  floor: { arity: 1, intrinsic: "math.floor", op: "f64.floor" },
+  ceil: { arity: 1, intrinsic: "math.ceil", op: "f64.ceil" },
+  trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
+  sin: { arity: 1, intrinsic: "math.sin" },
+  cos: { arity: 1, intrinsic: "math.cos" },
+  exp: { arity: 1, intrinsic: "math.exp" },
+  log: { arity: 1, intrinsic: "math.log" },
+  log2: { arity: 1, intrinsic: "math.log2" },
+  pow: { arity: 2, intrinsic: "math.pow" },
+  atan2: { arity: 2, intrinsic: "math.atan2" },
 };
 
 /** Compatibility view for callers/tests that only need the method names. */
@@ -372,6 +380,20 @@ export interface IrSelectionOptions {
    * IR-claim without the engine's verdict.
    */
   readonly asyncEngineClaims?: (fn: ts.FunctionLikeDeclaration) => boolean;
+  /**
+   * Exact producer proof for an engine-activated async declaration whose
+   * suspension graph can be prepared as `IrAsyncPlan`. The engine remains the
+   * only scheduler/emitter; this callback only permits the IR to own its state
+   * bodies. Absent by default, so bare selector callers cannot claim a real
+   * suspension accidentally.
+   */
+  readonly canPrepareSuspendingAsync?: (fn: ts.FunctionLikeDeclaration) => boolean;
+  /**
+   * True when at least one await cannot be eliminated by the shared async
+   * analysis. An engine decline does not make such a body synchronous; until
+   * an `IrAsyncPlan` producer claims it, it must remain a typed fallback.
+   */
+  readonly asyncHasRealSuspension?: (fn: ts.FunctionLikeDeclaration) => boolean;
   /**
    * (#2856) Host-extern support — resolves a bare identifier that is NOT a
    * local/param binding to an ambient host global (`document`, `console`, …).
@@ -565,7 +587,8 @@ export function isAsyncIrReady(options: IrSelectionOptions | undefined, fn: ts.F
   if (!fn.body) return false;
   // ONE-engine invariant: without the engine's verdict, never claim.
   if (options.asyncEngineClaims === undefined) return false;
-  if (options.asyncEngineClaims(fn)) return false;
+  if (options.asyncEngineClaims(fn)) return options.canPrepareSuspendingAsync?.(fn) === true;
+  if (options.asyncHasRealSuspension?.(fn) === true) return false;
   // Body-scope bounds: `for await` and nested async function-likes are out.
   if (bodyHasAsyncOutOfIrScope(fn.body)) return false;
   return true;
@@ -1216,7 +1239,7 @@ let currentDirectOnlyDynMemberEqualityFunctions: ReadonlySet<ts.FunctionDeclarat
 let currentDirectOnlyDynMemberEqualityFunctionsReady = false;
 let currentDynMemberEqualitySubject: ts.FunctionDeclaration | null = null;
 let currentDynEqualityBoxableParamNames = new Set<string>();
-let currentMutableParamSlotNames = new Set<string>();
+let currentMutableSlotNames = new Set<string>();
 let currentStableFunctionCallSubject: IrStableFunctionCallPlan | null = null;
 let currentStableDynamicRootNames = new Set<string>();
 // Grounded parameter families from the propagation map. The checker sees an
@@ -1323,7 +1346,7 @@ function prepareDynamicEqualitySubject(fn: IrClaimableSubject, isMethod: boolean
   currentSubjectIsModuleInit = false;
   currentDynMemberEqualitySubject = !isMethod && ts.isFunctionDeclaration(fn) ? fn : null;
   currentDynEqualityBoxableParamNames = new Set<string>();
-  currentMutableParamSlotNames = new Set<string>();
+  currentMutableSlotNames = new Set<string>();
   currentStableFunctionCallSubject = null;
   currentStableDynamicRootNames = new Set<string>();
   currentNumericParamNames = new Set<string>();
@@ -1608,15 +1631,12 @@ function whyNotIrClaimable(
     if (paramResolved === null) return "param-type-not-resolvable";
     if (
       directMutationNames.has(p.name.text) &&
-      paramResolved !== "f64" &&
-      paramResolved !== "bool" &&
-      paramResolved !== "string" &&
-      paramResolved !== "dynamic"
+      !mutableParameterHasIrSlot(p, paramResolved, currentSelectionOptions?.implicitParamUsesNumericVecAbi)
     ) {
       shapeNo("param-mutation-no-slot-representation", p);
       return "body-shape-rejected";
     }
-    if (directMutationNames.has(p.name.text)) currentMutableParamSlotNames.add(p.name.text);
+    if (directMutationNames.has(p.name.text)) currentMutableSlotNames.add(p.name.text);
     // #2949 slice 2 — collect dynamic-typed param names for the move-only scan.
     recordDynamicParamKind(p.name.text, paramResolved, dynNames);
     if (currentStableFunctionCallSubject !== null && paramResolved === "dynamic") {
@@ -2927,7 +2947,7 @@ function isPhase1StatementListInScope(
           }
           continue;
         }
-        if (currentMutableParamSlotNames.has(s.expression.left.text)) {
+        if (currentMutableSlotNames.has(s.expression.left.text)) {
           if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
             return shapeNo("nontail-param-assign-rhs", s.expression.right);
           }
@@ -4331,6 +4351,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       (d.type ? localClassNameFromTypeNode(d.type) : null) ??
       localClassNameForExpression(initializer, initializerScope);
     if (className !== null) currentClassBindings.set(d.name.text, className);
+    if (!isConst && d.type && isNumericArrayTypeNode(d.type)) currentMutableSlotNames.add(d.name.text);
     scope.add(d.name.text);
   }
   return true;
@@ -4449,13 +4470,13 @@ function isPhase1NestedFunc(
     return capabilityNo("call-resolution-unsupported", "nested-function-self-reference", fn);
   }
   const projectionBindings = enterProjectionBindingScope(fn.parameters);
-  const outerMutableParamSlotNames = currentMutableParamSlotNames;
-  currentMutableParamSlotNames = new Set();
+  const outerMutableSlotNames = currentMutableSlotNames;
+  currentMutableSlotNames = new Set();
   let bodyAccepted = false;
   try {
     bodyAccepted = isPhase1StatementList(fn.body.statements, closureScope, localClasses);
   } finally {
-    currentMutableParamSlotNames = outerMutableParamSlotNames;
+    currentMutableSlotNames = outerMutableSlotNames;
     restoreProjectionBindings(projectionBindings);
   }
   if (!bodyAccepted) return false;
@@ -4494,8 +4515,8 @@ function isPhase1ClosureLiteral(
   }
 
   const projectionBindings = enterProjectionBindingScope(expr.parameters);
-  const outerMutableParamSlotNames = currentMutableParamSlotNames;
-  currentMutableParamSlotNames = new Set();
+  const outerMutableSlotNames = currentMutableSlotNames;
+  currentMutableSlotNames = new Set();
 
   // ArrowFunction with concise body: must be a Phase-1 expression.
   // ArrowFunction / FunctionExpression with block body: Phase-1 tail
@@ -4507,7 +4528,7 @@ function isPhase1ClosureLiteral(
     if (!ts.isBlock(expr.body)) return shapeNo("closure-body-kind", expr.body);
     return isPhase1StatementList(expr.body.statements, inner, localClasses) || shapeNo("closure-body", expr.body);
   } finally {
-    currentMutableParamSlotNames = outerMutableParamSlotNames;
+    currentMutableSlotNames = outerMutableSlotNames;
     restoreProjectionBindings(projectionBindings);
   }
 }
@@ -5969,20 +5990,6 @@ function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string
   return undefined;
 }
 
-function isNumericArrayTypeNode(node: ts.TypeNode): boolean {
-  if (ts.isTypeOperatorNode(node) && node.operator === ts.SyntaxKind.ReadonlyKeyword) {
-    return isNumericArrayTypeNode(node.type);
-  }
-  if (ts.isArrayTypeNode(node)) return node.elementType.kind === ts.SyntaxKind.NumberKeyword;
-  return (
-    ts.isTypeReferenceNode(node) &&
-    ts.isIdentifier(node.typeName) &&
-    (node.typeName.text === "Array" || node.typeName.text === "ReadonlyArray") &&
-    node.typeArguments?.length === 1 &&
-    node.typeArguments[0]!.kind === ts.SyntaxKind.NumberKeyword
-  );
-}
-
 function directCallParamUsesNumericVecAbi(
   call: ts.CallExpression,
   parameterIndex: number,
@@ -5999,10 +6006,7 @@ function directCallParamUsesNumericVecAbi(
   const declaration = currentDynScanDecls?.get(call.expression.text);
   const parameter = declaration?.parameters[parameterIndex];
   if (!parameter || !ts.isIdentifier(parameter.name)) return false;
-  const type = effectiveIrParamTypeNode(parameter);
-  return type
-    ? isNumericArrayTypeNode(type)
-    : currentSelectionOptions?.implicitParamUsesNumericVecAbi?.(parameter) === true;
+  return parameterUsesNumericVecAbi(parameter, currentSelectionOptions?.implicitParamUsesNumericVecAbi);
 }
 
 type ObviousSelectorValueFamily = "number" | "boolean" | "string" | "reference" | "nullish";

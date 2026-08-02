@@ -69,6 +69,7 @@ import {
 } from "../analysis/linear-memory-plan.js";
 import { bindLinearStringRuntime } from "../analysis/linear-string-runtime.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
+import { IR_VEC_ELEM_SET_PREFIX } from "../vector-runtime.js";
 import {
   asVal,
   irVal,
@@ -111,6 +112,7 @@ import { planIrCompilationByIdentity, projectIrSelectionToLegacy } from "../sele
 import { buildIrRecursiveTypeEvidence } from "../type-evidence.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
+import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
 import type { TypeConverter } from "./contract.js";
 import { verifyIrBackendLegality } from "./legality.js";
 import { LinearEmitter } from "./linear-emitter.js";
@@ -449,6 +451,16 @@ export function getLastLinearIrReport(): LinearIrResult | undefined {
   return lastReport;
 }
 
+function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourceFile: string): readonly IrFunction[] {
+  return (
+    prepareIrRuntimeManifest({
+      functions,
+      sourceFile,
+      policy: { target: "host", backend: "linear" },
+    })?.functions ?? functions
+  );
+}
+
 /**
  * Build + lower every selector-claimed top-level FunctionDeclaration for the
  * LINEAR backend. Precompute mutates only append-only/deduped func types and
@@ -723,7 +735,9 @@ export function compileLinearIrFunctions(
     const fn = built.get(ownerUnitId);
     return fn ? [fn] : [];
   });
-  irModule = { functions: plannedFunctions };
+  const preparedFunctions = prepareLinearIntrinsicFunctions(plannedFunctions, sourceFile.fileName);
+  for (const fn of preparedFunctions) built.set(fn.unitId, fn);
+  irModule = { functions: preparedFunctions };
   memoryPlan = planLinearMemory(irModule, allocRegistry, allocationPolicy);
   bindMemoryPlan(memoryPlan);
 
@@ -1018,6 +1032,7 @@ function makeLinearIrResolver(
       "vector element initialization",
     );
     return {
+      valueType: { kind: "i32" },
       vecStructTypeIdx: 0,
       lengthFieldIdx: 0,
       dataFieldIdx: 0,
@@ -1059,7 +1074,9 @@ function makeLinearIrResolver(
           }
           // (#2956 L2) Vec mutation is an abstract element-store request. On
           // linear it maps to the canonical grow-on-OOB array runtime.
-          if (symbol.startsWith("__vec_elem_set_")) return resolveRuntimeFunc("__arr_set");
+          if (symbol.startsWith(IR_VEC_ELEM_SET_PREFIX) || symbol.startsWith("__vec_elem_set_")) {
+            return resolveRuntimeFunc("__arr_set");
+          }
           throw new Error(`linear-ir: unsupported intrinsic '${symbol}' (${ref.name})`);
         }
         case "support":
@@ -1444,7 +1461,7 @@ function linearValueTypeConverter(resolver: IrLowerResolver, funcName: string): 
     backend: "linear",
     convertType(type: IrType): readonly ValType[] {
       if (type.kind === "val") return [type.val];
-      if (type.kind === "string") return [{ kind: "i32" }];
+      if (type.kind === "string" || type.kind === "vec") return [{ kind: "i32" }];
       if (type.kind === "object" && resolver.resolveObject?.(type.shape)) return [{ kind: "i32" }];
       if (type.kind === "boxed") {
         const inner = asVal(type.inner);

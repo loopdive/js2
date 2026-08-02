@@ -129,6 +129,13 @@ export function createCodegenContext(
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
     arrayProtoIndexDirty: false, // (#2001 S2) set by scanForArrayHoles: Array.prototype index write ⇒ HOF hole-skip disabled
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
+    // (#4035) "auto" = the JS host needs the bridge as its calling convention,
+    // a JS-free host does not. Standalone/WASI callers that DO inspect the
+    // module (the test262 harness) pass hostBridge: "always".
+    emitHostBridge:
+      (options?.hostBridge ?? "auto") === "auto"
+        ? !(options?.standalone || options?.wasi)
+        : options?.hostBridge === "always",
     suppressVecUsageFlag: false, // (#2083) true only during the two prereg calls below
     holeTypeIdx: -1, // (#2001 S1) $Hole struct type; lazily registered
     holeGlobalIdx: undefined, // (#2001 S1) $__hole singleton global

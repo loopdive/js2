@@ -24,6 +24,7 @@ async function runStandalone(src: string): Promise<string> {
     allowJs: true,
     skipSemanticDiagnostics: true,
     target: "standalone",
+    hostBridge: "always",
   });
   expect(r.success, r.success ? "" : r.errors.map((e) => e.message).join("\n")).toBe(true);
   expect(r.imports.filter((i) => i.module === "env").map((i) => i.name)).toEqual([]);

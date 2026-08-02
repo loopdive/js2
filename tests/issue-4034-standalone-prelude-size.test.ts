@@ -17,10 +17,17 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
+// (#4035) These cases assert on the presence/absence of the host-bridge
+// exports, which is now a POLICY decision — standalone defaults to omitting
+// them. Pin `hostBridge: "always"` so this file keeps testing what it was
+// written to test: whether the string prelude fabricates *array usage*. With
+// the bridge off by default the bridge-presence assertions below would pass
+// vacuously and stop guarding #4034 at all.
 const STANDALONE = {
   target: "wasi",
   nativeStrings: true,
   optimize: 3,
+  hostBridge: "always",
 } as const;
 
 async function compileStandalone(source: string) {

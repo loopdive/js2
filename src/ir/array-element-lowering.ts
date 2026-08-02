@@ -19,6 +19,7 @@ import type { IrVecLowering } from "./lower.js";
 import { asVal, irVal, type IrConst, type IrType, type IrValueId } from "./nodes.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import type { ValType } from "./types.js";
+import { irVecElemSetSymbol } from "./vector-runtime.js";
 
 interface ArrayElementResolver {
   resolveVec?(valType: ValType): IrVecLowering | null;
@@ -354,16 +355,22 @@ export function tryLowerVecPush(
 ): IrValueId | null | undefined {
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   const receiverExpression = expr.expression.expression;
+  if (methodName !== "push") return undefined;
   const vecRecvVal = asVal(recvType);
+  const logicalElement = recvType.kind === "vec" ? asVal(recvType.elementType) : null;
+  const vec = logicalElement
+    ? host.resolver?.resolveVecForElement?.(logicalElement)
+    : vecRecvVal
+      ? host.resolver?.resolveVec?.(vecRecvVal)
+      : null;
+  if (!vec) return undefined;
   const scalarVecReceiver =
-    vecRecvVal?.kind === "i32" &&
+    (vec.valueType?.kind === "i32" || vecRecvVal?.kind === "i32") &&
     (host.resolver?.isVecValueExpression?.(receiverExpression) === true ||
       host.emptyArrayInference.isResolvedVectorExpression(receiverExpression));
-  if (methodName !== "push" || !vecRecvVal || (vecRecvVal.kind !== "ref" && !scalarVecReceiver)) {
+  if (recvType.kind !== "vec" && (!vecRecvVal || (vecRecvVal.kind !== "ref" && !scalarVecReceiver))) {
     return undefined;
   }
-  const vec = host.resolver?.resolveVec?.(vecRecvVal);
-  if (!vec) return undefined;
   if (expr.arguments.length !== 1 || ts.isSpreadElement(expr.arguments[0]!)) {
     throw new Error(
       `ir/from-ast: .push with ${expr.arguments.length} args / spread not in IR scope (single plain arg only) (${host.funcName})`,
@@ -405,7 +412,9 @@ export function tryLowerVecPush(
     const nextLength = host.builder.emitBinary("i32.add", lenI32, one, irVal({ kind: "i32" }));
     host.builder.emitVecSetLength(recv, nextLength);
   } else {
-    host.builder.emitCall(irIntrinsicFuncRef(`__vec_elem_set_${vec.vecStructTypeIdx}`), [recv, lenI32, value], null);
+    const symbol =
+      recvType.kind === "vec" ? irVecElemSetSymbol(recvType.elementType) : `__vec_elem_set_${vec.vecStructTypeIdx}`;
+    host.builder.emitCall(irIntrinsicFuncRef(symbol), [recv, lenI32, value], null);
   }
   if (statementPosition) return null;
   const one = host.builder.emitConst({ kind: "f64", value: 1 }, IR_F64);

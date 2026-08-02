@@ -5,8 +5,27 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 31a336a9-7fce-4c41-9a15-3e10d02eca44
+  modified: 2026-08-01T11:43:57.835Z
   modified: 2026-08-01T10:10:12.701Z
 ---
+
+## Recurring instance: un-awaited async `compile()` scores a fictitious 100% failure
+
+**Hit by two independent agents in one session (2026-08-01).** `compile()` in
+`src/index.ts` is **async**. A probe that forgets `await` gets a Promise, reads
+no `.wasm`/`.errors` off it, and scores **every case as a compile failure** —
+a clean, plausible, completely fictitious result (one agent scored 28/28
+`compile_error`; another read every case as a compile failure and nearly
+triaged the wrong defect).
+
+It is the perfect silent-empty: 100% failure looks exactly like "this feature
+is entirely broken", which is often the very hypothesis being tested.
+
+**Guard:** have the probe **throw on a malformed result** rather than treating
+a missing `.wasm` as a failure — `if (!r || typeof r.then === "function" ||
+!("errors" in r)) throw new Error("probe: compile() result malformed")`. And
+keep a **known-passing control row** in every probe: if the control also
+"fails", the instrument is broken, not the subject.
 
 **The benign-looking outcome is indistinguishable from the broken one, and
 nothing records which happened.** Eight measured instances in a single session

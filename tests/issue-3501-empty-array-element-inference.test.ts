@@ -30,6 +30,7 @@ import {
 import { lowerIrModuleToPorffor } from "../src/ir/backend/porffor/integration.js";
 import { loadOptionalPorffor } from "../src/ir/backend/porffor/loader.js";
 import { asBlockId, forEachInstrDeep, type IrFunction, type IrInstr } from "../src/ir/nodes.js";
+import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
@@ -78,6 +79,7 @@ describe("#3501 empty-array element inference", () => {
       elementValType: { kind: "f64" },
       aliases: ["values", "alias", "joined"],
       evidence: ["number"],
+      int32Narrowed: false,
     });
   });
 
@@ -170,11 +172,11 @@ describe("#3501 shared planned-vector backend operations", () => {
       }
     }
     expect(instructions.some((instruction) => instruction.kind === "vec.new_fixed")).toBe(true);
-    expect(
-      instructions
-        .filter((instruction): instruction is Extract<IrInstr, { kind: "call" }> => instruction.kind === "call")
-        .map((instruction) => instruction.target.name),
-    ).toEqual(expect.arrayContaining(["__vec_elem_set_0", "__arr_get", "__arr_len"]));
+    const callTargets = instructions
+      .filter((instruction): instruction is Extract<IrInstr, { kind: "call" }> => instruction.kind === "call")
+      .map((instruction) => instruction.target.name);
+    expect(callTargets).toEqual(expect.arrayContaining(["__ir_vec_elem_set_f64", "__arr_get", "__arr_len"]));
+    expect(callTargets).not.toContain("__vec_elem_set_0");
 
     const allocations = report.memoryPlan.allocations.filter(
       (allocation) => allocation.ownerFunction === "vectorProbe",
@@ -210,10 +212,11 @@ describe("#3501 shared planned-vector backend operations", () => {
         "#js2_vec_resolve",
         "__arr_get",
         "__arr_len",
-        "__vec_elem_set_0",
+        "__ir_vec_elem_set_f64",
         "vectorProbe",
       ]),
     );
+    expect(porfforInput.funcs.map((candidate) => candidate?.name)).not.toContain("__vec_elem_set_0");
     const runtimeNodes = porfforInput.funcs
       .filter((candidate) => candidate && candidate.name !== "vectorProbe")
       .flatMap((candidate) => collectPorfforNodes(candidate!.body));
@@ -336,7 +339,8 @@ describe("#3501 exact landing array-sum source", () => {
 
     const gc = await compile(source, { target: "gc", experimentalIR: true, fileName: exactSourcePath });
     expect(gc.success, gc.errors.map((error) => error.message).join("\n")).toBe(true);
-    const { instance: gcInstance } = await WebAssembly.instantiate(gc.binary, gc.importObject ?? {});
+    const gcImports = buildImports(gc.imports, undefined, gc.stringPool);
+    const { instance: gcInstance } = await WebAssembly.instantiate(gc.binary, gcImports as WebAssembly.Imports);
     const gcRun = gcInstance.exports.run as (n: number) => number;
     expect(inputs.map(gcRun)).toEqual(expected);
 

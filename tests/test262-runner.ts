@@ -4162,6 +4162,15 @@ async function runOriginalHarnessVariant(
         // below already calls the exported __module_init after setInstance.
         ...(target ? { target } : {}),
         ...(target === undefined || target === "standalone" ? { deferTopLevelInit: true } : {}),
+        // (#4035) The harness INSPECTS the module from JS — it renders native
+        // exception payloads via `__exn_render_*` (#2962) and drains the
+        // host-free print sink via `__stdout_*` (#3469). Standalone/WASI now
+        // default to `hostBridge: "off"` (a deployed pure-Wasm module needs
+        // only its own exports), so the runner must ask for the bridge
+        // explicitly or those two channels vanish and the conformance numbers
+        // collapse onto opaque labels. This is the harness opt-in the flag was
+        // designed around; do not drop it to "shrink the test binaries".
+        hostBridge: "always",
       });
     } catch (error) {
       compileMs = performance.now() - compileStarted;

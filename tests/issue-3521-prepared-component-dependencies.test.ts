@@ -26,7 +26,18 @@ import {
   type IrTerminalUnitRecord,
   type IrUnitId,
 } from "../src/ir/identity.js";
-import { asBlockId, asValueId, irVal, type IrClassShape, type IrFunction, type IrInstr } from "../src/ir/nodes.js";
+import {
+  asBlockId,
+  asValueId,
+  irVal,
+  irVec,
+  type IrClassShape,
+  type IrClosureSignature,
+  type IrFunction,
+  type IrInstr,
+  type IrType,
+  type IrTypeRef,
+} from "../src/ir/nodes.js";
 import {
   derivePreparedComponentDependencies,
   type PreparedComponentAbiEntry,
@@ -43,6 +54,14 @@ import {
   IR_STRING_ITERATOR_CHAR_AT_FN,
   IR_STRING_LITERAL_MATERIALIZE_FN,
 } from "../src/ir/string-runtime.js";
+import { attachIrVecLayouts } from "../src/ir/vec-layout.js";
+import {
+  IR_VEC_ELEM_SET_PREFIX,
+  IR_VEC_NEW_SIZED_PREFIX,
+  irVecElemSetSymbol,
+  irVecNewSizedSymbol,
+  parseIrVectorRuntimeElement,
+} from "../src/ir/vector-runtime.js";
 import { ts } from "../src/ts-api.js";
 
 const VOID_SIGNATURE = Object.freeze({ params: Object.freeze([]), results: Object.freeze([]) });
@@ -139,6 +158,15 @@ function abiLookup(entries: readonly PreparedComponentAbiEntry[]): PreparedCompo
   return {
     get: (id) => byId.get(id),
     entries: () => entries,
+  };
+}
+
+function supportTypeEntry(ref: IrTypeRef): PreparedComponentAbiEntry {
+  return {
+    id: ref.binding.bindingId,
+    structuralReferenceKey: irTypeBindingKey(ref.binding),
+    slotPolicy: "required",
+    intent: { kind: "type", shapeKey: `test:${ref.name}` },
   };
 }
 
@@ -453,6 +481,173 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     const mixed = attachIrStringCarrier({ ...unbound, resultTypes: [classType] }, carrierRef).function;
     expect(mixed.resultTypes[0]).toBe(classType);
     expect(mixed.resultTypes[0]).toMatchObject({ kind: "class", shape: classShape });
+  });
+
+  it("fails closed for logical vectors without a layout and transitional raw reference types", () => {
+    const f = fixture();
+    const logical: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "values", type: irVec(irVal({ kind: "f64" })) }],
+      valueCount: 1,
+    };
+    const logicalReport = derivePreparedComponentDependencies({
+      module: { functions: [logical] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+    expect(logicalReport.components[0]!.status).toBe("blocked");
+    expect(logicalReport.components[0]!.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("symbolic Program ABI layout"),
+      }),
+    ]);
+
+    const raw: IrFunction = {
+      ...logical,
+      params: [{ value: asValueId(0), name: "values", type: irVal({ kind: "ref", typeIdx: 17 }) }],
+    };
+    const rawReport = derivePreparedComponentDependencies({
+      module: { functions: [raw] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+    expect(rawReport.components[0]!.status).toBe("blocked");
+    expect(rawReport.components[0]!.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("raw IR reference type ref:17"),
+      }),
+    ]);
+  });
+
+  it("records the exact carrier and backing-array dependencies for a prepared logical vector", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "vector-carrier:vec<f64>", "__ir_vec_carrier_f64");
+    const dataRef = irSupportTypeRef(f.sourceId, "vector-data:vec<f64>", "__ir_vec_data_f64");
+    const layout = Object.freeze({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 1,
+    });
+    const logical: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "values", type: irVec(irVal({ kind: "f64" })) }],
+      valueCount: 1,
+    };
+    const attached = attachIrVecLayouts(logical, () => layout);
+    expect(attached.usesVec).toBe(true);
+    expect(attached.function.params[0]!.type).toMatchObject({ kind: "vec", layout });
+    expect(attachIrVecLayouts(attached.function, () => layout).function).toBe(attached.function);
+
+    const supportTypeEntry = (ref: typeof carrierRef, shapeKey: string): PreparedComponentAbiEntry => ({
+      id: ref.binding.bindingId,
+      structuralReferenceKey: irTypeBindingKey(ref.binding),
+      slotPolicy: "required",
+      intent: { kind: "type", shapeKey },
+    });
+    const carrierEntry = supportTypeEntry(carrierRef, "vector-carrier-f64");
+    const dataEntry = supportTypeEntry(dataRef, "vector-data-f64");
+    const prepared = derivePreparedComponentDependencies({
+      module: { functions: [attached.function] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), carrierEntry, dataEntry]),
+    });
+
+    expect(prepared.components[0]!.status).toBe("complete");
+    expect(prepared.components[0]!.failures).toEqual([]);
+    expect(prepared.components[0]!.abiDependencies.map((dependency) => dependency.bindingId)).toEqual([
+      carrierRef.binding.bindingId,
+      dataRef.binding.bindingId,
+    ]);
+    expect(prepared.components[0]!.abiDependencies).toEqual([
+      expect.objectContaining({
+        kind: "support",
+        bindingId: carrierRef.binding.bindingId,
+        structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+        terminalOwnerUnitId: null,
+      }),
+      expect.objectContaining({
+        kind: "support",
+        bindingId: dataRef.binding.bindingId,
+        structuralReferenceKey: irTypeBindingKey(dataRef.binding),
+        terminalOwnerUnitId: null,
+      }),
+    ]);
+
+    const missingData = derivePreparedComponentDependencies({
+      module: { functions: [attached.function] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), carrierEntry]),
+    });
+    expect(missingData.components[0]!.status).toBe("blocked");
+    expect(missingData.components[0]!.failures).toContainEqual(
+      expect.objectContaining({
+        code: "unplanned-abi-binding",
+        bindingId: dataRef.binding.bindingId,
+      }),
+    );
+  });
+
+  it("keeps logical vector helper identities independent of physical type indices", () => {
+    const f64 = irVal({ kind: "f64" });
+    const i32 = irVal({ kind: "i32" });
+    expect(irVecElemSetSymbol(f64)).toBe("__ir_vec_elem_set_f64");
+    expect(irVecNewSizedSymbol(f64)).toBe("__ir_vec_new_sized_f64");
+    expect(irVecElemSetSymbol(i32)).toBe("__ir_vec_elem_set_i32");
+    expect(parseIrVectorRuntimeElement("__ir_vec_elem_set_f64", IR_VEC_ELEM_SET_PREFIX)).toEqual({ kind: "f64" });
+    expect(parseIrVectorRuntimeElement("__ir_vec_new_sized_i32", IR_VEC_NEW_SIZED_PREFIX)).toEqual({ kind: "i32" });
+    expect(parseIrVectorRuntimeElement("__ir_vec_elem_set_17", IR_VEC_ELEM_SET_PREFIX)).toBeNull();
+  });
+
+  it("rejects invalid or drifting prepared vector layouts", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "vector-carrier:vec<f64>", "__ir_vec_carrier_f64");
+    const dataRef = irSupportTypeRef(f.sourceId, "vector-data:vec<f64>", "__ir_vec_data_f64");
+    const logical: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "values", type: irVec(irVal({ kind: "f64" })) }],
+      valueCount: 1,
+    };
+    const invalid = attachIrVecLayouts(logical, () => ({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 0,
+    }));
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [invalid.function] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+    expect(report.components[0]!.status).toBe("blocked");
+    expect(report.components[0]!.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("invalid prepared field layout"),
+      }),
+    ]);
+
+    const attached = attachIrVecLayouts(logical, () => ({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 1,
+    }));
+    expect(() =>
+      attachIrVecLayouts(attached.function, () => ({
+        carrierType: carrierRef,
+        dataType: dataRef,
+        lengthFieldIndex: 1,
+        dataFieldIndex: 0,
+      })),
+    ).toThrow(/different prepared layout/);
   });
 
   it("turns literal storage and string length into exact prepared dependencies", () => {
@@ -847,6 +1042,85 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
         detail: expect.stringContaining("iterator runtime callables"),
       }),
     ]);
+  });
+
+  it.each(["empty", "unrelated"] as const)(
+    "does not accept %s closure evidence for a different final IR object",
+    (evidenceKind) => {
+      const f = fixture();
+      const signature: IrClosureSignature = { params: [], returnType: null };
+      const closureType: IrType = { kind: "closure", signature };
+      const supportRef = irSupportTypeRef(f.first.id, "test-closure-wrapper", "__test_closure_wrapper");
+      const closureNew: IrInstr = {
+        kind: "closure.new",
+        liftedFunc: irUnitFuncRef({ unitId: f.second.id, name: "second" }),
+        signature,
+        captureFieldTypes: [],
+        captures: [],
+        result: asValueId(0),
+        resultType: closureType,
+      };
+      const unrelatedClosureNew: IrInstr = { ...closureNew };
+      const refs = evidenceKind === "empty" ? [] : [supportRef];
+      const report = derivePreparedComponentDependencies({
+        module: { functions: [irFunction(f.first, [closureNew]), irFunction(f.second)] },
+        terminalUnitIds: new Set([f.first.id, f.second.id]),
+        inventory: f.inventory,
+        closureSupport: {
+          typeRefs: new Map([[closureType, refs]]),
+          instructionRefs: new Map([[evidenceKind === "empty" ? closureNew : unrelatedClosureNew, refs]]),
+          functionRefs: new Map(),
+        },
+        abi: abiLookup([
+          sourceCallableEntry(f.first.id),
+          sourceCallableEntry(f.second.id),
+          supportTypeEntry(supportRef),
+        ]),
+      });
+
+      expect(report.components[0]!.status).toBe("blocked");
+      expect(report.components[0]!.failures).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "implicit-support-reference-unavailable",
+            detail: expect.stringContaining("closure.new resolves closure wrapper/type support"),
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("keeps nested closure-signature support dependencies fail-closed", () => {
+    const f = fixture();
+    const signature: IrClosureSignature = { params: [{ kind: "string" }], returnType: null };
+    const closureType: IrType = { kind: "callable", signature };
+    const supportRef = irSupportTypeRef(f.first.id, "test-callable-wrapper", "__test_callable_wrapper");
+    const fn: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "callback", type: closureType }],
+      valueCount: 1,
+    };
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [fn] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      closureSupport: {
+        typeRefs: new Map([[closureType, [supportRef]]]),
+        instructionRefs: new Map(),
+        functionRefs: new Map(),
+      },
+      abi: abiLookup([sourceCallableEntry(f.first.id), supportTypeEntry(supportRef)]),
+    });
+
+    expect(report.components[0]!.status).toBe("blocked");
+    expect(report.components[0]!.failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "implicit-support-reference-unavailable",
+          detail: expect.stringContaining("IR string type resolves through backend support"),
+        }),
+      ]),
+    );
   });
 
   it("fails closed for an unresolved exact unit ref and for a foreign terminal owner", () => {

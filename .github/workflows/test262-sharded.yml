@@ -1096,6 +1096,26 @@ jobs:
           node scripts/check-standalone-highwater.mjs \
             --report merged-reports/test262-standalone-report-merged.json
 
+      # (#3953) MAKE THE SILENCE LOUD. The step above is the only place in CI
+      # that holds BOTH the committed mark and a fresh measurement of reality,
+      # and it already prints the gap — as an ordinary log line, in a job with
+      # thousands of them. That is why a 475-wide gap went unremarked for 37
+      # consecutive merges: the gate reported "passed" the whole time, because
+      # a floor that is too LOW never fires. Nothing anywhere reported a mark
+      # that had stopped moving.
+      #
+      # This step turns that gap into a run-summary ANNOTATION once it outlives
+      # the grace window. It is deliberately NON-FATAL (`|| true`): `merge shard
+      # reports` is a REQUIRED check, and a lagging mark is an infrastructure
+      # fault, never the fault of the PR sitting in the queue. Failing here
+      # would wedge the queue on someone else's defect.
+      - name: Report a STALE high-water mark (#3953)
+        if: env.STANDALONE_RAN == 'true'
+        run: |
+          node scripts/check-highwater-staleness.mjs \
+            --report merged-reports/test262-standalone-report-merged.json \
+            --annotate || true
+
       # #1668 — HARD catastrophic-regression guard. Lives INSIDE the REQUIRED
       # "merge shard reports" check so it blocks the merge queue. The
       # fine-grained `regression-gate` job below also blocks the merge queue
@@ -2596,6 +2616,19 @@ jobs:
           # via the hourly baseline-summary-sync.yml fallback (6h staleness
           # floor). Fail-open: if the queue query errors, keep the old
           # always-push behavior rather than silently freezing the summary.
+          #
+          # (#3953) ⚠️ THIS DEFERRAL ALSO DISCARDS THE #2097 HIGH-WATER RAISE.
+          # The raise runs earlier in this job and WRITES the mark file; the
+          # commit dropped here is its only carrier. Until 2026-08-02 the
+          # fallback named on the next line did not stage that file at all
+          # (`grep highwater baseline-summary-sync.yml` → 0 hits), so on a
+          # continuously-busy queue the mark could only be landed by the
+          # coincidence of an empty queue at promote time — measured: 37
+          # consecutive merges with no raise, a 475-wide gap, 525 passes of
+          # silent permissive headroom. baseline-summary-sync.yml now stages
+          # and re-raises the mark, so the sentence below is true for it too.
+          # If you ever narrow that fallback's file set, this deferral silently
+          # reopens the hole.
           OWNER="${GITHUB_REPOSITORY%/*}"; NAME="${GITHUB_REPOSITORY#*/}"
           QUEUE_LEN=$(gh api graphql \
             -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){mergeQueue{entries(first:1){totalCount}}}}' \

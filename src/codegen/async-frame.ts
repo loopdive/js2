@@ -260,8 +260,11 @@ export function asyncFnNeedsHostDrive(
 export interface AsyncFrameInfo {
   /** Source function name (the `__async_resume_f<name>` / struct name stem). */
   functionName: string;
-  /** The async function/method declaration this frame belongs to. */
-  decl: ts.FunctionLikeDeclaration;
+  /**
+   * The async function/method declaration this frame belongs to. Prepared IR
+   * frames omit it because their CFG and value carriers are already closed.
+   */
+  decl?: ts.FunctionLikeDeclaration;
   /** Per-frame `$AsyncFrame_<name>` state struct typeIdx. */
   stateTypeIdx: number;
   /** Field index of the i32 resume mode (`MODE_FIELD`). FrameLayout. */
@@ -1270,7 +1273,38 @@ function validateAsyncCfg(cfg: AsyncCfgPlan): string | null {
  * — a stale capture would otherwise repoint every baked `call`/`ref.func`. The
  * N-segment body widens that window (more helpers) but the discipline is the same.
  */
-export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameInfo, plan: AsyncCpsPlan): number {
+function planAsyncResumeCfg(
+  ctx: CodegenContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg: AsyncCfgPlan | undefined,
+): AsyncCfgPlan | null {
+  if (preparedCfg) return preparedCfg;
+  if (!info.decl) return null;
+  if (info.asyncGen) {
+    // #2570: keep delegate mode on the same carrier split as admission.
+    return planAsyncGenCfg(
+      info.decl,
+      isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null,
+      asyncGenDelegatesForPlan(ctx, info.decl, isStandalonePromiseActive(ctx) ? "carrier" : "awaitFree"),
+    );
+  }
+  if (!plan) return null;
+  // #3587: both settlement backends admit try/catch across await; host still
+  // refuses return-in-try and loops until its suspension rounds are widened.
+  return planAsyncCfg(ctx, info.decl, plan, {
+    allowLoops: !info.host,
+    allowTryCatch: true,
+    allowReturnInTry: !info.host,
+  });
+}
+
+export function ensureAsyncResumeFunction(
+  ctx: CodegenContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg?: AsyncCfgPlan,
+): number {
   if (info.resumeFuncIdx !== undefined) return info.resumeFuncIdx;
 
   // (#2906 slice 3/3a) Build the general CFG plan the emitter drives.
@@ -1288,24 +1322,11 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
   // (`isAsyncGenDriveCandidate`) keyed the body's shape check on, so gate and
   // planner always see the same segment split. Type queries go through
   // `ctx.oracle` (the #1930 boundary), not the raw checker.
-  const cfg = info.asyncGen
-    ? planAsyncGenCfg(
-        info.decl,
-        isStandalonePromiseActive(ctx) ? { oracle: ctx.oracle } : null,
-        // (#2570) Emit-time delegates mode (registry-backed helper resolution)
-        // on the same lane split as the admission gate, so gate and planner
-        // always see the same segment shape.
-        asyncGenDelegatesForPlan(ctx, info.decl, isStandalonePromiseActive(ctx) ? "carrier" : "awaitFree"),
-      )
-    : planAsyncCfg(ctx, info.decl, plan, {
-        allowLoops: !info.host,
-        // (#3587) try/catch-across-await is admitted on BOTH settle backends —
-        // the host gate (`asyncFnNeedsHostDrive`) mirrors this via
-        // `computeTryCatchSpills`, keeping predicate and producer in lockstep.
-        allowTryCatch: true,
-        allowReturnInTry: !info.host,
-      });
+  const cfg = planAsyncResumeCfg(ctx, info, plan, preparedCfg);
   if (cfg === null) {
+    if (!info.decl) {
+      throw new Error("internal: prepared async-frame resume has no closed CFG");
+    }
     reportError(ctx, info.decl, "internal: async-frame resume built on an unsupported body shape (#2906 slice 1/3a)");
     info.resumeFuncIdx = -1;
     return -1;
@@ -1313,6 +1334,7 @@ export function ensureAsyncResumeFunction(ctx: CodegenContext, info: AsyncFrameI
 
   const cfgError = validateAsyncCfg(cfg);
   if (cfgError !== null) {
+    if (!info.decl) throw new Error(`internal: prepared async CFG violates the emitter contract — ${cfgError}`);
     reportError(ctx, info.decl, `internal: async CFG plan violates the emitter contract — ${cfgError} (#2906)`);
     info.resumeFuncIdx = -1;
     return -1;
@@ -2493,9 +2515,23 @@ export function emitAsyncFrameStateMachine(
   info.boxedCaptures = fctx.boxedCaptures;
   info.readsCurrentThis = fctx.readsCurrentThis;
   info.selfCaptureLayout = fctx.selfCaptureLayout;
-  const resumeFuncIdx = ensureAsyncResumeFunction(ctx, info, plan);
+  emitAsyncFrameEntry(ctx, fctx, info, plan);
+}
+
+function emitAsyncFrameEntry(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: AsyncFrameInfo,
+  plan: AsyncCpsPlan | null,
+  preparedCfg?: AsyncCfgPlan,
+): void {
+  const host = info.host;
+  const hostImports = info.hostImports;
+  const promiseTypeIdx = info.promiseTypeIdx;
+  const resumeFuncIdx = ensureAsyncResumeFunction(ctx, info, plan, preparedCfg);
   if (resumeFuncIdx < 0) {
-    reportError(ctx, decl, "internal: async-frame resume function unavailable (#2895 slice 1)");
+    if (!info.decl) throw new Error("internal: prepared async-frame resume function unavailable");
+    reportError(ctx, info.decl, "internal: async-frame resume function unavailable (#2895 slice 1)");
     fctx.body.push({ op: "ref.null.extern" });
     return;
   }
@@ -2575,6 +2611,16 @@ export function emitAsyncFrameStateMachine(
   fctx.body.push({ op: "local.get", index: resultPromiseLocal });
   if (!host) fctx.body.push({ op: "extern.convert_any" });
   fctx.body.push({ op: "return" });
+}
+
+/** Emit a prepared, AST-free async CFG through the existing frame engine. */
+export function emitPreparedAsyncFrameStateMachine(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  info: AsyncFrameInfo,
+  cfg: AsyncCfgPlan,
+): void {
+  emitAsyncFrameEntry(ctx, fctx, info, null, cfg);
 }
 
 // ── async-generator PRODUCER core (#2906 slice 3d-i) ─────────────────────────

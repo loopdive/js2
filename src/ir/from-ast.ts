@@ -142,7 +142,7 @@ import {
   isIrBitwiseOperatorToken,
 } from "./i32-pure-bitwise.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
-import { IrUnsupportedError } from "./outcomes.js";
+import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { effectiveIrParamTypeNode, effectiveIrReturnTypeNode, IR_MATH_METHOD_TABLE } from "./select.js";
 import { JsTag } from "./js-tag.js"; // #2949 S5.2 — box-refinement tags for dynamic equality operands
@@ -161,6 +161,7 @@ import {
   irDynamic,
   irTypeEquals,
   irVal,
+  irVec,
   type IrBinop,
   type IrClassShape,
   type IrClosureSignature,
@@ -176,8 +177,68 @@ import {
   type IrValueId,
 } from "./nodes.js";
 import type { ValType } from "./types.js";
+import { irVecElemSetSymbol, irVecNewSizedSymbol } from "./vector-runtime.js";
 
-const VEC_NEW_SIZED_PREFIX = "__vec_new_sized_";
+interface ResolvedIrVecType {
+  readonly lowering: IrVecLowering;
+  readonly elementType: IrType;
+  readonly valueType: ValType;
+}
+
+interface IrSlotRepresentation {
+  readonly storageType: ValType;
+  readonly bindingType: IrType;
+  readonly asType?: IrType;
+}
+
+/** Resolve a logical vec type without exposing its physical type index to inference. */
+function resolveIrVecType(type: IrType, cx: Pick<LowerCtx, "resolver" | "funcName">): ResolvedIrVecType | null {
+  if (type.kind === "vec") {
+    const elementValType = asVal(type.elementType);
+    if (!elementValType) return null;
+    const lowering = cx.resolver?.resolveVecForElement?.(elementValType);
+    if (!lowering) return null;
+    const backendValueType =
+      cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ??
+      lowering.valueType ??
+      ({ kind: type.nullable ? "ref_null" : "ref", typeIdx: lowering.vecStructTypeIdx } as ValType);
+    const valueType =
+      (backendValueType.kind === "ref" || backendValueType.kind === "ref_null") && type.nullable
+        ? ({ kind: "ref_null", typeIdx: backendValueType.typeIdx } as ValType)
+        : backendValueType;
+    return { lowering, elementType: type.elementType, valueType };
+  }
+  const valueType = asVal(type);
+  if (!valueType) return null;
+  const lowering = cx.resolver?.resolveVec?.(valueType);
+  return lowering ? { lowering, elementType: irVal(lowering.elementValType), valueType } : null;
+}
+
+/** Materialize a logical IR type into mutable backend-local storage. */
+function resolveIrSlotRepresentation(
+  type: IrType,
+  resolver: IrFromAstResolver | undefined,
+  funcName: string,
+): IrSlotRepresentation | null {
+  const valueType = asVal(type);
+  if (valueType) return { storageType: valueType, bindingType: type };
+
+  let storageType: ValType | undefined;
+  if (type.kind === "string") storageType = resolver?.resolveString?.();
+  else if (type.kind === "dynamic") storageType = resolver?.resolveDynamic?.();
+  else if (type.kind === "vec") {
+    storageType = resolveIrVecType(type, { resolver, funcName })?.valueType;
+  }
+  return storageType ? { storageType, bindingType: irVal(storageType), asType: type } : null;
+}
+
+function vecElemSetProviderSymbol(type: IrType, vec: IrVecLowering): string {
+  return type.kind === "vec" ? irVecElemSetSymbol(type.elementType) : `__vec_elem_set_${vec.vecStructTypeIdx}`;
+}
+
+function vecNewSizedProviderSymbol(type: IrType, vec: IrVecLowering): string {
+  return type.kind === "vec" ? irVecNewSizedSymbol(type.elementType) : `__vec_new_sized_${vec.vecStructTypeIdx}`;
+}
 
 function unsupportedVoidCallExpression(detail: string): never {
   throw new IrUnsupportedError("void-call-expression", "build", detail);
@@ -432,8 +493,8 @@ export interface IrFromAstResolver {
    *     sentinel conventions incl. #1248 slice/substring-end + #2002
    *     NaN-position; `"native-slice-len"` = `slice(start)`'s implicit end =
    *     recv.length, i32-truncated; `"native-substring"` (#3156) = substring's
-   *     omitted start/end pad `i32 0` / `i32 0x7fffffff` — `__str_substring`
-   *     clamps end to len, matching the legacy native arm's sentinel;
+   *     omitted start/end pad `i32 0` / `i32 0x7fffffff` — both the native and
+   *     guarded host helpers clamp end to len;
    *     `"charcode-zero"` (#3156) = charCodeAt's omitted position pads
    *     `i32 0` in BOTH modes, since the guarded helpers take an i32 index).
    *
@@ -872,42 +933,18 @@ export function lowerFunctionAstToIr(
   // backend's canonical carrier, so every accepted type has an exact slot
   // representation.
   for (const param of pendingMutableParams) {
-    const valType = asVal(param.type);
-    if (valType) {
-      const slotIndex = builder.declareSlot(param.name, valType);
-      builder.emitSlotWrite(slotIndex, param.value);
-      scope.set(param.name, { kind: "slot", slotIndex, type: param.type });
-      continue;
+    const representation = resolveIrSlotRepresentation(param.type, options.resolver, name);
+    if (!representation) {
+      throw new Error(`ir/from-ast: mutable parameter "${param.name}" has no slot representation (${name})`);
     }
-    if (param.type.kind === "string") {
-      const stringValType = options.resolver?.resolveString?.();
-      if (stringValType) {
-        const slotIndex = builder.declareSlot(param.name, stringValType);
-        builder.emitSlotWrite(slotIndex, param.value);
-        scope.set(param.name, {
-          kind: "slot",
-          slotIndex,
-          type: irVal(stringValType),
-          asType: param.type,
-        });
-        continue;
-      }
-    }
-    if (param.type.kind === "dynamic") {
-      const dynamicValType = options.resolver?.resolveDynamic?.();
-      if (dynamicValType) {
-        const slotIndex = builder.declareSlot(param.name, dynamicValType);
-        builder.emitSlotWrite(slotIndex, param.value);
-        scope.set(param.name, {
-          kind: "slot",
-          slotIndex,
-          type: irVal(dynamicValType),
-          asType: param.type,
-        });
-        continue;
-      }
-    }
-    throw new Error(`ir/from-ast: mutable parameter "${param.name}" has no slot representation (${name})`);
+    const slotIndex = builder.declareSlot(param.name, representation.storageType);
+    builder.emitSlotWrite(slotIndex, param.value);
+    scope.set(param.name, {
+      kind: "slot",
+      slotIndex,
+      type: representation.bindingType,
+      ...(representation.asType ? { asType: representation.asType } : {}),
+    });
   }
 
   // Slice 7a (#1169f): generator prologue — allocate the `__gen_buffer`
@@ -2938,12 +2975,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
           `ir/from-ast: resolver cannot register vec for number[] annotation on '${name}' (${cx.funcName})`,
         );
       }
-      annotated = irVal(
-        cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ?? {
-          kind: "ref",
-          typeIdx: vec.vecStructTypeIdx,
-        },
-      );
+      annotated = irVec(irVal(elementValType), true);
     }
     let inferredEmptyArrayHint: IrType | undefined;
     if (annotated === undefined && ts.isArrayLiteralExpression(d.initializer) && d.initializer.elements.length === 0) {
@@ -2957,12 +2989,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
         if (!vec) {
           throw new Error(`ir/from-ast: resolver cannot register inferred number[] vec for '${name}' (${cx.funcName})`);
         }
-        inferredEmptyArrayHint = irVal(
-          cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ?? {
-            kind: "ref",
-            typeIdx: vec.vecStructTypeIdx,
-          },
-        );
+        inferredEmptyArrayHint = irVec(irVal(elementValType), true);
       }
     }
     // (#3142 Slice 2) A module binding's hint is its GLOBAL's type — the
@@ -3010,7 +3037,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
       // alongside `val`, so use `irTypeEquals` for a structural match
       // rather than `asVal`-only kind comparison (which silently drops
       // the string case).
-      if (!irTypeEquals(annotated, inferred)) {
+      if (!irTypeAssignable(inferred, annotated)) {
         throw new Error(
           `ir/from-ast: local '${name}' annotated as ${describeIrType(annotated)} but initializer is ${describeIrType(inferred)} in ${cx.funcName}`,
         );
@@ -3081,16 +3108,13 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // `slot.read` / `slot.write` instead of carrying the SSA value
     // through the scope.
     //
-    // Slice 6 part 4 refactor (#1185): extended to support
-    // `IrType.string` slot bindings via the resolver. In
-    // native-strings mode we use the resolver's `resolveString()` to
-    // get the underlying `(ref $AnyString)` ValType for the slot,
-    // and tag the binding with `asType: IrType.string` so identifier
-    // reads compose with slice-1 string ops.
+    // Logical string, dynamic, and vector values use resolver-selected
+    // backend storage while identifier reads retain their logical IR type.
     if (!isConst && cx.mutatedLets.has(name)) {
-      const slotValType = asVal(inferred);
-      if (slotValType !== null) {
-        const slotIndex = cx.builder.declareSlot(name, slotValType);
+      const logicalType = inferred.kind === "dynamic" && widenDynamic ? irDynamic() : inferred;
+      const representation = resolveIrSlotRepresentation(logicalType, cx.resolver, cx.funcName);
+      if (representation) {
+        const slotIndex = cx.builder.declareSlot(name, representation.storageType);
         cx.builder.emitSlotWrite(slotIndex, value);
         if (promoteI32Slot) {
           // (#3741) The Wasm slot is i32; the BINDING's logical type stays f64
@@ -3099,40 +3123,14 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
           cx.scope.set(name, { kind: "slot", slotIndex, type: IR_F64, i32Storage: true });
           continue;
         }
-        cx.scope.set(name, { kind: "slot", slotIndex, type: inferred, ...(stringEncoding ? { stringEncoding } : {}) });
+        cx.scope.set(name, {
+          kind: "slot",
+          slotIndex,
+          type: representation.bindingType,
+          ...(representation.asType ? { asType: representation.asType } : {}),
+          ...(stringEncoding ? { stringEncoding } : {}),
+        });
         continue;
-      }
-      // String let in native-strings mode: slot ValType is the
-      // resolver's string ref; binding type is IrType.string via
-      // asType widening so body code composes with string ops.
-      if (inferred.kind === "string") {
-        const stringValType = cx.resolver?.resolveString?.();
-        if (stringValType) {
-          const slotIndex = cx.builder.declareSlot(name, stringValType);
-          cx.builder.emitSlotWrite(slotIndex, value);
-          cx.scope.set(name, {
-            kind: "slot",
-            slotIndex,
-            type: irVal(stringValType),
-            asType: { kind: "string" },
-            ...(stringEncoding ? { stringEncoding } : {}),
-          });
-          continue;
-        }
-      }
-      if (inferred.kind === "dynamic") {
-        const dynamicValType = cx.resolver?.resolveDynamic?.();
-        if (dynamicValType) {
-          const slotIndex = cx.builder.declareSlot(name, dynamicValType);
-          cx.builder.emitSlotWrite(slotIndex, value);
-          cx.scope.set(name, {
-            kind: "slot",
-            slotIndex,
-            type: irVal(dynamicValType),
-            asType: widenDynamic ? irDynamic() : inferred,
-          });
-          continue;
-        }
       }
       // Fall through only for representations without a concrete ValType.
       // A later assignment then remains an invariant: the mutation pre-pass
@@ -3252,23 +3250,13 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
  */
 function lowerArrayPattern(pattern: ts.ArrayBindingPattern, source: IrValueId, cx: LowerCtx): void {
   const sourceType = cx.builder.typeOf(source);
-  const valTy = asVal(sourceType);
-  if (!valTy || (valTy.kind !== "ref" && valTy.kind !== "ref_null")) {
+  const resolved = resolveIrVecType(sourceType, cx);
+  if (!resolved) {
     throw new Error(
-      `ir/from-ast: array destructuring source must be vec ref (got ${describeIrType(sourceType)}) in ${cx.funcName}`,
+      `ir/from-ast: array destructuring source is not a recognisable vec (${describeIrType(sourceType)}) in ${cx.funcName}`,
     );
   }
-  // Recover the element ValType. We need a resolver thread-through —
-  // matches the slice-6 vec for-of pattern. If the resolver is absent
-  // or doesn't recognize the ref as a vec, fall back to legacy.
-  const vec = cx.resolver?.resolveVec?.(valTy);
-  if (!vec) {
-    throw new Error(
-      `ir/from-ast: array destructuring source is not a recognisable vec ref (${describeIrType(sourceType)}) in ${cx.funcName}`,
-    );
-  }
-  const elemValType = vec.elementValType;
-  const elemIrType: IrType = irVal(elemValType);
+  const elemIrType = resolved.elementType;
 
   let i = 0;
   for (const elem of pattern.elements) {
@@ -3375,6 +3363,7 @@ function coerceIrNumeric(value: IrValueId, target: IrType, cx: LowerCtx): IrValu
 function describeIrType(t: IrType): string {
   if (t.kind === "val") return t.val.kind;
   if (t.kind === "string") return "string";
+  if (t.kind === "vec") return `vec<${describeIrType(t.elementType)}>${t.nullable ? "?" : ""}`;
   if (t.kind === "object") {
     return `object{${t.shape.fields.map((f) => `${f.name}:${describeIrType(f.type)}`).join(",")}}`;
   }
@@ -3808,6 +3797,11 @@ interface DenseFillPlan {
 }
 
 function denseFillPlanForLiteral(expr: ts.ArrayLiteralExpression): DenseFillPlan | null {
+  // The direct-store optimization relies on the empty-literal allocation arm
+  // reserving the loop bound as backing capacity and publishing that bound as
+  // the final length. A non-empty literal keeps its fixed initial capacity and
+  // length, so its indexed writes must retain the grow-and-length helper.
+  if (expr.elements.length !== 0) return null;
   const declaration = expr.parent;
   if (!ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return null;
   const declarationList = declaration.parent;
@@ -3920,9 +3914,8 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
   }
 
   // Recover an element IrType from the hint when it is (or wraps) a vec ref.
-  const hintVal = asVal(hint);
-  const hintElem = hintVal ? (cx.resolver?.resolveVec?.(hintVal)?.elementValType ?? null) : null;
-  const hintElemIr: IrType | null = hintElem ? irVal(hintElem) : null;
+  const hintVec = resolveIrVecType(hint, cx);
+  const hintElemIr = hintVec?.elementType ?? null;
 
   if (expr.elements.length === 0) {
     // Empty literal — element type must come from the hint.
@@ -3936,25 +3929,27 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
     }
     const vecValueType =
       cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
+      vec.valueType ??
       ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
+    const vecResultType = hint.kind === "vec" ? irVec(hintElemIr, false) : irVal(vecValueType);
     const countedPush = canonicalCountedPushPlanForLiteral(expr, cx.checker);
     if (countedPush) {
-      return cx.builder.emitVecNewFixed([], hintElemIr, irVal(vecValueType), countedPush.capacity);
+      return cx.builder.emitVecNewFixed([], hintElemIr, vecResultType, countedPush.capacity);
     }
     const denseFill = denseFillPlanForLiteral(expr);
     if (denseFill && vecValueType.kind !== "i32") {
       const bound = lowerExpr(denseFill.bound, cx, irVal({ kind: "f64" }));
       const allocated = cx.builder.emitCall(
-        irIntrinsicFuncRef(`${VEC_NEW_SIZED_PREFIX}${vec.vecStructTypeIdx}`),
+        irIntrinsicFuncRef(vecNewSizedProviderSymbol(hint, vec)),
         [bound],
-        irVal(vecValueType),
+        vecResultType,
       );
       if (allocated === null) {
         throw new Error(`ir/from-ast: sized vec allocation produced no result (${cx.funcName})`);
       }
       return allocated;
     }
-    return cx.builder.emitVecNewFixed([], hintElemIr, irVal(vecValueType));
+    return cx.builder.emitVecNewFixed([], hintElemIr, vecResultType);
   }
 
   // #2780 (hybrid Row 6) — widening-escape proof, the PRIMARY HI gate (run
@@ -4031,8 +4026,12 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
     throw new Error(`ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`);
   }
   const vecValueType =
-    cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
-  return cx.builder.emitVecNewFixed(storedElementIds, storedElementType, irVal(vecValueType));
+    cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
+    vec.valueType ??
+    ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
+  const resultType =
+    elemVT.kind === "f64" || elemVT.kind === "i32" ? irVec(storedElementType, false) : irVal(vecValueType);
+  return cx.builder.emitVecNewFixed(storedElementIds, storedElementType, resultType);
 }
 
 /**
@@ -4118,6 +4117,7 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
  */
 function staticTypeOfFor(t: IrType): string | null {
   if (t.kind === "string") return "string";
+  if (t.kind === "vec") return "object";
   if (t.kind === "val") {
     if (t.val.kind === "f64" || t.val.kind === "f32" || t.val.kind === "i64") return "number";
     if (t.val.kind === "i32") return "boolean"; // i32 represents bool in slice 1
@@ -4144,6 +4144,8 @@ function isIrTypeNullable(t: IrType): boolean {
     case "string":
     case "closure":
       return false;
+    case "vec":
+      return t.nullable;
     case "callable":
       // Boundary callables are externref carriers. A host can still supply
       // null despite the source annotation, so optional access must retain a
@@ -4418,13 +4420,17 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   // branch only fires for `.length`. Method dispatch (`arr.push(...)`,
   // `arr.map(...)`, etc.) is handled in `lowerMethodCall`.
   const recvVal = asVal(recvType);
-  const scalarVecReceiver =
-    recvVal?.kind === "i32" &&
-    (cx.resolver?.isVecValueExpression?.(expr.expression) === true ||
-      cx.emptyArrayInference.isResolvedVectorExpression(expr.expression));
-  if (recvVal && (recvVal.kind === "ref" || recvVal.kind === "ref_null" || scalarVecReceiver)) {
-    const vec = cx.resolver?.resolveVec?.(recvVal);
-    if (vec) {
+  const vectorExpression =
+    cx.resolver?.isVecValueExpression?.(expr.expression) === true ||
+    cx.emptyArrayInference.isResolvedVectorExpression(expr.expression);
+  const scalarVecCandidate = recvVal?.kind === "i32" && vectorExpression;
+  if (
+    recvType.kind === "vec" ||
+    (recvVal && (recvVal.kind === "ref" || recvVal.kind === "ref_null" || scalarVecCandidate))
+  ) {
+    const resolvedVec = resolveIrVecType(recvType, cx);
+    if (resolvedVec) {
+      const scalarVecReceiver = resolvedVec.valueType.kind === "i32" && vectorExpression;
       if (propName === "length") {
         // A growable linear vec may have forwarded its original header after
         // an indexed write. The direct runtime reader chases that chain;
@@ -4628,13 +4634,17 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
     recvVal?.kind === "i32" &&
     (cx.resolver?.isVecValueExpression?.(lhs.expression) === true ||
       cx.emptyArrayInference.isResolvedVectorExpression(lhs.expression));
-  if (!recvVal || (recvVal.kind !== "ref" && recvVal.kind !== "ref_null" && !scalarVecStoreReceiver)) {
+  if (
+    recvType.kind !== "vec" &&
+    (!recvVal || (recvVal.kind !== "ref" && recvVal.kind !== "ref_null" && !scalarVecStoreReceiver))
+  ) {
     throw new Error(`ir/from-ast: element store on ${describeIrType(recvType)} not in IR scope (${cx.funcName})`);
   }
-  const vec = cx.resolver?.resolveVec?.(recvVal);
-  if (!vec) {
+  const resolvedVec = resolveIrVecType(recvType, cx);
+  if (!resolvedVec) {
     throw new Error(`ir/from-ast: element-store receiver is not a recognisable vec in ${cx.funcName}`);
   }
+  const vec = resolvedVec.lowering;
   const elem = vec.elementValType;
   // (#3734) A vector this function narrowed to i32 elements — the analysis
   // already proved this store's RHS is an exact int32 (that proof is WHY the
@@ -4666,7 +4676,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
       cx.builder.emitVecSet(recv, idxI32, narrowVal);
       return;
     }
-    cx.builder.emitCall(irIntrinsicFuncRef(`__vec_elem_set_${vec.vecStructTypeIdx}`), [recv, idxI32, narrowVal], null);
+    cx.builder.emitCall(irIntrinsicFuncRef(vecElemSetProviderSymbol(recvType, vec)), [recv, idxI32, narrowVal], null);
     return;
   }
   const valRaw = lowerExpr(rhs, cx, irVal(elem));
@@ -4690,7 +4700,7 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
     cx.builder.emitVecSet(recv, idxI32, val);
     return;
   }
-  cx.builder.emitCall(irIntrinsicFuncRef(`__vec_elem_set_${vec.vecStructTypeIdx}`), [recv, idxI32, val], null);
+  cx.builder.emitCall(irIntrinsicFuncRef(vecElemSetProviderSymbol(recvType, vec)), [recv, idxI32, val], null);
 }
 
 function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrValueId {
@@ -4741,13 +4751,18 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
   // sharpest hybrid-invariant violation (strictly worse than legacy, which at
   // least bounds-checks and returns a sentinel).
   const recvVal = asVal(recvType);
-  const scalarVecReceiver =
-    recvVal?.kind === "i32" &&
-    (cx.resolver?.isVecValueExpression?.(expr.expression) === true ||
-      cx.emptyArrayInference.isResolvedVectorExpression(expr.expression));
-  if (recvVal && (recvVal.kind === "ref" || recvVal.kind === "ref_null" || scalarVecReceiver)) {
-    const vec = cx.resolver?.resolveVec?.(recvVal);
-    if (vec) {
+  const vectorExpression =
+    cx.resolver?.isVecValueExpression?.(expr.expression) === true ||
+    cx.emptyArrayInference.isResolvedVectorExpression(expr.expression);
+  const scalarVecCandidate = recvVal?.kind === "i32" && vectorExpression;
+  if (
+    recvType.kind === "vec" ||
+    (recvVal && (recvVal.kind === "ref" || recvVal.kind === "ref_null" || scalarVecCandidate))
+  ) {
+    const resolvedVec = resolveIrVecType(recvType, cx);
+    if (resolvedVec) {
+      const vec = resolvedVec.lowering;
+      const scalarVecReceiver = resolvedVec.valueType.kind === "i32" && vectorExpression;
       // Lower the index expression as f64 (JS Number semantics), then
       // truncate to i32 via the new `i32.trunc_sat_f64_s` IrUnop (slice
       // 12). Saturation handles NaN→0 and out-of-range values, matching
@@ -4773,7 +4788,7 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
           `ir/from-ast: element-access index must be number or bool (got ${idxValTy.kind}) in ${cx.funcName}`,
         );
       }
-      const elemIr = irVal(vec.elementValType);
+      const elemIr = resolvedVec.elementType;
       if (scalarVecReceiver && cx.emptyArrayInference.isResolvedVectorExpression(expr.expression)) {
         // The direct linear runtime historically uses a backend-specific zero
         // sentinel for OOB array reads, while the shared f64 vec path uses NaN
@@ -4995,7 +5010,7 @@ function lowerImportedCall(
         value = cx.builder.emitCallablePack(value, expected.signature);
         actual = cx.builder.typeOf(value);
       }
-      if (!irTypeArgAssignable(actual, expected)) {
+      if (!irTypeAssignable(actual, expected)) {
         throw new Error(
           `ir/from-ast: arg ${i} of imported call to ${plan.target.name} is ${describeIrType(actual)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
         );
@@ -5184,7 +5199,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
       cx.funcName === "stringToNumber" &&
       (calleeName === "parseInt" || calleeName === "parseFloat") &&
       i === 0;
-    if (!dynamicExternBoundary && !irTypeArgAssignable(argType, expected)) {
+    if (!dynamicExternBoundary && !irTypeAssignable(argType, expected)) {
       throw new Error(
         `ir/from-ast: arg ${i} of call to ${calleeName} is ${describeIrType(argType)}, expected ${describeIrType(expected)} in ${cx.funcName}`,
       );
@@ -5211,9 +5226,18 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
  * NON-NULL `(ref $T)` value into `(ref null $T)`. The reverse directions stay
  * rejected.
  */
-function irTypeArgAssignable(actual: IrType, expected: IrType): boolean {
+function irTypeAssignable(actual: IrType, expected: IrType): boolean {
   if (irTypeEquals(actual, expected)) return true;
   if (actual.kind === "dynamic" && expected.kind === "dynamic" && expected.tag === undefined) return true;
+  if (
+    actual.kind === "vec" &&
+    expected.kind === "vec" &&
+    !actual.nullable &&
+    expected.nullable &&
+    irTypeEquals(actual.elementType, expected.elementType)
+  ) {
+    return true;
+  }
   const a = asVal(actual);
   const e = asVal(expected);
   if (
@@ -5475,7 +5499,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   }
 
   if (!shape) {
-    throw new Error(`ir/from-ast: unknown class "${className}" in ${cx.funcName}`);
+    demoteToLegacy("unknown-class-construction", `ir/from-ast: unknown class "${className}" in ${cx.funcName}`);
   }
   const argExprs = expr.arguments ?? [];
   if (argExprs.length !== shape.constructorParams.length) {
@@ -5962,9 +5986,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return null;
   }
 
-  // (#1371/#2856) Exact-arity Math builtin. Direct Wasm unary ops remain
-  // direct; transcendental methods call the self-hosted Math_<method> helper
-  // already registered by the legacy declaration scan.
+  // (#1371/#2856/#3526 M1) Exact-arity Math builtin. Every accepted method
+  // becomes a semantic intrinsic here; runtime/backend provider selection is
+  // deferred until final IR preparation, after all middle-end transforms.
   // the shape BEFORE lowering the receiver, because `Math` is a host
   // global with no IR type binding (lowerExpr on `Math` would throw
   // "unknown identifier"). The selector's `isPhase1Expr` already
@@ -5994,11 +6018,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         }
         return arg;
       });
-      if ("op" in plan) return cx.builder.emitUnary(plan.op, args[0]!, irVal({ kind: "f64" }));
-      const result = cx.builder.emitCall(irRuntimeFuncRef(plan.helper), args, irVal({ kind: "f64" }));
-      if (result === null)
-        throw new Error(`ir/from-ast: Math.${methodName} helper produced no result (${cx.funcName})`);
-      return result;
+      const source = expr.getSourceFile();
+      const position = source.getLineAndCharacterOfPosition(expr.getStart(source));
+      return cx.builder.emitIntrinsic(plan.intrinsic, args, {
+        line: position.line + 1,
+        column: position.character,
+      });
     }
     throw new Error(`ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }
@@ -6619,9 +6644,9 @@ function lowerStringMethodCall(
       loweredArgs.push(cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })));
       continue;
     }
-    // (#3156) native substring — omitted start pads 0; omitted end pads the
-    // 0x7fffffff "to end" sentinel (`__str_substring` clamps to len; exactly
-    // the legacy native arm's convention, string-ops.ts `substring`).
+    // (#3156) i32 substring helpers — omitted start pads 0; omitted end pads
+    // the 0x7fffffff "to end" sentinel. Both the native helper and the guarded
+    // host builtin helper clamp it to len.
     if (plan.padOmitted === "native-substring") {
       loweredArgs.push(cx.builder.emitConst({ kind: "i32", value: i === 1 ? 0x7fffffff : 0 }, irVal({ kind: "i32" })));
       continue;
@@ -7095,8 +7120,12 @@ function lowerForOfStatement(stmt: ts.ForOfStatement, cx: LowerCtx): void {
   //                                    coercion).
   //   - anything else                → throw, fall back to legacy.
   const valTy = asVal(iterableT);
+  if (iterableT.kind === "vec") {
+    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName);
+    return;
+  }
   if (valTy && (valTy.kind === "ref" || valTy.kind === "ref_null")) {
-    lowerForOfVec(stmt, cx, iterableV, valTy, loopVarName);
+    lowerForOfVec(stmt, cx, iterableV, iterableT, loopVarName);
     return;
   }
   if (iterableT.kind === "string") {
@@ -7790,7 +7819,7 @@ function lowerForOfVec(
   stmt: ts.ForOfStatement,
   cx: LowerCtx,
   iterableV: IrValueId,
-  valTy: ValType,
+  iterableType: IrType,
   loopVarName: string,
 ): void {
   // Slice 6 part 4 refactor (#1185): ask the resolver for the vec
@@ -7804,11 +7833,15 @@ function lowerForOfVec(
   // absent (older callers / tests) — same behavior as before #1185.
   let elemValType: ValType | null = null;
   let dataValType: ValType | null = null;
-  const vec = cx.resolver?.resolveVec?.(valTy);
-  if (vec) {
-    elemValType = vec.elementValType;
-    dataValType = { kind: "ref", typeIdx: vec.arrayTypeIdx };
+  const resolvedVec = resolveIrVecType(iterableType, cx);
+  const valTy = resolvedVec?.valueType ?? asVal(iterableType);
+  if (resolvedVec) {
+    elemValType = resolvedVec.lowering.elementValType;
+    dataValType = { kind: "ref", typeIdx: resolvedVec.lowering.arrayTypeIdx };
   } else {
+    if (!valTy) {
+      throw new Error(`ir/from-ast: for-of iterable has no backend vec carrier in ${cx.funcName}`);
+    }
     elemValType = inferVecElementValTypeFromContext(valTy, cx);
     dataValType = inferVecDataValTypeFromContext(valTy, cx);
   }
@@ -7819,6 +7852,9 @@ function lowerForOfVec(
 
   if (!dataValType) {
     throw new Error(`ir/from-ast: for-of vec has unexpected data field shape (${cx.funcName})`);
+  }
+  if (!valTy) {
+    throw new Error(`ir/from-ast: for-of vec has no backend value carrier (${cx.funcName})`);
   }
   const counterSlot = cx.builder.declareSlot("__forof_i", { kind: "i32" });
   const lengthSlot = cx.builder.declareSlot("__forof_len", { kind: "i32" });
@@ -8365,10 +8401,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       newType = cx.builder.typeOf(newValue);
     }
   }
-  const assignmentTypeMatches =
-    irTypeEquals(newType, logicalType) ||
-    (newType.kind === "dynamic" && logicalType.kind === "dynamic" && logicalType.tag === undefined);
-  if (!assignmentTypeMatches) {
+  if (!irTypeAssignable(newType, logicalType)) {
     throw new Error(
       `ir/from-ast: assignment to "${id.text}" (${describeIrType(logicalType)}) got ${describeIrType(newType)} in ${cx.funcName}`,
     );
@@ -9756,6 +9789,18 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     return cx.builder.emitConst({ kind: "bool", value: isStrictEq }, irVal({ kind: "i32" }));
   }
   const other = leftU ? expr.right : expr.left;
+  // A typed array index has a non-undefined TypeScript element type even when
+  // the runtime index is out of bounds. Until the IR carries first-class
+  // `undefined` through a numeric-vector read, only a proven in-bounds access
+  // may participate in the never-undefined fold below. Unproven reads stay on
+  // the direct SAFE path instead of folding `a[i] === undefined` to false.
+  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx)) {
+    throw new IrUnsupportedError(
+      "nullish-value-unsupported",
+      "build",
+      `ir/from-ast: unproven indexed read cannot be compared with undefined (${cx.funcName})`,
+    );
+  }
   const v = lowerExpr(other, cx, irVal({ kind: "externref" }));
   const t = cx.builder.typeOf(v);
   // #2949 S5.2 — a dynamic (boxed-any) operand: strict `=== undefined` /
@@ -10673,16 +10718,16 @@ function analyseCaptures(
  */
 function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   if (!stmt.expression) {
-    throw new Error(`ir/from-ast: bare 'throw' (no expression) not in slice 9 (${cx.funcName})`);
+    demoteToLegacy("throw-value-unsupported", `ir/from-ast: bare 'throw' not in slice 9 (${cx.funcName})`);
   }
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
   const valTy = asVal(valueType);
-  if (valTy?.kind === "f64" || valTy?.kind === "i32") {
-    // Numeric throws would need a box helper. Slice 9 defers — fall back
-    // to legacy by throwing here so the function compilation aborts
-    // cleanly and the legacy path takes over.
-    throw new Error(`ir/from-ast: throw of numeric type (${valTy.kind}) not in slice 9 (${cx.funcName})`);
+  if (valTy?.kind === "f64" || valTy?.kind === "i32" || valueType.kind === "class") {
+    // Slice 9 defers numerics (need a box helper) and class instances (#4035:
+    // `extern.convert_any` on an IR class struct renders as "[object Object]"
+    // not "Cls: msg" — a SILENT wrong answer, so IR declines). Legacy takes over.
+    demoteToLegacy("throw-value-unsupported", `ir/from-ast: throw ${valueType.kind} not in slice 9 (${cx.funcName})`);
   }
   // Reference-shaped — coerce to externref. The helper is a no-op
   // when the value is already externref or `IrType.string` in host

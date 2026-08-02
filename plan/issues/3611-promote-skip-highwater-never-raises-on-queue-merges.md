@@ -16,6 +16,39 @@ related: [2097, 3467, 3468, 3448, 3592, 2562, 1078, 3601, 3953]
 origin: "PR-queue shepherd verification of the #3601 (#3592 RC2) landing, 2026-07-25. Surfaced only because a deliberate ~5,000-test move was being watched."
 ---
 
+> ## Adjudication 2026-08-02 (from #3953): this issue is CORRECTLY `done`
+>
+> #3953 was dispatched to determine whether this issue was a **false-done**, a
+> **regression**, or an **incomplete fix**, because its exact symptom — a frozen
+> high-water mark — was live again on 2026-08-02. **It is none of the three.**
+>
+> The fix here works. Verified by content, not by title:
+>
+> - `957adc7b8` (PR #3938) is on main and carries both halves of the `if:` —
+>   `!cancelled()` **and** the explicit `needs.*.result == 'success'` terms.
+> - **AC1 is now satisfiable with a run id**, which this issue explicitly refused
+>   to tick off the structural tests: push:main runs **`30756312728`** and
+>   **`30755117423`** show `promote merged report to main baseline` with
+>   conclusion **`success`**. The pre-fix `skipped` ×30 audit is the control.
+> - The raise itself executes — job **`91518979710`**:
+>   `[standalone-highwater] raised host-free mark 26546 → 27019`.
+> - **AC3 partially landed for real**: the mark advanced **11 times** on main
+>   between 2026-08-01T02:57 and 2026-08-02T12:14 (22626 → 26546). Before this
+>   fix it had not moved on a queue merge at all. That is the direct,
+>   observable, on-main effect this issue was asking for.
+>
+> **The live 2026-08-02 symptom has a THIRD, independent cause downstream of
+> this one** — the raise runs and writes the file, then the main-repo commit
+> carrying it is discarded by the #1951 non-empty-queue deferral, whose named
+> fallback (`baseline-summary-sync.yml`) did not stage the high-water file at
+> all (`grep -c highwater` → 0). Fixed in **#3953**; the measurement and the
+> full evidence table live there.
+>
+> This issue's own diagnosis anticipated the shape but not the layer: it warned
+> that _"a job can succeed while its update step no-ops"_. The update step does
+> not no-op — **its commit is thrown away.** Worth recording precisely, because
+> the two have identical symptoms and different fixes.
+
 # #3611 — the standalone high-water mark never re-raises on queue merges
 
 ## Problem

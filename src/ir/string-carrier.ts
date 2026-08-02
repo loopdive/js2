@@ -84,6 +84,12 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
         mapped = Object.assign(placeholder, { shape: mapObjectShape(type.shape) });
         break;
       }
+      case "vec": {
+        const placeholder = { ...type };
+        typeMemo.set(type, placeholder);
+        mapped = Object.assign(placeholder, { elementType: mapType(type.elementType) });
+        break;
+      }
       case "closure":
       case "callable": {
         const placeholder = { ...type };

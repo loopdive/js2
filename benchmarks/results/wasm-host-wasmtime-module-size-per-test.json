@@ -2,8 +2,8 @@
   {
     "name": "AOT compiled",
     "path": "fib",
-    "value": 1545,
-    "label": "1.5 kB",
+    "value": 106,
+    "label": "0.1 kB",
     "jsUs": 98
   },
   {
@@ -23,8 +23,8 @@
   {
     "name": "AOT compiled",
     "path": "fib-recursive",
-    "value": 1559,
-    "label": "1.6 kB",
+    "value": 120,
+    "label": "0.1 kB",
     "jsUs": 86
   },
   {
@@ -44,8 +44,8 @@
   {
     "name": "AOT compiled",
     "path": "array-sum",
-    "value": 1550,
-    "label": "1.6 kB",
+    "value": 132,
+    "label": "0.1 kB",
     "jsUs": 143
   },
   {
@@ -65,8 +65,8 @@
   {
     "name": "AOT compiled",
     "path": "string-hash",
-    "value": 2254,
-    "label": "2.3 kB",
+    "value": 828,
+    "label": "0.8 kB",
     "jsUs": 238
   },
   {

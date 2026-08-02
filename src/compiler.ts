@@ -715,6 +715,7 @@ function buildCodegenOptions(
     sourceMap: emitSourceMap,
     fast: options.fast,
     nativeStrings: options.nativeStrings,
+    hostBridge: options.hostBridge,
     utf8Storage: options.utf8Storage,
     testRuntime: options.testRuntime,
     wasi: options.target === "wasi",

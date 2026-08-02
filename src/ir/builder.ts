@@ -36,12 +36,14 @@ import {
   IrUnop,
   IrValueId,
   IrValueIdAllocator,
+  irTypeEquals,
 } from "./nodes.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { irSupportFuncRef } from "./callable-bindings.js";
 import type { Instr, ValType } from "./types.js";
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
 
 interface OpenBlock {
   readonly id: IrBlockId;
@@ -203,6 +205,35 @@ export class IrFunctionBuilder {
     // for call-result origin rules (JSON.parse, string methods, …).
     const alloc = resultType?.kind === "string" ? this.allocId("string", resultType) : undefined;
     this.pushInstr({ kind: "call", target, args: [...args], result, resultType, alloc });
+    return result;
+  }
+
+  /** Emit one closed semantic intrinsic before any runtime provider is chosen. */
+  emitIntrinsic(id: IntrinsicId, args: readonly IrValueId[], site?: IrSiteId): IrValueId {
+    const definition = INTRINSIC_DEFINITIONS[id];
+    if (args.length !== definition.signature.params.length) {
+      throw new Error(
+        `IrFunctionBuilder: ${id} expects ${definition.signature.params.length} argument(s), received ${args.length}`,
+      );
+    }
+    for (let index = 0; index < args.length; index++) {
+      const actual = this.typeOf(args[index]!);
+      const expected = definition.signature.params[index]!;
+      if (!irTypeEquals(actual, expected)) {
+        throw new Error(`IrFunctionBuilder: ${id} argument ${index} does not match its semantic signature`);
+      }
+    }
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, definition.signature.result);
+    this.pushInstr({
+      kind: "intrinsic",
+      id,
+      version: definition.signature.version,
+      args: [...args],
+      result,
+      resultType: definition.signature.result,
+      ...(site ? { site } : {}),
+    });
     return result;
   }
 

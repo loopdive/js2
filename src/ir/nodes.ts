@@ -21,6 +21,8 @@ import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./ide
 // nodes.ts stays free of value imports.
 import type { JsTag } from "./js-tag.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
+import type { IrAsyncPlan, PreparedIrAsyncRuntime } from "./async-plan.js";
 
 // ---------------------------------------------------------------------------
 // Symbolic references
@@ -80,6 +82,23 @@ export interface IrTypeRef {
   /** Compatibility/debug label; never the semantic lookup key. */
   readonly name: string;
   readonly binding: IrTypeBinding;
+}
+
+/**
+ * Final, backend-selected storage identities for one logical dense vector.
+ *
+ * The middle end reasons about {@link IrType}'s `vec` arm and its element
+ * type. Program preparation later attaches these symbolic Program-ABI refs;
+ * neither inference nor optimization observes module-relative type indices.
+ * Field indices are part of the compiler/runtime vector ABI rather than a
+ * backend registry lookup, so lowering can consume the prepared layout
+ * without rediscovering a struct shape from ambient module state.
+ */
+export interface IrVecLayoutRef {
+  readonly carrierType: IrTypeRef;
+  readonly dataType: IrTypeRef;
+  readonly lengthFieldIndex: number;
+  readonly dataFieldIndex: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +303,17 @@ export type IrType =
   // may omit the ref; prepared-component discovery then fails closed instead
   // of consulting ambient backend state.
   | { readonly kind: "string"; readonly carrierRef?: IrTypeRef }
+  // Backend-neutral dense JS-array/vector marker. The element type and
+  // nullability are JS/middle-end facts; the physical WasmGC struct/array
+  // identities are attached only at the final preparation boundary. Linear
+  // lowering consumes the same logical type and deliberately ignores the
+  // WasmGC-specific symbolic layout attachment.
+  | {
+      readonly kind: "vec";
+      readonly elementType: IrType;
+      readonly nullable: boolean;
+      readonly layout?: IrVecLayoutRef;
+    }
   // Backend-agnostic object-shape marker (#1169b). The actual WasmGC struct
   // is registered lazily by `IrLowerResolver.resolveObject`. Like `union`
   // and `boxed`, the IR carries enough information to drive the resolver
@@ -368,6 +398,11 @@ export function irVal(v: ValType): IrType {
   return { kind: "val", val: v };
 }
 
+/** Construct a backend-neutral dense-vector type. */
+export function irVec(elementType: IrType, nullable = true): IrType {
+  return { kind: "vec", elementType, nullable };
+}
+
 /**
  * Wrap a ValType as an IrType with an explicit signedness fact (#1126 Stage 1).
  * Use this only for `i32` ValTypes where the value-domain (signed `int32` vs
@@ -428,6 +463,9 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
     return aSigned === bSigned;
   }
   if (a.kind === "string" && b.kind === "string") return true;
+  if (a.kind === "vec" && b.kind === "vec") {
+    return a.nullable === b.nullable && irTypeEquals(a.elementType, b.elementType);
+  }
   // #1926 — `inner`/`members` are IrTypes now, so recurse via irTypeEquals
   // (a boxed-of-string or union-of-symbolic-kind compares structurally).
   if (a.kind === "boxed" && b.kind === "boxed") return irTypeEquals(a.inner, b.inner);
@@ -650,6 +688,31 @@ export interface IrInstrCall extends IrInstrBase {
   readonly kind: "call";
   readonly target: IrFuncRef;
   readonly args: readonly IrValueId[];
+}
+
+/** Backend primitive choices available to the first semantic-intrinsic family. */
+export type IrIntrinsicBackendOp = "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
+
+/**
+ * Provider attachment selected after middle-end transforms and manifest
+ * freeze. Source/type lowering emits no provider; preparation attaches either
+ * a backend primitive or one exact symbolic callable.
+ */
+export type IrIntrinsicProvider =
+  | { readonly kind: "backend-op"; readonly opcode: IrIntrinsicBackendOp }
+  | { readonly kind: "callable"; readonly target: IrFuncRef };
+
+/**
+ * Versioned semantic intrinsic. Unlike `call`, this names source meaning, not
+ * a concrete runtime helper. The optional provider is a preparation artifact
+ * and must be present before backend lowering.
+ */
+export interface IrInstrIntrinsic extends IrInstrBase {
+  readonly kind: "intrinsic";
+  readonly id: IntrinsicId;
+  readonly version: IntrinsicSignatureVersion;
+  readonly args: readonly IrValueId[];
+  readonly provider?: IrIntrinsicProvider;
 }
 
 /** Read a global by symbolic reference. */
@@ -2568,6 +2631,7 @@ export interface IrInstrSwitch extends IrInstrBase {
 export type IrInstr =
   | IrInstrConst
   | IrInstrCall
+  | IrInstrIntrinsic
   | IrInstrGlobalGet
   | IrInstrGlobalSet
   | IrInstrBinary
@@ -2791,6 +2855,18 @@ export interface IrFunction extends IrFunctionIdentity {
    */
   readonly funcKind?: "regular" | "generator" | "async";
   /**
+   * Canonical, target-neutral suspension graph for a genuinely asynchronous
+   * function. It is produced before backend selection and contains no AST,
+   * Wasm indices, or concrete host adapter spellings.
+   */
+  readonly asyncPlan?: IrAsyncPlan;
+  /**
+   * Lookup-only backend attachment added after runtime-manifest freeze. This
+   * is deliberately separate from `asyncPlan` so plan hashes stay target
+   * independent while Program ABI sealing can see exact adapter callables.
+   */
+  readonly asyncRuntime?: PreparedIrAsyncRuntime;
+  /**
    * Slice 7a (#1169f) — for `funcKind === "generator"` functions only,
    * the slot index (in `slots`) of the `__gen_buffer` Wasm-local. The
    * lowerer reads this when emitting `gen.push` / `gen.epilogue` to
@@ -2886,6 +2962,7 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     // here — the single point that must know about every buffer.
     case "const":
     case "call":
+    case "intrinsic":
     case "global.get":
     case "global.set":
     case "binary":
@@ -3052,6 +3129,7 @@ export function mapNestedBuffers(
     // set as forEachNestedBuffer; the never-check enforces parity.)
     case "const":
     case "call":
+    case "intrinsic":
     case "global.get":
     case "global.set":
     case "binary":
@@ -3152,6 +3230,8 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
     case "class.alloc":
       return [];
     case "call":
+      return instr.args;
+    case "intrinsic":
       return instr.args;
     case "global.set":
       return [instr.value];

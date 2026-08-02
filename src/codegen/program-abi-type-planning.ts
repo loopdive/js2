@@ -2,10 +2,10 @@
 
 import { irClassTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId } from "../ir/identity.js";
-import type { IrTypeRef } from "../ir/nodes.js";
+import type { IrClosureSignature, IrType, IrTypeRef, IrVecLayoutRef } from "../ir/nodes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
-import type { StructTypeDef, TypeDef } from "../ir/types.js";
+import type { FuncTypeDef, StructTypeDef, TypeDef } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { requireIrClassShapeClassId } from "./ir-class-shapes.js";
@@ -15,13 +15,154 @@ import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./progra
 const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   retainedModuleType: 0,
   stringCarrier: 1,
+  vectorCarrier: 2,
+  vectorData: 3,
+  closureWrapperRoot: 4,
+  closureSignatureWrapper: 5,
+  closureLiftedFunc: 6,
+  closureCapturedSubtype: 7,
   classLayout: 0,
 } as const);
+
+export interface ProgramAbiClosureSupportLayoutRequest {
+  readonly signature: IrClosureSignature;
+  readonly captureFieldTypes: readonly IrType[];
+  /** Canonical module-wide wrapper root already allocated by the closure registry. */
+  readonly wrapperRootType: StructTypeDef;
+  /** Signature allocation wrapper; equal to wrapperRootType for the first signature. */
+  readonly allocationWrapperType: StructTypeDef;
+  /** Exact lifted-funcref type whose leading self parameter references the wrapper root. */
+  readonly liftedFuncType: FuncTypeDef;
+  /** Captured allocation subtype; equal to allocationWrapperType when there are no captures. */
+  readonly capturedSubtypeType: StructTypeDef;
+}
+
+export interface ProgramAbiClosureSupportLayout {
+  readonly semanticSignatureKey: string;
+  readonly semanticLayoutKey: string;
+  readonly wrapperRootRef: IrTypeRef;
+  readonly allocationWrapperRef: IrTypeRef;
+  readonly liftedFuncRef: IrTypeRef;
+  readonly capturedSubtypeRef: IrTypeRef;
+}
+
+interface ObservedClosureSupportLayout {
+  readonly request: ProgramAbiClosureSupportLayoutRequest;
+  readonly layout: ProgramAbiClosureSupportLayout;
+}
+
+interface CanonicalClosureSupportRequest {
+  readonly request: ProgramAbiClosureSupportLayoutRequest;
+  readonly signatureKey: string;
+  readonly layoutKey: string;
+}
+
+function canonicalClosureSupportIrType(type: IrType, active: Set<object>): unknown {
+  if (active.has(type)) {
+    throw new ProgramAbiInvariantError(
+      "unknown-order-anchor",
+      "closure support semantic type contains a recursive anonymous IR layout",
+    );
+  }
+  active.add(type);
+  try {
+    switch (type.kind) {
+      case "val":
+        if (type.val.kind === "ref" || type.val.kind === "ref_null") {
+          throw new ProgramAbiInvariantError(
+            "unknown-order-anchor",
+            "closure support semantic types cannot contain module-relative ref type indices",
+          );
+        }
+        return {
+          kind: type.kind,
+          value: canonicalProgramAbiValType(type.val),
+          ...(type.val.kind === "i32" ? { signed: type.signed ?? true } : {}),
+        };
+      case "string":
+        return { kind: type.kind };
+      case "vec":
+        return {
+          kind: type.kind,
+          elementType: canonicalClosureSupportIrType(type.elementType, active),
+          nullable: type.nullable,
+        };
+      case "object":
+        return {
+          kind: type.kind,
+          fields: type.shape.fields.map((field) => ({
+            name: field.name,
+            type: canonicalClosureSupportIrType(field.type, active),
+          })),
+        };
+      case "closure":
+      case "callable":
+        return {
+          kind: type.kind,
+          signature: canonicalClosureSupportSignature(type.signature, active),
+        };
+      case "class":
+        return { kind: type.kind, classId: type.shape.classId };
+      case "extern":
+        return { kind: type.kind, className: type.className };
+      case "union":
+        return {
+          kind: type.kind,
+          members: type.members.map((member) => canonicalClosureSupportIrType(member, active)),
+        };
+      case "boxed":
+        return { kind: type.kind, inner: canonicalClosureSupportIrType(type.inner, active) };
+      case "dynamic":
+        return { kind: type.kind, tag: type.tag ?? null };
+    }
+  } finally {
+    active.delete(type);
+  }
+}
+
+function canonicalClosureSupportSignature(signature: IrClosureSignature, active = new Set<object>()): unknown {
+  if (active.has(signature)) {
+    throw new ProgramAbiInvariantError("unknown-order-anchor", "closure support contains a recursive IR signature");
+  }
+  active.add(signature);
+  try {
+    return {
+      params: signature.params.map((type) => canonicalClosureSupportIrType(type, active)),
+      returnType: signature.returnType === null ? null : canonicalClosureSupportIrType(signature.returnType, active),
+    };
+  } finally {
+    active.delete(signature);
+  }
+}
+
+/** Backend-neutral semantic key for one caller-visible closure signature. */
+export function canonicalProgramAbiClosureSignatureKey(signature: IrClosureSignature): string {
+  return JSON.stringify(canonicalClosureSupportSignature(signature));
+}
+
+/** Backend-neutral semantic key for one signature plus ordered capture layout. */
+export function canonicalProgramAbiClosureLayoutKey(
+  signature: IrClosureSignature,
+  captureFieldTypes: readonly IrType[],
+): string {
+  return JSON.stringify({
+    signature: canonicalClosureSupportSignature(signature),
+    captures: captureFieldTypes.map((type) => canonicalClosureSupportIrType(type, new Set<object>())),
+  });
+}
 
 interface ProgramAbiClassLayoutObservation {
   readonly classId: IrClassId;
   readonly displayName: string;
   readonly cell: ProgramAbiTypeCell;
+}
+
+/** True when a class layout has no type-index-bearing field or parent edge. */
+export function isEarlyStableScalarClassLayout(type: StructTypeDef): boolean {
+  return (
+    type.superTypeIdx === undefined &&
+    type.fields.every((field) => ["i32", "i64", "f32", "f64", "v128", "i8", "i16"].includes(field.type.kind))
+  );
 }
 
 function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
@@ -33,6 +174,20 @@ function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
     );
   }
   return entrySources[0]!.id;
+}
+
+function vectorLogicalOrdinal(logicalKey: string): number {
+  switch (logicalKey) {
+    case "vec<f64>":
+      return 0;
+    case "vec<i32>":
+      return 1;
+    default:
+      throw new ProgramAbiInvariantError(
+        "unknown-order-anchor",
+        `vector layout ${logicalKey} has no stable Program ABI order`,
+      );
+  }
 }
 
 /**
@@ -47,6 +202,16 @@ function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
  */
 export class ProgramAbiTypeRegistry {
   private readonly classes = new Map<IrClassId, ProgramAbiClassLayoutObservation[]>();
+  private readonly vectorLayouts = new Map<
+    string,
+    {
+      readonly carrierCell: ProgramAbiTypeCell;
+      readonly dataCell: ProgramAbiTypeCell;
+      readonly layout: IrVecLayoutRef;
+    }
+  >();
+  private readonly closureSupportLayouts = new Map<string, ObservedClosureSupportLayout>();
+  private closureSupportBatchPlanned = false;
   private planned = false;
 
   constructor(
@@ -101,6 +266,39 @@ export class ProgramAbiTypeRegistry {
     return typeIdx < 0 ? undefined : Object.freeze({ typeIdx, type });
   }
 
+  /** Whether one collected class layout is stable before type-index compaction. */
+  canPrepareScalarClassLayout(classId: IrClassId): boolean {
+    const layout = this.layoutForClass(classId);
+    return layout !== undefined && isEarlyStableScalarClassLayout(layout.type);
+  }
+
+  /** Publish one index-stable scalar class layout for an early prepared component. */
+  prepareScalarClassLayout(classId: IrClassId): void {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot prepare class layout ${classId} after retained type planning`,
+      );
+    }
+    const classRecord = this.session.inventory.classes.find((record) => record.id === classId);
+    const observations = this.classes.get(classId) ?? [];
+    const canonical = observations.filter((observation) => observation.cell.current !== null).at(-1);
+    const current = canonical?.cell.current;
+    if (
+      !classRecord ||
+      !canonical ||
+      !current ||
+      current.kind !== "struct" ||
+      !isEarlyStableScalarClassLayout(current)
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `prepared class ${classId} has no retained index-stable scalar layout`,
+      );
+    }
+    this.planClass(classId, canonical.displayName, current, canonical.cell);
+  }
+
   /** Return the backend-neutral Program-ABI identity used by final string IR. */
   stringCarrierRef(): IrTypeRef {
     return irSupportTypeRef(canonicalEntrySource(this.session), "string-carrier", "__string_carrier");
@@ -150,6 +348,245 @@ export class ProgramAbiTypeRegistry {
       this.attachTypeLocator(ref.binding.bindingId, cell);
     }
     return ref;
+  }
+
+  /**
+   * Plan the exact WasmGC carrier and backing-array types selected for one
+   * logical dense-vector type.
+   *
+   * `logicalKey` is derived from backend-neutral IrType structure. Physical
+   * indices are accepted only at this final allocator boundary and are
+   * converted immediately into remappable Program-ABI type cells.
+   */
+  prepareVectorLayout(logicalKey: string, vecStructTypeIdx: number, arrayTypeIdx: number): IrVecLayoutRef {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot prepare vector layout ${logicalKey} after retained type planning`,
+      );
+    }
+    if (logicalKey.length === 0) {
+      throw new ProgramAbiInvariantError("unknown-order-anchor", "vector layout requires a logical type key");
+    }
+    const carrierType = this.ctx.mod.types[vecStructTypeIdx];
+    const dataType = this.ctx.mod.types[arrayTypeIdx];
+    if (!carrierType || carrierType.kind !== "struct" || !dataType || dataType.kind !== "array") {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `vector ${logicalKey} references invalid carrier/data types ${vecStructTypeIdx}/${arrayTypeIdx}`,
+      );
+    }
+    const lengthField = carrierType.fields[0];
+    const dataField = carrierType.fields[1];
+    if (
+      carrierType.fields.length !== 2 ||
+      lengthField?.name !== "length" ||
+      lengthField?.type.kind !== "i32" ||
+      dataField?.name !== "data" ||
+      (dataField?.type.kind !== "ref" && dataField?.type.kind !== "ref_null") ||
+      dataField.type.typeIdx !== arrayTypeIdx
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `vector ${logicalKey} does not use the canonical { length, data } layout`,
+      );
+    }
+
+    const carrierCell = this.session.typeCellFor(carrierType) ?? this.session.createTypeCell(carrierType);
+    const dataCell = this.session.typeCellFor(dataType) ?? this.session.createTypeCell(dataType);
+    const existing = this.vectorLayouts.get(logicalKey);
+    if (existing) {
+      if (existing.carrierCell !== carrierCell || existing.dataCell !== dataCell) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `logical vector ${logicalKey} was observed with two physical layouts`,
+        );
+      }
+      return existing.layout;
+    }
+
+    const entrySourceId = canonicalEntrySource(this.session);
+    const logicalOrdinal = vectorLogicalOrdinal(logicalKey);
+    const carrierRef = irSupportTypeRef(
+      entrySourceId,
+      `vector-carrier:${logicalKey}`,
+      `__ir_vec_carrier_${logicalKey}`,
+    );
+    const dataRef = irSupportTypeRef(entrySourceId, `vector-data:${logicalKey}`, `__ir_vec_data_${logicalKey}`);
+    this.planPreparedSupportType(
+      carrierRef,
+      carrierType,
+      carrierCell,
+      PROGRAM_ABI_TYPE_ROLE.vectorCarrier,
+      logicalOrdinal,
+    );
+    this.planPreparedSupportType(dataRef, dataType, dataCell, PROGRAM_ABI_TYPE_ROLE.vectorData, logicalOrdinal);
+    const layout = Object.freeze({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 1,
+    });
+    this.vectorLayouts.set(logicalKey, Object.freeze({ carrierCell, dataCell, layout }));
+    return layout;
+  }
+
+  /**
+   * Plan the exact physical type population already allocated for a batch of
+   * compiler-owned closures.
+   *
+   * The batch boundary is deliberate: semantic signature/layout keys are
+   * sorted before structural ordinals are assigned, so caller traversal and
+   * closure creation order cannot perturb Program ABI ordering. Repeating the
+   * exact batch is idempotent; adding a new semantic layout later fails rather
+   * than silently changing earlier ordinals.
+   */
+  prepareClosureSupportLayouts(
+    requests: readonly ProgramAbiClosureSupportLayoutRequest[],
+  ): readonly ProgramAbiClosureSupportLayout[] {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        "cannot prepare closure support after retained type planning",
+      );
+    }
+    if (requests.length === 0) return [];
+
+    const canonical = requests.map((request) => {
+      const signatureKey = canonicalProgramAbiClosureSignatureKey(request.signature);
+      const layoutKey = canonicalProgramAbiClosureLayoutKey(request.signature, request.captureFieldTypes);
+      this.validateAllocatedClosureSupport(request, signatureKey);
+      return { request, signatureKey, layoutKey } satisfies CanonicalClosureSupportRequest;
+    });
+
+    if (this.closureSupportBatchPlanned) {
+      return canonical.map(({ request, layoutKey }) => {
+        const observed = this.closureSupportLayouts.get(layoutKey);
+        if (!observed) {
+          throw new ProgramAbiInvariantError(
+            "planning-sealed",
+            `closure support layout ${layoutKey} was requested after the canonical batch was planned`,
+          );
+        }
+        this.assertSameClosurePhysicalLayout(observed.request, request, layoutKey);
+        return observed.layout;
+      });
+    }
+
+    const first = canonical[0]!;
+    for (const candidate of canonical) {
+      if (candidate.request.wrapperRootType !== first.request.wrapperRootType) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          "one closure support batch references more than one physical wrapper root",
+        );
+      }
+    }
+
+    const bySignature = new Map<string, CanonicalClosureSupportRequest>();
+    const byLayout = new Map<string, CanonicalClosureSupportRequest>();
+    let rootAllocationSignatureKey: string | undefined;
+    for (const candidate of canonical) {
+      const priorSignature = bySignature.get(candidate.signatureKey);
+      if (priorSignature) {
+        if (
+          priorSignature.request.allocationWrapperType !== candidate.request.allocationWrapperType ||
+          priorSignature.request.liftedFuncType !== candidate.request.liftedFuncType
+        ) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `closure signature ${candidate.signatureKey} maps to different physical wrapper/funcref types`,
+          );
+        }
+      } else {
+        bySignature.set(candidate.signatureKey, candidate);
+      }
+
+      const priorLayout = byLayout.get(candidate.layoutKey);
+      if (priorLayout) {
+        this.assertSameClosurePhysicalLayout(priorLayout.request, candidate.request, candidate.layoutKey);
+      } else {
+        byLayout.set(candidate.layoutKey, candidate);
+      }
+
+      if (candidate.request.allocationWrapperType === candidate.request.wrapperRootType) {
+        if (rootAllocationSignatureKey !== undefined && rootAllocationSignatureKey !== candidate.signatureKey) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            "the physical closure wrapper root is claimed by more than one semantic signature",
+          );
+        }
+        rootAllocationSignatureKey = candidate.signatureKey;
+      }
+    }
+
+    const signatureOrdinals = new Map([...bySignature.keys()].sort().map((key, index) => [key, index] as const));
+    const layoutOrdinals = new Map([...byLayout.keys()].sort().map((key, index) => [key, index] as const));
+    const rootRef = this.planClosureSupportType({
+      semanticRole: "wrapper-root",
+      adapterName: "__ir_closure_wrapper_root",
+      type: first.request.wrapperRootType,
+      roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureWrapperRoot,
+      derivedOrdinal: 0,
+    });
+
+    const resultByLayout = new Map<string, ProgramAbiClosureSupportLayout>();
+    for (const [signatureKey, candidate] of [...bySignature].sort(([left], [right]) => left.localeCompare(right))) {
+      const signatureOrdinal = signatureOrdinals.get(signatureKey)!;
+      const allocationWrapperRef =
+        candidate.request.allocationWrapperType === candidate.request.wrapperRootType
+          ? rootRef
+          : this.planClosureSupportType({
+              semanticRole: `signature-wrapper:${signatureKey}`,
+              adapterName: `__ir_closure_wrapper_${signatureOrdinal}`,
+              type: candidate.request.allocationWrapperType,
+              roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureSignatureWrapper,
+              derivedOrdinal: signatureOrdinal,
+            });
+      const liftedFuncRef = this.planClosureSupportType({
+        semanticRole: `lifted-func:${signatureKey}`,
+        adapterName: `__ir_closure_lifted_func_${signatureOrdinal}`,
+        type: candidate.request.liftedFuncType,
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureLiftedFunc,
+        derivedOrdinal: signatureOrdinal,
+      });
+
+      for (const [layoutKey, layoutCandidate] of [...byLayout]
+        .filter(([, value]) => value.signatureKey === signatureKey)
+        .sort(([left], [right]) => left.localeCompare(right))) {
+        const layoutOrdinal = layoutOrdinals.get(layoutKey)!;
+        const capturedSubtypeRef =
+          layoutCandidate.request.capturedSubtypeType === layoutCandidate.request.allocationWrapperType
+            ? allocationWrapperRef
+            : this.planClosureSupportType({
+                semanticRole: `captured-subtype:${layoutKey}`,
+                adapterName: `__ir_closure_captured_${layoutOrdinal}`,
+                type: layoutCandidate.request.capturedSubtypeType,
+                roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureCapturedSubtype,
+                derivedOrdinal: layoutOrdinal,
+              });
+        resultByLayout.set(
+          layoutKey,
+          Object.freeze({
+            semanticSignatureKey: signatureKey,
+            semanticLayoutKey: layoutKey,
+            wrapperRootRef: rootRef,
+            allocationWrapperRef,
+            liftedFuncRef,
+            capturedSubtypeRef,
+          }),
+        );
+      }
+    }
+
+    for (const [layoutKey, candidate] of byLayout) {
+      this.closureSupportLayouts.set(
+        layoutKey,
+        Object.freeze({ request: candidate.request, layout: resultByLayout.get(layoutKey)! }),
+      );
+    }
+    this.closureSupportBatchPlanned = true;
+    return canonical.map(({ layoutKey }) => resultByLayout.get(layoutKey)!);
   }
 
   /** Plan all source classes plus every retained allocator type after DCE. */
@@ -256,9 +693,152 @@ export class ProgramAbiTypeRegistry {
     this.attachTypeLocator(ref.binding.bindingId, cell);
   }
 
+  private planPreparedSupportType(
+    ref: IrTypeRef,
+    type: TypeDef,
+    cell: ProgramAbiTypeCell,
+    roleOrdinal: number,
+    derivedOrdinal: number,
+  ): void {
+    const entrySourceId = canonicalEntrySource(this.session);
+    const structuralReferenceKey = irTypeBindingKey(ref.binding);
+    this.session.ensurePlan({
+      id: ref.binding.bindingId,
+      structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
+        domain: "type",
+        roleOrdinal,
+        derivedOrdinal,
+      }),
+      structuralReferenceKey,
+      displayName: ref.name,
+      slotPolicy: "required",
+      slotSpace: "type",
+      intent: {
+        kind: "type",
+        shapeKey: canonicalProgramAbiTypeDef(type),
+      },
+    });
+    this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
+    this.attachTypeLocator(ref.binding.bindingId, cell);
+  }
+
   private attachTypeLocator(bindingId: IrBindingId, cell: ProgramAbiTypeCell): void {
     if (!this.session.hasLocator(bindingId, cell)) {
       this.session.attachLocator(bindingId, { kind: "type-cell", cell });
     }
+  }
+
+  private validateAllocatedClosureSupport(request: ProgramAbiClosureSupportLayoutRequest, signatureKey: string): void {
+    const rootIndex = this.requireUniqueAllocatedType(request.wrapperRootType, "closure wrapper root");
+    const wrapperIndex = this.requireUniqueAllocatedType(request.allocationWrapperType, "closure signature wrapper");
+    this.requireUniqueAllocatedType(request.liftedFuncType, "closure lifted function type");
+    const subtypeIndex = this.requireUniqueAllocatedType(request.capturedSubtypeType, "closure captured subtype");
+
+    const hasCanonicalWrapperFields = (type: StructTypeDef): boolean =>
+      type.fields.length === 2 && type.fields[0]?.type.kind === "funcref" && type.fields[1]?.type.kind === "i32";
+    if (!hasCanonicalWrapperFields(request.wrapperRootType)) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `closure signature ${signatureKey} has a non-canonical physical wrapper root`,
+      );
+    }
+    if (
+      request.allocationWrapperType !== request.wrapperRootType &&
+      (!hasCanonicalWrapperFields(request.allocationWrapperType) ||
+        request.allocationWrapperType.superTypeIdx !== rootIndex)
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `closure signature ${signatureKey} has a wrapper outside the canonical root hierarchy`,
+      );
+    }
+
+    const self = request.liftedFuncType.params[0];
+    if (
+      request.liftedFuncType.params.length !== request.signature.params.length + 1 ||
+      request.liftedFuncType.results.length !== (request.signature.returnType === null ? 0 : 1) ||
+      (self?.kind !== "ref" && self?.kind !== "ref_null") ||
+      self.typeIdx !== rootIndex
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `closure signature ${signatureKey} has a mismatched lifted function type`,
+      );
+    }
+
+    if (request.captureFieldTypes.length === 0) {
+      if (request.capturedSubtypeType !== request.allocationWrapperType) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `capture-free closure signature ${signatureKey} allocated a redundant subtype`,
+        );
+      }
+    } else if (
+      request.capturedSubtypeType === request.allocationWrapperType ||
+      request.capturedSubtypeType.superTypeIdx !== wrapperIndex ||
+      request.capturedSubtypeType.fields.length !== request.captureFieldTypes.length + 2 ||
+      request.capturedSubtypeType.fields[0]?.type.kind !== "funcref" ||
+      request.capturedSubtypeType.fields[1]?.type.kind !== "i32"
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `closure layout ${signatureKey} has a mismatched captured subtype at ${subtypeIndex}`,
+      );
+    }
+  }
+
+  private assertSameClosurePhysicalLayout(
+    previous: ProgramAbiClosureSupportLayoutRequest,
+    next: ProgramAbiClosureSupportLayoutRequest,
+    layoutKey: string,
+  ): void {
+    if (
+      previous.wrapperRootType !== next.wrapperRootType ||
+      previous.allocationWrapperType !== next.allocationWrapperType ||
+      previous.liftedFuncType !== next.liftedFuncType ||
+      previous.capturedSubtypeType !== next.capturedSubtypeType
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `closure support semantic layout ${layoutKey} maps to different physical type objects`,
+      );
+    }
+  }
+
+  private requireUniqueAllocatedType(type: TypeDef, label: string): number {
+    const index = this.ctx.mod.types.indexOf(type);
+    if (index < 0 || this.ctx.mod.types.indexOf(type, index + 1) >= 0) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `${label} must be one exact existing allocator type object`,
+      );
+    }
+    return index;
+  }
+
+  private planClosureSupportType(input: {
+    readonly semanticRole: string;
+    readonly adapterName: string;
+    readonly type: TypeDef;
+    readonly roleOrdinal: number;
+    readonly derivedOrdinal: number;
+  }): IrTypeRef {
+    const entrySourceId = canonicalEntrySource(this.session);
+    const ref = irSupportTypeRef(
+      entrySourceId,
+      `closure-support:${input.semanticRole}`,
+      input.adapterName,
+      input.derivedOrdinal,
+    );
+    const cell = this.session.typeCellFor(input.type) ?? this.session.createTypeCell(input.type);
+    const previousOwner = this.session.locatorBindingId(cell);
+    if (previousOwner !== undefined && previousOwner !== ref.binding.bindingId) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `closure support type ${input.semanticRole} is already owned by ${previousOwner}`,
+      );
+    }
+    this.planPreparedSupportType(ref, input.type, cell, input.roleOrdinal, input.derivedOrdinal);
+    return ref;
   }
 }

@@ -6,6 +6,7 @@ import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
 import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
 import * as linearIr from "../ir/backend/linear-integration.js";
+import { compileResolvedArrayPointer, emitResolvedArrayLocal } from "./array-pointer.js";
 import type { CollectionKind, FinallyEntry, LinearContext, LinearFuncContext } from "./context.js";
 import { addLocal } from "./context.js";
 import type { ClassLayout } from "./layout.js";
@@ -3139,8 +3140,8 @@ function compilePropertyAccess(ctx: LinearContext, fctx: LinearFuncContext, expr
   const objKind = getExprCollectionKind(ctx, fctx, expr.expression);
 
   if (propName === "length" && (objKind === "Array" || objKind === "Uint8Array" || objKind === "ArrayOrUint8Array")) {
-    // arr.length or u8.length → call __arr_len / __u8arr_len
-    compileExpression(ctx, fctx, expr.expression);
+    if (objKind === "Array") compileResolvedArrayPointer(ctx, fctx, expr.expression, compileExpression);
+    else compileExpression(ctx, fctx, expr.expression);
     if (objKind === "ArrayOrUint8Array") {
       // Runtime dispatch via tag byte
       const arrLenIdx = ctx.funcMap.get("__arr_len")!;
@@ -3282,7 +3283,7 @@ function compileElementAccess(ctx: LinearContext, fctx: LinearFuncContext, expr:
   if (objKind === "Array") {
     // arr[i] → __arr_get(arr, i) → f64 slot (#1938)
     const getIdx = ctx.funcMap.get("__arr_get")!;
-    compileExpression(ctx, fctx, expr.expression); // arr ptr (i32)
+    compileResolvedArrayPointer(ctx, fctx, expr.expression, compileExpression); // arr ptr (i32)
     compileExprToI32(ctx, fctx, expr.argumentExpression); // index → i32
     fctx.body.push({ op: "call", funcIdx: getIdx });
     // The slot is an f64 bit pattern. For a number/boolean element the slot IS
@@ -3386,7 +3387,7 @@ function compileElementAccessAssignment(
     const valLocal = addScratch({ kind: rightIsNumeric ? "f64" : "i32" });
     compileExpression(ctx, fctx, right); // value — evaluated once
     fctx.body.push({ op: "local.set", index: valLocal });
-    compileExpression(ctx, fctx, left.expression); // arr ptr (i32)
+    compileResolvedArrayPointer(ctx, fctx, left.expression, compileExpression); // arr ptr (i32)
     compileExprToI32(ctx, fctx, left.argumentExpression); // index → i32
     fctx.body.push({ op: "local.get", index: valLocal });
     if (!rightIsNumeric) {
@@ -3577,10 +3578,10 @@ function compileArrayMethodCall(
     const pushIdx = ctx.funcMap.get("__arr_push")!;
     const lenIdx = ctx.funcMap.get("__arr_len")!;
     const arrLocal = addLocal(fctx, `__push_arr_${fctx.locals.length}`, { kind: "i32" });
-    compileExpression(ctx, fctx, propAccess.expression); // arr ptr (i32)
+    compileResolvedArrayPointer(ctx, fctx, propAccess.expression, compileExpression); // arr ptr (i32)
     fctx.body.push({ op: "local.set", index: arrLocal });
     for (const arg of expr.arguments) {
-      fctx.body.push({ op: "local.get", index: arrLocal }); // arr ptr (i32)
+      emitResolvedArrayLocal(ctx, fctx, arrLocal);
       if (inferExprType(ctx, fctx, arg).kind === "f64") {
         compileExprToF64(ctx, fctx, arg); // numeric/boolean → f64 slot
       } else {
@@ -3673,8 +3674,7 @@ function compileArrayHOF(
   const resultType: ValType = method === "find" ? elemType : method === "some" ? { kind: "f64" } : { kind: "i32" };
   const resultLocal = addLocal(fctx, `__hof_result_${fctx.locals.length}`, resultType);
 
-  // Initialize: arrLocal = source array
-  compileExpression(ctx, fctx, propAccess.expression);
+  compileResolvedArrayPointer(ctx, fctx, propAccess.expression, compileExpression);
   fctx.body.push({ op: "local.set", index: arrLocal });
 
   // lenLocal = __arr_len(arrLocal)
