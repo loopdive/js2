@@ -31,6 +31,16 @@ VERIFIED NON-GATING: `profile-godfiles` appears nowhere under `.github/`. Both
 `check:godfiles` and `profile:godfiles` exist in package.json but no workflow invokes
 either. It therefore blocks nothing today.
 
+CORROBORATED 2026-08-02, independently and from the opposite direction: the
+`H-crashes` lane observed `quality` **passing** on PR #4007 while `check:godfiles`
+was red on the same tree, and separately confirmed the redness is not
+branch-local by kill-switch (reverting its own change entirely, the gate reports
+the identical two regressions). Re-verified here: `grep -rl godfiles .github/`
+returns nothing. So the "it gates nothing" half of this issue is now confirmed
+by three independent routes — source grep, a passing `quality` on a red tree,
+and a kill-switch — while the "it is red on pristine main" half is confirmed by
+two.
+
 THE ACTUAL DECISION (do not just re-baseline it): a check that is permanently red and
 wired to nothing is worse than no check — it trains agents to ignore a red signal, and
 it cannot catch the god-file growth it was built to catch. Pick one:
