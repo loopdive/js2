@@ -37,6 +37,7 @@ import { emitSelfHostedFunc } from "./stdlib-selfhost.js";
 import { SELF_HOSTED_OBJECT_RUNTIME } from "../stdlib/object-runtime.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { reserveVecOverlayHelpers } from "./vec-overlay.js";
+import { buildIntegrityPredicate, registerIntegrityBagResolver } from "./object-integrity-carrier.js";
 import { buildObjectIntegrityMutationHelpers } from "./object-runtime-integrity.js";
 
 /**
@@ -2801,36 +2802,30 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
   // ES §20.5.2.13/14: isFrozen/isSealed on a NON-object return TRUE; §20.5.2.12:
   // isExtensible on a non-object returns FALSE. (Merged from main; preserved
   // here through the Blocker B merge so the standalone predicates remain native.)
-  const emitIntegrityPredicate = (name: string, flagBit: number, invert: boolean, nonObjResult: number): void => {
-    const testExpr: Instr[] = [
-      { op: "local.get", index: 1 },
-      { op: "ref.cast", typeIdx: objectTypeIdx },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-      { op: "i32.const", value: flagBit },
-      { op: "i32.and" },
-    ];
-    if (invert) {
-      testExpr.push({ op: "i32.eqz" });
-    } else {
-      testExpr.push({ op: "i32.const", value: 0 }, { op: "i32.ne" });
-    }
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: 1 },
-      { op: "ref.test", typeIdx: objectTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: testExpr,
-        else: [{ op: "i32.const", value: nonObjResult }],
-      },
-    ];
-    registerNative(name, [{ kind: "externref" }], [{ kind: "i32" }], [{ name: "any", type: { kind: "anyref" } }], body);
+  // (#4032) `ref.test $Object` false does NOT mean "not an object" — see
+  // `object-integrity-carrier.ts` for the mechanism, the two halves of the fix,
+  // and why this is byte-neutral in host mode (`integrityBagIdx === undefined`).
+  const integrityBagIdx = registerIntegrityBagResolver(ctx, registerNative);
+  const emitIntegrityPredicate = (name: string, flagBit: number, invert: boolean, terminalResult: number): void => {
+    const { locals, body } = buildIntegrityPredicate({
+      objectTypeIdx,
+      flagBit,
+      invert,
+      terminalResult,
+      integrityBagIdx,
+    });
+    registerNative(name, [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
   };
   emitIntegrityPredicate("__object_isFrozen", OBJ_FLAG_FROZEN, false, 1);
   emitIntegrityPredicate("__object_isSealed", OBJ_FLAG_SEALED, false, 1);
   emitIntegrityPredicate("__object_isExtensible", OBJ_FLAG_NONEXTENSIBLE, true, 0);
+  // Known-object variants: same body, terminal fallback flipped to the ORDINARY
+  // OBJECT rule. Standalone/wasi only — host already answers these correctly.
+  if (integrityBagIdx !== undefined) {
+    emitIntegrityPredicate("__object_isFrozen_obj", OBJ_FLAG_FROZEN, false, 0);
+    emitIntegrityPredicate("__object_isSealed_obj", OBJ_FLAG_SEALED, false, 0);
+    emitIntegrityPredicate("__object_isExtensible_obj", OBJ_FLAG_NONEXTENSIBLE, true, 1);
+  }
 
   // Register at the original minting point so every subsequent function index
   // remains byte-for-byte stable.
@@ -2847,5 +2842,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     OBJ_FLAG_NONEXTENSIBLE,
     OBJ_FLAG_SEALED,
     OBJ_FLAG_FROZEN,
+    integrityBagIdx,
   });
 }

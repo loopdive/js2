@@ -82,6 +82,7 @@ import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
 import {
@@ -8230,6 +8231,7 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__object_isFrozen",
   "__object_isSealed",
   "__object_isExtensible",
+  ...OBJECT_INTEGRITY_OBJ_PREDICATES, // (#4032) known-object variants
   // #1472 Phase B Blocker A Half 2 — object integrity SET path.
   "__object_preventExtensions",
   "__object_seal",

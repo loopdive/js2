@@ -10,6 +10,7 @@
 // chain. Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
+import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
 import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "../../ir/object-integrity.js";
@@ -1519,8 +1520,7 @@ export function compileBuiltinStaticCall(
       // fresh JS array and lose the WeakSet/descriptor identity) and delegate to
       // the runtime TestIntegrityLevel query.
       if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-      const importName = method === "isFrozen" ? "__object_isFrozen" : "__object_isSealed";
-      const hostIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "i32" }]);
+      const hostIdx = ensureIntegrityPredicate(ctx, arg0, method);
       flushLateImportShifts(ctx, fctx);
       if (hostIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -1563,7 +1563,7 @@ export function compileBuiltinStaticCall(
       // vec into a fresh JS array and lose identity) and delegate to the runtime
       // query.
       if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-      const hostIdx = ensureLateImport(ctx, "__object_isExtensible", [{ kind: "externref" }], [{ kind: "i32" }]);
+      const hostIdx = ensureIntegrityPredicate(ctx, arg0, "isExtensible");
       flushLateImportShifts(ctx, fctx);
       if (hostIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hostIdx });
