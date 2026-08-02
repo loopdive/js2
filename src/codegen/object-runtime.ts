@@ -81,6 +81,7 @@ import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
+import { HASOWN_BAG_LOCAL, buildHasOwnNonObjectBail } from "./carrier-bag-hasown.js"; // (#4055) hasOwn over the #3468 bag
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
@@ -3004,7 +3005,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+        // (#4055) A closure receiver is not a `$Object` but keeps its own
+        // properties in the #3468 bag that `__extern_get`/`__extern_set`
+        // already use; answering `false` here denied a property just stored.
+        then: buildHasOwnNonObjectBail(ctx, { objFindIdx, objectTypeIdx }),
       },
       // e = __obj_find(cast<$Object>(any), key) ; return e != null
       { op: "local.get", index: 2 },
@@ -3018,7 +3022,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       name,
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [{ name: "any", type: { kind: "anyref" } }],
+      [{ name: "any", type: { kind: "anyref" } }, HASOWN_BAG_LOCAL],
       body,
     );
   };
