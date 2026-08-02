@@ -1266,11 +1266,10 @@ export class IrFunctionBuilder {
    * operand through — see lower.ts `case "await"`). Only valid inside
    * `funcKind === "async"` functions.
    */
-  emitAwait(operand: IrValueId): IrValueId {
+  emitAwait(operand: IrValueId, resultType: IrType = { kind: "val", val: { kind: "externref" } }): IrValueId {
     if (this.funcKind !== "async") {
       throw new Error(`IrFunctionBuilder: emitAwait requires funcKind=async (${this.id.name})`);
     }
-    const resultType: IrType = { kind: "val", val: { kind: "externref" } };
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "await", operand, result, resultType });

@@ -1,7 +1,7 @@
 ---
 id: 4110
 title: "IR async fetchAllParallel non-identity continuation"
-status: blocked
+status: in-progress
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02

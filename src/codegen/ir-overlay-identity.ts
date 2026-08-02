@@ -316,7 +316,12 @@ export function projectIrIntegrationLoweringPlans(
     const declaration = plan.identityPlan.identityContext.declarationByUnitId.get(unitId);
     if (!declaration) continue;
     for (const [call, directCall] of collectIrDirectCallLoweringPlans(declaration, unitId, directCallTargets)) {
-      if (!directCalls.has(call)) directCalls.set(call, directCall);
+      // The projected callable ABI is authoritative for every exact active
+      // source edge. In particular, a prepared suspending async target keeps
+      // its numeric fulfillment type in `signaturesByUnitId`, while calls to
+      // its source slot observe the Promise-returning externref ABI. A stale
+      // pre-projection plan would otherwise unbox that Promise as a number.
+      directCalls.set(call, directCall);
     }
   }
   return {

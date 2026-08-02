@@ -26,6 +26,7 @@ interface ArrayElementResolver {
   resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
   resolveVecOutOfBoundsConst?(elementValType: ValType): IrConst | null;
   isVecValueExpression?(expression: ts.Expression): boolean;
+  preparedAsyncPromiseVectorLocal?(declaration: ts.VariableDeclaration): boolean;
 }
 
 /**
@@ -300,6 +301,24 @@ export function emptyLiteralElementValType(initializer: ts.Expression, host: Arr
   if (inference?.kind !== "resolved" || !inference.int32Narrowed) return f64;
   const i32: ValType = { kind: "i32" };
   return host.resolver?.resolveVecForElement?.(i32) ? i32 : f64;
+}
+
+/** Resolve an explicitly annotated empty-array representation. */
+export function annotatedArrayElementValType(
+  declaration: ts.VariableDeclaration,
+  host: ArrayElementLoweringHost,
+): ValType {
+  const type = declaration.type;
+  if (!type || !ts.isArrayTypeNode(type)) {
+    throw new Error(`ir/from-ast: annotated array '${declaration.name.getText()}' lost its array type`);
+  }
+  if (type.elementType.kind === ts.SyntaxKind.NumberKeyword) {
+    return emptyLiteralElementValType(declaration.initializer!, host);
+  }
+  if (host.resolver?.preparedAsyncPromiseVectorLocal?.(declaration) === true) return { kind: "externref" };
+  throw new Error(
+    `ir/from-ast: array annotation on '${declaration.name.getText()}' must be number[] or a certified async vector`,
+  );
 }
 
 /**
