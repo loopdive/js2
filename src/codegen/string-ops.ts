@@ -32,16 +32,14 @@ import { emitBrandCheckTypeError } from "./native-proto.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import {
   emitStandaloneRegExpToStringFromExpr,
-  isDefinitelyUndefinedExpr,
-  isPlainToStringSearchValue,
   isStaticallyUndefinedExpr,
-  searchValueOperand,
   tryCompileStandaloneStringMatch,
   tryCompileStandaloneStringMatchAll,
   tryCompileStandaloneStringReplace,
   tryCompileStandaloneStringSearch,
   tryCompileStandaloneStringSplit,
 } from "./regexp-standalone.js";
+import { isDefinitelyUndefinedExpr, tryCompileCoercedStringSplit } from "./string-search-value.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
   getArrTypeIdxFromVec,
@@ -2317,7 +2315,7 @@ function tryThrowOnBigIntOrSymbolArg(ctx: CodegenContext, fctx: FunctionContext,
  * Returns true when emission succeeded (caller continues building the
  * arg list); false when an unreachable throw was emitted instead.
  */
-function compileStringIntegerArg(
+export function compileStringIntegerArg(
   ctx: CodegenContext,
   fctx: FunctionContext,
   arg: ts.Expression,
@@ -3233,12 +3231,10 @@ export function compileNativeStringMethodCall(
   // string-like separator, so these forms fell through to the host marshal
   // path, which has no standalone `string_split` and null-deref'd. Handled
   // natively here: build the one-element vec directly (no engine call).
-  // (#4016) `isDefinitelyUndefinedExpr` widens the compile-time test from the
-  // purely SYNTACTIC `undefined`/`void 0` to any expression whose type is
-  // exactly `undefined`/`void` — test262 spells an undefined separator
-  // `function(){}()` (S15.5.4.14_A1_T9), which the syntactic test misses and
-  // which would otherwise fall into the ToString arm below and split on the
-  // literal text "undefined".
+  // (#4016) `isDefinitelyUndefinedExpr` widens SYNTACTIC `undefined`/`void 0` to
+  // any `undefined`/`void`-TYPED expression: test262 writes an undefined
+  // separator `function(){}()`, which would otherwise split on the text
+  // "undefined". See `string-search-value.ts`.
   if (
     method === "split" &&
     ctx.nativeStrings &&
@@ -3253,12 +3249,9 @@ export function compileNativeStringMethodCall(
     const recvLocal = allocLocal(fctx, `__split_recv_${fctx.locals.length}`, nativeStringType(ctx));
     emitReceiver();
     fctx.body.push({ op: "local.set", index: recvLocal });
-    // (#4016) The separator's VALUE is unused (undefined never splits), but the
-    // expression that produced it is still evaluated at the call site. The
-    // syntactic forms this arm originally matched (`undefined`, `void 0`) are
-    // side-effect-free and folded away; a type-level `void` one (`f()`) is not,
-    // so evaluate and discard it. Dropping the whole expression would silently
-    // delete the call.
+    // (#4016) The separator's VALUE is unused, but its EXPRESSION is still
+    // evaluated at the call site — a type-level `void` one (`f()`) is not
+    // side-effect-free like the syntactic forms, so discard rather than delete.
     if (expr.arguments.length > 0 && !isStaticallyUndefinedExpr(expr.arguments[0]!)) {
       const sepType = compileExpression(ctx, fctx, expr.arguments[0]!);
       if (sepType) fctx.body.push({ op: "drop" });
@@ -3329,40 +3322,11 @@ export function compileNativeStringMethodCall(
     return { kind: "ref", typeIdx: nstrVecTypeIdx };
   }
 
-  // (#4016) split with a separator the spec resolves by plain ToString —
-  // `s.split(123)`, `s.split(null)`, `s.split(objWithToString)`. §22.1.3.23
-  // step 2 only dispatches `@@split` when the separator HAS that method; when
-  // it provably does not, step 5's `R = ToString(separator)` is the whole of
-  // the semantics and the native `__str_split` above is exactly right. Refusing
-  // this as "needs a JS host" (#1474) conflated "not a string" with "not a
-  // RegExp".
-  //
-  // Emission mirrors the string-like arm operand-for-operand (receiver →
-  // separator → limit) so the ARGUMENT evaluation order is left-to-right, as at
-  // any call site. The only difference is `emitArgAsNativeString` (§7.1.17
-  // ToString, the #2598 engine) in place of a raw `compileExpression`, which
-  // would feed a mistyped ref to a helper expecting `ref $AnyString`.
-  if (
-    method === "split" &&
-    noJsHost(ctx) &&
-    !firstArgIsStringLike &&
-    expr.arguments.length > 0 &&
-    isPlainToStringSearchValue(ctx, expr.arguments[0]!, "split")
-  ) {
-    emitReceiver();
-    // Emit from the same node the admissibility gate proved on — see
-    // `searchValueOperand` (proving on the operand while emitting from the
-    // assertion is a silent wrong answer, not a missed optimisation).
-    emitArgAsNativeString(ctx, fctx, searchValueOperand(expr.arguments[0]!));
-    if (expr.arguments.length > 1 && !isStaticallyUndefinedExpr(expr.arguments[1]!)) {
-      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
-    } else {
-      fctx.body.push({ op: "i32.const", value: -1 });
-    }
-    const splitIdx = ctx.nativeStrHelpers.get("__str_split")!;
-    fctx.body.push({ op: "call", funcIdx: splitIdx });
-    const nstrVecTypeIdx = ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`)!;
-    return { kind: "ref", typeIdx: nstrVecTypeIdx };
+  // (#4016) `s.split(123)` / `.split(null)` / `.split(objWithToString)` — the
+  // plain-ToString separator path, lowered in `string-search-value.ts`.
+  if (method === "split" && noJsHost(ctx) && !firstArgIsStringLike) {
+    const coerced = tryCompileCoercedStringSplit(ctx, fctx, expr, emitReceiver);
+    if (coerced !== undefined) return coerced;
   }
 
   // codePointAt: like charCodeAt but returns f64 (code point value)

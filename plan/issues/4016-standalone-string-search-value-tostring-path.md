@@ -12,6 +12,9 @@ assignee: ttraenkler/M-regexp
 created: 2026-08-01
 completed: 2026-08-02
 oracle-ratchet-allow: []
+loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/string-ops.ts
 ---
 
 ## Problem
@@ -179,6 +182,29 @@ separator expression. It matched only side-effect-free syntactic forms before;
 with the type-level widening it can match `f()`, and folding the value away must
 not delete the call.
 
+### Where the code lives, and the LOC ratchet
+
+Both files this touches — `regexp-standalone.ts` (4,261) and `string-ops.ts`
+(3,795) — are god-files already at their #3102 cap, and the gate's instruction
+is *"add code to the subsystem module, not the barrel/driver"*. The first
+version ignored that and grew them **+255 / +55**.
+
+The §22.1.3 search-value dispatch is a genuine subsystem, so it now lives in
+**`src/codegen/string-search-value.ts`**: the admissibility predicates, the
+`RegExpCreate(ToString(v))` lowering, and the coerced `search` / `match` /
+`split` entry points. The split is meaningful, not cosmetic — *this* module owns
+the **decision** (is the spec's plain-ToString path the whole of the semantics
+here?), `regexp-standalone.ts` keeps the **engine plumbing** it calls into.
+
+That took the growth to **+19 / +19** (−93 % / −65 %). What is left is the seam
+itself and nothing else: one import line per file, four `export` keywords on
+primitives the subsystem calls (`stripStaticWrapper`,
+`ensureDynamicStandaloneRegExpCompiler`, `emitRegexSearchCall`,
+`emitRegexExecArrayCall`, `compileStringIntegerArg`, `emitArgAsNativeString`),
+the `regexpOverride` option field on the two shared emitters, and a two-line
+delegation at each of the three call sites. `loc-budget-allow` covers that
+residual; it is not a licence for the logic, which is in the new module.
+
 ## Test Results
 
 Instrument validated in both directions before the change, on the harness used
@@ -192,6 +218,11 @@ its error category and line are not the CI path, and it does not apply the
   population files on unmodified `upstream/main`: **0 / 43**, all 43 failing
   with exactly this refusal. This is the attribution proof: the "before" arm is
   the same harness, same corpus, same files, with the change absent.
+- **Regression guard** — the 166 files the baseline records as standalone `pass`
+  across the six touched directories (`String/prototype/{search,match,matchAll,`
+  `split,replace,replaceAll}` and `annexB/.../String/prototype`): **166 / 166**,
+  re-run after the subsystem extraction. The extraction moved ~280 lines, so it
+  was re-measured rather than assumed.
 
 Node was used as the oracle for every hand-written probe **before** it was run
 against the compiler.
@@ -200,23 +231,46 @@ against the compiler.
 
 | Set | before | after |
 | --- | ---: | ---: |
-| Goal-scope population (43) | 0 | **31** |
-| — `search` (15) | 0 | 13 |
-| — `match` (11) | 0 | 9 |
-| — `split` (9) | 0 | 9 |
+| **Goal-scope population (43)** | 0 | **35** |
+| — `search` (15) | 0 | **15** |
+| — `match` (11) | 0 | **11** |
+| — `split` (9) | 0 | **9** |
 | — `replace` (8, deliberately out of scope) | 0 | 0 |
+| **All-official population (99)** | 0 | **47** |
+| **Guard set — 166 files the baseline records as standalone `pass` in the six touched directories** | 166 | **166** (0 regressed) |
 
-31 of 43 population files, i.e. **31 of the 35 files in the three lanes this
-change addresses (89 %)**. The 4 residuals are all the same shape: an
-argument whose static type is `any` (`var x;` used before its declaration —
-S15.5.4.10/12_A1_T6) — the documented conservative boundary of
-`wellKnownSymbolMemberOf`.
+**Every file in the three lanes this change addresses now passes: 35 / 35.** The
+only goal-scope residuals are the 8 `replace` files that are deliberately out of
+scope.
 
-**File counts are not flip ceilings** and this one is unusually high because the
-population was cut by a Tier-1 refusal string: every member is *conclusively*
-gated on this one mechanism, so the usual "gated ≠ reachable" discount (the
-project's measured reference point is 103 reachable → 34 flipped) largely does
-not apply here.
+**File counts are not flip ceilings**, and the project's measured reference point
+is 103 reachable → 34 flipped (33 %). This one is far higher because the
+population was cut by a **Tier-1 refusal string**: every member is *conclusively*
+gated on this one mechanism, so the usual "gated ≠ reachable" discount does not
+apply. That is a property of how the population was selected, not a claim that
+levers generally behave this way.
+
+#### A refuted intermediate claim, kept as a warning
+
+An earlier revision of this file reported **31 / 43** and explained the 4
+residuals as "an argument whose static type is `any` — the conservative boundary
+of `wellKnownSymbolMemberOf`". **That explanation was wrong**, and it was wrong
+in the most seductive way: it was a *plausible* story that matched the intended
+design, so it read as a finding rather than as a symptom.
+
+The real cause was a **silently no-op edit**. A scripted `str.replace()` meant to
+switch the `search`/`match` gates from `isStaticallyUndefinedExpr` to
+`isDefinitelyUndefinedExpr` did not match (whitespace), printed `ok`, and changed
+nothing — so those two gates kept the narrower syntactic predicate while the
+`split` gate got the wider one. The 4 residuals were exactly the type-level
+`undefined` cases (`var x;` and `function(){}()`), which the wider predicate
+handles. They flipped the moment the intended edit actually landed, during the
+LOC extraction.
+
+Two things to carry forward: a scripted source edit must **assert its match
+count** (the later extraction script did, which is how this surfaced), and a
+residual that has a tidy explanation still needs the explanation *checked*
+against the failing file rather than inferred from the design.
 
 ## Deliberately out of scope
 
