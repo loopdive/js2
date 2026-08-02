@@ -13,10 +13,47 @@ task_type: bug
 area: codegen
 language_feature: n/a
 goal: standalone-mode
-related: [1781, 4040]
+related: [1781, 4040, 4065]
+assignee: ttraenkler/L-regexp
 ---
 
 # Standalone refuses a dynamic RegExp pattern — 'Unsupported dynamic regular expression pattern' plus the RegExp.prototype residual
+
+## Status 2026-08-02 — the CharacterEscape slice LANDED under #4065
+
+Measured on a `--force`-refreshed standalone baseline (rows `07:26:36 →
+07:37:16`, 48,619 rows, 0 bad JSON, 0 dup keys, 0 unopenable; official 43,505
+run, goal scope 8,545 run — both reproducing published figures exactly).
+
+**Funnel for this refusal string, per stage:**
+
+| Stage | Count |
+| --- | ---: |
+| all-official non-pass carrying the refusal | **18** |
+| goal-scope non-pass carrying it | **10** |
+| of those, host=pass (reachable) | **10 / 10 (100 %)** |
+| flipped by #4065 | **6 / 10** |
+
+The issue's own caution — *"check whether the refusal is still load-bearing
+before implementing anything"* — was right in spirit but the wrong way round:
+the refusal **is** real (reproduced 0/10 on unmodified `main`, all 10 with
+exactly this message), and what was over-broad was its **grammar**, not its
+existence. `new RegExp("A"+"B")` works because that concat is
+**constant-folded** by `staticConstStringValue` and never reaches the runtime
+compiler at all; #4016's probe proved the *static* path, not the dynamic one.
+A genuinely dynamic `\x41` was refused.
+
+**Remaining residual (4 of the 10), each named rather than absorbed:**
+
+- `S15.10.2.8_A3_T15` / `_T16` — 200 nested **capture groups**; needs SAVE-slot
+  allocation in the runtime compiler.
+- `S15.10.4.1_A8_T2` — unanchored alternation plus an empty character class.
+- `annexB/.../RegExp-control-escape-russian-letter` — needs **quantifiers**
+  (it constructs `\c*`), not the `\c` fallback, which is implemented.
+
+The `~35 (area) built-ins/RegExp/prototype` line below is a **different cut**
+from the 18/10 above (an area count, not a mechanism count) and is not
+reconciled with it.
 
 ## Problem
 
