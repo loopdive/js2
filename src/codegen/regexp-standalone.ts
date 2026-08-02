@@ -79,6 +79,7 @@ import { emitReceiverBrandCheck } from "./receiver-brand.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
+import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
@@ -196,7 +197,7 @@ function reportStandaloneRegExpUnsupported(ctx: CodegenContext, node: ts.Node, d
   );
 }
 
-function stripStaticWrapper(expr: ts.Expression): ts.Expression {
+export function stripStaticWrapper(expr: ts.Expression): ts.Expression {
   while (
     ts.isParenthesizedExpression(expr) ||
     ts.isAsExpression(expr) ||
@@ -812,7 +813,7 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
  * Broader runtime parsing can extend this helper without changing the carrier
  * or VM ABI.
  */
-function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): number {
+export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): number {
   const name = "__regex_compile_dynamic_simple";
   const existing = ctx.nativeRegexHelpers.get(name);
   if (existing !== undefined) return existing;
@@ -1905,7 +1906,7 @@ export function recoverRegExpStructFromExternref(
  * available via the returned `capsLocal`. Returns `null` after reporting a
  * narrowed refusal if the regex value was not backend-created.
  */
-function emitRegexSearchCall(
+export function emitRegexSearchCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   regexpExpr: ts.Expression,
@@ -1923,6 +1924,8 @@ function emitRegexSearchCall(
     gyLastIndex?: boolean | "runtime";
     /** Pre-evaluated native-string receiver supplied by guarded dispatch. */
     inputOverride?: () => ValType | null;
+    /** (#4016) Pre-materialised `$NativeRegExp` — see `string-search-value.ts`. */
+    regexpOverride?: { regexpLocal: number; structTypeIdx: number };
   },
 ): RegexSearchEmission | null {
   ensureNativeStringHelpers(ctx);
@@ -1936,7 +1939,7 @@ function emitRegexSearchCall(
   const strTypeIdx = ctx.nativeStrTypeIdx;
 
   // --- the compiled $NativeRegExp struct ---
-  const loaded = loadStandaloneRegExpStruct(ctx, fctx, regexpExpr);
+  const loaded = options?.regexpOverride ?? loadStandaloneRegExpStruct(ctx, fctx, regexpExpr);
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
 
@@ -2496,12 +2499,16 @@ function buildIndexPairExternref(
  * captures represented as null native strings (the compiler's `undefined` for
  * nullable native string slots).
  */
-function emitRegexExecArrayCall(
+export function emitRegexExecArrayCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   regexpExpr: ts.Expression,
   inputExpr: ts.Expression,
-  options?: { gyLastIndex?: boolean | "runtime"; inputOverride?: () => ValType | null },
+  options?: {
+    gyLastIndex?: boolean | "runtime";
+    inputOverride?: () => ValType | null;
+    regexpOverride?: { regexpLocal: number; structTypeIdx: number };
+  },
 ): ValType | null {
   const emitted = emitRegexSearchCall(ctx, fctx, regexpExpr, inputExpr, options);
   if (emitted === null) return null;
@@ -2530,7 +2537,9 @@ function emitRegexExecArrayCall(
   let groupNames: ReadonlyMap<string, number> = new Map();
   let hasD = false;
   let nGroups = 0;
-  const meta = staticRegExpGroupMeta(ctx, regexpExpr);
+  // (#4016) An overridden regex was built at RUNTIME, so `regexpExpr` is the
+  // search-value argument, not a regex source — skip static recovery outright.
+  const meta = options?.regexpOverride ? null : staticRegExpGroupMeta(ctx, regexpExpr);
   if (meta !== null) {
     groupNames = meta.groupNames;
     hasD = (meta.flags & RE_FLAG_D) !== 0;
@@ -2659,8 +2668,7 @@ export function tryCompileStandaloneRegExpExec(
  * the match's `.index` or `-1` on no match. It is unaffected by the `g` flag and
  * never advances. Here the subject (string) is the receiver and the RegExp is
  * the argument: `"abc".search(/b/)`. The argument must be a backend-created
- * static RegExp; a string argument (which the spec coerces to `new RegExp(arg)`)
- * stays a narrowed refusal in standalone for this slice.
+ * static RegExp, or (#4016) a plain-`ToString` value (`string-search-value.ts`).
  *
  * Returns f64 (the index, or -1). `caps[0]` holds the whole-match start.
  * Never returns `VOID_RESULT`, so the type stays `ValType | null | undefined`
@@ -2678,12 +2686,17 @@ export function tryCompileStandaloneStringSearch(
   // The caller has already selected the native String method lane. Untyped
   // receivers may arrive through a proven native-string local or through the
   // receiver override's runtime brand check.
-  if (expr.arguments.length !== 1) return undefined;
-  const argExpr = expr.arguments[0]!;
+  if (expr.arguments.length > 1) return undefined;
+  const argExpr = expr.arguments[0];
+
+  // (#4016) §22.1.3.12 steps 2-4 — the plain-ToString path (`string-search-value.ts`).
+  const coerced = tryCompileCoercedStringSearch(ctx, fctx, expr, propAccess.expression, argExpr, receiverOverride);
+  if (coerced !== undefined) return coerced;
+  if (argExpr === undefined) return undefined;
   const argType = ctx.checker.getTypeAtLocation(argExpr);
   if (!isGlobalRegExpType(argType) && !isKnownBackendCreatedRegExpReceiver(ctx, argExpr)) {
-    // Not a RegExp argument — let the generic string-method path handle the
-    // string-coercion case (it refuses in standalone, citing #1474).
+    // Neither a RegExp nor a provably-plain value — could carry `@@search`.
+    // Let the generic string-method path keep the #1474 refusal.
     return undefined;
   }
 
@@ -2818,6 +2831,7 @@ function staticRegExpFlags(
  * Non-global static RegExp arguments share the same result shape as `.exec`.
  * Global `match` returns an all-matches array and sticky/global lastIndex
  * details are intentionally left to the next capture-array slice.
+ * (#4016) Plain-`ToString` search values are handled in `string-search-value.ts`.
  */
 export function tryCompileStandaloneStringMatch(
   ctx: CodegenContext,
@@ -2828,8 +2842,13 @@ export function tryCompileStandaloneStringMatch(
 ): ValType | null | undefined {
   if (!ctx.standalone || propAccess.name.text !== "match") return undefined;
 
-  if (expr.arguments.length !== 1) return undefined;
-  const argExpr = expr.arguments[0]!;
+  if (expr.arguments.length > 1) return undefined;
+  const argExpr = expr.arguments[0];
+
+  // (#4016) §22.1.3.11 steps 3-5 — the plain-ToString path (`string-search-value.ts`).
+  const coerced = tryCompileCoercedStringMatch(ctx, fctx, expr, propAccess.expression, argExpr, receiverOverride);
+  if (coerced !== undefined) return coerced;
+  if (argExpr === undefined) return undefined;
   const argType = ctx.checker.getTypeAtLocation(argExpr);
   if (!isGlobalRegExpType(argType) && !isKnownBackendCreatedRegExpReceiver(ctx, argExpr)) {
     return undefined;
@@ -2854,14 +2873,14 @@ function emitStandaloneRegExpMatchCore(
   regexExpr: ts.Expression,
   subjectOverride?: () => ValType | null,
 ): ValType | null {
-  const flags = staticRegExpFlags(ctx, regexExpr);
-  if (flags === null) {
-    reportStandaloneRegExpUnsupported(ctx, regexExpr, "String.prototype.match with dynamic RegExp flags");
+  if (!hasStandaloneRegExpEngine(ctx)) {
+    reportStandaloneRegExpUnsupported(ctx, expr, "String.prototype.match without an enabled standalone engine");
     return null;
   }
 
-  if (!hasStandaloneRegExpEngine(ctx)) {
-    reportStandaloneRegExpUnsupported(ctx, expr, "String.prototype.match without an enabled standalone engine");
+  const flags = staticRegExpFlags(ctx, regexExpr);
+  if (flags === null) {
+    reportStandaloneRegExpUnsupported(ctx, regexExpr, "String.prototype.match with dynamic RegExp flags");
     return null;
   }
 
