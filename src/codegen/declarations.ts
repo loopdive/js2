@@ -66,6 +66,7 @@ import {
   unwrapGeneratorYieldType,
 } from "./index.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js";
+import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
 import { ensureNativeStringExternBridge, ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
@@ -548,7 +549,7 @@ function registerBodylessFunctionDeclaration(
     }
   }
 
-  params = expandLinearU8ParamTypes(ctx, stmt, params);
+  [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
 
   const optionalParams: OptionalParamInfo[] = [];
   for (let i = 0; i < stmt.parameters.length; i++) {
@@ -1015,7 +1016,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         }
       }
 
-      params = expandLinearU8ParamTypes(ctx, stmt, params);
+      [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
 
       const optionalParams: OptionalParamInfo[] = [];
       for (let i = 0; i < stmt.parameters.length; i++) {

@@ -1,7 +1,7 @@
 ---
 id: 4106
 title: "IR async fetchUser plan producer and frame consumer"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
