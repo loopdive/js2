@@ -148,3 +148,51 @@ Instrument the producer, not the emitter: record which pass last wrote
 `fillMethodTrampolines`/`finalizeMethodTrampolines`, since all three overwrite an
 existing slot's body after it was first compiled and are therefore the paths that
 can pair a body with a foreign frame.
+
+## Localised (2026-08-02) — `ve` is a NESTED function declaration
+
+`JS2WASM_TRACE_SLOT=1666` (added in this session) answers the "who wrote it"
+question outright. Slot 1666 is written **exactly once**:
+
+```text
+[js2:slot] pushDefinedFunc -> position 1666 name='ve' locals=0 bodyOps=0
+    at pushDefinedFunc (src/codegen/func-space.ts)
+    at pushProgramAbiNestedFunctionDeclaration (src/codegen/program-abi-source-callable-planning.ts:128)
+    at compileNestedFunctionDeclaration (src/codegen/statements/nested-declarations.ts:659)
+    at compileStatementInner (src/codegen/statements.ts:265)
+```
+
+Three facts follow, and they reshape the issue:
+
+1. **`ve` is a nested function declaration**, not a top-level one — which is why
+   the earlier top-level AST scan found nothing named `ve`.
+2. The slot is claimed as an **empty placeholder** (`locals=0 bodyOps=0`) and its
+   `locals`/`body` are filled in later **by mutating that same object**. So the
+   inconsistency is introduced by the fill, not by a competing slot write —
+   `replaceDefinedFuncAt` is NOT involved and can be dropped from the suspect
+   list.
+3. `compileNestedFunctionDeclaration` does `ctx.funcMap.set(funcName, …)` with
+   the **bare** name. Nested declarations therefore share the flat name space
+   with each other and with top-level functions — the same hazard as #4045,
+   whose fix deliberately covered **only top-level declarations**.
+
+### Where to look next
+
+The body assigned to `ve` uses a frame of ≥ 66 while the object ends up with 6
+locals, so the fill pairs a body compiled in one `FunctionContext` with another
+function's `locals`. `compileNestedFunctionDeclaration` compiles the nested body
+in a `liftedFctx` **while the enclosing function's context is live**, so the
+first thing to check is whether the fill can take the body from the enclosing
+context (65+ locals is entirely plausible for a large minified function) while
+writing the nested placeholder's `locals`.
+
+That is a specific, testable hypothesis and does not require the ESLint graph:
+a nested function inside a host function with many locals, in a minified-style
+(CJS-rewritten) source, should reproduce it.
+
+### Note on the standing `#2043` attribution
+
+The diagnostic's boilerplate blames the late-import index-shift class. For this
+defect the evidence points elsewhere — a single placeholder write followed by an
+in-place fill, with no shift involved. The text should be softened to name both
+candidate classes rather than assert one.
