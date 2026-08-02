@@ -31,6 +31,14 @@ async function instantiateLinear(source: string) {
   return instance.exports as Record<string, Function>;
 }
 
+/** The body of one `(func $name …)` in the emitted WAT. */
+function funcBody(wat: string, name: string): string {
+  const start = wat.indexOf(`(func $${name} `);
+  expect(start, `no $${name} in the emitted module`).toBeGreaterThanOrEqual(0);
+  const next = wat.indexOf("\n  (func $", start + 1);
+  return wat.slice(start, next < 0 ? undefined : next);
+}
+
 describe("#3908 linear backend: Array.prototype.find result slot matches the element type", () => {
   it("validates and finds a match in a number[] (the reported repro)", async () => {
     const e = await instantiateLinear(`
@@ -134,5 +142,27 @@ export function run(): number {
     // ...so find's accumulator must be f64 too, never i32.
     expect(wat).toMatch(/\(local \$__hof_result_\d+ f64\)/);
     expect(wat).not.toMatch(/\(local \$__hof_result_\d+ i32\)/);
+  });
+
+  it("caches a resolved array parameter before scanning it", async () => {
+    const result = await compile(
+      `
+export function run(arr: number[]): number {
+  const found = arr.find((x: number): boolean => x === 7);
+  if (found !== undefined) return found;
+  return 0;
+}`,
+      { fast: true, target: "linear", emitWat: true, optimize: 0 },
+    );
+    expect(result.success).toBe(true);
+    const wat = result.wat ?? "";
+    const importedFunctionCount = [...wat.matchAll(/^ {2}\(import .+ \(func /gm)].length;
+    const definedFunctionNames = [...wat.matchAll(/^ {2}\(func \$([^\s(]+)/gm)].map((match) => match[1]);
+    const resolverOffset = definedFunctionNames.indexOf("__arr_resolve");
+    expect(resolverOffset, "no $__arr_resolve in the emitted module").toBeGreaterThanOrEqual(0);
+
+    const resolverIndex = importedFunctionCount + resolverOffset;
+    const run = funcBody(wat, "run");
+    expect(run).toMatch(new RegExp(`local\\.get 0\\s+call ${resolverIndex}\\s+local\\.tee 0`));
   });
 });
