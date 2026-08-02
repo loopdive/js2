@@ -50,6 +50,28 @@ The discriminating check took minutes and was available the whole time:
   nothing to do with the change's subject. That mismatch alone should trigger
   suspicion of your own model.
 
+## The missing causal link — the CATEGORY field was actively wrong
+
+Reported by the owner after the fix. CI's category field recorded
+**`runtime_error: 152`** for what were **compile-time throws**.
+
+That is not CI being sloppy — it is accurate *for what CI could see*. The
+speculative catch in `compileExpressionBody` swallowed a compile-time
+`TypeError` and re-emitted it as a generic failure, so by the time the
+categoriser saw it, the compile-time origin was gone. **The laundering happened
+upstream of the instrument.**
+
+This is why the aggregate was not merely uninformative but *misleading*: a
+category that says `runtime_error` steers you toward "many different runtime
+behaviours changed" — i.e. a broad, multi-cause change — and away from "one
+compile-time crash". It cost a 20-minute fix a full split-the-PR dispatch.
+
+Adjacent to #4075 (*the standalone refuse-loud channel is LOSSY*): the same
+catch that discards a non-sticky `reportError` also destroys the provenance a
+triage tool needs. **When an error passes through a catch that re-labels it,
+every downstream classification inherits the re-label — and nothing marks it as
+second-hand.**
+
 ## Corollary — label hypotheses as hypotheses when dispatching
 
 The wrong diagnosis was handed to the owner explicitly as *"a hypothesis with
