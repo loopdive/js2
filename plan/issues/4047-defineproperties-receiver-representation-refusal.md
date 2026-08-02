@@ -149,25 +149,51 @@ into a silent wrong answer — the exact vacuity the refusal exists to prevent.
   yields a **fresh** wrapper with zero own enumerable properties, so the key
   walk is empty and the operation is a no-op returning `O`. This is a complete
   answer, not a degraded one.
-- **object without the open representation**: resolve its own-property **bag** —
-  `__vec_bag_*` (#3537) or `__closure_bag_*` (#3468) — through the **same
-  `__integrity_bag` resolver #4032 introduced**. Both bags *are* `$Object`s, so
-  the rest of the helper works unchanged. No third side table: adding one is
-  what #4010 exists to undo.
-- **vec with `length != 0`**: its own enumerable **index** keys carry
-  descriptors that live in the elements, not the bag. Enumerating only the bag
-  would define a strict subset and return normally. **Keeps refusing**
-  (`[SITE-PROPS-VEC-INDEXED]`).
-- **object with no bag at all** (Date / RegExp / Error): **keeps refusing**
-  (`[SITE-PROPS-NO-CARRIER]`). Re-measured: `d.p = 7; d.p` does not even
-  round-trip on those, so any enumeration over them would be vacuous by
-  construction.
+- **object without the open representation** (Array / arguments / Function /
+  Date / RegExp / Error / closed struct): **keeps refusing**
+  (`[SITE-PROPS-BAG-NOT-AUTHORITATIVE]`). See the next section — this arm was
+  built, measured, and deliberately reverted.
 
-The `__integrity_bag` registration moves ahead of `__defineProperties`. That
-changes only the *emission order* of one defined function; every reference is
-resolved through `ctx.funcMap`, and the reserve-then-fill helpers it calls are
-reserved in `object-runtime.ts` long before this module runs, so no baked
-`call <idx>` operand moves.
+## The arm I built, measured at +6, and REVERTED
+
+The obvious move for the Function and Array buckets is to resolve the
+receiver's own-property **bag** — `__vec_bag_*` (#3537) or `__closure_bag_*`
+(#3468), both of which *are* `$Object`s — through the same `__integrity_bag`
+resolver #4032 introduced, and enumerate that. It was implemented, and it
+worked: 6 more test262 files flipped, including
+`15.2.3.7-5-b-239`/`-240` where a descriptor **setter must actually fire**, so
+those were not vacuous passes.
+
+**It is still unsound, and `tests/issue-3957.test.ts` caught it.** The bag is
+not the complete own-property store for a carrier:
+
+```
+props.p = v                        → lands in the expando bag              ✓
+Object.defineProperty(props,"p",…) → Array:    the SEPARATE #3251 overlay companion
+                                     Function: NOWHERE — __defineProperty_value's
+                                               terminal arm is a lenient no-op
+                                               for a closure receiver
+```
+
+Nothing distinguishes those at runtime. So for the second spelling the arm
+enumerated an empty bag, defined nothing, and **returned normally** — the exact
+silent no-op #3957 wrote its Function/Array invariant cases to forbid. Both
+fired.
+
+Reverted. **+6 that manufactures a silent wrong answer on a common spelling is
+negative value**, and the shape it breaks (`Object.defineProperty` on the
+Properties map) is the *more* idiomatic of the two.
+
+This is direct, reproducible evidence for **#4010**: the arm becomes sound the
+moment one store is authoritative for a carrier's own properties. A narrower
+prerequisite that would unlock the Function half alone: give
+`__defineProperty_value` / `__defineProperty_accessor` a closure arm that
+recurses on `__closure_bag_ensure(recv)`, mirroring the existing
+`vecOverlayArm`. That also fixes a pre-existing silent no-op —
+`Object.defineProperty(fn, "p", desc)` currently drops the write entirely.
+
+Because the arm is gone, the `__integrity_bag` registration stays where #4032
+put it; nothing about function emission order moves.
 
 ### 3. `Object.create(O, undefined)` — §20.1.2.2 step 3 is conditional
 
@@ -184,12 +210,12 @@ is-undefined test at the externref boundary and is left to #4010.
 
 ## Refusals that deliberately survive
 
-`[SITE-O-NO-CARRIER]`, `[SITE-PROPS-NO-CARRIER]`, `[SITE-PROPS-VEC-INDEXED]`,
+`[SITE-O-NO-CARRIER]`, `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]`,
 `[SITE-PROPS-STRING-INDICES]`. Each is tagged so the next harvest reads the
 *mechanism* rather than the family — the failure mode that let the previous
-attribution stand unchallenged for three weeks. The 26-file `NO-CARRIER` bucket
-is blocked on the exotic-receiver own-property substrate (#4010) and is not
-fixable here.
+attribution stand unchallenged for three weeks. The 41-file
+`BAG-NOT-AUTHORITATIVE` bucket is blocked on the exotic-receiver own-property
+substrate (#4010) and is not fixable here.
 
 ## Result
 

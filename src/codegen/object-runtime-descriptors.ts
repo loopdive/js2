@@ -1027,16 +1027,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     );
   }
 
-  // (#4047) The #4032 carrier-bag resolver is registered HERE, ahead of
-  // `__defineProperties`, because that helper needs it to resolve a
-  // non-`$Object` `Properties`. The integrity predicates at the end of this
-  // module read the same binding. Moving the registration only changes the
-  // EMISSION ORDER of a defined function; every reference to it is resolved
-  // through `ctx.funcMap`, and the reserve-then-fill helpers it calls
-  // (`__is_vec_prop_carrier`, `__vec_bag_ensure`, `__is_closure_prop_carrier`,
-  // `__closure_bag_ensure`) are reserved in `object-runtime.ts` well before
-  // this module runs, so their baked `call <idx>` operands are unaffected.
-  const integrityBagIdx = registerIntegrityBagResolver(ctx, registerNative);
   const isVecCarrierIdx = ctx.funcMap.get("__is_vec_prop_carrier");
 
   // ── __defineProperties (#1906 — native plural descriptor apply) ─────────
@@ -1073,7 +1063,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     const HOST_FLAG_ACCESSOR = 1 << 6;
     const HOST_FLAG_HAS_VALUE = 1 << 7;
 
-    const L_BAG_ANY = 22;
     const L_OBJ_ANY = 2;
     const L_OBJ = 3;
     const L_DESCS_ANY = 4;
@@ -1433,55 +1422,39 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
             blockType: { kind: "empty" },
             then: [{ op: "local.get", index: 0 }, { op: "return" }],
           },
-          // (d) an OBJECT that is not the open representation. Its own
-          //     properties may live in one of the carrier bags that already
-          //     exist — `__vec_bag_*` (#3537, Array/arguments expandos) and
-          //     `__closure_bag_*` (#3468, function own properties). Both bags
-          //     ARE `$Object`s, so resolving to the bag makes the rest of this
-          //     helper work unchanged. Same resolver #4032 uses; adding a third
-          //     side table is what #4010 exists to undo.
-          ...(integrityBagIdx === undefined
-            ? throwUnsupported(" [SITE-PROPS-NO-CARRIER]")
-            : ([
-                // A vec whose LENGTH is non-zero also has own enumerable INDEX
-                // keys, and those descriptors live in the elements, not the
-                // bag. Enumerating only the bag would define a strict SUBSET
-                // and return normally — a silent wrong answer. Refuse instead.
-                ...(isVecCarrierIdx !== undefined && vecOverlayBaseIdx >= 0
-                  ? ([
-                      { op: "local.get", index: 1 },
-                      { op: "call", funcIdx: isVecCarrierIdx },
-                      {
-                        op: "if",
-                        blockType: { kind: "empty" },
-                        then: [
-                          { op: "local.get", index: L_DESCS_ANY },
-                          { op: "ref.cast", typeIdx: vecOverlayBaseIdx },
-                          { op: "struct.get", typeIdx: vecOverlayBaseIdx, fieldIdx: 0 },
-                          {
-                            op: "if",
-                            blockType: { kind: "empty" },
-                            then: throwUnsupported(" [SITE-PROPS-VEC-INDEXED]"),
-                          },
-                        ],
-                      },
-                    ] satisfies Instr[])
-                  : []),
-                { op: "local.get", index: 1 },
-                { op: "call", funcIdx: integrityBagIdx },
-                { op: "any.convert_extern" },
-                { op: "local.tee", index: L_BAG_ANY },
-                { op: "ref.test", typeIdx: objectTypeIdx },
-                { op: "i32.eqz" },
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: throwUnsupported(" [SITE-PROPS-NO-CARRIER]"),
-                },
-                { op: "local.get", index: L_BAG_ANY },
-                { op: "ref.cast", typeIdx: objectTypeIdx },
-                { op: "local.set", index: L_DESCS },
-              ] satisfies Instr[])),
+          // (d) an OBJECT that is not the open representation — Array,
+          //     arguments, Function, Date, RegExp, Error, a closed struct.
+          //     KEEPS REFUSING, and the reason is worth recording because the
+          //     obvious fix is wrong.
+          //
+          // The tempting move is to resolve the receiver's own-property BAG
+          // (`__vec_bag_*` #3537 / `__closure_bag_*` #3468, both of which ARE
+          // `$Object`s) through the #4032 `__integrity_bag` resolver and
+          // enumerate that. It was implemented, measured, and REVERTED: it is
+          // UNSOUND, because the bag is not the complete own-property store.
+          //
+          //   props.p = v                       → lands in the expando bag ✓
+          //   Object.defineProperty(props,"p",…) → for an Array lands in the
+          //                                        SEPARATE #3251 overlay
+          //                                        companion; for a Function
+          //                                        lands NOWHERE, because
+          //                                        `__defineProperty_value`'s
+          //                                        terminal arm is a lenient
+          //                                        no-op for closures.
+          //
+          // Nothing distinguishes those two at runtime, so bag-resolution
+          // answers "no own properties" for a receiver that has them and
+          // returns normally having defined nothing — the exact silent no-op
+          // #3957 forbade. `tests/issue-3957.test.ts`'s Function/Array
+          // invariant cases catch it; they did.
+          //
+          // This is concrete evidence for #4010 (two disjoint identity-keyed
+          // side tables): the arm becomes sound the moment ONE store is
+          // authoritative for a carrier's own properties. A narrower
+          // prerequisite for the Function half alone: give
+          // `__defineProperty_value` / `_accessor` a closure arm that recurses
+          // on `__closure_bag_ensure`, mirroring `vecOverlayArm`.
+          ...throwUnsupported(" [SITE-PROPS-BAG-NOT-AUTHORITATIVE]"),
         ],
       },
 
@@ -1756,7 +1729,6 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
         { name: "value", type: { kind: "externref" } },
         { name: "getter", type: { kind: "externref" } },
         { name: "setter", type: { kind: "externref" } },
-        { name: "bagAny", type: { kind: "anyref" } },
       ],
       body,
     );
@@ -3007,8 +2979,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
   // (#4032) `ref.test $Object` false does NOT mean "not an object" — see
   // `object-integrity-carrier.ts` for the mechanism, the two halves of the fix,
   // and why this is byte-neutral in host mode (`integrityBagIdx === undefined`).
-  // (#4047) The resolver is now registered ABOVE, before `__defineProperties`,
-  // because that helper needs it too; this reads the hoisted binding.
+  const integrityBagIdx = registerIntegrityBagResolver(ctx, registerNative);
   const emitIntegrityPredicate = (name: string, flagBit: number, invert: boolean, terminalResult: number): void => {
     const { locals, body } = buildIntegrityPredicate({
       objectTypeIdx,

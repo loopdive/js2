@@ -10,19 +10,29 @@
  * Distinguishing 0 from 1 is the whole point — a silent no-op is what this
  * gate exists to prevent, and it is invisible to a does-not-throw assertion.
  *
- * The six NEGATIVE cases are as load-bearing as the positive ones.
+ * The NEGATIVE cases are as load-bearing as the positive ones.
  * `__defineProperty_value`'s terminal arm for a carrier-less receiver is a
  * LENIENT no-op that returns O unchanged, so relaxing one refusal too far
  * reads as a pure win while manufacturing vacuous passes — exactly the trap
- * #3957 measured and rejected. A4/C2/D2/D3/E1/A5-A6 fail loudly if that happens.
+ * #3957 measured and rejected.
+ *
+ * B1/B2/C1/F3 (Function and Array `Properties`) are here as refusals ON
+ * PURPOSE, and the history matters. A carrier-bag arm that resolved those
+ * receivers through the #4032 `__integrity_bag` resolver was implemented and
+ * measured at +6 more test262 files — then REVERTED, because #3957's own
+ * invariant tests proved it unsound: the bag holds `props.p = v` but NOT
+ * `Object.defineProperty(props, "p", …)`, which for an Array lands in the
+ * separate #3251 overlay companion and for a Function lands nowhere. Nothing
+ * distinguishes the two at runtime, so the arm answered "no own properties"
+ * for a receiver that had them. Do not re-add it before #4010 makes one store
+ * authoritative.
  *
  * G1–G4 guard the gains this sits on top of: #3957 RC1 (descriptor read via
  * [[Get]]), #3957 RC2 (closed-struct map via identifier), the static
- * object-literal expansion, and #4032 — whose `__integrity_bag` resolver this
- * reuses and whose registration point moved.
+ * object-literal expansion, and #4032 integrity predicates on an Array.
  *
  * Kill-switch: restore the `ref.test $Object` gate on either receiver in
- * `__defineProperties` and A1–A3, B1–B2, C1, D1, F3 all revert to code 2.
+ * `__defineProperties` and A1–A3, D1 and F1–F2 revert to code 2.
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.ts";
@@ -102,16 +112,16 @@ const CASES: Record<string, [string, number]> = {
     }`,
     2,
   ],
-  "B1 FUNCTION Properties -> defined via closure bag [0]": [
+  "B1 FUNCTION Properties -> still refuses loudly (bag not authoritative) [2]": [
     `export function test(): number {
       const obj: any = {};
       const props: any = function () {};
       props.prop = { value: 1, enumerable: true };
       try { Object.defineProperties(obj, props); return obj.hasOwnProperty("prop") ? (obj.prop === 1 ? 0 : 4) : 1; } catch (e) { return 2; }
     }`,
-    0,
+    2,
   ],
-  "B2 FUNCTION Properties accessor descriptor [0]": [
+  "B2 FUNCTION Properties accessor descriptor -> still refuses [2]": [
     `let data = "data";
     export function test(): number {
       const obj: any = {};
@@ -124,16 +134,16 @@ const CASES: Record<string, [string, number]> = {
         return data === "funData" ? 0 : 4;
       } catch (e) { return 2; }
     }`,
-    0,
+    2,
   ],
-  "C1 empty ARRAY Properties with expando -> defined via vec bag [0]": [
+  "C1 empty ARRAY Properties with expando -> still refuses [2]": [
     `export function test(): number {
       const obj: any = {};
       const props: any = [];
       props.prop = { value: 8, enumerable: true };
       try { Object.defineProperties(obj, props); return obj.hasOwnProperty("prop") ? (obj.prop === 8 ? 0 : 4) : 1; } catch (e) { return 2; }
     }`,
-    0,
+    2,
   ],
   "C2 NON-empty ARRAY Properties -> still refuses loudly [2]": [
     `export function test(): number {
@@ -195,13 +205,13 @@ const CASES: Record<string, [string, number]> = {
     }`,
     0,
   ],
-  "F3 Object.create(proto, fnProps) -> defined via closure bag [0]": [
+  "F3 Object.create(proto, fnProps) -> still refuses [2]": [
     `export function test(): number {
       const props: any = function () {};
       props.prop = { value: 3, enumerable: true };
       try { const o: any = Object.create({}, props); return o.hasOwnProperty("prop") ? (o.prop === 3 ? 0 : 4) : 1; } catch (e) { return 2; }
     }`,
-    0,
+    2,
   ],
   "G1 REGRESSION GUARD: static object-literal Properties still works [0]": [
     `export function test(): number {
