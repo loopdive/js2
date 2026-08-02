@@ -16,6 +16,51 @@ goal: dogfood
 related: [35, 1758, 2786, 3878, 3904]
 ---
 
+## ⚠ REFRAME 2026-08-02: the cadence is HALF of a loop — `[skip ci]` commits are the other half
+
+Found by the shepherd measuring a refresh that *worked* and was undone 11
+minutes later; every claim below re-verified from source by the tech lead.
+
+The 12:16Z refresh log reads `updated=2 skipped=0 failed=0` — it did its job.
+By 12:27Z both PRs were `BEHIND` again, each lacking **exactly one commit**:
+
+```
+c2b9023e  12:14:39Z  chore(test262): refresh sharded baseline — … [skip ci]
+```
+
+Authored before the refresh, **pushed after** — the refresh raced the
+baseline-promote bot and lost.
+
+**Why one bookkeeping commit disqualifies every open PR**
+(`scripts/enqueue-green-prs.mjs:114`):
+
+```js
+const ENQUEUEABLE = new Set(["CLEAN", "HAS_HOOKS"]);
+```
+
+`BEHIND` is not in it. So:
+
+> **A `[skip ci]` commit says "this changes nothing that needs testing" — and it
+> is simultaneously enough to remove every open PR from enqueue eligibility.**
+
+The loop: merge → `[skip ci]` baseline commit → all open PRs `BEHIND` →
+un-enqueueable → wait ~1 h for a refresh (#4093's cadence half) → refresh →
+possibly raced by the *next* baseline commit → repeat. Measured frequency of
+the trigger: **six** `[skip ci]` commits in ~5.5 h (12:14, 11:43 ×2, 10:54,
+08:49, 06:49) — this fires repeatedly, not occasionally.
+
+**Design observation, recorded but NOT prescribed:** the enqueue script's own
+comment (line 817) says *"the merge queue builds merge groups against main
+itself, so PR branches never need auto-updating from CI."* If that holds,
+requiring `CLEAN` is stricter than the queue needs, and admitting `BEHIND`
+(never `UNSTABLE` — that exclusion is load-bearing, #3878/#3904) would break
+the loop without touching cadence. ⚠ The same file documents the 2026-06-11
+incident (17 bot-updated BEHIND PRs stranded in `action_required`), so this is
+a queue-design decision with a live blast radius — stakeholder call, not a
+lane's. An alternative with a smaller radius: exempt `[skip ci]`-only
+divergence from the BEHIND disqualification, since by its own declaration such
+a commit cannot change test outcomes.
+
 # The cron declares 3/hour and delivers ~0.7/hour
 
 Measured 2026-08-02 by the PR-queue shepherd, independently re-measured by the
