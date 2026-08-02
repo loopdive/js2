@@ -387,6 +387,27 @@ export function isStaticallyUndefinedExpr(expr: ts.Expression): boolean {
 export type SearchValueProtocol = "match" | "matchAll" | "replace" | "search" | "split";
 
 /**
+ * (#4016) The node a search value must be BOTH proven and emitted from.
+ *
+ * `String.prototype.split` is typed `(separator: string | RegExp, …)`, so a
+ * TypeScript caller can only pass a number/object separator through a cast —
+ * which means the analysis has to see through the assertion or this path is
+ * unreachable from TypeScript entirely. A type assertion is erased at runtime,
+ * so the operand's proven shape IS the value's shape.
+ *
+ * The reason this is one exported function rather than a `stripStaticWrapper`
+ * call at each site: proving on the operand while EMITTING from the assertion
+ * is a silent wrong answer, not a missed optimisation. `"xtruey".search(true as
+ * any)` proved admissible on the `true` literal but then handed `true as any`
+ * to the ToString engine, which saw type `any` over a raw i32 and produced a
+ * value that matched nothing (`-1` instead of `1`) — while the identical
+ * cast-free JavaScript was correct all along. Route both through here.
+ */
+export function searchValueOperand(argExpr: ts.Expression): ts.Expression {
+  return stripStaticWrapper(argExpr);
+}
+
+/**
  * (#4016) Is `argExpr` a search value that the spec resolves by plain
  * **`ToString`**, with no `@@<protocol>` dispatch and no RegExp involved?
  *
@@ -423,13 +444,14 @@ export function isPlainToStringSearchValue(
   protocol: SearchValueProtocol,
 ): boolean {
   if (isDefinitelyUndefinedExpr(ctx, argExpr)) return false;
-  if (stripStaticWrapper(argExpr).kind === ts.SyntaxKind.NullKeyword) return true;
-  const fact = ctx.oracle.typeFactOf(argExpr);
+  const value = searchValueOperand(argExpr);
+  if (value.kind === ts.SyntaxKind.NullKeyword) return true;
+  const fact = ctx.oracle.typeFactOf(value);
   // ToString(symbol) throws (§7.1.17) — keep the loud refusal rather than
   // silently stringifying. A union is rejected if ANY part could be a symbol.
   if (fact.kind === "symbol") return false;
   if (fact.kind === "union" && fact.parts.some((part) => part.kind === "symbol")) return false;
-  return ctx.oracle.wellKnownSymbolMemberOf(argExpr, protocol) === false;
+  return ctx.oracle.wellKnownSymbolMemberOf(value, protocol) === false;
 }
 
 /**
@@ -447,7 +469,7 @@ export function isPlainToStringSearchValue(
  */
 export function isDefinitelyUndefinedExpr(ctx: CodegenContext, argExpr: ts.Expression): boolean {
   if (isStaticallyUndefinedExpr(argExpr)) return true;
-  const kind = ctx.oracle.typeFactOf(argExpr).kind;
+  const kind = ctx.oracle.typeFactOf(searchValueOperand(argExpr)).kind;
   return kind === "undefined" || kind === "void";
 }
 
@@ -477,7 +499,9 @@ function emitCoercedRegExpToLocal(
   if (argExpr === undefined) {
     for (const instr of nativeStringLiteralInstrs(ctx, "")) fctx.body.push(instr);
   } else {
-    emitArgAsNativeString(ctx, fctx, argExpr);
+    // Emit from the same node the admissibility gate proved on — see
+    // `searchValueOperand`.
+    emitArgAsNativeString(ctx, fctx, searchValueOperand(argExpr));
   }
   fctx.body.push({ op: "local.set", index: patternLocal });
 

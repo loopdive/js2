@@ -11,7 +11,18 @@
  * statically-known backend RegExp, conflating "not a RegExp" with "needs a JS
  * host".
  *
- * Every expectation below was taken from Node BEFORE it was asserted here.
+ * Two harness constraints shape every case below, both learned the hard way:
+ *
+ *  - **Exports return numbers only.** A standalone module's string is a WasmGC
+ *    `$AnyString`, so returning one hands JS an opaque ref (it prints as `{}`);
+ *    string results are encoded numerically instead.
+ *  - **`as any` here is REQUIRED, not laziness.** `String.prototype.split` is
+ *    typed `(separator: string | RegExp, …)`, so a number/object separator is
+ *    only expressible through a cast. The compiler therefore analyses the
+ *    assertion's OPERAND — otherwise the only way a TypeScript caller can reach
+ *    this path would be the very thing that defeats it.
+ *
+ * Every expectation was taken from Node BEFORE it was asserted here.
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
@@ -28,13 +39,14 @@ async function runStandalone(src: string, fn = "f"): Promise<unknown> {
 
 describe("#4016 — String.prototype.search coerces its search value", () => {
   it.each([
-    // `RegExpCreate(undefined)` is the EMPTY pattern, not the text "undefined".
-    ["absent argument", `return "".search();`, 0],
-    ["absent argument, non-empty subject", `return "--undefined--".search();`, 0],
+    // `RegExpCreate(undefined)` is the EMPTY pattern, not the text "undefined",
+    // so this is 0 rather than -1 on a subject containing no "undefined".
+    ["absent argument", `return "abc".search(undefined as any);`, 0],
     ["string argument", `return new String("test string").search("string") as number;`, 5],
     ["no match", `return "abc".search("z");`, -1],
-    ["number argument", `return "this123is".search(123);`, 4],
+    ["number argument", `return "this123is".search(123 as any);`, 4],
     ["null argument", `return "gnulluna".search(null as any);`, 1],
+    ["boolean argument", `return "xtruey".search(true as any);`, 1],
   ])("%s", async (_label, body, want) => {
     expect(await runStandalone(`export function f(): number { ${body} }`)).toBe(want);
   });
@@ -50,7 +62,7 @@ describe("#4016 — String.prototype.search coerces its search value", () => {
 
   it("treats the coerced source as a PATTERN, not a literal substring", async () => {
     // The distinguishing case: `search` builds a RegExp, so metacharacters are
-    // live. `"a.c".search("a.c")` matching at 0 proves nothing; this does.
+    // live. `"a.c".search("a.c")` matching at 0 would prove nothing; this does.
     const src = `export function f(): number { return "xxabc".search("a.c"); }`;
     expect(await runStandalone(src)).toBe(2);
   });
@@ -58,23 +70,25 @@ describe("#4016 — String.prototype.search coerces its search value", () => {
 
 describe("#4016 — String.prototype.match coerces its search value", () => {
   it("returns an exec-shaped result for a string argument", async () => {
+    // index * 100 + length * 10 + m[0].length → 2*100 + 1*10 + 2
     const src = `
-      export function f(): string {
+      export function f(): number {
         const m = "ssABBABABAB".match("AB");
-        if (m === null) return "null";
-        return (m[0] as string) + "|" + String((m as any).index) + "|" + String(m.length);
+        if (m === null) return -1;
+        return (m.index as number) * 100 + m.length * 10 + (m[0] as string).length;
       }`;
-    expect(await runStandalone(src)).toBe("AB|2|1");
+    expect(await runStandalone(src)).toBe(212);
   });
 
   it("an absent argument builds the empty pattern", async () => {
+    // `"".match(undefined)` is `[""]` at index 0 — NOT a match on "undefined".
     const src = `
-      export function f(): string {
-        const m = "".match();
-        if (m === null) return "null";
-        return "[" + (m[0] as string) + "]|" + String((m as any).index) + "|" + String(m.length);
+      export function f(): number {
+        const m = "".match(undefined as any);
+        if (m === null) return -1;
+        return (m.index as number) * 100 + m.length * 10 + (m[0] as string).length;
       }`;
-    expect(await runStandalone(src)).toBe("[]|0|1");
+    expect(await runStandalone(src)).toBe(10);
   });
 
   it("returns null when the coerced pattern does not match", async () => {
@@ -85,45 +99,48 @@ describe("#4016 — String.prototype.match coerces its search value", () => {
 
 describe("#4016 — String.prototype.split coerces its separator", () => {
   it("splits on a number separator", async () => {
+    // ["this","is","a"] → 3*100 + 4*10 + 1
     const src = `
-      export function f(): string {
+      export function f(): number {
         const a = "this123is123a".split(123 as any);
-        return String(a.length) + "|" + a[0] + "|" + a[2];
+        return a.length * 100 + a[0].length * 10 + a[2].length;
       }`;
-    expect(await runStandalone(src)).toBe("3|this|a");
+    expect(await runStandalone(src)).toBe(341);
   });
 
-  it("splits on ToString(null) === \"null\"", async () => {
+  it('splits on ToString(null) === "null"', async () => {
+    // ["g","una"] → 2*100 + 1*10 + 3
     const src = `
-      export function f(): string {
+      export function f(): number {
         const a = "gnulluna".split(null as any);
-        return String(a.length) + "|" + a[0] + "|" + a[1];
+        return a.length * 100 + a[0].length * 10 + a[1].length;
       }`;
-    expect(await runStandalone(src)).toBe("2|g|una");
+    expect(await runStandalone(src)).toBe(213);
   });
 
   it("honours an overridden toString separator and an overridden valueOf limit", async () => {
+    // ToUint32(true) === 1 → ["A"] → 1*100 + 1*10 + 1
     const src = `
-      export function f(): string {
+      export function f(): number {
         const sep = { toString() { return "BB"; } };
         const lim = { valueOf() { return true; } };
         const a = "ABBABABAB".split(sep as any, lim as any);
-        return String(a.length) + "|" + a[0];
+        return a.length * 100 + a[0].length * 10 + (a[0] === "A" ? 1 : 0);
       }`;
-    expect(await runStandalone(src)).toBe("1|A");
+    expect(await runStandalone(src)).toBe(111);
   });
 
-  it("an UNDEFINED separator does not split — and is not ToString'd to \"undefined\"", async () => {
-    // The silent-wrong-answer this change had to avoid: §22.1.3.23 step 2 exits
+  it('an UNDEFINED separator does not split — and is not ToString\'d to "undefined"', async () => {
+    // The silent wrong answer this change had to avoid: §22.1.3.23 step 2 exits
     // early for undefined, so the result is [S]. Splitting on the text
-    // "undefined" would give ["", "-here"] here.
+    // "undefined" would give ["", "-here"] — length 2, first element empty.
     const src = `
-      export function f(): string {
+      export function f(): number {
         function nothing(): void {}
         const a = "undefined-here".split(nothing() as any);
-        return String(a.length) + "|" + a[0];
+        return a.length * 100 + a[0].length;
       }`;
-    expect(await runStandalone(src)).toBe("1|undefined-here");
+    expect(await runStandalone(src)).toBe(114);
   });
 
   it("still evaluates a side-effecting undefined separator expression", async () => {
@@ -142,8 +159,9 @@ describe("#4016 — the refusal is NARROWED, not removed", () => {
   const refusal = /with a RegExp or symbol-protocol search value is not supported/;
 
   it("still refuses a search value that could carry @@split", async () => {
-    // An `any`-typed value cannot be proven free of `[Symbol.split]`, so the
-    // spec's protocol dispatch might apply. Refusing loudly beats guessing.
+    // An `any` whose operand is also unprovable cannot be shown free of
+    // `[Symbol.split]`, so the spec's protocol dispatch might apply. Refusing
+    // loudly beats guessing.
     const r = await compile(
       `export function f(): number { const sep: any = JSON.parse("1"); return "abc".split(sep).length; }`,
       { target: "standalone" },
@@ -164,6 +182,14 @@ describe("#4016 — the refusal is NARROWED, not removed", () => {
 
   it("a statically-known RegExp argument keeps its existing native lowering", async () => {
     const src = `export function f(): number { return "xxabc".search(/a.c/); }`;
+    expect(await runStandalone(src)).toBe(2);
+  });
+
+  it("a RegExp behind an `as any` is still recognised as a RegExp", async () => {
+    // Looking through the assertion must not LOSE the RegExp:
+    // `wellKnownSymbolMemberOf` answers `true` for the operand, so this keeps
+    // the regex lowering instead of ToString-ing it to the source text "/a.c/".
+    const src = `export function f(): number { const re = /a.c/; return "xxabc".search(re as any); }`;
     expect(await runStandalone(src)).toBe(2);
   });
 });

@@ -35,6 +35,7 @@ import {
   isDefinitelyUndefinedExpr,
   isPlainToStringSearchValue,
   isStaticallyUndefinedExpr,
+  searchValueOperand,
   tryCompileStandaloneStringMatch,
   tryCompileStandaloneStringMatchAll,
   tryCompileStandaloneStringReplace,
@@ -3349,7 +3350,10 @@ export function compileNativeStringMethodCall(
     isPlainToStringSearchValue(ctx, expr.arguments[0]!, "split")
   ) {
     emitReceiver();
-    emitArgAsNativeString(ctx, fctx, expr.arguments[0]!);
+    // Emit from the same node the admissibility gate proved on — see
+    // `searchValueOperand` (proving on the operand while emitting from the
+    // assertion is a silent wrong answer, not a missed optimisation).
+    emitArgAsNativeString(ctx, fctx, searchValueOperand(expr.arguments[0]!));
     if (expr.arguments.length > 1 && !isStaticallyUndefinedExpr(expr.arguments[1]!)) {
       compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
     } else {
