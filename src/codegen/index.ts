@@ -34,6 +34,7 @@ import {
   irDynamic,
   isDynamic,
   irVal,
+  irVec,
   type IrClassMethodDescriptor,
   type IrFuncRef,
   type IrType,
@@ -839,6 +840,11 @@ function isConcreteLattice(t: LatticeType | undefined): t is LatticeType & { kin
   return t !== undefined && (t.kind === "f64" || t.kind === "bool" || t.kind === "string");
 }
 
+function arrayElementRequiresOpaqueStorage(node: ts.TypeNode): boolean {
+  while (ts.isParenthesizedTypeNode(node) || ts.isTypeOperatorNode(node)) node = node.type;
+  return node.kind === ts.SyntaxKind.UnknownKeyword || ts.isUnionTypeNode(node);
+}
+
 /**
  * Resolve the IR type for a function's param or return position, using
  * the AST's explicit TypeNode first (authoritative) and the TypeMap
@@ -890,7 +896,12 @@ function resolvePositionType(
     // string element types are accepted; nested-vec or object-element
     // types throw and fall back to legacy.
     if (ts.isArrayTypeNode(node)) {
-      const elemIr = resolvePositionType(node.elementType, undefined, ctx, classShapes);
+      const elemIr = arrayElementRequiresOpaqueStorage(node.elementType)
+        ? irDynamic()
+        : resolvePositionType(node.elementType, undefined, ctx, classShapes);
+      if (elemIr.kind === "val" && (elemIr.val.kind === "f64" || elemIr.val.kind === "i32")) {
+        return irVec(elemIr, true);
+      }
       // (#2949 slice 3b) `any[]` elements keep their historical externref
       // vec representation — the AnyKeyword POSITION arm above now returns
       // `dynamic`, but element storage is a vec-layout decision (the
@@ -944,9 +955,19 @@ function resolvePositionType(
       ) {
         const typeArgs = node.typeArguments;
         if (typeArgs && typeArgs.length === 1) {
-          const elemIr = resolvePositionType(typeArgs[0]!, undefined, ctx, classShapes);
+          const elementType = typeArgs[0]!;
+          const elemIr = arrayElementRequiresOpaqueStorage(elementType)
+            ? irDynamic()
+            : resolvePositionType(elementType, undefined, ctx, classShapes);
+          if (elemIr.kind === "val" && (elemIr.val.kind === "f64" || elemIr.val.kind === "i32")) {
+            return irVec(elemIr, true);
+          }
           const elemVal =
-            elemIr.kind === "val" ? elemIr.val : elemIr.kind === "string" ? ({ kind: "externref" } as ValType) : null;
+            elemIr.kind === "val"
+              ? elemIr.val
+              : elemIr.kind === "string" || elemIr.kind === "dynamic"
+                ? ({ kind: "externref" } as ValType)
+                : null;
           if (!elemVal) {
             throw new Error(
               `Array<T> element TypeNode ${ts.SyntaxKind[typeArgs[0]!.kind]} could not be lowered to a primitive ValType`,
@@ -1896,6 +1917,9 @@ function makeIrImplicitParamTypeResolver(
     }
     if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
       const structName = ctx.typeIdxToStructName.get(inferred.typeIdx);
+      if (structName === "__vec_f64") {
+        return { kind: "object", type: irVec(irVal({ kind: "f64" }), true) };
+      }
       if (structName?.startsWith("__vec_") || structName?.startsWith("__arr_")) {
         return { kind: "object", type: irVal(inferred) };
       }
@@ -2031,6 +2055,7 @@ function planIrOverlay(
   const implicitParamUsesNumericVecAbi = (parameter: ts.ParameterDeclaration): boolean => {
     const projection = resolveImplicitParamType(parameter);
     if (projection?.kind !== "object") return false;
+    if (projection.type.kind === "vec") return asVal(projection.type.elementType)?.kind === "f64";
     const valueType = asVal(projection.type);
     if (valueType?.kind !== "ref" && valueType?.kind !== "ref_null") return false;
     return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";

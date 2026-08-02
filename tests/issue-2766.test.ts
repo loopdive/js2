@@ -50,12 +50,17 @@ function extractFunc(wat: string, name: string): string {
   return wat.slice(idx, i);
 }
 async function compileInfo(source: string, fn: string) {
-  const r = await compile(source);
+  const r = await compile(source, { trackIrOutcomes: true });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   const body = extractFunc(r.wat, fn);
   // A structured `if` (the SAFE bounds-check) vs `br_if` (ordinary loop branch).
   const hasStructuredIf = /\bif\b/.test(body.replace(/br_if/g, "BRIF"));
-  return { demotions: (r.irPostClaimErrors ?? []).length, hasStructuredIf, body };
+  return {
+    demotions: (r.irPostClaimErrors ?? []).length,
+    hasStructuredIf,
+    body,
+    outcome: r.irOutcomes?.find((candidate) => candidate.displayName === fn),
+  };
 }
 
 describe("#2766 — IR ElementAccess prove-then-specialize", () => {
@@ -112,6 +117,12 @@ describe("#2766 — IR ElementAccess prove-then-specialize", () => {
       const info = await compileInfo(src, "sum");
       expect(info.demotions).toBe(0); // stayed on the IR path
       expect(info.hasStructuredIf).toBe(false); // proven → NO bounds-check branch
+      expect(info.outcome).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
     });
 
     it("an UNPROVEN read emits a SAFE bounds-check branch (structural counterpart)", async () => {

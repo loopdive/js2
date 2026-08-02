@@ -7,13 +7,13 @@ import {
   type IrInstr,
   type IrObjectShape,
   type IrType,
-  type IrTypeRef,
+  type IrVecLayoutRef,
   mapNestedBuffers,
 } from "./nodes.js";
 
-export interface IrStringCarrierAttachment {
+export interface IrVecLayoutAttachment {
   readonly function: IrFunction;
-  readonly usesString: boolean;
+  readonly usesVec: boolean;
 }
 
 function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
@@ -26,21 +26,31 @@ function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
   return changed ? mapped : values;
 }
 
+function sameLayout(left: IrVecLayoutRef, right: IrVecLayoutRef): boolean {
+  return (
+    irTypeBindingKey(left.carrierType.binding) === irTypeBindingKey(right.carrierType.binding) &&
+    irTypeBindingKey(left.dataType.binding) === irTypeBindingKey(right.dataType.binding) &&
+    left.lengthFieldIndex === right.lengthFieldIndex &&
+    left.dataFieldIndex === right.dataFieldIndex
+  );
+}
+
 /**
- * Attach one canonical Program-ABI carrier identity to every string type in a
- * final IR function.
+ * Attach the final symbolic storage layout to every logical vector type.
  *
- * This is intentionally a preparation pass rather than a type-inference rule:
- * inference continues to produce the backend-neutral `string` kind, while the
- * program preparation boundary supplies the exact carrier identity selected
- * for this compilation. The walk covers nested type shapes and structured
- * instruction buffers so lowering cannot discover an unbound string carrier.
+ * This pass deliberately runs after inference and middle-end transforms. A
+ * backend may therefore select its physical carrier without leaking a Wasm
+ * type index into JS type propagation, call-graph analysis, or optimization.
+ * Existing attachments are checked rather than overwritten so a sealed
+ * component cannot later lower through a different layout.
  */
-export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): IrStringCarrierAttachment {
-  const carrierKey = irTypeBindingKey(carrierRef.binding);
+export function attachIrVecLayouts(
+  fn: IrFunction,
+  layoutFor: (type: Extract<IrType, { kind: "vec" }>) => IrVecLayoutRef,
+): IrVecLayoutAttachment {
   const typeMemo = new Map<IrType, IrType>();
   const objectMemo = new Map<IrObjectShape, IrObjectShape>();
-  let usesString = false;
+  let usesVec = false;
 
   const mapSignature = (signature: IrClosureSignature): IrClosureSignature => {
     const params = mapArray(signature.params, mapType);
@@ -67,27 +77,26 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
     if (cached) return cached;
     let mapped: IrType;
     switch (type.kind) {
-      case "string": {
-        usesString = true;
-        const existing = type.carrierRef;
-        if (existing && irTypeBindingKey(existing.binding) !== carrierKey) {
-          throw new Error(
-            `IR string type carries ${irTypeBindingKey(existing.binding)}, expected canonical carrier ${carrierKey}`,
-          );
+      case "vec": {
+        usesVec = true;
+        const placeholder = { ...type };
+        typeMemo.set(type, placeholder);
+        const elementType = mapType(type.elementType);
+        const candidate = { ...type, elementType };
+        const layout = layoutFor(candidate);
+        if (type.layout && !sameLayout(type.layout, layout)) {
+          throw new Error("IR vec type already carries a different prepared layout");
         }
-        mapped = existing ? type : { ...type, carrierRef };
+        mapped =
+          type.layout && elementType === type.elementType
+            ? type
+            : Object.assign(placeholder, { elementType, layout: type.layout ?? layout });
         break;
       }
       case "object": {
         const placeholder = { ...type };
         typeMemo.set(type, placeholder);
         mapped = Object.assign(placeholder, { shape: mapObjectShape(type.shape) });
-        break;
-      }
-      case "vec": {
-        const placeholder = { ...type };
-        typeMemo.set(type, placeholder);
-        mapped = Object.assign(placeholder, { elementType: mapType(type.elementType) });
         break;
       }
       case "closure":
@@ -97,13 +106,10 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
         mapped = Object.assign(placeholder, { signature: mapSignature(type.signature) });
         break;
       }
-      case "class": {
-        // Class shapes carry exact inventory/allocator sidecars keyed by
-        // object identity. Their class binding already owns the complete
-        // physical layout, so string preparation must preserve the shape.
+      case "class":
+        // Class shapes carry allocator sidecars keyed by object identity.
         mapped = type;
         break;
-      }
       case "union": {
         const placeholder = { ...type };
         typeMemo.set(type, placeholder);
@@ -117,6 +123,7 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
         break;
       }
       case "val":
+      case "string":
       case "extern":
       case "dynamic":
         mapped = type;
@@ -127,7 +134,6 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
   }
 
   const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(buffer, mapInstr);
-
   const mapInstr = (instr: IrInstr): IrInstr => {
     const nested = mapNestedBuffers(instr, mapBuffer);
     const resultType = nested.resultType === null ? null : mapType(nested.resultType);
@@ -187,7 +193,7 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
     (closureSubtype.signature === fn.closureSubtype?.signature &&
       closureSubtype.captureFieldTypes === fn.closureSubtype.captureFieldTypes);
   const mapped =
-    !usesString ||
+    !usesVec ||
     (params === fn.params && resultTypes === fn.resultTypes && blocks === fn.blocks && closureSubtypeUnchanged)
       ? fn
       : {
@@ -197,5 +203,5 @@ export function attachIrStringCarrier(fn: IrFunction, carrierRef: IrTypeRef): Ir
           blocks,
           ...(closureSubtype === undefined ? {} : { closureSubtype }),
         };
-  return Object.freeze({ function: mapped, usesString });
+  return Object.freeze({ function: mapped, usesVec });
 }

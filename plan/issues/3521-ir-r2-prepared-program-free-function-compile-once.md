@@ -67,13 +67,20 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/program-abi-session.ts
   - src/codegen/index.ts
+  - src/ir/backend/porffor/assembler.ts
+  - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower.ts
   - src/ir/nodes.ts
   - src/ir/verify.ts
 func-budget-allow:
+  - src/codegen/index.ts::planIrOverlay
   - src/codegen/index.ts::generateModule
+  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
   - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::makeResolver
+  - src/ir/lower.ts::lowerIrFunctionBody
 ---
 
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
@@ -1014,3 +1021,33 @@ publication.
 This is a prerequisite seam only. Prepared free-function ownership, terminal
 component outcomes, support-intent collection, and direct/IR emission
 accounting remain for the main R2 implementation.
+
+## 2026-08-02 symbolic vector-layout continuation
+
+Vector types in typed IR now carry only their logical element type and
+nullability. The WasmGC carrier struct and backing-array references are
+attached during final Program ABI preparation, after the backend and numeric
+element representation are known. Prepared-component dependency collection
+records both exact support-type roots and fails closed for a missing, invalid,
+or drifting layout. Vector helper identities are likewise logical; WasmGC,
+linear, and Porffor resolve them at their final lowering boundaries without
+embedding physical type indexes in IR provider names.
+
+Anti-vacuity coverage now proves that the quicksort-plus-main vector component
+is prepared and emits with `direct=0, IR=1`. The original #1198 complex fixture
+is retained and still exposes its separate bitwise/runtime-support dependency;
+a smaller dense-fill fixture proves the vector preparation path independently.
+#1001 counted push, #2780 fixed literals, #2766 bounds-sensitive reads, and
+#3734 i32 elements cover the migrated vector optimizations. The focused core
+matrix passes 57/57, the optimization matrix passes 69/69, and #3501 passes
+9 tests with 2 optional native tests skipped. Typecheck, formatting, staged
+lint, the changed-root hook, and the optimization-ledger checker pass. The
+ledger contains 21 decisions: 10 are IR-owned and the i32-element row is the
+first retirement-ready vector decision; four performance-attribution rows
+remain open.
+
+This slice does not claim the whole six-function Algorithms fixture. Its
+remaining component blockers are source-global storage, TDZ, and module-init
+ownership in #3523, plus throw/exception, `extern.call`, box/unbox, undefined,
+numeric, string, and console support providers in #3526. Those are independent
+of vector layout and remain the next prepared-ownership work.

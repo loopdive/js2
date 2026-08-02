@@ -28,6 +28,7 @@ import {
 } from "../../nodes.js";
 import type { IrLoweredBody, IrLowerResolver } from "../../lower.js";
 import { compareIrIdentity, type IrUnitId } from "../../identity.js";
+import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../../vector-runtime.js";
 import type { FuncHandle, FuncTypeDef, GlobalHandle, TypeHandle, ValType } from "../../types.js";
 import type { ModuleAssembler } from "../contract.js";
 import type { IrVecLowering, LinearMemoryFieldLowering, LinearVecLowering, PlannedObjectLowering } from "../handles.js";
@@ -1303,6 +1304,7 @@ export class PorfforModuleAssembler
       `vector element initialization for '${layout.id}'`,
     );
     return {
+      valueType: { kind: "i32" },
       vecStructTypeIdx: PORFFOR_LINEAR_F64_VEC_TYPE_INDEX,
       lengthFieldIdx: 0,
       dataFieldIdx: 0,
@@ -1394,6 +1396,13 @@ function isAllocationBindingOperation(operation: LinearRuntimeOperation): boolea
 }
 
 function linearArrayRuntimeKind(name: string): FunctionEntry["linearArrayRuntime"] {
+  if (name.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
+    const element = parseIrVectorRuntimeElement(name, IR_VEC_ELEM_SET_PREFIX);
+    if (element?.kind !== "f64") {
+      throw new Error(`porffor assembler: unsupported logical vector helper '${name}'`);
+    }
+    return "set";
+  }
   const set = /^__vec_elem_set_(\d+)$/.exec(name);
   if (set) {
     const vectorTypeIndex = Number(set[1]);

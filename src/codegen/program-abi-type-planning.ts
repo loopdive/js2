@@ -2,7 +2,7 @@
 
 import { irClassTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId } from "../ir/identity.js";
-import type { IrTypeRef } from "../ir/nodes.js";
+import type { IrTypeRef, IrVecLayoutRef } from "../ir/nodes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { StructTypeDef, TypeDef } from "../ir/types.js";
@@ -15,6 +15,8 @@ import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./progra
 const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   retainedModuleType: 0,
   stringCarrier: 1,
+  vectorCarrier: 2,
+  vectorData: 3,
   classLayout: 0,
 } as const);
 
@@ -35,6 +37,20 @@ function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
   return entrySources[0]!.id;
 }
 
+function vectorLogicalOrdinal(logicalKey: string): number {
+  switch (logicalKey) {
+    case "vec<f64>":
+      return 0;
+    case "vec<i32>":
+      return 1;
+    default:
+      throw new ProgramAbiInvariantError(
+        "unknown-order-anchor",
+        `vector layout ${logicalKey} has no stable Program ABI order`,
+      );
+  }
+}
+
 /**
  * Compilation-wide exact type/class-layout sidecar.
  *
@@ -47,6 +63,14 @@ function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
  */
 export class ProgramAbiTypeRegistry {
   private readonly classes = new Map<IrClassId, ProgramAbiClassLayoutObservation[]>();
+  private readonly vectorLayouts = new Map<
+    string,
+    {
+      readonly carrierCell: ProgramAbiTypeCell;
+      readonly dataCell: ProgramAbiTypeCell;
+      readonly layout: IrVecLayoutRef;
+    }
+  >();
   private planned = false;
 
   constructor(
@@ -152,6 +176,87 @@ export class ProgramAbiTypeRegistry {
     return ref;
   }
 
+  /**
+   * Plan the exact WasmGC carrier and backing-array types selected for one
+   * logical dense-vector type.
+   *
+   * `logicalKey` is derived from backend-neutral IrType structure. Physical
+   * indices are accepted only at this final allocator boundary and are
+   * converted immediately into remappable Program-ABI type cells.
+   */
+  prepareVectorLayout(logicalKey: string, vecStructTypeIdx: number, arrayTypeIdx: number): IrVecLayoutRef {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot prepare vector layout ${logicalKey} after retained type planning`,
+      );
+    }
+    if (logicalKey.length === 0) {
+      throw new ProgramAbiInvariantError("unknown-order-anchor", "vector layout requires a logical type key");
+    }
+    const carrierType = this.ctx.mod.types[vecStructTypeIdx];
+    const dataType = this.ctx.mod.types[arrayTypeIdx];
+    if (!carrierType || carrierType.kind !== "struct" || !dataType || dataType.kind !== "array") {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `vector ${logicalKey} references invalid carrier/data types ${vecStructTypeIdx}/${arrayTypeIdx}`,
+      );
+    }
+    const lengthField = carrierType.fields[0];
+    const dataField = carrierType.fields[1];
+    if (
+      carrierType.fields.length !== 2 ||
+      lengthField?.name !== "length" ||
+      lengthField?.type.kind !== "i32" ||
+      dataField?.name !== "data" ||
+      (dataField?.type.kind !== "ref" && dataField?.type.kind !== "ref_null") ||
+      dataField.type.typeIdx !== arrayTypeIdx
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `vector ${logicalKey} does not use the canonical { length, data } layout`,
+      );
+    }
+
+    const carrierCell = this.session.typeCellFor(carrierType) ?? this.session.createTypeCell(carrierType);
+    const dataCell = this.session.typeCellFor(dataType) ?? this.session.createTypeCell(dataType);
+    const existing = this.vectorLayouts.get(logicalKey);
+    if (existing) {
+      if (existing.carrierCell !== carrierCell || existing.dataCell !== dataCell) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `logical vector ${logicalKey} was observed with two physical layouts`,
+        );
+      }
+      return existing.layout;
+    }
+
+    const entrySourceId = canonicalEntrySource(this.session);
+    const logicalOrdinal = vectorLogicalOrdinal(logicalKey);
+    const carrierRef = irSupportTypeRef(
+      entrySourceId,
+      `vector-carrier:${logicalKey}`,
+      `__ir_vec_carrier_${logicalKey}`,
+    );
+    const dataRef = irSupportTypeRef(entrySourceId, `vector-data:${logicalKey}`, `__ir_vec_data_${logicalKey}`);
+    this.planPreparedSupportType(
+      carrierRef,
+      carrierType,
+      carrierCell,
+      PROGRAM_ABI_TYPE_ROLE.vectorCarrier,
+      logicalOrdinal,
+    );
+    this.planPreparedSupportType(dataRef, dataType, dataCell, PROGRAM_ABI_TYPE_ROLE.vectorData, logicalOrdinal);
+    const layout = Object.freeze({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 1,
+    });
+    this.vectorLayouts.set(logicalKey, Object.freeze({ carrierCell, dataCell, layout }));
+    return layout;
+  }
+
   /** Plan all source classes plus every retained allocator type after DCE. */
   planRetained(): void {
     if (this.planned) return;
@@ -245,6 +350,35 @@ export class ProgramAbiTypeRegistry {
       }),
       structuralReferenceKey,
       displayName: type.kind === "rec" ? `type#${finalIndex}` : (type.name ?? `type#${finalIndex}`),
+      slotPolicy: "required",
+      slotSpace: "type",
+      intent: {
+        kind: "type",
+        shapeKey: canonicalProgramAbiTypeDef(type),
+      },
+    });
+    this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
+    this.attachTypeLocator(ref.binding.bindingId, cell);
+  }
+
+  private planPreparedSupportType(
+    ref: IrTypeRef,
+    type: TypeDef,
+    cell: ProgramAbiTypeCell,
+    roleOrdinal: number,
+    derivedOrdinal: number,
+  ): void {
+    const entrySourceId = canonicalEntrySource(this.session);
+    const structuralReferenceKey = irTypeBindingKey(ref.binding);
+    this.session.ensurePlan({
+      id: ref.binding.bindingId,
+      structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
+        domain: "type",
+        roleOrdinal,
+        derivedOrdinal,
+      }),
+      structuralReferenceKey,
+      displayName: ref.name,
       slotPolicy: "required",
       slotSpace: "type",
       intent: {
