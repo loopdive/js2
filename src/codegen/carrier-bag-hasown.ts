@@ -1,71 +1,84 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4055) `__hasOwnProperty` / `__object_hasOwn`: consult the carrier own-property
- * side tables for a non-`$Object` receiver.
+ * (#4055) `__desc_has_own(obj, key)` — the HasProperty step of
+ * ToPropertyDescriptor (§6.2.5.6), widened to see the #3468 closure
+ * own-property side table.
  *
- * ## The gap (instance #7 of the #4080 family)
- * #3468 (closures) and #3537 (arrays) gave the terminal dynamic-property helpers
- * `__extern_get` / `__extern_set` / `__extern_method_call` a fallback for a
- * receiver that is not a `$Object`: an identity-keyed side table mapping the
- * carrier to a `$Object` "bag" holding its named own properties.
- *
- * `__hasOwnProperty` never got wired to it. Its body still bails with `0` on
- * `ref.test $Object`, so a function or array answered `false` for an own
- * property it had *just stored through the very same substrate*:
+ * ## The gap
+ * #3468 gave the terminal dynamic-property helpers `__extern_get` /
+ * `__extern_set` / `__extern_method_call` a fallback for a receiver that is not
+ * a `$Object`: an identity-keyed side table mapping the carrier to a `$Object`
+ * "bag" holding its own properties. The descriptor reader never got it, and
+ * `__obj_define_from_desc`'s ToPropertyDescriptor gates **every** field on
+ * HasProperty before reading it. So a **function used as a descriptor** — the
+ * dominant test262 spelling —
  *
  * ```js
- * var f = function () {};
- * f.enumerable = true;
- * f["enumerable"];                 // true   (__extern_get reads the bag)
- * f.hasOwnProperty("enumerable");  // false  <- the gap
+ * var descObj = function () {};
+ * descObj.enumerable = true;
+ * descObj.value = 42;
+ * Object.defineProperty(obj, "p", descObj);
  * ```
  *
- * ## Why this is worth fixing beyond `hasOwnProperty` itself
- * `__obj_define_from_desc`'s ToPropertyDescriptor (§6.2.5.6) gates **every**
- * descriptor field on `HasProperty` before reading it. With the gap, a
- * Function/Array descriptor carrier — the dominant test262 spelling, e.g.
- * `var descObj = function(){}; descObj.enumerable = true;` — produced an EMPTY
- * descriptor, and CompletePropertyDescriptor then filled in `undefined` + all
- * attributes `false`. Silently: no refusal, wrong content.
+ * produced an EMPTY descriptor, and CompletePropertyDescriptor filled in
+ * `undefined` plus all-false attributes. Silently: no refusal, wrong content —
+ * even though `descObj.enumerable` *reads* `true` through `__extern_get`.
  *
- * ## Why this is NOT the carrier-bag arm that #4047 measured and reverted
- * That arm resolved a **`Properties` map** through the bag. Enumerating a map
- * needs a COMPLETE own-key source, and the bag is not one — writes via
- * `props.p = v` land in the bag while `Object.defineProperty(props,"p",…)` lands
- * in the separate #3251 overlay (Array) or nowhere (Function). So it enumerated
- * an empty bag, defined nothing, and returned normally: a silent no-op on the
- * more idiomatic spelling.
+ * ## Why this is a SEPARATE native, not a change to `__hasOwnProperty` (#4017)
+ * The first version of this fix widened `__hasOwnProperty` / `__object_hasOwn`
+ * themselves. It kept every flip and it was auto-parked out of the merge queue
+ * for costing **684 host-free passes**: `Object.prototype.hasOwnProperty` is
+ * reached by `propertyHelper.js` on every `built-ins/**\/{name,length}.js` test —
+ * ~700 files, of which 696 failed with "descriptor should be configurable".
  *
- * `hasOwnProperty(k)` is a **fixed-key presence query**. It needs no key source
- * at all, and the bag is exactly where `__extern_set` put the write, so presence
- * and read agree by construction. `Object.defineProperty(fun,"p",…)` still lands
- * nowhere and this arm still answers `false` for it — the same answer as today,
- * so no new inconsistency is introduced.
+ * The lesson is NOT "that arm was subtly wrong". Its answers were the ones asked
+ * for. It was wired at the most GENERAL point that could express the fix, and
+ * generality there IS blast radius. ToPropertyDescriptor is the only caller that
+ * needs this, so the widening now lives in a native only it calls;
+ * `Object.prototype.hasOwnProperty`, `Object.hasOwn` and `propertyIsEnumerable`
+ * are byte-identical to before.
+ *
+ * Worth recording because the harness-only trigger was never isolated: three
+ * candidate mechanisms were measured and all three failed to reproduce outside
+ * the full harness assembly (gOPD reads `configurable: true` on BOTH arms;
+ * `isConfigurable`'s delete-then-hasOwn already answers wrong on BOTH arms;
+ * the `verifyProperty` vacuity gate is `true` on BOTH arms). When a mechanism
+ * resists isolation, narrowing the change until the mechanism is out of scope
+ * beats chasing it.
+ *
+ * ## Why a fixed-key presence query over the bag is sound
+ * #4047 measured a carrier-bag arm at +6 and reverted it: resolving a
+ * `Properties` MAP through the bag needs a COMPLETE own-key source, and the bag
+ * is not one — `props.p = v` lands in the bag while
+ * `Object.defineProperty(props,"p",…)` lands in the separate #3251 overlay
+ * (Array) or nowhere (Function). Enumerating it defines nothing and returns
+ * normally: a silent no-op on the more idiomatic spelling.
+ *
+ * HasProperty over a FIXED key needs no key source at all, and the bag is
+ * exactly where `__extern_set` put the write, so presence and read agree by
+ * construction. `Object.defineProperty(fun,"p",…)` still lands nowhere and this
+ * still answers `false` for it — the same answer as before.
  *
  * ## LOOKUP, never ENSURE
- * The bag is read with `__vec_bag_lookup` / `__closure_bag_lookup`, never the
- * `_ensure` variants: a presence *query* must not allocate a bag, or merely
- * observing a value would mutate the side table and give a later
+ * The bag is read with `__closure_bag_lookup`, never `__closure_bag_ensure`: a
+ * presence *query* must not allocate a bag, or merely asking whether a
+ * descriptor has a `value` field would mutate the side table and hand a later
  * `__integrity_bag` consumer a carrier that previously had none.
  *
- * ## The ARRAY half is deliberately NOT here — measured, not assumed
- * `fillVecHasOwnHelpers` (`vec-overlay.ts`) **unshifts** a prologue into
- * `__hasOwnProperty` that answers from `__vec_gopd` and `return`s for EVERY vec
- * receiver, so no arm placed in the body can be reached for an array. Verified
- * by probe: with an array carrier, `hasOwnProperty("0")` is `true` and
- * `hasOwnProperty("9")` is `false` (the overlay answering indices) while
- * `arr.q = 5; arr.hasOwnProperty("q")` is `false` even though `arr.q` reads `5`.
- *
- * That is the #3251-overlay-vs-#3537-bag split — the two disjoint identity-keyed
- * side tables filed as **#4010** — and reconciling them is that issue's job, not
- * a symptom fix's. A vec arm was written here, measured unreachable, and removed
- * rather than shipped as decoration.
+ * ## The ARRAY half is deliberately absent — measured, not assumed
+ * A vec arm was written and measured **unreachable**: `fillVecHasOwnHelpers`
+ * (`vec-overlay.ts`) unshifts a prologue into `__hasOwnProperty` that answers
+ * from `__vec_gopd` and returns for EVERY vec receiver. Probe: `a=[1,2,3];
+ * a.q=5` gives `a.q === 5` and `a.hasOwnProperty("0") === true` but
+ * `a.hasOwnProperty("q") === false`. That is the #3251-overlay-vs-#3537-bag
+ * split filed as **#4010**. Removed rather than shipped as decoration.
  *
  * ## Ownership / byte-neutrality
  * Composition only — `closure-props.ts` (#3468) and `vec-props.ts` (#3537) are
- * not edited; this module reaches their helpers by name through `funcMap`. Every
- * builder returns `[]` when a substrate is absent, which is the host/gc case, so
- * the non-standalone output stays byte-identical.
+ * not edited; this reaches their helpers by name through `funcMap`. When the
+ * substrate is absent (host/gc, where the `env::__extern_*` imports own the
+ * dynamic-property path) the native degrades to a plain `__hasOwnProperty`
+ * forward, so non-standalone output is unchanged.
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -74,97 +87,115 @@ import type { CodegenContext } from "./context/types.js";
 const IS_CLOSURE_PROP_CARRIER = "__is_closure_prop_carrier";
 const CLOSURE_BAG_LOOKUP = "__closure_bag_lookup";
 
-/** Splice-site contract: the host function's `$Object` type + `__obj_find` idx. */
-export interface BagHasOwnArgs {
-  /** `__obj_find(ref $Object, externref key) -> ref null $PropEntry`. */
-  objFindIdx: number;
-  /** The `$Object` struct type index. */
-  objectTypeIdx: number;
-}
+/** The descriptor-scoped HasProperty native minted here. */
+export const DESC_HAS_OWN = "__desc_has_own";
+
+/** Minter signature shared with `ensureObjectRuntime`'s `registerNative`. */
+type RegisterNative = (
+  name: string,
+  paramTypes: ValType[],
+  resultTypes: ValType[],
+  locals: { name: string; type: ValType }[],
+  body: Instr[],
+) => number;
+
+/** Params are 0/1; the single local `bag` is 2. */
+const BAG = 2;
 
 /**
- * The local `emitHasOwn` must append for {@link buildHasOwnNonObjectBail} to use.
- * Declared here so the index below and the registration stay in one place — the
- * arm reads it by absolute index, which is exactly the coupling that rots when
- * the two halves live in different files.
- */
-export const HASOWN_BAG_LOCAL: { readonly name: string; readonly type: ValType } = {
-  name: "bag",
-  type: { kind: "externref" },
-};
-
-/** `emitHasOwn` params are 0/1 and its first local (`any`) is 2, so `bag` is 3. */
-const BAG_LOCAL_INDEX = 3;
-
-/**
- * `__obj_find(bag, key) != null`, returned from the enclosing function.
+ * Register `__desc_has_own(externref obj, externref key) -> i32`:
  *
- * A FACTORY, never a shared array: the result is spliced into two arms of the
- * same body, and aliasing one `Instr[]` into both makes the finalize walks remap
- * it twice (see `reference_shared_instr_object_dce_double_remap`).
+ * ```
+ * if (__hasOwnProperty(obj, key)) return 1;          // never overridden
+ * if (__is_closure_prop_carrier(obj)) {
+ *   bag = __closure_bag_lookup(obj);                 // LOOKUP, never ensure
+ *   if (bag != null && bag is $Object) return __obj_find(bag, key) != null;
+ * }
+ * return 0;
+ * ```
  *
- * The `ref.test` guard is not decoration — a bag is always a `__new_plain_object`
- * product today, but a bare `ref.cast` here would turn any future substrate
- * change into a runtime trap inside a helper that must never throw.
+ * The `__hasOwnProperty` call comes FIRST so every answer the existing helper
+ * gives is preserved exactly — the bag is a strict fallback for the cases it
+ * answers `false` on, never an override. That ordering is what keeps this
+ * additive rather than a redirection.
+ *
+ * Returns the funcIdx, or `undefined` when a dependency is missing, in which
+ * case callers keep using `__hasOwnProperty` directly.
  */
-function bagProbe(args: BagHasOwnArgs): Instr[] {
-  return [
-    { op: "local.get", index: BAG_LOCAL_INDEX },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: args.objectTypeIdx },
+export function registerDescriptorHasOwn(
+  ctx: CodegenContext,
+  registerNative: RegisterNative,
+  args: { hasOwnIdx: number; objFindIdx: number; objectTypeIdx: number },
+): number | undefined {
+  const existing = ctx.funcMap.get(DESC_HAS_OWN);
+  if (existing !== undefined) return existing;
+
+  const isCarrierIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+  const bagLookupIdx = ctx.funcMap.get(CLOSURE_BAG_LOOKUP);
+
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: args.hasOwnIdx },
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: BAG_LOCAL_INDEX },
-        { op: "any.convert_extern" },
-        { op: "ref.cast", typeIdx: args.objectTypeIdx },
-        { op: "local.get", index: 1 }, // key
-        { op: "call", funcIdx: args.objFindIdx },
-        { op: "ref.is_null" },
-        { op: "i32.eqz" },
-        { op: "return" },
-      ],
+      then: [{ op: "i32.const", value: 1 }, { op: "return" }],
     },
   ];
-}
 
-/** One carrier arm: `if (isCarrier(obj)) { bag = lookup(obj); if (bag) probe }`. */
-function carrierArm(ctx: CodegenContext, isCarrierName: string, bagLookupName: string, args: BagHasOwnArgs): Instr[] {
-  const isCarrierIdx = ctx.funcMap.get(isCarrierName);
-  const bagLookupIdx = ctx.funcMap.get(bagLookupName);
-  if (isCarrierIdx === undefined || bagLookupIdx === undefined) return [];
-  return [
-    { op: "local.get", index: 0 }, // obj
-    { op: "call", funcIdx: isCarrierIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: 0 }, // obj
-        { op: "call", funcIdx: bagLookupIdx },
-        { op: "local.tee", index: BAG_LOCAL_INDEX },
-        { op: "ref.is_null" },
-        { op: "i32.eqz" },
-        { op: "if", blockType: { kind: "empty" }, then: bagProbe(args) },
-      ],
-    },
-  ];
-}
+  if (isCarrierIdx !== undefined && bagLookupIdx !== undefined) {
+    body.push(
+      { op: "local.get", index: 0 },
+      { op: "call", funcIdx: isCarrierIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: bagLookupIdx },
+          { op: "local.tee", index: BAG },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              // The `ref.test` is not decoration: a bag is a
+              // `__new_plain_object` product today, but a bare `ref.cast` would
+              // turn any future substrate change into a trap inside a helper
+              // that must never throw (#3468 S1 discipline).
+              { op: "local.get", index: BAG },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: args.objectTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: BAG },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: args.objectTypeIdx },
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: args.objFindIdx },
+                  { op: "ref.is_null" },
+                  { op: "i32.eqz" },
+                  { op: "return" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    );
+  }
 
-/**
- * The WHOLE `then:` body of `emitHasOwn`'s `ref.test $Object` bail: consult the
- * carrier bag, else answer `false`.
- *
- * It owns the terminal `i32.const 0; return` so the caller in `object-runtime.ts`
- * stays a single expression — the arm and the answer it falls through to are one
- * decision and belong in one place. A `$Object` receiver never reaches here, so
- * it pays nothing for the carrier predicate.
- */
-export function buildHasOwnNonObjectBail(ctx: CodegenContext, args: BagHasOwnArgs): Instr[] {
-  return [
-    ...carrierArm(ctx, IS_CLOSURE_PROP_CARRIER, CLOSURE_BAG_LOOKUP, args),
-    { op: "i32.const", value: 0 },
-    { op: "return" },
-  ];
+  body.push({ op: "i32.const", value: 0 });
+
+  return registerNative(
+    DESC_HAS_OWN,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    [{ name: "bag", type: { kind: "externref" } }],
+    body,
+  );
 }

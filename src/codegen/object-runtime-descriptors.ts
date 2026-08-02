@@ -1049,7 +1049,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
     const exnTagIdx = ensureExnTag(ctx);
-    const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty")!;
+    // (#4055) `__hasOwnProperty` PLUS the #3468 closure bag — scoped to this
+    // caller, because widening the helper itself cost 684 host-free passes
+    // (#4017). Rationale in carrier-bag-hasown.ts; fallback for host/gc.
+    const hasOwnIdx = ctx.funcMap.get("__desc_has_own") ?? ctx.funcMap.get("__hasOwnProperty")!;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
     const typeofObjectIdx = ctx.funcMap.get("__typeof_object")!;
@@ -1762,7 +1765,10 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     const typeErrorCtorIdx = ctx.funcMap.get("__new_TypeError")!;
     const exnTagIdx = ensureExnTag(ctx);
-    const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty")!;
+    // (#4055) `__hasOwnProperty` PLUS the #3468 closure bag — scoped to this
+    // caller, because widening the helper itself cost 684 host-free passes
+    // (#4017). Rationale in carrier-bag-hasown.ts; fallback for host/gc.
+    const hasOwnIdx = ctx.funcMap.get("__desc_has_own") ?? ctx.funcMap.get("__hasOwnProperty")!;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy")!;
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function")!;
     const typeofObjectIdx = ctx.funcMap.get("__typeof_object")!;

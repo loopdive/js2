@@ -17,18 +17,22 @@ goal: standalone-mode
 assignee: ttraenkler/L-descriptor
 related: [4080, 4047, 3957, 3468, 3537, 4010, 4061, 4062, 4071]
 # (#3102 / #3400) The fix itself is a NEW subsystem module,
-# `src/codegen/carrier-bag-hasown.ts`. What lands in the god-file is the
-# irreducible splice: one import, a three-line rationale comment, one call, and
-# one entry in the locals list — +4 LOC, +3 in `ensureObjectRuntime`. The bail
-# body (including its terminal `i32.const 0; return`) was deliberately moved
-# INTO the module so the arm and the answer it falls through to stay one
-# decision; that is what took the growth from +17/+16 down to +4/+3. There is no
-# smaller shape: `emitHasOwn` registers the helper, so the local must be declared
-# at the registration site.
+# `src/codegen/carrier-bag-hasown.ts`. What lands in the two god-files is only
+# the wiring that cannot live anywhere else:
+#   - object-runtime.ts (+14 / +13 in `ensureObjectRuntime`): the native must be
+#     registered where `registerNative`, `__hasOwnProperty` and `__obj_find` are
+#     all in scope, which is inside that function. The comment explains WHY it is
+#     a separate native and not a widening of `__hasOwnProperty` — that is the
+#     #4017 park in one paragraph, and it is the load-bearing part.
+#   - object-runtime-descriptors.ts (+6): two ToPropertyDescriptor call sites, 3
+#     lines each. Already shrunk once (5-line comments → 3) since the rationale
+#     lives in the module; the remainder is the `??` fallback plus its pointer.
 loc-budget-allow:
   - src/codegen/object-runtime.ts
+  - src/codegen/object-runtime-descriptors.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
 ---
 # LEVER 1 — property-descriptor model in standalone: 835 ≤ES5 failures across defineProperty/defineProperties/create/gOPD
 
@@ -77,113 +81,116 @@ expected`, else exit 9), and the two arms' row SETS compared for identity before
 any delta was computed. Harness: `runTest262File(…, "standalone")`, read from the
 JSONL — never a vitest reporter tally.
 
-## SHIPPED — `__hasOwnProperty` never got the carrier own-property bag
+## SHIPPED — ToPropertyDescriptor's HasProperty never saw the carrier bag
 
-`src/codegen/carrier-bag-hasown.ts` (new) + a 4-line splice into `emitHasOwn`.
+`src/codegen/carrier-bag-hasown.ts` (new) + a registration in `emitHasOwn`'s
+enclosing function and a 3-line rewire at each of the two ToPropertyDescriptor
+call sites.
 
-#3468 (closures) gave `__extern_get` / `__extern_set` / `__extern_method_call` a
-fallback for a receiver that is not a `$Object`: an identity-keyed side table
-mapping the carrier to a `$Object` "bag" of its own properties.
-**`__hasOwnProperty` was never wired to it** and still bailed with `0` on
-`ref.test $Object`. So a function denied a property it had just stored *through
-the same substrate*:
+#3468 gave `__extern_get` / `__extern_set` / `__extern_method_call` a fallback
+for a receiver that is not a `$Object`: an identity-keyed side table mapping the
+carrier to a `$Object` "bag" of its own properties. **The descriptor reader was
+never wired to it**, and `__obj_define_from_desc`'s ToPropertyDescriptor
+(§6.2.5.6) gates **every** field on HasProperty before reading it. So a
+**function used as a descriptor** — the dominant test262 spelling,
+`var descObj = function(){}; descObj.enumerable = true;` — produced an EMPTY
+descriptor and CompletePropertyDescriptor filled in `undefined` plus all-false
+attributes. Silently, even though `descObj.enumerable` *reads* `true`.
 
-```js
-var f = function () {};
-f.enumerable = true;
-f["enumerable"];                 // true   — __extern_get reads the bag
-f.hasOwnProperty("enumerable");  // false  — the gap
-```
+Instance **#7 of the #4080 family**: a correct treatment exists and one consumer
+was never wired to it.
 
-That is not merely a wrong boolean. `__obj_define_from_desc`'s
-ToPropertyDescriptor (§6.2.5.6) gates **every** descriptor field on
-`HasProperty` before reading it, so a **Function descriptor carrier** — the
-dominant test262 spelling, `var descObj = function(){}; descObj.enumerable =
-true;` — produced an EMPTY descriptor and CompletePropertyDescriptor filled in
-`undefined` plus all-false attributes. Silently: no refusal, wrong content.
+### The first version of this fix was auto-parked — and why the second is scoped
 
-This is **instance #7 of the #4080 family**: a correct treatment exists and one
-consumer never got wired to it.
+v1 widened `__hasOwnProperty` / `__object_hasOwn` themselves. Every flip held and
+the PR was green, and the `merge_group` re-validation parked it for breaching the
+standalone host-free floor by **-457** (the artifact diff later put it at **-684**).
 
-### Why this is NOT the carrier-bag arm #4047 measured at +6 and reverted
+Composition of the loss, from the merge-queue artifacts: **713 files lost
+host-free pass**, of which **682 (95.7 %) are `name.js` / `length.js`** and
+**696 fail with "descriptor should be configurable"**. `propertyHelper.js`
+reaches `Object.prototype.hasOwnProperty` on every `built-ins/**/{name,length}.js`
+test — a **~700-file population that is disjoint from every stratum v1 sampled**.
 
-That arm resolved a **`Properties` map** through the bag. Enumerating a map needs
-a COMPLETE own-key source and the bag is not one — `props.p = v` lands in the
-bag while `Object.defineProperty(props,"p",…)` lands in the separate #3251
-overlay (Array) or nowhere (Function) — so it enumerated empty, defined nothing
-and returned normally.
+**The lesson is not that v1's arm was subtly wrong.** Its answers were the ones
+asked for. It was wired at the most GENERAL point that could express the fix, and
+generality there *is* blast radius. v2 puts the widening in `__desc_has_own`, a
+native only ToPropertyDescriptor calls; `Object.prototype.hasOwnProperty`,
+`Object.hasOwn` and `propertyIsEnumerable` are byte-identical to before.
 
-`hasOwnProperty(k)` is a **fixed-key presence query**. It needs no key source at
-all, and the bag is exactly where `__extern_set` put the write, so presence and
-read agree by construction. `Object.defineProperty(fun,"p",…)` still lands
-nowhere and this arm still answers `false` for it — the same answer as today, so
-no new inconsistency is introduced. `tests/issue-3957.test.ts` and
-`tests/issue-3468-closure-own-props.test.ts` both still pass.
+`__desc_has_own` calls `__hasOwnProperty` **first** and consults the bag only if
+that answered false — the bag can add a `true` the helper declined, never
+override one it gave. Additive, not a redirection.
 
-### Measured: +14 flips, 0 regressions
+**The harness-only trigger was never isolated, and that is recorded on purpose.**
+Three candidate mechanisms were measured and all three failed to reproduce
+outside the full harness assembly: `gOPD(Math.ceil,"length").configurable` reads
+`true` on BOTH arms; `isConfigurable`'s real body (`delete obj[name]; return
+!__hasOwnProperty(obj,name)`, with the harness's `Function.prototype.call.bind`
+alias) already answers wrong on BOTH arms — pre-existing, not the delta; and
+`verifyProperty`'s vacuity gate `__hasOwnProperty(desc,'configurable')` is `true`
+on BOTH arms. **When a mechanism resists isolation, narrowing the change until
+the mechanism is out of scope beats chasing it.**
 
-Instrument validated first: the BASELINE arm agreed with the published standalone
-baseline on **203 / 203** rows.
+### Why a fixed-key presence query over the bag is sound
 
-| stratum | denominator | n | base pass | treat pass | fail→PASS | pass→FAIL |
-|---|---|--:|--:|--:|--:|--:|
-| **T** failing ≤ES5 descriptor-area files with a FUNCTION descriptor carrier | **census** — all 78 | 78 | 0 | 14 | **+14** | 0 |
-| **W** failing with an expando descriptor build on a NON-function carrier | 40 sampled of 98 | 40 | 0 | 0 | 0 | 0 |
-| **N** currently-PASSING files asserting a **FALSE** `hasOwnProperty` result | 45 sampled of 206 | 45 | 45 | 45 | 0 | **0** |
-| **C** currently-PASSING descriptor-area files | 40 sampled of 1,775 | 40 | 40 | 40 | 0 | **0** |
+#4047 measured a carrier-bag arm at +6 and reverted it: resolving a `Properties`
+MAP through the bag needs a COMPLETE own-key source, and the bag is not one —
+`props.p = v` lands in the bag while `Object.defineProperty(props,"p",…)` lands
+in the separate #3251 overlay (Array) or nowhere (Function). It enumerated
+empty, defined nothing, and returned normally.
 
-Stratum **N** exists because this change is **bidirectional** — it flips
-`hasOwnProperty` false→true, so the failure mode to detect is OVER-reporting. It
-is sampled from files that assert a *negative* `hasOwn` result across
-`built-ins/{Object,Function,Array}`. Zero moved.
+HasProperty over a **fixed key** needs no key source at all, and the bag is
+exactly where `__extern_set` put the write, so presence and read agree by
+construction. `Object.defineProperty(fun,"p",…)` still lands nowhere and this
+still answers `false` for it — the same answer as before.
 
-- **Flip ratio on the targeted population: 14 / 78 = 17.9 %** — a CENSUS of the
-  function-carrier stratum, not a sample, so no extrapolation is involved.
-- Load was 11.98 entering the baseline arm and 10.52 entering the treatment arm;
-  both arms produced **0 `compile_error`** rows, so no contention flake to
-  re-run solo.
-- Attribution proved by **kill-switch removal**: the baseline arm is the same
-  worktree with the carrier arm suppressed, so `emitHasOwn`'s bail falls straight
-  through to `i32.const 0`. The shipped source was then re-run over the T census
-  to confirm it reproduces the treatment arm exactly (see below).
+### Measured
 
-### Vacuity audit of the 14 flips
+| check | result |
+| --- | --- |
+| function-carrier flip **census**, all 78 files | **14 pass** — every v1 flip survives the rescope |
+| `Math/ceil/length.js` + `Array/prototype/fill/name.js` (the park repro) | 2/2 pass (v1: 0/2) |
+| **`built-ins/**/{name,length}.js` acceptance stratum**, 972 files | **971/972 agree with baseline; 0 baseline-pass → FAIL**, 1 baseline-fail → PASS |
+| unit + neighbour guard suites (9 files) | 100/100 |
 
-Every one carries at least one POSITIVE assertion; none is satisfiable by a
-silent no-op:
+The 972-file stratum is a **standing control adopted from this park**: it is
+uniformly hit by `propertyHelper.js` and invisible from descriptor-area sampling.
+One arm is exact here because every row is baseline-scored.
 
-- `obj.property === "Function"` / `"functionGetProperty"` — a real value, and in
-  `-3-218` a **getter that must fire** (`create/15.2.3.5-4-244`,
-  `defineProperties/15.2.3.7-5-b-{125,204}`, `defineProperty/15.2.3.6-3-{139,218}`)
-- `accessed !== true` — for-in must SEE the property
-  (`create/15.2.3.5-4-59`, `defineProperties/15.2.3.7-5-b-19`,
-  `defineProperty/15.2.3.6-3-33`)
-- `result1 === true` (`create/15.2.3.5-4-112`, `defineProperties/15.2.3.7-5-b-72`)
-- `beforeWrite && afterWrite` — `writable` honoured (`15.2.3.6-3-165`);
-  `beforeDeleted === true` — `configurable` honoured (`15.2.3.6-3-86`)
-- `hasProperty !== true` + `data === "overrideData"` — a **setter that must
-  fire** (`create/15.2.3.5-4-279`, `defineProperty/15.2.3.6-3-248`)
+### Why v1's controls could not have caught it
 
-`15.2.3.6-3-248` asserts `obj.hasOwnProperty("property")`, which would be
-circular if `obj` were the changed receiver — it is not: `obj` is a plain `{}`
-and the carrier is `funObj`. Its companion `data === "overrideData"` is an
-independent positive.
+Not "my controls missed it" — **the controls were incapable of seeing it**, two
+ways, and both are now closed:
 
-### Deliberately NOT shipped in this slice — the ARRAY half
+1. **`runTest262File` does not apply the #2961 host-import refusal.**
+   `standaloneHostImportError` is called only from `runSyntheticTest262File`, so
+   every runner-based control is structurally blind to `host_import_leak_class`
+   — the axis the floor scores. An imports check now goes into every standalone
+   control from the start (`WebAssembly.Module.imports` / `result.imports`, with
+   a positive control, since "0 imports everywhere" is otherwise indistinguishable
+   from a broken probe).
+2. **The affected population was disjoint from every stratum sampled.** v1's
+   controls were 45 negative-`hasOwnProperty` files and 40 descriptor-area
+   passing files. The regression lived in ~700 `name`/`length` files asserting
+   `configurable: true` on a property that legitimately exists — a *third*
+   direction neither stratum covers.
 
-A vec (array) arm was written, **measured unreachable, and removed rather than
-shipped as decoration**. `fillVecHasOwnHelpers` (`vec-overlay.ts`) **unshifts** a
-prologue into `__hasOwnProperty`/`__object_hasOwn` that answers from
-`__vec_gopd` and `return`s for EVERY vec receiver, so no arm placed in the body
-can be reached for an array. Probe: `a=[1,2,3]; a.q=5` gives `a.q === 5`,
+A corpus-wide 220-file pass→fail sweep run during the diagnosis did catch it
+independently (**7 pass→FAIL, all `name.js`/`length.js`, all "descriptor should
+be configurable"**, 3.2 % vs the artifact diff's 2.6 %) — so the sweep *axis* was
+sound and only the *stratum* was wrong.
+
+### Deliberately NOT shipped — the ARRAY half
+
+A vec arm was written, **measured unreachable, and removed rather than shipped as
+decoration**. `fillVecHasOwnHelpers` (`vec-overlay.ts`) **unshifts** a prologue
+into `__hasOwnProperty` that answers from `__vec_gopd` and `return`s for EVERY
+vec receiver. Probe: `a=[1,2,3]; a.q=5` gives `a.q === 5`,
 `a.hasOwnProperty("0") === true`, `a.hasOwnProperty("9") === false`, but
-`a.hasOwnProperty("q") === false`.
-
-That is the #3251-overlay-vs-#3537-bag split — the two disjoint identity-keyed
-side tables filed as **#4010** — and reconciling them is that issue's job. The
-boundary is pinned by the last case in `tests/issue-4055.test.ts` so it stays a
-decision rather than an oversight. **This slice fixes a symptom, not the
-substrate**, and says so.
+`a.hasOwnProperty("q") === false`. That is the #3251-overlay-vs-#3537-bag split
+filed as **#4010**. Pinned by a test so it stays a decision, not an oversight.
+**This slice fixes a symptom, not the substrate.**
 
 ## REFUTED and NOT shipped — `isOpenDescriptorShape` is worth +0
 

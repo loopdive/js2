@@ -81,7 +81,7 @@ import { buildClosureRefTestArms } from "./closure-classifier.js"; // (#3140) __
 import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "./closure-exports.js"; // (#3592) under-application widening
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
-import { HASOWN_BAG_LOCAL, buildHasOwnNonObjectBail } from "./carrier-bag-hasown.js"; // (#4055) hasOwn over the #3468 bag
+import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
@@ -3005,10 +3005,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       {
         op: "if",
         blockType: { kind: "empty" },
-        // (#4055) A closure receiver is not a `$Object` but keeps its own
-        // properties in the #3468 bag that `__extern_get`/`__extern_set`
-        // already use; answering `false` here denied a property just stored.
-        then: buildHasOwnNonObjectBail(ctx, { objFindIdx, objectTypeIdx }),
+        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
       },
       // e = __obj_find(cast<$Object>(any), key) ; return e != null
       { op: "local.get", index: 2 },
@@ -3022,12 +3019,25 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       name,
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
-      [{ name: "any", type: { kind: "anyref" } }, HASOWN_BAG_LOCAL],
+      [{ name: "any", type: { kind: "anyref" } }],
       body,
     );
   };
   emitHasOwn("__hasOwnProperty");
   emitHasOwn("__object_hasOwn");
+
+  // (#4055) ToPropertyDescriptor's HasProperty step, and ONLY it, must also see
+  // the #3468 closure own-property bag — a function used as a descriptor keeps
+  // its `value`/`enumerable`/… there, and gating each field on a bag-blind
+  // HasProperty yielded an empty descriptor with all-false defaults. Deliberately
+  // a separate native rather than a widening of `__hasOwnProperty`: #4017 tried
+  // the latter and cost 684 host-free passes via `propertyHelper.js`. See
+  // carrier-bag-hasown.ts.
+  registerDescriptorHasOwn(ctx, registerNative, {
+    hasOwnIdx: ctx.funcMap.get("__hasOwnProperty")!,
+    objFindIdx,
+    objectTypeIdx,
+  });
 
   // ── __propertyIsEnumerable(externref obj, externref key) -> i32 (#2541) ─────
   //
