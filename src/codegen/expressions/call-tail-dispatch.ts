@@ -52,6 +52,7 @@ import {
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { compileSuperElementMethodCall } from "./new-super.js";
+import { tryEmitStoredMemberClosureCall } from "./stored-member-closure-call.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -1900,6 +1901,20 @@ export function compileTailDispatch(
         return { kind: "externref" };
       }
     }
+  }
+
+  // (#4096) LAST arm before the graceful fallback: `o.f(…)` where `f` is a
+  // function-valued member STORED on a closed-typed receiver (the expando shape
+  // `o.f = function(){…}` / `o.m = String.prototype.m`). Its Wasm carrier is a
+  // concrete struct ref, so the any-receiver closed-method dispatcher — where
+  // #3117 already handles the field-stored-closure case — never sees it, and no
+  // static arm claims it either. Without this the call reaches the fallback
+  // below and silently answers `undefined` while the callee never runs. Placed
+  // here deliberately: everything it can claim produces `ref.null.extern` today,
+  // so it cannot displace a working path.
+  {
+    const __smcResult = tryEmitStoredMemberClosureCall(ctx, fctx, expr);
+    if (__smcResult !== undefined) return __smcResult;
   }
 
   // Graceful fallback: compile the callee expression and all arguments for side effects,
