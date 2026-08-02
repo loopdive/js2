@@ -1,7 +1,7 @@
 {
   "generated": "2026-08-02",
   "threshold": 1500,
-  "totalCeiling": 525420,
+  "totalCeiling": 525842,
   "files": {
     "src/codegen-linear/index.ts": 5614,
     "src/codegen-linear/runtime.ts": 4306,
@@ -32,8 +32,8 @@
     "src/codegen/expressions/call-receiver-method.ts": 3591,
     "src/codegen/expressions/call-tail-dispatch.ts": 1922,
     "src/codegen/expressions/calls-closures.ts": 1638,
-    "src/codegen/expressions/calls.ts": 8444,
-    "src/codegen/expressions/identifiers.ts": 2021,
+    "src/codegen/expressions/calls.ts": 8452,
+    "src/codegen/expressions/identifiers.ts": 2018,
     "src/codegen/expressions/new-super.ts": 4426,
     "src/codegen/expressions/operator-assignment.ts": 3136,
     "src/codegen/expressions/unary-updates.ts": 1881,
@@ -61,7 +61,7 @@
     "src/codegen/statements/control-flow.ts": 1758,
     "src/codegen/statements/for-of-destructuring.ts": 2127,
     "src/codegen/statements/loops.ts": 3695,
-    "src/codegen/statements/nested-declarations.ts": 2791,
+    "src/codegen/statements/nested-declarations.ts": 2730,
     "src/codegen/statements/variables.ts": 1784,
     "src/codegen/string-ops.ts": 3755,
     "src/codegen/type-coercion.ts": 4168,
