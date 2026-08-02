@@ -1,10 +1,11 @@
 {
   "id": "4076",
   "assignee": "ttraenkler/H-errmodel",
-  "requested_by": "ttraenkler/H-errmodel",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-4044-borrowed-proto-this-brand",
   "claimed_at": "2026-08-02T04:26:14Z",
-  "updated_at": "2026-08-02T04:26:14Z",
-  "write_id": "10604-4k5bqsf4"
+  "updated_at": "2026-08-02T05:29:09Z",
+  "write_id": "81951-ldzq04uu",
+  "released_at": "2026-08-02T05:29:09Z"
 }
