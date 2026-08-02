@@ -15,6 +15,9 @@ import {
   isSkipCiOnlyDivergence,
   enqueueEligibility,
   divergenceCommitMessages,
+  classifyChecks,
+  requiredCheckNames,
+  REQUIRED_CHECK_FALLBACK,
 } from "../scripts/enqueue-green-prs.mjs";
 
 // The real baseline commit that made PR #4002 BEHIND on 2026-08-02 — the exact
@@ -84,45 +87,139 @@ describe("#4094 divergence classification", () => {
   });
 });
 
-describe("#4094 enqueue eligibility", () => {
-  const skipCiDivergence = { ok: true, messages: [REAL_BASELINE_COMMIT], reason: "commits:1" };
-  const realDivergence = { ok: true, messages: ["fix(#1): real change"], reason: "commits:1" };
+// The six required contexts, as the ruleset reports them.
+const REQUIRED = [
+  "cheap gate (main-ancestor + lint)",
+  "quality",
+  "merge shard reports",
+  "equivalence-gate",
+  "check for test262 regressions",
+  "cla-check",
+];
+const allGreenRows = () => REQUIRED.map((name) => ({ name, state: "pass" }));
 
-  it("leaves the pre-existing enqueueable states untouched", () => {
-    expect(enqueueEligibility("CLEAN").eligible).toBe(true);
-    expect(enqueueEligibility("HAS_HOOKS").eligible).toBe(true);
+describe("#4094 classifyChecks — required contexts from real check rows", () => {
+  it("accepts when every required context is pass or skipping", () => {
+    expect(classifyChecks(allGreenRows(), REQUIRED).green).toBe(true);
+    // A SKIPPED required check satisfies branch protection.
+    const withSkip = allGreenRows().map((r) => (r.name === "equivalence-gate" ? { ...r, state: "skipping" } : r));
+    expect(classifyChecks(withSkip, REQUIRED).green).toBe(true);
   });
 
-  // #3878/#3904 — required-green with one red NON-required check is exactly the
-  // state that once let red PRs into the queue. It must stay excluded, and must
-  // NOT become eligible just because the divergence happens to be skip-ci.
-  it("still excludes UNSTABLE, even with a skip-ci-only divergence", () => {
-    expect(enqueueEligibility("UNSTABLE").eligible).toBe(false);
-    expect(enqueueEligibility("UNSTABLE", skipCiDivergence).eligible).toBe(false);
+  // ⚠ A check NAME is not an identifier. `merge shard reports` and `check for
+  // test262 regressions` are each published TWICE (real job + #3934 stub) — on
+  // PR #4002 one instance read `pass` and the other `skipping`. `head -1` is how
+  // a watcher settles on the stub.
+  it("handles duplicate names: both instances pass/skipping is green", () => {
+    const rows = [...allGreenRows(), { name: "merge shard reports", state: "skipping" }];
+    expect(classifyChecks(rows, REQUIRED).green).toBe(true);
   });
 
-  it("still excludes DIRTY / BLOCKED / UNKNOWN regardless of divergence", () => {
-    for (const state of ["DIRTY", "BLOCKED", "UNKNOWN", "DRAFT"]) {
-      expect(enqueueEligibility(state, skipCiDivergence).eligible).toBe(false);
-    }
+  it("handles duplicate names: a FAILING second instance is not masked by a passing first", () => {
+    const rows = [...allGreenRows(), { name: "merge shard reports", state: "fail" }];
+    const got = classifyChecks(rows, REQUIRED);
+    expect(got.green).toBe(false);
+    expect(got.failures.join()).toContain("merge shard reports");
   });
 
-  it("POSITIVE CONTROL: BEHIND by only a skip-ci commit becomes eligible", () => {
-    const got = enqueueEligibility("BEHIND", skipCiDivergence);
+  it("handles duplicate names: a PENDING second instance keeps it not-green", () => {
+    const rows = [...allGreenRows(), { name: "quality", state: "pending" }];
+    expect(classifyChecks(rows, REQUIRED).green).toBe(false);
+  });
+
+  // NEGATIVE CONTROL #1 — one red REQUIRED check.
+  it("NEGATIVE CONTROL: a red required check is excluded", () => {
+    const rows = allGreenRows().map((r) => (r.name === "quality" ? { ...r, state: "fail" } : r));
+    expect(classifyChecks(rows, REQUIRED).green).toBe(false);
+  });
+
+  // NEGATIVE CONTROL #2 — this is what the UNSTABLE exclusion was protecting
+  // (#3878/#3904). Dropping the status string must NOT drop this guard.
+  it("NEGATIVE CONTROL: a red NON-required check is also excluded", () => {
+    const rows = [...allGreenRows(), { name: "some-optional-canary", state: "fail" }];
+    const got = classifyChecks(rows, REQUIRED);
+    expect(got.green).toBe(false);
+    expect(got.failures.join()).toContain("some-optional-canary");
+  });
+
+  it("excludes when a required context never reported at all", () => {
+    const rows = allGreenRows().filter((r) => r.name !== "cla-check");
+    const got = classifyChecks(rows, REQUIRED);
+    expect(got.green).toBe(false);
+    expect(got.missingRequired).toContain("cla-check");
+  });
+
+  it("FAILS CLOSED on no visible checks", () => {
+    expect(classifyChecks([], REQUIRED).green).toBe(false);
+    expect(classifyChecks(null as unknown as [], REQUIRED).green).toBe(false);
+  });
+});
+
+describe("#4094 enqueueEligibility — real signals only", () => {
+  const base = { checks: allGreenRows(), requiredNames: REQUIRED, isDraft: false, labels: [], mergeable: "MERGEABLE" };
+
+  // POSITIVE CONTROL: a genuinely-green PR is eligible, and behind-ness is not
+  // even an input — #4002 (1 behind) and #4033 (4 behind) were both queued, and
+  // #4002 merged with a green merge_group re-validation.
+  it("POSITIVE CONTROL: green + mergeable is eligible, with no behindness input", () => {
+    const got = enqueueEligibility(base);
     expect(got.eligible).toBe(true);
-    expect(got.reason).toContain("skip-ci-only");
+    expect(got.reason).toBe("real-signals-green");
   });
 
-  it("NEGATIVE CONTROL: BEHIND by a real commit stays excluded", () => {
-    expect(enqueueEligibility("BEHIND", realDivergence).eligible).toBe(false);
+  // The whole point of the re-scope: the stale field must be unreachable.
+  it("does not accept mergeStateStatus as an input at all", () => {
+    // Passing it changes nothing — eligibility is decided by real signals.
+    expect(enqueueEligibility({ ...base, mergeStateStatus: "BEHIND" } as never).eligible).toBe(true);
+    expect(enqueueEligibility({ ...base, mergeStateStatus: "UNSTABLE" } as never).eligible).toBe(true);
+    expect(enqueueEligibility({ ...base, mergeStateStatus: "CLEAN" } as never).eligible).toBe(true);
   });
 
-  it("BEHIND with an unfetched or failed divergence stays excluded", () => {
-    expect(enqueueEligibility("BEHIND").eligible).toBe(false);
-    expect(enqueueEligibility("BEHIND", null).eligible).toBe(false);
-    expect(enqueueEligibility("BEHIND", { ok: false, messages: null, reason: "compare-api-failed" }).eligible).toBe(
-      false,
-    );
+  it("NEGATIVE CONTROL: one red required check stays excluded", () => {
+    const checks = allGreenRows().map((r) => (r.name === "quality" ? { ...r, state: "fail" } : r));
+    expect(enqueueEligibility({ ...base, checks }).eligible).toBe(false);
+  });
+
+  it("NEGATIVE CONTROL: a red NON-required check stays excluded (the #3878/#3904 guard)", () => {
+    const checks = [...allGreenRows(), { name: "release-pending", state: "fail" }];
+    expect(enqueueEligibility({ ...base, checks }).eligible).toBe(false);
+  });
+
+  it("excludes drafts and hold-labelled PRs", () => {
+    expect(enqueueEligibility({ ...base, isDraft: true }).eligible).toBe(false);
+    expect(enqueueEligibility({ ...base, labels: [{ name: "hold" }] }).eligible).toBe(false);
+    expect(enqueueEligibility({ ...base, labels: [{ name: "stack-retarget-pending" }] }).eligible).toBe(false);
+  });
+
+  it("excludes CONFLICTING, and fails closed on an UNKNOWN merge computation", () => {
+    expect(enqueueEligibility({ ...base, mergeable: "CONFLICTING" }).eligible).toBe(false);
+    expect(enqueueEligibility({ ...base, mergeable: "UNKNOWN" }).eligible).toBe(false);
+    expect(enqueueEligibility({ ...base, mergeable: undefined }).eligible).toBe(false);
+  });
+});
+
+describe("#4094 requiredCheckNames", () => {
+  it("prefers the live ruleset over the static fallback", () => {
+    const fake = () => ({ ok: true, stdout: JSON.stringify(["only-one"]), stderr: "" });
+    const got = requiredCheckNames("loopdive/js2", fake);
+    expect(got.names).toEqual(["only-one"]);
+    expect(got.source).toBe("ruleset");
+  });
+
+  // `linear-tests` was documented as required for months and never was (#3934),
+  // so the list must come from the ruleset when readable — but a failed read
+  // must not yield an EMPTY required set, which would make everything "green".
+  it("falls back to the six documented contexts when the ruleset is unreadable", () => {
+    const failing = () => ({ ok: false, stdout: "", stderr: "boom" });
+    const got = requiredCheckNames("loopdive/js2", failing);
+    expect(got.source).toBe("fallback");
+    expect(got.names).toEqual([...REQUIRED_CHECK_FALLBACK]);
+    expect(got.names.length).toBe(6);
+  });
+
+  it("falls back rather than accepting an empty ruleset array", () => {
+    const empty = () => ({ ok: true, stdout: "[]", stderr: "" });
+    expect(requiredCheckNames("loopdive/js2", empty).source).toBe("fallback");
   });
 });
 
