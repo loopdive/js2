@@ -178,6 +178,15 @@ Focused `gc` and `standalone` coverage proves:
 - an injected verifier failure records one Invariant with `direct=0, IR=0`,
   proving there is no post-claim legacy retry.
 
+The authoritative single-host readiness corpus is unchanged before versus
+after this bounded slice: **37 terminal units, 33 IR bodies, 35 legacy bodies,
+4 Unsupported, and zero Invariants** on both `origin/main` and this branch.
+None of its five entries contains an eligible scalar-layout instance method;
+the physical ownership improvement is therefore measured by the focused
+per-unit counters above rather than an artificial corpus change. Hybrid remains
+READY, while strict IR-only remains NOT READY with the same four typed async /
+closure blockers and 35 retained legacy bodies.
+
 Reference-bearing class layouts, constructors, accessors, fields,
 derived/inherited classes, class expressions, nested class units, object
 methods, and closures remain for later R3 slices.
