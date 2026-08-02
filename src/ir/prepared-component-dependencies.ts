@@ -317,6 +317,9 @@ function collectIrTypeClasses(type: IrType, classes: Map<IrClassId, IrClassShape
     case "object":
       for (const field of type.shape.fields) collectIrTypeClasses(field.type, classes, seen);
       return;
+    case "vec":
+      collectIrTypeClasses(type.elementType, classes, seen);
+      return;
     case "closure":
     case "callable":
       for (const param of type.signature.params) collectIrTypeClasses(param, classes, seen);
@@ -371,6 +374,38 @@ function recordImplicitTypeRequirement(
         ownership,
         "IR string carrier must use a compiler-support Program ABI type ref",
       );
+      return;
+    }
+    case "vec": {
+      if (!type.layout) {
+        block("IR vec type resolves through backend support without a symbolic Program ABI layout");
+        return;
+      }
+      if (
+        !Number.isSafeInteger(type.layout.lengthFieldIndex) ||
+        type.layout.lengthFieldIndex < 0 ||
+        !Number.isSafeInteger(type.layout.dataFieldIndex) ||
+        type.layout.dataFieldIndex < 0 ||
+        type.layout.lengthFieldIndex === type.layout.dataFieldIndex
+      ) {
+        block("IR vec type carries an invalid prepared field layout");
+        return;
+      }
+      recordSupportTypeReference(
+        evidence,
+        type.layout.carrierType,
+        abi,
+        ownership,
+        "IR vec carrier must use a compiler-support Program ABI type ref",
+      );
+      recordSupportTypeReference(
+        evidence,
+        type.layout.dataType,
+        abi,
+        ownership,
+        "IR vec backing array must use a compiler-support Program ABI type ref",
+      );
+      recordImplicitTypeRequirement(evidence, type.elementType, seen, abi, ownership);
       return;
     }
     case "object":
@@ -508,7 +543,10 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "vec.set_length":
     case "vec.new_fixed":
     case "forof.vec":
-      return `${instr.kind} resolves vec layout/helper support without an explicit symbolic ref`;
+      // Final vec types carry their carrier/backing-array refs. The type walk
+      // above records both dependencies and fails closed for transitional raw
+      // references or a missing layout.
+      return null;
     case "iter.new":
     case "iter.next":
     case "iter.done":

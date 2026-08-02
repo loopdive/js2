@@ -490,6 +490,30 @@ function planLeafReachableCallable(f: Fixture) {
   return { id, leafType };
 }
 
+function planExplicitLeafSupportType(f: Fixture) {
+  const baseType: TypeDef = {
+    kind: "struct",
+    name: "$VectorBase",
+    fields: [],
+    superTypeIdx: -1,
+    final: false,
+  };
+  const leafType: TypeDef = {
+    kind: "struct",
+    name: "$VectorF64",
+    fields: [{ name: "length", type: { kind: "i32" }, mutable: true }],
+    superTypeIdx: 1,
+    final: false,
+  };
+  f.module.types.push(baseType, leafType);
+  const id = createIrBindingId({ ownerId: f.sourceId, domain: "type", role: "vector-f64" });
+  const referenceKey = `type|${id}`;
+  f.session.plan(typeDraft(f, id, referenceKey));
+  f.session.registerStructuralReference(id, referenceKey);
+  f.session.attachLocator(id, { kind: "type-cell", cell: f.session.createTypeCell(leafType) });
+  return { id, leafType };
+}
+
 describe("#3521 scoped prepared-component ABI seal", () => {
   it("reverse-resolves planned structural references without numeric slot discovery", () => {
     const f = fixture();
@@ -1048,6 +1072,31 @@ describe("#3521 scoped prepared-component ABI seal", () => {
     if (driftLeaf.leafType.kind !== "struct") throw new Error("invalid leaf finalization fixture");
     driftLeaf.leafType.fields.push({ name: "late", type: { kind: "i32" }, mutable: false });
     expectInvariant(() => drift.session.recordLeafTypeFinalization([1]), "type-remap-mismatch");
+  });
+
+  it("records reported leaf finalization for an explicit prepared support-type root", () => {
+    const accepted = fixture();
+    planCallable(accepted, accepted.firstUnitId, "body", "first");
+    const acceptedLeaf = planExplicitLeafSupportType(accepted);
+    const scoped = sealFirst(accepted, [acceptedLeaf.id]);
+
+    const finalized = markLeafStructsFinal(accepted.module);
+    expect(finalized).toEqual([2]);
+    accepted.session.recordLeafTypeFinalization(finalized);
+    expect(scoped.get(acceptedLeaf.id)?.intent).toEqual(
+      expect.objectContaining({ kind: "type", shapeKey: expect.stringContaining('"final":true') }),
+    );
+    expect(accepted.session.publish(accepted.module).abi.resolveFinalIndex(acceptedLeaf.id)).toEqual({
+      space: "type",
+      index: 2,
+    });
+
+    const unreported = fixture();
+    planCallable(unreported, unreported.firstUnitId, "body", "first");
+    const unreportedLeaf = planExplicitLeafSupportType(unreported);
+    sealFirst(unreported, [unreportedLeaf.id]);
+    unreportedLeaf.leafType.final = true;
+    expectInvariant(() => unreported.session.recordLeafTypeFinalization([1]), "type-remap-mismatch");
   });
 
   it("refreshes callable and global aliases that inherit canonical contracts during a valid reorder", () => {

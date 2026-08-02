@@ -1013,6 +1013,39 @@
       "weeklyDownloads": 104930549
     },
     {
+      "name": "jsdom",
+      "version": "30.0.1",
+      "issue": null,
+      "entryFile": "lib/api.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 180053,
+        "timedOut": true,
+        "timeoutMs": 180000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 180000ms budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 180000ms budget"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 89317829
+    },
+    {
       "name": "marked",
       "version": "18.0.2",
       "issue": 3716,
