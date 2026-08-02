@@ -53,6 +53,56 @@
  * already route to the host getter, which throws a genuine host TypeError;
  * re-routing them to a wasm-constructed one would be a behavioural change to a
  * lane that is not broken. See #3610.
+ *
+ * ---
+ *
+ * ## (#4076) Sibling arm: the BORROWED receiver
+ *
+ * The gate above answers "the receiver **is** `<Ctor>.prototype`". This module
+ * also hosts the complementary question: `<Ctor>.prototype.<m>.call(recv, …)`,
+ * where the `this` value is the *first argument* rather than the callee's base.
+ *
+ * The defect is the same shape as #4017 — **a static path that knows the answer
+ * degrades to a silent wrong answer once its vehicle is gone.** In JS-host mode
+ * the borrowed call rides the `__proto_method_call` host import, and the JS
+ * engine performs `RequireObjectCoercible` / `IsCallable` for us. Standalone has
+ * no host, so `calls.ts` either synthesises a bare `recv.<m>(…)` or falls
+ * through to a refuse-loud `reportError`. Neither survives:
+ *
+ *   - the synthesised bare call constant-folds an answer (`false` for
+ *     `hasOwnProperty`, the receiver itself for `valueOf`) without ever running
+ *     step 1 of the spec algorithm;
+ *   - **the refuse-loud is not loud.** `reportError` is emitted WITHOUT
+ *     `sticky`, and `compileExpressionBody`'s `null`-result unwind
+ *     (`rollbackSpeculative`, expressions.ts) DISCARDS non-sticky diagnostics
+ *     and substitutes `pushDefaultValue`. Measured on `--target standalone`:
+ *     `Object.prototype.valueOf.call(undefined)` compiles clean, with zero
+ *     imports, to `global.get $undefined; extern.convert_any; drop` — the
+ *     default-value placeholder. The refusal was raised and then erased.
+ *
+ * So the standalone lane answers `undefined` where the spec demands a TypeError,
+ * and every `assert.throws(TypeError, …)` over the shape reports
+ * "Expected a TypeError to be thrown but no exception was thrown at all".
+ *
+ * The fix keeps the #4017 discipline: **decide statically, throw statically.**
+ * We fire ONLY on a receiver whose invalidity is a *proof*, never a guess:
+ *
+ *   - `Object.prototype.<m>` — step 1/2 is `ToObject(this value)`, so the
+ *     receiver must be **provably nullish**: the `null` keyword, or an
+ *     expression the oracle types exactly `undefined`/`null`. A primitive is
+ *     NOT invalid here (`hasOwnProperty.call("ab","0")` is legitimately `true`).
+ *   - `Function.prototype.<m>` — step 2 is `IsCallable(func)`, so additionally a
+ *     **syntactically** non-callable literal (`{}`, `[]`, `/re/`, `"s"`, `1`,
+ *     `true`) qualifies. Syntax, not inference: an `object`-typed identifier may
+ *     hold a function at run time under `allowJs`, so identifiers are refused.
+ *
+ * A widened `any`, an unresolvable identifier, or anything merely *nullable*
+ * falls through untouched, so the gate can never manufacture a throw for a
+ * receiver that might be valid at run time. This is deliberately NARROWER than
+ * `resolvesToNonConstructableValue`, which also claims `.bind()`/`.call()`/
+ * `.apply()` RESULTS — sound only behind a runtime re-check, because a bound
+ * function IS constructable when its target is, and `f.call(x)` can return a
+ * constructor. That over-claim is not inherited here.
  */
 import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
@@ -364,4 +414,185 @@ export function tryBuiltinPrototypeMethodBrandThrow(
     `TypeError: Method ${ctor}.prototype.${method} called on incompatible receiver ${ctor}.prototype`,
     expectedType ?? (ctx.fast ? { kind: "i32" } : { kind: "f64" }),
   );
+}
+
+// ───────────────────────── (#4076) borrowed-receiver arm ─────────────────────
+
+/**
+ * `<Ctor>.prototype.<method>` pairs whose spec algorithm rejects a nullish
+ * `this` in **step 1 or 2**, before any observable step. The value is the
+ * result ValType to hand back for the (dead) sentinel after the throw.
+ *
+ * Object.prototype — §20.1.3, step "Let O be ? ToObject(this value)":
+ *   valueOf (§20.1.3.7 s1) · toLocaleString (§20.1.3.5 — `Invoke(O,"toString")`
+ *   → GetV → ToObject) · hasOwnProperty (§20.1.3.2 s2) ·
+ *   propertyIsEnumerable (§20.1.3.4 s2).
+ *
+ * Function.prototype — §20.2.3, step "If IsCallable(func) is false, throw a
+ * TypeError exception": call (s2) · apply (s2) · bind (s2) · toString (s2/s5).
+ *
+ * DELIBERATELY ABSENT, each for a spec reason — adding one would be a wrong
+ * answer, not a missing one:
+ *
+ *   - `Object.prototype.toString` — §20.1.3.6 steps 1–2 return
+ *     `"[object Undefined]"` / `"[object Null]"` for a nullish `this`. It is the
+ *     one Object.prototype method that must NOT throw here.
+ *   - `Object.prototype.isPrototypeOf` — §20.1.3.3 step 1 is
+ *     "If V is not an Object, return false", which runs BEFORE ToObject(this).
+ *     Whether it throws depends on the ARGUMENT, not the receiver, so a
+ *     receiver-only gate cannot decide it.
+ *   - `String.prototype.*` — already routed through
+ *     `emitBorrowedStringReceiverToString` (#3254), which performs
+ *     RequireObjectCoercible + ToString on the borrowed receiver. Duplicating it
+ *     here would shadow a working path.
+ *   - the `BRANDED_PROTO_METHODS` ctors above (Map/Set/WeakMap/WeakSet/Date/
+ *     ArrayBuffer/TypedArray) — their `RequireInternalSlot` does reject a
+ *     nullish `this`, but the borrowed form ALREADY throws correctly today
+ *     (36 `this-not-object-throw*.js` files pass). They are a follow-on with
+ *     a 36-file at-risk pool and a 1-file yield; not worth coupling to this.
+ */
+const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = new Map<
+  string,
+  ReadonlyMap<string, ValType>
+>([
+  [
+    "Object",
+    new Map<string, ValType>([
+      ["valueOf", { kind: "externref" }],
+      ["toLocaleString", { kind: "externref" }],
+      ["hasOwnProperty", { kind: "i32", boolean: true }],
+      ["propertyIsEnumerable", { kind: "i32", boolean: true }],
+    ]),
+  ],
+  [
+    "Function",
+    new Map<string, ValType>([
+      ["toString", { kind: "externref" }],
+      ["call", { kind: "externref" }],
+      ["apply", { kind: "externref" }],
+      ["bind", { kind: "externref" }],
+    ]),
+  ],
+]);
+
+/**
+ * Is `expr` **provably** the `undefined` or `null` value?
+ *
+ * Proof, not guess. `typeFactOf` reports `undefined`/`null` only for a type that
+ * IS exactly that — TypeScript never widens an `any`, an unresolvable
+ * identifier, or a merely-nullable union down to them. A shadowing
+ * `var undefined = {}` retypes the identifier, so the gate correctly declines.
+ * The bare `null` keyword is accepted syntactically because a `null` literal in
+ * a `strictNullChecks: false` program types as `any`.
+ *
+ * `void`-typed expressions are EXCLUDED on purpose: under `allowJs` a JS
+ * function with no `return` infers `void`, but nothing prevents it from
+ * returning a value at run time, so `void` is not a proof.
+ */
+function provablyNullishReceiver(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const e = skipParens(expr);
+  if (e.kind === ts.SyntaxKind.NullKeyword) return true;
+  const fact = ctx.oracle.typeFactOf(e);
+  return fact.kind === "undefined" || fact.kind === "null";
+}
+
+function skipParens(expr: ts.Expression): ts.Expression {
+  let e: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  return e;
+}
+
+/**
+ * Is `expr` **syntactically** a value that can never be callable?
+ *
+ * This is a SYNTAX fact, not a type inference: an object literal, an array
+ * literal, a regular-expression literal and the primitive literals each
+ * evaluate to a value with no [[Call]] slot, in every program, whatever
+ * TypeScript thinks the type is. That distinction matters under `allowJs` +
+ * `skipSemanticDiagnostics`, where an `object`-typed *identifier* may well hold
+ * a function at run time — which is exactly why identifiers are NOT accepted
+ * here. Used only for the `Function.prototype` family, whose step 2 is
+ * "If IsCallable(func) is false, throw a TypeError exception" (§20.2.3).
+ */
+function syntacticallyNotCallable(expr: ts.Expression): boolean {
+  const e = skipParens(expr);
+  return (
+    ts.isObjectLiteralExpression(e) ||
+    ts.isArrayLiteralExpression(e) ||
+    ts.isRegularExpressionLiteral(e) ||
+    ts.isStringLiteral(e) ||
+    ts.isNoSubstitutionTemplateLiteral(e) ||
+    ts.isNumericLiteral(e) ||
+    ts.isBigIntLiteral(e) ||
+    e.kind === ts.SyntaxKind.TrueKeyword ||
+    e.kind === ts.SyntaxKind.FalseKeyword
+  );
+}
+
+/**
+ * Call-expression arm: `<Ctor>.prototype.<method>.call(recv, …args)` where
+ * `recv` is provably nullish and `<method>`'s step 1/2 rejects it.
+ *
+ * Returns the result ValType when the gate fired, or `undefined` to fall
+ * through to the normal dispatch chain.
+ *
+ * **Evaluation order.** §13.3.6.1 EvaluateCall runs ArgumentListEvaluation
+ * before Call, so every argument of the OUTER `.call(...)` — the borrowed
+ * receiver included — is evaluated before `Function.prototype.call` ever
+ * invokes the target. We therefore compile all arguments in source order and
+ * drop each before throwing, so their side effects are preserved.
+ *
+ * **Known incompleteness, stated rather than hidden.** For
+ * `hasOwnProperty`/`propertyIsEnumerable` the spec runs `ToPropertyKey(V)`
+ * BEFORE `ToObject(this)` (§20.1.3.2 s1–s2), so a key whose `toString` throws
+ * must surface THAT error, not our TypeError. Compiling the key argument
+ * evaluates the expression but does not apply ToPropertyKey, so
+ * `hasOwnProperty/topropertykey_before_toobject.js` stays failing (it fails
+ * today too — this is not a regression, and it is excluded from the claimed
+ * flips). Every trigger file that flips passes a plain string literal, for which
+ * ToPropertyKey is the identity.
+ *
+ * `compileArg` is injected to avoid a module cycle with `expressions.ts`.
+ */
+export function tryBorrowedPrototypeNullishThisThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  /** The callee's base — `<Ctor>.prototype.<method>` in `<…>.call(recv, …)`. */
+  borrowedMethod: ts.Expression,
+  compileArg: (arg: ts.Expression) => ValType | null,
+  expectedType?: ValType,
+): ValType | undefined {
+  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
+  let base: ts.Expression = borrowedMethod;
+  while (ts.isParenthesizedExpression(base)) base = base.expression;
+  if (!ts.isPropertyAccessExpression(base)) return undefined;
+  const method = base.name.text;
+  // Shadow safety: the base must be the LIB constructor (`declare var Object:
+  // ObjectConstructor`), not a user `class Object {}` — same test as the
+  // prototype-receiver arm above, and strictly tighter than the surrounding
+  // dispatch's raw identifier-text comparison.
+  const ctor = builtinPrototypeReceiver(ctx, base.expression);
+  if (ctor === undefined) return undefined;
+  const result = NULLISH_THIS_THROWS.get(ctor)?.get(method);
+  if (result === undefined) return undefined;
+  const receiver = expr.arguments[0];
+  if (receiver === undefined) return undefined;
+  // Object.prototype: only `RequireObjectCoercible` fails statically — a
+  // primitive receiver is perfectly legal there (`hasOwnProperty.call("ab","0")`
+  // is `true`). Function.prototype: step 2 is `IsCallable`, so a syntactically
+  // non-callable literal fails it too.
+  const invalidThis =
+    provablyNullishReceiver(ctx, receiver) || (ctor === "Function" && syntacticallyNotCallable(receiver));
+  if (!invalidThis) return undefined;
+
+  for (const arg of expr.arguments) {
+    const t = compileArg(arg);
+    if (t !== null) fctx.body.push({ op: "drop" });
+  }
+  const what =
+    ctor === "Function"
+      ? `Function.prototype.${method} called on non-callable receiver`
+      : `Object.prototype.${method} called on null or undefined`;
+  return emitBrandThrowWithSentinel(ctx, fctx, `TypeError: ${what}`, expectedType ?? result);
 }
