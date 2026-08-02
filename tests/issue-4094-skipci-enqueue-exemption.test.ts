@@ -18,6 +18,8 @@ import {
   classifyChecks,
   requiredCheckNames,
   REQUIRED_CHECK_FALLBACK,
+  authoritativeHeadSha,
+  reconcileHeadSha,
 } from "../scripts/enqueue-green-prs.mjs";
 
 // The real baseline commit that made PR #4002 BEHIND on 2026-08-02 — the exact
@@ -149,6 +151,22 @@ describe("#4094 classifyChecks — required contexts from real check rows", () =
     expect(got.missingRequired).toContain("cla-check");
   });
 
+  // The reason string must report the OBSERVATION and the discriminator, never a
+  // diagnosis. Two mechanisms produce an absent context with OPPOSITE remedies:
+  // a dropped `synchronize` delivery (push any commit — what actually happened to
+  // #4028 on 2026-08-02) vs a workflow-level `paths:` skip (fix path filters).
+  // Asserting the unrecoverable one would send someone editing path filters to
+  // chase a GitHub delivery failure.
+  it("names the missing contexts and the discriminator, and claims NO cause", () => {
+    const rows = allGreenRows().filter((r) => r.name !== "quality");
+    const reason = classifyChecks(rows, REQUIRED).reason;
+    expect(reason).toContain("quality"); // says WHICH context is absent
+    expect(reason).toContain("earlier head"); // gives the discriminator
+    expect(reason).toContain("dropped synchronize"); // names the RECOVERABLE case
+    // Must not assert the unrecoverable framing.
+    expect(reason).not.toMatch(/never be satisfied|permanently|unrecoverable|stranded/i);
+  });
+
   it("FAILS CLOSED on no visible checks", () => {
     expect(classifyChecks([], REQUIRED).green).toBe(false);
     expect(classifyChecks(null as unknown as [], REQUIRED).green).toBe(false);
@@ -195,6 +213,58 @@ describe("#4094 enqueueEligibility — real signals only", () => {
     expect(enqueueEligibility({ ...base, mergeable: "CONFLICTING" }).eligible).toBe(false);
     expect(enqueueEligibility({ ...base, mergeable: "UNKNOWN" }).eligible).toBe(false);
     expect(enqueueEligibility({ ...base, mergeable: undefined }).eligible).toBe(false);
+  });
+});
+
+describe("#4094 head SHA is sourced from REST, never the cached PR view", () => {
+  const A = "a".repeat(40);
+  const B = "b".repeat(40);
+
+  it("reads .head.sha from the REST pull resource", () => {
+    const calls: string[][] = [];
+    const fake = (args: string[]) => {
+      calls.push(args);
+      return { ok: true, stdout: `${A}\n`, stderr: "" };
+    };
+    const got = authoritativeHeadSha(4038, "loopdive/js2", fake);
+    expect(got).toEqual({ ok: true, sha: A, reason: "rest" });
+    expect(calls[0]!.join(" ")).toContain("repos/loopdive/js2/pulls/4038");
+    expect(calls[0]!.join(" ")).toContain(".head.sha");
+  });
+
+  // Measured 2026-08-02 on #4028: `gh pr view --json headRefOid` served d07a989e
+  // while REST already had e24f4378. Check runs for the stale SHA are all real —
+  // green, complete, for the WRONG commit — so the verdict is confidently wrong
+  // with no anomaly anywhere. Disagreement must skip, not pick a winner.
+  it("PREFERS REST and SKIPS when the cached view disagrees", () => {
+    const rest = { ok: true as const, sha: B, reason: "rest" };
+    const got = reconcileHeadSha(A, rest);
+    expect(got.ok).toBe(false);
+    expect(got.reason).toContain("head-sha-stale");
+    expect(got.sha).toBe(B); // reports the authoritative one for the log
+  });
+
+  it("agrees when the two match", () => {
+    expect(reconcileHeadSha(A, { ok: true, sha: A, reason: "rest" })).toEqual({
+      ok: true,
+      sha: A,
+      reason: "head-sha-agreed",
+    });
+  });
+
+  // Falling back to the cached value on a REST failure would reinstate the bug.
+  it("FAILS CLOSED when REST is unreadable — never falls back to the cached SHA", () => {
+    const failing = () => ({ ok: false, stdout: "", stderr: "boom" });
+    const rest = authoritativeHeadSha(4038, "loopdive/js2", failing);
+    expect(rest.ok).toBe(false);
+    const got = reconcileHeadSha(A, rest);
+    expect(got.ok).toBe(false);
+    expect(got.sha).toBeNull();
+  });
+
+  it("rejects a non-SHA REST response rather than trusting it", () => {
+    const garbage = () => ({ ok: true, stdout: "not-a-sha", stderr: "" });
+    expect(authoritativeHeadSha(4038, "loopdive/js2", garbage).ok).toBe(false);
   });
 });
 

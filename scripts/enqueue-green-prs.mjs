@@ -282,7 +282,22 @@ export function classifyChecks(rows, requiredNames) {
   if (missingRequired.length > 0)
     return {
       green: false,
-      reason: `missing-required:${missingRequired.length}`,
+      // (#4094) WORDING IS LOAD-BEARING — do not shorten this to "stranded" or
+      // imply a cause. Two very different mechanisms produce an absent required
+      // context, and they have OPPOSITE remedies:
+      //   - a dropped `synchronize` delivery — GitHub simply never dispatched the
+      //     `pull_request` workflows for this head. Signature: ONLY the
+      //     `pull_request_target` checks (`cla-check`, retarget) are present, and
+      //     the contexts DID run on an earlier head. Remedy: push any commit.
+      //   - a workflow-level `paths:` skip — no check run is ever created, on ANY
+      //     head, so the context stays "Expected" forever. Remedy: fix the path
+      //     filters (what `test262-pr-stub.yml` exists to prevent).
+      // Measured 2026-08-02 on #4028: it looked like the second and was the FIRST
+      // (its earlier heads ran `quality`), and a single retrigger commit cleared
+      // it. Naming the wrong one sends someone editing path filters to chase a
+      // GitHub delivery failure, so this reports the OBSERVATION and the
+      // discriminator, never a diagnosis.
+      reason: `required-not-reported:${missingRequired.length} [${missingRequired.slice(0, 3).join(", ")}] — no check run on THIS head; if they ran on an earlier head it is a dropped synchronize (push any commit), else check workflow path filters`,
       failures,
       pendingRequired,
       missingRequired,
@@ -433,6 +448,49 @@ function graphql(query, vars = {}) {
  *
  * Returns `{ ok, messages, reason }`. `ok:false` ⇒ caller must NOT exempt.
  */
+/**
+ * #4094 — the AUTHORITATIVE head SHA, from the REST pull resource.
+ *
+ * ⚠ `gh pr view --json headRefOid` (and the GraphQL PR object generally) serves a
+ * CACHED SAMPLE. Measured 2026-08-02 on #4028: `headRefOid` returned `d07a989e`
+ * while the REST `.head.sha` was already `e24f4378` — one push stale.
+ *
+ * This is the worst failure shape available to this script, because it is
+ * SILENT and internally consistent: check runs fetched for a stale SHA are all
+ * genuinely real — complete, green, correctly reported — just for the wrong
+ * commit. Nothing anywhere looks anomalous, and the eligibility verdict is
+ * simply wrong. Three fields of this repo's PR view were found stale in one day
+ * (`mergeStateStatus`, local tracking refs, `headRefOid`), so the rule is: for
+ * anything load-bearing, read the specific REST resource.
+ */
+export function authoritativeHeadSha(prNumber, repo = REPO, runner = ghMaybe) {
+  const res = runner(["api", `repos/${repo}/pulls/${prNumber}`, "--jq", ".head.sha"]);
+  if (!res.ok) return { ok: false, sha: null, reason: "rest-head-unavailable" };
+  const sha = String(res.stdout || "").trim();
+  if (!/^[0-9a-f]{40}$/.test(sha)) return { ok: false, sha: null, reason: "rest-head-shape" };
+  return { ok: true, sha, reason: "rest" };
+}
+
+/**
+ * #4094 — reconcile the cached PR-view SHA against the authoritative REST one.
+ *
+ * FAILS CLOSED both ways. If REST is unreadable we do not fall back to the
+ * cached value (that would reinstate exactly the bug). If the two DISAGREE the
+ * head moved under the sweep, so every check verdict already computed is about
+ * the wrong commit — skip this PR and let the next sweep see a consistent world.
+ */
+export function reconcileHeadSha(viewSha, rest) {
+  if (!rest || rest.ok !== true) return { ok: false, sha: null, reason: rest?.reason || "rest-head-missing" };
+  if (viewSha && viewSha !== rest.sha) {
+    return {
+      ok: false,
+      sha: rest.sha,
+      reason: `head-sha-stale (view=${String(viewSha).slice(0, 9)} rest=${rest.sha.slice(0, 9)})`,
+    };
+  }
+  return { ok: true, sha: rest.sha, reason: "head-sha-agreed" };
+}
+
 export function divergenceCommitMessages(headOid, repo = REPO, runner = ghMaybe) {
   if (!headOid) return { ok: false, messages: null, reason: "no-head-oid" };
   // Reduce to a JSON ARRAY and parse it — do NOT split raw --jq output on newlines.
@@ -1202,6 +1260,16 @@ function runSweep() {
     // also handles the name collision: `merge shard reports` and `check for
     // test262 regressions` are each published TWICE (real job + the #3934 stub),
     // so a first-match read can settle on the stub.
+    //
+    // SHA STALENESS (measured 2026-08-02): `gh pr view --json headRefOid` can
+    // serve a SHA the push has already superseded — the authoritative read is
+    // `gh api repos/<repo>/pulls/<N> --jq .head.sha`. That matters here because a
+    // predicate keyed on "check runs for a SHA" produces a CONFIDENT WRONG
+    // verdict on a stale one: the runs it finds are all genuinely real, just for
+    // the wrong head. This path is fail-SAFE rather than fail-wrong only because
+    // the enqueue mutation pins `expectedHeadOid` — a stale SHA is refused by
+    // GitHub (captured as refusal telemetry) instead of enqueueing the wrong
+    // state, and `freshEnqueueGuard` independently rejects a moved head.
     const required = classifyChecks(checks.rows, REQUIRED_NAMES);
     if (!required.green) {
       skipped.push([pr.number, `required-not-green: ${required.reason}`]);
@@ -1251,6 +1319,17 @@ function runSweep() {
       skipped.push([pr.number, `fresh-guard:${exact.reason}`]);
       continue;
     }
+    // (#4094) Pin the AUTHORITATIVE head before anything keyed on a SHA. `fresh`
+    // came from `gh pr view`, whose `headRefOid` can be one push stale — and the
+    // check runs fetched for a stale SHA are all genuinely real, just for the
+    // wrong commit, so the verdict is wrong with no anomaly to notice. Fails
+    // closed: unreadable REST, or REST disagreeing with the view, both skip.
+    const headCheck = reconcileHeadSha(fresh.headRefOid, authoritativeHeadSha(pr.number));
+    if (!headCheck.ok) {
+      skipped.push([pr.number, `head-sha:${headCheck.reason}`]);
+      continue;
+    }
+    const headSha = headCheck.sha;
     const exactChecks = visibleCheckState(pr.number);
     if (exactChecks.error) {
       skipped.push([pr.number, `fresh-checks-unavailable: ${exactChecks.error}`]);
@@ -1278,7 +1357,7 @@ function runSweep() {
             }
           }
         `,
-        enqueueMutationVariables(pr.id, fresh.headRefOid),
+        enqueueMutationVariables(pr.id, headSha),
       );
       // (#4094) TELEMETRY, not a decision. Record how far behind main this PR was
       // when it was accepted, and whether that divergence was skip-CI-only. This
@@ -1287,7 +1366,7 @@ function runSweep() {
       // failed compare read must never affect an enqueue that already succeeded.
       let behindNote = "";
       try {
-        const div = divergenceCommitMessages(fresh.headRefOid);
+        const div = divergenceCommitMessages(headSha);
         if (div.ok) {
           const n = div.messages.length;
           behindNote =
