@@ -4,7 +4,7 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: blocked
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-08-02
 priority: critical
 horizon: xl
 complexity: XL
@@ -186,6 +186,33 @@ is permitted.
 - Add a legacy parity adapter that compares planned vs observed imports/helpers
   without granting authority to observed strings. Add poison seams for every
   late mutation path.
+
+#### C0 foundation landing (2026-08-02)
+
+The isolated schema seam now defines the exact twelve certified pure-Math
+`IntrinsicId`s, their fourteen-entry transitive `RuntimeFeature` vocabulary
+(including `math.atan` and `math.reduce-trig` provider dependencies), and the
+deliberately empty `HostCapability` vocabulary for this host-free family.
+Signatures are versioned f64 contracts; effect evidence is opaque and can only
+be created through the existing `effectsOf` authority. The runtime-manifest
+builder verifies intrinsic uses and provider signatures/adapters, expands
+dependencies to a deterministic fixed point, requires explicit declarations
+for cycles, emits canonical dependency components, and rejects both mutation
+and unplanned lookup after deep freeze.
+
+Focused anti-vacuity coverage proves all twelve methods against
+`IR_MATH_METHOD_TABLE`, canonical output under reversed use/provider traversal,
+the shared `pow -> exp + log`, `atan2 -> atan`, and `sin/cos -> reduce-trig`
+closure, an injected declared cycle, all eight target/backend policy pairs,
+zero host capabilities, provider-name independence, and typed failures for bad
+IDs/signatures/effects/providers/adapters and late requests.
+
+This landing intentionally stops before M1 routing. The exact follow-up is to
+add the semantic intrinsic use to prepared IR in the sequential owner of
+`nodes.ts`/`effects.ts`/`from-ast.ts`, collect it into this builder before ABI
+publication, and make backend lowering resolve only the frozen provider plan.
+Until that shared integration lands, the existing `Math_*` discovery and
+providers remain unchanged and authoritative for production emission.
 
 ### M1 — deterministic pure Math
 
