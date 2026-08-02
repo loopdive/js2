@@ -358,6 +358,12 @@ function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
   if (backend === "wasmgc") return null;
   if (backend === "linear") {
     if (type.kind === "string") return null;
+    if (type.kind === "vec") {
+      const element = asVal(type.elementType);
+      return element?.kind === "f64"
+        ? null
+        : `${backend} backend does not support vec element IR type '${type.elementType.kind}'`;
+    }
     if (type.kind === "object") return linearAggregateTypeError(type);
     if (type.kind === "boxed") {
       const inner = asVal(type.inner);
@@ -377,6 +383,12 @@ function backendTypeError(backend: IrBackendKind, type: IrType): string | null {
   }
   if (type.kind === "object") return porfforAggregateTypeError(type);
   if (type.kind === "string") return null;
+  if (type.kind === "vec") {
+    const element = asVal(type.elementType);
+    return element?.kind === "f64"
+      ? null
+      : `${backend} backend does not support vec element IR type '${type.elementType.kind}'`;
+  }
   const v = asVal(type);
   if (!v) return `porffor backend does not support IR type '${type.kind}'`;
   return porfforValTypeError(v);

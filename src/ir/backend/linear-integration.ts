@@ -69,6 +69,7 @@ import {
 } from "../analysis/linear-memory-plan.js";
 import { bindLinearStringRuntime } from "../analysis/linear-string-runtime.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
+import { IR_VEC_ELEM_SET_PREFIX } from "../vector-runtime.js";
 import {
   asVal,
   irVal,
@@ -1018,6 +1019,7 @@ function makeLinearIrResolver(
       "vector element initialization",
     );
     return {
+      valueType: { kind: "i32" },
       vecStructTypeIdx: 0,
       lengthFieldIdx: 0,
       dataFieldIdx: 0,
@@ -1059,7 +1061,9 @@ function makeLinearIrResolver(
           }
           // (#2956 L2) Vec mutation is an abstract element-store request. On
           // linear it maps to the canonical grow-on-OOB array runtime.
-          if (symbol.startsWith("__vec_elem_set_")) return resolveRuntimeFunc("__arr_set");
+          if (symbol.startsWith(IR_VEC_ELEM_SET_PREFIX) || symbol.startsWith("__vec_elem_set_")) {
+            return resolveRuntimeFunc("__arr_set");
+          }
           throw new Error(`linear-ir: unsupported intrinsic '${symbol}' (${ref.name})`);
         }
         case "support":
@@ -1444,7 +1448,7 @@ function linearValueTypeConverter(resolver: IrLowerResolver, funcName: string): 
     backend: "linear",
     convertType(type: IrType): readonly ValType[] {
       if (type.kind === "val") return [type.val];
-      if (type.kind === "string") return [{ kind: "i32" }];
+      if (type.kind === "string" || type.kind === "vec") return [{ kind: "i32" }];
       if (type.kind === "object" && resolver.resolveObject?.(type.shape)) return [{ kind: "i32" }];
       if (type.kind === "boxed") {
         const inner = asVal(type.inner);

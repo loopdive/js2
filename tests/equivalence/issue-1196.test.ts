@@ -144,6 +144,23 @@ describe("Issue #1196 — bounds-check elimination soundness", () => {
     );
   });
 
+  it("body re-assigns a vector parameter: slot-backed and BCE disabled", async () => {
+    await assertEquivalent(
+      `function sum(arr: number[]): number {
+        let total = 0;
+        for (let i = 0; i < arr.length; i++) {
+          total += arr[i];
+          if (i === 1) arr = [9, 9];
+        }
+        return total;
+      }
+      export function test(): number {
+        return sum([1, 2, 3, 4]);
+      }`,
+      [{ fn: "test", args: [] }],
+    );
+  });
+
   it("body calls arr.pop(): BCE disabled — length shrinks", async () => {
     await assertEquivalent(
       `export function test(): number {

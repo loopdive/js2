@@ -66,10 +66,11 @@ import { lowerFunctionAstToIr, type IrFromAstResolver } from "../ir/from-ast.js"
 import { collectIrDirectCallLoweringPlans, type IrDirectCallTarget } from "../ir/ast-lowering-plans.js";
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import { irVal, type IrFunction, type IrType } from "../ir/nodes.js";
+import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../ir/vector-runtime.js";
 import { createDerivedIrUnitId, createIrSourceId, type IrSyntheticUnitRole, type IrUnitId } from "../ir/identity.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureNativeCharCodeAtHelper, NATIVE_CHARCODEAT_FN } from "./char-code-at-helpers.js";
-import { ensureVecElemSet, VEC_ELEM_SET_PREFIX } from "./vec-elem-set.js";
+import { ensureVecElemSet, ensureVecElemSetForElement, VEC_ELEM_SET_PREFIX } from "./vec-elem-set.js";
 import { constantFold } from "../ir/passes/constant-fold.js";
 import { deadCode } from "../ir/passes/dead-code.js";
 import { simplifyCFG } from "../ir/passes/simplify-cfg.js";
@@ -83,7 +84,9 @@ import { mintDefinedFunc, nativeStrHelperHandle, pushDefinedFunc } from "./func-
 const F64: IrType = irVal({ kind: "f64" });
 
 function selfHostedCalleeRef(name: string) {
-  return name.startsWith(VEC_ELEM_SET_PREFIX) || name === NATIVE_CHARCODEAT_FN
+  return name.startsWith(IR_VEC_ELEM_SET_PREFIX) ||
+    name.startsWith(VEC_ELEM_SET_PREFIX) ||
+    name === NATIVE_CHARCODEAT_FN
     ? irIntrinsicFuncRef(name)
     : irRuntimeFuncRef(name);
 }
@@ -256,6 +259,8 @@ function irTypeContainsContextIndex(type: IrType, seen = new Set<object>()): boo
       return "typeIdx" in type.val;
     case "object":
       return type.shape.fields.some((field) => irTypeContainsContextIndex(field.type, seen));
+    case "vec":
+      return irTypeContainsContextIndex(type.elementType, seen);
     case "closure":
     case "callable":
       return (
@@ -547,6 +552,14 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
       // ABI takes an i32 index — a TS-source caller must declare that exact
       // sig in calleeTypes and produce an i32 arg (e.g. a comparison result);
       // f64 index arithmetic needs an `__arri_*`-style f64-ABI wrapper.
+      if (ref.binding.kind === "intrinsic" && ref.binding.symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
+        const element = parseIrVectorRuntimeElement(ref.binding.symbol, IR_VEC_ELEM_SET_PREFIX);
+        const helperIdx = element ? ensureVecElemSetForElement(ctx, element) : null;
+        if (helperIdx === null) {
+          throw new Error(`stdlib-selfhost: ${name} cannot materialize ${ref.name} (unsupported logical vec)`);
+        }
+        return helperIdx;
+      }
       if (ref.binding.kind === "intrinsic" && ref.binding.symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
         const vecTypeIdx = Number(ref.binding.symbol.slice(VEC_ELEM_SET_PREFIX.length));
         const helperIdx = Number.isInteger(vecTypeIdx) ? ensureVecElemSet(ctx, vecTypeIdx) : null;

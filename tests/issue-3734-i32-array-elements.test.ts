@@ -56,14 +56,16 @@ function funcBody(wat: string, name: string): string {
 /**
  * Did the IR lane give some vector in this module an i32 element layout?
  *
- * The `__vec_elem_set_<vecTypeIdx>` helper's third parameter IS the element
- * type, so an `i32`-valued one is minted only for a narrowed vector — the IR
- * element-store/`push` arms refuse every other i32-element vec (`boolean[]`).
- * Reading the helper signature rather than counting type indices keeps this
- * assertion stable against unrelated additions to the type section.
+ * A narrowed vector either uses the grow helper (whose third parameter is the
+ * element type) or, when capacity is proven, lowers to direct stores and keeps
+ * an i32 vec-element scratch. Accept both optimized shapes without coupling to
+ * module-relative type indices.
  */
 function hasI32ElementVector(wat: string): boolean {
-  return /\(func \$__vec_elem_set_\d+ \(param \(ref null \d+\) i32 i32\)/.test(wat);
+  return (
+    /\(func \$__vec_elem_set_\d+ \(param \(ref null \d+\) i32 i32\)/.test(wat) ||
+    /\(local \$\$vec_element_i32: i32\)/.test(wat)
+  );
 }
 
 const BENCH_SRC = `
@@ -78,7 +80,7 @@ export function bench_array(): number {
 
 describe("#3734 — i32 array elements (shape)", () => {
   it("the array.ts benchmark gets an i32 element vector and widens on read", async () => {
-    const r = await compile(BENCH_SRC, { emitWat: true });
+    const r = await compile(BENCH_SRC, { emitWat: true, trackIrOutcomes: true });
     expect(r.success).toBe(true);
     expect(hasI32ElementVector(r.wat)).toBe(true);
 
@@ -88,6 +90,12 @@ describe("#3734 — i32 array elements (shape)", () => {
     // (`local.tee` in between is the SSA value's own spill — the widen is
     // still the next real operation on the loaded element.)
     expect(body).toMatch(/array\.get \d+\s*\n\s*(local\.tee \d+\s*\n\s*)?f64\.convert_i32_s/);
+    expect(r.irOutcomes?.find((outcome) => outcome.displayName === "bench_array")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
   });
 
   it("a narrowed store costs one conversion FEWER per iteration than the f64 layout", async () => {
