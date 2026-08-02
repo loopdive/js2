@@ -997,9 +997,15 @@ function collectFunctionEvidence(
       }
     });
   };
-  for (const block of fn.blocks) {
-    for (const type of block.blockArgTypes) collectType(type);
-    for (const instr of block.instrs) collectInstr(instr);
+  // A prepared async source callable is lowered exclusively from its semantic
+  // state plan. Its original AST-lowered block is retained as provenance for
+  // diagnostics, but scanning it would invent dependencies on the discarded
+  // `await`/boxing path and prevent the real state-plan component from sealing.
+  if (!fn.asyncPlan) {
+    for (const block of fn.blocks) {
+      for (const type of block.blockArgTypes) collectType(type);
+      for (const instr of block.instrs) collectInstr(instr);
+    }
   }
   for (const state of fn.asyncRuntime?.states ?? fn.asyncPlan?.states ?? []) {
     if (state.resume) collectType(state.resume.type);
