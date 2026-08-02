@@ -125,8 +125,21 @@ export function emitStrWsSpanHelpers(shared: NativeStrShared): void {
     { name: "ws", type: { kind: "i32" as const } },
   ];
 
-  /** `i = trunc(from); n = trunc(to); data = s.data; off = s.off` */
-  const prologue: Instr[] = [
+  /**
+   * `i = trunc(from); n = trunc(to); data = s.data; off = s.off`
+   *
+   * A FACTORY, not a shared array (#4034). Both kernels below need this
+   * prologue, and spreading one array into both bodies copies the array but
+   * ALIASES the `Instr` objects — including the two `struct.get`s that carry a
+   * `typeIdx`. Dead-elimination's `remapTypeIdxInBody` mutates instructions in
+   * place and guards against double-remap with a WeakSet scoped to ONE body
+   * (#1302/#2564), so an object reachable from two bodies is remapped once per
+   * body: under a compaction map `$NativeString` 7→6→5 lands on `$AnyString`,
+   * and emit fails with "struct field index out of range — 2 (valid: [0, 1))".
+   * Latent until something makes a type actually die; #4034's export-gating did.
+   * Fresh objects per body keep each instruction remapped exactly once.
+   */
+  const makePrologue = (): Instr[] => [
     { op: "local.get", index: 1 },
     { op: "i32.trunc_sat_f64_s" },
     { op: "local.set", index: I },
@@ -148,7 +161,7 @@ export function emitStrWsSpanHelpers(shared: NativeStrShared): void {
     ctx.nativeStrHelpers.set(STR_WS_START_FN, funcIdx);
 
     const body: Instr[] = [
-      ...prologue,
+      ...makePrologue(),
       {
         op: "block",
         blockType: { kind: "empty" },
@@ -205,7 +218,7 @@ export function emitStrWsSpanHelpers(shared: NativeStrShared): void {
 
     // Here `i` is the lower bound and `n` the moving end.
     const body: Instr[] = [
-      ...prologue,
+      ...makePrologue(),
       {
         op: "block",
         blockType: { kind: "empty" },
