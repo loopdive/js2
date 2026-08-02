@@ -385,3 +385,58 @@ This supersedes the earlier framing entirely: the issue is **not** "the `ve`
 bug", and not ESLint-specific. It is a general codegen defect that any minified
 bundle appears to trigger, of which ESLint's failure is one instance. Retitled
 accordingly.
+
+## The offending SOURCE CONSTRUCT, named (2026-08-02)
+
+`JS2WASM_CHECK_FRAMES=1` now also fires inside `compileArrowAsClosure`, printing
+the arrow/function-expression **source text** the moment a lifted body escapes
+its own frame. On `uri.all.js` all four `__closure_N` breaches are two functions,
+each compiled twice:
+
+```text
+[js2:closure-frame] __closure_21 frame=6 (2 params + 4 locals) worst=17
+  source: function toUnicode(input) { return mapDomain(input, function (string) {
+             return regexPunycode.test(string) ? decode(string.slice(4).toLowerCase()) : string; }); }
+
+[js2:closure-frame] __closure_23 frame=6 (2 params + 4 locals) worst=17
+  source: function toASCII(input) { return mapDomain(input, function (string) {
+             return regexNonASCII.test(string) ? 'xn--' + encode(string) : string; }); }
+```
+
+The breaching unit is the **outer named function expression**, not the inner
+callback. Both have the identical shape:
+
+> a **named function expression** whose entire body is
+> `return helper(input, function (x) { … });` — an **inline callback passed to a
+> user function**.
+
+And the number lines up: `mapDomain`, the callee, has a **40-slot** frame in the
+same module (`[js2:emit] 18  40  mapDomain`), so `worst=17` is comfortably inside
+*its* frame while being far outside the 6-slot closure that ended up holding it.
+Something copies instructions from the callee's frame into the caller's body.
+
+### Minimal-repro attempts that did NOT reproduce
+
+Four variants of exactly that shape, each with a 40-slot `helper`, all compile
+clean:
+
+| variant | result |
+| --- | --- |
+| named function expression + inline `function` callback | clean |
+| plain function declarations, same shape | clean |
+| named function expression + **arrow** callback | clean |
+| callback with the regex/ternary body from the original | clean |
+
+So the shape is necessary but **not sufficient** — the surrounding `uri.all.js`
+context contributes. That bundle is UMD: an outer IIFE, `_typeof`/`_slicedToArray`
+helper preludes, and the whole module compiled twice (both `toUnicode` and
+`toASCII` appear at two closure ids, e.g. 21/23 and 63/65), which is itself worth
+a look — a module compiled twice is exactly where a stale frame could be reused.
+
+### Now-cheap next step
+
+`uri.all.js` is 57 KB of readable ES5 (not single-line). With the closure
+reporter, deleting halves of the file and re-probing costs **seconds** per round,
+and the reporter names the surviving construct each time. That is a
+straightforward delta-debug to a minimal fixture — no more hypothesis-guessing
+required.

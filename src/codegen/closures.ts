@@ -2610,6 +2610,49 @@ export function compileLiftedClosureBody(
   return { liftedFctx, closureReturnType, liftedFuncTypeIdx };
 }
 
+/** (#4075) Report a lifted closure whose body escapes its own local frame. */
+function reportClosureFrameBreach(
+  ctx: CodegenContext,
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  closureName: string,
+  liftedFuncTypeIdx: number,
+  liftedFctx: FunctionContext,
+): void {
+  const type = ctx.mod.types[liftedFuncTypeIdx];
+  if (!type || type.kind !== "func") return;
+  const frame = type.params.length + liftedFctx.locals.length;
+  const localOps = new Set(["local.get", "local.set", "local.tee"]);
+  let worst = -1;
+  const walk = (instrs: readonly Instr[]): void => {
+    for (const instr of instrs) {
+      if (localOps.has(instr.op)) {
+        const index = (instr as { index?: number }).index;
+        if (typeof index === "number" && index >= frame && index > worst) worst = index;
+      }
+      for (const key of ["body", "then", "else", "catchAll"] as const) {
+        const nested = (instr as unknown as Record<string, unknown>)[key];
+        if (Array.isArray(nested)) walk(nested as Instr[]);
+      }
+      const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+      if (Array.isArray(catches)) for (const c of catches) if (Array.isArray(c.body)) walk(c.body);
+    }
+  };
+  walk(liftedFctx.body);
+  if (worst < 0) return;
+  let text = "<unavailable>";
+  try {
+    text = arrow.getText().replace(/\s+/g, " ").slice(0, 200);
+  } catch {
+    // A synthesized node has no source text; the name and frame still localise it.
+  }
+  const file = arrow.getSourceFile?.()?.fileName ?? "<unknown>";
+  process.stderr.write(
+    `[js2:closure-frame] ${closureName} frame=${frame} (${type.params.length} params + ` +
+      `${liftedFctx.locals.length} locals) worst=${worst}\n` +
+      `[js2:closure-frame]   at ${file}\n[js2:closure-frame]   source: ${text}\n`,
+  );
+}
+
 /** Compile an arrow function as a first-class closure value (Wasm GC struct + funcref) */
 export function compileArrowAsClosure(
   ctx: CodegenContext,
@@ -2713,6 +2756,14 @@ export function compileArrowAsClosure(
   liftedFuncTypeIdx = generic.liftedFuncTypeIdx;
 
   const liftedFuncIdx = mintDefinedFunc(ctx);
+  // (#4075) `JS2WASM_CHECK_FRAMES=1` reports a lifted closure body that reads or
+  // writes a local its own frame never declares, AT THE MOMENT IT IS CREATED,
+  // together with the offending source text. The end-of-codegen checker can only
+  // say which function is broken; this says which ARROW produced it, which is
+  // the last link needed to reduce a fixture. Inert unless set.
+  if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+    reportClosureFrameBreach(ctx, arrow, closureName, liftedFuncTypeIdx, liftedFctx);
+  }
   pushProgramAbiNestedCallable(ctx, arrow, liftedFuncIdx, {
     name: closureName,
     typeIdx: liftedFuncTypeIdx,
