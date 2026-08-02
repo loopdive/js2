@@ -1,11 +1,12 @@
 ---
 id: 3976
 title: "standalone: class elements are not installed as own properties on the prototype/constructor — invisible to getOwnPropertyDescriptor/hasOwnProperty"
-status: ready
+status: done
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
-assignee: ttraenkler/sendev-p3-uncurry
+updated: 2026-08-02
+completed: 2026-08-02
+assignee: ttraenkler/senior-dev-3976-class-elements
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -272,3 +273,123 @@ fail honestly; do not fake the flags.
 
 **Private elements** (`#m`) must stay absent from all of the above — several
 tests in this cluster assert exactly that.
+
+---
+
+## Slice 1 as implemented (2026-08-02) — the plan above was REFUTED and replaced
+
+### The plan's own slice 1 is worth ZERO. Measured, full population, no sampling.
+
+The plan above proposes synthesizing own-property answers by prepending
+class-identity arms into `__hasOwnProperty` / `__getOwnPropertyDescriptor` /
+`__propertyIsEnumerable` / `__getOwnPropertyNames`, and explicitly defers
+`writable`/`configurable` as "behavioural, out of slice 1".
+
+**That deferral removes the entire population.** Static classification of every
+file in the class own-property bucket (`.tmp/classify.mjs`, denominator **816**,
+full census — not a sample):
+
+| n       | descriptor keys asserted                  |
+| ------- | ----------------------------------------- |
+| 658     | `configurable + enumerable + writable`     |
+| 158     | `configurable + enumerable + value + writable` |
+| **816** | **assert `writable` AND `configurable` — 100.0 %** |
+| **0**   | presence/enumerable only — **0.0 %**       |
+
+`propertyHelper.js` probes those two **by mutating**: `isWritable` (line 174)
+writes an unlikely value and reads it back; `isConfigurable` (line 138) deletes
+and re-checks `hasOwnProperty`. A descriptor that cannot be written to or
+deleted from fails both probes. So presence-and-descriptor-only flips **0/816**,
+and faking the flags would trade a missing property for a **wrong** one.
+
+Positive control on the reading:
+`language/statements/class/elements/same-line-method-rs-static-async-method-privatename-identifier-alt.js`
+carries verbatim `verifyProperty(C.prototype, "m", {enumerable: false, configurable: true, writable: true})`.
+
+### What was built instead: the prototype IS an ordinary object
+
+Every behaviour the population needs — presence, descriptor, enumerability,
+for-in exclusion, write-through, delete, own-key enumeration — is what an
+ordinary object already does. So rather than re-implement six natives' worth of
+semantics behind class-identity guards, `emitLazyProtoGet` now builds the
+standalone prototype singleton as a real `$Object` with the methods installed as
+own data properties at §17 attributes (`__new_plain_object` +
+`__defineProperty_value`, flags `0x05`). Every reflective native then answers
+through its existing `$Object` path with **no new arms at all**.
+
+New module `src/codegen/class-proto-object.ts`; the only wiring is one early
+return in `emitLazyProtoGet` (`src/codegen/expressions/extern.ts`). Template
+copied: `emitGeneratorPrototypeSingleton` (`array-object-proto.ts`), including
+the `ctx.liveBodies` registration around the body swap — **not optional here**,
+because unlike the legacy struct init this body bakes `ref.func`s.
+
+### Measured result — A/B by file-copy revert, same binary, same file list
+
+Arms are the two file states of `src/codegen/expressions/extern.ts`, swapped by
+file copy (never `git stash` — shared ref stack). Same binary otherwise, same
+file list, same order.
+
+| population                                   | BASE          | FIX               |
+| -------------------------------------------- | ------------- | ----------------- |
+| seeded sample, 140 of the 539                | **0 / 140**   | **122 / 140** (87.1 %) |
+| **full `C.prototype` population, all 539**   | 0 (see below) | **479 / 539 (88.9 %)** |
+
+BASE on the full 539 was not re-run: every one of the 539 is drawn from the
+*failing* standalone population by construction, and the 140-file arm measured
+BASE at exactly 0/140. Quote 479 as the measured figure, not 539.
+
+**All 60 residuals are ONE bucket, unanimous** — `foo descriptor value should be
+foobar; foo descriptor should be enumerable`, i.e. an *instance field* expected
+at `{value:"foobar", enumerable:true, …}`. That is the
+instance-field-as-own-property-of-the-instance defect (the census's 276
+`receiver = c` bucket), a separate slice. Nothing residual is blocked on the
+prototype surface this slice supplies.
+
+Regression control: 160 files seeded from the **5,786** class-path files that
+PASS standalone in the baseline → **159/160 on FIX**. The single non-pass
+(`class/elements/fields-asi-same-line-1.js`) was re-run **solo on both arms** and
+fails identically on BASE — pre-existing baseline drift, not attributable. So
+**0 attributable regressions**, on a 160-file sample rather than the full 5,786.
+
+Note the ceiling caveat held: 88.9 %, not the vacuous arm-U 40/40.
+
+**Instrument caveat**: all of the above uses `runTest262File`, which is *not* the
+CI path (no #2961 host-import refusal) — its **status** is trustworthy, its error
+category and source location are artifacts. Standalone conformance is certified
+by the `merge_group`, not by these numbers.
+
+### What is deliberately NOT in this slice
+
+- **The class object `C`** (179 of the 816, static receivers). Blocked:
+  `new-super.ts::emitDynamicNewFallback` `ref.test`s the class-object value
+  against each `$ClassName` struct type **by design**, so converting it to an
+  `$Object` silently breaks value-bound `new K(...)`. Needs that dispatcher
+  reworked first.
+- **Accessors.** `ctx.classMethodNames` folds get/set in with methods and
+  carries no kind tag; `ctx.classMethodSet` (methods only) is the filter used.
+  They need real accessor descriptors (`$get`/`$set`), not a data property whose
+  value is the getter — the latter would be a silent wrong answer.
+- **Instance fields as own properties of the instance** — the 276-file bucket
+  and the 18 residuals above.
+- **The prototype's own `[[Prototype]]`** is left null (it was effectively null
+  before, so this is behaviour-preserving). `D.prototype.__proto__ ===
+  C.prototype` and `%Object.prototype%` are a later slice.
+
+### Two pre-existing defects this change makes newly OBSERVABLE — read before extending
+
+1. **`__object_keys` and `__object_keys_forin` ignore `FLAG_ENUMERABLE`.**
+   Verified in `object-runtime-enumeration.ts`: the mask appears exactly once in
+   that file and in neither helper. This is general to every `$Object`, not
+   class-specific. Consequence here: `for (k in C.prototype)` now yields the
+   method names where it previously yielded nothing. It is **masked inside
+   `verifyProperty`** (`isEnumerable` ANDs the for-in scan with
+   `propertyIsEnumerable`, which does honour the flag), which is why the target
+   case passes anyway. Fixing it is a correctness win but a general one with its
+   own blast radius — do not fold it in here.
+2. **The syntactic `C.prototype.m` read bypasses the object.**
+   `property-access-dispatch.ts` intercepts it at compile time and returns the
+   cached closure singleton (#1394, which is what buys the
+   `c.m === C.prototype.m` identity). So after `C.prototype.m = v`, the dynamic
+   read sees `v` but the syntactic read still sees the method. Both spellings
+   were wrong before (the write was simply lost); they now disagree.
+   `propertyHelper` is entirely dynamic, so the population is unaffected.
