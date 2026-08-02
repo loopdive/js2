@@ -108,7 +108,7 @@ describe("five-part contract surface (#3029-S1)", () => {
 
 describe("IR interchange contract surface (#3030-T1)", () => {
   it("exports the frozen format version", () => {
-    expect(IR_FORMAT_VERSION).toBe("5.0");
+    expect(IR_FORMAT_VERSION).toBe("5.1");
     expect(IR_FORMAT_VERSION).toMatch(/^\d+\.\d+$/);
   });
 

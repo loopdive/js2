@@ -40,6 +40,8 @@ import {
   IR_STRING_CONCAT_FN,
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
+  IR_STRING_ITERATOR_CHAR_AT_FN,
+  IR_STRING_LITERAL_MATERIALIZE_FN,
 } from "../src/ir/string-runtime.js";
 import { ts } from "../src/ts-api.js";
 
@@ -532,6 +534,61 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     );
   });
 
+  it("turns oversized literal materialization into an exact callable dependency", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
+    const materializer = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:0`);
+    const literal: IrInstr = {
+      kind: "string.const",
+      result: asValueId(0),
+      resultType: { kind: "string" },
+      value: "x".repeat(10_001),
+    };
+    const withCarrier = attachIrStringCarrier(irFunction(f.first, [literal]), carrierRef).function;
+    const prepared = attachIrStringSupport(withCarrier, {
+      storageForConst: () => undefined,
+      materializerForConst: () => materializer,
+      providerForLength: () => undefined,
+    });
+    const providerBindingId = createIrBindingId({
+      ownerId: f.sourceId,
+      domain: "callable",
+      role: "string-literal-materializer",
+    });
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [prepared] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([
+        sourceCallableEntry(f.first.id),
+        {
+          id: carrierRef.binding.bindingId,
+          structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+          slotPolicy: "required",
+          intent: { kind: "type", shapeKey: '{"kind":"struct","name":"AnyString"}' },
+        },
+        {
+          id: providerBindingId,
+          structuralReferenceKey: irCallableBindingKey(materializer.binding),
+          slotPolicy: "required",
+          intent: { kind: "callable", origin: "intrinsic" },
+        },
+      ]),
+    });
+
+    expect(prepared.blocks[0]!.instrs[0]).toMatchObject({
+      kind: "string.const",
+      materializer: { binding: materializer.binding },
+    });
+    expect(report.components[0]!.status).toBe("complete");
+    expect(report.components[0]!.abiDependencies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ bindingId: carrierRef.binding.bindingId, kind: "support" }),
+        expect.objectContaining({ bindingId: providerBindingId, kind: "external-callable" }),
+      ]),
+    );
+  });
+
   it("turns final string operations into exact callable dependencies without collapsing owned append", () => {
     const f = fixture();
     const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
@@ -646,6 +703,70 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     );
     expect(new Set(report.components[0]!.abiDependencies.map((dependency) => dependency.bindingId))).toEqual(
       new Set([carrierRef.binding.bindingId, ...providerIds]),
+    );
+  });
+
+  it("turns native string iteration into an exact code-point provider dependency", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
+    const loop: IrInstr = {
+      kind: "forof.string",
+      str: asValueId(0),
+      counterSlot: 0,
+      lengthSlot: 1,
+      strSlot: 2,
+      elementSlot: 3,
+      body: [],
+      result: null,
+      resultType: null,
+    };
+    const unbound: IrFunction = {
+      ...irFunction(f.first, [loop]),
+      params: [{ value: asValueId(0), name: "value", type: { kind: "string" } }],
+      valueCount: 1,
+    };
+    const withCarrier = attachIrStringCarrier(unbound, carrierRef).function;
+    const prepared = attachIrStringSupport(withCarrier, {
+      storageForConst: () => undefined,
+      providerForLength: () => undefined,
+    });
+    const provider = irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN);
+    const providerBindingId = createIrBindingId({
+      ownerId: f.sourceId,
+      domain: "callable",
+      role: "string-iterator-provider",
+    });
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [prepared] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([
+        sourceCallableEntry(f.first.id),
+        {
+          id: carrierRef.binding.bindingId,
+          structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+          slotPolicy: "none",
+          intent: { kind: "type", shapeKey: '{"kind":"externref"}' },
+        },
+        {
+          id: providerBindingId,
+          structuralReferenceKey: irCallableBindingKey(provider.binding),
+          slotPolicy: "required",
+          intent: { kind: "callable", origin: "intrinsic" },
+        },
+      ]),
+    });
+
+    expect(prepared.blocks[0]!.instrs[0]).toMatchObject({
+      kind: "forof.string",
+      provider: { binding: provider.binding },
+    });
+    expect(report.components[0]!.status).toBe("complete");
+    expect(report.components[0]!.abiDependencies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ bindingId: carrierRef.binding.bindingId, kind: "support" }),
+        expect.objectContaining({ bindingId: providerBindingId, kind: "external-callable" }),
+      ]),
     );
   });
 
