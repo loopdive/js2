@@ -1,10 +1,11 @@
 ---
 id: 4110
 title: "IR async fetchAllParallel non-identity continuation"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-03
+completed: 2026-08-03
 priority: critical
 horizon: m
 feasibility: medium
@@ -132,6 +133,46 @@ shape already representable by the shared IR plan.
   increase fails the hybrid gate.
 - Focused async-plan/runtime tests, typecheck, fallback/readiness/optimization
   gates, formatting, source/function budgets, and relevant pre-push tests pass.
+
+## Result
+
+`fetchAllParallel` now compiles through the prepared IR async component. Its
+source callable, entry helper, and post-resume reduction continuation share a
+frozen Promise ABI and resolve through stable Program ABI identities. The
+entry preserves the three-request fan-out before suspension; the continuation
+materializes the fulfilled host array into the typed vector representation,
+reduces it with direct indexed reads and numeric loop state, and settles the
+outer Promise through the existing frame runtime. Rejection bypasses the
+continuation and reaches the established rejection path.
+
+The production census is now 35 of 37 reachable functions emitted through IR,
+32 legacy bodies, two typed async blockers, and zero invariants. The two
+remaining blockers are `fetchAllSequential` and async `main`.
+
+No new optimization-retirement ledger row was required: this slice introduced
+no new direct-only optimization. Existing vector representation, indexed-read,
+numeric accumulator, loop-counter, and bounds decisions are covered by the
+focused WAT assertions. The next serial slice is `fetchAllSequential`.
+
+## Validation evidence
+
+- The focused #4110 suite passes all 18 tests, covering source/entry/
+  continuation ownership, fan-out and ordering, first rejection, stable
+  symbolic targets, exact vector materialization, continuation WAT shape, and
+  fail-closed controls.
+- The post-rebase async, runtime, allocation, vector, and regression selection
+  passes all 147 tests across 12 files.
+- Typecheck and formatting checks pass.
+- Source LOC and function-size budgets pass with only the issue-scoped
+  allowances for `ir-async-frame.ts` and `async-prepare.ts`.
+- The raw-checker TypeOracle ratchet passes with zero new checker accesses.
+- The normal fallback ratchet and the body-shape diagnostic pass with zero
+  unintended fallback growth, post-claim fallback growth, module growth, or
+  body-shape rejection.
+- Hybrid readiness passes at 35/37 IR-emitted, 32 legacy bodies, two
+  unsupported async owners, and zero invariants.
+- Optimization-retirement validation passes all 22 tracked decisions: 11 are
+  IR-owned, one is retirement-ready, and two remain source-anchored.
 
 ## Validation plan
 
