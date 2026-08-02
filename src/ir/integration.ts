@@ -247,6 +247,7 @@ import {
   derivePreparedComponentDependencies,
   type PreparedComponentDependencyReport,
 } from "./prepared-component-dependencies.js";
+import { attachIrStringCarrier } from "./string-carrier.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -1942,7 +1943,7 @@ export function compileIrPathFunctions(
       return false;
     }
   };
-  if (!runGlobalPreparation(() => preregisterStringSupport(ctx, healthyForLower))) return finishReport();
+  if (!runGlobalPreparation(() => (healthyForLower = prepareStrings(ctx, healthyForLower)))) return finishReport();
   if (!runGlobalPreparation(() => preregisterHostDateSnapshotSupport(ctx, healthyForLower))) {
     return finishReport();
   }
@@ -4417,7 +4418,7 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
  * Idempotent — repeat calls are no-ops, and the helpers themselves are
  * idempotent on `(ctx.hasStringImports, ctx.stringGlobalMap)`.
  */
-function preregisterStringSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   // Find all distinct string literals + whether any string op is used at all.
   // Slice 10 (#1169i): the `extern.regex` instr lowers to two `string.const`
   // ops (pattern + flags). We collect them here too so the host-strings
@@ -4482,9 +4483,7 @@ function preregisterStringSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[
       for (const instr of block.instrs) walk(instr);
     }
   }
-  if (!usesStringOp) return;
-
-  if (!ctx.nativeStrings) {
+  if (usesStringOp && !ctx.nativeStrings) {
     // Host-string backend: ensure all five `wasm:js-string` imports exist.
     addStringImports(ctx);
     // Pre-register every string literal as a global import. The helper is
@@ -4500,7 +4499,18 @@ function preregisterStringSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[
   // operation appears in source. The IR selector accepts `string` only when
   // a string operation appears in source, so the helpers are guaranteed to
   // exist by the time Phase 3 runs. (If they don't, the resolver throws
-  // with a clear message and the caller falls back to legacy.)
+  // with a clear preparation invariant; an IR-owned body is never retried.)
+  const registry = ctx.programAbiTypes;
+  if (!registry) return fns;
+  const carrierRef = registry.stringCarrierRef();
+  let usesString = false;
+  const prepared = fns.map((entry) => {
+    const attachment = attachIrStringCarrier(entry.fn, carrierRef);
+    usesString ||= attachment.usesString;
+    return attachment.function === entry.fn ? entry : { ...entry, fn: attachment.function };
+  });
+  if (usesString) registry.prepareStringCarrier();
+  return prepared;
 }
 
 function instrUsesStrings(instr: IrInstr): boolean {
@@ -4521,7 +4531,7 @@ function instrUsesStrings(instr: IrInstr): boolean {
 /**
  * Slice 6 part 3 (#1182): pre-register the iterator host imports if any
  * IR function emits an `iter.*` or `forof.iter` instr. Same pattern and
- * rationale as `preregisterStringSupport`: late import registration
+ * rationale as `prepareStrings`: late import registration
  * shifts function indices, and we want the shift to be a no-op on the
  * IR path's `IrFuncRef` resolution.
  *

@@ -332,7 +332,13 @@ function collectIrTypeClasses(type: IrType, classes: Map<IrClassId, IrClassShape
   }
 }
 
-function recordImplicitTypeRequirement(evidence: MutableFunctionEvidence, type: IrType, seen: Set<IrType>): void {
+function recordImplicitTypeRequirement(
+  evidence: MutableFunctionEvidence,
+  type: IrType,
+  seen: Set<IrType>,
+  abi: PreparedComponentAbiLookup,
+  ownership: OwnershipIndex,
+): void {
   if (seen.has(type)) return;
   seen.add(type);
   const block = (detail: string): void => {
@@ -348,9 +354,31 @@ function recordImplicitTypeRequirement(evidence: MutableFunctionEvidence, type: 
         block(`raw IR reference type ${type.val.kind}:${type.val.typeIdx} has no symbolic Program ABI type ref`);
       }
       return;
-    case "string":
-      block("IR string type resolves through backend support without a symbolic Program ABI type ref");
+    case "string": {
+      const carrierRef = type.carrierRef;
+      if (!carrierRef) {
+        block("IR string type resolves through backend support without a symbolic Program ABI type ref");
+        return;
+      }
+      if (carrierRef.binding.kind !== "support") {
+        block("IR string carrier must use a compiler-support Program ABI type ref");
+        return;
+      }
+      let structuralReferenceKey: string;
+      try {
+        structuralReferenceKey = irTypeBindingKey(carrierRef.binding);
+      } catch {
+        block("IR string carrier has a malformed compiler-support Program ABI type ref");
+        return;
+      }
+      addAbiDependency(evidence, abi, ownership, {
+        bindingId: carrierRef.binding.bindingId,
+        kind: "support",
+        structuralReferenceKey,
+        expected: (intent) => intent.kind === "type",
+      });
       return;
+    }
     case "object":
       block("IR object shape resolves a backend type without a symbolic Program ABI type ref");
       return;
@@ -731,7 +759,7 @@ function collectFunctionEvidence(
   const seenImplicitTypes = new Set<IrType>();
   const collectType = (type: IrType): void => {
     collectIrTypeClasses(type, classes, seenTypes);
-    recordImplicitTypeRequirement(evidence, type, seenImplicitTypes);
+    recordImplicitTypeRequirement(evidence, type, seenImplicitTypes, input.abi, ownership);
   };
   for (const param of fn.params) collectType(param.type);
   for (const result of fn.resultTypes) collectType(result);

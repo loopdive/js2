@@ -277,7 +277,13 @@ export type IrType =
   // Keeping the IR type backend-agnostic mirrors how `union`/`boxed` defer
   // their concrete struct to the resolver. From the middle-end's point of
   // view a `string` value is a single SSA def with no member structure.
-  | { readonly kind: "string" }
+  //
+  // Final prepared IR carries `carrierRef`: a Program-ABI identity for the
+  // backend-selected storage carrier. It deliberately does not expose that
+  // carrier's Wasm shape to type inference. Transitional/pre-preparation IR
+  // may omit the ref; prepared-component discovery then fails closed instead
+  // of consulting ambient backend state.
+  | { readonly kind: "string"; readonly carrierRef?: IrTypeRef }
   // Backend-agnostic object-shape marker (#1169b). The actual WasmGC struct
   // is registered lazily by `IrLowerResolver.resolveObject`. Like `union`
   // and `boxed`, the IR carries enough information to drive the resolver

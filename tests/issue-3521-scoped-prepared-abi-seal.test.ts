@@ -668,7 +668,7 @@ describe("#3521 scoped prepared-component ABI seal", () => {
     expect(disjoint.session.publish(disjoint.module).abi.entries()).toHaveLength(4);
   });
 
-  it("allows disjoint scopes but rejects source-callable requests and shared binding ownership", () => {
+  it("allows disjoint scopes and shared immutable dependencies but rejects source-callable requests", () => {
     const disjoint = fixture();
     planCallable(disjoint, disjoint.firstUnitId, "body", "first");
     planCallable(disjoint, disjoint.secondUnitId, "body", "second");
@@ -722,10 +722,11 @@ describe("#3521 scoped prepared-component ABI seal", () => {
     overlap.session.attachLocator(importedId, { kind: "import-function", value: imported });
     const owner = overlap.session.beginPreparedComponentScope("import-owner", [overlap.firstUnitId]);
     owner.includeBinding(importedId);
-    owner.seal();
-    const conflicting = overlap.session.beginPreparedComponentScope("import-overlap", [overlap.secondUnitId]);
-    conflicting.includeBinding(importedId);
-    expectInvariant(() => conflicting.seal(), "duplicate-session-draft");
+    expect(owner.seal().bindingIds).toContain(importedId);
+    const shared = overlap.session.beginPreparedComponentScope("import-overlap", [overlap.secondUnitId]);
+    shared.includeBinding(importedId);
+    expect(shared.seal().bindingIds).toContain(importedId);
+    expect(overlap.session.publish(overlap.module).abi.entries()).toHaveLength(3);
   });
 
   it("closes source globals through exact storage terminals and rejects foreign storage", () => {

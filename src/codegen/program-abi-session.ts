@@ -856,7 +856,7 @@ export class ProgramAbiSession {
   private readonly preparedScopes = new Map<string, PreparedProgramAbiScopeRecord>();
   private readonly preparedScopeByUnitId = new Map<IrUnitId, string>();
   private readonly preparedScopeByClassId = new Map<IrClassId, string>();
-  private readonly preparedScopeByBindingId = new Map<IrBindingId, string>();
+  private readonly preparedScopeIdsByBindingId = new Map<IrBindingId, Set<string>>();
   private readonly openPreparedScopeIds = new Set<string>();
   private applyingPreparedTypeLayoutRemap = false;
   private state: SessionState = "planning";
@@ -1140,7 +1140,7 @@ export class ProgramAbiSession {
       }
       return;
     }
-    const preparedScopeId = this.preparedScopeByBindingId.get(id);
+    const preparedScopeId = this.preparedScopeForBinding(id);
     if (preparedScopeId !== undefined) {
       throw new ProgramAbiInvariantError(
         "planning-sealed",
@@ -1178,7 +1178,7 @@ export class ProgramAbiSession {
       }
       return;
     }
-    const preparedScopeId = this.preparedScopeByBindingId.get(id);
+    const preparedScopeId = this.preparedScopeForBinding(id);
     if (preparedScopeId !== undefined) {
       throw new ProgramAbiInvariantError(
         "planning-sealed",
@@ -1763,8 +1763,13 @@ export class ProgramAbiSession {
           `prepared ABI scope ${scopeId} reaches source global ${id} owned by another component`,
         );
       }
-      const previousScope = this.preparedScopeByBindingId.get(id);
-      if (previousScope !== undefined) {
+      const previousScope = this.preparedScopeForBinding(id);
+      const structuralOwnerId = this.assertCanonicalPreparedBindingId(draft);
+      const dependencyTerminalOwnerId = this.terminalOwnerForPreparedDraft(draft, structuralOwnerId);
+      // Entry/runtime-owned dependencies are immutable compilation-wide
+      // snapshots and may be consumed by more than one component. Anything
+      // with a terminal source owner remains exclusive to that component.
+      if (previousScope !== undefined && dependencyTerminalOwnerId !== null) {
         throw new ProgramAbiInvariantError(
           "duplicate-session-draft",
           `prepared ABI binding ${id} overlaps sealed scope ${previousScope}`,
@@ -1906,7 +1911,7 @@ export class ProgramAbiSession {
     this.preparedScopes.set(scopeId, record);
     for (const unitId of unitIds) this.preparedScopeByUnitId.set(unitId, scopeId);
     for (const classId of classIds) this.preparedScopeByClassId.set(classId, scopeId);
-    for (const bindingId of exactBindingIds) this.preparedScopeByBindingId.set(bindingId, scopeId);
+    for (const bindingId of exactBindingIds) this.addPreparedScopeBinding(bindingId, scopeId);
     return view;
   }
 
@@ -2336,8 +2341,18 @@ export class ProgramAbiSession {
     }
   }
 
+  private preparedScopeForBinding(id: IrBindingId): string | undefined {
+    return this.preparedScopeIdsByBindingId.get(id)?.values().next().value;
+  }
+
+  private addPreparedScopeBinding(id: IrBindingId, scopeId: string): void {
+    const scopeIds = this.preparedScopeIdsByBindingId.get(id) ?? new Set<string>();
+    scopeIds.add(scopeId);
+    this.preparedScopeIdsByBindingId.set(id, scopeIds);
+  }
+
   private preparedScopeAffectedByDraft(draft: ProgramAbiDraft): string | undefined {
-    const exactOwner = this.preparedScopeByBindingId.get(draft.id);
+    const exactOwner = this.preparedScopeForBinding(draft.id);
     if (exactOwner !== undefined) return exactOwner;
     if (draft.intent.kind === "callable" && draft.intent.unitId) {
       const unitOwner = this.preparedScopeByUnitId.get(draft.intent.unitId);
@@ -2352,11 +2367,11 @@ export class ProgramAbiSession {
       if (classOwner !== undefined) return classOwner;
     }
     if (draft.slotPolicy === "alias") {
-      const aliasOwner = this.preparedScopeByBindingId.get(draft.aliasOf);
+      const aliasOwner = this.preparedScopeForBinding(draft.aliasOf);
       if (aliasOwner !== undefined) return aliasOwner;
     }
     if (draft.intent.kind === "export") {
-      const exportOwner = this.preparedScopeByBindingId.get(draft.intent.targetId);
+      const exportOwner = this.preparedScopeForBinding(draft.intent.targetId);
       if (exportOwner !== undefined) return exportOwner;
     }
     for (const [unitId, scopeId] of this.preparedScopeByUnitId) {
@@ -2777,7 +2792,7 @@ export class ProgramAbiSession {
     replacement: T,
   ): void {
     this.assertLayoutMutable(`replace slot locator for ${id}`);
-    const preparedScopeId = this.preparedScopeByBindingId.get(id);
+    const preparedScopeId = this.preparedScopeForBinding(id);
     if (preparedScopeId !== undefined) {
       throw new ProgramAbiInvariantError(
         "locator-remap-mismatch",

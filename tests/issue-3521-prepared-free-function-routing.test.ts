@@ -53,7 +53,7 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: false,
       irBodyEmitted: true,
     });
-    expect(outcome(result, "codeAtStart").preparedComponentId).toBeUndefined();
+    expect(outcome(result, "codeAtStart").preparedComponentId).toMatch(/^prepared-component:/);
     expect((await instantiate(result)).run()).toBe(65);
   });
 
@@ -324,6 +324,8 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: false,
       irBodyEmitted: true,
     });
+    expect(outcome(result, "codeAtStart").preparedComponentId).toMatch(/^prepared-component:/);
+    expect(outcome(result, "caller").preparedComponentId).toMatch(/^prepared-component:/);
     expect(outcome(result, "lateDirect")).toMatchObject({
       kind: "unsupported",
       legacyBodyEmitted: true,

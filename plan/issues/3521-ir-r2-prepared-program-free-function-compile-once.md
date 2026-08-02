@@ -26,6 +26,9 @@ files:
   - src/ir/program.ts
   - src/ir/prepare.ts
   - src/ir/integration.ts
+  - src/ir/nodes.ts
+  - src/ir/prepared-component-dependencies.ts
+  - src/ir/string-carrier.ts
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/lower.ts
@@ -33,6 +36,7 @@ files:
   - src/codegen/program-abi-session.ts
   - src/codegen/program-abi-import-planning.ts
   - src/codegen/program-abi-provider-planning.ts
+  - src/codegen/program-abi-type-planning.ts
   - src/codegen/ir-overlay-preparation.ts
   - src/codegen/ir-overlay-safety.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -47,6 +51,7 @@ files:
   - tests/issue-3521-prepared-ir-program.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
+  - tests/issue-3521-scoped-prepared-abi-seal.test.ts
   - tests/issue-3520-program-abi-import-callable-planning.test.ts
   - tests/issue-3520-callable-provider-abi.test.ts
   - tests/issue-3765-numeric-locals.test.ts
@@ -55,6 +60,7 @@ loc-budget-allow:
   - src/codegen/program-abi-session.ts
   - src/codegen/index.ts
   - src/ir/integration.ts
+  - src/ir/nodes.ts
 ---
 
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
@@ -538,6 +544,62 @@ The next R2 dependencies are symbolic string/dynamic/object/layout support and
 pre-reserved pass-derived callable slots. The explicit emission transaction
 and removal of the remaining placeholder/patch branch follow those dependency
 families.
+
+## Symbolic string-carrier continuation (2026-08-02)
+
+The first string dependency now crosses the prepared-program boundary without
+exposing a backend storage type to JS inference:
+
+- inference and the optimization passes continue to use the backend-neutral
+  `IrType.string` kind;
+- final post-pass IR receives one canonical `carrierRef` throughout params,
+  results, block arguments, nested result types, closure signatures, object
+  shapes, ref cells, unions, and vector element metadata. Exact class-shape
+  identities remain untouched because their class binding owns the complete
+  physical layout;
+- the Program ABI maps that ref to slotless `externref` in the host-string
+  backend or to the exact remappable `$AnyString` type cell in the native
+  backend; and
+- dependency discovery accepts the string type only when that exact support
+  type plan exists. Transitional IR without the ref remains blocked.
+
+The production `value.charCodeAt(0)` fixture already carried an explicit
+intrinsic provider after the preceding slice. Its remaining implicit string
+parameter blocker is now removed: the body records `direct=0`, `IR=1`, gains a
+`preparedComponentId`, and still returns `65`. The host-string late-import
+fixture also seals both string-typed bodies before lowering and continues to
+execute correctly after a later direct owner adds an import.
+
+That host fixture exposed a compilation-wide scope invariant that was too
+strict for prepared programs: two independent components could not share one
+immutable import or support type. Prepared ABI bookkeeping now retains every
+scope using a binding. Dependencies with no terminal source owner may be
+shared, while terminal-owned callables, globals, classes, and support remain
+exclusive to their component. Mutation guards still reject late contract,
+locator, or alias changes; prepared type layouts advance only through the
+existing exact-remap transaction.
+
+Validation for this continuation:
+
+- focused import/provider planning, scoped ABI sealing, dependency derivation,
+  prepared-program, and production routing coverage: **76/76 passing**;
+- numeric-local optimization parity: **17/17 passing**;
+- the broad #3520/#3521 matrix: **389/395 passing**, with the same six
+  parent-reproduced failures already recorded above (four stale host-bridge
+  census totals, nested source-callable reservation, and the linear inventory
+  build-count assertion);
+- typecheck, scoped lint/formatting, LOC/function budgets, fallback ratchet,
+  optimization-retirement ledger, and adoption checks: passing; and
+- hybrid readiness: **31/37 IR-emitted**, **6 typed Unsupported**, **0
+  invariants**, READY. Strict IR-only remains NOT READY because all 37 lane
+  units still pass through legacy body emission and the same six unsupported
+  units remain.
+
+The remaining string work is instruction-level support: literals, concat,
+equality, length, character operations, and string iteration still name
+implicit backend globals/helpers in their IR instructions. Dynamic carriers,
+object/ref-cell/closure/union/vector layouts, pass-derived callable slots, and
+the explicit emission transaction remain subsequent R2/R6 dependencies.
 
 ## File ownership and locks
 

@@ -1,7 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { describe, expect, it } from "vitest";
-import { irClassTypeRef, irGlobalBindingKey, irModuleGlobalRef, irTypeBindingKey } from "../src/ir/abi-bindings.js";
+import {
+  irClassTypeRef,
+  irGlobalBindingKey,
+  irModuleGlobalRef,
+  irSupportTypeRef,
+  irTypeBindingKey,
+} from "../src/ir/abi-bindings.js";
 import {
   irCallableBindingKey,
   irImportFuncRef,
@@ -24,6 +30,7 @@ import {
   type PreparedComponentAbiEntry,
   type PreparedComponentAbiLookup,
 } from "../src/ir/prepared-component-dependencies.js";
+import { attachIrStringCarrier } from "../src/ir/string-carrier.js";
 import { ts } from "../src/ts-api.js";
 
 const VOID_SIGNATURE = Object.freeze({ params: Object.freeze([]), results: Object.freeze([]) });
@@ -369,6 +376,71 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
         terminalOwnerUnitId: null,
       }),
     ]);
+  });
+
+  it("turns a prepared string carrier into an exact support-type dependency", () => {
+    const f = fixture();
+    const unbound: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "value", type: { kind: "string" } }],
+      valueCount: 1,
+    };
+    const blocked = derivePreparedComponentDependencies({
+      module: { functions: [unbound] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+    expect(blocked.components[0]!.status).toBe("blocked");
+    expect(blocked.components[0]!.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("symbolic Program ABI type ref"),
+      }),
+    ]);
+
+    const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
+    const attachment = attachIrStringCarrier(unbound, carrierRef);
+    expect(attachment.usesString).toBe(true);
+    expect(attachment.function.params[0]!.type).toMatchObject({
+      kind: "string",
+      carrierRef,
+    });
+    expect(attachIrStringCarrier(attachment.function, carrierRef).function).toBe(attachment.function);
+    const carrierEntry: PreparedComponentAbiEntry = {
+      id: carrierRef.binding.bindingId,
+      structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+      slotPolicy: "none",
+      intent: { kind: "type", shapeKey: '{"kind":"externref"}' },
+    };
+    const prepared = derivePreparedComponentDependencies({
+      module: { functions: [attachment.function] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), carrierEntry]),
+    });
+
+    expect(prepared.components[0]!.status).toBe("complete");
+    expect(prepared.components[0]!.abiDependencies).toEqual([
+      expect.objectContaining({
+        kind: "support",
+        bindingId: carrierRef.binding.bindingId,
+        structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+        terminalOwnerUnitId: null,
+      }),
+    ]);
+
+    const classShape: IrClassShape = {
+      classId: f.nestedClassId,
+      className: "LocalBox",
+      fields: [],
+      methods: [],
+      constructorParams: [],
+    };
+    const classType = { kind: "class", shape: classShape } as const;
+    const mixed = attachIrStringCarrier({ ...unbound, resultTypes: [classType] }, carrierRef).function;
+    expect(mixed.resultTypes[0]).toBe(classType);
+    expect(mixed.resultTypes[0]).toMatchObject({ kind: "class", shape: classShape });
   });
 
   it("requires a reverse Program ABI identity for import/runtime/intrinsic callables", () => {
