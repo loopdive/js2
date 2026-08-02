@@ -27,6 +27,7 @@ import type { ValType } from "./types.js";
 // (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
 // from the dependency-free leaf, so this adds no codegen module-graph pull.
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 
 /**
  * #1850 — successor block ids of a block, derived from its terminator.
@@ -1058,6 +1059,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [];
     case "call":
       return instr.args;
+    case "intrinsic":
+      return instr.args;
     case "global.get":
       return [];
     case "global.set":
@@ -1512,6 +1515,12 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
 
   const checkInstr = (instr: IrInstr, blockId: number): void => {
     switch (instr.kind) {
+      case "intrinsic": {
+        for (const message of verifyIrIntrinsicInstruction(instr, typeOf)) {
+          errors.push({ message, func: func.name, block: blockId });
+        }
+        break;
+      }
       case "binary": {
         const want = binopOperandKind(instr.op);
         for (const [label, v] of [

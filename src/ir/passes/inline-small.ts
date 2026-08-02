@@ -407,7 +407,8 @@ function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId, IrVal
     case "global.get":
     case "raw.wasm":
       return inst;
-    case "call": {
+    case "call":
+    case "intrinsic": {
       let changed = false;
       const newArgs: IrValueId[] = [];
       for (const a of inst.args) {

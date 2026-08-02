@@ -67,6 +67,8 @@ import { collectIrDirectCallLoweringPlans, type IrDirectCallTarget } from "../ir
 import { irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import { irVal, type IrFunction, type IrType } from "../ir/nodes.js";
 import { IR_VEC_ELEM_SET_PREFIX, parseIrVectorRuntimeElement } from "../ir/vector-runtime.js";
+import { prepareIrRuntimeManifest } from "../ir/intrinsic-support.js";
+import { isIntrinsicId } from "../ir/intrinsics.js";
 import { createDerivedIrUnitId, createIrSourceId, type IrSyntheticUnitRole, type IrUnitId } from "../ir/identity.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureNativeCharCodeAtHelper, NATIVE_CHARCODEAT_FN } from "./char-code-at-helpers.js";
@@ -478,7 +480,15 @@ export function emitSelfHostedFunc(ctx: CodegenContext, def: SelfHostedFuncDef):
   // ValTypes need resolveString()); everything else stays resolver-less.
   const fromAst = def.dialect === "native-strings" ? makeNativeStringsBuildResolver(ctx) : undefined;
   const ir = buildSelfHostedIr(def, createSelfHostedIrUnitId(def.name), fromAst);
-  const funcIdx = lowerAndRegister(ctx, def.name, ir);
+  const prepared = prepareIrRuntimeManifest({
+    functions: [ir],
+    sourceFile: `<stdlib:${def.name}>`,
+    policy: {
+      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
+      backend: "wasmgc",
+    },
+  });
+  const funcIdx = lowerAndRegister(ctx, def.name, prepared?.functions[0] ?? ir);
   return funcIdx;
 }
 
@@ -579,6 +589,11 @@ function lowerAndRegister(ctx: CodegenContext, name: string, ir: IrFunction): nu
           );
         }
         return helperIdx;
+      }
+      if (ref.binding.kind === "intrinsic" && isIntrinsicId(ref.binding.symbol)) {
+        const providerIdx = ctx.funcMap.get(ref.name);
+        if (providerIdx !== undefined) return providerIdx;
+        throw new Error(`stdlib-selfhost: ${name} cannot resolve prepared intrinsic provider ${ref.name}`);
       }
       const adapterName =
         ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic"

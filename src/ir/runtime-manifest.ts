@@ -9,7 +9,7 @@
  * frozen arrays/records. Lowering receives lookup-only `resolveProvider` calls;
  * a request absent from the frozen plan is a typed invariant.
  */
-import { irTypeEquals } from "./nodes.js";
+import { irTypeEquals, type IrIntrinsicBackendOp } from "./nodes.js";
 import {
   F64_BINARY_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
@@ -56,7 +56,7 @@ export type RuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
 export type RuntimeProviderImplementation =
   | {
       readonly kind: "backend-op";
-      readonly opcode: "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
+      readonly opcode: IrIntrinsicBackendOp;
     }
   | {
       readonly kind: "self-hosted";
