@@ -81,6 +81,7 @@ import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./r
 import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
+import { buildBagValueSeed, buildRealElementSeed } from "./vec-bag-seed.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
@@ -791,54 +792,6 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "local.set", index: lenLocal },
   ];
 
-  /**
-   * Seed an in-bounds real element into the companion when it has no entry:
-   * `__defineProperty_value(compExt, key, __extern_get_idx(vec, f64(i)), 0xBF)`.
-   * Locals: comp (ref null $Object), compExt/key/vec externref, i/len i32.
-   */
-  const seedIfRealElement = (l: {
-    comp: number;
-    compExt: number;
-    key: number;
-    vec: number;
-    i: number;
-    len: number;
-  }): Instr[] => [
-    { op: "local.get", index: l.i },
-    { op: "i32.const", value: 0 },
-    { op: "i32.ge_s" },
-    { op: "local.get", index: l.i },
-    { op: "local.get", index: l.len },
-    { op: "i32.lt_s" },
-    { op: "i32.and" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: l.comp },
-        { op: "ref.as_non_null" },
-        { op: "local.get", index: l.key },
-        { op: "call", funcIdx: objFindIdx },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: l.compExt },
-            { op: "local.get", index: l.key },
-            { op: "local.get", index: l.vec },
-            { op: "local.get", index: l.i },
-            { op: "f64.convert_i32_s" },
-            { op: "call", funcIdx: externGetIdxIdx },
-            { op: "f64.const", value: SEED_FLAGS },
-            { op: "call", funcIdx: dpValueIdx },
-            { op: "drop" },
-          ],
-        },
-      ],
-    },
-  ];
-
   const clearDeletedIndexMarker = (l: {
     comp: number;
     compExt: number;
@@ -1123,10 +1076,20 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: seedIfRealElement({ comp: 5, compExt: 6, key: 1, vec: 0, i: 7, len: 8 }),
+              then: buildRealElementSeed(
+                { comp: 5, compExt: 6, key: 1, vec: 0, i: 7, len: 8 },
+                objFindIdx,
+                dpValueIdx,
+                externGetIdxIdx,
+                SEED_FLAGS,
+              ),
             },
           ],
         },
+        // (#4010 S1′) Named-key twin of the index seed above — see `vec-bag-seed.ts`.
+        // Deliberately NOT applied on the accessor path: converting a data
+        // property to an accessor does not preserve [[Value]] (§10.1.6.3).
+        ...buildBagValueSeed(ctx, { comp: 5, compExt: 6, key: 1, vec: 0, i: 7 }, objFindIdx, dpValueIdx, SEED_FLAGS),
         // Delegate the define to the $Object native (validation throws propagate).
         { op: "local.get", index: 6 },
         { op: "local.get", index: 1 },
@@ -1269,7 +1232,13 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: seedIfRealElement({ comp: 6, compExt: 7, key: 1, vec: 0, i: 8, len: 9 }),
+              then: buildRealElementSeed(
+                { comp: 6, compExt: 7, key: 1, vec: 0, i: 8, len: 9 },
+                objFindIdx,
+                dpValueIdx,
+                externGetIdxIdx,
+                SEED_FLAGS,
+              ),
             },
           ],
         },
