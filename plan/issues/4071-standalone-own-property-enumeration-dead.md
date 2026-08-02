@@ -1,11 +1,12 @@
 ---
 id: 4071
 title: "Own-property ENUMERATION is dead in standalone for array indices and function own properties — Object.keys returns [] while writes round-trip"
-status: in-progress
+status: done
 sprint: current
 assignee: ttraenkler/L-enum
 created: 2026-08-02
 updated: 2026-08-02
+completed: 2026-08-02
 priority: high
 horizon: m
 feasibility: medium
@@ -88,3 +89,115 @@ assuming either subsumes the other.
    spread and `JSON.stringify` — with per-surface before/after counts.
 4. Net flips reported against a force-refreshed standalone baseline, with the
    denominator stated. **Report flips, not file counts.**
+
+---
+
+## Test Results (2026-08-02, `ttraenkler/L-enum`)
+
+Instrument: 10-carrier × 5-surface probe matrix, scored **in-Wasm** against a
+**plain-JS oracle** (`new Function`), with the compiler's **`gc` lane as a
+control**. Baselines force-refreshed (`--force`): host 48,340 rows, standalone
+48,619 rows.
+
+### Root cause
+
+`__object_keys` (`src/codegen/object-runtime-enumeration.ts:91`) treats a
+non-`$Object` receiver as "no properties". In standalone an array is a
+`__vec_<k>` struct subtyping `$__vec_base` (#2186) and a class instance is a
+closed nominal struct — neither is a `$Object`, so both enumerated ZERO.
+
+**Both halves of the treatment already existed for SIBLING helpers**; this one
+consumer was never wired to either:
+- #3183's `fillDynamicForinVecArms` → `$__vec_base` arms for
+  `__object_keys_forin` / `__extern_has` / `__extern_get`.
+- `fillClosedStructOwnPropertyNamesArms` → closed-struct arms for
+  `__getOwnPropertyNames`.
+
+### Probe matrix (INSTRUMENT — NOT a population, NOT a flip forecast)
+
+50 constructed (carrier, surface) cells. `gc`-wrong is constant at 7/50 across
+all arms — no host-lane movement.
+
+| arm | standalone-wrong cells |
+| --- | --- |
+| base (kill switch OFF) | 30 / 50 |
+| vec arm only (**shipped**) | 28 / 50 |
+
+### Funnel (test262, standalone lane)
+
+| stage | `Object.keys` | `getOwnPropertyNames` | `JSON.stringify` |
+| --- | --- | --- | --- |
+| 1 population (corpus mentions) | 255 | 203 | 155 |
+| 2a present in standalone baseline | 234 (unopenable 21) | 138 (unopenable 65) | 84 (unopenable 71) |
+| 2b not passing today | 140 | 92 | 62 |
+| 3 swept before+after | **234** | — | — |
+| 4 flips | **+3 / −2 = net +1** | — | — |
+
+**Instrument validation before reading any delta:** local sweep vs published CI
+baseline over the same 234 rows — 217/234 exact-status agreement (92.7%); the 17
+disagreements are 15 `compile_error→fail`, 1 `fail→skip`, 1 `compile_error→pass`,
+i.e. the known `runTest262File`-is-not-the-CI-path artifact. At **pass /
+not-pass** granularity — the only granularity the flip count uses — agreement is
+**233/234 = 99.6%**.
+
+**Attribution** proved by kill-switch REMOVAL (file-copy revert of
+`object-runtime.ts` to the merge-base version, never `git stash`), re-measured
+end-to-end, not by reasoning.
+
+### Per-surface before/after (probe matrix, standalone)
+
+| surface | before | after | note |
+| --- | --- | --- | --- |
+| `Object.keys` | array 0, class 0 | **array 3 ✓**, class 0 | fixed for arrays |
+| `for-in` | array 3 ✓ | array 3 ✓ | unchanged (had the arm since #3183) |
+| `getOwnPropertyNames` | array 0 ✗ | array 0 ✗ | untouched — no vec arm |
+| spread | array 0 ✗ | array 0 ✗ | **does not route through `__object_keys`** |
+| `JSON.stringify` | array `"null"` ✗ | array `"null"` ✗ | **does not route through `__object_keys`** → #4085 |
+
+### What this REFUTES
+
+- **The shared-substrate premise in this issue is wrong.** Spread and
+  `JSON.stringify` did **not** move when `__object_keys` was fixed. They are
+  independent helpers, not consumers of one enumeration substrate. Only
+  `Object.keys` and `for-in` are siblings, and `for-in` was already fixed.
+- **Acceptance criterion 2 (`Object.keys(fn)`) is NOT a standalone-only defect.**
+  The `gc` lane gets it wrong too (`gc=0`, spec `1`). It is a compiler-wide
+  gap, so it is out of scope for a standalone carrier fix.
+- **The sparse-array component of the residual is not lane-specific.** `gc` and
+  standalone BOTH report 6 for `for-in`, `hasOwnProperty` and `Object.keys` on
+  `[1,2,,4,,6]` (spec: 4). There is no hole representation in either lane.
+
+### What was deliberately NOT shipped
+
+- **The closed-struct half — measured at +5 additional net flips (+8/−3 vs
+  +3/−2), then REVERTED.** It made `Object.keys(new Date(0))` answer
+  `["timestamp"]` and `Object.keys(/ab/)` answer 7 internal RegExp fields, both
+  correctly `[]` before. A number bought with a new silent wrong answer on two
+  very common spellings is negative value. Both are now explicit regression
+  guards in `tests/issue-4071.test.ts`. Root cause + fix direction filed as
+  **#4086** (needs a user-declared-vs-builtin struct predicate, which does not
+  exist today).
+- **`JSON.stringify` → `"null"` for every non-empty array / class instance /
+  object-holding-an-array.** Distinct helper (`json-codec-native.ts` dispatches
+  on `$Object`/`$ObjVec` and never `$__vec_base`; `$ObjVec` is the
+  enumeration-RESULT vector, not a user array). Filed as **#4085**.
+- **Vec expando properties.** `Object.keys([10,20].concat with .z=9)` yields the
+  index keys only, matching what `for-in` already does. The expando bag (#3537)
+  and the index keys remain disjoint side tables — #4010 territory.
+
+### The 2 apparent regressions are DE-VACUIFICATIONS, not regressions
+
+Both re-run **SOLO** (per the ~79% inflation lesson): both reproduce, so they
+are real status changes, not flake. But both were **vacuous passes**:
+
+`15.2.3.14-6-1` / `-6-2` do `for (var index in returnedArray) assert.sameValue(...)`
+where `returnedArray = Object.keys(denseArray)`. Before the fix `Object.keys`
+returned `[]` (measured 0 → 3), so the loop ran **zero iterations and executed
+zero assertions** — the tests passed while verifying nothing. They now execute
+and fail against a *separate* pre-existing defect (`tempArray[index]` reads
+`undefined` under the real harness; the same shape scored in-Wasm both at module
+top level and inside a function gives 3 comparisons / 0 mismatches, so it is not
+reproducible outside the harness and was not chased here).
+
+Net honest effect on this population: +3 real passes, −2 passes that were never
+verifying anything.
