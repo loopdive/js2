@@ -1,7 +1,7 @@
 ---
 id: 4113
 title: "Require final allocation-provenance verification for every IR artifact"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
@@ -89,19 +89,19 @@ and include this gate in its deletion-readiness result.
 
 ## Acceptance criteria
 
-- [ ] `IR_VERIFY_ALLOC` continues to control optional checks at intermediate
+- [x] `IR_VERIFY_ALLOC` continues to control optional checks at intermediate
       pass boundaries.
-- [ ] Final allocation-provenance verification is unconditional and runs once
-      for every final WasmGC IR artifact before analysis/lowering.
-- [ ] Ordinary, synthetic, and monomorphized final functions cannot bypass the
+- [x] Final allocation-provenance verification is unconditional and runs once
+      for every final WasmGC IR artifact before publication/lowering.
+- [x] Ordinary, synthetic, and monomorphized final functions cannot bypass the
       required gate.
-- [ ] A focused injected final-stage defect fails with
+- [x] A focused injected final-stage defect fails with
       `allocation-provenance-failure` while `IR_VERIFY_ALLOC` is unset.
-- [ ] A normal focused compile succeeds with the flag unset.
-- [ ] Focused IR and type/format checks pass.
-- [ ] Compile overhead is measured on a named stable corpus; the result is
+- [x] A normal focused compile succeeds with the flag unset.
+- [x] Focused IR and type/format checks pass.
+- [x] Compile overhead is measured on a named stable corpus; the result is
       recorded without treating timing noise as zero cost.
-- [ ] #3792 v2 follow-up classification is documented without inserting an
+- [x] #3792 v2 follow-up classification is documented without inserting an
       incompatible ledger row.
 
 ## Out of scope
@@ -113,4 +113,31 @@ and include this gate in its deletion-readiness result.
 
 ## Result
 
-Pending implementation and measurement.
+`assertFinalAllocProvenance` now ignores the optional debug flag and shares the
+same verifier/error producer as the intermediate assertion. WasmGC integration
+runs that required assertion after string, vector, and runtime-manifest
+attachments and before prepared-component sealing, slot publication, resolver
+construction, or lowering. It walks the complete healthy artifact collection,
+so ordinary source functions, lifted/async synthetic functions, and
+monomorphized clones share one final boundary.
+
+The focused suites pass **11/11** tests: seven allocation-verifier tests plus
+four integration tests covering a normal compile and injected ordinary,
+synthetic, and monomorphized failures with `IR_VERIFY_ALLOC` unset. Typecheck,
+formatting, the IR fallback gate, LOC budget, and function budget pass. The
+broader #3519 outcome suite passes **38/40**; both failures reproduce unchanged
+on the control commit (a stale static-method expectation and the existing
+overload inventory defect), so neither is attributed to this change.
+
+Compile overhead was measured with the stable repository command
+`pnpm run check:ir-fallbacks`, using three alternating fresh-process runs after
+filesystem warm-up on the same machine:
+
+| Configuration | Commit | Samples (seconds) | Mean | Median |
+| --- | --- | --- | ---: | ---: |
+| Control | `efc05e59f99aa4` | 24.38, 25.79, 20.51 | 23.56 | 24.38 |
+| Required final gate | `5fc43544470746` | 25.53, 20.75, 20.39 | 22.22 | 20.75 |
+
+The ranges overlap (**20.51–25.79 s** control and **20.39–25.53 s** candidate).
+No compile-time regression is detected at this corpus and timing resolution;
+the result does not establish zero cost for the additional final walk.
