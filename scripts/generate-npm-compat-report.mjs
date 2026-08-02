@@ -78,6 +78,7 @@ const NPM_DOWNLOADS_SNAPSHOT = {
     tailwindcss: 117_155_768,
     axios: 112_353_408,
     clsx: 104_930_549,
+    jsdom: 89_317_829,
     marked: 60_496_071,
     webpack: 55_617_769,
     hono: 53_123_258,

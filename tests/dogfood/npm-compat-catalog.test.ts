@@ -11,6 +11,7 @@ const EXPECTED_NAMES = [
   "lodash",
   "axios",
   "react-dom",
+  "jsdom",
   "webpack",
   "uuid",
   "typescript",
@@ -48,6 +49,7 @@ describe("npm compatibility package catalog", () => {
     );
 
     expect(canonical).toEqual(publicMirror);
+    expect(canonical).toEqual(expect.arrayContaining(EXPECTED_NAMES));
   });
 
   const selectedPackage = process.env.DOGFOOD_NPM_CATALOG;
