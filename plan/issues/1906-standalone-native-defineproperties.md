@@ -20,6 +20,17 @@ claimed_by: codex-developer
 claimed_at: 2026-06-07T10:51:59.654Z
 pr: 1264
 completed: 2026-06-08
+# (#3474) The live citations are an INTENTIONAL fail-loud refusal, not open work.
+# #1906 shipped the native `$Object`→`$Object` plural apply and deliberately
+# installed a refusal for every other receiver representation; the string names
+# this issue because this issue authored it. Measured 2026-08-02 (#4047) on the
+# CI path over all 952 files under built-ins/Object/{defineProperties,create}:
+# 100% of the citing failures are receiver-representation refusals and ZERO
+# reach a per-descriptor site. #4047 resolved the shapes with a complete answer;
+# the remainder is blocked on the exotic-receiver own-property substrate (#4010)
+# and stays refused rather than silently no-opping — see the correction section
+# below and `tests/issue-3957.test.ts`, whose invariant cases enforce that.
+done_cited_ok: true
 ---
 # #1906 — Standalone native `Object.defineProperties`
 
