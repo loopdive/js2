@@ -118,3 +118,32 @@ export function run(x: number): number { return alpha(x) + beta(x); }`,
     expect((exports.run as (x: number) => number)(4)).toBe(17);
   });
 });
+
+describe("#4045 — same-named functions taken as VALUES (closure trampolines)", () => {
+  it("gives each module's function its own trampoline and cache", async () => {
+    // `ensureFuncClosureSingleton` keyed `__fn_tramp_<name>_cached` and the
+    // closure-cache global by the BARE name, and its reuse path validated the
+    // existing trampoline's shape but never that it targeted the same function.
+    // So the second module's closure value called the FIRST module's function —
+    // and once both units were genuinely reachable, two unit-anchored ABI
+    // binding ids claimed one trampoline object and planning aborted with
+    // "allocator locator … is already owned by". That is the exact error the
+    // ESLint graph hit (eslint-visitor-keys 3.4.3 and 5.0.1 both ship `getKeys`).
+    const exports = await run(
+      {
+        "./a.ts": `export function pick(x: number): number { return x + 100; }
+export function useA(): number { const f: (n: number) => number = pick; return f(3); }`,
+        "./b.ts": `export function pick(x: number): number { return x * 2; }
+export function useB(): number { const f: (n: number) => number = pick; return f(3); }`,
+        "./main.ts": `import { useA } from "./a.js";
+import { useB } from "./b.js";
+export function run(): number { return useA() * 1000 + useB(); }`,
+      },
+      "./main.ts",
+    );
+    // node: useA() = 103, useB() = 6 -> 103006. The two halves are placed in
+    // different digit ranges so any cross-talk is legible rather than a
+    // coincidentally-equal sum.
+    expect((exports.run as () => number)()).toBe(103006);
+  });
+});
