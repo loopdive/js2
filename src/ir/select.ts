@@ -66,6 +66,11 @@ import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imp
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
+import {
+  isNumericArrayTypeNode,
+  mutableParameterHasIrSlot,
+  parameterUsesNumericVecAbi,
+} from "./select-vector-slots.js";
 import { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 
@@ -1216,7 +1221,7 @@ let currentDirectOnlyDynMemberEqualityFunctions: ReadonlySet<ts.FunctionDeclarat
 let currentDirectOnlyDynMemberEqualityFunctionsReady = false;
 let currentDynMemberEqualitySubject: ts.FunctionDeclaration | null = null;
 let currentDynEqualityBoxableParamNames = new Set<string>();
-let currentMutableParamSlotNames = new Set<string>();
+let currentMutableSlotNames = new Set<string>();
 let currentStableFunctionCallSubject: IrStableFunctionCallPlan | null = null;
 let currentStableDynamicRootNames = new Set<string>();
 // Grounded parameter families from the propagation map. The checker sees an
@@ -1323,7 +1328,7 @@ function prepareDynamicEqualitySubject(fn: IrClaimableSubject, isMethod: boolean
   currentSubjectIsModuleInit = false;
   currentDynMemberEqualitySubject = !isMethod && ts.isFunctionDeclaration(fn) ? fn : null;
   currentDynEqualityBoxableParamNames = new Set<string>();
-  currentMutableParamSlotNames = new Set<string>();
+  currentMutableSlotNames = new Set<string>();
   currentStableFunctionCallSubject = null;
   currentStableDynamicRootNames = new Set<string>();
   currentNumericParamNames = new Set<string>();
@@ -1608,15 +1613,12 @@ function whyNotIrClaimable(
     if (paramResolved === null) return "param-type-not-resolvable";
     if (
       directMutationNames.has(p.name.text) &&
-      paramResolved !== "f64" &&
-      paramResolved !== "bool" &&
-      paramResolved !== "string" &&
-      paramResolved !== "dynamic"
+      !mutableParameterHasIrSlot(p, paramResolved, currentSelectionOptions?.implicitParamUsesNumericVecAbi)
     ) {
       shapeNo("param-mutation-no-slot-representation", p);
       return "body-shape-rejected";
     }
-    if (directMutationNames.has(p.name.text)) currentMutableParamSlotNames.add(p.name.text);
+    if (directMutationNames.has(p.name.text)) currentMutableSlotNames.add(p.name.text);
     // #2949 slice 2 — collect dynamic-typed param names for the move-only scan.
     recordDynamicParamKind(p.name.text, paramResolved, dynNames);
     if (currentStableFunctionCallSubject !== null && paramResolved === "dynamic") {
@@ -2927,7 +2929,7 @@ function isPhase1StatementListInScope(
           }
           continue;
         }
-        if (currentMutableParamSlotNames.has(s.expression.left.text)) {
+        if (currentMutableSlotNames.has(s.expression.left.text)) {
           if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
             return shapeNo("nontail-param-assign-rhs", s.expression.right);
           }
@@ -4331,6 +4333,7 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       (d.type ? localClassNameFromTypeNode(d.type) : null) ??
       localClassNameForExpression(initializer, initializerScope);
     if (className !== null) currentClassBindings.set(d.name.text, className);
+    if (!isConst && d.type && isNumericArrayTypeNode(d.type)) currentMutableSlotNames.add(d.name.text);
     scope.add(d.name.text);
   }
   return true;
@@ -4449,13 +4452,13 @@ function isPhase1NestedFunc(
     return capabilityNo("call-resolution-unsupported", "nested-function-self-reference", fn);
   }
   const projectionBindings = enterProjectionBindingScope(fn.parameters);
-  const outerMutableParamSlotNames = currentMutableParamSlotNames;
-  currentMutableParamSlotNames = new Set();
+  const outerMutableSlotNames = currentMutableSlotNames;
+  currentMutableSlotNames = new Set();
   let bodyAccepted = false;
   try {
     bodyAccepted = isPhase1StatementList(fn.body.statements, closureScope, localClasses);
   } finally {
-    currentMutableParamSlotNames = outerMutableParamSlotNames;
+    currentMutableSlotNames = outerMutableSlotNames;
     restoreProjectionBindings(projectionBindings);
   }
   if (!bodyAccepted) return false;
@@ -4494,8 +4497,8 @@ function isPhase1ClosureLiteral(
   }
 
   const projectionBindings = enterProjectionBindingScope(expr.parameters);
-  const outerMutableParamSlotNames = currentMutableParamSlotNames;
-  currentMutableParamSlotNames = new Set();
+  const outerMutableSlotNames = currentMutableSlotNames;
+  currentMutableSlotNames = new Set();
 
   // ArrowFunction with concise body: must be a Phase-1 expression.
   // ArrowFunction / FunctionExpression with block body: Phase-1 tail
@@ -4507,7 +4510,7 @@ function isPhase1ClosureLiteral(
     if (!ts.isBlock(expr.body)) return shapeNo("closure-body-kind", expr.body);
     return isPhase1StatementList(expr.body.statements, inner, localClasses) || shapeNo("closure-body", expr.body);
   } finally {
-    currentMutableParamSlotNames = outerMutableParamSlotNames;
+    currentMutableSlotNames = outerMutableSlotNames;
     restoreProjectionBindings(projectionBindings);
   }
 }
@@ -5969,20 +5972,6 @@ function knownCallableArity(expression: ts.Expression, scope: ReadonlySet<string
   return undefined;
 }
 
-function isNumericArrayTypeNode(node: ts.TypeNode): boolean {
-  if (ts.isTypeOperatorNode(node) && node.operator === ts.SyntaxKind.ReadonlyKeyword) {
-    return isNumericArrayTypeNode(node.type);
-  }
-  if (ts.isArrayTypeNode(node)) return node.elementType.kind === ts.SyntaxKind.NumberKeyword;
-  return (
-    ts.isTypeReferenceNode(node) &&
-    ts.isIdentifier(node.typeName) &&
-    (node.typeName.text === "Array" || node.typeName.text === "ReadonlyArray") &&
-    node.typeArguments?.length === 1 &&
-    node.typeArguments[0]!.kind === ts.SyntaxKind.NumberKeyword
-  );
-}
-
 function directCallParamUsesNumericVecAbi(
   call: ts.CallExpression,
   parameterIndex: number,
@@ -5999,10 +5988,7 @@ function directCallParamUsesNumericVecAbi(
   const declaration = currentDynScanDecls?.get(call.expression.text);
   const parameter = declaration?.parameters[parameterIndex];
   if (!parameter || !ts.isIdentifier(parameter.name)) return false;
-  const type = effectiveIrParamTypeNode(parameter);
-  return type
-    ? isNumericArrayTypeNode(type)
-    : currentSelectionOptions?.implicitParamUsesNumericVecAbi?.(parameter) === true;
+  return parameterUsesNumericVecAbi(parameter, currentSelectionOptions?.implicitParamUsesNumericVecAbi);
 }
 
 type ObviousSelectorValueFamily = "number" | "boolean" | "string" | "reference" | "nullish";

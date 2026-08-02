@@ -10,6 +10,7 @@ import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { getOrRegisterVecType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import {
@@ -135,6 +136,10 @@ function bodyProjection(
 
 function r2StableSignatureType(type: IrType | null): boolean {
   if (type === null || type.kind === "string") return true;
+  if (type.kind === "vec") {
+    const element = asVal(type.elementType);
+    return element?.kind === "f64" || element?.kind === "i32";
+  }
   const val = asVal(type);
   return val?.kind === "f64" || val?.kind === "i32";
 }
@@ -259,6 +264,12 @@ function r2StableValType(ctx: CodegenContext, type: IrType): ValType | undefined
   if (type.kind === "string") {
     if (!ctx.nativeStrings) return { kind: "externref" };
     return ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : undefined;
+  }
+  if (type.kind === "vec") {
+    const element = asVal(type.elementType);
+    if (!element || (element.kind !== "f64" && element.kind !== "i32")) return undefined;
+    const vecTypeIdx = getOrRegisterVecType(ctx, element.kind, element);
+    return { kind: type.nullable ? "ref_null" : "ref", typeIdx: vecTypeIdx };
   }
   const val = asVal(type);
   return val?.kind === "f64" || val?.kind === "i32" ? val : undefined;
