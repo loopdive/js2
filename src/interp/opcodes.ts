@@ -94,10 +94,11 @@ export const Op = {
   // Native `>`/`>=` carry that flag correctly, so they get their own opcodes.
   Gt: 37, //       Gt r            ; acc = regs[r] >  acc
   Ge: 38, //       Ge r            ; acc = regs[r] >= acc
+  InitName: 39, // InitName c      ; initialize predeclared lexical name = acc
 } as const;
 
 /** The number of distinct opcodes (0..OP_COUNT-1). */
-export const OP_COUNT = 39;
+export const OP_COUNT = 40;
 
 // ── Encoding (doc §"Encoding" / ADR-0019) ────────────────────────────────────
 //
@@ -199,6 +200,7 @@ export const OP_INFO: OpInfo[] = [
   { name: "Throw", form: OperandForm.None }, // 36
   { name: "Gt", form: OperandForm.RegA }, // 37 (#3356)
   { name: "Ge", form: OperandForm.RegA }, // 38 (#3356)
+  { name: "InitName", form: OperandForm.ConstA }, // 39 (#2929)
 ];
 
 // ── Builtin ids (CallBuiltin operand `a`) ────────────────────────────────────

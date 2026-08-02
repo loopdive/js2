@@ -82,12 +82,24 @@ class FunctionEmitter {
   private completionReg = -1;
   /** Hoisted var/let/const binding names (collected before emission). */
   private readonly hoistedVars: string[] = [];
+  /** Script lexical names, predeclared in a private eval environment. */
+  private readonly hoistedLexicals: string[] = [];
   /** Hoisted function declarations (collected before emission). */
   private readonly hoistedFuncs: Node[] = [];
   /** Function directive-prologue strictness (scripts keep their global-this entry semantics). */
   private strictMode = false;
+  /** True when PerformEval already created the script's environment bindings. */
+  private readonly scriptBindingsPredeclared: boolean;
 
-  constructor(params: Node[], body: Node, name: JSValue, isScript: boolean, isExpressionBody: boolean) {
+  constructor(
+    params: Node[],
+    body: Node,
+    name: JSValue,
+    isScript: boolean,
+    isExpressionBody: boolean,
+    forceStrict: boolean,
+    scriptBindingsPredeclared: boolean,
+  ) {
     // Use explicit fields instead of TypeScript parameter properties: the E2
     // self-compiler materialises declared class fields as WasmGC struct fields,
     // while parameter properties currently fall back to dynamic object reads.
@@ -96,6 +108,8 @@ class FunctionEmitter {
     this.name = name;
     this.isScript = isScript;
     this.isExpressionBody = isExpressionBody; // arrow with expression body
+    this.strictMode = forceStrict;
+    this.scriptBindingsPredeclared = scriptBindingsPredeclared;
   }
 
   // ── register allocation ────────────────────────────────────────────────────
@@ -162,17 +176,15 @@ class FunctionEmitter {
       this.enc.emit0(Op.Return);
     } else {
       const stmts: Node[] = this.body.body;
-      if (!this.isScript) {
-        // Detect the directive prologue inline. A newly-added late class helper
-        // is not a stable self-compile call seam until #3651 lands.
-        for (const statement of stmts) {
-          if (statement.type !== "ExpressionStatement" || statement.expression.type !== "Literal") break;
-          if (statement.expression.value === "use strict") {
-            this.strictMode = true;
-            break;
-          }
-          if (typeof statement.expression.value !== "string") break;
+      // Detect the directive prologue inline. A newly-added late class helper
+      // is not a stable self-compile call seam until #3651 lands.
+      for (const statement of stmts) {
+        if (statement.type !== "ExpressionStatement" || statement.expression.type !== "Literal") break;
+        if (statement.expression.value === "use strict") {
+          this.strictMode = true;
+          break;
         }
+        if (typeof statement.expression.value !== "string") break;
       }
       // Collect all var/function/let/const declarations (function-scoped).
       this.collectHoist(stmts);
@@ -217,7 +229,7 @@ class FunctionEmitter {
     // A standalone switch over a dynamic/native-string field does not share
     // the statically typed string switch representation.
     if (s.type === "VariableDeclaration") {
-      for (const d of s.declarations) this.collectHoistPattern(d.id);
+      for (const d of s.declarations) this.collectHoistPattern(d.id, this.isScript && s.kind !== "var");
     } else if (s.type === "FunctionDeclaration") {
       if (s.id) this.hoistedFuncs.push(s);
     } else if (s.type === "IfStatement") {
@@ -238,9 +250,10 @@ class FunctionEmitter {
       this.collectHoistStatement(s.body);
     }
   }
-  private collectHoistPattern(id: Node): void {
+  private collectHoistPattern(id: Node, lexical: boolean): void {
     if (id.type === "Identifier") {
-      this.hoistedVars.push(id.name);
+      if (lexical) this.hoistedLexicals.push(id.name);
+      else this.hoistedVars.push(id.name);
     } else {
       throw new UnsupportedNodeError(`destructuring binding (${id.type})`, id.type);
     }
@@ -257,9 +270,15 @@ class FunctionEmitter {
    * it).
    */
   private declareScriptGlobals(): void {
-    for (const name of this.hoistedVars) {
-      this.enc.emit0(Op.LdaUndef);
-      this.enc.emitConst(Op.StName, this.enc.internConst(name));
+    if (!this.scriptBindingsPredeclared) {
+      for (const name of this.hoistedVars) {
+        this.enc.emit0(Op.LdaUndef);
+        this.enc.emitConst(Op.StName, this.enc.internConst(name));
+      }
+      for (const name of this.hoistedLexicals) {
+        this.enc.emit0(Op.LdaUndef);
+        this.enc.emitConst(Op.StName, this.enc.internConst(name));
+      }
     }
     for (const fn of this.hoistedFuncs) {
       this.emitClosure(fn);
@@ -321,7 +340,11 @@ class FunctionEmitter {
       if (d.id.type !== "Identifier") throw new UnsupportedNodeError(`destructuring (${d.id.type})`, d.id.type);
       if (d.init) {
         this.emitExpr(d.init);
-        this.storeName(d.id.name);
+        if (this.isScript && this.scriptBindingsPredeclared && s.kind !== "var") this.initializeName(d.id.name);
+        else this.storeName(d.id.name);
+      } else if (this.isScript && this.scriptBindingsPredeclared && s.kind !== "var") {
+        this.enc.emit0(Op.LdaUndef);
+        this.initializeName(d.id.name);
       }
       // no init: the register already holds undefined (Phase 1: no TDZ)
     }
@@ -584,6 +607,12 @@ class FunctionEmitter {
     else this.enc.emitConst(Op.StName, this.enc.internConst(name));
   }
 
+  private initializeName(name: string): void {
+    const r = this.names.get(name);
+    if (r !== undefined) this.enc.emitReg(Op.Star, r);
+    else this.enc.emitConst(Op.InitName, this.enc.internConst(name));
+  }
+
   /** Whether a syntactic global name is shadowed anywhere in this function.
    *
    * Hoisted script bindings are environment-backed rather than register-backed,
@@ -596,6 +625,9 @@ class FunctionEmitter {
       if (bound === name) return true;
     }
     for (const local of this.hoistedVars) {
+      if (local === name) return true;
+    }
+    for (const local of this.hoistedLexicals) {
       if (local === name) return true;
     }
     for (const fn of this.hoistedFuncs) {
@@ -1120,7 +1152,7 @@ class FunctionEmitter {
     const isArrow = node.type === "ArrowFunctionExpression";
     const isExprBody = isArrow && node.body.type !== "BlockStatement";
     const nm = node.id && node.id.name ? node.id.name : "";
-    const child = new FunctionEmitter(node.params, node.body, nm, /*isScript*/ false, isExprBody);
+    const child = new FunctionEmitter(node.params, node.body, nm, false, isExprBody, false, false);
     const meta = child.emit();
     const m = this.mark();
     this.enc.emitConst(Op.LdaConst, this.enc.internConst(meta));
@@ -1132,9 +1164,9 @@ class FunctionEmitter {
 }
 
 /** Emit a top-level Script/eval body (completion-value semantics) → FuncMeta. */
-export function emitProgram(ast: Node): FuncMeta {
+export function emitProgram(ast: Node, forceStrict = false, scriptBindingsPredeclared = false): FuncMeta {
   if (ast.type !== "Program") throw new UnsupportedNodeError(`top-level ${ast.type}`, ast.type);
-  const emitter = new FunctionEmitter([], ast, "", /*isScript*/ true, /*isExpressionBody*/ false);
+  const emitter = new FunctionEmitter([], ast, "", true, false, forceStrict, scriptBindingsPredeclared);
   return emitter.emit();
 }
 
@@ -1157,6 +1189,6 @@ export function emitFunction(node: Node): FuncMeta {
   const isArrow = node.type === "ArrowFunctionExpression";
   const isExpressionBody = isArrow && node.body.type !== "BlockStatement";
   const name = node.id && node.id.name ? node.id.name : "";
-  const emitter = new FunctionEmitter(node.params, node.body, name, /*isScript*/ false, isExpressionBody);
+  const emitter = new FunctionEmitter(node.params, node.body, name, false, isExpressionBody, false, false);
   return emitter.emit();
 }

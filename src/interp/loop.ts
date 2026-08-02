@@ -56,6 +56,7 @@ import {
   anyTypeof,
   isTruthy,
 } from "./runtime-ops.js";
+import { EVAL_TDZ } from "./eval-environment.js";
 import {
   ENV_DECLARATIVE,
   EvalBindingCell,
@@ -185,7 +186,11 @@ function envLookup(env: EnvRec | null, name: JSValue): JSValue {
       const slots = e.slots;
       if (slots !== null) {
         for (let i = 0; i < names.length; i += 1) {
-          if (names[i] === name) return (slots[i] as EvalBindingCell).value;
+          if (names[i] === name) {
+            const value = (slots[i] as EvalBindingCell).value;
+            if (value === EVAL_TDZ) throw new ReferenceError(`${String(name)} is not initialized`);
+            return value;
+          }
         }
       }
     } else if (name in e.backing) {
@@ -209,12 +214,37 @@ function normalizeSloppyThis(env: EnvRec | null, receiver: JSValue): JSValue {
   }
   return globalBacking;
 }
-function envAssign(env: EnvRec | null, name: JSValue, value: JSValue): void {
-  // Phase 1 (non-strict): assign to the nearest record that already has the
-  // binding, else create it on the root global backing. Strict-mode ReferenceError
-  // on an undeclared assignment is deferred (#2929).
+function envAssign(env: EnvRec | null, name: JSValue, value: JSValue, strict: boolean): void {
   let e = env;
   let root: EnvRec | null = null;
+  for (;;) {
+    if (e === null) break;
+    if (e.kind === ENV_DECLARATIVE) {
+      const names: JSValue = e.names;
+      const slots = e.slots;
+      if (slots !== null) {
+        for (let i = 0; i < names.length; i += 1) {
+          if (names[i] === name) {
+            const cell = slots[i] as EvalBindingCell;
+            if (cell.value === EVAL_TDZ) throw new ReferenceError(`${String(name)} is not initialized`);
+            cell.value = value;
+            return;
+          }
+        }
+      }
+    } else if (name in e.backing) {
+      e.backing[name] = value;
+      return;
+    }
+    root = e;
+    e = e.parent;
+  }
+  if (strict) throw new ReferenceError(`${String(name)} is not defined`);
+  if (root !== null && root.kind !== ENV_DECLARATIVE) root.backing[name] = value;
+}
+
+function envInitialize(env: EnvRec | null, name: JSValue, value: JSValue): void {
+  let e = env;
   for (;;) {
     if (e === null) break;
     if (e.kind === ENV_DECLARATIVE) {
@@ -228,14 +258,10 @@ function envAssign(env: EnvRec | null, name: JSValue, value: JSValue): void {
           }
         }
       }
-    } else if (name in e.backing) {
-      e.backing[name] = value;
-      return;
     }
-    root = e;
     e = e.parent;
   }
-  if (root !== null && root.kind !== ENV_DECLARATIVE) root.backing[name] = value;
+  envAssign(env, name, value, false);
 }
 function typeofName(env: EnvRec | null, name: JSValue): JSValue {
   // `typeof <undeclared>` must be "undefined", never ReferenceError.
@@ -247,7 +273,11 @@ function typeofName(env: EnvRec | null, name: JSValue): JSValue {
       const slots = e.slots;
       if (slots !== null) {
         for (let i = 0; i < names.length; i += 1) {
-          if (names[i] === name) return typeof (slots[i] as EvalBindingCell).value;
+          if (names[i] === name) {
+            const value = (slots[i] as EvalBindingCell).value;
+            if (value === EVAL_TDZ) throw new ReferenceError(`${String(name)} is not initialized`);
+            return typeof value;
+          }
         }
       }
     } else if (name in e.backing) {
@@ -419,7 +449,10 @@ function run(bottom: Frame): JSValue {
             break;
           case Op.StGlobal:
           case Op.StName:
-            envAssign(frame.envRec, consts[a], acc);
+            envAssign(frame.envRec, consts[a], acc, (meta.flags & FLAG_STRICT) !== 0);
+            break;
+          case Op.InitName:
+            envInitialize(frame.envRec, consts[a], acc);
             break;
 
           // ── calls ──

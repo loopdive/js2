@@ -100,7 +100,7 @@ Branch `codex/2929-direct-eval-capture` implements the first acceptance slice:
   eval-visible locals to the compiler's existing canonical mutable capture
   cells;
 - direct eval passes parallel name/cell vectors through the standalone provider
-  boundary `__runtime_direct_eval(source, globalObject, thisArg, names, slots)`;
+  boundary `__runtime_direct_eval(source, globalObject, thisArg, names, slots, callerStrict)`;
 - the provider creates a declarative `$EnvRecord` above the global record, and
   interpreter name lookup, assignment, and `typeof` dereference those live
   cells; and
@@ -113,6 +113,27 @@ The MVP mutation gate is green: a caller cell initialized to `40` is changed by
 dynamic direct eval to `42`, and the probe observes both the eval result and the
 subsequent AOT read (`42 + 42 = 84`). Existing indirect-eval and `new Function`
 provider routes remain green.
+
+The follow-on declaration/strictness slice is also present on the same branch:
+
+- `EvalDeclarationInstantiation` now separates top-level `var`/function names,
+  top-level lexical names, and nested block functions;
+- strict direct eval inherits caller strictness across the provider ABI, while a
+  source-level `"use strict"` directive is detected inside the runtime AST;
+- strict eval receives a private declarative var environment, and top-level
+  `let`/`const` bindings receive a private TDZ environment;
+- `InitName` initializes those predeclared lexical cells without weakening
+  ordinary assignment's TDZ and strict-unresolvable checks; and
+- nested block functions use private strict-eval cells so their closure can be
+  initialized without leaking after the eval returns. Full block-environment
+  semantics and Annex B conflict handling remain follow-up work.
+
+The real Acorn provider remains a zero-import standalone artifact. Its runtime
+canaries now cover sloppy caller mutation, strict-source and strict-caller var
+isolation, lexical isolation and TDZ, strict early errors, indirect strict var
+isolation, and declaration-plan/environment construction. The focused Node
+environment suite is 9/9, including a guard that nested block declarations are
+not mistaken for top-level eval lexicals.
 
 ### Test262 eval-code measurement
 
@@ -134,26 +155,66 @@ Result: **207 / 816 pass (25.4%)**, all 207 host-free.
 | Annex B | 77 | 469 | 52 / 309 | 25 / 160 |
 | Combined | 207 | 816 | 149 / 595 | 58 / 221 |
 
+The 207-file passing surface is concentrated in these concrete families:
+
+- direct and indirect non-string passthrough, `parse-failure-1..6`, and normal
+  completion-value cases (`cptn-nrml-*`);
+- strictness/isolation cases including direct `strict-caller-*`,
+  `strictness-override`, both `block-decl-eval-source-is-strict-*` variants,
+  indirect `always-non-strict` / `block-decl-strict`, and the passing strict
+  `var-env-func-*`, `var-env-global-lex-*`, and `var-env-lower-lex-*` cases;
+- the supported arrow/async arguments-declaration matrix where `arguments` is
+  absent, a parameter, a `var`, or a function declaration (lexical-binding and
+  several method/default-parameter shapes remain failures);
+- direct global-environment/catch/eval/function cases, selected `this` and
+  `super-call` cases, and direct/indirect import/export syntax checks; and
+- 77 Annex B cases, primarily `*-block-scoping`, existing function/var
+  no-initializer behavior, and the selected `*-skip-early-err-{block,for}`
+  variants listed by the lane result.
+
 Non-pass outcomes were 565 runtime failures, 16 compile errors, and 28 compile
 timeouts. The leading runtime buckets were 349 assertion failures, 173 other
 errors, 24 syntax errors, 14 illegal casts, 3 type errors, 1 negative-test
 failure, and 1 null dereference; the 16 compile errors were reported as host
 import leaks.
 
+A maintained 56-test `var-env-*` / `lex-env-*` declaration cohort was measured
+before and after this follow-on and remained **16 / 56** with no per-file status
+changes. These Test262 inputs use literal eval sources and are currently handled
+by the compiler's separate AOT `tryStaticEvalInline` path, so that cohort does
+not exercise the runtime interpreter. The dynamic Acorn-provider canaries above
+are the acceptance gate for this slice. A future interpreter-only Test262 score
+needs an explicit maintained compile mode that prefers runtime eval; it must not
+silently disable constant folding, because existing acceptance tests require
+literal eval to remain provider-free.
+
+The final full-lane A/B run (`20260802-073632`) remained **207 / 816** with the
+exact same 207 passing files as the pre-slice baseline: zero pass-to-fail and
+zero fail-to-pass transitions. Candidate non-pass outcomes were 569 runtime
+failures, 16 compile errors, and 24 compile timeouts. The only four status
+changes were Annex B files that moved from compile timeout to a known runtime
+`ReferenceError`; they do not change the passing denominator. Current-standard
+coverage remains 130/347 and Annex B remains 77/469.
+
 ### Remaining work, in recommended order
 
-1. Implement eval declaration instantiation and strict-direct-eval isolation.
-   The current `emitProgram` path treats script declarations as globals, so new
-   `var`/lexical bindings, early errors, and global-property effects are not yet
-   spec-correct.
+1. Split direct-eval caller cells into current-activation bindings versus outer
+   captures, and add a persistent overlay for sloppy eval-created `var`
+   bindings. The current flat vector can update an outer capture when the spec
+   requires a new current-function var, and newly created names do not persist
+   across later eval calls.
 2. Repair parameter-default/`arguments` cell synchronization. Reification can
    currently race direct parameter-local writes and produces the observed
    illegal-cast cluster.
-3. Cover methods, async/generator functions, classes, `new.target`, `super`, and
-   strict-caller `this` behavior in the interpreter emitter/runtime.
-4. Implement the object environment record for `with`, then coordinate the
+3. Add real block lexical environments, class declarations, and the remaining
+   Annex B B.3.3.3 conflict/initialization rules. The current strict block-
+   function cell is intentionally an isolation approximation, not a general
+   block-scope implementation.
+4. Cover methods, async/generator functions, `new.target`, `super`, and strict-
+   caller `this` behavior in the interpreter emitter/runtime.
+5. Implement the object environment record for `with`, then coordinate the
    shared ordinary-object MOP surface with #1355 before adding Proxy traps.
-5. Add generator suspend/resume opcodes on the shared #2864 frame carrier, then
+6. Add generator suspend/resume opcodes on the shared #2864 frame carrier, then
    run the JS-host/standalone differential acceptance gate.
 
 This branch is a resumable MVP slice, not closure of #2929. Only the first

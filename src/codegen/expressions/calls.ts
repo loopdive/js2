@@ -5923,7 +5923,7 @@ function compileCallExpression(
       // #2928/#2929 — direct eval adds live caller cells to indirect eval's global environment.
       const runtimeEval =
         evalKind === "direct"
-          ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr.arguments)
+          ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
           : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
       if (runtimeEval !== undefined) return runtimeEval;
       // (#2960) WASI (until its linker grows the provider), or a standalone

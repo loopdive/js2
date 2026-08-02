@@ -72,6 +72,56 @@ async function main() {
         return (result as number) + x;
       }
 
+      export function linkedDirectSloppyVarMutation(): number {
+        let x = 40;
+        const result: any = eval(dynamic("var x = 1; x"));
+        return (result as number) + x;
+      }
+
+      export function linkedDirectStrictSourceVarIsolation(): number {
+        let x = 40;
+        const result: any = eval(dynamic("'use strict'; var x = 1; x"));
+        return (result as number) + x;
+      }
+
+      export function linkedDirectStrictCallerVarIsolation(): number {
+        "use strict";
+        let x = 40;
+        const result: any = eval(dynamic("var x = 1; x"));
+        return (result as number) + x;
+      }
+
+      export function linkedDirectLexicalIsolation(): number {
+        let x = 40;
+        const result: any = eval(dynamic("let x = 1; x"));
+        return (result as number) + x;
+      }
+
+      export function linkedDirectLexicalTdz(): number {
+        try {
+          eval(dynamic("x; let x = 1"));
+          return 0;
+        } catch (error) {
+          return error && error.name === "ReferenceError" ? 1 : 2;
+        }
+      }
+
+      export function linkedDirectStrictEarlyError(): number {
+        "use strict";
+        try {
+          eval(dynamic("var arguments = 1"));
+          return 0;
+        } catch (error) {
+          return error && error.name === "SyntaxError" ? 1 : 2;
+        }
+      }
+
+      export function linkedIndirectStrictVarIsolation(): number {
+        globalThis.evalStrictX = 40;
+        const result: any = (0, eval)(dynamic("'use strict'; var evalStrictX = 1; evalStrictX"));
+        return (result as number) + globalThis.evalStrictX;
+      }
+
       export function linkedThrow(): number {
         try {
           (0, eval)(dynamic("throw 7"));
@@ -111,6 +161,7 @@ async function main() {
     `,
     {
       fileName: "runtime-eval-acorn-user.ts",
+      inferModuleStrictArguments: false,
       skipSemanticDiagnostics: true,
       target: "standalone",
     },
@@ -156,6 +207,13 @@ async function main() {
           ["positiveCorpus", instance.exports.__runtime_positive_corpus_canary],
           ["linkedEval", userInstance.exports.linkedEval],
           ["linkedDirectEval", userInstance.exports.linkedDirectEval],
+          ["linkedDirectSloppyVarMutation", userInstance.exports.linkedDirectSloppyVarMutation],
+          ["linkedDirectStrictSourceVarIsolation", userInstance.exports.linkedDirectStrictSourceVarIsolation],
+          ["linkedDirectStrictCallerVarIsolation", userInstance.exports.linkedDirectStrictCallerVarIsolation],
+          ["linkedDirectLexicalIsolation", userInstance.exports.linkedDirectLexicalIsolation],
+          ["linkedDirectLexicalTdz", userInstance.exports.linkedDirectLexicalTdz],
+          ["linkedDirectStrictEarlyError", userInstance.exports.linkedDirectStrictEarlyError],
+          ["linkedIndirectStrictVarIsolation", userInstance.exports.linkedIndirectStrictVarIsolation],
           ["linkedThrow", userInstance.exports.linkedThrow],
           ["linkedErrorThrow", userInstance.exports.linkedErrorThrow],
           ["linkedNumberBuiltin", userInstance.exports.linkedNumberBuiltin],

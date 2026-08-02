@@ -106,7 +106,8 @@ const REFUSAL_PROVIDER_SOURCE = `
         globalObject: any,
         thisArg: any,
         names: any,
-        slots: any
+        slots: any,
+        callerStrict: boolean
       ): any {
         return refuse();
       }
@@ -148,6 +149,7 @@ const INTERP_FILES = [
   "opcodes.ts",
   "encoder.ts",
   "runtime-ops.ts",
+  "eval-environment.ts",
   "emitter.ts",
   "loop.ts",
   "dynamic-function.ts",
@@ -211,12 +213,13 @@ const PROVIDER_EXPORT_WRAPPER = `
         globalObject: any,
         thisArg: any,
         names: any,
-        slots: any
+        slots: any,
+        callerStrict: boolean
       ): any {
         try {
           return runtimeEvalResult(
             true,
-            executeDirectEval(parse, source, globalObject, thisArg, names, slots)
+            executeDirectEval(parse, source, globalObject, thisArg, names, slots, callerStrict)
           );
         } catch (error) {
           return runtimeEvalResult(false, error);
@@ -247,12 +250,37 @@ const PROVIDER_EXPORT_WRAPPER = `
           {},
           undefined,
           names,
-          slots
+          slots,
+          false
         );
         return (result as number) + (cell.value as number);
       }
 
       export function __runtime_positive_corpus_canary(): number {
+        const declarationPlan = collectEvalDeclarations(
+          parse("var declaredVar; let declaredLexical;", {
+            ecmaVersion: 2025,
+            sourceType: "script"
+          })
+        );
+        if (declarationPlan.varNames.length !== 1) return -2001;
+        if (declarationPlan.varNames[0] !== "declaredVar") return -2002;
+        if (declarationPlan.lexicalNames.length !== 1) return -2003;
+        if (declarationPlan.lexicalNames[0] !== "declaredLexical") return -2004;
+        const declarationAst = parse("'use strict'; var privateVar = 1; privateVar", {
+          ecmaVersion: 2025,
+          sourceType: "script"
+        });
+        const declarationGlobal: any = {};
+        const declarationGlobalEnv = new EnvRec(ENV_GLOBAL, null, null, null, declarationGlobal);
+        const declarationEnv = prepareEvalEnvironment(declarationAst, declarationGlobalEnv, true);
+        if (declarationEnv.kind !== ENV_DECLARATIVE) return -2005;
+        const declarationNames: any = declarationEnv.names;
+        if (declarationNames.length !== 1) return -2006;
+        if (declarationNames[0] !== "privateVar") return -2007;
+        const declarationSlots: any = declarationEnv.slots;
+        if (declarationSlots.length !== 1) return -2008;
+
         // Thirty Phase-1-positive bodies drawn from the Test262-shaped corpus
         // in differential.test.ts. Every case parses through the real Acorn
         // artifact and executes in the self-compiled interpreter.

@@ -6,6 +6,7 @@ import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { currentDirectEvalBindings } from "../direct-eval-environment.js";
 import { emitGlobalEnvironmentObject } from "../global-environment.js";
+import { isStrictContext } from "../helpers/is-strict-function.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjVecBuilders } from "../object-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
@@ -66,9 +67,10 @@ export function emitRuntimeEvalResultUnwrap(ctx: CodegenContext, fctx: FunctionC
 export function emitStandaloneDirectEvalRuntime(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  args: readonly ts.Expression[],
+  call: ts.CallExpression,
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
+  const args = call.arguments;
   if (args.length === 0) {
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
@@ -124,18 +126,23 @@ export function emitStandaloneDirectEvalRuntime(
   } else if (thisType.kind !== "externref") {
     coerceType(ctx, fctx, thisType, externref);
   }
-  fctx.body.push({ op: "local.get", index: namesLocal }, { op: "local.get", index: slotsLocal });
+  fctx.body.push(
+    { op: "local.get", index: namesLocal },
+    { op: "local.get", index: slotsLocal },
+    { op: "i32.const", value: isStrictContext(call, ctx.inferModuleStrictArguments) ? 1 : 0 },
+  );
 
   const evalIdx = ensureLateImport(
     ctx,
     "__runtime_direct_eval",
-    [externref, externref, externref, externref, externref],
+    [externref, externref, externref, externref, externref, { kind: "i32" }],
     [externref],
     RUNTIME_EVAL_IMPORT_MODULE,
   );
   flushLateImportShifts(ctx, fctx);
   if (evalIdx === undefined) {
     fctx.body.push(
+      { op: "drop" },
       { op: "drop" },
       { op: "drop" },
       { op: "drop" },

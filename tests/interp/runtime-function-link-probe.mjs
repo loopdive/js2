@@ -15,6 +15,7 @@ const INTERP_FILES = [
   "opcodes.ts",
   "encoder.ts",
   "runtime-ops.ts",
+  "eval-environment.ts",
   "emitter.ts",
   "loop.ts",
   "dynamic-function.ts",
@@ -252,6 +253,9 @@ function providerSource() {
         }
         if (source === "answer + 2") return makeEvalAst();
         if (source === "x = x + 2; x") return makeDirectMutationEvalAst();
+        if (source === "'use strict';\\nx = x + 2; x") {
+          return makeDirectMutationEvalAst();
+        }
         if (source === "aotIdentity(globalValue)") {
           return makeReverseIdentityEvalAst();
         }
@@ -299,12 +303,13 @@ function providerSource() {
         globalObject: any,
         thisArg: any,
         names: any,
-        slots: any
+        slots: any,
+        callerStrict: boolean
       ): any {
         try {
           return runtimeEvalResult(
             true,
-            executeDirectEval(parse, source, globalObject, thisArg, names, slots)
+            executeDirectEval(parse, source, globalObject, thisArg, names, slots, callerStrict)
           );
         } catch (error) {
           return runtimeEvalResult(false, error);
@@ -331,7 +336,8 @@ function providerSource() {
           globalThis,
           undefined,
           names,
-          slots
+          slots,
+          false
         );
         return (result as number) + (cell.value as number);
       }
