@@ -109,12 +109,24 @@ export interface PreparedComponentDependencyReport {
   readonly componentByTerminalUnitId: ReadonlyMap<IrUnitId, PreparedComponentDependencyEvidence>;
 }
 
+/**
+ * Exact post-pass closure-support evidence prepared against allocator-owned
+ * type objects before a component is sealed. Object identity is deliberate:
+ * a later IR rewrite cannot inherit closure ownership from an earlier shape.
+ */
+export interface PreparedComponentClosureSupportEvidence {
+  readonly typeRefs: ReadonlyMap<IrType, readonly IrTypeRef[]>;
+  readonly instructionRefs: ReadonlyMap<IrInstr, readonly IrTypeRef[]>;
+  readonly functionRefs: ReadonlyMap<IrFunction, readonly IrTypeRef[]>;
+}
+
 export interface DerivePreparedComponentDependenciesInput {
   readonly module: IrModule;
   /** Exact R2 candidate denominator. Local calls close components within it. */
   readonly terminalUnitIds: ReadonlySet<IrUnitId>;
   readonly inventory: IrUnitInventory;
   readonly derivedUnits?: readonly ProgramAbiDerivedUnitRecord[];
+  readonly closureSupport?: PreparedComponentClosureSupportEvidence;
   readonly abi: PreparedComponentAbiLookup;
 }
 
@@ -493,7 +505,7 @@ function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
   return types;
 }
 
-function implicitSupportRequirement(instr: IrInstr): string | null {
+function implicitSupportRequirement(instr: IrInstr, hasPreparedClosureSupport = false): string | null {
   switch (instr.kind) {
     case "binary":
       return instr.op.startsWith("js.")
@@ -532,7 +544,9 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "closure.new":
     case "closure.cap":
     case "closure.call":
-      return `${instr.kind} resolves closure wrapper/type support beyond its explicit callable ref`;
+      return hasPreparedClosureSupport
+        ? null
+        : `${instr.kind} resolves closure wrapper/type support beyond its explicit callable ref`;
     case "refcell.new":
     case "refcell.get":
     case "refcell.set":
@@ -834,8 +848,22 @@ function collectFunctionEvidence(
   const classes = new Map<IrClassId, IrClassShape>();
   const seenTypes = new Set<IrType>();
   const seenImplicitTypes = new Set<IrType>();
+  const recordPreparedClosureRefs = (refs: readonly IrTypeRef[] | undefined, detail: string): boolean => {
+    if (!refs || refs.length === 0) return false;
+    for (const ref of refs) recordSupportTypeReference(evidence, ref, input.abi, ownership, detail);
+    return true;
+  };
   const collectType = (type: IrType): void => {
     collectIrTypeClasses(type, classes, seenTypes);
+    const preparedRefs = input.closureSupport?.typeRefs.get(type);
+    if (
+      (type.kind === "closure" || type.kind === "callable") &&
+      recordPreparedClosureRefs(preparedRefs, `prepared IR ${type.kind} type must use Program ABI support refs`)
+    ) {
+      for (const param of type.signature.params) collectType(param);
+      if (type.signature.returnType) collectType(type.signature.returnType);
+      return;
+    }
     recordImplicitTypeRequirement(evidence, type, seenImplicitTypes, input.abi, ownership);
   };
   for (const param of fn.params) collectType(param.type);
@@ -843,6 +871,11 @@ function collectFunctionEvidence(
   if (fn.closureSubtype) {
     for (const capture of fn.closureSubtype.captureFieldTypes) collectType(capture);
   }
+  const functionClosureSupport = input.closureSupport?.functionRefs.get(fn);
+  recordPreparedClosureRefs(
+    functionClosureSupport,
+    "prepared IR lifted closure body must use Program ABI support refs",
+  );
 
   for (const block of fn.blocks) {
     for (const type of block.blockArgTypes) collectType(type);
@@ -850,7 +883,16 @@ function collectFunctionEvidence(
       forEachInstrDeep(instr, (nested) => {
         if (nested.resultType) collectType(nested.resultType);
         for (const shape of explicitClassShapes(nested, valueTypes)) collectClassShape(shape, classes, seenTypes);
-        const implicitSupport = implicitSupportRequirement(nested);
+        const instructionClosureSupport = input.closureSupport?.instructionRefs.get(nested);
+        recordPreparedClosureRefs(
+          instructionClosureSupport,
+          `prepared IR ${nested.kind} must use Program ABI support refs`,
+        );
+        const hasPreparedClosureSupport =
+          nested.kind === "closure.cap"
+            ? (functionClosureSupport?.length ?? 0) > 0
+            : (instructionClosureSupport?.length ?? 0) > 0;
+        const implicitSupport = implicitSupportRequirement(nested, hasPreparedClosureSupport);
         if (implicitSupport) {
           addFailure(evidence, {
             code: "implicit-support-reference-unavailable",

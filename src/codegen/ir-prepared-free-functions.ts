@@ -5,7 +5,12 @@ import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
-import { buildIrLegacyUnitProjection, type IrLegacyUnitProjection } from "../ir/planning-identity.js";
+import {
+  buildIrLegacyUnitProjection,
+  type IrLegacyUnitProjection,
+  type IrPlanningIdentityContext,
+} from "../ir/planning-identity.js";
+import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
 import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
@@ -15,11 +20,76 @@ import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import {
   buildIrRequestedFunctionSkipProjection,
+  computeIrFirstSkipUnitIds,
   mergeIrIntegrationReports,
   preparedIrBodyRouting,
   type IrExactBodyClaim,
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
+
+/** Preserve the inherited compile-once allowlist for owners not prepared early. */
+export function computePreparedInheritedIrFirstSkipUnitIds(input: {
+  readonly sourceFile: ts.SourceFile;
+  readonly identityContext: IrPlanningIdentityContext;
+  readonly safeFunctionUnitIds: ReadonlySet<IrUnitId>;
+  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
+  readonly overridesByUnitId: ReadonlyMap<
+    IrUnitId,
+    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
+  >;
+  readonly potentiallyBlockedOwnerUnitIds: ReadonlySet<IrUnitId>;
+  readonly generatorsSkippable: boolean;
+  readonly fast: boolean;
+}): Set<IrUnitId> {
+  const requestedSkipUnitIds = new Set(
+    computeIrFirstSkipUnitIds({
+      sourceFile: input.sourceFile,
+      identityContext: input.identityContext,
+      safeFunctionUnitIds: input.safeFunctionUnitIds,
+      claimsByUnitId: input.claimsByUnitId,
+      overridesByUnitId: input.overridesByUnitId,
+      potentiallyBlockedOwnerUnitIds: input.potentiallyBlockedOwnerUnitIds,
+      generatorsSkippable: input.generatorsSkippable,
+    }),
+  );
+  // Fast mode can ground source `number` positions to i32 during direct body
+  // discovery even though the early IR override still says f64. Keep only the
+  // annotation-proven boolean subset on the inherited compile-once route until
+  // exact callable-contract comparison moves into preparation.
+  if (!input.fast) return requestedSkipUnitIds;
+
+  const fastBlockedUnitIds = new Set<IrUnitId>();
+  for (const unitId of requestedSkipUnitIds) {
+    const declaration = input.claimsByUnitId.get(unitId)?.declaration;
+    const stableFastSignature =
+      declaration !== undefined &&
+      declaration.parameters.every(
+        (parameter) =>
+          !parameter.questionToken &&
+          !parameter.dotDotDotToken &&
+          !parameter.initializer &&
+          parameter.type?.kind === ts.SyntaxKind.BooleanKeyword,
+      ) &&
+      (declaration.type?.kind === ts.SyntaxKind.BooleanKeyword || declaration.type?.kind === ts.SyntaxKind.VoidKeyword);
+    if (!stableFastSignature) {
+      requestedSkipUnitIds.delete(unitId);
+      fastBlockedUnitIds.add(unitId);
+    }
+  }
+  const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityContext);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const unitId of requestedSkipUnitIds) {
+      if (![...(callEdges.callees.get(unitId) ?? [])].some((calleeUnitId) => fastBlockedUnitIds.has(calleeUnitId))) {
+        continue;
+      }
+      requestedSkipUnitIds.delete(unitId);
+      fastBlockedUnitIds.add(unitId);
+      changed = true;
+    }
+  }
+  return requestedSkipUnitIds;
+}
 
 export interface PreparedIrFreeFunctionBodies {
   readonly report: IrIntegrationReport;
@@ -320,6 +390,105 @@ function r2SignatureMatchesAllocatedSlot(
     signature.params.every((type, index) => sameValType(type, params[index]!)) &&
     (result === null || sameValType(signature.results[0]!, result))
   );
+}
+
+/**
+ * The certified Promise-delay owner is the first R3 closure component whose
+ * complete derived population is already produced by the IR lowerer. Its
+ * source return type is reference-shaped, so keep this ABI proof separate
+ * from the scalar/string R2 predicate rather than widening R2 implicitly.
+ */
+function r3PromiseDelaySignatureMatchesAllocatedSlot(
+  ctx: CodegenContext,
+  unitId: IrUnitId,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  if (
+    override.params.length !== 2 ||
+    override.params.some((type) => asVal(type)?.kind !== "f64") ||
+    override.returnType?.kind !== "extern" ||
+    override.returnType.className !== "Promise"
+  ) {
+    return false;
+  }
+  const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
+  const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
+  return (
+    signature?.kind === "func" &&
+    signature.params.length === 2 &&
+    signature.params.every((type) => type.kind === "f64") &&
+    signature.results.length === 1 &&
+    signature.results[0]?.kind === "externref"
+  );
+}
+
+/**
+ * Select only exact checker-certified Promise-delay components after their
+ * final runtime/import preparation has retained the owner. The two nested
+ * arrows are not a generic nested-syntax widening: the lowering plan owns
+ * their derived unit IDs, capture order, signatures, and lifted bodies.
+ */
+export function selectR3PreparedPromiseDelayFunctions(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly selectedLegacyNames: ReadonlySet<string>;
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
+  readonly overridesByUnitId: ReadonlyMap<
+    IrUnitId,
+    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
+  >;
+  readonly promiseDelays: IrPromiseDelayLoweringPlans;
+}): ReadonlySet<string> {
+  const planByOwnerUnitId = new Map<IrUnitId, IrPromiseDelayLoweringPlan>();
+  for (const [construction, plan] of input.promiseDelays.constructions) {
+    if (construction !== plan.construction) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `R3 Promise-delay construction map lost exact AST identity for ${plan.ownerUnitId}`,
+      );
+    }
+    const prior = planByOwnerUnitId.get(plan.ownerUnitId);
+    if (prior && prior !== plan) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `R3 Promise-delay owner ${plan.ownerUnitId} has multiple lowering plans`,
+      );
+    }
+    planByOwnerUnitId.set(plan.ownerUnitId, plan);
+  }
+
+  const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
+  const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
+  const selected = new Set<string>();
+  for (const legacyName of input.selectedLegacyNames) {
+    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
+    const plan = planByOwnerUnitId.get(unitId);
+    if (!plan) continue;
+    const claim = input.claimsByUnitId.get(unitId);
+    const override = input.overridesByUnitId.get(unitId);
+    if (!claim || !override) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `R3 Promise-delay candidate ${unitId} / ${legacyName} has no exact claim/signature`,
+      );
+    }
+    if (
+      plan.ownerName !== legacyName ||
+      plan.construction.getSourceFile() !== input.sourceFile ||
+      claim.declaration !== plan.construction.parent?.parent?.parent ||
+      functionValueTargets.has(unitId) ||
+      containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
+      !r3PromiseDelaySignatureMatchesAllocatedSlot(input.ctx, unitId, override)
+    ) {
+      continue;
+    }
+    selected.add(legacyName);
+  }
+  return selected;
 }
 
 /**

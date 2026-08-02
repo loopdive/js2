@@ -32,8 +32,11 @@ import {
   irVal,
   irVec,
   type IrClassShape,
+  type IrClosureSignature,
   type IrFunction,
   type IrInstr,
+  type IrType,
+  type IrTypeRef,
 } from "../src/ir/nodes.js";
 import {
   derivePreparedComponentDependencies,
@@ -155,6 +158,15 @@ function abiLookup(entries: readonly PreparedComponentAbiEntry[]): PreparedCompo
   return {
     get: (id) => byId.get(id),
     entries: () => entries,
+  };
+}
+
+function supportTypeEntry(ref: IrTypeRef): PreparedComponentAbiEntry {
+  return {
+    id: ref.binding.bindingId,
+    structuralReferenceKey: irTypeBindingKey(ref.binding),
+    slotPolicy: "required",
+    intent: { kind: "type", shapeKey: `test:${ref.name}` },
   };
 }
 
@@ -1030,6 +1042,85 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
         detail: expect.stringContaining("iterator runtime callables"),
       }),
     ]);
+  });
+
+  it.each(["empty", "unrelated"] as const)(
+    "does not accept %s closure evidence for a different final IR object",
+    (evidenceKind) => {
+      const f = fixture();
+      const signature: IrClosureSignature = { params: [], returnType: null };
+      const closureType: IrType = { kind: "closure", signature };
+      const supportRef = irSupportTypeRef(f.first.id, "test-closure-wrapper", "__test_closure_wrapper");
+      const closureNew: IrInstr = {
+        kind: "closure.new",
+        liftedFunc: irUnitFuncRef({ unitId: f.second.id, name: "second" }),
+        signature,
+        captureFieldTypes: [],
+        captures: [],
+        result: asValueId(0),
+        resultType: closureType,
+      };
+      const unrelatedClosureNew: IrInstr = { ...closureNew };
+      const refs = evidenceKind === "empty" ? [] : [supportRef];
+      const report = derivePreparedComponentDependencies({
+        module: { functions: [irFunction(f.first, [closureNew]), irFunction(f.second)] },
+        terminalUnitIds: new Set([f.first.id, f.second.id]),
+        inventory: f.inventory,
+        closureSupport: {
+          typeRefs: new Map([[closureType, refs]]),
+          instructionRefs: new Map([[evidenceKind === "empty" ? closureNew : unrelatedClosureNew, refs]]),
+          functionRefs: new Map(),
+        },
+        abi: abiLookup([
+          sourceCallableEntry(f.first.id),
+          sourceCallableEntry(f.second.id),
+          supportTypeEntry(supportRef),
+        ]),
+      });
+
+      expect(report.components[0]!.status).toBe("blocked");
+      expect(report.components[0]!.failures).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "implicit-support-reference-unavailable",
+            detail: expect.stringContaining("closure.new resolves closure wrapper/type support"),
+          }),
+        ]),
+      );
+    },
+  );
+
+  it("keeps nested closure-signature support dependencies fail-closed", () => {
+    const f = fixture();
+    const signature: IrClosureSignature = { params: [{ kind: "string" }], returnType: null };
+    const closureType: IrType = { kind: "callable", signature };
+    const supportRef = irSupportTypeRef(f.first.id, "test-callable-wrapper", "__test_callable_wrapper");
+    const fn: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "callback", type: closureType }],
+      valueCount: 1,
+    };
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [fn] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      closureSupport: {
+        typeRefs: new Map([[closureType, [supportRef]]]),
+        instructionRefs: new Map(),
+        functionRefs: new Map(),
+      },
+      abi: abiLookup([sourceCallableEntry(f.first.id), supportTypeEntry(supportRef)]),
+    });
+
+    expect(report.components[0]!.status).toBe("blocked");
+    expect(report.components[0]!.failures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "implicit-support-reference-unavailable",
+          detail: expect.stringContaining("IR string type resolves through backend support"),
+        }),
+      ]),
+    );
   });
 
   it("fails closed for an unresolved exact unit ref and for a foreign terminal owner", () => {
