@@ -157,6 +157,47 @@ describe("#3523 direct-queue parity inventory", () => {
     });
   });
 
+  it("reports repeated legacy queue identities as extra work instead of failing compilation", () => {
+    const { ast, plan } = buildPlan(`let x: number = 1;`);
+    const statement = ast.sourceFile.statements[0]!;
+    const report = reconcileIrModuleInitPlan(plan, ast.sourceFile, {
+      liveFunctionNames: [],
+      staticEntries: [],
+      moduleStatements: [statement, statement],
+    });
+    expect(report).toMatchObject({
+      aligned: false,
+      plannedEntryCount: 1,
+      legacyEntryCount: 2,
+      missingFromLegacy: [],
+      extraInLegacy: [report.plannedOrder[0]],
+      reordered: [],
+    });
+  });
+
+  it("keeps duplicated class-expression static queues observational", () => {
+    const ast = analyzeSource(
+      `var C = class { static #a = 1; static #b = 2; m() { return 42; } };`,
+      "module-init-class-expression-duplicate.js",
+    );
+    const generated = generateModule(ast, {
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      deferTopLevelInit: true,
+    });
+    const evidence = generated.moduleInitPlanning;
+    expect(evidence).toBeDefined();
+    expect(evidence!.parity).toMatchObject({
+      aligned: false,
+      plannedEntryCount: 1,
+      legacyEntryCount: 4,
+      missingFromLegacy: [expect.stringMatching(/^statement:/)],
+      reordered: [],
+    });
+    expect(evidence!.parity.extraInLegacy).toHaveLength(4);
+    expect(new Set(evidence!.parity.extraInLegacy).size).toBe(2);
+  });
+
   it("detects the legacy all-statics-before-statements reordering in production", () => {
     const ast = analyzeSource(
       `

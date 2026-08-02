@@ -567,6 +567,27 @@ function duplicates(values: readonly string[], label: string): void {
   }
 }
 
+interface QueueIdentityOccurrence {
+  readonly key: string;
+  readonly identity: string;
+}
+
+/**
+ * Preserve queue multiplicity without treating a source-range collision as a
+ * malformed semantic plan. The direct class-expression path may register the
+ * same source initializer once per internal class owner. R4 must observe that
+ * as extra legacy work; its read-only parity probe must not make otherwise
+ * valid source fail compilation.
+ */
+function identifyQueueOccurrences(values: readonly string[]): readonly QueueIdentityOccurrence[] {
+  const seen = new Map<string, number>();
+  return values.map((key) => {
+    const occurrence = seen.get(key) ?? 0;
+    seen.set(key, occurrence + 1);
+    return frozen({ key, identity: `${key}\u0000${occurrence}` });
+  });
+}
+
 /** Compare the semantic order with the current direct-front-end queues. */
 export function reconcileIrModuleInitPlan(
   plan: IrModuleInitPlan,
@@ -586,19 +607,22 @@ export function reconcileIrModuleInitPlan(
     ...legacy.moduleStatements.map((statement) => legacyNodeKey("statement", statement, sourceFile)),
   ];
   duplicates(plannedOrder, "module-init plan");
-  duplicates(legacyOrder, "legacy module-init observation");
-  const plannedSet = new Set(plannedOrder);
-  const legacySet = new Set(legacyOrder);
-  const missingFromLegacy = plannedOrder.filter((key) => !legacySet.has(key));
-  const extraInLegacy = legacyOrder.filter((key) => !plannedSet.has(key));
-  const commonPlanned = plannedOrder.filter((key) => legacySet.has(key));
-  const commonLegacy = legacyOrder.filter((key) => plannedSet.has(key));
+  const plannedOccurrences = identifyQueueOccurrences(plannedOrder);
+  const legacyOccurrences = identifyQueueOccurrences(legacyOrder);
+  const plannedSet = new Set(plannedOccurrences.map((entry) => entry.identity));
+  const legacySet = new Set(legacyOccurrences.map((entry) => entry.identity));
+  const missingFromLegacy = plannedOccurrences
+    .filter((entry) => !legacySet.has(entry.identity))
+    .map((entry) => entry.key);
+  const extraInLegacy = legacyOccurrences.filter((entry) => !plannedSet.has(entry.identity)).map((entry) => entry.key);
+  const commonPlanned = plannedOccurrences.filter((entry) => legacySet.has(entry.identity));
+  const commonLegacy = legacyOccurrences.filter((entry) => plannedSet.has(entry.identity));
   const reordered: { planned: string; observed: string }[] = [];
   for (let index = 0; index < Math.max(commonPlanned.length, commonLegacy.length); index++) {
     const planned = commonPlanned[index];
     const observed = commonLegacy[index];
-    if (planned !== observed && planned !== undefined && observed !== undefined) {
-      reordered.push(frozen({ planned, observed }));
+    if (planned?.identity !== observed?.identity && planned !== undefined && observed !== undefined) {
+      reordered.push(frozen({ planned: planned.key, observed: observed.key }));
     }
   }
   return frozen({

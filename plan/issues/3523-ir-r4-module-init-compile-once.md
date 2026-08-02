@@ -188,6 +188,31 @@ static/module queue partition with this ordered entry stream for a
 capability-complete scalar module, then prove `direct=0, IR=1` without changing
 startup behavior.
 
+#### Merge-queue multiplicity correction (2026-08-02)
+
+The first merge-group run exposed a valid class-expression population whose
+direct backend registers each static initializer once per internal class
+owner. Six source initializer ranges therefore appeared twice in the legacy
+queue. The read-only parity probe collapsed identities to source ranges and
+treated that multiplicity as a malformed semantic plan, turning 142 candidate
+Test262 rows into the same compile error before body emission.
+
+Reconciliation now keeps the semantic plan's unique-entry invariant while
+pairing each observed queue key with an occurrence ordinal. Repeated legacy
+entries remain visible as `extraInLegacy`; they make parity non-aligned but no
+longer make valid source fail compilation. This preserves the evidence R4
+needs to eliminate the duplicate direct work later without allowing the
+observer itself to change production behavior.
+
+Focused coverage is **8/8 passing**. The exact previously failing generated
+class-expression source now compiles successfully, validates as Wasm, and the
+minimal two-private-static fixture records four legacy observations over two
+source ranges instead of throwing. The fixed head must still complete a fresh
+merge-group Test262 run before landing. The expanded seven-file adjacent
+matrix is **53/57 passing**: the same two #3142 failures reproduce on pristine
+current `main`, and the remaining two rows require the absent optional
+`test262-fyi/data` submodule.
+
 ### Commit 2 — prepare/lower module init and make fallback one-pass
 
 - Extend from-AST lowering for every planned top-level entry and static intent.
