@@ -26,6 +26,7 @@ async function compileStandalone(src: string): Promise<Compiled> {
     allowJs: true,
     skipSemanticDiagnostics: true,
     target: "standalone",
+    hostBridge: "always",
   });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   return r;

@@ -217,14 +217,26 @@ function createFreshCompiler() {
 }
 createFreshCompiler();
 
+// (#4035) Everything this worker compiles is INSPECTED from JS afterwards: the
+// exec path renders native exception payloads through `__exn_render_*` (#2962)
+// and drains the host-free print sink through `__stdout_*` (#3469), and the
+// host lane reaches into WasmGC values through the `__vec_*`/`__sget_*` bridge.
+// Standalone/WASI now default to `hostBridge: "off"` so a DEPLOYED pure-Wasm
+// module ships only its own exports; the harness is the opt-in case. Injecting
+// it in both wrappers covers every compile site at once — and a caller may
+// still override by passing its own `hostBridge`.
+const HARNESS_HOST_BRIDGE = { hostBridge: "always" };
+
 function compileSingleSource(source, options) {
-  return incrementalCompiler ? incrementalCompiler.compile(source, options) : compile(source, options);
+  const opts = { ...HARNESS_HOST_BRIDGE, ...options };
+  return incrementalCompiler ? incrementalCompiler.compile(source, opts) : compile(source, opts);
 }
 
 function compileMultipleSources(files, entryFile, options) {
+  const opts = { ...HARNESS_HOST_BRIDGE, ...options };
   return incrementalCompiler?.compileMulti
-    ? incrementalCompiler.compileMulti(files, entryFile, options)
-    : compileMulti(files, entryFile, options);
+    ? incrementalCompiler.compileMulti(files, entryFile, opts)
+    : compileMulti(files, entryFile, opts);
 }
 
 // Suppress unhandled Promise rejections from async tests

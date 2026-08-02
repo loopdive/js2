@@ -99,6 +99,7 @@ import { asyncEngineWouldActivate } from "./async-activation.js"; // (#1373b C-1
 import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
+import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -4486,6 +4487,11 @@ export function generateModule(
 
     emitDataStructHostBridgeManifest(ctx);
 
+    // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
+    // the functions/types those exports pin are actually reclaimed. No-op when
+    // the bridge is published (js-host default).
+    stripHostBridgeExports(ctx);
+
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
@@ -6512,6 +6518,11 @@ export function generateMultiModule(
     finalizeLeafStructTypes(ctx);
 
     emitDataStructHostBridgeManifest(ctx);
+
+    // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
+    // the functions/types those exports pin are actually reclaimed. No-op when
+    // the bridge is published (js-host default).
+    stripHostBridgeExports(ctx);
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
