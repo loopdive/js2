@@ -1621,7 +1621,7 @@ export function compileTypeofExpression(
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
   } else if (operandType.kind === "i32") {
-    const boxIdx = ctx.funcMap.get("__box_boolean");
+    const boxIdx = ctx.funcMap.get(operandType.symbol === true ? "__box_symbol" : "__box_boolean");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
   } else if (operandType.kind === "ref" || operandType.kind === "ref_null") {
     fctx.body.push({ op: "extern.convert_any" });
@@ -1632,7 +1632,7 @@ export function compileTypeofExpression(
 }
 
 function staticTypeofForWasmType(type: ValType): string {
-  if (type.kind === "i32") return "boolean";
+  if (type.kind === "i32") return type.symbol === true ? "symbol" : "boolean";
   if (type.kind === "f32" || type.kind === "f64" || type.kind === "i64") return "number";
   return "object";
 }

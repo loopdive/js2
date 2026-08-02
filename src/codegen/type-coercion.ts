@@ -19,6 +19,7 @@ import { buildThrowJsErrorInstrs } from "./expressions/helpers.js";
 import { ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { ensureNativeArrayFromIterN } from "./iterator-native.js";
 import { markNoBrandSiblingShapes } from "./shape-brand.js";
+import { symbolBoundaryCoercionInstrs } from "./symbol-field-carrier.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
@@ -1904,6 +1905,11 @@ export function coerceType(
     }
     return;
   }
+  const symbolBoundary = symbolBoundaryCoercionInstrs(ctx, from, to, fctx);
+  if (symbolBoundary) {
+    fctx.body.push(...symbolBoundary);
+    return;
+  }
   // ref is a subtype of ref_null — no coercion needed for same typeIdx
   if (from.kind === "ref" && to.kind === "ref_null") {
     // But check for any-value boxing (ref $X → ref_null $AnyValue) (#2104)
@@ -2140,21 +2146,6 @@ export function coerceType(
   }
   // externref → i32 (unbox as number to preserve value, then truncate)
   if (from.kind === "externref" && to.kind === "i32") {
-    // (#2866 slice 3) symbol carrier → i32 id. A standalone/WASI symbol VALUE is
-    // a bare i32 counter id; when it has crossed an externref channel (e.g. a
-    // single `symbol` element of `Object.getOwnPropertySymbols(o)`) it is a
-    // `$Symbol` struct. Unboxing to a symbol slot is the inverse of the
-    // `__box_symbol` boxing path: recover the canonical i32 id (`$Symbol.id`) so
-    // symbol identity (`===`, id-compare) and re-indexing (`o[sym]`) work on the
-    // returned carrier. Narrowly gated on a symbol-branded target with the
-    // carrier registered; never touches number/boolean i32 coercions.
-    if (to.symbol === true && (ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0) {
-      const symIdx = ctx.symbolTypeIdx;
-      fctx.body.push({ op: "any.convert_extern" });
-      fctx.body.push({ op: "ref.cast", typeIdx: symIdx });
-      fctx.body.push({ op: "struct.get", typeIdx: symIdx, fieldIdx: 0 });
-      return;
-    }
     addUnionImports(ctx);
     const funcIdx = ctx.funcMap.get("__unbox_number");
     if (funcIdx !== undefined) {
@@ -3992,6 +3983,9 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
     if (fromKind === "f64" && toKind === "i32") return [{ op: "i32.trunc_sat_f64_s" }];
   }
   if (from.kind === to.kind) return [];
+
+  const symbolBoundary = symbolBoundaryCoercionInstrs(ctx, from, to, fctx);
+  if (symbolBoundary) return symbolBoundary;
 
   // #1917 Step 0: scalar / numeric / box-unbox rows come from the single
   // coercion table. Excluded here (kept as the original rows below): `from`

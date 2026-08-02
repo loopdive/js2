@@ -93,6 +93,17 @@ export function inferParamTypeFromCallSites(
   let sawCallSite = false;
   let sawUnderApplied = false;
 
+  const isRecursiveCall = (call: ts.CallExpression): boolean => {
+    const target = ctx.oracle.valueDeclarationOf(call.expression);
+    for (let owner: ts.Node | undefined = call.parent; owner; owner = owner.parent) {
+      if (!ts.isFunctionLike(owner)) continue;
+      return (
+        owner === target || (target !== undefined && ts.isVariableDeclaration(target) && target.initializer === owner)
+      );
+    }
+    return false;
+  };
+
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === funcName) {
       // A matching call exists regardless of arg types — the function IS invoked
@@ -131,7 +142,15 @@ export function inferParamTypeFromCallSites(
                 const wasmType: ValType = { kind: "f64" };
                 if (agreed === null) agreed = wasmType;
                 else if (agreed.kind !== wasmType.kind) conflict = true;
+              } else if (isRecursiveCall(node)) {
+                // (#3961) A dynamic value forwarded recursively is part of the
+                // callee's runtime domain. React's `mapIntoArray(children, …)`
+                // also has a proven-array call; ignoring the recursive value
+                // narrows `children` to a vec and destroys element arguments.
+                conflict = true;
               }
+            } else if (isRecursiveCall(node)) {
+              conflict = true;
             }
           } else {
             const wasmType = resolveWasmType(ctx, argType);
