@@ -251,7 +251,9 @@ const siblingCaptureClosureCache = new WeakMap<ts.Node, Map<string, Set<string>>
  * The container whose statement list holds `stmt`'s sibling function
  * declarations: its enclosing function body, or the source file at top level.
  */
-function siblingContainerOf(stmt: ts.FunctionDeclaration): { node: ts.Node; stmts: readonly ts.Statement[] } | undefined {
+function siblingContainerOf(
+  stmt: ts.FunctionDeclaration,
+): { node: ts.Node; stmts: readonly ts.Statement[] } | undefined {
   const parent = stmt.parent;
   if (!parent) return undefined;
   if (ts.isSourceFile(parent)) return { node: parent, stmts: parent.statements };
