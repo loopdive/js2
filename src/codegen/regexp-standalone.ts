@@ -807,6 +807,24 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
 }
 
 /**
+ * (#4089) Resolve the runtime ToString the standalone regex lane uses, as ONE
+ * coercion site.
+ *
+ * Both the `.test`/`.exec` subject path and the dynamic-constructor argument
+ * path need this exact conversion. Each having its own `ensureLateImport` +
+ * `funcMap` lookup is a hand-rolled ToString site per the coercion-site drift
+ * gate (#2108/#3131/#3279) — and the gate is right: that is precisely how the
+ * two paths drifted apart in the first place, with only one of them actually
+ * applying ToString. One resolver, two callers.
+ */
+function ensureRuntimeToStringIdx(ctx: CodegenContext, fctx: FunctionContext | null): number | undefined {
+  const idx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (idx === undefined) return undefined;
+  return ctx.funcMap.get("__extern_toString") ?? idx;
+}
+
+/**
  * (#4089) Compile `expr` and leave a native `$AnyString` on the stack, applying
  * the SPEC's ToString — i.e. an object argument gets its own `toString()`
  * called, per §7.1.17.
@@ -839,15 +857,14 @@ function emitArgAsNativeString(
   if (emitted.kind !== "externref") {
     coerceType(ctx, fctx, emitted, { kind: "externref" }, "string", compileStringLiteral);
   }
-  const toStringIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
-  flushLateImportShifts(ctx, fctx);
+  const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
   if (toStringIdx === undefined) {
     // No runtime ToString available — fall back to the previous direct coercion
     // rather than emitting nothing.
     coerceType(ctx, fctx, { kind: "externref" }, strType, "string", compileStringLiteral);
     return true;
   }
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_toString") ?? toStringIdx });
+  fctx.body.push({ op: "call", funcIdx: toStringIdx });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
   return true;
@@ -1979,11 +1996,10 @@ export function emitRegexSearchCall(
     if (inputType !== null && inputType.kind !== "externref") {
       coerceType(ctx, fctx, inputType, { kind: "externref" }, "string", compileStringLiteral);
     }
-    const toStringIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
+    // (#4089) Same single resolver the constructor path uses.
+    const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
     if (toStringIdx !== undefined) {
-      const finalToStringIdx = ctx.funcMap.get("__extern_toString") ?? toStringIdx;
-      fctx.body.push({ op: "call", funcIdx: finalToStringIdx });
+      fctx.body.push({ op: "call", funcIdx: toStringIdx });
       fctx.body.push({ op: "any.convert_extern" });
       fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
       inputType = nativeStringType(ctx);

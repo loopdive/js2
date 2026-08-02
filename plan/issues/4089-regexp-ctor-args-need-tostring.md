@@ -119,6 +119,31 @@ e.g. `abc{1}` needs `{n}` quantifier support in
 `__regex_compile_dynamic_simple`. That is the regexp-engine lever, a different
 issue, and explicitly out of scope here.
 
+## The coercion-site gate caught a second hand-rolled site — and it was right
+
+The first cut of this fix failed `quality` on the **coercion-site drift gate**
+(#2108/#3131/#3279): `regexp-standalone.ts: 2 → 4 (__extern_toString 2→4)`.
+My helper had its own `ensureLateImport` + `funcMap` lookup, duplicating the
+one already in `emitRegexSearchCall`.
+
+That gate offers a `coercion-sites-allow:` escape, and taking it would have
+meant **two allowances in one PR** — exactly the trade this issue argues
+against. It was also diagnosing the real defect: two hand-rolled ToString
+lookups is precisely how these two paths drifted apart in the first place,
+with only one of them actually applying ToString.
+
+Fixed properly instead: `ensureRuntimeToStringIdx` is now the single resolver
+and **both** paths call it. No allowance taken; the gate passes with no net
+vocabulary growth.
+
+Note this is the dedupe I explicitly declined earlier in this issue — but only
+the *lookup*, not the surrounding control flow. `emitRegexSearchCall` keeps its
+own compile/coerce sequence, including the subtle path where a `null` from
+`compileExpression` does **not** bail. Verified by running the existing
+standalone regex suites: **238 tests pass**
+(`issue-1539-standalone-regex`, `-replace`, `issue-2161-regex-const-ctor`,
+`issue-1474-standalone-regex-refuse`).
+
 ## Why this bucket is smaller than it looks (context for #4080 / triage)
 
 While scoping this I classified where each of the 84 crash-bucket files
