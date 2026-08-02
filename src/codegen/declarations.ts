@@ -37,7 +37,7 @@ import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-a
 import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
 import { reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
-import { compileFunctionBody, registerInlinableFunction } from "./function-body.js";
+import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./function-body.js";
 import { _hasRuntimeComputedKey } from "./literals.js"; // (#3024) module-global externref routing for runtime-computed-key literals
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import {
@@ -2548,6 +2548,7 @@ export function compileDeclarations(
           }
           try {
             compileFunctionBody(ctx, stmt, func);
+            dumpFrameBreach(ctx, func);
             registerInlinableFunction(ctx, fnName, func);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -2606,6 +2607,7 @@ export function compileDeclarations(
     if (func.body.length > 0) continue;
     try {
       compileFunctionBody(ctx, fnExpr as unknown as ts.FunctionDeclaration, func);
+      dumpFrameBreach(ctx, func);
       registerInlinableFunction(ctx, funcName, func);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

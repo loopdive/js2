@@ -260,6 +260,7 @@ import {
 import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { frameSnapshotAtCompile } from "./function-body.js";
 import { describeInternalError } from "./internal-error.js";
 import {
   brandExternMethodResult,
@@ -6162,8 +6163,11 @@ export function generateMultiModule(
       }
     });
 
+    frameStage(ctx, "bodies");
+
     // (#1602) Rebuild method-closure trampolines against final method sigs.
     profilePhase("finalize-method-trampolines", () => finalizeMethodTrampolines(ctx));
+    frameStage(ctx, "finalizeMethodTrampolines");
     profileCount("functions-after-bodies", ctx.mod.functions.length);
 
     // (#2138 M0) Compile-twice IR overlay for multi-module top-level functions.
@@ -6212,20 +6216,25 @@ export function generateMultiModule(
       // finalization pass. Rebuild those late declarations against the target's
       // final signature before any fixup/validation pass observes them.
       finalizeMethodTrampolines(ctx);
+      frameStage(ctx, "ir-overlay");
     }
 
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
     profilePhase("fixup-struct-new-args", () => fixupStructNewArgCounts(ctx));
+    frameStage(ctx, "fixupStructNewArgCounts");
 
     // Fixup pass: insert extern.convert_any after struct.new when the result
     // is stored into an externref local/global.
     profilePhase("fixup-struct-new-coercion", () => fixupStructNewResultCoercion(ctx));
+    frameStage(ctx, "fixupStructNewResultCoercion");
 
     // Build per-shape default property flags table for all user-visible structs
     profilePhase("shape-prop-flags", () => buildShapePropFlagsTable(ctx));
+    frameStage(ctx, "buildShapePropFlagsTable");
 
     // Collect ref.func targets so the binary emitter can add a declarative element segment
     profilePhase("declared-func-refs", () => collectDeclaredFuncRefs(ctx));
+    frameStage(ctx, "collectDeclaredFuncRefs");
 
     // Resolve deferred `export default <variable>` for module globals (#1108).
     // Must run AFTER compileDeclarations — string-constant imports added during
@@ -6560,6 +6569,68 @@ export function generateMultiModule(
     irOutcomes: ctx.irOutcomes,
     programAbi: ctx.programAbiSession?.publication,
   };
+}
+
+/**
+ * (#4075) Count bodies that reference locals outside their own frame.
+ *
+ * `JS2WASM_FRAME_STAGES=1` calls this after each post-body pass in
+ * `generateMultiModule` so the FIRST pass that introduces a breach names itself.
+ * The surviving breach class is provably not emitted by body compilation (a
+ * push-trap on ordinary function bodies stays silent for it), so the introducing
+ * pass has to be found by bisecting the pass list.
+ */
+export function countOutOfFrameLocals(mod: WasmModule): number {
+  const localOps = new Set(["local.get", "local.set", "local.tee"]);
+  let n = 0;
+  for (const func of mod.functions) {
+    const type = mod.types[func.typeIdx];
+    if (!type || type.kind !== "func") continue;
+    const frame = type.params.length + func.locals.length;
+    let bad = false;
+    const walk = (instrs: readonly Instr[]): void => {
+      for (const instr of instrs) {
+        if (bad) return;
+        if (localOps.has(instr.op)) {
+          const index = (instr as { index?: number }).index;
+          if (typeof index === "number" && index >= frame) bad = true;
+        }
+        for (const key of ["body", "then", "else", "catchAll"] as const) {
+          const nested = (instr as unknown as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) walk(nested as Instr[]);
+        }
+        const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+        if (Array.isArray(catches)) for (const c of catches) if (Array.isArray(c.body)) walk(c.body);
+      }
+    };
+    walk(func.body);
+    if (bad) n += 1;
+  }
+  return n;
+}
+
+let frameStagePrev = 0;
+
+/** (#4075) Report the first pass boundary at which the breach count grows. */
+function frameStage(ctx: CodegenContext, label: string): void {
+  if (!process.env?.JS2WASM_FRAME_STAGES) return;
+  const n = countOutOfFrameLocals(ctx.mod);
+  if (n !== frameStagePrev) {
+    process.stderr.write(`[js2:frame-stage] after ${label}: ${frameStagePrev} -> ${n}\n`);
+    // Did the FRAME shrink, or did the BODY grow? That fork decides whether to
+    // hunt a locals-array replacement or a late instruction splice.
+    for (const func of ctx.mod.functions) {
+      const snap = frameSnapshotAtCompile.get(func);
+      if (!snap) continue;
+      if (snap.locals !== func.locals.length || snap.bodyLen !== func.body.length) {
+        process.stderr.write(
+          `[js2:frame-stage]   '${func.name}' locals ${snap.locals}->${func.locals.length}` +
+            ` bodyLen ${snap.bodyLen}->${func.body.length}\n`,
+        );
+      }
+    }
+    frameStagePrev = n;
+  }
 }
 
 /** (#4075) Report bodies that reference locals outside their own frame. */

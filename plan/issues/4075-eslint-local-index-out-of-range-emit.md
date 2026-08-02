@@ -687,3 +687,49 @@ and report the first pass boundary where the two diverge.
 
 All three survivors share **index 33** despite frames of 15, 7 and 21, so
 whatever mutates them applies one common offset or one common source of indices.
+
+## Second class: narrowed to a compilation path, not a post-pass (2026-08-02)
+
+`JS2WASM_FRAME_STAGES=1` re-runs the breach count after each post-body pass and
+prints the first boundary where it grows. Result on `uri.all.js`:
+
+```text
+[js2:frame-stage] after bodies: 0 -> 3
+```
+
+So the breaches ARE introduced during the bodies phase — the earlier conclusion
+("not emitted by body compilation") was **wrong**, and wrong for a specific
+reason worth recording: the `push`-trap it rested on was installed on
+`fctx.body`, but `fctx.body` is REASSIGNED during compilation (the `savedBodies`
+swap), so the proxy stops observing writes after the first swap. A trap on a
+field that gets reassigned is not a trap.
+
+Further narrowing, all measured:
+
+- **Not the inliner.** Every unmapped `local.get` at inline time is instrumented
+  (`[js2:inline-unmapped]`); silent.
+- **Not the late-import shift.** That walker only rewrites `funcIdx` on
+  `call` / `return_call` / `ref.func`; it never touches `local.*` operands. The
+  error message's own `#2043` attribution is misleading for this class.
+- **Not a frame shrink or a body splice after compilation.** Snapshotting
+  `locals.length` / `body.length` at each function's compile and re-checking at
+  the end of the bodies phase reports **no** change.
+- **These three functions never reach `compileFunctionBody`'s wired call sites
+  at all** — `dumpFrameBreach`, hooked at both, never fires for them, and they
+  have no snapshot entry.
+
+`resolve`, `normalize` and `equal` are **nested** function declarations (inside
+the UMD factory), not module-top-level ones, so they are compiled by a different
+route than the two sites instrumented here. That route is where to look next.
+
+All three call `parse(...)` and `serialize(...)`, and all three breach at the
+same index 33 — consistent with one shared callee's frame leaking into three
+callers along that nested-declaration path.
+
+### Instrumentation now available (all env-gated, inert by default)
+
+- `JS2WASM_CHECK_FRAMES=1` — end-of-codegen breach report.
+- `JS2WASM_FRAME_OPS=1` — per-closure instruction dump, the nested-capture probe,
+  the inline-unmapped probe, and `dumpFrameBreach` for ordinary functions.
+- `JS2WASM_FRAME_STAGES=1` — breach count after each post-body pass, plus a
+  locals/body-length delta per function.
