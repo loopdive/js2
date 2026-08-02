@@ -97,6 +97,10 @@ keep the existing frame engine as the sole consumer.
 - The exact top-level host `fetchUser` callable freezes its canonical Promise
   ABI before Program ABI publication and enters the sealed prepared-function
   transaction without first compiling a direct body.
+- Compile-once admission now requires the awaited call site to resolve to an
+  exact already-prepared dependency. Ordinary single-await functions whose
+  callees still use the direct route keep their legacy body instead of entering
+  an unsealed prepared component.
 - Prepared async dependency sealing consumes the semantic async plan and its
   runtime adapters instead of the discarded pre-transform await block.
 - Runtime execution still resolves `fetchUser(7)` to `70`; direct-only,
@@ -112,7 +116,9 @@ keep the existing frame engine as the sole consumer.
 ## Validation
 
 - `pnpm exec vitest run tests/issue-4104-ir-async-plan-runtime-consumer.test.ts tests/issue-4106-ir-async-fetch-user.test.ts tests/ir/issue-1373b-async-plan.test.ts`
-  — 21/21 tests pass.
+  — 22/22 tests pass.
+- The three equivalence files that caught premature single-await admission pass
+  26/26 tests: `promise-chains`, `async-function`, and `ir-slice10-promise`.
 - `pnpm exec tsx scripts/check-ir-only.ts --policy=hybrid` — READY at 34/37
   IR-emitted, 33 legacy bodies, three typed blockers, and zero invariants.
 - `pnpm run check:ir-optimization-retirement` — 22 rows, 11 IR-owned, one

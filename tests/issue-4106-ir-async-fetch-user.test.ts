@@ -175,6 +175,35 @@ describe("#4106 IR single-await async producer", () => {
     });
   });
 
+  it("keeps an await of a non-prepared async callee on the direct route", async () => {
+    const result = await compile(
+      `async function getValue(): Promise<number> {
+        return 100;
+      }
+
+      export async function test(): Promise<number> {
+        const value = await getValue();
+        return value;
+      }`,
+      {
+        fileName: "issue-4107-non-prepared-async-callee.ts",
+        target: "gc",
+        trackIrOutcomes: true,
+      },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(result.irFirstSkipped ?? []).not.toContain("test");
+    expect((result.irOutcomes ?? []).find((candidate) => candidate.displayName === "test")).toMatchObject({
+      legacyBodyEmitted: true,
+    });
+
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    await expect(settled((instance.exports.test as () => Promise<number>)())).resolves.toBe(100);
+  });
+
   it("keeps host-free and non-numeric ABI owners off the prepared skip route", async () => {
     const hostFree = await compile(EXACT_SOURCE, {
       fileName: "issue-4107-host-free.ts",

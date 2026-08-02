@@ -527,9 +527,19 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
     { readonly params: readonly IrType[]; readonly returnType: IrType | null }
   >;
   readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
+  readonly preparedDependencyLegacyNames: ReadonlySet<string>;
+  readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
 }): ReadonlySet<string> {
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
   const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
+  const dependencySelection: IrSelection = {
+    funcs: new Set(input.preparedDependencyLegacyNames),
+    classMembers: new Set(),
+    moduleInit: undefined,
+  };
+  const preparedDependencyUnitIds = new Set(
+    input.projectLoweringPlans(dependencySelection).ownerProjection.entries.map(({ unitId }) => unitId),
+  );
   const selected = new Set<string>();
   for (const legacyName of input.selectedLegacyNames) {
     const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
@@ -548,6 +558,29 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
       functionValueTargets.has(unitId) ||
       containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
       !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override)
+    ) {
+      continue;
+    }
+    const declarationStatement = claim.declaration.body?.statements[0];
+    const declaration =
+      declarationStatement && ts.isVariableStatement(declarationStatement)
+        ? declarationStatement.declarationList.declarations[0]
+        : undefined;
+    const awaited = declaration?.initializer;
+    const awaitedCall =
+      awaited && ts.isAwaitExpression(awaited) && ts.isCallExpression(awaited.expression)
+        ? awaited.expression
+        : undefined;
+    if (!awaitedCall) continue;
+    const candidatePlans = input.projectLoweringPlans({
+      ...dependencySelection,
+      funcs: new Set([...dependencySelection.funcs, legacyName]),
+    });
+    const directCall = candidatePlans.directCalls.get(awaitedCall);
+    if (
+      directCall?.ownerUnitId !== unitId ||
+      directCall.target.binding.kind !== "unit" ||
+      !preparedDependencyUnitIds.has(directCall.target.binding.unitId)
     ) {
       continue;
     }

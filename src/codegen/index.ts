@@ -3290,6 +3290,8 @@ function planIrFirstBodyRouting(
       claimsByUnitId: plan.functionClaimsByUnitId,
       overridesByUnitId: plan.overrideMapByUnitId,
       suspendingAsyncUnitIds: plan.suspendingAsyncUnitIds,
+      preparedDependencyLegacyNames: new Set([...preliminaryR2Names, ...promiseDelayNames]),
+      projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
     });
     const preparedFreeFunctionNames = new Set([...preliminaryR2Names, ...promiseDelayNames, ...suspendingAsyncNames]);
     if (preparedFreeFunctionNames.size === 0 && preliminaryClassMethodNames.size === 0) {
