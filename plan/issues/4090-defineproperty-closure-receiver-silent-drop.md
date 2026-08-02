@@ -66,11 +66,21 @@ pattern-match this to the revert:
 | failure mode it produced | enumerated empty, defined nothing, **returned normally** | — |
 
 Writing one key into `__closure_bag_ensure`'s bag is writing into exactly the
-table `__extern_get` / `__extern_set` / (post-#4017) `__hasOwnProperty` read
-from, so define/read/presence agree **by construction**. It also *removes* an
-inconsistency rather than adding one: it is what makes #4017's
-`hasOwnProperty` answer `true` for the `defineProperty` spelling, which today it
-correctly answers `false` for.
+table `__extern_get` / `__extern_set` read from, so define and read agree **by
+construction**. It also *removes* an inconsistency rather than adding one: it is
+what makes #4055's descriptor reader see a `defineProperty`-written field, which
+today it cannot.
+
+**Do NOT widen `__hasOwnProperty` itself as part of this.** #4055's first cut did
+and was **auto-parked**: it cost **684 standalone host-free passes** (713 files
+lost, 682 of them `name.js` / `length.js`), because `propertyHelper.js` reaches
+`hasOwnProperty` on essentially every `built-ins/**/{name,length}.js` test. The
+shipped fix is a **separate native** (`__desc_has_own`, `carrier-bag-hasown.ts`)
+that only ToPropertyDescriptor calls, leaving
+`Object.prototype.hasOwnProperty` / `Object.hasOwn` / `propertyIsEnumerable`
+byte-identical. Scope this fix to the **consumer**, not the general helper — the
+arm was never wrong, it was wired at the most general point that could express
+it, and generality there is blast radius.
 
 ## Instance #8 of #4080
 
@@ -87,11 +97,13 @@ carrier; the define appliers are the consumer that was never wired.
 
 **Explicitly NOT in scope, each with its reason:**
 
-- **The ARRAY (vec) half.** #4017 measured a vec `hasOwnProperty` arm
-  *unreachable* and removed it rather than shipping decoration; the vec bag
-  (#3537) and the vec descriptor overlay (#3251) are two disjoint tables that
-  clobber each other. That is **#4010**, and it is a substrate change, not this
-  arm.
+- **The ARRAY (vec) half.** #4055 measured a vec `hasOwnProperty` arm
+  *unreachable* and removed it rather than shipping decoration: `vec-overlay.ts`'s
+  `fillVecHasOwnHelpers` **unshifts** a prologue that answers every vec receiver
+  from `__vec_gopd` and returns, so no arm placed in the helper's body is
+  reachable at all. The vec bag (#3537) and the vec descriptor overlay (#3251)
+  are two disjoint tables that clobber each other. That is **#4010**, and it is a
+  substrate change, not this arm.
 - **Enumeration over the bag** — `Object.keys` / `for-in` / `__object_keys_forin`
   on a carrier. These need a *complete* key source and therefore hit #4047's
   unsoundness head-on **until this issue lands**. Measured on main today, with
