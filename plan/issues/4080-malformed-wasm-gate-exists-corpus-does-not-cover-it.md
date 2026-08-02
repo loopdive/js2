@@ -90,6 +90,42 @@ diff-test corpus:
 - `++`/`--` on a boolean-initialised (i32-slot) global (#4079)
 - a string `+=` into an externref slot (#3989)
 
+## ⚠ CORRECTION 2026-08-02 — the thesis above covers only HALF the family
+
+**Refuted in part by the `L-enum` lane, and the refutation is accepted.** The
+"`malformed_wasm` already catches it, the gap is only corpus coverage" claim
+holds for the instances that emit **invalid Wasm** — and **not at all** for the
+ones that emit **valid Wasm with a wrong value**.
+
+The family splits in two, and the two halves need **different instruments**:
+
+| half | instances | what would catch it |
+| --- | --- | --- |
+| **invalid Wasm**, compiler reports success | #3989, #4077, #4079, #4081 | `malformed_wasm` (#2143) — **exists**; gap is corpus coverage |
+| **valid Wasm, WRONG VALUE** | `__object_keys` (#4071), `__hasOwnProperty` (#4055), the RegExp anchoring bug in #4065 | **nothing today** — needs a value-level gc-vs-standalone differential oracle |
+
+`Object.keys([10,20,30])` returning `[]`, `hasOwnProperty` answering false for a
+property that was just written, and `^(?:a.c|zz)$` failing to match while `a.c`
+matches — all produce **perfectly valid modules**. `WebAssembly.validate` is
+`true`. A validity invariant is structurally incapable of seeing them.
+
+**So this issue's scope is now two pieces of work, not one:**
+
+1. **(as originally filed)** measure and extend the `malformed_wasm` diff-test
+   corpus, for the invalid-Wasm half.
+2. **(new, and probably the larger)** a **value-level differential oracle**:
+   run the same program through the **gc** lane and the **standalone** lane and
+   compare *results*, not validity. Every silent-wrong-answer instance above is
+   a gc/standalone divergence and would fall out of such an oracle immediately.
+
+Precedent that this is tractable: the #4065 lane already ran a **37-case
+differential against Node** (29 agree / 8 loud refusals / **0 wrong / 0 miss**)
+by hand. The proposal is to make that a standing instrument rather than a
+per-lane improvisation.
+
+**Do not size either piece from the anecdotes.** Neither corpus has been
+measured, and the one screen attempted for this family was refuted (above).
+
 ## Work — sizing FIRST, shape second
 
 1. **Measure what the `malformed_wasm` corpus actually covers.** This has
