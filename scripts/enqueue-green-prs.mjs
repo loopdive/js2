@@ -113,6 +113,90 @@ export const HOLD_LABELS = new Set([
 // the state that allowed red PRs to enter the merge queue.
 const ENQUEUEABLE = new Set(["CLEAN", "HAS_HOOKS"]);
 const PASSING_CHECK_STATES = new Set(["pass", "skipping"]);
+
+// ---------------------------------------------------------------------------
+// #4094 — `[skip ci]`-ONLY DIVERGENCE EXEMPTION (stakeholder decision 2026-08-02)
+//
+// The loop this breaks (measured in #4093): a merge lands, a `[skip ci]` baseline
+// commit follows (six in ~5.5h), every open PR goes BEHIND, ENQUEUEABLE excludes
+// BEHIND, and the PRs are un-enqueueable until the refresh cron (~0.7/hour actual)
+// catches up — often raced by the next baseline commit. A commit whose own message
+// declares "this changes nothing needing testing" currently disqualifies every PR
+// in flight.
+//
+// GitHub's ACCEPTED MARKER SET — verified 2026-08-02 against
+// docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs,
+// NOT from memory. Two properties of that source matter and are easy to get wrong:
+//   1. There are FIVE spellings, not one. This repo only ever emits `[skip ci]`,
+//      so a predicate matching only that spelling passes every local test and is
+//      still wrong in production the first time someone writes `[ci skip]`.
+//   2. The doc says the string suppresses `on: push`/`on: pull_request` when added
+//      "to the commit message" — anywhere in it, NOT first-line-only. Matching only
+//      the subject would silently miss a marker in the body.
+// ---------------------------------------------------------------------------
+export const SKIP_CI_MARKERS = Object.freeze(["[skip ci]", "[ci skip]", "[no ci]", "[skip actions]", "[actions skip]"]);
+
+/** True when a single commit message carries any GitHub skip-CI marker. */
+export function hasSkipCiMarker(message) {
+  if (typeof message !== "string" || message.length === 0) return false;
+  const m = message.toLowerCase();
+  return SKIP_CI_MARKERS.some((marker) => m.includes(marker));
+}
+
+/**
+ * #4094 — is a PR's divergence from main composed ONLY of `[skip ci]` commits?
+ *
+ * `messages` is the FULL commit message of every commit main is ahead by, from
+ * the server-side compare API (never local refs — see `divergenceCommitMessages`).
+ *
+ * FAILS CLOSED, deliberately, in two distinct ways that are easy to conflate:
+ *
+ *   - `null`/non-array  ⇒ we could not SEE the divergence. Not exempt. A detector
+ *     whose "cannot see" answer equals "nothing wrong" is unsound, and this one
+ *     gates entry to the merge queue.
+ *   - EMPTY array ⇒ ALSO not exempt. This is the silent-empty trap: "no commits
+ *     matched" is indistinguishable from "the fetch returned nothing", and a PR
+ *     that is genuinely BEHIND must be behind by at least one commit. So the
+ *     count is FLOORED at 1 rather than treated as a vacuous all-true.
+ *
+ * Only a non-empty set in which EVERY message carries a marker is exempt.
+ */
+export function isSkipCiOnlyDivergence(messages) {
+  if (!Array.isArray(messages)) return false;
+  if (messages.length === 0) return false; // vacuous-truth guard, see above
+  return messages.every((m) => hasSkipCiMarker(m));
+}
+
+/**
+ * #4094 — the eligibility decision, pure and exported so both controls are
+ * unit-testable with no `gh` call and no queue mutation.
+ *
+ * SCOPE, narrow on purpose (issue #4094 constraint 1): this widens the
+ * ELIGIBILITY TEST only. It updates/rebases nothing. The 2026-06-11 incident
+ * (17 bot-updated BEHIND PRs stranded in `action_required`) was caused by
+ * *bot-updating branches*; `ALLOW_UPDATE_BRANCH` semantics are untouched here.
+ *
+ * Everything else stays exactly as it was — in particular `UNSTABLE` remains
+ * excluded (#3878/#3904: required-green + one red non-required is precisely the
+ * state that once let red PRs into the queue), as do drafts, hold labels and the
+ * author-trust gate. The ONLY state this admits that was previously refused is
+ * `BEHIND`, and only when the entire divergence is skip-CI commits.
+ */
+export function enqueueEligibility(mergeStateStatus, divergence = null) {
+  if (ENQUEUEABLE.has(mergeStateStatus)) {
+    return { eligible: true, reason: `state:${mergeStateStatus}` };
+  }
+  if (mergeStateStatus !== "BEHIND") {
+    return { eligible: false, reason: mergeStateStatus || "merge-state-missing" };
+  }
+  if (!divergence || divergence.ok !== true) {
+    return { eligible: false, reason: `BEHIND (divergence-unknown:${divergence?.reason || "not-fetched"})` };
+  }
+  if (!isSkipCiOnlyDivergence(divergence.messages)) {
+    return { eligible: false, reason: `BEHIND (${divergence.reason})` };
+  }
+  return { eligible: true, reason: `BEHIND-skip-ci-only (${divergence.reason})` };
+}
 // STALL SURFACING (#3584). How long a PR must sit BLOCKED with nothing failing
 // and nothing pending before we stop calling it "in flight" and start calling it
 // a suspected permanent stall. Deliberately generous: a false positive here
@@ -209,6 +293,40 @@ function graphql(query, vars = {}) {
   const args = ["api", "graphql", "-f", `query=${query}`];
   for (const [k, v] of Object.entries(vars)) args.push("-f", `${k}=${v}`); // -f = raw string field
   return JSON.parse(gh(args));
+}
+
+/**
+ * #4094 — the full commit messages of every commit `main` is ahead of `headOid` by,
+ * read from the SERVER-SIDE compare API (never local refs: this checkout's remote
+ * tracking refs are unreliable, and CI has no local main to compare against).
+ *
+ * ⚠ FIELD TRAP, measured 2026-08-02 on PR #4002. Called as `compare/<head>...main`,
+ * GitHub reports `{ahead_by: 1, behind_by: 16, commits: [<1 entry>]}`. The
+ * divergence we care about — what main has that the PR does not — is `ahead_by`
+ * and the `commits` ARRAY. `behind_by` is the opposite direction (commits the PR
+ * head has that main does not) and reading it as "how far behind the PR is" inverts
+ * the test: #4002 would have looked 16 commits divergent when it was exactly one
+ * `[skip ci]` baseline refresh. Issue #4094 phrases this as "every commit main is
+ * ahead by", which is correct — but only `commits`/`ahead_by` express it.
+ *
+ * Returns `{ ok, messages, reason }`. `ok:false` ⇒ caller must NOT exempt.
+ */
+export function divergenceCommitMessages(headOid, repo = REPO, runner = ghMaybe) {
+  if (!headOid) return { ok: false, messages: null, reason: "no-head-oid" };
+  // Reduce to a JSON ARRAY and parse it — do NOT split raw --jq output on newlines.
+  // Commit messages are multi-line, and a marker is valid ANYWHERE in the message
+  // (verified against GitHub's docs above), so line-splitting would tear a
+  // body-borne marker away from its own commit and silently mis-classify it.
+  const res = runner(["api", `repos/${repo}/compare/${headOid}...main`, "--jq", "[.commits[].commit.message]"]);
+  if (!res.ok) return { ok: false, messages: null, reason: "compare-api-failed" };
+  let messages;
+  try {
+    messages = JSON.parse(String(res.stdout || ""));
+  } catch {
+    return { ok: false, messages: null, reason: "compare-api-unparseable" };
+  }
+  if (!Array.isArray(messages)) return { ok: false, messages: null, reason: "compare-api-shape" };
+  return { ok: true, messages, reason: `commits:${messages.length}` };
 }
 
 // Merge-queue snapshot: PR numbers already queued + whether any head is forming.
