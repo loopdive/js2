@@ -440,3 +440,70 @@ reporter, deleting halves of the file and re-probing costs **seconds** per round
 and the reporter names the surviving construct each time. That is a
 straightforward delta-debug to a minimal fixture — no more hypothesis-guessing
 required.
+
+## Delta-debugged to 200 lines — and the signal is an OFF-BY-ONE (2026-08-02)
+
+Automated statement-level reduction (greedy removal from the UMD factory body,
+re-probing with the closure-frame reporter as the oracle) took the reproducer
+from the full 146-source ESLint graph down to a single file:
+
+| stage | size |
+| --- | --- |
+| ESLint `linter.js` graph | 146 sources, ~15 min per probe |
+| `uri.all.js` alone | 57,304 B, seconds per probe |
+| after reduction round 1 | 19,011 B |
+| **fixpoint** | **8,392 B / 200 lines**, 5 load-bearing factory statements |
+
+Two independent reduction strategies (largest-statement-list, and
+factory-body-targeted) converge on the same fixpoint, so this is the limit of
+statement-level deletion; going further needs sub-statement granularity.
+
+### The five load-bearing statements
+
+```js
+var URI_PROTOCOL = buildExps(false);
+var IRI_PROTOCOL = buildExps(true);
+var regexSeparators = /[\x2E\u3002\uFF0E\uFF61]/g;
+function mapDomain(string, fn) { … var encoded = map(labels, fn).join('.'); … }
+var toUnicode = function toUnicode(input) {
+  return mapDomain(input, function (string) { … });
+};
+```
+
+Note `buildExps` is called **twice**, and in the original it is a function with a
+very large local frame.
+
+### The sharpened signal
+
+At the fixpoint the reporter says:
+
+```text
+[js2:closure-frame] __closure_2 frame=4 (2 params + 2 locals) worst=4
+[js2:closure-frame] __closure_6 frame=4 (2 params + 2 locals) worst=4
+```
+
+**`worst=4` against `frame=4`** — the body references exactly ONE index past the
+end of its own frame, where the un-reduced file showed `worst=17` against
+`frame=6`. An off-by-one is a much more specific defect than an arbitrary stale
+index: it points at an index computed as `params + locals` where
+`params + locals - 1` was meant, or at a local that was counted and then dropped
+from the emitted list — not at a wholesale frame mix-up.
+
+That also weakens the earlier "body from another function's frame" reading: at
+the fixpoint there is no 40-slot neighbour to borrow from.
+
+### Caveat on the fixture
+
+The reducer's oracle is "does the closure-frame reporter still fire", and a
+compile that emits *diagnostics* still returns normally — so the reduced file is
+**not** guaranteed to be semantically valid JavaScript (some referenced helpers
+may have been deleted). That is acceptable for a compiler-crash fixture but it
+must be cleaned up before being committed as a test, and the cleaned version
+re-verified to still breach.
+
+### Reproducing the reduction
+
+The reducer is a ~70-line script: parse the file, take the UMD factory body's
+statement list, greedily try deleting each statement from last to first, keep the
+deletion when `compileMulti` still prints `[js2:closure-frame]`, repeat to
+fixpoint. With in-process `compileMulti` each probe is well under a second.
