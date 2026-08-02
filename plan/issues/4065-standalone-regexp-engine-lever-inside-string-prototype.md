@@ -1,10 +1,11 @@
 ---
 id: 4065
-title: "RegExp engine is a separate lever hiding inside String.prototype — M1 search-value refusal 51 files, 91 non-pass by method"
-status: ready
+title: "RegExp engine is a separate lever hiding inside String.prototype — M1 REFUTED (51 → 8, consumed by #4016); real lever is the dynamic-pattern refusal under built-ins/RegExp"
+status: done
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
+completed: 2026-08-02
 priority: high
 horizon: m
 feasibility: medium
@@ -13,8 +14,233 @@ task_type: feature
 area: standalone
 language_feature: n/a
 goal: standalone-mode
+assignee: ttraenkler/L-regexp
+related: [4016, 4042, 4056, 4067]
+loc-budget-allow:
+  - src/codegen/regexp-standalone.ts
 ---
-# RegExp engine is a separate lever hiding inside String.prototype — M1 search-value refusal 51 files, 91 non-pass by method
+
+# RegExp engine is a separate lever hiding inside String.prototype
+
+> **⚠ The numbers in the ORIGINAL BODY at the bottom are STALE.** They were
+> measured 2026-08-01, BEFORE #4016 landed. They are kept for the record and
+> corrected in the table below. Do not size anything from them. A stale issue
+> body is not inert: four consecutive misaimed fixes
+> (#3983/#3984/#3991/#4032) came from trusting one.
+
+## Outcome
+
+**M1 was a false lever.** The task was explicitly to check whether the M1
+search-value refusal was still load-bearing *before* implementing against it.
+It was not — #4016 (PR #3996) had already consumed it. The real RegExp-engine
+lever is one directory over: **#4042's dynamic-pattern refusal under
+`built-ins/RegExp`**, not under `String.prototype`. This issue retargeted onto
+that and shipped it.
+
+## Instrument validation (before reading any delta)
+
+Fresh standalone baseline, `fetch-baseline-jsonl.mjs --standalone --force`,
+row timestamps `2.8.2026, 07:26:36 → 07:37:16`, `oracle_version` 12, lane
+`honest`.
+
+| | |
+| --- | --- |
+| Rows / bad JSON / duplicate `file` keys | **48,619 / 0 / 0** |
+| Corpus files that failed to open (`unopenable`) | **0** |
+| Official scope | **43,505 run** / 26,087 pass (60.0 %) |
+| Goal scope (`es5id` present, or none of `es5id`/`es6id`/`esid`) | **8,545 run** / 6,376 pass (74.6 %) / 2,169 non-pass |
+
+**Agreement with published figures: 2 of 2 denominators reproduce exactly** —
+goal-scope run **8,545** (as in both this issue's original census and #4016's)
+and official run **43,505** (as in #4016's). Pass counts are strictly higher
+than both earlier reports, which is what landed work should look like.
+Positive control: 12 files the baseline records as standalone `pass` under
+`built-ins/RegExp` → **12 / 12 pass**.
+
+## What this REFUTES about its own original framing
+
+**The two cuts are kept separate and are never summed.**
+
+| Cut | Original claim (2026-08-01) | Measured now | Note |
+| --- | ---: | ---: | --- |
+| **M1 mechanism cut** — goal-scope non-pass carrying the search-value refusal string | 51 | **8** | all 8 are `replace`; only **4** are host=pass |
+| M1 mechanism cut, all-official | ~98 | **36** | |
+| **Per-method cut** — `split`/`replace`/`search`/`match` non-pass under `String/prototype` | 91 | **52** | a DIFFERENT cut from the 51/8 above |
+| **Area population** — `built-ins/String/prototype`, goal scope | 630 run / 427 pass / 203 non-pass | **642 run / 512 pass / 130 non-pass** | |
+
+The 8 surviving M1 files are **precisely the residual #4016 deliberately
+deferred**: `replace` with a function replacer, a separate pre-existing defect.
+Reproduced on unmodified `main`: **0 / 8**, all 8 carrying exactly that
+refusal. So M1 is not merely smaller — it is *closed*, and what remains is
+owned elsewhere.
+
+**The genuine engine lever is #4042's** `Unsupported dynamic regular
+expression pattern`: **18 all-official / 10 goal-scope / 10 of 10 host=pass
+(100 % reachable)**, living under `built-ins/RegExp`, not `String.prototype`.
+"A separate lever hiding inside String.prototype" was pointing one directory
+off.
+
+## What shipped
+
+CharacterEscape support in the **runtime** (dynamic) standalone pattern
+compiler, plus the tokenisation invariant that had to be fixed first.
+
+### Root cause — a fifth instance of the recurring shape
+
+`ensureDynamicStandaloneRegExpCompiler` walks a runtime-built pattern **four
+times**: count program records, find the next `|`, emit the records, and the
+anchored literal-alternations fast path. Each walk advanced **one source code
+unit at a time and re-derived the character semantics itself** — and only the
+*emitter* knew that `.` means `ReOp.ANY`.
+
+That agreed only because every construct the runtime grammar accepted was
+exactly one unit wide. The invariant was never written down; it existed as two
+independent derivations of the same quantity — `CHARS` (counted) in the first
+walk, and the expression `J - I` (source-unit distance) in the third.
+
+This is the shape logged four times on 2026-08-01/02 (#3989, #4077, #4079,
+#4081): **a duplicated emission sequence where one copy carries the handling
+and another does not.** Here it is duplicated *four* ways, and the invariant is
+not even a comment in one copy — it is arithmetic in one and a counter in
+another.
+
+### The pre-existing silent wrong answer it was already causing
+
+The fourth walk (`REGEX_ANCHORED_LITERAL_ALTS_MARKER`) copies the pattern's
+**source text verbatim** as its match payload. That is only valid when source
+text == matched text. Measured on **unmodified `main`**:
+
+```
+^(?:a.c|zz)$  ~  "abc"     Node: "abc"     standalone: NO MATCH   <-- wrong
+a.c           ~  "abc"     Node: "abc"     standalone: "abc"      <-- right
+```
+
+Same construct, two different answers, decided only by whether the pattern is
+anchored. Nothing in the population pointed at this; it fell out of reading the
+fourth walk.
+
+### Fix
+
+- **`src/codegen/regexp-dynamic-pattern.ts` (new)** — owns the *grammar*
+  question ("what is the next token and how wide is it?"). One decoder,
+  `__regex_dyn_token`, returning a packed `kind | len << 3 | value << 8`.
+  All four walks call it, so token boundaries and character semantics are
+  decided in exactly one place. `regexp-standalone.ts` keeps the emission
+  plumbing.
+- `CHARS` now counts **records**, not source units.
+- The SPLIT's second target is a **counted** `ALTN`, never the `J - I`
+  source-unit distance.
+- The alternations fast path is gated on a new `PLAIN` flag (every token a
+  one-unit literal), which is what fixes the `.` defect above.
+- The decoder is deliberately conservative: anything it is not certain of is
+  `TOKEN_UNSUPPORTED`, which keeps the existing **catchable** `TypeError`.
+  A refusal is recoverable; a wrong match is not.
+
+Grammar added: `\xHH`, `\uHHHH`, `\cA`–`\cz`, `\f\n\r\t\v`, IdentityEscape of
+any non-alphanumeric, and the Annex B B.1.4 fallback where `\c` **not**
+followed by an ASCII letter decodes as a literal backslash of width 1.
+Still refused, on purpose: `\d \D \s \S \w \W \b \B \k \p \P`, octal /
+back-references, every other `\`+alphanumeric, and `^ $ * + ? ( ) [ ] { }`.
+
+The new module keeps `regexp-standalone.ts` off its #3102 cap growth path; the
+`loc-budget-allow` above covers only the seam (the token-call helpers and the
+four call sites), not the logic, which lives in the new module.
+
+## Test Results
+
+Harness: `runTest262File(..., "standalone")` — **status only** (its error
+category/line are not the CI path, and it does not apply the #2961 host-import
+refusal). Serial, single process.
+
+### Funnel — per stage, never collapsed
+
+| Stage | Count | Cut |
+| --- | ---: | --- |
+| Population — goal-scope non-pass carrying the dynamic-pattern refusal | **10** | mechanism |
+| — same, all-official | 18 | mechanism |
+| Reachable — of those 10, host=pass | **10 / 10 (100 %)** | reachability |
+| **Flipped** | **6 / 10** | measured |
+
+100 % reachability is a property of how the population was selected (a Tier-1
+refusal string — every member is conclusively gated on this one mechanism),
+not a claim that levers behave this way. The project's reference point is 103
+reachable → 34 flipped (33 %).
+
+### Attribution — kill-switch removed
+
+The same 10 files on **unmodified `upstream/main`**, same harness, same
+corpus: **0 / 10 pass**, all 10 failing with exactly
+`TypeError: Unsupported dynamic regular expression pattern`. That is the
+"before" arm; the change is the only difference.
+
+### Flips
+
+| File | before | after |
+| --- | ---: | ---: |
+| `RegExp/S15.10.2.10_A2.1_T1` (`\cA`–`\cZ`) | fail | **pass** |
+| `RegExp/S15.10.2.10_A2.1_T2` (`\ca`–`\cz`) | fail | **pass** |
+| `RegExp/S15.10.2.10_A3.1_T2` (`\xHH`) | fail | **pass** |
+| `RegExp/S15.10.2.10_A4.1_T2` (`\uHHHH`) | fail | **pass** |
+| `RegExp/S15.10.2.10_A4.1_T3` (`\uHHHH`) | fail | **pass** |
+| `RegExp/S15.10.2.10_A5.1_T1` (IdentityEscape) | fail | **pass** |
+| `RegExp/S15.10.2.8_A3_T15` (200 nested groups) | fail | fail |
+| `RegExp/S15.10.2.8_A3_T16` (200 nested groups) | fail | fail |
+| `RegExp/S15.10.4.1_A8_T2` (`a\|b\|[]`) | fail | fail |
+| `annexB/.../RegExp-control-escape-russian-letter` | fail | fail |
+
+The Cyrillic file was expected to flip (the Annex B `\c` fallback is
+implemented and passes in isolation) and does **not**: the test also iterates
+ASCII punctuation, so it constructs `\c*`, which needs **quantifiers**. Named
+rather than absorbed.
+
+### Differential probe vs Node (Node is the oracle, computed per case)
+
+37 hand-built cases through the genuinely-dynamic path:
+**29 AGREE · 8 loud refusals · 0 WRONG · 0 MISS.**
+
+The instrument was validated in **both** directions first. An earlier version
+of this probe reported 6/6 green using patterns like `"a" + ".c"` — which
+`staticConstStringValue` **constant-folds**, so it silently exercised the
+compile-time path and proved nothing. The fold-test control (`(a)b` behind a
+function call must produce the unsupported-dynamic `TypeError`) is what
+establishes that the probe reaches the runtime compiler at all.
+
+A suspicion this refutes: `.` is **absent** from the old `isRegexMeta` set,
+which looked like a bug. It is not — `.` was handled correctly in the emitter.
+Checked before reporting.
+
+### Regression guard
+
+**261 files** — every file the fresh baseline records as standalone `pass`
+whose source can reach the RegExp **constructor** at all (`/\bRegExp\s*\(/`),
+out of **26,087** official baseline-pass rows. The remaining 25,826 cannot
+reach `ensureDynamicStandaloneRegExpCompiler` without a constructor call.
+Result: **261 / 261 pass, 0 regressed.**
+
+`tests/issue-4065.test.ts` adds 34 cases, including the multi-unit-escape and
+escaped-`\|` interactions with alternation, the `.`-in-anchored-alternation
+defect, and the eight constructs that must stay loud refusals.
+
+## Deliberately NOT shipped
+
+- **Capture groups in dynamic patterns** (`S15.10.2.8_A3_T15/T16`, 200 nested
+  parens). Needs SAVE-slot allocation in the runtime compiler — a different
+  mechanism, not an escape.
+- **Unanchored alternation + empty character class** (`S15.10.4.1_A8_T2`).
+- **Quantifiers**, which is what the Cyrillic annexB file actually needs.
+- **The 8 `replace` M1 residuals** — function replacers, #4016's named
+  follow-up, not this lever.
+- **#4067's god-file split** of engine vs String↔RegExp bridge. A
+  consolidation-goal refactor; folding it into a conformance fix was
+  explicitly out of scope. The new `regexp-dynamic-pattern.ts` is a
+  *tokenisation* subsystem and does not pre-empt that split.
+- **Backpatching the SPLIT target** instead of counting `ALTN`. Counting is
+  correct and smaller; backpatching would additionally remove an ordering
+  constraint, but nothing in the population needs it.
+
+---
+
+# ORIGINAL BODY (STALE — measured 2026-08-01, superseded above)
 
 > Filed 2026-08-02 from a TaskList entry that had been carrying the full
 > analysis but no issue file. The body below is the original measurement
@@ -24,9 +250,9 @@ Surfaced by L-strwith 2026-08-01 while decomposing the String.prototype area. It
 DIFFERENT mechanism with a different owner and must not be counted as String work.
 
 POPULATION (fresh baseline, goal scope = es5id present OR none of es5id/es6id/esid):
-  built-ins/String/prototype: 630 run / 427 pass / 203 non-pass
-  M1 "RegExp / symbol-protocol search-value refusal": 51 files
-  By method, split/replace/search/match account for 91 non-pass
+  built-ins/String/prototype: 630 run / 427 pass / 203 non-pass    [STALE -> 642 / 512 / 130]
+  M1 "RegExp / symbol-protocol search-value refusal": 51 files      [STALE -> 8]
+  By method, split/replace/search/match account for 91 non-pass     [STALE -> 52]
   (the two figures are DIFFERENT CUTS — 51 is the mechanism classification,
    91 is a per-method count. Do NOT sum or reconcile them silently.)
 

@@ -84,6 +84,16 @@ import { nativeStringRepr } from "./builtin-scaffold.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
+import {
+  ensureDynamicPatternTokenDecoder,
+  TOKEN_ANY,
+  TOKEN_KIND_MASK,
+  TOKEN_LEN_MASK,
+  TOKEN_LEN_SHIFT,
+  TOKEN_PIPE,
+  TOKEN_UNSUPPORTED,
+  TOKEN_VALUE_SHIFT,
+} from "./regexp-dynamic-pattern.js";
 
 export const STANDALONE_REGEXP_ABI_VERSION = 1;
 
@@ -868,6 +878,18 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   const HAS_MORE = 25;
   const BIT = 26;
   const INVALID_FLAGS = 27;
+  // #4065 — the packed token from `__regex_dyn_token`, and the *counted*
+  // number of program records in the current alternative. `ALTN` replaces the
+  // old `J - I` source-unit arithmetic, which silently assumed one source unit
+  // per record and would mis-target the SPLIT the moment a multi-unit escape
+  // appeared in an alternation.
+  const TOK = 28;
+  const ALTN = 29;
+  // 1 while every token so far is a ONE-UNIT literal or `|`. Only then may the
+  // anchored-literal-alternations fast path below copy the pattern SOURCE text
+  // verbatim as its match payload. `.` (ANY) and any multi-unit escape make
+  // source text != matched text, which that path has no way to express.
+  const PLAIN = 30;
 
   const readFlatUnit = (dataLocal: number, offLocal: number, indexLocal: number): Instr[] => [
     { op: "local.get", index: dataLocal },
@@ -914,15 +936,49 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     return tail;
   };
 
-  const isRegexMeta = (): Instr[] => {
-    const units = "\\^$*+?()[]{}".split("").map((ch) => ch.charCodeAt(0));
-    const out: Instr[] = [];
-    for (let idx = 0; idx < units.length; idx++) {
-      out.push({ op: "local.get", index: CH }, { op: "i32.const", value: units[idx]! }, { op: "i32.eq" });
-      if (idx > 0) out.push({ op: "i32.or" });
-    }
-    return out;
-  };
+  // #4065 — the single shared tokeniser. All three walks over the pattern (count,
+  // find-next-alternation, emit) go through this, so the token *boundaries* and
+  // the character *semantics* are decided in exactly one place. Previously each
+  // walk advanced one source unit at a time and only the emitter knew `.` is
+  // `ReOp.ANY`; that agreed only because every accepted construct was one unit
+  // wide. See regexp-dynamic-pattern.ts for why that had to change.
+  const tokenDecoderIdx = ensureDynamicPatternTokenDecoder(ctx, strDataRef);
+  /** `TOK = __regex_dyn_token(pdata, poff, <index>, end)` */
+  const readToken = (indexLocal: number): Instr[] => [
+    { op: "local.get", index: PDATA },
+    { op: "local.get", index: POFF },
+    { op: "local.get", index: indexLocal },
+    { op: "local.get", index: END },
+    { op: "call", funcIdx: tokenDecoderIdx },
+    { op: "local.set", index: TOK },
+  ];
+  const tokKind = (): Instr[] => [
+    { op: "local.get", index: TOK },
+    { op: "i32.const", value: TOKEN_KIND_MASK },
+    { op: "i32.and" },
+  ];
+  const tokKindIs = (kind: number): Instr[] => [...tokKind(), { op: "i32.const", value: kind }, { op: "i32.eq" }];
+  const tokLen = (): Instr[] => [
+    { op: "local.get", index: TOK },
+    { op: "i32.const", value: TOKEN_LEN_SHIFT },
+    { op: "i32.shr_u" },
+    { op: "i32.const", value: TOKEN_LEN_MASK },
+    { op: "i32.and" },
+  ];
+  const tokValue = (): Instr[] => [
+    { op: "local.get", index: TOK },
+    { op: "i32.const", value: TOKEN_VALUE_SHIFT },
+    { op: "i32.shr_u" },
+    { op: "i32.const", value: 0xffff },
+    { op: "i32.and" },
+  ];
+  /** `<indexLocal> += tokenLength` */
+  const advanceByToken = (indexLocal: number): Instr[] => [
+    { op: "local.get", index: indexLocal },
+    ...tokLen(),
+    { op: "i32.add" },
+    { op: "local.set", index: indexLocal },
+  ];
 
   const progCell = (offset: number, value: Instr[]): Instr[] => [
     { op: "local.get", index: PROG },
@@ -1140,6 +1196,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.set", index: PIPES },
     { op: "i32.const", value: 0 },
     { op: "local.set", index: CHARS },
+    { op: "i32.const", value: 1 },
+    { op: "local.set", index: PLAIN },
     { op: "local.get", index: START },
     { op: "local.set", index: I },
     {
@@ -1154,11 +1212,27 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
             { op: "local.get", index: END },
             { op: "i32.ge_s" },
             { op: "br_if", depth: 1 },
-            ...readFlatUnit(PDATA, POFF, I),
-            { op: "local.set", index: CH },
-            { op: "local.get", index: CH },
-            { op: "i32.const", value: 0x7c },
-            { op: "i32.eq" },
+            // One token per iteration — `CHARS` counts program RECORDS, not
+            // source units, so a 4-unit `\x41` contributes exactly 1.
+            ...readToken(I),
+            // `.` or any multi-unit escape ⇒ the pattern's source text is no
+            // longer the text it matches, so the raw-source ALTS fast path
+            // must not be taken. (`.` in an anchored alternation silently
+            // mismatched before this — same construct, two answers.)
+            ...tokKindIs(TOKEN_ANY),
+            ...tokLen(),
+            { op: "i32.const", value: 1 },
+            { op: "i32.ne" },
+            { op: "i32.or" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: PLAIN },
+              ],
+            },
+            ...tokKindIs(TOKEN_PIPE),
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -1180,7 +1254,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 },
               ],
               else: [
-                ...isRegexMeta(),
+                ...tokKindIs(TOKEN_UNSUPPORTED),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -1197,10 +1271,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 },
               ],
             },
-            { op: "local.get", index: I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: I },
+            ...advanceByToken(I),
             { op: "br", depth: 0 },
           ],
         },
@@ -1298,6 +1369,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
               body: [
                 { op: "local.get", index: I },
                 { op: "local.set", index: J },
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: ALTN },
                 {
                   op: "block",
                   blockType: { kind: "empty" },
@@ -1310,14 +1383,17 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         { op: "local.get", index: END },
                         { op: "i32.ge_s" },
                         { op: "br_if", depth: 1 },
-                        ...readFlatUnit(PDATA, POFF, J),
-                        { op: "i32.const", value: 0x7c },
-                        { op: "i32.eq" },
+                        // Token-aware: an escaped `\|` is a LITERAL token and
+                        // must NOT be mistaken for an alternation separator.
+                        // `ALTN` counts this alternative's records as it goes.
+                        ...readToken(J),
+                        ...tokKindIs(TOKEN_PIPE),
                         { op: "br_if", depth: 1 },
-                        { op: "local.get", index: J },
+                        { op: "local.get", index: ALTN },
                         { op: "i32.const", value: 1 },
                         { op: "i32.add" },
-                        { op: "local.set", index: J },
+                        { op: "local.set", index: ALTN },
+                        ...advanceByToken(J),
                         { op: "br", depth: 0 },
                       ],
                     },
@@ -1335,13 +1411,15 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                     ...emitRecord(
                       [{ op: "i32.const", value: ReOp.SPLIT }],
                       [{ op: "local.get", index: PC }, { op: "i32.const", value: 1 }, { op: "i32.add" }],
+                      // Second SPLIT target = first record AFTER this
+                      // alternative. Counted (`ALTN`), never derived from the
+                      // source-unit distance `J - I` — those two agree only
+                      // while every token is one unit wide (#4065).
                       [
                         { op: "local.get", index: PC },
                         { op: "i32.const", value: 2 },
                         { op: "i32.add" },
-                        { op: "local.get", index: J },
-                        { op: "local.get", index: I },
-                        { op: "i32.sub" },
+                        { op: "local.get", index: ALTN },
                         { op: "i32.add" },
                       ],
                     ),
@@ -1362,13 +1440,15 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         { op: "local.get", index: J },
                         { op: "i32.ge_s" },
                         { op: "br_if", depth: 1 },
-                        ...readFlatUnit(PDATA, POFF, K),
+                        // Same tokeniser as the counting walk, so this emits
+                        // exactly `CHARS` records and stays inside the
+                        // `NINSTR * 3` program array.
+                        ...readToken(K),
+                        ...tokValue(),
                         { op: "local.set", index: CH },
                         ...emitRecord(
                           [
-                            { op: "local.get", index: CH },
-                            { op: "i32.const", value: 0x2e },
-                            { op: "i32.eq" },
+                            ...tokKindIs(TOKEN_ANY),
                             {
                               op: "if",
                               blockType: { kind: "val", type: { kind: "i32" } },
@@ -1388,10 +1468,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                           ],
                           dynamicCharOperand,
                         ),
-                        { op: "local.get", index: K },
-                        { op: "i32.const", value: 1 },
-                        { op: "i32.add" },
-                        { op: "local.set", index: K },
+                        ...advanceByToken(K),
                         { op: "br", depth: 0 },
                       ],
                     },
@@ -1451,6 +1528,10 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "i32.and" },
     { op: "local.get", index: FBITS },
     { op: "i32.eqz" },
+    { op: "i32.and" },
+    // #4065 — and only when every token is a one-unit literal, so that the raw
+    // source span copied below really is the text to match.
+    { op: "local.get", index: PLAIN },
     { op: "i32.and" },
     {
       op: "if",
@@ -1557,6 +1638,9 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
       { name: "hasMore", type: { kind: "i32" } },
       { name: "bit", type: { kind: "i32" } },
       { name: "invalidFlags", type: { kind: "i32" } },
+      { name: "tok", type: { kind: "i32" } },
+      { name: "altn", type: { kind: "i32" } },
+      { name: "plain", type: { kind: "i32" } },
     ],
     body,
     exported: false,
