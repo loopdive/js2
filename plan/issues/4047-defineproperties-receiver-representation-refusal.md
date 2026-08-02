@@ -16,7 +16,7 @@ area: codegen
 language_feature: property-descriptors, object-defineproperties, object-create
 es_edition: es5
 goal: standalone-gap
-related: [1906, 3246, 3251, 3468, 3537, 3957, 3991, 4010, 4032]
+related: [1906, 3246, 3251, 3468, 3537, 3957, 3991, 4010, 4032, 4071]
 assignee: ttraenkler/H-descriptor
 origin: "2026-08-02 harvest — the 61 official / 50 goal-scope `unsupported descriptor shape in standalone mode (#1906)` records."
 # (#3102 / #3400 ratchet) Both edits are in-place changes to the single existing
@@ -35,7 +35,7 @@ func-budget-allow:
 
 ## The finding that reframes this
 
-`plan/issues/1906-*.md` reads `status: done`, yet its refusal string —
+The #1906 issue file reads `status: done`, yet its refusal string —
 `Object.defineProperties unsupported descriptor shape in standalone mode (#1906)`
 — was still the single largest in-scope failure signature.
 
@@ -105,8 +105,9 @@ Object.keys(fnWithOwnProp).length       === 0
 ```
 
 …while the corresponding **writes round-trip** (`r.p = 7; r.p === 7`) for both
-Arrays and functions. Enumeration is the dead half. (That is a strictly larger
-lever than this issue and is filed separately; it belongs with #4010.)
+Arrays and functions. Enumeration is the dead half. That is a strictly larger
+lever than this issue and was handed over rather than folded in — it is now
+**#4071**.
 
 What this issue changes is that the widening is no longer blanket. Each receiver
 shape is resolved to a key source that is **complete**, or it keeps refusing.
@@ -220,29 +221,53 @@ substrate (#4010) and is not fixable here.
 ## Result
 
 Scoped CI-path run over the same 952 files, read from the JSONL (the artifact
-CI actually diffs — the vitest `it()`-level tallies drifted under load and are
-not the number):
+CI actually diffs — the vitest `it()`-level tallies drift under machine load
+and are not the number):
 
 ```
-before   604 pass / 347 fail / 1 CE
-after    617 pass / 334 fail / 1 CE
-         +13 pass, 0 regressions
+before          604 pass / 347 fail / 1 CE
+with the arm    617 pass / 334 fail / 1 CE     +13   ← REVERTED, unsound
+shipped         611 pass / 340 fail / 1 CE     +7    0 regressions
 ```
 
-Run **twice**, at 1-min load 8 and 13 — **0 flips between the two runs**,
-file for file. That is what makes the number quotable rather than a
-contention artifact.
+The `+13` line is recorded on purpose: it is what the carrier-bag arm scored
+before #3957's invariant guard proved it unsound. **6 of those 13 were bought
+with a silent wrong answer** on the `Object.defineProperty`-written spelling.
+The shipped number is 7.
 
-Attribution proved by **kill-switch removal**, not by correlation: restoring the
-`ref.test $Object` gate on `Properties` reverts `B1 FUNCTION Properties` from
-`0` (defined) to `2` (threw).
+The `+13` run was executed **twice**, at 1-min load 8 and 13, with **0 flips
+between the two runs** file for file — so the instrument is stable and the
+difference between 13 and 7 is the code, not contention.
 
-**Reachable ≠ flipped, and the gap is real.** 22 goal-scope files sat in the
-arms this addresses; 13 flipped. The rest fail *past* the refusal for unrelated
-reasons — e.g. `15.2.3.5-4-6.js` asserts `this instanceof Array` inside the
-descriptor getter, and reading the descriptor through the carrier bag gives the
-bag as `this`. Removing a refusal exposes whatever was behind it; that is the
-point, but it is not a flip.
+Attribution proved by **kill-switch removal**, not correlation.
+
+**Flips (7), by arm:**
+
+| arm | files |
+| --- | --- |
+| `O` is an Array | `15.2.3.7-6-a-243`, `-246`, `-255`, `-258` |
+| primitive `Properties` (ToObject) | `15.2.3.7-2-3`, `create/properties-arg-to-object`, `…-bigint` |
+
+5 are goal-scope; 2 (`properties-arg-to-object*`) are not.
+
+**Reachable ≠ flipped, and three of the misses are progress, not failure.**
+Removing a refusal exposes whatever it was masking:
+
+- `create/15.2.3.5-4-2.js` — the `Object.create(O, undefined)` fix works; the
+  file now fails on `newObj instanceof Object`, an unrelated downstream defect
+  the refusal had been hiding.
+- `15.2.3.7-6-a-147` — passes the `O` gate now, then fails on `arr.length`
+  (array-length descriptor, #3984/#4006 territory).
+- `15.2.3.7-2-5` / `-2-7` — the receiver `var obj = {"123": 100}` is a closed
+  struct with no carrier, so it hits the new `[SITE-O-NO-CARRIER]` refusal.
+  Correctly refused, not vacuously passed.
+
+**Blast radius outside the measured set.** Only three behaviours change:
+non-`$Object` `O` (refuse → refuse-or-proceed), primitive `Properties`
+(throw → spec no-op), and static `Object.create(x, undefined)`. A test could
+only regress by asserting one of the *old* non-conformant outcomes. The scoped
+952-file run shows 0 such regressions; the wider corpus population is floored
+below, and the merge-queue standalone floor is the backstop.
 
 **Trigger population** (files that can move for this reason at all): 683 corpus
 files mention `defineProperties`, 338 spell `Object.create(x, y)`, union
