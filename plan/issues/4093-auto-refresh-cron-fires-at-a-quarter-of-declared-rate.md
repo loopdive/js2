@@ -149,6 +149,32 @@ Anyone implementing work item 2 (compensation) must treat this concurrency
 group as part of the problem, not as neutral infrastructure. A merge-triggered
 refresh would collide with the same group.
 
+### ⚠ SECOND PRECONDITION — skip a DETERMINISTICALLY-FAILING PR
+
+Found 2026-08-02 by the shepherd auditing **its own** dispatches, and it is the
+same shape as the in-flight guard: the compensation quietly does nothing, and
+the nothing is invisible.
+
+A PR whose **required** check fails deterministically **cannot benefit from a
+refresh**. Rebasing it re-runs a known-failing suite and changes its state
+(`BEHIND → BLOCKED`), so each cycle *looks like* progress while being none.
+
+Measured on #4002: **5 of 5 CI runs failed on the identical step**
+(`quality` → `Changed root test files must pass (#3008)`), and those five runs
+map **1:1 onto the five refresh events** of the day (07:28, 09:35, 11:04,
+11:37, 12:00). Two were manual dispatches under this grant. The PR had been
+cycling `BEHIND → refresh → CI fails → BEHIND` for ~4.5 h.
+
+**Rule:** before dispatching, skip — and do not count as justification — any PR
+whose **last CI run failed a required check on the same failing step as the run
+before it**. A deterministically-failing PR needs an **owner**, not a rebase.
+
+Note the interaction with the invisibility theme: the workflow reports
+`success`, the PR's state genuinely changes, and the refresh genuinely ran. The
+only thing that did not happen is the thing it was for. Both preconditions on
+this grant exist because *"the action completed"* and *"the action helped"* are
+different claims, and only the first is observable by default.
+
 ### First use of the grant — worked, recorded as the reference pattern
 
 2026-08-02T11:37:07Z, conditions checked before firing: two PRs (#4028, #4002)
