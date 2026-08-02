@@ -1797,6 +1797,13 @@ export function compileIdentifierCall(
           if (mapped !== undefined) {
             fctx.body.push({ op: "local.get", index: mapped });
           } else {
+            if (process.env?.JS2WASM_FRAME_OPS) {
+              process.stderr.write(
+                `[js2:inline-unmapped] inlining '${funcName}' into ${fctx.name}: local.get ${(instr as any).index} ` +
+                  `has no arg mapping (paramCount=${inlineInfo.paramCount}, argLocals=${argLocals.join(",")}), ` +
+                  `callerFrame=${fctx.params.length + fctx.locals.length}\n`,
+              );
+            }
             fctx.body.push({ ...instr });
           }
         } else {

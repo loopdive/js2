@@ -646,3 +646,44 @@ evidence for the fix is the measured breach-count drop plus the reduced fixture
 going 2 → 0. A committed test needs either the cleaned 200-line fixture (see the
 validity caveat above) or a programmatic surface for the frame checker's result,
 which today is env-gated stderr only.
+
+## The SECOND class is introduced AFTER body emission (2026-08-02)
+
+Two probes, both silent, narrow it sharply:
+
+1. **The inliner is not the source.** `compileIdentifierCall`'s inline path
+   remaps only PARAMETER indices and copies anything else verbatim, which looked
+   like an obvious candidate — three callers inlining one callee would all carry
+   its index. Instrumented every unmapped `local.get` at inline time
+   (`[js2:inline-unmapped]`): **never fires** on `uri.all.js`. Registration
+   already rejects a callee with any local (`func.locals.length > 0`) or any
+   `local.get >= paramCount`, and that invariant evidently holds through to the
+   inline.
+
+2. **Nothing writes the bad index during emission.** The same `push`-trap that
+   identified the first class immediately — applied here to ORDINARY function
+   bodies in `compileFunctionBody` — is **silent** for `resolve`, `normalize` and
+   `equal`, even though the end-of-codegen checker reports all three.
+
+So the bad indices are **not emitted by body compilation at all**. They are
+introduced by a pass that runs BETWEEN the end of a function's body compilation
+and the end of codegen — a remap, a shift, a splice, or a body replacement.
+
+That reframes the error message's own `#2043 late-import index-shift` hint: for
+this class it may be the right FAMILY (a post-hoc index remap) applied to the
+wrong index space — locals rather than funcidx.
+
+### Candidates to instrument next, in order
+
+- the late-import shift (`flushLateImportShifts` / `addUnionImports` /
+  `addStringImports`) — does any of them walk `local.*` operands?
+- dead-code elimination / peephole renumbering,
+- the IR overlay patching a legacy body in place,
+- `fixupStructNewArgCounts` / the other post-body fixup passes.
+
+The cheapest decisive probe is a checksum: record each function's set of
+`local.*` indices at the end of its own compilation, re-check at end of codegen,
+and report the first pass boundary where the two diverge.
+
+All three survivors share **index 33** despite frames of 15, 7 and 21, so
+whatever mutates them applies one common offset or one common source of indices.
