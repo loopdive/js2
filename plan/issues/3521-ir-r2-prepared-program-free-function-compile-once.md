@@ -71,6 +71,9 @@ loc-budget-allow:
   - src/ir/lower.ts
   - src/ir/nodes.ts
   - src/ir/verify.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/ir/integration.ts::compileIrPathFunctions
 ---
 
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
@@ -402,33 +405,31 @@ emission from 37 to 16, but full equivalence exposed twelve final-ABI
 regressions because those functions still depended on direct-body discovery.
 That unsafe breadth was removed.
 
-The fail-closed routing slice now activates only when the complete selected
-population consists of one or more closed scalar/string top-level call
-components, with no selected class member/module init or pending ambient-call,
-callback, Date, Promise, fast-mode, async/generator, reference-shaped callable
-contract, allocated-slot signature mismatch, or unresolved cross-component
-dependency. Exact comparison against the already allocated source-callable
-slot prevents preparation from replacing an empty body with a different
-callable ABI; those components retain the established post-direct parity
-withdrawal and direct fallback. Programs outside that boundary retain the
-established post-direct overlay and compile-once allowlist.
+The fail-closed routing slice selects exact closed scalar/string top-level call
+components. An unrelated class member or module-init owner no longer blocks a
+closed free-function component; an exact call edge to or from a direct-owned
+unit removes the complete affected component before preparation. Pending
+ambient-call, callback, Date, Promise, fast-mode, async/generator,
+reference-shaped callable contracts, allocated-slot signature mismatches, and
+unresolved dependencies remain conservative boundaries. Exact comparison
+against the already allocated source-callable slot prevents preparation from
+replacing an empty body with a different callable ABI; those components retain
+the established post-direct parity withdrawal and direct fallback.
 A separate fast-mode guard prevents source `number` positions whose direct ABI
 grounds to i32 from being skipped against an early f64 IR signature, while
 retaining annotation-proven boolean compile-once owners.
 
-The committed single-host readiness lane contains class/module/async ownership
-and therefore deliberately remains at **37 legacy body emissions**, with the
-same 31/37 IR-emitted terminals, six typed Unsupported units, zero invariants,
-and READY hybrid policy. Anti-vacuity is instead carried by the focused
-string-method fixture, which moves one owner outside the old allowlist from
-compile-twice to IR-only emission. This deliberately smaller cutover preserves
-the existing final-ABI discovery behavior while later R2 work moves that
-discovery and post-pass symbolic dependency sealing into explicit preparation.
+The single-host readiness lane now records **35 legacy body emissions**, **33/37
+IR-emitted terminals**, four typed Unsupported units, zero invariants, and a
+READY hybrid policy. The two-unit legacy reduction comes from the first sealed
+static-method R3 continuation described in #3522; free-function anti-vacuity is
+carried by focused sealed-component fixtures. Strict IR-only remains NOT READY
+on the four unsupported async-related units and every remaining legacy body.
 
-The required 110-test matrix is 106 passing. All four failures reproduce
-unchanged on the exact parent: three stale end-to-end `inline-small` harness
-expectations/import setups and the #3214 imported-overload inventory-owner
-failure. No optimization test regressed under R2.
+The required 106-test matrix is 104 passing. Both failures reproduce unchanged
+on the exact parent: one stale end-to-end `inline-small` expectation and the
+#3214 imported-overload inventory-owner failure. No optimization test regressed
+under R2.
 
 Remaining R2 work before closing this issue is the full required gate matrix,
 explicit component/counter reconciliation evidence, and removal of the
@@ -743,6 +744,53 @@ transform. Both optimizations must be migrated before their direct handlers can
 be retired. Dynamic carriers, object/ref-cell/closure/union/vector layouts,
 iterator/generator/exception/async providers, pass-derived callable slots, and
 the explicit emission transaction remain subsequent R2 dependencies.
+
+## Component-local emission transaction continuation (2026-08-02)
+
+Preparation is now component-local across mixed source ownership. A direct
+class or module owner no longer forces an unrelated, dependency-complete free
+function component through legacy emission. Exact local call edges still close
+policy boundaries: a free function called by module init or a direct class
+member stays on the post-direct route.
+
+The preparation probe also no longer publishes an unsealed early body as final
+ownership. Exact compiled-artifact evidence removes every unsealed terminal
+from the early report; derived artifacts are refused on that retrying route.
+Direct emission then runs, and the established late overlay produces the one
+terminal report consumed by the outcome audit. Sealed owners preserve their
+installed allocator object and skip direct emission. Deferred callers retain
+exact AST-site plans for already sealed callees without re-adding those callees
+to the emission population.
+
+Nested executable owners and top-level functions materialized as callable
+values stay off the retrying/sealed route. Their derived identities and cached
+trampoline/global bindings are still created by the direct pass; attempting
+them early either registered one derived unit twice or tried to mutate a sealed
+prepared scope. The selector now refuses both the materialized target and an
+owner that contains such a value reference, while an explicit invariant rejects
+any future unsealed attempt that unexpectedly produces a derived artifact.
+
+This continuation supplies the reusable transaction used by #3522's first
+static-method slice. Validation is **89/89 passing** across exact outcome and
+skip correlation, class/source/support callable ABI, prepared-component
+dependency, scoped-seal, free-function routing, and static-method runtime
+coverage. Typecheck, fallback ratchet, optimization-retirement ledger,
+adoption check, and hybrid readiness pass. The strict gate reports **33/37 IR
+emitted**, **4 Unsupported**, **0 Invariants**, and **35 legacy bodies**, so R2
+is not complete and no direct handler is retirement-ready yet.
+
+The four equivalence files that exposed #4014's six new regressions are now
+**28/28 passing**: function values stored in variables, a function-valued
+module object property, and branch-hoisted nested declarations all retain their
+working direct/late integration path. The complete **8/8 equivalence shard**
+gate reports zero new regressions; four committed baseline failures now pass,
+and the baseline remains unchanged.
+
+The next R2 work is to make the remaining dynamic/object/layout and
+pass-derived dependencies sealable, then replace the transitional probe/direct/
+late-overlay sequence with one isolated prepare/emit transaction and exact
+emission counters. The compatibility placeholder branch cannot be deleted
+until the remaining R3/R4 owners consume that transaction.
 
 ## File ownership and locks
 

@@ -151,7 +151,10 @@ function readonlyMap<K, V>(entries: Iterable<readonly [K, V]>): ReadonlyMap<K, V
 }
 
 function terminalInventoryUnit(inventory: IrUnitInventory, unitId: IrUnitId): IrTerminalUnitRecord | undefined {
-  return inventory.terminalUnits.find((unit) => unit.id === unitId && unit.kind === "top-level-function");
+  // R2 components are keyed by terminal executable ownership, not by syntax
+  // family. Free functions, class members, and module init all carry the same
+  // exact terminal-owner contract in the inventory.
+  return inventory.terminalUnits.find((unit) => unit.id === unitId);
 }
 
 function buildOwnershipIndex(

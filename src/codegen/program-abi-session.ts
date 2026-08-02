@@ -881,7 +881,7 @@ export class ProgramAbiSession {
   private readonly inventorySourceIds = new Set<IrSourceId>();
   private readonly inventoryUnitIds = new Set<IrUnitId>();
   private readonly inventoryClassIds = new Set<IrClassId>();
-  private readonly preparedFreeFunctionUnitIds = new Set<IrUnitId>();
+  private readonly preparedTerminalUnitIds = new Set<IrUnitId>();
   private readonly drafts = new Map<IrBindingId, ProgramAbiDraft>();
   private readonly draftOrderOwners = new Map<string, IrBindingId>();
   private readonly derivedUnits = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
@@ -914,9 +914,7 @@ export class ProgramAbiSession {
     }
     for (const unit of inventory.allUnits) this.inventoryUnitIds.add(unit.id);
     for (const classRecord of inventory.classes) this.inventoryClassIds.add(classRecord.id);
-    for (const unit of inventory.terminalUnits) {
-      if (unit.kind === "top-level-function") this.preparedFreeFunctionUnitIds.add(unit.id);
-    }
+    for (const unit of inventory.terminalUnits) this.preparedTerminalUnitIds.add(unit.id);
     this.structuralOrder = new ProgramAbiStructuralOrder(inventory);
   }
 
@@ -935,7 +933,7 @@ export class ProgramAbiSession {
   }
 
   /**
-   * Start exact dependency discovery for one prepared free-function component.
+   * Start exact dependency discovery for one prepared executable component.
    *
    * Source and derived callables are inferred from terminal ownership. The
    * caller adds only already-discovered external/support dependencies; alias
@@ -960,10 +958,10 @@ export class ProgramAbiSession {
       );
     }
     for (const unitId of exactTerminalUnitIds) {
-      if (!this.preparedFreeFunctionUnitIds.has(unitId)) {
+      if (!this.preparedTerminalUnitIds.has(unitId)) {
         throw new ProgramAbiInvariantError(
           "unknown-inventory-unit",
-          `prepared ABI scope ${scopeId} references non-R2 or unknown terminal ${unitId}`,
+          `prepared ABI scope ${scopeId} references an unknown terminal ${unitId}`,
         );
       }
       const owner = this.preparedScopeByUnitId.get(unitId);

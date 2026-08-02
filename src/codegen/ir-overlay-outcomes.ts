@@ -36,7 +36,7 @@ export interface ReconcileIrOverlayOutcomesInput {
   readonly initialSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
   readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
   readonly preparationFailuresByUnitId: ReadonlyMap<IrUnitId, IrPreparationFailure>;
-  readonly skippedFunctionUnitIds: ReadonlySet<IrUnitId>;
+  readonly skippedBodyUnitIds: ReadonlySet<IrUnitId>;
   readonly report: IrIntegrationReport;
   readonly existingOutcomes: readonly IrObservedOutcome[];
   readonly target: IrObservedOutcome["target"];
@@ -47,11 +47,13 @@ export interface ReconciledIrOverlayOutcomes {
   readonly diagnostics: readonly string[];
 }
 
-export interface IrSkippedFunctionSlotViolation {
+export interface IrSkippedBodySlotViolation {
   readonly unitId: IrUnitId;
   readonly legacyName: string;
   readonly failure: IrPreparationFailure;
 }
+
+export type IrSkippedFunctionSlotViolation = IrSkippedBodySlotViolation;
 
 function invariant(
   code: "duplicate-unit-outcome" | "selection-preparation-mismatch",
@@ -241,19 +243,16 @@ export function auditIrIntegrationTerminalEvidence(input: {
   };
 }
 
-/**
- * Prove that every exact function whose legacy body was skipped reached one
- * terminal integration result. This safety check is deliberately independent
- * of optional outcome telemetry and never treats raw name arrays as evidence.
- */
-export function auditIrSkippedFunctionSlots(input: {
+function auditIrSkippedBodySlots(input: {
   readonly sourceFile: ts.SourceFile;
   readonly identityPlan: IrOverlayIdentityPlan;
   readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
-  readonly skippedFunctionUnitIds: ReadonlySet<IrUnitId>;
+  readonly skippedBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly expectedKind: "function" | "class-member";
+  readonly label: "function" | "class member";
   readonly report: IrIntegrationReport;
-}): readonly IrSkippedFunctionSlotViolation[] {
-  if (input.skippedFunctionUnitIds.size === 0) return [];
+}): readonly IrSkippedBodySlotViolation[] {
+  if (input.skippedBodyUnitIds.size === 0) return [];
 
   const localUnits = new Map(
     collectObservedIrUnits(input.sourceFile, input.identityPlan.identityContext).map((unit) => [unit.unitId, unit]),
@@ -269,19 +268,19 @@ export function auditIrSkippedFunctionSlots(input: {
     terminalCompiledOwners: input.report.terminalCompiledOwners,
     syntheticCompiledArtifacts: input.report.syntheticCompiledArtifacts,
   });
-  const violations: IrSkippedFunctionSlotViolation[] = [];
+  const violations: IrSkippedBodySlotViolation[] = [];
 
-  for (const unitId of input.skippedFunctionUnitIds) {
+  for (const unitId of input.skippedBodyUnitIds) {
     const unit = localUnits.get(unitId);
     const projected = activeOwners.getByUnitId(unitId);
     const legacyName = projected?.legacyName ?? unit?.matchName ?? String(unitId);
-    if (!unit || unit.unitKind !== "function" || !projected) {
+    if (!unit || unit.unitKind !== input.expectedKind || !projected) {
       violations.push({
         unitId,
         legacyName,
         failure: invariant(
           "selection-preparation-mismatch",
-          `skipped IR function ${unitId} / ${JSON.stringify(legacyName)} is outside the exact active source population`,
+          `skipped IR ${input.label} ${unitId} / ${JSON.stringify(legacyName)} is outside the exact active source population`,
         ),
       });
       continue;
@@ -315,6 +314,42 @@ export function auditIrSkippedFunctionSlots(input: {
   }
 
   return violations;
+}
+
+/**
+ * Prove that every exact function whose legacy body was skipped reached one
+ * terminal integration result. This safety check is deliberately independent
+ * of optional outcome telemetry and never treats raw name arrays as evidence.
+ */
+export function auditIrSkippedFunctionSlots(input: {
+  readonly sourceFile: ts.SourceFile;
+  readonly identityPlan: IrOverlayIdentityPlan;
+  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
+  readonly skippedFunctionUnitIds: ReadonlySet<IrUnitId>;
+  readonly report: IrIntegrationReport;
+}): readonly IrSkippedBodySlotViolation[] {
+  return auditIrSkippedBodySlots({
+    ...input,
+    skippedBodyUnitIds: input.skippedFunctionUnitIds,
+    expectedKind: "function",
+    label: "function",
+  });
+}
+
+/** Prove every skipped static class slot reached one exact terminal result. */
+export function auditIrSkippedClassMemberSlots(input: {
+  readonly sourceFile: ts.SourceFile;
+  readonly identityPlan: IrOverlayIdentityPlan;
+  readonly preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
+  readonly skippedClassMemberUnitIds: ReadonlySet<IrUnitId>;
+  readonly report: IrIntegrationReport;
+}): readonly IrSkippedBodySlotViolation[] {
+  return auditIrSkippedBodySlots({
+    ...input,
+    skippedBodyUnitIds: input.skippedClassMemberUnitIds,
+    expectedKind: "class-member",
+    label: "class member",
+  });
 }
 
 function observedFailure(
@@ -420,7 +455,7 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
   const diagnostics: string[] = [];
 
   for (const unit of collectObservedIrUnits(input.sourceFile, input.identityPlan.identityContext)) {
-    const legacyBodyEmitted = unit.legacyBodyAvailable && !input.skippedFunctionUnitIds.has(unit.unitId);
+    const legacyBodyEmitted = unit.legacyBodyAvailable && !input.skippedBodyUnitIds.has(unit.unitId);
     const base = {
       key: unit.key,
       sourceId: unit.sourceId,
@@ -456,13 +491,6 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
       );
     } else if (input.preparationFailuresByUnitId.has(unit.unitId)) {
       outcome = observedFailure(base, input.preparationFailuresByUnitId.get(unit.unitId)!);
-    } else if (unit.staticClassMember) {
-      outcome = observedFailure(base, {
-        kind: "unsupported",
-        code: "static-class-member",
-        stage: "build",
-        detail: `${unit.matchName} remains compile-twice on the direct static-member path`,
-      });
     } else if (!preparedUnitIds.has(unit.unitId)) {
       outcome = observedFailure(base, {
         kind: "unsupported",

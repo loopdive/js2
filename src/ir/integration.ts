@@ -436,13 +436,18 @@ function sealDependencyCompletePreparedComponents(input: {
   const terminalCallableBindingIds = new Set<IrBindingId>();
   for (const terminalUnitId of terminalUnitIds) {
     const entry = terminalEntries.get(terminalUnitId);
-    const func = ctx.programAbiSourceCallables?.functionForUnit(terminalUnitId);
+    const funcIdx = entry?.moduleInit
+      ? ctx.programAbiModuleInitCallables?.handleForUnit(terminalUnitId)
+      : entry?.classMember
+        ? ctx.programAbiClassCallables?.handleForUnit(terminalUnitId)
+        : ctx.programAbiSourceCallables?.handleForUnit(terminalUnitId);
+    const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
     const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
     if (!entry || !func || !signature || signature.kind !== "func") {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
-        `dependency preparation has no exact allocated source callable for terminal ${terminalUnitId}`,
+        `dependency preparation has no exact allocated callable for terminal ${terminalUnitId}`,
       );
     }
     const bindingId = planProgramAbiUnitCallable(ctx, {
@@ -454,7 +459,7 @@ function sealDependencyCompletePreparedComponents(input: {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
-        `dependency preparation could not plan the exact source callable for terminal ${terminalUnitId}`,
+        `dependency preparation could not plan the exact callable for terminal ${terminalUnitId}`,
       );
     }
     terminalCallableBindingIds.add(bindingId);
@@ -1123,10 +1128,9 @@ export function compileIrPathFunctions(
   //   1. Walk class declarations from sourceFile.statements.
   //   2. Filter to MethodDeclarations whose synthetic name is in
   //      `selected.classMembers`.
-  //   3. Currently restricted to NON-static instance methods. Static
-  //      methods stay on legacy (no `self` injection complication; can
-  //      be added in a follow-up). Constructors stay on legacy (Phase C
-  //      handles their `struct.new + __self` epilogue).
+  //   3. Instance methods receive the projected `self` parameter. Static
+  //      methods are ordinary no-receiver callables. Constructors use Phase
+  //      C's `struct.new + __self` epilogue.
   //   4. For each eligible method:
   //      - Look up the class's `IrClassShape` from the resolver-supplied
   //        `classShapes` map. Skip if absent (legacy class shape couldn't
@@ -1155,21 +1159,23 @@ export function compileIrPathFunctions(
       if (!classShape) continue;
 
       for (const member of stmt.members) {
-        // Phase B v1 — instance methods + (#3000-B) instance get/set accessors
-        // + (#3000-C) the constructor. Static members skip `self` injection and
-        // use a different funcMap entry shape; defer. Abstract methods have no
-        // body — Phase A already rejected them as `class-method`.
+        // Phase B — instance methods + (#3000-B) instance get/set accessors +
+        // (#3000-C) the constructor + (#3522) static methods. Static accessors
+        // still remain selector-unsupported. Abstract methods have no body —
+        // Phase A already rejected them as `class-method`.
         const isCtorMember = ts.isConstructorDeclaration(member);
         const isAccessor = ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member);
+        const isStaticMethod =
+          ts.isMethodDeclaration(member) &&
+          (member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false);
         if (!ts.isMethodDeclaration(member) && !isAccessor && !isCtorMember) continue;
         if (!member.body) continue;
-        // Non-ctor members: skip nameless / static / abstract. A constructor
-        // carries no `.name`, is never static, and never abstract — so these
-        // guards apply only to methods / accessors.
+        // Non-ctor members: skip nameless / static accessors / abstract. A
+        // constructor carries no `.name`, is never static, and never abstract.
         if (!isCtorMember) {
           if (!member.name) continue;
           const isStatic = member.modifiers?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword) ?? false;
-          if (isStatic) continue;
+          if (isStatic && !isStaticMethod) continue;
           if (member.modifiers?.some((m) => m.kind === ts.SyntaxKind.AbstractKeyword)) continue;
         }
 
@@ -1178,7 +1184,7 @@ export function compileIrPathFunctions(
         // the member name below.
         let memberName: string;
         let memberBaseName: string | undefined;
-        let descriptorKind: "method" | "getter" | "setter" | undefined;
+        let descriptorKind: "method" | "getter" | "setter" | "static" | undefined;
         if (isCtorMember) {
           memberName = `${className}_new`;
         } else {
@@ -1203,7 +1209,7 @@ export function compileIrPathFunctions(
             descriptorKind = "setter";
           } else {
             memberName = `${className}_${memberBaseName}`;
-            descriptorKind = "method";
+            descriptorKind = isStaticMethod ? "static" : "method";
           }
         }
         if (!selected.classMembers.has(memberName)) continue;
@@ -1244,11 +1250,13 @@ export function compileIrPathFunctions(
             directCalls: directCallsFor(member, ownerUnitId),
             ...(isCtorMember
               ? { constructorClassShape: classShape, paramTypeOverrides }
-              : {
-                  selfParam: { type: { kind: "class", shape: classShape } as IrType },
-                  paramTypeOverrides,
-                  returnTypeOverride,
-                }),
+              : isStaticMethod
+                ? { paramTypeOverrides, returnTypeOverride }
+                : {
+                    selfParam: { type: { kind: "class", shape: classShape } as IrType },
+                    paramTypeOverrides,
+                    returnTypeOverride,
+                  }),
             calleeTypes,
             importedCalls: loweringPlans?.importedCalls,
             topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,

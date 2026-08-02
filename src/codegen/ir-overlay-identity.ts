@@ -1,7 +1,11 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
+import {
+  collectIrDirectCallLoweringPlans,
+  type IrDirectCallTarget,
+  type IrIntegrationLoweringPlans,
+} from "../ir/ast-lowering-plans.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrUnitId } from "../ir/identity.js";
 import {
@@ -289,11 +293,28 @@ export function projectIrIntegrationLoweringPlans(
   const ownerUnitIdByLegacyName = new Map(
     ownerProjection.entries.map(({ legacyName, unitId }) => [legacyName, unitId]),
   );
+  const directCallTargets = new Map<string, IrDirectCallTarget>();
+  for (const { unitId, legacyName } of ownerProjection.entries) {
+    const signature = plan.overrideMapByUnitId.get(unitId);
+    if (!signature) continue;
+    directCallTargets.set(legacyName, {
+      target: irUnitFuncRef({ unitId, name: legacyName }),
+      signature,
+    });
+  }
+  const directCalls = new Map(plan.directCalls ?? []);
+  for (const { unitId } of ownerProjection.entries) {
+    const declaration = plan.identityPlan.identityContext.declarationByUnitId.get(unitId);
+    if (!declaration) continue;
+    for (const [call, directCall] of collectIrDirectCallLoweringPlans(declaration, unitId, directCallTargets)) {
+      if (!directCalls.has(call)) directCalls.set(call, directCall);
+    }
+  }
   return {
     identityContext: plan.identityPlan.identityContext,
     ownerProjection,
     ownerUnitIdByLegacyName,
-    directCalls: plan.directCalls ?? new Map(),
+    directCalls,
     signaturesByUnitId: plan.overrideMapByUnitId,
     importedCalls: plan.importedCalls,
     topLevelFunctionValues: plan.topLevelFunctionValues,
@@ -311,10 +332,10 @@ export function buildIrIntegrationOwnerProjection(
     readonly moduleInit?: { readonly stmtCount: number; readonly reason: string | null };
   },
 ): IrLegacyUnitProjection {
-  return buildPreparedOwnerProjection(identityPlan, selection, false);
+  return buildPreparedOwnerProjection(identityPlan, selection, true);
 }
 
-/** Structural membership for terminal reconciliation, including static-member policy rows. */
+/** Structural membership for terminal reconciliation. */
 export function collectIrPreparedSelectionUnitIds(
   identityPlan: IrOverlayIdentityPlan,
   selection: {

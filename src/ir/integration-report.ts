@@ -12,6 +12,8 @@ import type { IrLegacyUnitProjection, IrLegacyUnitProjectionEntry } from "./plan
 export interface IrIntegrationReport {
   readonly compiled: readonly string[];
   readonly errors: readonly IrIntegrationError[];
+  /** Exact emitted artifacts retained for component-local report routing. */
+  readonly compiledArtifactEvidence?: readonly IrIntegrationCompiledArtifactEvidence[];
   /** Exact terminal-owner evidence retained beside the public name lists. */
   readonly terminalEvidence?: readonly IrIntegrationTerminalEvidence[];
   /** Public compiled entries that are exact terminal owners. */
@@ -290,6 +292,7 @@ export function buildIrIntegrationReport(
   return {
     compiled,
     errors,
+    compiledArtifactEvidence,
     terminalEvidence,
     terminalCompiledOwners: structuralCompiledOwners,
     syntheticCompiledArtifacts: structuralSyntheticArtifacts,
