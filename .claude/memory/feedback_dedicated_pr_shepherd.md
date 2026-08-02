@@ -24,8 +24,9 @@ owns merge strategy.
   GraphQL `enqueuePullRequest` with the **user PAT**:
   `PRID=$(gh pr view N --json id -q .id); gh api graphql -f query='mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){clientMutationId}}' -f id="$PRID"`.
   NEVER `gh pr merge --auto` (no-ops on already-green CLEAN PRs); NEVER `GITHUB_TOKEN`
-  (suppresses the `merge_group` event). **NEVER re-enqueue** (re-add cancels the in-flight
-  `merge_group` run — see [[project_merge_queue_requeue_cancels_run]]).
+  (suppresses the `merge_group` event). **NEVER re-enqueue** (re-adding a PR that is IN
+  the in-flight group cancels its run; a tail append of another PR does not —
+  see [[project_merge_queue_requeue_cancels_run]], re-verified 2026-08-02).
 - Monitor `merge_group` results; handle parks/ejections per the auto-park rules.
 - Reconcile merged PRs → TaskList `completed` + issue `status: done`.
 

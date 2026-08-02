@@ -29,8 +29,9 @@ own erroneous label — which would let the backstop re-enqueue a known-failing 
 - Distinguish real-regression vs flake/collateral before re-enqueueing (a merge
   group batches PRs; the same readonly-queue branch can fail then pass when
   rebuilt without the offender). One controlled SOLO enqueue on an empty queue
-  disambiguates. NEVER re-enqueue in a loop (cancels in-flight merge_group runs,
-  see [[project_merge_queue_requeue_cancels_run]]).
+  disambiguates. NEVER re-enqueue in a loop (re-adding the PR that is in
+  the in-flight group cancels its run — see
+  [[project_merge_queue_requeue_cancels_run]], re-verified 2026-08-02).
 - "Behavior-neutral" is only proven by the merge_group full baseline, NOT local
   suites — local diff-neutrality is necessary, not sufficient. See
   [[project_broad_impact_validate_full_ci]].

@@ -375,9 +375,11 @@ way.
 
 **There is no automated unsticker.** The old `queue-unstick.yml` /
 `scripts/unstick-merge-queue.mjs` cron re-enqueued a "wedged" head
-automatically, but **a dequeue + re-enqueue rebuilds the merge group and
-CANCELS the in-flight `merge_group` run** (memory
-`project_merge_queue_requeue_cancels_run`). Even with its gates (12-min
+automatically, but **a dequeue + re-enqueue of the HEAD rebuilds its merge group
+and CANCELS the in-flight `merge_group` run** (memory
+`project_merge_queue_requeue_cancels_run`; that is the entry the unsticker
+poked, which is why it was so destructive — appending a PR behind the head is
+harmless by comparison). Even with its gates (12-min
 stall + de-alias + a zero-`merge_group`-runs guard) the loop still produced
 sustained cancellation churn during the 2026-07-18/19 recovery-PR drain — a
 false-wedge detection cancels a live run, the head re-wedges, and it fires
@@ -436,9 +438,12 @@ gh pr list -R loopdive/js2 --state open --label needs-manual-enqueue
 ```
 
 Each such PR needs **one** deliberate enqueue with a user PAT (the GraphQL
-`enqueuePullRequest` mutation) — **check the queue first, and never loop**; a
-re-add rebuilds the merge group and cancels the in-flight `merge_group` run.
-The label auto-clears if the PR later enqueues on its own.
+`enqueuePullRequest` mutation) — **check the queue first, and never loop**.
+Checking first is the load-bearing part: adding a PR that is *not* yet queued
+appends it behind the head and does not disturb the in-flight group, but
+re-adding one that is **already in** that group rebuilds it and cancels its run
+(re-verified 2026-08-02, `project_merge_queue_requeue_cancels_run`). The label
+auto-clears if the PR later enqueues on its own.
 
 `needs-manual-enqueue` is **not** in `HOLD_LABELS` and must never be added to
 it: a hold would make `auto-enqueue` skip the PR permanently, turning the

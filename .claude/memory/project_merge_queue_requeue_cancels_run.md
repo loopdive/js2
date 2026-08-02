@@ -1,6 +1,6 @@
 ---
 name: project-merge-queue-requeue-cancels-run
-description: "Merge_group runs cancelled mid-flight (head never completes, main stuck) = queue membership churn — every dequeue/enqueue/re-add invalidates the in-flight group. Don't poke a queue with a run in flight."
+description: "Merge_group runs cancelled mid-flight (head never completes, main stuck) = queue membership churn. Re-adding the PR that is IN the in-flight group cancels its run; a tail append of another PR does not. Don't poke the head while its run is in flight."
 metadata: 
   node_type: memory
   type: project
@@ -28,11 +28,11 @@ If genuinely ZERO failed jobs across all pages → CANCELLED; `quality` (ci.yml)
 regression = a shard job with `conclusion=failure`; cancellation = only
 success+(missing) jobs.
 
-**Root cause**: GitHub invalidates/rebuilds a merge group whenever queue
-**membership or order changes**. So *anything* that dequeues/enqueues/re-adds a
-PR while a run is in flight cancels that run before it can complete. The
-culprits 2026-06-20 (in order of impact):
-- **`queue-unstick.yml` (THE engine, root cause of the 2h stall)** — fires on
+**Root cause**: GitHub invalidates/rebuilds a merge group when the queue
+**membership or order changes in a way that affects that group**. The culprits
+2026-06-20 (in order of impact):
+- **`queue-unstick.yml` (THE engine, root cause of the 2h stall — GONE as of
+  2026-08-02, see the re-verification below)** — fires on
   EVERY `workflow_run` completion (so ~every 2 min during active CI). Its
   `unstick-merge-queue.mjs` does **dequeue + re-enqueue of the head** to clear a
   *wedge* (the zero-runs GITHUB_TOKEN wedge). But when the head is legitimately
@@ -51,15 +51,60 @@ culprits 2026-06-20 (in order of impact):
   Still: an 11-PR queue drained fine at 05:00 before any poking; once unstick is
   off, leave the queue alone.
 
+## RE-VERIFIED 2026-08-02 — the rule is NARROWER than it was written
+
+Two things changed since 2026-06-20, and the original phrasing ("*anything*
+that dequeues/enqueues/re-adds a PR while a run is in flight cancels that run")
+was over-broad even then.
+
+**1. The engine is gone.** `queue-unstick.yml` and `scripts/unstick-merge-queue.mjs`
+no longer exist on `main` — the workflow that fired on EVERY `workflow_run`
+completion and dequeue+re-enqueued the head is deleted, not merely disabled.
+The only queue-touching workflow left is `auto-enqueue.yml`.
+
+**2. Appending to the TAIL does not cancel anything.** GitHub's docs: a new
+entry's group contains "the target branch and pull requests **ahead of** it in
+the queue", so adding behind the head leaves the head's group intact. What DOES
+rebuild: removing an entry (the ones behind it are recreated) and reordering —
+*"jumping to the top of a merge queue will cause a full rebuild of all
+in-progress pull requests, as the reordering of the queue introduces a break in
+the commit graph."*
+
+**3. This repo runs with NO speculation** (ruleset, verified 2026-08-02):
+`max_entries_to_build: 1`, `max_entries_to_merge: 1`, `grouping_strategy:
+ALLGREEN`, `check_response_timeout_minutes: 120` (the "60" cited below is
+stale). The building group is the head PR alone, so a tail append has nothing
+behind it to rebuild.
+
+**What is still true — the actual rule:**
+> Re-enqueueing a PR that is **currently in the in-flight merge group** is a
+> dequeue + re-add of that entry and DOES cancel its run. Appending a different,
+> not-yet-queued PR to the tail does not. Never dequeue/re-add/reorder the head
+> while its run is in flight.
+
+**Empirics (2026-08-02, last ~1.5 days, 500 `merge_group` runs):** 488 success,
+8 failure, **2 cancelled (0.4 %)** — both with 97 success / 0 failed jobs, i.e.
+the cancellation signature below. In June this was the norm; it is now rare.
+NOT verified: what triggered those 2 (a PR ahead merging, a dequeue, and
+auto-park are all candidates), and there is no controlled experiment proving a
+tail append never cancels — only GitHub's documented model plus the low rate.
+
+**Unchanged by this re-verification:** "the single enqueuer is the server-side
+`auto-enqueue.yml`; devs/agents do not enqueue." That rule's real justification
+is #2786 (a dev's backgrounded CI watcher dies on stand-down, stranding green
+PRs), not cancellation churn — so it stands on its own.
+
 **Fix / discipline**:
-1. **Don't touch a queue while a run is in flight.** No dequeue/enqueue/label
-   churn mid-run. Pick the action, then leave it ALONE for a full run (~15 min).
+1. **Don't touch the HEAD while its run is in flight.** No dequeue/re-add/
+   reorder mid-run. Pick the action, then leave it ALONE for a full run
+   (~15 min). Appending a new PR behind it is safe.
 2. To drain when it's stuck: **dequeue ALL, then PAT-enqueue ONE PR, then hands
    off** until it merges; repeat. PAT/App enqueue (not GITHUB_TOKEN — see
    [[project_merge_queue_wedge_github_token]]) creates a fresh run and clears the
    dangling cancelled-check state.
 3. A cancelled run leaves a dangling "expected" check; the head can sit
-   AWAITING_CHECKS until the ruleset `check_response_timeout_minutes` (60) fires.
+   AWAITING_CHECKS until the ruleset `check_response_timeout_minutes` (120 as of
+   2026-08-02) fires.
    Dequeue+PAT-re-enqueue resets it instead of waiting.
 4. If genuinely clean PRs (quality green, 0 failed shard jobs) stay stuck, they
    are mergeable — admin-merge is justified to bypass a self-inflicted queue
@@ -70,4 +115,6 @@ culprits 2026-06-20 (in order of impact):
 - DUP-ID CHURN: runs fire, `quality` fails "N duplicate IDs" → stale issue-ID
   collision. [[project_merge_queue_dup_issue_id_churn]]
 - CANCELLATION CHURN (this): runs fire but cancelled mid-flight, 0 failed jobs →
-  queue membership churn. STOP poking; one PR at a time; hands off.
+  the HEAD's group was rebuilt (re-add / reorder / removal ahead of it). STOP
+  poking the head; one PR at a time; hands off. Rare since `queue-unstick.yml`
+  was deleted — see the 2026-08-02 re-verification above.
