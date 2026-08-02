@@ -1,27 +1,37 @@
 ---
 id: 3593
-title: "codegen: Iterator.zip over object-literal iterators null-derefs in __module_init (shape-sensitive, pre-existing) — uncatchable trap"
+title: "codegen: an array literal whose object-literal elements have DIFFERENT member counts null-derefs in __module_init — uncatchable trap (NOT an Iterator.zip defect)"
 status: in-progress
 sprint: current
 assignee: ttraenkler/L-regexp
 created: 2026-07-25
 updated: 2026-08-02
 priority: high
-horizon: l
-feasibility: hard
-reasoning_effort: max
+horizon: m
+feasibility: medium
+reasoning_effort: high
 task_type: bugfix
 area: codegen
-language_feature: iterator-helpers
+language_feature: object-literals
 goal: correctness
-related: [3024, 3189]
+related: [3024, 3189, 2093]
 ---
+
+> **RECLASSIFIED 2026-08-02 — frontmatter changed, deliberately.** `horizon`
+> l→m, `feasibility` hard→medium, `reasoning_effort` max→high,
+> `language_feature` iterator-helpers→object-literals, and the
+> **"Routing: senior-dev"** line below is withdrawn. Those fields are what the
+> picker and the next dispatcher read, so leaving them describing a defect that
+> has been measured away would misroute the next person. Evidence: the ablation
+> table under "REFUTED" — the repro is one line and involves no iterator.
 
 # #3593 — `Iterator.zip` over object-literal iterators traps (`dereferencing a null pointer` in `__module_init`)
 
-**Routing: senior-dev.** This is a shape-sensitive module-lowering defect, not a
+~~**Routing: senior-dev.** This is a shape-sensitive module-lowering defect, not a
 one-liner. Hand-written snippets do **not** reproduce it — it needs the real
-test262 harness module shape.
+test262 harness module shape.~~ **← every clause of this is REFUTED below.**
+It is a one-liner, it needs no harness, and a hand-written snippet reproduces
+it via `compileAndInstantiate`.
 
 Surfaced while landing the #3024 iterator-dispatcher slice (PR #3563). The trap
 **pre-dates that PR**; #3563 only made the affected file compile far enough to
@@ -181,16 +191,67 @@ It is an **off-by-one in source attribution**, not a semantic pointer at
 `assert.throws`. Once `assert.throws` is removed entirely and the trap
 survives, the original reading cannot stand. Do not chase the attributed line.
 
-### Not established — my probe was inconclusive, not negative
+### `Iterator.zip` is NOT INVOLVED AT ALL — and neither are iterators
 
-The report also says hand-written `compile()` snippets do not reproduce (4
-variants tried). Given the one-line repro above, that is worth re-testing —
-but **I have not disproved it**: my plain-`compile()` probe failed at
-`WebAssembly.instantiate` with `Import #0 "string_constants": module is not an
-object or function`, i.e. it never ran, because I passed an empty import
-object instead of the host imports the runner builds. That is a defect in the
-probe, not evidence either way. Whoever continues should reuse the runner's
-import-object construction rather than an empty `{}`.
+Removing the iterator helper entirely still traps. These have **no
+`Iterator`, no `Symbol`, and no harness feature** anywhere in the program:
+
+```js
+var arr = [{ a() {}, b() {} }, { c() {} }];
+if (arr.length !== 2) throw new Error("len");   // → dereferencing a null pointer
+```
+
+Also traps with `arr[0].next` / `for-of` / `Array.from` as the consumer, and
+with **no consumer at all** beyond reading `.length` — so the null is created
+when the **array literal is built**, not when anything reads it.
+
+### The measured rule
+
+Ablating member counts, names, and property kinds:
+
+| array literal | result |
+| --- | --- |
+| `[{a,b},{c}]` — 2 vs 1 | **TRAP** |
+| `[{c},{a,b}]` — 1 vs 2 | **TRAP** (symmetric) |
+| `[{a,b,e},{c}]` — 3 vs 1 | **TRAP** |
+| `[{c},{a,b,e}]` — 1 vs 3 | **TRAP** |
+| `[{a:1,b:2},{c:3}]` — data props, 2 vs 1 | **TRAP** |
+| `[{a,b},[1,2]]` — objlit vs array literal | **TRAP** |
+| `[{a,b},{c,d}]` — 2 vs 2, **different names** | pass |
+| `[{a,b},{a,b}]` — 2 vs 2, same names | pass |
+| `[{a,b},{}]` — 2 vs **empty** | pass |
+| `[{a,b}]` — single element | pass |
+
+**An array literal traps iff two of its object-literal elements have different
+NON-ZERO member counts.** It is symmetric, independent of member *names*
+(2-vs-2 with disjoint names passes), independent of data-vs-method, and an
+empty `{}` element is exempt. That points at array-literal element-type
+lowering keying on field **count**.
+
+This is ordinary JavaScript — `[{a(){},b(){}}, {c(){}}]` is not an exotic
+shape — so the blast radius is much wider than one test262 file.
+
+### A refuted hypothesis of mine, kept as a warning
+
+I predicted the rule would be **asymmetric** — that the element type is taken
+from the *first* element, so `[{a,b},{c}]` would trap while `[{c},{a,b}]` would
+not. **Measured: both trap.** The first-element-wins story was tidy and wrong;
+the rule is symmetric. Recorded because it is the obvious hypothesis and the
+next person will form it too.
+
+### The "snippets don't reproduce" claim is REFUTED (with a working instrument)
+
+My first plain-`compile()` probe *appeared* to show non-reproduction. It was
+**vacuous**: it passed `{}` as the import object, so every program died at
+`Import #0 "string_constants"` before running. Rebuilt on
+`compileAndInstantiate` (which builds the real imports) it discriminates
+cleanly — `TRAP` for `[{a,b},{c}]`, `ok` for `[{a,b},{c,d}]`. So a hand-written
+snippet **does** reproduce, and no test262 harness is needed.
+
+**The same defect made my first `tests/issue-3593.test.ts` pass all nine cases
+while the bug was live.** The shipped version therefore carries four
+`ok`-asserting controls whose only job is to prove the file can still tell a
+trap from a setup failure. Anyone editing that file should keep them.
 
 ## Suggested next step (WAT dump — still the right move)
 
