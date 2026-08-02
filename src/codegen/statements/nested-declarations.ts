@@ -65,7 +65,7 @@ import { annexBHoistCancels } from "../annexb-cancel.js";
  * must throw ReferenceError (e.g. `class x extends x {}`). Returns true if the
  * extends heritage clause contains an identifier equal to the class name.
  */
-function extendsReferencesClassName(decl: ts.ClassDeclaration | ts.ClassExpression, className: string): boolean {
+function extendsOwnClass(ctx: CodegenContext, decl: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (!decl.heritageClauses) return false;
   for (const clause of decl.heritageClauses) {
     if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
@@ -73,7 +73,7 @@ function extendsReferencesClassName(decl: ts.ClassDeclaration | ts.ClassExpressi
       let found = false;
       const visit = (node: ts.Node): void => {
         if (found) return;
-        if (ts.isIdentifier(node) && node.text === className) {
+        if (ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === decl) {
           found = true;
           return;
         }
@@ -104,7 +104,7 @@ export function compileNestedClassDeclaration(
   // evaluated. `class x extends x {}` must throw ReferenceError (#1594B). Only
   // a NAMED class can self-reference in its own heritage (`decl.name` present);
   // an anonymous class expression has no name to hit the TDZ.
-  if (decl.name && extendsReferencesClassName(decl, decl.name.text)) {
+  if (decl.name && extendsOwnClass(ctx, decl)) {
     emitThrowReferenceError(ctx, fctx, `Cannot access '${decl.name.text}' before initialization`);
     return;
   }

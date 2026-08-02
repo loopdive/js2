@@ -1072,6 +1072,7 @@ export interface CodegenContext {
   programAbiSession?: import("../program-abi-session.js").ProgramAbiSession;
   programAbiModuleInitCallables?: import("../program-abi-module-init-planning.js").ProgramAbiModuleInitCallableRegistry;
   programAbiSourceCallables?: import("../program-abi-source-callable-planning.js").ProgramAbiSourceCallableRegistry;
+  programAbiCallableImports?: import("../program-abi-import-planning.js").ProgramAbiCallableImportRegistry;
   programAbiCallableProviders?: import("../program-abi-provider-planning.js").ProgramAbiCallableProviderRegistry;
   programAbiClassCallables?: import("../program-abi-class-callable-planning.js").ProgramAbiClassCallableRegistry;
   programAbiCallables?: import("../program-abi-callable-planning.js").ProgramAbiCallableRegistry;
@@ -1864,8 +1865,8 @@ export interface CodegenContext {
   skippedClosureRecastDecls?: Set<ts.Node>;
   /** Map from local variable name → closure metadata (for call_ref dispatch) */
   closureMap: Map<string, ClosureInfo>;
-  /** Map from closure struct type index → closure metadata (for anonymous closures) */
   closureInfoByTypeIdx: Map<number, ClosureInfo>;
+  maxHostDynamicMethodCallArity?: number;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */

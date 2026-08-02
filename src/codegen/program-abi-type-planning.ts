@@ -1,18 +1,20 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { ts } from "../ts-api.js";
 import { irClassTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId } from "../ir/identity.js";
+import type { IrTypeRef } from "../ir/nodes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { StructTypeDef, TypeDef } from "../ir/types.js";
+import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { requireIrClassShapeClassId } from "./ir-class-shapes.js";
-import { canonicalProgramAbiTypeDef } from "./program-abi-signatures.js";
 import type { ProgramAbiSession, ProgramAbiTypeCell } from "./program-abi-session.js";
+import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./program-abi-signatures.js";
 
 const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   retainedModuleType: 0,
+  stringCarrier: 1,
   classLayout: 0,
 } as const);
 
@@ -97,6 +99,57 @@ export class ProgramAbiTypeRegistry {
     if (!type || type.kind !== "struct") return undefined;
     const typeIdx = this.ctx.mod.types.indexOf(type);
     return typeIdx < 0 ? undefined : Object.freeze({ typeIdx, type });
+  }
+
+  /** Return the backend-neutral Program-ABI identity used by final string IR. */
+  stringCarrierRef(): IrTypeRef {
+    return irSupportTypeRef(canonicalEntrySource(this.session), "string-carrier", "__string_carrier");
+  }
+
+  /**
+   * Plan the one backend-selected storage carrier behind `IrType.string`.
+   *
+   * Host strings use the built-in `externref` value type and therefore need
+   * no module type slot. Native strings use the exact `$AnyString` allocator
+   * object and a remappable type cell. Both backends expose the same symbolic
+   * support identity to final IR; only this planner knows the physical shape.
+   */
+  prepareStringCarrier(): IrTypeRef {
+    const entrySourceId = canonicalEntrySource(this.session);
+    const ref = this.stringCarrierRef();
+    const structuralReferenceKey = irTypeBindingKey(ref.binding);
+    const nativeType =
+      this.ctx.nativeStrings && this.ctx.anyStrTypeIdx >= 0 ? this.ctx.mod.types[this.ctx.anyStrTypeIdx] : undefined;
+    if (this.ctx.nativeStrings && this.ctx.anyStrTypeIdx >= 0 && !nativeType) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `native string carrier type ${this.ctx.anyStrTypeIdx} is absent from the allocator module`,
+      );
+    }
+    const base = {
+      id: ref.binding.bindingId,
+      structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
+        domain: "type",
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.stringCarrier,
+      }),
+      structuralReferenceKey,
+      displayName: ref.name,
+      intent: {
+        kind: "type" as const,
+        shapeKey: nativeType
+          ? canonicalProgramAbiTypeDef(nativeType)
+          : canonicalProgramAbiValType({ kind: "externref" }),
+      },
+    };
+    this.session.ensurePlan(
+      nativeType ? { ...base, slotPolicy: "required", slotSpace: "type" } : { ...base, slotPolicy: "none" },
+    );
+    this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
+    if (nativeType) {
+      const cell = this.session.typeCellFor(nativeType) ?? this.session.createTypeCell(nativeType);
+      this.attachTypeLocator(ref.binding.bindingId, cell);
+    }
+    return ref;
   }
 
   /** Plan all source classes plus every retained allocator type after DCE. */

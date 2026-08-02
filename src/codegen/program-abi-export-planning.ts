@@ -90,6 +90,29 @@ export class ProgramAbiExportRegistry {
     session.assertModule(ctx.mod);
   }
 
+  /**
+   * Plan the already-declared public aliases of exact prepared ABI targets.
+   *
+   * Prepared components seal before final dead-layout planning, so aliases
+   * that already point at their allocator objects must join that scope before
+   * it closes. Other exports remain untouched until `planRetained()` owns the
+   * final complete population.
+   */
+  planAliasesForTargets(targetIds: ReadonlySet<IrBindingId>): void {
+    if (this.planned || targetIds.size === 0) return;
+    const entrySourceId = canonicalEntrySource(this.session);
+    for (let ordinal = 0; ordinal < this.ctx.mod.exports.length; ordinal++) {
+      const exported = this.ctx.mod.exports[ordinal]!;
+      if (exported.desc.kind !== "func" && exported.desc.kind !== "global") continue;
+      const valueExport = exported as ValueExport;
+      const { value } = valueExportTarget(this.ctx, valueExport);
+      const targetId = this.session.locatorBindingId(value);
+      if (targetId !== undefined && targetIds.has(targetId)) {
+        this.planValueExport(entrySourceId, ordinal, valueExport);
+      }
+    }
+  }
+
   planRetained(): void {
     if (this.planned) return;
     this.planned = true;

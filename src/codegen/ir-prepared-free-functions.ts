@@ -5,7 +5,7 @@ import type { IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
-import type { IrLegacyUnitProjection } from "../ir/planning-identity.js";
+import { buildIrLegacyUnitProjection, type IrLegacyUnitProjection } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
@@ -15,22 +15,236 @@ import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import {
   buildIrRequestedFunctionSkipProjection,
   mergeIrIntegrationReports,
-  preparedIrFunctionRouting,
+  preparedIrBodyRouting,
+  type IrExactBodyClaim,
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 
 export interface PreparedIrFreeFunctionBodies {
   readonly report: IrIntegrationReport;
   readonly requestedSkipProjection: IrLegacyUnitProjection;
-  readonly attemptedBodies: ReadonlySet<string>;
+  /** Owners settled by the preparation attempt and excluded from the late overlay. */
+  readonly completedBodies: ReadonlySet<string>;
   readonly skipBodies: ReadonlySet<string>;
   readonly preserveBodies: ReadonlySet<string>;
+}
+
+export interface PreparedIrStaticClassMethodBodies {
+  readonly report: IrIntegrationReport;
+  readonly requestedSkipProjection: IrLegacyUnitProjection;
+  readonly completedBodies: ReadonlySet<string>;
+  readonly skipBodies: ReadonlySet<string>;
+  readonly preserveBodies: ReadonlySet<string>;
+}
+
+/** Project selected static methods through exact structural class ownership. */
+export function selectPreparedStaticClassMethodNames(input: {
+  readonly selection: Pick<IrSelection, "classMembers">;
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+}): ReadonlySet<string> {
+  const selectedNames = new Set(input.selection.classMembers ?? []);
+  const staticNames = new Set<string>();
+  for (const claim of input.identityPlan.identitySelection.classMembers?.values() ?? []) {
+    const terminal = input.identityPlan.identityContext.terminalByUnitId.get(claim.unitId);
+    const declaration = input.identityPlan.identityContext.declarationByUnitId.get(claim.unitId);
+    if (
+      selectedNames.has(claim.legacyMatchName) &&
+      terminal?.staticClassMember === true &&
+      declaration !== undefined &&
+      ts.isMethodDeclaration(declaration) &&
+      !containsNestedExecutableSyntax(declaration)
+    ) {
+      staticNames.add(claim.legacyMatchName);
+    }
+  }
+  return staticNames;
+}
+
+function deferUnsealedPreparedComponents(
+  report: IrIntegrationReport,
+  deferredUnitIds: ReadonlySet<IrUnitId>,
+  claimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
+): IrIntegrationReport {
+  if (deferredUnitIds.size === 0) return report;
+  if (!report.terminalEvidence || !report.compiledArtifactEvidence) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "patch",
+      "unsealed prepared components have no exact integration artifact evidence",
+    );
+  }
+  const deferredLegacyNames = new Set<string>();
+  for (const unitId of deferredUnitIds) {
+    const claim = claimsByUnitId.get(unitId);
+    const evidence = report.terminalEvidence.find((candidate) => candidate.unitId === unitId);
+    if (!claim || evidence?.kind !== "patched" || evidence.preparedComponentId !== undefined) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        `deferred prepared component ${unitId} has no exact unsealed patched owner`,
+      );
+    }
+    deferredLegacyNames.add(claim.legacyName);
+  }
+  const compiledArtifactEvidence = report.compiledArtifactEvidence.filter(
+    (artifact) => !deferredUnitIds.has(artifact.terminalOwnerUnitId),
+  );
+  const deferredDerivedArtifact = report.compiledArtifactEvidence.find(
+    (artifact) =>
+      deferredUnitIds.has(artifact.terminalOwnerUnitId) && artifact.artifactUnitId !== artifact.terminalOwnerUnitId,
+  );
+  if (deferredDerivedArtifact) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "patch",
+      `unsealed prepared owner ${deferredDerivedArtifact.terminalOwnerUnitId} produced derived artifact ${deferredDerivedArtifact.artifactUnitId}`,
+    );
+  }
+  return {
+    compiled: compiledArtifactEvidence.map((artifact) => artifact.name),
+    errors: report.errors.filter((error) => !deferredLegacyNames.has(error.func)),
+    compiledArtifactEvidence,
+    terminalEvidence: report.terminalEvidence.filter((evidence) => !deferredUnitIds.has(evidence.unitId)),
+    terminalCompiledOwners: (report.terminalCompiledOwners ?? []).filter(
+      (legacyName) => !deferredLegacyNames.has(legacyName),
+    ),
+    syntheticCompiledArtifacts: compiledArtifactEvidence
+      .filter((artifact) => artifact.artifactUnitId !== artifact.terminalOwnerUnitId)
+      .map((artifact) => artifact.name),
+  };
+}
+
+function bodyProjection(
+  unitIds: ReadonlySet<IrUnitId>,
+  claimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
+): IrLegacyUnitProjection {
+  return buildIrLegacyUnitProjection(
+    [...unitIds].map((unitId) => {
+      const claim = claimsByUnitId.get(unitId);
+      if (!claim) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `prepared body ${unitId} has no exact structural claim`,
+        );
+      }
+      return { unitId, legacyName: claim.legacyName };
+    }),
+  );
 }
 
 function r2StableSignatureType(type: IrType | null): boolean {
   if (type === null || type.kind === "string") return true;
   const val = asVal(type);
   return val?.kind === "f64" || val?.kind === "i32";
+}
+
+/**
+ * An unsealed early attempt is retried after direct emission. Nested executable
+ * syntax can allocate derived callable identities during that attempt, and the
+ * Program ABI deliberately rejects registering those identities twice. Keep
+ * those owners on the late route until R3 owns their complete transaction.
+ */
+function containsNestedExecutableSyntax(declaration: ts.FunctionLikeDeclaration): boolean {
+  if (!declaration.body) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      ts.isClassStaticBlockDeclaration(node)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(declaration.body, visit);
+  return found;
+}
+
+function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  if (!parent) return false;
+  if (ts.isCallExpression(parent) && parent.expression === identifier) return false;
+  if (
+    ((ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)) &&
+      parent.name === identifier) ||
+    (ts.isVariableDeclaration(parent) && parent.name === identifier) ||
+    (ts.isParameter(parent) && parent.name === identifier) ||
+    ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === identifier) ||
+    (ts.isBindingElement(parent) && (parent.name === identifier || parent.propertyName === identifier)) ||
+    (ts.isLabeledStatement(parent) && parent.label === identifier) ||
+    ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === identifier) ||
+    ts.isImportSpecifier(parent) ||
+    ts.isExportSpecifier(parent)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function topLevelFunctionUnitsByName(
+  sourceFile: ts.SourceFile,
+  identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
+): ReadonlyMap<string, readonly IrUnitId[]> {
+  const byName = new Map<string, IrUnitId[]>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isFunctionDeclaration(statement) || !statement.body || !statement.name) continue;
+    const unitId = identityPlan.identityContext.unitIdByDeclaration.get(statement);
+    if (!unitId) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `top-level function ${statement.name.text} has no exact structural identity`,
+      );
+    }
+    const ids = byName.get(statement.name.text) ?? [];
+    ids.push(unitId);
+    byName.set(statement.name.text, ids);
+  }
+  return byName;
+}
+
+function collectTopLevelFunctionValueTargets(
+  sourceFile: ts.SourceFile,
+  unitsByName: ReadonlyMap<string, readonly IrUnitId[]>,
+): ReadonlySet<IrUnitId> {
+  const targets = new Set<IrUnitId>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
+      for (const unitId of unitsByName.get(node.text) ?? []) targets.add(unitId);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return targets;
+}
+
+function containsTopLevelFunctionValueReference(
+  declaration: ts.FunctionLikeDeclaration,
+  unitsByName: ReadonlyMap<string, readonly IrUnitId[]>,
+): boolean {
+  if (!declaration.body) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && unitsByName.has(node.text) && identifierIsRuntimeFunctionValueReference(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.body);
+  return found;
 }
 
 function sameValType(left: ValType, right: ValType): boolean {
@@ -101,6 +315,8 @@ export function selectR2PreparedFreeFunctions(input: {
 }): ReadonlySet<string> {
   const candidates = new Set<IrUnitId>();
   const baseline = new Set<IrUnitId>();
+  const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
+  const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
   for (const legacyName of input.baselineLegacyNames) {
     baseline.add(irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName));
   }
@@ -124,6 +340,9 @@ export function selectR2PreparedFreeFunctions(input: {
       input.ctx.fast ||
       isAsync ||
       claim.declaration.asteriskToken ||
+      containsNestedExecutableSyntax(claim.declaration) ||
+      functionValueTargets.has(unitId) ||
+      containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
       !override.params.every(r2StableSignatureType) ||
       !r2StableSignatureType(override.returnType) ||
       !r2SignatureMatchesAllocatedSlot(input.ctx, unitId, override)
@@ -186,11 +405,12 @@ export function prepareIrFreeFunctionBodies(input: {
     classMembers: new Set<string>(),
     moduleInit: undefined,
   };
-  const report: IrIntegrationReport =
+  const initialReport: IrIntegrationReport =
     freeFunctionSelection.funcs.size === 0
       ? {
           compiled: [],
           errors: [],
+          compiledArtifactEvidence: [],
           terminalEvidence: [],
           terminalCompiledOwners: [],
           syntheticCompiledArtifacts: [],
@@ -202,22 +422,72 @@ export function prepareIrFreeFunctionBodies(input: {
           input.overrideMap,
           input.classShapes,
           input.loweringPlans,
+          { sealPreparedComponents: true },
         );
-  const routing = preparedIrFunctionRouting(report, input.claimsByUnitId);
+  const routing = preparedIrBodyRouting(initialReport, input.claimsByUnitId);
+  const report = deferUnsealedPreparedComponents(initialReport, routing.deferredUnitIds, input.claimsByUnitId);
   const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(routing.irOwnedUnitIds, input.claimsByUnitId);
   const preparedProjection = buildIrRequestedFunctionSkipProjection(routing.preparedUnitIds, input.claimsByUnitId);
+  const deferredProjection = buildIrRequestedFunctionSkipProjection(routing.deferredUnitIds, input.claimsByUnitId);
+  const deferredBodies = new Set(deferredProjection.entries.map(({ legacyName }) => legacyName));
   return {
     report,
     requestedSkipProjection,
-    attemptedBodies: freeFunctionSelection.funcs,
+    completedBodies: new Set([...freeFunctionSelection.funcs].filter((legacyName) => !deferredBodies.has(legacyName))),
+    skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
+    preserveBodies: new Set(preparedProjection.entries.map(({ legacyName }) => legacyName)),
+  };
+}
+
+/** Prepare selected top-level static class methods before direct class bodies. */
+export function prepareIrStaticClassMethodBodies(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly selection: Pick<IrSelection, "classMembers">;
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+  readonly overrideMap: IrTypeOverrideMap;
+  readonly classShapes: ReadonlyMap<string, IrClassShape>;
+  readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
+}): PreparedIrStaticClassMethodBodies | undefined {
+  const staticNames = selectPreparedStaticClassMethodNames(input);
+  const claimsByUnitId = new Map<IrUnitId, IrExactBodyClaim>();
+  for (const claim of input.identityPlan.identitySelection.classMembers?.values() ?? []) {
+    if (!staticNames.has(claim.legacyMatchName)) continue;
+    claimsByUnitId.set(claim.unitId, { unitId: claim.unitId, legacyName: claim.legacyMatchName });
+  }
+  if (claimsByUnitId.size === 0) return undefined;
+  const selection: IrSelection = {
+    funcs: new Set<string>(),
+    classMembers: staticNames,
+    moduleInit: undefined,
+  };
+  const initialReport = compileIrPathFunctions(
+    input.ctx,
+    input.sourceFile,
+    selection,
+    input.overrideMap,
+    input.classShapes,
+    input.projectLoweringPlans(selection),
+    { sealPreparedComponents: true },
+  );
+  const routing = preparedIrBodyRouting(initialReport, claimsByUnitId);
+  const report = deferUnsealedPreparedComponents(initialReport, routing.deferredUnitIds, claimsByUnitId);
+  const requestedSkipProjection = bodyProjection(routing.irOwnedUnitIds, claimsByUnitId);
+  const preparedProjection = bodyProjection(routing.preparedUnitIds, claimsByUnitId);
+  const deferredProjection = bodyProjection(routing.deferredUnitIds, claimsByUnitId);
+  const deferredBodies = new Set(deferredProjection.entries.map(({ legacyName }) => legacyName));
+  return {
+    report,
+    requestedSkipProjection,
+    completedBodies: new Set([...staticNames].filter((legacyName) => !deferredBodies.has(legacyName))),
     skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
     preserveBodies: new Set(preparedProjection.entries.map(({ legacyName }) => legacyName)),
   };
 }
 
 /**
- * Compile the population left after prepared free functions and combine both
- * exact terminal reports into the single audit/telemetry input.
+ * Compile the population left after prepared bodies and combine both exact
+ * terminal reports into the single audit/telemetry input.
  */
 export function completePreparedIrIntegration(input: {
   readonly ctx: CodegenContext;
@@ -227,12 +497,17 @@ export function completePreparedIrIntegration(input: {
   readonly classShapes: ReadonlyMap<string, IrClassShape>;
   readonly preparedReport?: IrIntegrationReport;
   readonly preparedLegacyNames?: ReadonlySet<string>;
+  readonly preparedClassMemberLegacyNames?: ReadonlySet<string>;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
 }): IrIntegrationReport {
   const remainingSelection: IrSelection = input.preparedReport
     ? {
         funcs: new Set([...input.selection.funcs].filter((legacyName) => !input.preparedLegacyNames?.has(legacyName))),
-        classMembers: input.selection.classMembers,
+        classMembers: new Set(
+          [...(input.selection.classMembers ?? [])].filter(
+            (legacyName) => !input.preparedClassMemberLegacyNames?.has(legacyName),
+          ),
+        ),
         moduleInit: input.selection.moduleInit,
       }
     : {
@@ -240,13 +515,26 @@ export function completePreparedIrIntegration(input: {
         classMembers: input.selection.classMembers,
         moduleInit: input.selection.moduleInit,
       };
+  const remainingLoweringPlans = input.projectLoweringPlans(remainingSelection);
+  const loweringPlans = input.preparedReport
+    ? {
+        ...remainingLoweringPlans,
+        // A deferred caller can still target a dependency whose sealed body
+        // was settled by the early report. Retain those exact AST-site plans
+        // without re-adding the prepared owner to the emission population.
+        directCalls: new Map([
+          ...input.projectLoweringPlans(input.selection).directCalls,
+          ...remainingLoweringPlans.directCalls,
+        ]),
+      }
+    : remainingLoweringPlans;
   const remainingReport = compileIrPathFunctions(
     input.ctx,
     input.sourceFile,
     remainingSelection,
     input.overrideMap,
     input.classShapes,
-    input.projectLoweringPlans(remainingSelection),
+    loweringPlans,
   );
   return input.preparedReport ? mergeIrIntegrationReports(input.preparedReport, remainingReport) : remainingReport;
 }

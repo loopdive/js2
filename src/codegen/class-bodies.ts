@@ -1571,12 +1571,22 @@ export function collectDeclaredFuncRefs(ctx: CodegenContext): void {
   }
 }
 
-/** Compile constructor and method bodies for a class declaration */
+export interface ClassBodyCompileRouting {
+  /** Exact physical member names whose direct emitter must not run. */
+  readonly skipBodies: ReadonlySet<string>;
+  /** Prepared slots whose already-installed IR bodies must remain untouched. */
+  readonly preserveSkippedBodies?: ReadonlySet<string>;
+  /** Correlation sink populated only after an exact class slot is found. */
+  readonly skippedNames: string[];
+}
+
+/** Compile constructor and method bodies for a class declaration. */
 export function compileClassBodies(
   ctx: CodegenContext,
   decl: ts.ClassDeclaration | ts.ClassExpression,
   funcByName: Map<string, number>,
   syntheticName?: string,
+  routing?: ClassBodyCompileRouting,
 ): void {
   const className = syntheticName ?? decl.name?.text;
   if (!className) {
@@ -1606,7 +1616,7 @@ export function compileClassBodies(
     ctx.parentBodiesStack.push(enclosingFunc.body);
   }
   try {
-    compileClassBodiesInner(ctx, decl, funcByName, className, structTypeIdx, fields);
+    compileClassBodiesInner(ctx, decl, funcByName, className, structTypeIdx, fields, routing);
   } finally {
     if (enclosingFunc) {
       ctx.funcStack.pop();
@@ -1623,6 +1633,7 @@ function compileClassBodiesInner(
   className: string,
   structTypeIdx: number,
   fields: FieldDef[],
+  routing?: ClassBodyCompileRouting,
 ): void {
   // Compile constructor
   const ctor = decl.members.find(ts.isConstructorDeclaration) as ts.ConstructorDeclaration | undefined;
@@ -2204,6 +2215,18 @@ function compileClassBodiesInner(
       if (methodLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[methodLocalIdx]!;
+      // (#3522) Static methods whose complete ABI component was sealed and
+      // installed before direct emission own this exact slot. A prepared body
+      // stays intact; an invariant-owned failure receives only a non-shipping
+      // placeholder. Instance methods deliberately remain on the established
+      // direct-then-overlay route in this slice.
+      if (isStatic && routing?.skipBodies.has(fullName)) {
+        if (!routing.preserveSkippedBodies?.has(fullName)) {
+          func.body = [{ op: "unreachable" }];
+        }
+        routing.skippedNames.push(fullName);
+        continue;
+      }
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 

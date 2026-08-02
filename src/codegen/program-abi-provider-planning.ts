@@ -104,6 +104,8 @@ function sameLocator(left: ProviderLocator, right: ProviderLocator): boolean {
  */
 export class ProgramAbiCallableProviderRegistry {
   private readonly observed = new Map<string, ObservedProvider>();
+  private observationOrder: readonly string[] | undefined;
+  private readonly plannedByKey = new Map<string, IrBindingId>();
   private plannedValue: ReadonlyMap<string, IrBindingId> | undefined;
 
   constructor(
@@ -149,6 +151,12 @@ export class ProgramAbiCallableProviderRegistry {
     const structuralReferenceKey = irCallableBindingKey(binding);
     const locator = callableLocatorAt(this.ctx, index);
     const existing = this.observed.get(structuralReferenceKey);
+    if (!existing && this.observationOrder) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `callable provider ${structuralReferenceKey} was discovered after prepared provider planning`,
+      );
+    }
     if (existing && !sameLocator(existing.locator, locator)) {
       throw providerError(
         `callable provider ${structuralReferenceKey} changed allocator ownership between resolutions`,
@@ -168,6 +176,94 @@ export class ProgramAbiCallableProviderRegistry {
   }
 
   /**
+   * Plan the exact providers required by otherwise dependency-complete
+   * prepared components.
+   *
+   * The first call seals the complete post-pass provider-key denominator, so
+   * structural ordinals cannot drift when final planning later discards an
+   * import used only by a withdrawn IR candidate. Providers sharing one
+   * allocator are planned together to keep the lexically first key as the
+   * deterministic canonical owner.
+   */
+  canPlanPrepared(structuralReferenceKeys: ReadonlySet<string>): boolean {
+    for (const key of structuralReferenceKeys) {
+      const provider = this.observed.get(key);
+      if (!provider) return false;
+      if (
+        provider.locator.kind === "import-function" &&
+        this.session.locatorBindingId(provider.locator.value) === undefined
+      ) {
+        // A prepared semantic provider may alias an already planned import,
+        // but it must not take ownership of an import whose canonical import
+        // identity is still intentionally deferred until post-DCE planning.
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Return exact import objects for a complete set of observed provider keys. */
+  importsForPreparedProviders(structuralReferenceKeys: ReadonlySet<string>): ReadonlySet<Import> | undefined {
+    const imports = new Set<Import>();
+    for (const key of structuralReferenceKeys) {
+      const provider = this.observed.get(key);
+      if (!provider) return undefined;
+      if (provider.locator.kind === "import-function") imports.add(provider.locator.value);
+    }
+    return imports;
+  }
+
+  planPrepared(structuralReferenceKeys: ReadonlySet<string>): ReadonlyMap<string, IrBindingId> {
+    if (this.plannedValue) {
+      return new Map(
+        [...structuralReferenceKeys].map((key) => {
+          const id = this.plannedValue!.get(key);
+          if (!id) throw providerError(`prepared callable provider ${key} is absent from the final ABI plan`);
+          return [key, id] as const;
+        }),
+      );
+    }
+    const order = this.sealObservationOrder();
+    const requestedProviders = [...structuralReferenceKeys].map((key) => {
+      const provider = this.observed.get(key);
+      if (!provider) {
+        throw providerError(`prepared callable provider ${key} was not observed before discovery sealed`);
+      }
+      if (
+        provider.locator.kind === "import-function" &&
+        this.session.locatorBindingId(provider.locator.value) === undefined
+      ) {
+        throw providerError(
+          `prepared callable provider ${key} cannot own an import before its canonical import identity is planned`,
+        );
+      }
+      return provider;
+    });
+    const selected = new Set(structuralReferenceKeys);
+    for (const candidate of this.observed.values()) {
+      if (requestedProviders.some((requested) => sameLocator(requested.locator, candidate.locator))) {
+        selected.add(candidate.structuralReferenceKey);
+      }
+    }
+    for (let ordinal = 0; ordinal < order.length; ordinal++) {
+      const key = order[ordinal]!;
+      if (!selected.has(key)) continue;
+      const provider = this.observed.get(key)!;
+      if (currentCallableIndex(this.ctx, provider.locator) === undefined) {
+        throw providerError(`prepared callable provider ${key} lost its exact allocator object`);
+      }
+      this.planProvider(provider, ordinal);
+    }
+    return new Map(
+      [...selected].map((key) => {
+        const id = this.plannedByKey.get(key);
+        if (!id) throw providerError(`prepared callable provider ${key} did not produce an ABI binding`);
+        return [key, id] as const;
+      }),
+    );
+  }
+
+  /**
    * Plan every observed provider against the settled post-DCE module layout.
    *
    * Existing import/source/support locator owners remain canonical. Otherwise
@@ -176,73 +272,68 @@ export class ProgramAbiCallableProviderRegistry {
    */
   planRetained(): ReadonlyMap<string, IrBindingId> {
     if (this.plannedValue) return this.plannedValue;
-    const entrySourceId = canonicalEntrySource(this.session);
-    const entries = [...this.observed.values()]
-      .filter((provider) => {
-        if (currentCallableIndex(this.ctx, provider.locator) !== undefined) return true;
+    const order = this.sealObservationOrder();
+    for (let ordinal = 0; ordinal < order.length; ordinal++) {
+      const provider = this.observed.get(order[ordinal]!)!;
+      if (currentCallableIndex(this.ctx, provider.locator) === undefined) {
         // Resolver observation precedes the ABI-parity withdrawal boundary.
         // When a candidate falls back, DCE legitimately removes an import
         // used only by its discarded IR body. That provider never enters the
         // final ABI. Defined helpers are not eliminated by this pipeline; a
         // missing definition still means allocator ownership was corrupted.
-        if (provider.locator.kind === "import-function") return false;
+        if (provider.locator.kind === "import-function" && !this.plannedByKey.has(provider.structuralReferenceKey)) {
+          continue;
+        }
         throw providerError(`callable provider ${provider.structuralReferenceKey} lost its defined allocator object`);
-      })
-      .sort((left, right) =>
-        left.structuralReferenceKey < right.structuralReferenceKey
-          ? -1
-          : left.structuralReferenceKey > right.structuralReferenceKey
-            ? 1
-            : 0,
-      );
-    const planned = new Map<string, IrBindingId>();
-
-    for (let ordinal = 0; ordinal < entries.length; ordinal++) {
-      const provider = entries[ordinal]!;
-      const signature = cloneProgramAbiCallableTypeContract(callableSignature(this.ctx.mod, provider.locator));
-      const bindingId = createIrBindingId({
-        ownerId: entrySourceId,
-        domain: "callable",
-        role: `${provider.binding.kind}-provider`,
-        ordinal,
-      });
-      const canonicalOwner = this.session.locatorBindingId(provider.locator.value);
-      const common = {
-        id: bindingId,
-        structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
-          domain: "callable" as const,
-          roleOrdinal: PROGRAM_ABI_PROVIDER_ROLE_ORDINAL,
-          derivedOrdinal: ordinal,
-        }),
-        structuralReferenceKey: provider.structuralReferenceKey,
-        displayName: provider.binding.symbol,
-        intent: {
-          kind: "callable" as const,
-          origin: provider.binding.kind,
-          signature: canonicalProgramAbiCallableTypeContract(signature),
-        },
-      };
-      if (canonicalOwner) {
-        this.session.ensurePlan({
-          ...common,
-          slotPolicy: "alias",
-          aliasOf: canonicalOwner,
-        });
-      } else {
-        this.session.ensurePlan({
-          ...common,
-          slotPolicy: "required",
-          slotSpace: "function",
-        });
-        this.session.attachLocator(bindingId, provider.locator as ProgramAbiSlotLocator);
       }
-      this.session.registerCallableTypeContract(bindingId, signature);
-      this.session.registerStructuralReference(bindingId, provider.structuralReferenceKey);
-      planned.set(provider.structuralReferenceKey, bindingId);
+      this.planProvider(provider, ordinal);
     }
+    this.plannedValue = new Map(this.plannedByKey);
+    return this.plannedValue;
+  }
 
-    this.plannedValue = planned;
-    return planned;
+  private sealObservationOrder(): readonly string[] {
+    this.observationOrder ??= Object.freeze([...this.observed.keys()].sort());
+    return this.observationOrder;
+  }
+
+  private planProvider(provider: ObservedProvider, ordinal: number): IrBindingId {
+    const existing = this.plannedByKey.get(provider.structuralReferenceKey);
+    if (existing) return existing;
+    const entrySourceId = canonicalEntrySource(this.session);
+    const signature = cloneProgramAbiCallableTypeContract(callableSignature(this.ctx.mod, provider.locator));
+    const bindingId = createIrBindingId({
+      ownerId: entrySourceId,
+      domain: "callable",
+      role: `${provider.binding.kind}-provider`,
+      ordinal,
+    });
+    const canonicalOwner = this.session.locatorBindingId(provider.locator.value);
+    const common = {
+      id: bindingId,
+      structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
+        domain: "callable" as const,
+        roleOrdinal: PROGRAM_ABI_PROVIDER_ROLE_ORDINAL,
+        derivedOrdinal: ordinal,
+      }),
+      structuralReferenceKey: provider.structuralReferenceKey,
+      displayName: provider.binding.symbol,
+      intent: {
+        kind: "callable" as const,
+        origin: provider.binding.kind,
+        signature: canonicalProgramAbiCallableTypeContract(signature),
+      },
+    };
+    if (canonicalOwner) {
+      this.session.ensurePlan({ ...common, slotPolicy: "alias", aliasOf: canonicalOwner });
+    } else {
+      this.session.ensurePlan({ ...common, slotPolicy: "required", slotSpace: "function" });
+      this.session.attachLocator(bindingId, provider.locator as ProgramAbiSlotLocator);
+    }
+    this.session.registerCallableTypeContract(bindingId, signature);
+    this.session.registerStructuralReference(bindingId, provider.structuralReferenceKey);
+    this.plannedByKey.set(provider.structuralReferenceKey, bindingId);
+    return bindingId;
   }
 
   private requireProviderBinding(ref: IrFuncRef): ProviderBinding {
