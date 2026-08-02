@@ -6,7 +6,7 @@ and a goal being "ready" doesn't mean it should be worked on immediately.
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 30,592 / 43,488 (70.3 %)
+**test262 conformance**: 30,639 / 43,490 (70.5 %)
 
 <!-- AUTO:conformance-end -->
 
@@ -174,6 +174,41 @@ and a goal being "ready" doesn't mean it should be worked on immediately.
 | **self-hosting-dogfood** | Active (s57)                                  | compiled acorn AST == node-acorn                                                                      | compilable (met), crash-free (partial)                                              | #1710 (harness), #1711 (triage), #1712 (acceptance); #1679/#1690/#1690b done                                                                                                                                                                       |
 | **backend-agnostic-ir**  | Active (s57)                                  | IR lowers to 2+ backends via a trait                                                                  | compiler-architecture                                                               | #1713 (trait seam, hard, arch-spec), #1714 (linear proof), #1715 (bytecode proof), #2953 (pushRaw gap, P1), #2954 (LinearEmitter core ops), #2956 (linear consumes IR, XL); feeds #1584                                                            |
 | **ir-full-coverage**     | **Active — NORTH STAR** (elevated 2026-07-02) | ALL AST kinds through the IR front-end; backends fork below the IR; direct AST→Wasm front-end retired | backend-agnostic-ir (trait seam)                                                    | Current retirement: #3518 epic; #3519 truth; #3520–#3523 identity/compile-once; #3525 whole program; #3526 runtime contract; #3527 async plans; #3528 shared linear; #3090 deletion. Historical inputs: #2855/#2856–#2859, #2949–#2952, #2955.     |
+
+
+### ⚠ ES5 + untagged standalone — goal RESTATED 2026-08-01 (project-lead ruling)
+
+**The goal is ~95.4 % EX-DYNAMIC-CODE, not 100 %.** Target **8,150 of 8,545**
+reachable (6,176 passing + 1,974 non-dynamic failures). Scope = test262 files
+carrying `es5id:` **or** none of `es5id`/`es6id`/`esid`.
+
+**317 files are DECLINE-BY-DEPENDENCY and are OUT OF SCOPE — not failures to fix:**
+
+| blocker | files | needs |
+| --- | ---: | --- |
+| eval / `Function` | ~144 | real eval (#2928) — the Acorn interpreter provider; minutes to compile, unaffordable per shard. A **packaging** problem (#2527) as much as a semantics one. |
+| `with` — object environment records with first-class Reference identity | ~162 | a **front-end substrate**, same weight class as the 795-file descriptor MOP |
+
+Near-disjoint; 13 files need both. **Funding eval does NOT deliver `with`** — an
+earlier version of the census said otherwise and was corrected.
+
+- **Do not dispatch agents at these 317.**
+- **Do not measure progress against 8,545 or report "100 %".** A run at 95.4 % is
+  **success**, not a 4.6 % shortfall.
+- **95.4 % is an UPPER BOUND, not a forecast** — 202 files remain unpriced.
+
+**Why the exclusion is sound (non-circularity control):** the same detector run
+over the 6,176 goal-scope *passes* finds **248 files that use `eval`/`with`/
+`Function` and pass anyway**. The 317 were identified by **engine refusal**, not
+by mentioning the feature.
+
+`with` is additionally **168 of 175 host-lane**, so it is shared front-end
+scope-analysis work, not a standalone-gap item.
+
+**Revisit** if #2527 packaging makes real eval affordable per shard.
+
+Evidence: `plan/log/analysis-2026-08-01-es5-untagged-tail-census.md` (baselines
+`d8c30f3b7df0`, js2 main `bc54c09da`).
 
 ## How to use this
 

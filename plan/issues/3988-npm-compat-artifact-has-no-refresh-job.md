@@ -105,16 +105,62 @@ incidents and dropping the parts that do not apply:
 | decision | why |
 | --- | --- |
 | **push to main + 6h cron + dispatch; NOT on PRs** | The artifact is data, not a correctness gate — a PR run has nothing to decide, and a full generation is expensive. The cron is a backstop so a busy main cannot starve the refresh (see concurrency). |
-| **`cancel-in-progress: true`** | Only the newest main matters; a cancelled run is always superseded by one publishing a strictly fresher artifact. benchmark-refresh lets pushes queue because it is 7-12 min — this job is tens of minutes, so queuing would pile up runs already obsolete when they finish. |
+| ~~**`cancel-in-progress: true`**~~ **WRONG — reverted, see "The livelock" below** | ~~Only the newest main matters; a cancelled run is always superseded by one publishing a strictly fresher artifact.~~ The superseding run gets cancelled too, forever, whenever the job is longer than the merge interval. |
 | **Single job, not measure/promote split** | That split exists because benchmark-refresh also runs on PRs, where untrusted code must never reach write credentials. This never runs on a PR, so everything it executes is main's own trusted code. |
 | **Reuses `scripts/main-push-queue-gate.mjs`** | #3915: ANY push to main — including `[skip ci]` — rebuilds every queued merge group and discards the validation running under it. Not optional. |
 | **`github-actions[bot]` actor guard** | Its own `[skip ci]` commit is a push to main. `[skip ci]` suppresses workflows on that commit; the actor check is what makes the loop *impossible* rather than merely unlikely. |
 | **Sanity-check before promoting** | A generator that exits 0 having written a truncated file would blank the dashboard, and the page has no fallback source. Refuses to publish fewer than 20 packages or entries missing `name`/`compile`. |
-| **Main-advanced check before push** | The cron trigger makes "this run measured an older main" reachable in normal operation, not just as a race. |
+| ~~**Main-advanced check before push**~~ **WRONG — reverted, see "The livelock" below** | ~~The cron trigger makes "this run measured an older main" reachable in normal operation, not just as a race.~~ Main advances on EVERY run of a 24-min job, so this deferred 100% of completed runs. |
 
 Option 2 (a PR staleness gate) is **not** implemented and is no longer needed
 for the original failure mode — with CI regenerating on merge, a PR that changes
 the generator without touching the artifact is now correct rather than stale.
+
+## The livelock: the refresh workflow never published anything (2026-08-01)
+
+The workflow shipped and then **did not refresh the artifact once** in the
+following 9 hours. Both causes were my own design decisions in the table above,
+and they composed into a livelock where each one pointed at the other as the
+recovery path.
+
+Measured: the job takes **~24 min** (18:30:40 → 18:54:45). Main merges more
+often than that.
+
+1. **`cancel-in-progress: true` killed every run mid-flight.** 6 of the first 7
+   runs ended `cancelled`. The stated reasoning — "a cancelled run is always
+   superseded by one publishing a strictly fresher artifact" — only holds when
+   the job is SHORTER than the merge interval. Here the superseding run is
+   cancelled by the next push too, indefinitely.
+2. **The one run that survived deferred itself.** Run 30712669325 completed all
+   24 minutes, regenerated, passed the sanity check and the queue gate — then
+   hit the main-advanced guard: `Main advanced from bc7481e4 to 8eb5b837; a
+   newer run owns promotion.` and exited 0. That "newer run" was cancelled by
+   (1). Net effect: `generatedAt` stayed pinned at `2026-08-01T11:06:18Z`, the
+   hand-committed catch-up value, while `cookie`'s fixed lane (#3981, merged in
+   #3987) never appeared on the page.
+
+The **cron was not a backstop against this**, contrary to what this issue
+claimed. A scheduled run lands in the same concurrency group as a push run and
+was cancelled exactly like the others.
+
+### Fixes
+
+| change | why |
+| --- | --- |
+| `cancel-in-progress: false` | Let the measurement finish. GitHub keeps at most ONE pending run per group and cancels older pending ones, so this is bounded at one running + one queued — it is "coalesce", not "pile up". |
+| Replace the sha-equality guard with a **freshness** comparison | The invariant that matters is "never overwrite a NEWER artifact with an older measurement", which is a `generatedAt` comparison. Whether main advanced is irrelevant — it always does. |
+| Replay the artifacts onto current main before pushing (5 attempts) | A commit built on `SOURCE_SHA` can never fast-forward onto an advanced main. Stash the generated files outside the tree, `checkout -B` onto fresh `deploykey/main`, copy back, commit, push; retry on a mid-flight race. |
+| Push failure after 5 replays is now a **hard error** | The old code exited 0 on a failed push whenever main had moved — i.e. silently, every time. A refresh that cannot publish must be loud. |
+
+### Lesson
+
+The generalisable one: **a "newer run will handle it" deferral is only safe if
+something guarantees a newer run actually completes.** Two independent
+mechanisms that each defer to the other produce a system that is green,
+silent, and permanently stuck. Both of this workflow's guards were written to
+avoid publishing a slightly-stale artifact and together they published nothing
+at all — the far worse outcome, and exactly the failure mode (#3958, #3977) the
+workflow exists to prevent.
 
 ### Cost, stated plainly
 

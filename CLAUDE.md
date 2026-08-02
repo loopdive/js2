@@ -188,6 +188,7 @@ Be concise. Lead with the answer, then only the context needed to act on it.
 | `benchmarks/results/playground-benchmark-sidebar.json`    | main repo (committed, ~1KB) | landing-page sidebar wasm/js perf chart; `benchmark-refresh.yml` regression diff baseline                                  | `benchmark-refresh.yml` auto-commit step on every push to main (#1216) | (none)                                                                                                                                                    |
 | `benchmarks/results/npm-compat.json` (+ `-perf`, `-history`, and the `website/public/` twins) | main repo (committed) | the whole `npm-compat.html` dashboard — every package card's compile/validate, tests and perf | `npm-compat-refresh.yml` auto-commit on every push to main, 6h cron backstop (#3988) | pre-promote check in that workflow: refuses to publish <20 packages or entries missing `name`/`compile` |
 
+
 **`npm-compat.json` is refreshed by CI on every merge to main
 (`npm-compat-refresh.yml`, #3988) — do NOT hand-commit it.** Until 2026-08-01
 nothing regenerated it, so changing `scripts/generate-npm-compat-report.mjs` and
@@ -196,6 +197,21 @@ and no signal; that shipped stale twice in one day (#3958 rendered `39/null`;
 #3977 kept showing `lit` as `not-integrated` after its suite landed). The
 workflow now regenerates and auto-commits with `[skip ci]`, gated on the merge
 queue (#3915) and on a pre-promote sanity check.
+
+**The refresh job is ~24 min — LONGER than the interval between merges to main.
+That is load-bearing for anything you change about it (#3988).** Its first cut
+carried `cancel-in-progress: true` plus a "main advanced, a newer run owns
+promotion" guard, and the two composed into a livelock: every run was cancelled
+mid-flight by the next push, the single run that survived deferred to a "newer
+run" that had itself been cancelled, and the artifact did not move for 9 hours
+while CI stayed green. The 6h cron did not save it — a scheduled run shares the
+same concurrency group and is cancelled like any other. If you touch a long
+auto-commit-to-main workflow, the two rules that fall out of this are: **never
+`cancel-in-progress` a job longer than its own trigger interval**, and **gate
+promotion on artifact FRESHNESS (`generatedAt`), never on commit-sha equality
+with the revision you measured** — main always advances underneath you, so a
+sha check defers 100% of runs. Replay the artifact onto current main and retry
+instead.
 
 Two consequences worth knowing:
 
@@ -591,7 +607,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 30,592 / 43,488 (70.3 %)
+**test262 conformance**: 30,639 / 43,490 (70.5 %)
 
 <!-- AUTO:conformance-end -->
 
