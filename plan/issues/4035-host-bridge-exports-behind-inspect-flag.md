@@ -17,6 +17,26 @@ goal: performance
 related: [4034, 2083, 2962, 3469]
 depends_on: [4034]
 origin: "2026-08-01 follow-up to #4034: the flag fix only helps array-free programs; everything else still pays the bridge"
+loc-budget-allow:
+  # The policy needs a documented CompileOptions/CodegenOptions field and one
+  # ctx flag (types.ts, +16 incl. the doc comments that explain WHY the bridge
+  # is a calling convention in one mode and debug surface in the other), plus
+  # the strip call at both generateModule finalize sites (index.ts, +11). The
+  # pass itself is a NEW module, src/codegen/host-bridge-exports.ts — nothing
+  # that could live outside a god-file was put in one.
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+  # +1: forwarding the option through buildCodegenOptions, next to nativeStrings.
+  - src/compiler.ts
+func-budget-allow:
+  # createCodegenContext: the resolved `emitHostBridge` boolean must be derived
+  # where the other target-implication chains live (nativeStrings, strict mode),
+  # so it cannot move. generateModule: two one-line call sites + their comment.
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/index.ts::generateModule
+  # The multi-module finalize path needs the identical strip call — a policy
+  # that applied to single-file builds only would be a silent ABI split.
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4035 — should the host bridge be exported at all in standalone mode?
