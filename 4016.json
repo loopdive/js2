@@ -1,10 +1,11 @@
 {
   "id": "4016",
   "assignee": "ttraenkler/M-regexp",
-  "requested_by": "ttraenkler/M-regexp",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-4016-standalone-search-value-tostring",
   "claimed_at": "2026-08-01T22:53:29Z",
-  "updated_at": "2026-08-01T22:53:29Z",
-  "write_id": "19434-wy8orgpi"
+  "updated_at": "2026-08-02T01:32:39Z",
+  "write_id": "29192-c9nnk4iq",
+  "released_at": "2026-08-02T01:32:39Z"
 }
