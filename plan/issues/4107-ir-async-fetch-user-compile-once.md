@@ -1,7 +1,7 @@
 ---
 id: 4107
 title: "IR async fetchUser compile-once ownership"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
@@ -24,6 +24,11 @@ files:
   - src/codegen/index.ts
   - src/ir/prepared-component-dependencies.ts
   - scripts/ir-only-baseline.json
+  - plan/log/ir-optimization-retirement-ledger.md
+  - plan/issues/4102-ir-promise-delay-closure-compile-once.md
+  - plan/issues/4103-ir-async-runtime-provider-schema.md
+  - plan/issues/4104-ir-async-plan-runtime-consumer.md
+  - plan/issues/4106-ir-async-fetch-user-state-machine.md
   - tests/ir/issue-1373b-async-plan.test.ts
   - tests/issue-4104-ir-async-plan-runtime-consumer.test.ts
   - tests/issue-4106-ir-async-fetch-user.test.ts
@@ -86,3 +91,32 @@ awaits and void settlement). Those three admissions project 37/37 IR emission,
 but still only 7/37 compile-once owners and 30/37 legacy bodies; broader
 retirement remains #3518 R2–R8. Do not add another scheduler or async emitter;
 keep the existing frame engine as the sole consumer.
+
+## Result
+
+- The exact top-level host `fetchUser` callable freezes its canonical Promise
+  ABI before Program ABI publication and enters the sealed prepared-function
+  transaction without first compiling a direct body.
+- Prepared async dependency sealing consumes the semantic async plan and its
+  runtime adapters instead of the discarded pre-transform await block.
+- Runtime execution still resolves `fetchUser(7)` to `70`; direct-only,
+  host-free, near-miss, ABI-mismatch, and terminal-failure cases remain on
+  their previous routes.
+- The production corpus remains 34/37 IR-emitted with three typed async
+  blockers and zero invariants. Legacy body emission is now banked at 33,
+  down from 34.
+- Numeric Promise-carrier output shape is verified by function-specific WAT
+  evidence. Performance evidence remains pending, so the ledger row is not
+  retirement-ready.
+
+## Validation
+
+- `pnpm exec vitest run tests/issue-4104-ir-async-plan-runtime-consumer.test.ts tests/issue-4106-ir-async-fetch-user.test.ts tests/ir/issue-1373b-async-plan.test.ts`
+  — 21/21 tests pass.
+- `pnpm exec tsx scripts/check-ir-only.ts --policy=hybrid` — READY at 34/37
+  IR-emitted, 33 legacy bodies, three typed blockers, and zero invariants.
+- `pnpm run check:ir-optimization-retirement` — 22 rows, 11 IR-owned, one
+  retirement-ready.
+- `pnpm run check:ir-fallbacks`, `pnpm run typecheck`, `pnpm run check:issues`,
+  focused Prettier and Biome lint, source/function budgets, and
+  `git diff --check` pass.

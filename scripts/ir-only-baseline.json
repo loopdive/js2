@@ -7,7 +7,7 @@
       "terminalUnitFloor": 37,
       "emittedFloor": 34,
       "irBodyEmittedFloor": 34,
-      "legacyBodyEmittedCeiling": 34,
+      "legacyBodyEmittedCeiling": 33,
       "unsupportedCeiling": 3,
       "unsupportedByCode": {
         "select/async-function": 3
