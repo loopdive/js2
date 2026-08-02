@@ -91,7 +91,53 @@ itself reported `improvements=24`, `wasm-change regressions=0`, `net=24`. This
 is an infrastructure blocker tracked by #1668, not a scoped #1906 implementation
 or local validation failure.
 
-## Harvest note — residual (2026-07-13, /harvest-errors)
+## Attribution CORRECTION (2026-08-02, #4047) — read this before the note below
+
+**`status: done` is accurate. This is not a regression.** #1906 shipped the
+native plural path for a `$Object`→`$Object` apply and deliberately installed a
+fail-loud refusal for every other receiver shape. The refusal string below is
+that ceiling firing, not the landed work breaking.
+
+**The 2026-07-13 note's attribution is wrong, and it stood unchallenged for
+three weeks.** It blamed "a residual descriptor-shape family (accessor
+descriptors / mixed data+accessor / non-object entries)". Measured on the CI
+path over all 952 files under `built-ins/Object/{defineProperties,create}`,
+with each of the five `throwUnsupported()` sites separately tagged (corpus
+`b363f29d`; instrument validated at 951/952 file-level agreement with the
+committed standalone baseline, and 0 flips between the tagged and untagged
+runs):
+
+> **Zero** of the 61 official / 50 goal-scope records reach either
+> per-descriptor site. **100%** are refusals of the RECEIVER's wasm
+> representation — `Properties` (or `O`) is not the open-object `$Object`.
+
+| refusal site | files | goal scope |
+| --- | --- | --- |
+| `Properties` is an object with no bag carrier (Date/RegExp/Error/ctor-instance/closed struct) | 27 | 26 |
+| `Properties` is a vec carrier (Array / `arguments`) | 9 | 9 |
+| `O` is not a `$Object` (Array receiver) | 8 | 8 |
+| `Properties` is a Function (closure carrier) | 5 | 5 |
+| `Properties` is a primitive / `undefined` | 4 | 2 |
+| per-descriptor sites (`DESC-NULL`, `DESC-NOT-OBJ`) | **0** | **0** |
+
+The message names a *descriptor* problem while the defect is a
+*representation* problem. That mismatch is why the family survived four
+consecutive descriptor-side fixes (#3983, #3984, #3991, #4032) — each was
+aimed at the thing the string said, and none of them could have moved it.
+
+**Generalisable lesson:** a shared error string is a signature, not a
+mechanism. When a refusal cites an issue id, the id ages into a claim about
+cause that nobody re-derives. #4047 replaces the single string with
+per-mechanism tags (`SITE-O-NO-CARRIER`, `SITE-PROPS-NO-CARRIER`,
+`SITE-PROPS-VEC-INDEXED`, `SITE-PROPS-STRING-INDICES`) so the next harvest
+reads the mechanism directly.
+
+#4047 resolves the receiver shapes that have a complete answer (+13 measured in
+that scoped set, 0 regressions) and keeps refusing the rest. The 26-file
+no-carrier bucket is blocked on the exotic-receiver own-property substrate
+(#4010).
+
+## Harvest note — residual (2026-07-13, /harvest-errors) — SUPERSEDED, see above
 
 Standalone baseline run `20260713-085257` (gitHash `bb27494f`) still shows
 **79 records** emitting the exact string
