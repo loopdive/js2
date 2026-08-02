@@ -2215,12 +2215,12 @@ function compileClassBodiesInner(
       if (methodLocalIdx === undefined) continue;
 
       const func = ctx.mod.functions[methodLocalIdx]!;
-      // (#3522) Static methods whose complete ABI component was sealed and
+      // (#3522) Ordinary methods whose complete ABI component was sealed and
       // installed before direct emission own this exact slot. A prepared body
       // stays intact; an invariant-owned failure receives only a non-shipping
-      // placeholder. Instance methods deliberately remain on the established
-      // direct-then-overlay route in this slice.
-      if (isStatic && routing?.skipBodies.has(fullName)) {
+      // placeholder. Constructors and accessors deliberately remain on the
+      // established direct-then-overlay route in this slice.
+      if (routing?.skipBodies.has(fullName)) {
         if (!routing.preserveSkippedBodies?.has(fullName)) {
           func.body = [{ op: "unreachable" }];
         }

@@ -26,6 +26,14 @@ interface ProgramAbiClassLayoutObservation {
   readonly cell: ProgramAbiTypeCell;
 }
 
+/** True when a class layout has no type-index-bearing field or parent edge. */
+export function isEarlyStableScalarClassLayout(type: StructTypeDef): boolean {
+  return (
+    type.superTypeIdx === undefined &&
+    type.fields.every((field) => ["i32", "i64", "f32", "f64", "v128", "i8", "i16"].includes(field.type.kind))
+  );
+}
+
 function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
   const entrySources = session.inventory.sources.filter((source) => source.kind === "entry");
   if (entrySources.length !== 1) {
@@ -123,6 +131,39 @@ export class ProgramAbiTypeRegistry {
     if (!type || type.kind !== "struct") return undefined;
     const typeIdx = this.ctx.mod.types.indexOf(type);
     return typeIdx < 0 ? undefined : Object.freeze({ typeIdx, type });
+  }
+
+  /** Whether one collected class layout is stable before type-index compaction. */
+  canPrepareScalarClassLayout(classId: IrClassId): boolean {
+    const layout = this.layoutForClass(classId);
+    return layout !== undefined && isEarlyStableScalarClassLayout(layout.type);
+  }
+
+  /** Publish one index-stable scalar class layout for an early prepared component. */
+  prepareScalarClassLayout(classId: IrClassId): void {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot prepare class layout ${classId} after retained type planning`,
+      );
+    }
+    const classRecord = this.session.inventory.classes.find((record) => record.id === classId);
+    const observations = this.classes.get(classId) ?? [];
+    const canonical = observations.filter((observation) => observation.cell.current !== null).at(-1);
+    const current = canonical?.cell.current;
+    if (
+      !classRecord ||
+      !canonical ||
+      !current ||
+      current.kind !== "struct" ||
+      !isEarlyStableScalarClassLayout(current)
+    ) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `prepared class ${classId} has no retained index-stable scalar layout`,
+      );
+    }
+    this.planClass(classId, canonical.displayName, current, canonical.cell);
   }
 
   /** Return the backend-neutral Program-ABI identity used by final string IR. */

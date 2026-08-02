@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
-import type { IrUnitId } from "../ir/identity.js";
+import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
@@ -30,7 +30,7 @@ export interface PreparedIrFreeFunctionBodies {
   readonly preserveBodies: ReadonlySet<string>;
 }
 
-export interface PreparedIrStaticClassMethodBodies {
+export interface PreparedIrClassMethodBodies {
   readonly report: IrIntegrationReport;
   readonly requestedSkipProjection: IrLegacyUnitProjection;
   readonly completedBodies: ReadonlySet<string>;
@@ -38,27 +38,44 @@ export interface PreparedIrStaticClassMethodBodies {
   readonly preserveBodies: ReadonlySet<string>;
 }
 
-/** Project selected static methods through exact structural class ownership. */
-export function selectPreparedStaticClassMethodNames(input: {
-  readonly selection: Pick<IrSelection, "classMembers">;
-  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
-}): ReadonlySet<string> {
-  const selectedNames = new Set(input.selection.classMembers ?? []);
-  const staticNames = new Set<string>();
-  for (const claim of input.identityPlan.identitySelection.classMembers?.values() ?? []) {
-    const terminal = input.identityPlan.identityContext.terminalByUnitId.get(claim.unitId);
-    const declaration = input.identityPlan.identityContext.declarationByUnitId.get(claim.unitId);
+/** Project selected ordinary methods through exact structural class ownership. */
+export function selectPreparedClassMethodNames(
+  ctx: CodegenContext,
+  selection: Pick<IrSelection, "classMembers">,
+  identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
+): ReadonlySet<string> {
+  const selectedNames = new Set(selection.classMembers ?? []);
+  const methodNames = new Set<string>();
+  for (const claim of identityPlan.identitySelection.classMembers?.values() ?? []) {
+    const terminal = identityPlan.identityContext.terminalByUnitId.get(claim.unitId);
+    const declaration = identityPlan.identityContext.declarationByUnitId.get(claim.unitId);
+    const owner = declaration?.parent;
+    const instanceClassId =
+      owner !== undefined && ts.isClassDeclaration(owner)
+        ? identityPlan.identityContext.classIdByDeclaration.get(owner)
+        : undefined;
+    // Derived layouts receive a late leaf-finality decision and constructors /
+    // inherited support still cross the direct boundary. Keep this first
+    // instance-method owner on exact top-level classes without `extends`.
+    const instanceOwnerIsFlat =
+      owner !== undefined &&
+      ts.isClassDeclaration(owner) &&
+      ts.isSourceFile(owner.parent) &&
+      !(owner.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword) ?? false) &&
+      instanceClassId !== undefined &&
+      ctx.programAbiTypes?.canPrepareScalarClassLayout(instanceClassId) === true;
     if (
       selectedNames.has(claim.legacyMatchName) &&
-      terminal?.staticClassMember === true &&
+      (terminal?.kind === "class-static-method" ||
+        (terminal?.kind === "class-instance-method" && instanceOwnerIsFlat)) &&
       declaration !== undefined &&
       ts.isMethodDeclaration(declaration) &&
       !containsNestedExecutableSyntax(declaration)
     ) {
-      staticNames.add(claim.legacyMatchName);
+      methodNames.add(claim.legacyMatchName);
     }
   }
-  return staticNames;
+  return methodNames;
 }
 
 function deferUnsealedPreparedComponents(
@@ -450,8 +467,8 @@ export function prepareIrFreeFunctionBodies(input: {
   };
 }
 
-/** Prepare selected top-level static class methods before direct class bodies. */
-export function prepareIrStaticClassMethodBodies(input: {
+/** Prepare selected top-level ordinary class methods before direct class bodies. */
+export function prepareIrClassMethodBodies(input: {
   readonly ctx: CodegenContext;
   readonly sourceFile: ts.SourceFile;
   readonly selection: Pick<IrSelection, "classMembers">;
@@ -459,17 +476,44 @@ export function prepareIrStaticClassMethodBodies(input: {
   readonly overrideMap: IrTypeOverrideMap;
   readonly classShapes: ReadonlyMap<string, IrClassShape>;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
-}): PreparedIrStaticClassMethodBodies | undefined {
-  const staticNames = selectPreparedStaticClassMethodNames(input);
+}): PreparedIrClassMethodBodies | undefined {
+  const methodNames = selectPreparedClassMethodNames(input.ctx, input.selection, input.identityPlan);
   const claimsByUnitId = new Map<IrUnitId, IrExactBodyClaim>();
   for (const claim of input.identityPlan.identitySelection.classMembers?.values() ?? []) {
-    if (!staticNames.has(claim.legacyMatchName)) continue;
+    if (!methodNames.has(claim.legacyMatchName)) continue;
     claimsByUnitId.set(claim.unitId, { unitId: claim.unitId, legacyName: claim.legacyMatchName });
   }
   if (claimsByUnitId.size === 0) return undefined;
+  const classLayouts = new Set<IrClassId>();
+  for (const unitId of claimsByUnitId.keys()) {
+    const terminal = input.identityPlan.identityContext.terminalByUnitId.get(unitId);
+    if (terminal?.kind !== "class-instance-method") continue;
+    const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
+    const owner = declaration?.parent;
+    const classId =
+      owner !== undefined && ts.isClassDeclaration(owner)
+        ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
+        : undefined;
+    if (!classId) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared instance method ${unitId} has no exact class-layout owner`,
+      );
+    }
+    classLayouts.add(classId);
+  }
+  if (classLayouts.size > 0 && !input.ctx.programAbiTypes) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "prepared instance methods require one exact class-layout ABI registry",
+    );
+  }
+  for (const classId of classLayouts) input.ctx.programAbiTypes!.prepareScalarClassLayout(classId);
   const selection: IrSelection = {
     funcs: new Set<string>(),
-    classMembers: staticNames,
+    classMembers: methodNames,
     moduleInit: undefined,
   };
   const initialReport = compileIrPathFunctions(
@@ -490,7 +534,7 @@ export function prepareIrStaticClassMethodBodies(input: {
   return {
     report,
     requestedSkipProjection,
-    completedBodies: new Set([...staticNames].filter((legacyName) => !deferredBodies.has(legacyName))),
+    completedBodies: new Set([...methodNames].filter((legacyName) => !deferredBodies.has(legacyName))),
     skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
     preserveBodies: new Set(preparedProjection.entries.map(({ legacyName }) => legacyName)),
   };

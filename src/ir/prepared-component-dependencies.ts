@@ -1012,7 +1012,8 @@ function freezeComponent(
  *
  * Exact unit references close the terminal component as an undirected
  * ownership graph. Every directly encoded global/support/class-layout
- * identity is reconciled against Program ABI evidence. Source globals remain
+ * identity is reconciled against Program ABI evidence. Terminals sharing one
+ * canonical class layout form one atomic component. Source globals remain
  * blocked until their terminal storage owner is explicit. Class call sites
  * close over exact callable targets when present; compatibility nodes without
  * one remain blocked rather than guessing from a member name.
@@ -1056,11 +1057,20 @@ export function derivePreparedComponentDependencies(
   }
 
   const union = new ComponentUnion(input.terminalUnitIds);
+  const classLayoutOwner = new Map<IrBindingId, IrUnitId>();
   for (const item of evidence) {
     for (const dependency of item.unitDependencies.values()) {
       union.connect(item.terminalOwnerUnitId, dependency.terminalOwnerUnitId);
     }
     for (const dependency of item.abiDependencies.values()) {
+      if (dependency.kind === "class-layout") {
+        const previousOwner = classLayoutOwner.get(dependency.canonicalBindingId);
+        if (previousOwner === undefined) {
+          classLayoutOwner.set(dependency.canonicalBindingId, item.terminalOwnerUnitId);
+        } else {
+          union.connect(item.terminalOwnerUnitId, previousOwner);
+        }
+      }
       if (
         dependency.kind === "source-global" &&
         dependency.terminalOwnerUnitId !== null &&
