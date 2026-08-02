@@ -6,6 +6,7 @@
 - **READ THE RECORD, NOT THE REPORT** — trust state, never a tool's output. Verify by effect — [budget-grant-family](reference_budget_grant_from_another_issue_fails_in_ci.md)
 - **SILENT-EMPTY IS THE DEFAULT HYPOTHESIS** — empty/zero/green from an unproven tool ≠ a result. Positive control · floor the count · print provenance — [silent-empty](reference_silent_empty_is_indistinguishable_from_real.md)
 - **MEASURE, NEVER EXTRAPOLATE** — "compiles"≠"passes"; always give denominators — [measure-never-extrapolate](feedback_measure_never_extrapolate.md)
+- **A SUMMARY GIVES SIZE, NEVER SHAPE** — "it both fixes and breaks, so it can't be one bug" is UNSOUND; one defect on a shared hot path does exactly that. Read the ROWS, diff the ERROR TEXTS — [summary-gives-size-not-shape](reference_a_regression_summary_gives_size_never_shape.md)
 - **`origin` IS THE FORK in /workspace** — verify landed code against `upstream/main` by merge-commit ancestry — [origin-is-the-fork](reference_origin_is_the_fork_verify_against_upstream_main.md)
 - **ALWAYS spawn writers as teammates** + `isolation: worktree` + bypassPermissions.
 - **BEFORE EVERY git add/commit**: `pwd && git branch --show-current`. Never `git add -A`.
