@@ -5986,9 +5986,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return null;
   }
 
-  // (#1371/#2856) Exact-arity Math builtin. Direct Wasm unary ops remain
-  // direct; transcendental methods call the self-hosted Math_<method> helper
-  // already registered by the legacy declaration scan.
+  // (#1371/#2856/#3526 M1) Exact-arity Math builtin. Every accepted method
+  // becomes a semantic intrinsic here; runtime/backend provider selection is
+  // deferred until final IR preparation, after all middle-end transforms.
   // the shape BEFORE lowering the receiver, because `Math` is a host
   // global with no IR type binding (lowerExpr on `Math` would throw
   // "unknown identifier"). The selector's `isPhase1Expr` already
@@ -6018,11 +6018,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         }
         return arg;
       });
-      if ("op" in plan) return cx.builder.emitUnary(plan.op, args[0]!, irVal({ kind: "f64" }));
-      const result = cx.builder.emitCall(irRuntimeFuncRef(plan.helper), args, irVal({ kind: "f64" }));
-      if (result === null)
-        throw new Error(`ir/from-ast: Math.${methodName} helper produced no result (${cx.funcName})`);
-      return result;
+      const source = expr.getSourceFile();
+      const position = source.getLineAndCharacterOfPosition(expr.getStart(source));
+      return cx.builder.emitIntrinsic(plan.intrinsic, args, {
+        line: position.line + 1,
+        column: position.character,
+      });
     }
     throw new Error(`ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }

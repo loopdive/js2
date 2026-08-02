@@ -112,6 +112,7 @@ import { planIrCompilationByIdentity, projectIrSelectionToLegacy } from "../sele
 import { buildIrRecursiveTypeEvidence } from "../type-evidence.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
+import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
 import type { TypeConverter } from "./contract.js";
 import { verifyIrBackendLegality } from "./legality.js";
 import { LinearEmitter } from "./linear-emitter.js";
@@ -450,6 +451,16 @@ export function getLastLinearIrReport(): LinearIrResult | undefined {
   return lastReport;
 }
 
+function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourceFile: string): readonly IrFunction[] {
+  return (
+    prepareIrRuntimeManifest({
+      functions,
+      sourceFile,
+      policy: { target: "host", backend: "linear" },
+    })?.functions ?? functions
+  );
+}
+
 /**
  * Build + lower every selector-claimed top-level FunctionDeclaration for the
  * LINEAR backend. Precompute mutates only append-only/deduped func types and
@@ -724,7 +735,9 @@ export function compileLinearIrFunctions(
     const fn = built.get(ownerUnitId);
     return fn ? [fn] : [];
   });
-  irModule = { functions: plannedFunctions };
+  const preparedFunctions = prepareLinearIntrinsicFunctions(plannedFunctions, sourceFile.fileName);
+  for (const fn of preparedFunctions) built.set(fn.unitId, fn);
+  irModule = { functions: preparedFunctions };
   memoryPlan = planLinearMemory(irModule, allocRegistry, allocationPolicy);
   bindMemoryPlan(memoryPlan);
 

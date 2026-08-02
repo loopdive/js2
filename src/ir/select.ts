@@ -87,6 +87,7 @@ import type {
 } from "./module-bindings.js";
 import type { LatticeType, TypeMap } from "./propagate.js";
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
+import type { IntrinsicId } from "./intrinsics.js";
 
 /**
  * #1169q telemetry — record why a top-level FunctionDeclaration didn't make
@@ -206,30 +207,32 @@ function takeShapeRejectDetail(): string | undefined {
 export type IrMathMethodPlan =
   | {
       readonly arity: 1;
+      readonly intrinsic: IntrinsicId;
       readonly op: "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
     }
-  | { readonly arity: 1 | 2; readonly helper: `Math_${string}` };
+  | { readonly arity: 1 | 2; readonly intrinsic: IntrinsicId };
 
 /**
  * Exact-arity Math surface shared by selection, call-graph closure, and the
- * AST→IR builder. Direct Wasm unary operations stay direct; transcendental
- * functions call the already-registered self-hosted `Math_<method>` helper.
- * Keeping arity in this table prevents selector/builder drift and preserves
- * ambient-Math identity checks at each consumer.
+ * AST→IR builder. Every accepted method becomes a versioned semantic
+ * intrinsic. `op` remains only as a selector compatibility signal for the
+ * five methods that never require a callable provider; provider selection is
+ * performed after middle-end transforms. Keeping arity here prevents
+ * selector/builder drift and preserves ambient-Math identity checks.
  */
 export const IR_MATH_METHOD_TABLE: Readonly<Record<string, IrMathMethodPlan>> = {
-  abs: { arity: 1, op: "f64.abs" },
-  sqrt: { arity: 1, op: "f64.sqrt" },
-  floor: { arity: 1, op: "f64.floor" },
-  ceil: { arity: 1, op: "f64.ceil" },
-  trunc: { arity: 1, op: "f64.trunc" },
-  sin: { arity: 1, helper: "Math_sin" },
-  cos: { arity: 1, helper: "Math_cos" },
-  exp: { arity: 1, helper: "Math_exp" },
-  log: { arity: 1, helper: "Math_log" },
-  log2: { arity: 1, helper: "Math_log2" },
-  pow: { arity: 2, helper: "Math_pow" },
-  atan2: { arity: 2, helper: "Math_atan2" },
+  abs: { arity: 1, intrinsic: "math.abs", op: "f64.abs" },
+  sqrt: { arity: 1, intrinsic: "math.sqrt", op: "f64.sqrt" },
+  floor: { arity: 1, intrinsic: "math.floor", op: "f64.floor" },
+  ceil: { arity: 1, intrinsic: "math.ceil", op: "f64.ceil" },
+  trunc: { arity: 1, intrinsic: "math.trunc", op: "f64.trunc" },
+  sin: { arity: 1, intrinsic: "math.sin" },
+  cos: { arity: 1, intrinsic: "math.cos" },
+  exp: { arity: 1, intrinsic: "math.exp" },
+  log: { arity: 1, intrinsic: "math.log" },
+  log2: { arity: 1, intrinsic: "math.log2" },
+  pow: { arity: 2, intrinsic: "math.pow" },
+  atan2: { arity: 2, intrinsic: "math.atan2" },
 };
 
 /** Compatibility view for callers/tests that only need the method names. */

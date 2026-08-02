@@ -574,6 +574,10 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
       return `${instr.kind} resolves async runtime support without explicit symbolic refs`;
     case "const":
     case "call":
+    case "intrinsic":
+      return instr.kind === "intrinsic" && !instr.provider
+        ? `${instr.kind} has no provider from the frozen runtime manifest`
+        : null;
     case "global.get":
     case "global.set":
     case "unary":
@@ -866,6 +870,10 @@ function collectFunctionEvidence(
             );
           } else {
             recordExternalCallable(evidence, nested.target, input.abi, ownership);
+          }
+        } else if (nested.kind === "intrinsic") {
+          if (nested.provider?.kind === "callable") {
+            recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
           }
         } else if (nested.kind === "closure.new") {
           if (nested.liftedFunc.binding.kind === "unit") {

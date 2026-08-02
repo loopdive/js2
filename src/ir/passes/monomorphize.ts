@@ -706,6 +706,7 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "raw.wasm":
       return [];
     case "call":
+    case "intrinsic":
       return instr.args;
     case "global.set":
       return [instr.value];

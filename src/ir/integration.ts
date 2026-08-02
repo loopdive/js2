@@ -224,6 +224,10 @@ import {
   type IrSelection,
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
+import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
+import { isIntrinsicId, type IntrinsicId } from "./intrinsics.js";
+import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
+import type { RuntimeProviderPlan } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance } from "./verify-alloc.js";
@@ -365,6 +369,36 @@ interface BuiltFn {
   readonly classMember?: boolean;
   /** True when the artifact patches the exact module-initializer slot. */
   readonly moduleInit?: boolean;
+}
+
+function prepareBuiltFnRuntimeManifest(
+  ctx: CodegenContext,
+  sourceFile: string,
+  entries: readonly BuiltFn[],
+): { readonly entries: readonly BuiltFn[]; readonly runtime?: PreparedIrRuntimeManifest } {
+  const runtime = prepareIrRuntimeManifest({
+    functions: entries.map((entry) => entry.fn),
+    sourceFile,
+    policy: {
+      target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
+      backend: "wasmgc",
+    },
+  });
+  if (!runtime) return { entries };
+  const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
+  const preparedEntries = entries.map((entry) => {
+    const fn = preparedByUnitId.get(entry.artifactUnitId);
+    if (!fn) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `runtime-manifest preparation lost artifact ${entry.artifactUnitId} / ${entry.name}`,
+      );
+    }
+    return fn === entry.fn ? entry : { ...entry, fn };
+  });
+  materializePreparedMathProviders(ctx, runtime);
+  return { entries: preparedEntries, runtime };
 }
 
 function planDependencyBlockingCallableProviders(
@@ -1967,8 +2001,18 @@ export function compileIrPathFunctions(
       return false;
     }
   };
+  let preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined;
   if (!runGlobalPreparation(() => (healthyForLower = prepareStrings(ctx, healthyForLower)))) return finishReport();
   if (!runGlobalPreparation(() => (healthyForLower = prepareVectors(ctx, healthyForLower)))) return finishReport();
+  if (
+    !runGlobalPreparation(() => {
+      const prepared = prepareBuiltFnRuntimeManifest(ctx, sourceFile.fileName, healthyForLower);
+      preparedRuntimeManifest = prepared.runtime;
+      healthyForLower = [...prepared.entries];
+    })
+  ) {
+    return finishReport();
+  }
   if (!runGlobalPreparation(() => preregisterHostDateSnapshotSupport(ctx, healthyForLower))) {
     return finishReport();
   }
@@ -2023,7 +2067,11 @@ export function compileIrPathFunctions(
   ) {
     return finishReport();
   }
-  recordOwnerPreparationFailures(failures, failedOwners, preregisterCallableProviders(ctx, healthyForLower));
+  recordOwnerPreparationFailures(
+    failures,
+    failedOwners,
+    preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest?.providers),
+  );
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
   const importedCallableCatalog = catalogProgramAbiCallableImports(ctx);
@@ -2364,6 +2412,7 @@ export function compileIrPathFunctions(
       deferredClass,
       unitCallableSlots,
       importedCallableCatalog,
+      preparedRuntimeManifest?.providers,
     );
     const resolverInjection = process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE;
     if (resolverInjection === "function") resolver.resolveFunc(irIntrinsicFuncRef("__injected_missing_func"));
@@ -3870,7 +3919,11 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
   };
 }
 
-function resolveAndObserveCallableProvider(ctx: CodegenContext, ref: IrFuncRef): number {
+function resolveAndObserveCallableProvider(
+  ctx: CodegenContext,
+  ref: IrFuncRef,
+  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+): number {
   if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") {
     throw new TypeError("callable-provider resolution requires a runtime or intrinsic reference");
   }
@@ -3880,7 +3933,24 @@ function resolveAndObserveCallableProvider(ctx: CodegenContext, ref: IrFuncRef):
 
   let index: number | null | undefined;
   const { symbol } = ref.binding;
-  if (ref.binding.kind === "intrinsic" && symbol === FMOD_FN) {
+  if (ref.binding.kind === "intrinsic" && isIntrinsicId(symbol)) {
+    const provider = runtimeProviders?.get(symbol);
+    if (!provider || provider.implementation.kind !== "self-hosted") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `semantic intrinsic ${symbol} has no frozen callable provider`,
+      );
+    }
+    if (ref.name !== provider.implementation.symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `semantic intrinsic ${symbol} changed provider from ${provider.implementation.symbol} to ${ref.name}`,
+      );
+    }
+    index = preparedMathProviderIndex(ctx, provider.implementation.symbol);
+  } else if (ref.binding.kind === "intrinsic" && symbol === FMOD_FN) {
     index = ensureFmod(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
     const element = parseIrVectorRuntimeElement(symbol, IR_VEC_ELEM_SET_PREFIX);
@@ -3996,6 +4066,7 @@ function makeResolver(
   classResolver: DeferredClassResolver,
   unitCallableSlots: ReadonlyMap<IrUnitId, IrUnitCallableSlot>,
   importedCallableCatalog: ReadonlyMap<string, Import>,
+  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
 ): IrLowerResolver {
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
@@ -4068,7 +4139,7 @@ function makeResolver(
         );
       }
       if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
-        return resolveAndObserveCallableProvider(ctx, ref);
+        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders);
       }
       const adapterName = ref.binding.kind === "import" ? ref.binding.field : ref.name;
       const idx = ctx.funcMap.get(adapterName);
@@ -4392,6 +4463,8 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
   switch (instr.kind) {
     case "call":
       return instr.target;
+    case "intrinsic":
+      return instr.provider?.kind === "callable" ? instr.provider.target : undefined;
     case "closure.new":
       return instr.liftedFunc;
     case "class.call":
@@ -4417,6 +4490,7 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
 function preregisterCallableProviders(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
+  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
 ): ReadonlyMap<IrUnitId, IrOwnerPreparationFailure> {
   const failures = new Map<IrUnitId, IrOwnerPreparationFailure>();
   const owners = new Map<IrUnitId, IrLegacyUnitProjectionEntry>();
@@ -4442,7 +4516,7 @@ function preregisterCallableProviders(
           const ref = callableProviderRef(instr);
           if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
           try {
-            resolveAndObserveCallableProvider(ctx, ref);
+            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders);
           } catch (error) {
             if (!failures.has(owner.unitId)) {
               failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });
