@@ -188,3 +188,42 @@ describe("#3980 Annex B B.3.3 — the extension is NOT cancelled when the scope 
     ).toEqual([]);
   });
 });
+
+/**
+ * (#4091) `collectAnnexBCancelSites` is reached from `compileIdentifierCore` as
+ * `collectAnnexBCancelSites(id.getSourceFile())`, and `getSourceFile()` returns
+ * **undefined** for a *synthesized* identifier — one the compiler manufactured
+ * mid-lowering, with no `parent` chain to walk up. Those exist: script-goal
+ * top-level `this` is lowered by re-entering `compileIdentifier` with a fresh
+ * `ts.factory.createIdentifier("globalThis")` (#3365, `expressions.ts`).
+ *
+ * Memoizing on that undefined key threw `TypeError: Invalid value used as weak
+ * map key`, which `compileExpressionBody`'s speculative catch converted into
+ * `Internal error compiling expression` — a **whole-file compile_error** for
+ * code with no Annex B content whatsoever. Measured on the #4027 merge_group
+ * run: 666 additional test262 files hit it, 152 of them flipping `pass →
+ * compile_error` in the host lane and 143 in the standalone lane (100% of that
+ * run's non-timeout regressions in BOTH lanes).
+ *
+ * These two tests are the detector for that. The end-to-end one is the load-
+ * bearing half: it fails if the `if (!sf)` guard is removed, which the unit
+ * test alone would not.
+ */
+describe("#4091 — a synthesized identifier has no SourceFile", () => {
+  it("collectAnnexBCancelSites(undefined) answers 'no sites' instead of throwing", () => {
+    expect(collectAnnexBCancelSites(undefined)).toEqual([]);
+  });
+
+  it("script-goal top-level `this` (lowered to a synthesized `globalThis`) still compiles", async () => {
+    // Script goal, NOT module: no import/export, so `ctx.sourceIsModule` is
+    // false and `this` takes the `createIdentifier("globalThis")` path. Without
+    // the guard this reports `Invalid value used as weak map key` and fails.
+    const r = await compile(`var g: any = this;\nconsole.log(typeof g);\n`, {
+      fileName: "test.ts",
+      skipSemanticDiagnostics: true,
+    });
+    const messages = (r.errors ?? []).map((e) => e.message).join(" | ");
+    expect(messages).not.toContain("weak map key");
+    expect(r.success, messages).toBe(true);
+  });
+});

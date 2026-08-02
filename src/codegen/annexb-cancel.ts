@@ -274,13 +274,29 @@ export function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | n
 
 const CACHE = new WeakMap<ts.SourceFile, AnnexBCancelSite[]>();
 
+/** Shared empty result for callers with no SourceFile — never mutated. */
+const NO_SITES: AnnexBCancelSite[] = [];
+
 /**
  * Collect every Annex B B.3.3 site in `sf` whose web-compat var binding is
  * cancelled AND whose enclosing scope has no other binding for the name — i.e.
  * every name that must read as *unbound* outside its declaring block.
  * Memoized per SourceFile; the result is almost always empty.
+ *
+ * `sf` is OPTIONAL because the only caller derives it from
+ * `identifier.getSourceFile()`, which returns `undefined` for a **synthesized**
+ * identifier — one the compiler manufactured during a desugaring, with no
+ * `parent` chain to walk up. Those are common (`with`, `eval`, receiver and
+ * `this` rewrites, …) and they carry no source position, so no Annex B question
+ * can be asked about them: answer "no sites" and, critically, do NOT touch the
+ * `WeakMap`. `CACHE.set(undefined, …)` throws `TypeError: Invalid value used as
+ * weak map key`, which `compileExpressionBody`'s speculative catch converts into
+ * `Internal error compiling expression` — i.e. a **compile_error for the whole
+ * file**. Un-guarded, this fired on 666 test262 files that have nothing to do
+ * with Annex B (152 of them `pass` → `compile_error`); see #4091.
  */
-export function collectAnnexBCancelSites(sf: ts.SourceFile): AnnexBCancelSite[] {
+export function collectAnnexBCancelSites(sf: ts.SourceFile | undefined): AnnexBCancelSite[] {
+  if (!sf) return NO_SITES;
   const cached = CACHE.get(sf);
   if (cached) return cached;
   const sites: AnnexBCancelSite[] = [];
