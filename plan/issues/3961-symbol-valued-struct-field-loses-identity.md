@@ -14,6 +14,11 @@ task_type: bug
 area: compiler
 language_feature: symbols
 goal: value-rep
+trap-growth-allow:
+  count: 1
+  reason: "#3961 changes dynamic object/function carrier semantics while enabling React. test/language/types/object/S8.6.2_A5_T3.js was already non-passing on the merge-base (wrong answer: the second global-property call was skipped, count 1 instead of 2); the merged candidate instead reaches the pre-existing global callable/property defect and null-derefs. This is a bounded fail-to-trap reclassification, not a pass regression; the underlying primitive/global-property cluster is tracked by #2708."
+  tests:
+    - test/language/types/object/S8.6.2_A5_T3.js
 ---
 
 # A symbol stored in a struct field loses its identity
