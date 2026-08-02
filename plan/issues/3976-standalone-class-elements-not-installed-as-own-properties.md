@@ -1,11 +1,11 @@
 ---
 id: 3976
 title: "standalone: class elements are not installed as own properties on the prototype/constructor — invisible to getOwnPropertyDescriptor/hasOwnProperty"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
-assignee: ttraenkler/sendev-p3-uncurry
+updated: 2026-08-02
+assignee: ttraenkler/senior-dev-3976-class-elements
 priority: high
 feasibility: hard
 reasoning_effort: max
