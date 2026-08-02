@@ -465,6 +465,60 @@ lowering, then consume the sealed component view in an explicit emission
 transaction with exact direct/IR counters. Only after that evidence is green
 can the free-function placeholder/patch compatibility branch be deleted.
 
+## Runtime/intrinsic provider preparation continuation (2026-08-02)
+
+Dependency-complete preparation now includes defined runtime and intrinsic
+callable providers instead of discovering them for the first time during Wasm
+lowering:
+
+- preparation walks every nested instruction in the final post-pass IR and
+  resolves each `runtime`/`intrinsic` call, lifted-closure target, and explicit
+  class callable target to its exact import or `WasmFunction` object;
+- provider-resolution failures are correlated to the exact terminal owner and
+  classified before dependency sealing, while the walk continues so the
+  successful provider-key denominator is complete;
+- an unresolved external-callable failure now carries its structural reference
+  key. A component is eligible for early provider planning only when those
+  exact provider keys are its complete blocker set;
+- the provider registry seals one stable, sorted observation denominator and
+  can plan the selected defined providers early. Final planning reuses those
+  identities and can still discard an unplanned import observed only by a
+  withdrawn candidate; and
+- dependency discovery reruns after provider planning, allowing the newly
+  complete component to seal before its Wasm body is lowered.
+
+The production anti-vacuity fixture combines `Math.sin` and `%`. Its body now
+records `legacyBodyEmitted: false`, `irBodyEmitted: true`, a non-empty
+`preparedComponentId`, and the expected runtime value. Registry coverage also
+proves that preparing `__fmod` neither retains a candidate-only import nor
+allows a new provider key to appear after the denominator is sealed.
+
+Import-backed providers deliberately remain on the transitional component
+route unless their exact import object already has a canonical Program ABI
+owner. Letting a semantic provider take that locator first would make final
+import planning double-own the slot. Selective pre-DCE import planning is the
+next callable-provider step; this slice fails closed instead of creating that
+ordering bug.
+
+Validation after this continuation:
+
+- focused provider, dependency, scoped-ABI, and production-routing tests:
+  **65/65 passing**;
+- numeric-local optimization parity: **17/17 passing**;
+- typecheck, scoped Biome/Prettier, LOC/function budgets, fallback ratchet,
+  adoption, and hybrid IR-only readiness: passing;
+- readiness remains **31/37 IR-emitted**, **6 typed Unsupported**, and **0
+  invariants**; and
+- the broad #3520/#3521 matrix has the same six parent-reproduced failures:
+  four stale host-bridge census totals, the nested source-callable reservation
+  assertion, and the linear inventory build-count assertion. Both new provider
+  tests pass.
+
+The next R2 dependencies are canonical pre-DCE planning for required provider
+imports, symbolic string/dynamic/object/layout support, and pre-reserved
+pass-derived callable slots. The explicit emission transaction and removal of
+the remaining placeholder/patch branch follow those dependency families.
+
 ## File ownership and locks
 
 Lock `src/codegen/index.ts`, `src/codegen/declarations.ts`,

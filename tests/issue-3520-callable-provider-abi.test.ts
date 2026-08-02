@@ -196,6 +196,39 @@ describe("#3520 runtime/intrinsic callable-provider Program ABI", () => {
     expect(session.publish(module).abi.entries()).toEqual([]);
   });
 
+  it("prepares a required defined provider without retaining a withdrawn candidate import", () => {
+    const module = createEmptyModule();
+    module.types.push(F64_TO_F64);
+    module.imports.push(functionImport("env", "__candidate_only", 0));
+    const fmod = definedFunction("__fmod", 0);
+    module.functions.push(fmod);
+    const { ctx, providers, session } = fixture(module);
+    const deadRef = irRuntimeFuncRef("__candidate_only");
+    const fmodRef = irIntrinsicFuncRef("__fmod");
+    const deadKey = irCallableBindingKey(deadRef.binding);
+    const fmodKey = irCallableBindingKey(fmodRef.binding);
+    providers.observe(deadRef, 0);
+    providers.observe(fmodRef, 1);
+
+    expect(providers.canPlanPrepared(new Set([deadKey]))).toBe(false);
+    expect(providers.canPlanPrepared(new Set([fmodKey]))).toBe(true);
+    const prepared = providers.planPrepared(new Set([fmodKey]));
+    expect([...prepared.keys()]).toEqual([fmodKey]);
+    expect(session.hasLocator(prepared.get(fmodKey)!, fmod)).toBe(true);
+    expect(() => providers.observe(irRuntimeFuncRef("__late_provider"), 1)).toThrowError(
+      expect.objectContaining<ProgramAbiInvariantError>({ code: "planning-sealed" }),
+    );
+
+    module.imports = [];
+    ctx.numImportFuncs = 0;
+    expect(planProgramAbiCallableImports(ctx).size).toBe(0);
+    expect([...providers.planRetained().keys()]).toEqual([fmodKey]);
+    expect(session.publish(module).abi.resolveFinalIndex(prepared.get(fmodKey)!)).toEqual({
+      space: "function",
+      index: 0,
+    });
+  });
+
   it("publishes production Math and remainder providers without compatibility labels owning their slots", () => {
     const ast = analyzeSource(
       `

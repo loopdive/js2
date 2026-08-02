@@ -86,6 +86,29 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).run!()).toBe(42);
   });
 
+  it("dependency-seals scalar runtime/intrinsic providers before lowering", async () => {
+    const result = await compile(
+      `export function compute(value: number): number {
+      return Math.sin(value) + (value % 5);
+    }`,
+      {
+        fileName: "prepared-intrinsic-provider.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const computeOutcome = outcome(result, "compute");
+    expect(computeOutcome).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(computeOutcome.preparedComponentId).toMatch(/^prepared-component:/);
+    expect((await instantiate(result)).compute!(1)).toBeCloseTo(Math.sin(1) + 1, 10);
+  });
+
   it("direct-emits a selector-unsupported free function once", async () => {
     const result = await compile(`export function withDefault(value: number = 41): number { return value + 1; }`, {
       fileName: "prepared-direct.ts",

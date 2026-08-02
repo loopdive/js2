@@ -56,6 +56,7 @@ export interface PreparedComponentDependencyFailure {
   readonly code: PreparedComponentDependencyFailureCode;
   readonly ownerUnitId: IrUnitId;
   readonly detail: string;
+  readonly structuralReferenceKey?: string;
   readonly referencedUnitId?: IrUnitId;
   readonly referencedClassId?: IrClassId;
   readonly bindingId?: IrBindingId;
@@ -239,6 +240,7 @@ function failureKey(failure: PreparedComponentDependencyFailure): string {
     failure.referencedUnitId ?? "",
     failure.referencedClassId ?? "",
     failure.bindingId ?? "",
+    failure.structuralReferenceKey ?? "",
     failure.detail,
   ].join("\u0000");
 }
@@ -685,6 +687,7 @@ function recordExternalCallable(
     addFailure(evidence, {
       code: "unplanned-abi-binding",
       ownerUnitId: evidence.terminalOwnerUnitId,
+      structuralReferenceKey: key,
       detail:
         `external callable ${key} has no Program ABI identity; planning-time discovery requires ` +
         "an exact structural-key reverse lookup",
