@@ -2,10 +2,11 @@
 horizon: m
 id: 4037
 title: "ESLint: `new K(...x)` needs the up-front-reserved $ObjVecArr type, which was not reserved"
-status: ready
+status: done
 created: 2026-08-02
 updated: 2026-08-02
-assignee: unassigned
+completed: 2026-08-02
+assignee: ttraenkler/claude
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -54,3 +55,38 @@ body pass still emits it.
 - Note whether the reservation is safe to make unconditionally — an always-on
   reservation costs one type-table entry and would remove the whole class of
   disagreement, which may be preferable to widening the scan.
+
+## Root cause (2026-08-02) — missing multi-source parity, not a scan gap
+
+The single-source path reserves the type:
+
+```ts
+if (sourceContainsClass(ast.sourceFile)) reserveObjVecArrType(ctx);
+```
+
+`generateMultiModule` had **no such call at all**. So the reservation never
+happened for ANY multi-source graph, and every dynamic `new K(...x)` in one hit
+the guard. The guard's own comment called itself "defensive — every class-bearing
+source reserves it", which was true only of the single-source path.
+
+## Fix
+
+`generateMultiModule` reserves when **any** source declares a class, gated the
+same way so class-free graphs stay byte-identical, and placed before
+`collectDeclarations` (hence before any body compiles) so the type index is fixed
+at one deterministic point for every pass that reads it.
+
+## Verification
+
+`tests/issue-4038-jsdoc-nameless-param.test.ts` compiles a cross-module
+`new K(...args)`, instantiates it and asserts `run() === 3`.
+
+The ESLint graph's three `$ObjVecArr` diagnostics are gone.
+
+**Caveat on the test's strength**: the rung passes on the unfixed base too,
+because a statically-resolvable `new K(...)` takes the static path rather than
+the runtime-argv one. Two attempts at a small graph that forces the dynamic path
+(ternary-selected constructor in TS, and an `any`-typed constructor factory in
+JS) also failed to reproduce. The real evidence for this fix is the ESLint graph
+itself; the rung guards the runtime behaviour rather than the defect. Naming a
+fast reproducer is the follow-up.

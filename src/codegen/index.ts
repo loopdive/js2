@@ -260,6 +260,7 @@ import {
 import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
 import { profileCount, profilePhase } from "../compile-profile.js";
+import { describeInternalError } from "./internal-error.js";
 import {
   brandExternMethodResult,
   ensureLateImport,
@@ -6028,6 +6029,21 @@ export function generateMultiModule(
       }
     });
 
+    // (#4037) Multi-source parity for the #2026/#53 up-front `$ObjVecArr`
+    // reservation. The single-source path reserves it whenever its source
+    // declares a class; `generateMultiModule` never did, so ANY dynamic
+    // `new K(...args)` anywhere in a multi-source graph hit
+    // "runtime-argv needs the up-front-reserved $ObjVecArr type … which was not
+    // reserved for this module" and blocked emission — three times on ESLint.
+    //
+    // Gated on any source declaring a class, matching the single-source gate, so
+    // class-free graphs stay byte-identical. Placed before `collectDeclarations`
+    // (and therefore before any body compiles) so the type index is fixed at one
+    // deterministic point for every pass that reads it.
+    if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf))) {
+      reserveObjVecArrType(ctx);
+    }
+
     profilePhase("collect-declarations", () => {
       for (const sf of multiAst.sourceFiles) {
         const isEntry = sf === multiAst.entryFile;
@@ -6471,7 +6487,10 @@ export function generateMultiModule(
     for (const sourceFile of multiAst.sourceFiles) {
       recordWholeSourceFailure(ctx, sourceFile, failure, irPlanningIdentityContext);
     }
-    reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
+    // (#4030) Same reasoning as the expression catch: an untyped throw reaching
+    // here is a compiler bug, and a bare message costs a full instrumented
+    // re-run to localise on a large graph.
+    reportErrorNoNode(ctx, `Codegen error: ${describeInternalError(e)}`);
   }
 
   // (#2094) Emit-time backstop for the addImport gate — see generateModule.

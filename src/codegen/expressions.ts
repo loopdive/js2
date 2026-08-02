@@ -78,6 +78,7 @@ import { compileArrayLiteral, compileObjectLiteral } from "./literals.js";
 import { compileElementAccess, compilePropertyAccess, maybeWrapAnyReadEqualityCarrier } from "./property-access.js";
 import { compileTaggedTemplateExpression, compileTemplateExpression } from "./string-ops.js";
 import { compileDeleteExpression, compileRegExpLiteral, compileTypeofExpression } from "./typeof-delete.js";
+import { describeInternalError } from "./internal-error.js";
 
 // ── Public re-exports (preserves the external API) ────────────────────
 
@@ -862,8 +863,9 @@ function compileExpressionBody(
     result = compileExpressionInner(ctx, fctx, expr, expectedType);
   } catch (e) {
     rollbackSpeculative(ctx, fctx, snap);
-    const msg = e instanceof Error ? e.message : String(e);
-    reportErrorNoNode(ctx, `Internal error compiling expression: ${msg}`);
+    // (#4030) Name the innermost `src/` frame. An exception here is a compiler
+    // bug, and the bare message alone is not actionable — see #4038.
+    reportErrorNoNode(ctx, `Internal error compiling expression: ${describeInternalError(e)}`);
     const fallbackType = expectedType ?? { kind: "f64" as const };
     pushDefaultValue(fctx, fallbackType, ctx);
     return fallbackType;

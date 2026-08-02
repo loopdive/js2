@@ -1065,11 +1065,23 @@ export function compileIdentifierCall(
           // chance to throw. Force `externref` for binding-pattern params so the
           // call site agrees with the compiled callee.
           const paramDecl = sig.parameters[i]!.valueDeclaration;
-          if (
-            paramDecl &&
-            ts.isParameter(paramDecl) &&
-            (ts.isObjectBindingPattern(paramDecl.name) || ts.isArrayBindingPattern(paramDecl.name))
-          ) {
+          // (#4038) `ParameterDeclaration.name` is typed as non-optional, but it
+          // is genuinely ABSENT for a parameter declared through JSDoc
+          // function-type syntax — `@param {function(string): void} cb` models
+          // its own parameters as nameless `ParameterDeclaration` nodes. Passing
+          // that `undefined` into `ts.isObjectBindingPattern` threw
+          // `Cannot read properties of undefined (reading 'kind')`, which the
+          // speculative wrapper reported as an opaque "Internal error compiling
+          // expression" and which blocked the ESLint graph.
+          //
+          // Treating a nameless parameter as "not a binding pattern" is correct
+          // on the merits, not a defensive shrug: a binding pattern IS a name
+          // node (`{a}` / `[a]`), so a parameter without one cannot be one. It
+          // then takes the ordinary `resolveWasmType` path every other named
+          // non-pattern parameter takes.
+          const paramName =
+            paramDecl && ts.isParameter(paramDecl) ? (paramDecl.name as ts.BindingName | undefined) : undefined;
+          if (paramName && (ts.isObjectBindingPattern(paramName) || ts.isArrayBindingPattern(paramName))) {
             sigParamWasmTypes.push({ kind: "externref" });
             continue;
           }

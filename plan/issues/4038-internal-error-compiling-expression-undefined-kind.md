@@ -2,10 +2,11 @@
 horizon: m
 id: 4038
 title: "Internal error compiling expression: Cannot read properties of undefined (reading 'kind')"
-status: ready
+status: done
 created: 2026-08-02
 updated: 2026-08-02
-assignee: unassigned
+completed: 2026-08-02
+assignee: ttraenkler/claude
 priority: critical
 feasibility: medium
 reasoning_effort: high
@@ -48,3 +49,45 @@ next person pays the same instrumented-re-run cost on a ~16-minute compile that
 - The underlying `undefined` is fixed — not defended against with an `?.`, which
   would convert a crash into a silently wrong lowering.
 - ESLint's package entry no longer reports this diagnostic.
+
+## Root cause (2026-08-02) — a JSDoc function-type parameter has no name
+
+Localised in one run using #4030, which reported
+`(at src/codegen/expressions/call-identifier.ts:1071:17)`.
+
+That line asks `ts.isObjectBindingPattern(paramDecl.name)` to decide whether a
+signature parameter is a destructuring pattern. `ParameterDeclaration.name` is
+typed **non-optional**, but it is genuinely absent for a parameter declared
+through JSDoc function-type syntax: `@param {function(string): void} cb` models
+*its own* parameters as nameless `ParameterDeclaration` nodes. Passing that
+`undefined` into the predicate threw `Cannot read properties of undefined
+(reading 'kind')`.
+
+Reproduced in eight lines:
+
+```js
+/**
+ * @param {function(string): void} cb
+ * @returns {number}
+ */
+export function run(cb) { cb("x"); return 1; }
+```
+
+imported and called from another module. `@callback`-tag and `@type` variants do
+NOT reproduce — only the inline `function(...)` type form.
+
+## Fix
+
+A nameless parameter is definitionally **not** a binding pattern — a binding
+pattern *is* a name node (`{a}` / `[a]`) — so it takes the ordinary
+`resolveWasmType` path every other named non-pattern parameter takes.
+
+This satisfies the issue's own criterion that the underlying `undefined` be
+fixed rather than defended against: the predicate is now total over the real AST
+shape, and no case silently changes lowering. The TypeScript type is wrong about
+optionality, so the cast is deliberate and commented.
+
+## Verification
+
+`tests/issue-4038-jsdoc-nameless-param.test.ts` — passes with the fix, **fails
+on the unfixed base**. ESLint's two occurrences are gone.
