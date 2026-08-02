@@ -1,10 +1,11 @@
 ---
 id: 4034
 title: "the native-string runtime sets usesVecValue, cascading into 21 kB of unstrippable exports for standalone modules with no arrays"
-status: ready
+status: done
 sprint: current
 created: 2026-08-01
 updated: 2026-08-01
+completed: 2026-08-01
 priority: high
 horizon: m
 feasibility: medium
@@ -13,8 +14,15 @@ task_type: performance
 area: codegen
 language_feature: compiler-internals
 goal: performance
-related: [2083, 2962, 3469, 1950]
+related: [2083, 2962, 3469, 1950, 4035]
 origin: "2026-08-01 investigation of the landing-page Module-size chart (21.8 kB for a 10-line fib)"
+loc-budget-allow:
+  # +10 lines in the god-file: the fix must wrap the prelude emission where the
+  # emission order is defined (that order is load-bearing — each builder bakes in
+  # sibling funcIdx values), so it cannot move to a subsystem module. 8 of the 10
+  # lines are the rationale comment; the shared helper itself went into
+  # src/codegen/registry/types.ts next to the flag it pins.
+  - src/codegen/native-strings.ts
 ---
 
 # #4034 — one unused `String.prototype.split` costs 21 kB
@@ -143,6 +151,42 @@ Worth considering alongside, as separate follow-ups:
   (#2962) and read the host-free stdout marker (#3469).
 - The landing-page Module-size chart reflects the new figure after the next
   benchmark refresh.
+
+## Resolution (2026-08-01)
+
+Fixed as diagnosed. `withSuppressedVecUsage` (new, `src/codegen/registry/types.ts`)
+wraps the String-runtime prelude emission in `ensureNativeStringHelpers`
+(`src/codegen/native-strings.ts`), so vec types registered by prelude emission
+no longer read as user array usage. Type registration is unchanged — only the
+flag is pinned — so no type index moves.
+
+Measured (`-O3`), standalone/WASI:
+
+| program | before | after |
+| --- | --- | --- |
+| `export function run(n){return n;}` | 21,043 | **804** |
+| fib (landing benchmark) | 21,774 | **1,545** |
+| `'a'+'b'` | 21,117 | **966** |
+| `return {a:1}` | 21,179 | **940** |
+| `JSON.stringify({a:1})` | 21,094 | **896** |
+| `'a,b'.split(',')[0]` | 21,457 | **1,299** |
+| `for (const c of 'abc')` | 21,292 | 18,563 |
+| `return [1,2,3]` | 21,082 | 21,082 (unchanged) |
+| `return 'a,b'.split(',')` | 21,356 | 21,356 (unchanged) |
+| `'a,b'.split(',').length` | 21,351 | 21,351 (unchanged) |
+| `const a=[]; a.push(n)` | 21,168 | 21,168 (unchanged) |
+
+Every genuine array user keeps its `__vec_*` bridge. **js-host output is
+byte-identical** across all 14 probed shapes (the cascade is standalone-only).
+
+Guarded by `tests/issue-4034-standalone-prelude-size.test.ts`, which asserts
+both directions — the no-array case shrinks AND the boundary-crossing cases
+keep their exports.
+
+**This is only half the size story.** Programs that genuinely use an array or
+throw still pay ~20 kB, because the export suite they legitimately trigger is
+still unconditional. That is #4035 (gate the host bridge behind an
+inspect/debug option), which is the larger aggregate lever.
 
 ## Dupe check
 

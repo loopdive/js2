@@ -138,6 +138,25 @@ export function getOrRegisterVecBaseType(ctx: CodegenContext): number {
 }
 
 /**
+ * (#4034) Run `fn` with `usesVecValue` pinned to its current value, so vec
+ * types registered by COMPILER-INTERNAL emission (runtime preludes, reflective
+ * accessors, type-index-stability stubs) do not read as user array usage.
+ *
+ * Type registration still happens — only the usage flag is suppressed — so the
+ * emitted types and every index derived from them are unchanged. Restores the
+ * previous value rather than clearing, so nesting is safe.
+ */
+export function withSuppressedVecUsage<T>(ctx: CodegenContext, fn: () => T): T {
+  const wasSuppressed = ctx.suppressVecUsageFlag;
+  ctx.suppressVecUsageFlag = true;
+  try {
+    return fn();
+  } finally {
+    ctx.suppressVecUsageFlag = wasSuppressed;
+  }
+}
+
+/**
  * Get or register a vec struct type wrapping a Wasm GC array.
  * The vec struct has {length: i32, data: (ref $__arr_<elemKind>)}.
  */

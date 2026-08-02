@@ -29,6 +29,7 @@ import {
   getOrRegisterArrayType,
   getOrRegisterErrorStructType,
   getOrRegisterVecType,
+  withSuppressedVecUsage,
 } from "./registry/types.js";
 
 export function nativeStringType(ctx: CodegenContext): ValType {
@@ -286,24 +287,33 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
   // by name in ctx.nativeStrHelpers, so this fixed order preserves every
   // baked-in sibling funcIdx and mintDefinedFunc/addFuncType side-effect.
   const methodShared = makeNativeStrShared(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx, consStrTypeIdx);
-  emitStrFlattenHelpers(methodShared);
-  emitStrToUtf8Helper(methodShared);
-  emitStrConcatHelpers(methodShared);
-  emitStrCompareHelpers(methodShared);
-  emitStrSliceCharHelpers(methodShared);
-  emitStrSearchHelpers(methodShared);
-  emitSelfHostedStringHelpers(methodShared); // #3256 — trim/affix/pad/repeat from TS source (stdlib/strings.ts)
-  emitStrCaseHelpers(methodShared);
-  emitStrReplaceHelpers(methodShared);
-  emitStrSplitHelper(methodShared);
-  emitStrConstructHelpers(methodShared);
-  emitStrRegexEscapeHelper(methodShared);
+  // (#4034) This is a PRELUDE, not a usage site: `emitStrSplitHelper` registers a
+  // vec type for split's result array, which flipped `usesVecValue` and made every
+  // arith-only module look like an array user — cascading into ~21 kB of
+  // unstrippable standalone exports (#2083's fix, one level down). Types are still
+  // registered (only the flag is pinned), so no type index moves. Full chain +
+  // measurements in plan/issues/4034-*.md; guarded by
+  // tests/issue-4034-standalone-prelude-size.test.ts.
+  withSuppressedVecUsage(ctx, () => {
+    emitStrFlattenHelpers(methodShared);
+    emitStrToUtf8Helper(methodShared);
+    emitStrConcatHelpers(methodShared);
+    emitStrCompareHelpers(methodShared);
+    emitStrSliceCharHelpers(methodShared);
+    emitStrSearchHelpers(methodShared);
+    emitSelfHostedStringHelpers(methodShared); // #3256 — trim/affix/pad/repeat from TS source (stdlib/strings.ts)
+    emitStrCaseHelpers(methodShared);
+    emitStrReplaceHelpers(methodShared);
+    emitStrSplitHelper(methodShared);
+    emitStrConstructHelpers(methodShared);
+    emitStrRegexEscapeHelper(methodShared);
 
-  // (#3069) Annex B §B.2.2 HTML string-wrapper methods — the `__str_html_escape_quot`
-  // helper (CreateHTML step-4.b `"`→`&quot;` escaping). Emitted here, AFTER
-  // __str_flatten/__str_concat are registered. The tag/attribute concatenation
-  // is built inline at each call site in string-ops.ts via __str_concat.
-  emitNativeHtmlWrapperHelpers(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
+    // (#3069) Annex B §B.2.2 HTML string-wrapper methods — the `__str_html_escape_quot`
+    // helper (CreateHTML step-4.b `"`→`&quot;` escaping). Emitted here, AFTER
+    // __str_flatten/__str_concat are registered. The tag/attribute concatenation
+    // is built inline at each call site in string-ops.ts via __str_concat.
+    emitNativeHtmlWrapperHelpers(ctx, strTypeIdx, strDataTypeIdx, anyStrTypeIdx);
+  });
 }
 
 /**
