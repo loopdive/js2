@@ -100,7 +100,7 @@ import {
   makeIrRegExpExpressionPredicate,
   type IrModuleBindingResolver,
 } from "../ir/module-bindings.js"; // (#2856 Capability C)
-import { asyncEngineWouldActivate } from "./async-activation.js"; // (#1373b C-1)
+import { collectPreparedIrAsyncOwners, prepareIrAsyncSelectionOptions } from "./async-ir-planning.js";
 import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
@@ -1750,6 +1750,7 @@ interface IrOverlayPlan {
   readonly hostDateImportsByOwnerUnitId: ReadonlyMap<IrUnitId, IrHostDateSnapshotImportPlan>;
   /** Exact Promise-delay plans, keyed separately by each owned AST call. */
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
+  readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
   readonly importedFunctionResolver?: irOverlayIdentity.IrIdentityImportedFunctionResolver;
 }
 
@@ -2165,8 +2166,7 @@ function planIrOverlay(
       // async engine ($AsyncFrame drive / host-drive) declines it — the
       // legacy sync-pass-through population. Engine-activated functions keep
       // byte-identical routing.
-      supportsAsyncIr: ctx.supportsAsyncIr,
-      asyncEngineClaims: (fn) => asyncEngineWouldActivate(ctx, fn),
+      ...prepareIrAsyncSelectionOptions(ctx),
     },
     identityMaps,
   );
@@ -2201,7 +2201,6 @@ function planIrOverlay(
     identityContext,
   );
   // Build per-function IR type overrides from the propagated TypeMap.
-  //
   // For a claimed function, the selector must have resolved each
   // param + return to a concrete primitive via either an explicit
   // TS annotation OR the TypeMap. We mirror that resolution here to
@@ -2497,6 +2496,7 @@ function planIrOverlay(
     hostVoidCallbacks,
     hostDateImportsByOwnerUnitId,
     promiseDelays,
+    suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
     ...(options.importedFunctions ? { importedFunctionResolver: options.importedFunctions } : {}),
   };
 }

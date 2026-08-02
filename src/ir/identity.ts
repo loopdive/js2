@@ -51,6 +51,7 @@ export interface IrDerivedUnitProvenance {
 export type IrSyntheticUnitRole =
   | `compiler-unit:${CompilerSourceProducer}:${string}`
   | `stdlib-selfhost:${string}`
+  | "ir-async-state"
   | "lifted-closure"
   | "monomorphization-clone";
 /** Compiler-created class roles live in a namespace separate from source classes. */

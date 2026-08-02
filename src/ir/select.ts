@@ -381,6 +381,20 @@ export interface IrSelectionOptions {
    */
   readonly asyncEngineClaims?: (fn: ts.FunctionLikeDeclaration) => boolean;
   /**
+   * Exact producer proof for an engine-activated async declaration whose
+   * suspension graph can be prepared as `IrAsyncPlan`. The engine remains the
+   * only scheduler/emitter; this callback only permits the IR to own its state
+   * bodies. Absent by default, so bare selector callers cannot claim a real
+   * suspension accidentally.
+   */
+  readonly canPrepareSuspendingAsync?: (fn: ts.FunctionLikeDeclaration) => boolean;
+  /**
+   * True when at least one await cannot be eliminated by the shared async
+   * analysis. An engine decline does not make such a body synchronous; until
+   * an `IrAsyncPlan` producer claims it, it must remain a typed fallback.
+   */
+  readonly asyncHasRealSuspension?: (fn: ts.FunctionLikeDeclaration) => boolean;
+  /**
    * (#2856) Host-extern support — resolves a bare identifier that is NOT a
    * local/param binding to an ambient host global (`document`, `console`, …).
    * Returns the extern class name (`"Document"`, `"Console"`) when the
@@ -573,7 +587,8 @@ export function isAsyncIrReady(options: IrSelectionOptions | undefined, fn: ts.F
   if (!fn.body) return false;
   // ONE-engine invariant: without the engine's verdict, never claim.
   if (options.asyncEngineClaims === undefined) return false;
-  if (options.asyncEngineClaims(fn)) return false;
+  if (options.asyncEngineClaims(fn)) return options.canPrepareSuspendingAsync?.(fn) === true;
+  if (options.asyncHasRealSuspension?.(fn) === true) return false;
   // Body-scope bounds: `for await` and nested async function-likes are out.
   if (bodyHasAsyncOutOfIrScope(fn.body)) return false;
   return true;
