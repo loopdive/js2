@@ -89,14 +89,17 @@ try { box.grab(1); } catch (e) { }
     await expect(WebAssembly.instantiate(binary, {})).resolves.toBeDefined();
   });
 
-  // KNOWN RESIDUAL, deliberately NOT asserted as correct: when the borrowed
-  // method runs on a receiver its arm's exact-identity guard does not match,
-  // the outer dispatch falls through to `ref.null.extern` and the call answers
-  // `null` instead of the boolean. That is the #3992 coverage gap this fix
-  // makes *observable* (base crashed before reaching it), not a regression —
-  // measured on `var re = /a/; re.borrowed = RegExp.prototype.test`. Asserting
-  // the wrong value here would pin the bug, so this test only records that the
-  // module is at least well-formed.
+  // KNOWN RESIDUAL — tracked as #4083, deliberately NOT asserted as correct.
+  //
+  // When the borrowed method runs on a receiver its arm's exact-identity guard
+  // does not match, the outer dispatch falls through to `ref.null.extern` and
+  // the call answers `null` instead of the boolean. That is the #3992 coverage
+  // gap this fix makes *observable* (base crashed before reaching it), not a
+  // regression — measured on `var re = /a/; re.borrowed = RegExp.prototype.test`.
+  //
+  // Asserting the wrong value here would pin the bug and manufacture exactly
+  // the vacuous pass the residual is about, so this test records only that the
+  // module is well-formed. #4083 upgrades it to `=== true` / `=== false`.
   it("a borrowed method on a regex literal receiver at least validates", async () => {
     const binary = await compileStandalone(`
 var re = /a/;

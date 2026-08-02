@@ -34,6 +34,12 @@ S15.10.6.3_*` plus `Object/getOwnPropertyDescriptor/15.2.3.3-4-166.js`.
 Third distinct mechanism inside that one signature, after #4077 (`ref.null`
 arg mis-pairing, 28 files) and #4079 (i32-slot global `++`, 8 files).
 
+**Closes #4081 as well.** That issue is the same mechanism, filed from this
+agent's own mid-investigation handoff before it finished the work; #4081 is the
+finding, this is the fix. #4081 is set `done` here so it cannot be dispatched
+to a second agent. Its "next place to look: `closed-method-dispatch.ts`" lead
+was wrong and is corrected there.
+
 ## Root cause
 
 `__call_fn_method_N` returns **externref**. Every dispatch arm therefore has to
@@ -68,6 +74,12 @@ box correctly, via two byte-identical 30-line if-chains. So the shape is the
 same one #3989, #4077 and #4079 all had: **a decision that must hold in
 several places, duplicated rather than shared, where the newest copy is the
 one missing a case.**
+
+This is the **fourth** instance of #4080 in one cluster, and the sharpest: the
+invariant was not merely absent from the newest copy, it was written there as
+a **comment** (*"each arm pushes exactly one externref"*) in the copy that did
+not implement it. Prose cannot be checked; the other three instances at least
+failed silently rather than asserting their own correctness.
 
 ### What this refutes
 
@@ -125,7 +137,9 @@ that `runTest262File` does not gate the way the CI path does).
 
 ## KNOWN RESIDUAL — this fix removes the crash, not every wrong answer
 
-Measured and stated deliberately, because it is the uncomfortable half.
+**Tracked as #4083.** Measured and stated deliberately, because it is the
+uncomfortable half — a loud→quiet trade is acceptable when it is *recorded*,
+and unacceptable when it is absorbed.
 
 For the shape `var re = /a/; re.borrowed = RegExp.prototype.test;
 re.borrowed("banana")`:
@@ -149,9 +163,12 @@ files flip to **pass with their real assertions checked** (they assert a
 `TypeError` on a non-RegExp receiver, and the probe confirms a genuine
 `TypeError` is thrown), and there are 0 attributable regressions in 500. The
 `null` case was already broken — as a crash — so nothing regressed. The
-follow-up is to widen the #3992 arm's receiver matching; it is NOT tracked
-here and NOT asserted as correct in the tests, because pinning the wrong value
-would freeze the bug.
+follow-up — widening the #3992 arm's receiver matching — is tracked as
+**#4083**, and is NOT asserted as correct in the tests here, because pinning
+the wrong value would freeze the bug. The fourth test in
+`tests/issue-4082-closure-result-boxing.test.ts` records only that the module
+is well-formed, and is the place #4083 should upgrade to a real value
+assertion.
 
 ## Residual
 
