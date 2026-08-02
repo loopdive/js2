@@ -185,6 +185,12 @@ interface ResolvedIrVecType {
   readonly valueType: ValType;
 }
 
+interface IrSlotRepresentation {
+  readonly storageType: ValType;
+  readonly bindingType: IrType;
+  readonly asType?: IrType;
+}
+
 /** Resolve a logical vec type without exposing its physical type index to inference. */
 function resolveIrVecType(type: IrType, cx: Pick<LowerCtx, "resolver" | "funcName">): ResolvedIrVecType | null {
   if (type.kind === "vec") {
@@ -206,6 +212,24 @@ function resolveIrVecType(type: IrType, cx: Pick<LowerCtx, "resolver" | "funcNam
   if (!valueType) return null;
   const lowering = cx.resolver?.resolveVec?.(valueType);
   return lowering ? { lowering, elementType: irVal(lowering.elementValType), valueType } : null;
+}
+
+/** Materialize a logical IR type into mutable backend-local storage. */
+function resolveIrSlotRepresentation(
+  type: IrType,
+  resolver: IrFromAstResolver | undefined,
+  funcName: string,
+): IrSlotRepresentation | null {
+  const valueType = asVal(type);
+  if (valueType) return { storageType: valueType, bindingType: type };
+
+  let storageType: ValType | undefined;
+  if (type.kind === "string") storageType = resolver?.resolveString?.();
+  else if (type.kind === "dynamic") storageType = resolver?.resolveDynamic?.();
+  else if (type.kind === "vec") {
+    storageType = resolveIrVecType(type, { resolver, funcName })?.valueType;
+  }
+  return storageType ? { storageType, bindingType: irVal(storageType), asType: type } : null;
 }
 
 function vecElemSetProviderSymbol(type: IrType, vec: IrVecLowering): string {
@@ -909,42 +933,18 @@ export function lowerFunctionAstToIr(
   // backend's canonical carrier, so every accepted type has an exact slot
   // representation.
   for (const param of pendingMutableParams) {
-    const valType = asVal(param.type);
-    if (valType) {
-      const slotIndex = builder.declareSlot(param.name, valType);
-      builder.emitSlotWrite(slotIndex, param.value);
-      scope.set(param.name, { kind: "slot", slotIndex, type: param.type });
-      continue;
+    const representation = resolveIrSlotRepresentation(param.type, options.resolver, name);
+    if (!representation) {
+      throw new Error(`ir/from-ast: mutable parameter "${param.name}" has no slot representation (${name})`);
     }
-    if (param.type.kind === "string") {
-      const stringValType = options.resolver?.resolveString?.();
-      if (stringValType) {
-        const slotIndex = builder.declareSlot(param.name, stringValType);
-        builder.emitSlotWrite(slotIndex, param.value);
-        scope.set(param.name, {
-          kind: "slot",
-          slotIndex,
-          type: irVal(stringValType),
-          asType: param.type,
-        });
-        continue;
-      }
-    }
-    if (param.type.kind === "dynamic") {
-      const dynamicValType = options.resolver?.resolveDynamic?.();
-      if (dynamicValType) {
-        const slotIndex = builder.declareSlot(param.name, dynamicValType);
-        builder.emitSlotWrite(slotIndex, param.value);
-        scope.set(param.name, {
-          kind: "slot",
-          slotIndex,
-          type: irVal(dynamicValType),
-          asType: param.type,
-        });
-        continue;
-      }
-    }
-    throw new Error(`ir/from-ast: mutable parameter "${param.name}" has no slot representation (${name})`);
+    const slotIndex = builder.declareSlot(param.name, representation.storageType);
+    builder.emitSlotWrite(slotIndex, param.value);
+    scope.set(param.name, {
+      kind: "slot",
+      slotIndex,
+      type: representation.bindingType,
+      ...(representation.asType ? { asType: representation.asType } : {}),
+    });
   }
 
   // Slice 7a (#1169f): generator prologue — allocate the `__gen_buffer`
@@ -3108,16 +3108,13 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // `slot.read` / `slot.write` instead of carrying the SSA value
     // through the scope.
     //
-    // Slice 6 part 4 refactor (#1185): extended to support
-    // `IrType.string` slot bindings via the resolver. In
-    // native-strings mode we use the resolver's `resolveString()` to
-    // get the underlying `(ref $AnyString)` ValType for the slot,
-    // and tag the binding with `asType: IrType.string` so identifier
-    // reads compose with slice-1 string ops.
+    // Logical string, dynamic, and vector values use resolver-selected
+    // backend storage while identifier reads retain their logical IR type.
     if (!isConst && cx.mutatedLets.has(name)) {
-      const slotValType = asVal(inferred);
-      if (slotValType !== null) {
-        const slotIndex = cx.builder.declareSlot(name, slotValType);
+      const logicalType = inferred.kind === "dynamic" && widenDynamic ? irDynamic() : inferred;
+      const representation = resolveIrSlotRepresentation(logicalType, cx.resolver, cx.funcName);
+      if (representation) {
+        const slotIndex = cx.builder.declareSlot(name, representation.storageType);
         cx.builder.emitSlotWrite(slotIndex, value);
         if (promoteI32Slot) {
           // (#3741) The Wasm slot is i32; the BINDING's logical type stays f64
@@ -3126,40 +3123,14 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
           cx.scope.set(name, { kind: "slot", slotIndex, type: IR_F64, i32Storage: true });
           continue;
         }
-        cx.scope.set(name, { kind: "slot", slotIndex, type: inferred, ...(stringEncoding ? { stringEncoding } : {}) });
+        cx.scope.set(name, {
+          kind: "slot",
+          slotIndex,
+          type: representation.bindingType,
+          ...(representation.asType ? { asType: representation.asType } : {}),
+          ...(stringEncoding ? { stringEncoding } : {}),
+        });
         continue;
-      }
-      // String let in native-strings mode: slot ValType is the
-      // resolver's string ref; binding type is IrType.string via
-      // asType widening so body code composes with string ops.
-      if (inferred.kind === "string") {
-        const stringValType = cx.resolver?.resolveString?.();
-        if (stringValType) {
-          const slotIndex = cx.builder.declareSlot(name, stringValType);
-          cx.builder.emitSlotWrite(slotIndex, value);
-          cx.scope.set(name, {
-            kind: "slot",
-            slotIndex,
-            type: irVal(stringValType),
-            asType: { kind: "string" },
-            ...(stringEncoding ? { stringEncoding } : {}),
-          });
-          continue;
-        }
-      }
-      if (inferred.kind === "dynamic") {
-        const dynamicValType = cx.resolver?.resolveDynamic?.();
-        if (dynamicValType) {
-          const slotIndex = cx.builder.declareSlot(name, dynamicValType);
-          cx.builder.emitSlotWrite(slotIndex, value);
-          cx.scope.set(name, {
-            kind: "slot",
-            slotIndex,
-            type: irVal(dynamicValType),
-            asType: widenDynamic ? irDynamic() : inferred,
-          });
-          continue;
-        }
       }
       // Fall through only for representations without a concrete ValType.
       // A later assignment then remains an invariant: the mutation pre-pass
@@ -8429,10 +8400,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       newType = cx.builder.typeOf(newValue);
     }
   }
-  const assignmentTypeMatches =
-    irTypeEquals(newType, logicalType) ||
-    (newType.kind === "dynamic" && logicalType.kind === "dynamic" && logicalType.tag === undefined);
-  if (!assignmentTypeMatches) {
+  if (!irTypeAssignable(newType, logicalType)) {
     throw new Error(
       `ir/from-ast: assignment to "${id.text}" (${describeIrType(logicalType)}) got ${describeIrType(newType)} in ${cx.funcName}`,
     );

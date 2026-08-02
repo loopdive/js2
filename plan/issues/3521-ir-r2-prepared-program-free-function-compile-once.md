@@ -1033,13 +1033,20 @@ or drifting layout. Vector helper identities are likewise logical; WasmGC,
 linear, and Porffor resolve them at their final lowering boundaries without
 embedding physical type indexes in IR provider names.
 
+The post-rebase equivalence shard also proved that logical vectors must use the
+same representation boundary for mutable locals and parameters. Slot planning
+now resolves string, dynamic, and vector storage through one helper, while
+identifier reads and assignments retain their logical IR types. #1196 covers
+both a reassigned local vector and a reassigned vector parameter, with the
+counted-loop bounds proof correctly withdrawn after reassignment.
+
 Anti-vacuity coverage now proves that the quicksort-plus-main vector component
 is prepared and emits with `direct=0, IR=1`. The original #1198 complex fixture
 is retained and still exposes its separate bitwise/runtime-support dependency;
 a smaller dense-fill fixture proves the vector preparation path independently.
 #1001 counted push, #2780 fixed literals, #2766 bounds-sensitive reads, and
 #3734 i32 elements cover the migrated vector optimizations. The focused core
-matrix passes 57/57, the optimization matrix passes 69/69, and #3501 passes
+matrix passes 58/58, the optimization matrix passes 69/69, and #3501 passes
 9 tests with 2 optional native tests skipped. Typecheck, formatting, staged
 lint, the changed-root hook, and the optimization-ledger checker pass. The
 ledger contains 21 decisions: 10 are IR-owned and the i32-element row is the

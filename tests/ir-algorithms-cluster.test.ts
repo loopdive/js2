@@ -272,6 +272,37 @@ describe("#2856 C2 — element store arr[i] = v", () => {
       42,
     );
   });
+
+  it("reassigned vector locals and parameters remain prepared slot values", async () => {
+    const ir = await expectParity(
+      `function sum(arr: number[]): number {
+         let total = 0;
+         for (let i = 0; i < arr.length; i++) {
+           total += arr[i];
+           if (i === 1) arr = [9, 9];
+         }
+         return total;
+       }
+       export function main(): number {
+         let xs: number[] = [1, 2, 3, 4];
+         const result = sum(xs);
+         xs = [7, 8];
+         return result * 100 + xs[1];
+       }`,
+      "main",
+      [],
+      308,
+    );
+    const outcomes = new Map(ir.irOutcomes.map((outcome) => [outcome.displayName, outcome]));
+    for (const name of ["sum", "main"]) {
+      expect(outcomes.get(name), `${name} is emitted once through prepared IR`).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+    }
+  });
 });
 
 describe("#2856 C3 — module-scope Map + strict undefined-compare (JS-host lane)", () => {
