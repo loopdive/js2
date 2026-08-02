@@ -52,6 +52,49 @@ function isRuntimePrimitiveSeed(type: ValType, tsType: ts.Type): boolean {
 }
 
 /**
+ * Record properties that receive object-shaped or dynamically typed values.
+ * Closed anonymous structs are shape-specific, while JavaScript properties can
+ * later hold a different object shape. The field-registration pass consumes
+ * this set before any bodies are emitted and gives matching fields a stable
+ * externref carrier. This also covers a null-initialized field later assigned
+ * through an `any` parameter (ReactDOM's `queue.pending = update`).
+ */
+export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left)
+    ) {
+      let rhs: ts.Expression = node.right;
+      while (
+        ts.isParenthesizedExpression(rhs) ||
+        ts.isAsExpression(rhs) ||
+        ts.isSatisfiesExpression(rhs) ||
+        ts.isTypeAssertionExpression(rhs)
+      ) {
+        rhs = rhs.expression;
+      }
+      const rhsType = ctx.checker.getTypeAtLocation(rhs);
+      const mayCarryObject =
+        ts.isObjectLiteralExpression(rhs) ||
+        ts.isArrayLiteralExpression(rhs) ||
+        ts.isFunctionExpression(rhs) ||
+        ts.isArrowFunction(rhs) ||
+        ts.isNewExpression(rhs) ||
+        (rhsType.flags &
+          (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !==
+          0;
+      if (mayCarryObject) {
+        ctx.objectLiteralAssignedPropertyNames.add(node.left.name.text);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(sourceFile, visit);
+}
+
+/**
  * Early, type-table-neutral carrier scan for functions that return an empty
  * object populated through computed keys. Fnctor structs are reserved before
  * the full widening pass, so their RHS field inference must already know that

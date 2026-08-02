@@ -174,6 +174,9 @@ export function compileNestedClassDeclaration(
 
 interface CompileNestedFunctionOptions {
   reuseReservedEntry?: WasmFunction;
+  reserveOnly?: boolean;
+  allowWideReservation?: boolean;
+  preserveReservedCaptureOrder?: boolean;
 }
 
 /**
@@ -356,6 +359,26 @@ export function compileNestedFunctionDeclaration(
     collectReferencedIdentifiers(s, referencedNames, ownLocals);
   }
 
+  // A call to a capturing sibling needs the sibling's environment in this
+  // lifted frame too. Thread those bindings transitively instead of baking the
+  // sibling's owner-frame local indices into this function's body.
+  const captureWorklist = [...referencedNames];
+  const visitedCaptureFunctions = new Set<string>();
+  while (captureWorklist.length > 0) {
+    const referencedName = captureWorklist.pop()!;
+    if (visitedCaptureFunctions.has(referencedName)) continue;
+    visitedCaptureFunctions.add(referencedName);
+    const transitiveCaptures = ctx.nestedFuncCaptures.get(referencedName);
+    if (!transitiveCaptures) continue;
+    for (const capture of transitiveCaptures) {
+      if (ownLocals.has(capture.name)) continue;
+      if (!referencedNames.has(capture.name)) {
+        referencedNames.add(capture.name);
+        captureWorklist.push(capture.name);
+      }
+    }
+  }
+
   // Detect which captured variables are written inside the function body
   const writtenInBody = new Set<string>();
   for (const s of stmt.body.statements) {
@@ -514,6 +537,24 @@ export function compileNestedFunctionDeclaration(
     });
   }
 
+  if (opts.preserveReservedCaptureOrder) {
+    const reservedCaptures = ctx.nestedFuncCaptures.get(funcName) ?? [];
+    const reservedOrder = new Map(reservedCaptures.map((capture, index) => [capture.name, index]));
+    captures.sort(
+      (left, right) =>
+        (reservedOrder.get(left.name) ?? Number.MAX_SAFE_INTEGER) -
+        (reservedOrder.get(right.name) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }
+
+  // The legacy capture registry is keyed by the unqualified function name.
+  // Reserving a very wide bundle helper before its lexical neighbours have
+  // registered can therefore over-approximate a large transitive environment
+  // and poison later same-name resolution.  Keep the forward-reservation slice
+  // deliberately narrow; ordinary source-order compilation remains the
+  // fallback for wide helpers until nested identities are scope-qualified.
+  if (opts.reserveOnly && captures.length > 32 && !opts.allowWideReservation) return;
+
   // (#2172 / SF-1 of #2157) Wasm-native lowering for a NESTED `function*` in
   // standalone/WASI. Previously a nested generator always took the JS-host
   // buffer path (`__create_generator` etc.), which in standalone leaks env
@@ -567,27 +608,6 @@ export function compileNestedFunctionDeclaration(
   // formal param count.
   if (stmt.body && bodyUsesArguments(stmt.body)) {
     ctx.funcUsesArguments.add(funcName);
-  }
-
-  if (captures.length > 0 && opts.reuseReservedEntry) {
-    opts.reuseReservedEntry.body = [];
-    appendDefaultReturn(
-      {
-        name: funcName,
-        params: [],
-        locals: [],
-        localMap: new Map(),
-        returnType,
-        body: opts.reuseReservedEntry.body,
-        blockDepth: 0,
-        breakStack: [],
-        continueStack: [],
-        labelMap: new Map(),
-        savedBodies: [],
-      },
-      returnType,
-    );
-    return;
   }
 
   if (captures.length === 0) {
@@ -1015,21 +1035,30 @@ export function compileNestedFunctionDeclaration(
     // across `addUnionImports` (which can grow `numImportFuncs` and so
     // shift the absolute funcIdx, but the array entry's identity is
     // preserved). funcMap auto-shifts during addUnionImports.
-    const reservedFuncIdx = mintDefinedFunc(ctx);
-    const reservedEntry: WasmFunction = {
-      name: funcName,
-      typeIdx: funcTypeIdx,
-      locals: [] as Array<{ name: string; type: ValType }>,
-      body: [],
-      exported: false,
-    };
-    pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reservedEntry);
-    ctx.funcMap.set(funcName, reservedFuncIdx);
+    let reservedEntry: WasmFunction;
+    if (opts.reuseReservedEntry) {
+      reservedEntry = opts.reuseReservedEntry;
+      reservedEntry.typeIdx = funcTypeIdx;
+      reservedEntry.locals = [];
+      reservedEntry.body = [];
+    } else {
+      const reservedFuncIdx = mintDefinedFunc(ctx);
+      reservedEntry = {
+        name: funcName,
+        typeIdx: funcTypeIdx,
+        locals: [] as Array<{ name: string; type: ValType }>,
+        body: [],
+        exported: false,
+      };
+      pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reservedEntry);
+      ctx.funcMap.set(funcName, reservedFuncIdx);
+    }
     ctx.nestedFuncCaptures.set(
       funcName,
       captures.map((c) => ({
         name: c.name,
         outerLocalIdx: c.localIdx,
+        ownerFctx: fctx,
         mutable: c.mutable,
         // (#2623 / #2967 3a) A mutable capture whose outer slot is ALREADY the
         // canonical ref cell registers its INNER value type, NOT the cell
@@ -1049,6 +1078,17 @@ export function compileNestedFunctionDeclaration(
         outerTdzFlagIdx: c.tdzFlagIdx,
       })),
     );
+
+    // Phase-0 reservation for capturing sibling declarations.  At this point
+    // the lifted capture ABI and direct-call metadata are complete, but no
+    // capture has been boxed and no body instruction has been emitted.  The
+    // regular source-order pass re-enters with reuseReservedEntry to fill this
+    // exact slot after every sibling call target is known.
+    if (opts.reserveOnly) {
+      if (!ctx.preRegisteredBodyless) ctx.preRegisteredBodyless = new Set();
+      ctx.preRegisteredBodyless.add(funcName);
+      return;
+    }
 
     // (#2758) Pre-box any by-value capture that a sibling this function CALLS
     // mutably captures, BEFORE the parameter default-init / destructuring below
@@ -1649,6 +1689,47 @@ export function hoistFunctionDeclarations(
   }
   const isShadowedDuplicate = (stmt: ts.FunctionDeclaration): boolean =>
     lastSiblingDeclForName.get(stmt.name!.text) !== stmt;
+  // A declaration that only references a capturing sibling is itself
+  // capturing: its lifted body must receive and forward that sibling's
+  // environment. The old Phase-0 scan skipped every sibling name, classified
+  // such callers as capture-free, and reserved a no-capture function slot.
+  // When the full compiler later discovered the transitive capture it could
+  // not reuse that signature and replaced the function with a default-return
+  // stub. Compute the sibling dependency closure before reserving anything.
+  const transitivelyCapturingSiblings = new Set<string>();
+  const siblingDependencies = new Map<string, Set<string>>();
+  for (const stmt of stmts) {
+    if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body || isShadowedDuplicate(stmt)) continue;
+    const funcName = stmt.name.text;
+    const ownLocals = new Set<string>();
+    addFunctionOwnLocals(stmt, ownLocals);
+    const referenced = new Set<string>();
+    for (const s of stmt.body.statements) collectReferencedIdentifiers(s, referenced, ownLocals);
+    const dependencies = new Set<string>();
+    let capturesOuter = false;
+    for (const name of referenced) {
+      if (name === "this" || name === "super" || ownLocals.has(name)) continue;
+      if (siblingFuncNames.has(name)) {
+        dependencies.add(name);
+        continue;
+      }
+      if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+      if (fctx.localMap.has(name)) capturesOuter = true;
+    }
+    siblingDependencies.set(funcName, dependencies);
+    if (capturesOuter) transitivelyCapturingSiblings.add(funcName);
+  }
+  let captureClosureChanged = true;
+  while (captureClosureChanged) {
+    captureClosureChanged = false;
+    for (const [funcName, dependencies] of siblingDependencies) {
+      if (transitivelyCapturingSiblings.has(funcName)) continue;
+      if ([...dependencies].some((name) => transitivelyCapturingSiblings.has(name))) {
+        transitivelyCapturingSiblings.add(funcName);
+        captureClosureChanged = true;
+      }
+    }
+  }
   if (siblingFuncNames.size > 1) {
     for (const stmt of stmts) {
       if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
@@ -1657,28 +1738,7 @@ export function hoistFunctionDeclarations(
       if (ctx.funcMap.has(funcName)) continue;
       if (ctx.hoistFailedFuncs?.has(funcName)) continue;
 
-      // Capture check: a referenced name that is an outer local (and not an
-      // own-local, this/super, or a sibling function) makes this capturing.
-      const ownLocals = new Set<string>();
-      addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
-      const referenced = new Set<string>();
-      for (const s of stmt.body.statements) collectReferencedIdentifiers(s, referenced, ownLocals);
-      let capturesOuter = false;
-      for (const name of referenced) {
-        if (name === "this" || name === "super") continue;
-        if (ownLocals.has(name)) continue;
-        if (siblingFuncNames.has(name)) continue;
-        // #2669: skip names bound to a *user* function — but NOT a wasm:js-string
-        // builtin import (concat/length/equals/substring/charCodeAt), which lives in
-        // funcMap yet must not block capture of a same-named outer local (the
-        // test262 `let length = "outer"` dstr template captured by a nested fn).
-        if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
-        if (fctx.localMap.has(name)) {
-          capturesOuter = true;
-          break;
-        }
-      }
-      if (capturesOuter) continue;
+      if (transitivelyCapturingSiblings.has(funcName)) continue;
 
       // Compute the real signature (mirror the slice in
       // compileNestedFunctionDeclaration). Generators return externref; async
@@ -1730,8 +1790,247 @@ export function hoistFunctionDeclarations(
     }
   }
 
+  const unsafeForwardCalleesCache = new WeakMap<ts.FunctionDeclaration, ts.FunctionDeclaration[]>();
+  const unsafeForwardCallees = (caller: ts.FunctionDeclaration): ts.FunctionDeclaration[] => {
+    const cached = unsafeForwardCalleesCache.get(caller);
+    if (cached) return cached;
+    const found = new Set<ts.FunctionDeclaration>();
+    const visit = (node: ts.Node): void => {
+      if (
+        node !== caller &&
+        (ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isArrowFunction(node) ||
+          ts.isMethodDeclaration(node))
+      ) {
+        return;
+      }
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const callee = lastSiblingDeclForName.get(node.expression.text);
+        if (!callee || callee.getStart() <= caller.getStart()) {
+          ts.forEachChild(node, visit);
+          return;
+        }
+        for (let parent: ts.Node | undefined = node.parent; parent && parent !== caller.body; parent = parent.parent) {
+          if (
+            (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.CommaToken) ||
+            ts.isConditionalExpression(parent) ||
+            ts.isForStatement(parent) ||
+            ts.isForInStatement(parent) ||
+            ts.isForOfStatement(parent) ||
+            ts.isWhileStatement(parent) ||
+            ts.isDoStatement(parent)
+          ) {
+            found.add(callee);
+            break;
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(caller.body!);
+    const result = [...found];
+    unsafeForwardCalleesCache.set(caller, result);
+    return result;
+  };
+  const requiredCallees = (caller: ts.FunctionDeclaration): ts.FunctionDeclaration[] => {
+    const required = new Set<ts.FunctionDeclaration>(unsafeForwardCallees(caller));
+    for (const dependency of siblingDependencies.get(caller.name!.text) ?? []) {
+      const callee = lastSiblingDeclForName.get(dependency);
+      if (!callee) continue;
+      // An earlier declaration can itself be waiting on an unsafe forward
+      // target. Do not let a later dependent leapfrog that deferred body.
+      if (callee.getStart() < caller.getStart()) required.add(callee);
+    }
+    return [...required];
+  };
+  const hasLoopNestedForwardCall = (caller: ts.FunctionDeclaration, target: ts.FunctionDeclaration): boolean => {
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (
+        found ||
+        (node !== caller &&
+          (ts.isFunctionDeclaration(node) ||
+            ts.isFunctionExpression(node) ||
+            ts.isArrowFunction(node) ||
+            ts.isMethodDeclaration(node)))
+      ) {
+        return;
+      }
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        lastSiblingDeclForName.get(node.expression.text) === target
+      ) {
+        for (let parent: ts.Node | undefined = node.parent; parent && parent !== caller.body; parent = parent.parent) {
+          if (
+            ts.isForStatement(parent) ||
+            ts.isForInStatement(parent) ||
+            ts.isForOfStatement(parent) ||
+            ts.isWhileStatement(parent) ||
+            ts.isDoStatement(parent)
+          ) {
+            found = true;
+            return;
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(caller.body!);
+    return found;
+  };
+
+  // Keep callees at their natural source positions and defer only callers with
+  // unsafe forward calls. Pulling a callee earlier can move it ahead of its own
+  // ordinary dependencies; ReactDOM then lost performWorkOnRoot while fixing a
+  // forward call to performSyncWorkOnRoot. Releasing deferred callers as soon
+  // as all required targets are registered preserves every intervening sibling
+  // and avoids perturbing the package's large mutually-recursive call graph.
+  const hoistOrder: ts.Statement[] = [];
+  const emittedDeclarations = new Set<ts.FunctionDeclaration>();
+  const deferredDeclarations: ts.FunctionDeclaration[] = [];
+  const deferredCapturingCycles: ts.FunctionDeclaration[][] = [];
+  const releaseReadyDeclarations = (): void => {
+    let released = true;
+    while (released) {
+      released = false;
+      const readyIndex = deferredDeclarations.findIndex((declaration) =>
+        requiredCallees(declaration).every((callee) => emittedDeclarations.has(callee)),
+      );
+      if (readyIndex < 0) continue;
+      const [ready] = deferredDeclarations.splice(readyIndex, 1);
+      hoistOrder.push(ready!);
+      emittedDeclarations.add(ready!);
+      released = true;
+    }
+  };
+  const reserveCapturingCycle = (): boolean => {
+    const deferred = new Set(deferredDeclarations);
+    const directCallees = (declaration: ts.FunctionDeclaration): ts.FunctionDeclaration[] => {
+      const callees = new Set<ts.FunctionDeclaration>();
+      for (const dependency of siblingDependencies.get(declaration.name!.text) ?? []) {
+        const callee = lastSiblingDeclForName.get(dependency);
+        if (callee) callees.add(callee);
+      }
+      return [...callees];
+    };
+
+    // A direct mutual-recursion pair is the irreducible ordering case: the
+    // earlier function's loop/comma call needs the later target registered,
+    // while that later body calls back into the earlier function. Reserve this
+    // narrow pair rather than its whole transitive call-graph SCC; large package
+    // modules can have dozens of indirectly recursive siblings whose combined
+    // capture environment would be both unnecessary and enormous.
+    let cycle: ts.FunctionDeclaration[] | undefined;
+    for (const caller of deferredDeclarations) {
+      for (const callee of unsafeForwardCallees(caller)) {
+        if (
+          deferred.has(callee) &&
+          directCallees(callee).includes(caller) &&
+          hasLoopNestedForwardCall(caller, callee)
+        ) {
+          cycle = [caller, callee];
+          break;
+        }
+      }
+      if (cycle) break;
+    }
+    if (!cycle) return false;
+
+    const cycleSet = new Set(cycle);
+    for (let i = deferredDeclarations.length - 1; i >= 0; i--) {
+      if (cycleSet.has(deferredDeclarations[i]!)) deferredDeclarations.splice(i, 1);
+    }
+    for (const declaration of cycle) {
+      emittedDeclarations.add(declaration);
+    }
+    deferredCapturingCycles.push(cycle);
+    return true;
+  };
   for (const stmt of stmts) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body && !isShadowedDuplicate(stmt)) {
+      const ready = requiredCallees(stmt).every((callee) => emittedDeclarations.has(callee));
+      if (ready) {
+        hoistOrder.push(stmt);
+        emittedDeclarations.add(stmt);
+      } else {
+        deferredDeclarations.push(stmt);
+      }
+      releaseReadyDeclarations();
+    } else {
+      hoistOrder.push(stmt);
+    }
+  }
+  // Break a remaining forward-call cycle in source order, then immediately
+  // release every dependent that the chosen body unblocks. Merely appending
+  // the whole deferred list would put callers such as flushSyncWorkAcrossRoots
+  // ahead of the performSyncWorkOnRoot target they were waiting for.
+  while (deferredDeclarations.length > 0) {
+    const before = deferredDeclarations.length;
+    releaseReadyDeclarations();
+    if (deferredDeclarations.length === 0) break;
+    if (deferredDeclarations.length === before) {
+      if (reserveCapturingCycle()) continue;
+      const [cycleBreaker] = deferredDeclarations.splice(0, 1);
+      hoistOrder.push(cycleBreaker!);
+      emittedDeclarations.add(cycleBreaker!);
+    }
+  }
+  // Cycle members are intentionally emitted last. By then every ordinary
+  // sibling has registered its final capture metadata, so the mutually
+  // recursive pair can compute one stable shared environment before either
+  // body emits a call to the other.
+  for (const cycle of deferredCapturingCycles) hoistOrder.push(...cycle);
+
+  const reserveDeferredCapturingCycles = (): boolean => {
+    const declarations = deferredCapturingCycles.flat();
+    for (const declaration of declarations) {
+      const funcName = declaration.name!.text;
+      if (!ctx.preRegisteredBodyless?.has(funcName)) {
+        compileNestedFunctionDeclaration(ctx, fctx, declaration, {
+          reserveOnly: true,
+          allowWideReservation: true,
+        });
+      }
+    }
+    if (!declarations.every((declaration) => ctx.funcMap.has(declaration.name!.text))) return false;
+
+    let changed = true;
+    let iterations = 0;
+    while (changed && iterations++ < 32) {
+      changed = false;
+      for (const declaration of declarations) {
+        const funcName = declaration.name!.text;
+        const before = (ctx.nestedFuncCaptures.get(funcName) ?? [])
+          .map((capture) => capture.name)
+          .sort()
+          .join("\0");
+        const reservedFuncIdx = ctx.funcMap.get(funcName)!;
+        const reservedEntry = definedFuncAt(ctx, reservedFuncIdx);
+        if (!reservedEntry) return false;
+        compileNestedFunctionDeclaration(ctx, fctx, declaration, {
+          reserveOnly: true,
+          allowWideReservation: true,
+          reuseReservedEntry: reservedEntry,
+        });
+        const after = (ctx.nestedFuncCaptures.get(funcName) ?? [])
+          .map((capture) => capture.name)
+          .sort()
+          .join("\0");
+        if (after !== before) changed = true;
+      }
+    }
+    return !changed;
+  };
+  const deferredCycleMembers = new Set(deferredCapturingCycles.flat());
+  let deferredCyclesReserved = false;
+
+  for (const stmt of hoistOrder) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) {
+      if (!deferredCyclesReserved && deferredCycleMembers.has(stmt)) {
+        deferredCyclesReserved = reserveDeferredCapturingCycles();
+      }
       // (#3419) Earlier duplicate of a later same-name sibling — never
       // instantiated (last-wins, §10.2.11 step 14). Skip: the surviving
       // declaration owns the funcMap slot and the Annex B bookkeeping.
@@ -1775,7 +2074,17 @@ export function hoistFunctionDeclarations(
         // Save state so we can roll back if compilation fails
         const errorsBefore = ctx.errors.length;
 
-        compileNestedFunctionDeclaration(ctx, fctx, stmt, reservedEntry ? { reuseReservedEntry: reservedEntry } : {});
+        compileNestedFunctionDeclaration(
+          ctx,
+          fctx,
+          stmt,
+          reservedEntry
+            ? {
+                reuseReservedEntry: reservedEntry,
+                preserveReservedCaptureOrder: deferredCycleMembers.has(stmt),
+              }
+            : {},
+        );
 
         // If new errors were added during hoisting, roll back
         if (ctx.errors.length > errorsBefore) {

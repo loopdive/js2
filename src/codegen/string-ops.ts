@@ -1237,7 +1237,17 @@ export function compileTaggedTemplateExpression(
       const tdzFlaggedNested = nestedCaptures ? nestedCaptures.filter((c) => c.hasTdzFlag) : [];
       if (nestedCaptures) {
         for (const cap of nestedCaptures) {
-          fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+          const sourceLocalIdx = cap.ownerFctx === fctx ? cap.outerLocalIdx : fctx.localMap.get(cap.name);
+          if (sourceLocalIdx === undefined) {
+            reportError(
+              ctx,
+              expr,
+              `Cannot resolve transitive capture '${cap.name}' for tagged function '${tagName}' in '${fctx.name}'`,
+            );
+            pushDefaultValue(fctx, cap.valType ?? { kind: "externref" }, ctx);
+          } else {
+            fctx.body.push({ op: "local.get", index: sourceLocalIdx });
+          }
         }
         // #1205 Stage 3: after all value captures, push the boxed TDZ-flag refs.
         // Minimal replication of call-identifier.ts's cap-prepend (kept gated so

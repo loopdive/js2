@@ -663,7 +663,8 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
     if (
       declaredType.kind === "externref" &&
       !fctx.undefWidenedLocals?.has(name) &&
-      !fctx.forInIdentifierVars?.has(name)
+      !fctx.forInIdentifierVars?.has(name) &&
+      !fctx.mixedAssignmentCarrierVars?.has(name)
     ) {
       const narrowedType = ctx.checker.getTypeAtLocation(id);
       const narrowed = narrowTypeToUnbox(ctx, fctx, narrowedType);
@@ -819,6 +820,45 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   if (ctx.standalone && isSupportedBuiltinNamespace(name)) {
     const builtinObject = emitBuiltinNamespaceObject(ctx, fctx, name);
     if (builtinObject) return builtinObject;
+  }
+
+  // Host/gc: an ambient extern constructor used as a VALUE must resolve to the
+  // real host constructor object.  The extern-class registry normally serves
+  // only `new X()` and instance member dispatch, so a bare value read such as
+  // ReactDOM's feature selection
+  //
+  //   typeof AbortController !== "undefined" ? AbortController : fallback
+  //
+  // previously fell through to null.  Resolve every registered, unshadowed
+  // extern constructor through globalThis generically; this covers Web/API
+  // constructors without extending the TypedArray/ERM name allowlists below.
+  // Standalone/WASI deliberately keep their native/no-host behavior.
+  if (
+    !ctx.standalone &&
+    !ctx.wasi &&
+    ctx.externClasses.has(name) &&
+    fctx.localMap.get(name) === undefined &&
+    !(fctx.boxedCaptures?.has(name) ?? false) &&
+    !ctx.classSet.has(name)
+  ) {
+    const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+    const getIdx = ensureLateImport(
+      ctx,
+      "__extern_get",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (gtFuncIdx !== undefined && getIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
+      addStringConstantGlobal(ctx, name);
+      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      fctx.body.push(
+        strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
+      );
+      fctx.body.push({ op: "call", funcIdx: getIdx });
+      return { kind: "externref" };
+    }
   }
 
   // (#3087) Host/gc lane: a bare TypedArray constructor name used as a VALUE

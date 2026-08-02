@@ -34,8 +34,8 @@ import {
 } from "../linear-uint8-signatures.js";
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
-import { calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
-import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
+import { calleeIsBoundFunctionVar, resolveStoredObjectStaticMethod } from "../object-builtin-effects.js";
+import { emitNullCheckThrow, emitNullGuardedStructGet, typeErrorThrowInstrs } from "../property-access.js";
 import { emitStandaloneRegExpToStringFromExpr } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
@@ -958,6 +958,17 @@ export function compileIdentifierCall(
   if (ts.isIdentifier(expr.expression)) {
     const funcName = expr.expression.text;
 
+    // Stored Object.assign aliases must retain Object.assign's structural
+    // marshalling even when a lifted nested function captures the alias. In
+    // that case closureMap contains a callable carrier and would otherwise
+    // return through compileClosureCall before the later stored-builtin lane,
+    // routing opaque WasmGC sources through native Object.assign unchanged.
+    // Resolve the immutable builtin provenance before closure dispatch.
+    if (resolveStoredObjectStaticMethod(ctx.oracle, expr.expression) === "assign") {
+      const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
+      if (storedObjectCall !== undefined) return storedObjectCall;
+    }
+
     // (#1301) Param/local that shadows an outer function with nested captures:
     // the funcMap path emits a direct call AND prepends the outer's nested
     // captures using `cap.outerLocalIdx` indices. Inside a lifted closure
@@ -973,14 +984,12 @@ export function compileIdentifierCall(
     // Other shadow cases stay on the funcMap path — direct calls that don't
     // emit cap-prepend logic are already correct, even if a coincidental
     // local with the same name exists in the current scope.
-    let isLocallyShadowed = false;
-    if (fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
-      const localCalleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
-      const localCallSigs = localCalleeTsType?.getCallSignatures?.();
-      if (localCallSigs && localCallSigs.length > 0) {
-        isLocallyShadowed = true;
-      }
-    }
+    // Lexical binding wins even when JavaScript's checker type is `any` and
+    // therefore exposes no call signature. ReactDOM's renderWithHooks takes a
+    // parameter named `Component`; resolving it to React's captured outer
+    // `Component` function instead both calls the wrong value and attempts to
+    // read that function's owner-frame captures from this unrelated frame.
+    const isLocallyShadowed = fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName);
 
     // Check if this is a closure call
     let closureInfo = isLocallyShadowed ? undefined : ctx.closureMap.get(funcName);
@@ -1030,7 +1039,10 @@ export function compileIdentifierCall(
         const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
         if (hostCall !== null) return hostCall;
       }
-      if (isKnownVariable && (ctx.standalone || noJsHost(ctx))) {
+      if (
+        isKnownVariable &&
+        (ctx.standalone || noJsHost(ctx) || resolveStoredObjectStaticMethod(ctx.oracle, expr.expression) === "assign")
+      ) {
         const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
         if (storedObjectCall !== undefined) return storedObjectCall;
       }
@@ -1918,7 +1930,18 @@ export function compileIdentifierCall(
             // throwing inside an async fn body. Reverted; the canonical TDZ-
             // through-closure case is fixed via the call-site TDZ check below
             // and Stage 3 C.1 in compileArrowAsClosure.)
-            fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+            const sourceLocalIdx = cap.ownerFctx === fctx ? cap.outerLocalIdx : fctx.localMap.get(cap.name);
+            if (sourceLocalIdx === undefined) {
+              reportError(
+                ctx,
+                expr,
+                `Cannot resolve transitive capture '${cap.name}' for '${funcName}' in '${fctx.name}' ` +
+                  `(owner '${cap.ownerFctx.name}')`,
+              );
+              pushDefaultValue(fctx, cap.valType, ctx);
+            } else {
+              fctx.body.push({ op: "local.get", index: sourceLocalIdx });
+            }
             fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
             // Also box the outer local so subsequent reads/writes go through the ref cell
             const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
@@ -1958,11 +1981,56 @@ export function compileIdentifierCall(
           // (#1177: TDZ check moved above the mutable/non-mutable branch.
           // Stage 1 localMap-first lookup reverted — see comment in mutable
           // branch above.)
-          fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
-          // Coerce capture value to expected param type if they differ
+          // An async frame may conservatively force-box a spill that this
+          // lifted function captures by VALUE.  The callee ABI still expects
+          // the inner value, not the frame's ref-cell carrier.  Prefer the
+          // current frame-local box and read through it before coercing the
+          // capture argument.  Without this, try/catch async lowering passed
+          // `$__ref_cell_externref` itself as ReactDOMClient and the nested
+          // helper observed the wrong receiver (`createRoot` was undefined).
+          const boxedCapture = fctx.boxedCaptures?.get(cap.name);
           const expectedCapType = captureParamTypes?.[capIdx];
+          const passBoxDirectly =
+            boxedCapture !== undefined &&
+            expectedCapType !== undefined &&
+            (expectedCapType.kind === "ref" || expectedCapType.kind === "ref_null") &&
+            expectedCapType.typeIdx === boxedCapture.refCellTypeIdx;
+          const sourceLocalIdx = boxedCapture
+            ? fctx.localMap.get(cap.name)
+            : cap.ownerFctx === fctx
+              ? cap.outerLocalIdx
+              : fctx.localMap.get(cap.name);
+          if (sourceLocalIdx === undefined) {
+            reportError(
+              ctx,
+              expr,
+              `Cannot resolve transitive capture '${cap.name}' for '${funcName}' in '${fctx.name}' ` +
+                `(owner '${cap.ownerFctx.name}')`,
+            );
+            pushDefaultValue(fctx, captureParamTypes?.[capIdx] ?? { kind: "externref" }, ctx);
+          } else {
+            fctx.body.push({ op: "local.get", index: sourceLocalIdx });
+            if (boxedCapture !== undefined && !passBoxDirectly) {
+              emitNullGuardedStructGet(
+                ctx,
+                fctx,
+                { kind: "ref_null", typeIdx: boxedCapture.refCellTypeIdx },
+                boxedCapture.valType,
+                boxedCapture.refCellTypeIdx,
+                0,
+                undefined,
+                false,
+              );
+            }
+          }
+          // Coerce capture value to expected param type if they differ
           if (expectedCapType) {
-            const actualType = getLocalType(fctx, cap.outerLocalIdx);
+            const actualType =
+              sourceLocalIdx === undefined
+                ? undefined
+                : passBoxDirectly
+                  ? getLocalType(fctx, sourceLocalIdx)
+                  : (boxedCapture?.valType ?? getLocalType(fctx, sourceLocalIdx));
             if (actualType && !valTypesMatch(actualType, expectedCapType)) {
               coerceType(ctx, fctx, actualType, expectedCapType);
             }

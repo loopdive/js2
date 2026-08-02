@@ -53,6 +53,12 @@ function compileConditionalExpression(
   }
   let thenInstrs = fctx.body;
 
+  // Park the completed then branch while the else branch compiles. Late imports
+  // registered by the else branch shift every defined-function index; detached
+  // branch bodies must be visible to that shift walker as well. Large bundles
+  // such as ReactDOM otherwise left the then branch calling a neighbouring
+  // function after the else branch pulled in a helper.
+  fctx.savedBodies.push(thenInstrs);
   fctx.body = [];
   const elseResultType = compileExpression(ctx, fctx, expr.whenFalse);
   if (!elseResultType) {
@@ -60,6 +66,9 @@ function compileConditionalExpression(
   }
   let elseInstrs = fctx.body;
 
+  // Keep both completed branches parked through the common-type coercion below:
+  // coercion can itself register late imports and shift call indices.
+  fctx.savedBodies.push(elseInstrs);
   fctx.body = savedBody;
 
   const thenType: ValType = thenResultType ?? { kind: "f64" };
@@ -145,6 +154,10 @@ function compileConditionalExpression(
     };
   }
 
+  // Unpark else, then, and the original body registered by pushBody above.
+  fctx.savedBodies.pop();
+  fctx.savedBodies.pop();
+  fctx.savedBodies.pop();
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: resultValType },

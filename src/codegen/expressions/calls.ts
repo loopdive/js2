@@ -2494,6 +2494,9 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
     const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
     if (isHostBuiltinMember(inner)) return true;
     if (isReflectiveAccessorExtraction(inner)) return true;
+    if (ts.isConditionalExpression(inner)) {
+      return initMayBeHost(inner.whenTrue) || initMayBeHost(inner.whenFalse);
+    }
     if (
       ts.isBinaryExpression(inner) &&
       (inner.operatorToken.kind === ts.SyntaxKind.BarBarToken ||

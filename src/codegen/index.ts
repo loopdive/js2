@@ -169,7 +169,7 @@ import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
-import { hoistedVarRetypesToConcreteRef, usageInferredLocalType } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
+import { hoistedVarRetypesToConcreteRef, inferArrayVecType, usageInferredLocalType } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
 import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-carrier.js";
 import { symbolBrand } from "./symbol-field-carrier.js";
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
@@ -307,6 +307,7 @@ import {
   inferImplicitAnyParamType,
   inferNumericReturnTypes,
   collectEmptyObjectWidening,
+  collectObjectLiteralAssignedPropertyNames,
   collectGrowableObjectLiterals,
   compileDeclarations,
   createUnifiedCollectorState,
@@ -3570,6 +3571,7 @@ export function generateModule(
 
     // Pre-pass: detect empty object literals that get properties assigned later
     // Must run before import collectors so that widened types are known
+    collectObjectLiteralAssignedPropertyNames(ctx, ast.sourceFile);
     collectEmptyObjectWidening(ctx, ast.checker, ast.sourceFile);
     // (#2837) Detect NON-empty object literals later written out-of-shape (incl.
     // nested depth-2 descriptors) → route them to the externref $Object builder.
@@ -6011,6 +6013,7 @@ export function generateMultiModule(
     // Pre-pass: detect empty object literals that get properties assigned later
     // Must run before import collectors so that widened types are known
     for (const sf of multiAst.sourceFiles) {
+      collectObjectLiteralAssignedPropertyNames(ctx, sf);
       collectEmptyObjectWidening(ctx, multiAst.checker, sf);
       // (#2837) see single-file path above.
       collectGrowableObjectLiterals(ctx, multiAst.checker, sf);
@@ -7613,6 +7616,19 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     const propType = ctx.checker.getTypeOfSymbol(prop);
     ensureStructForType(ctx, propType);
     let wasmType = symbolBrand(propType, resolveWasmType(ctx, propType));
+    const receivesObjectCarrier = ctx.objectLiteralAssignedPropertyNames.has(prop.name);
+    const nullishScalarSeed =
+      wasmType.kind === "i32" &&
+      (propType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
+    if (
+      receivesObjectCarrier &&
+      (wasmType.kind === "ref" ||
+        wasmType.kind === "ref_null" ||
+        (wasmType.kind === "i32" && wasmType.boolean === true) ||
+        nullishScalarSeed)
+    ) {
+      wasmType = { kind: "externref" };
+    }
     // (#1468) `{ k: undefined }` makes TS infer the property's type as the
     // literal `undefined`. `mapTsTypeToWasm` maps that to i32 because for
     // function return types `undefined`/`void` indicate "no result". For a
@@ -8117,13 +8133,31 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     if (forInTargetForcesExternref) {
       (fctx.forInIdentifierVars ??= new Set()).add(name);
     }
-    const carrierForcesExternref =
-      initForcesExternref || forInTargetForcesExternref || bindingHasMixedAssignmentCarrier(ctx, decl);
+    let inferredArrayVecType: ValType | null = null;
+    if (varType.flags & ts.TypeFlags.Object) {
+      const symbol = (varType as ts.TypeReference).symbol ?? varType.symbol;
+      if (symbol?.name === "Array") {
+        const typeArgs = ctx.checker.getTypeArguments(varType as ts.TypeReference);
+        const isInitiallyEmptyArray =
+          decl.initializer !== undefined &&
+          ts.isArrayLiteralExpression(decl.initializer) &&
+          decl.initializer.elements.length === 0;
+        if (isInitiallyEmptyArray || (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any)) {
+          inferredArrayVecType = inferArrayVecType(ctx, decl);
+        }
+      }
+    }
+    const mixedAssignmentCarrier = inferredArrayVecType === null && bindingHasMixedAssignmentCarrier(ctx, decl);
+    if (mixedAssignmentCarrier) {
+      (fctx.mixedAssignmentCarrierVars ??= new Set()).add(name);
+    }
+    const carrierForcesExternref = initForcesExternref || forInTargetForcesExternref || mixedAssignmentCarrier;
     const usageF64 = carrierForcesExternref ? null : usageInferredLocalType(ctx, decl);
     const wasmType: ValType =
-      carrierForcesExternref || isNullablePrimitiveType(varType) || varBindingNeedsExternrefForUndefined(decl, ctx)
+      inferredArrayVecType ??
+      (carrierForcesExternref || isNullablePrimitiveType(varType) || varBindingNeedsExternrefForUndefined(decl, ctx)
         ? { kind: "externref" as const }
-        : (usageF64 ?? resolveWasmType(ctx, varType));
+        : (usageF64 ?? resolveWasmType(ctx, varType)));
     if (initForcesExternref) ctx.externrefAccessorVars.add(name);
     const localIdx = allocLocal(fctx, name, wasmType);
     // (#684) A hoisted `var` is `undefined` from function entry; when narrowed

@@ -14,6 +14,48 @@ area: dogfood
 language_feature: compiler-internals
 goal: dogfood
 related: [3958, 3977]
+loc-budget-allow:
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/runtime.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/index.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/closures.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/stack-balance.ts
+  - src/codegen/context/types.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/array-methods.ts
+  - src/compiler.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/declarations.ts
+func-budget-allow:
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/runtime.ts::resolveImport
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/runtime.ts::<anonymous>#78
+  - src/codegen/index.ts::ensureStructForType
+  - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
+  - src/runtime.ts::_wrapForHost
+  - src/codegen/string-ops.ts::compileTaggedTemplateExpression
+  - src/import-resolver.ts::preprocessImports
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/runtime.ts::_safeSet
 ---
 
 # Run react-dom's own unit tests against compiled react-dom

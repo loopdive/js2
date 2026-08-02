@@ -2941,6 +2941,27 @@ export function compileArrowAsCallback(
   // rationale on the identical scan in `compileArrowAsClosure`).
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
 
+  // A host callback can call a capturing nested declaration. Its callback
+  // frame must carry that declaration's environment just like a lifted Wasm
+  // closure does; otherwise the direct call reads owner-frame local indices
+  // from the callback frame.
+  const captureWorklist = [...referencedNames];
+  const visitedCaptureFunctions = new Set<string>();
+  while (captureWorklist.length > 0) {
+    const referencedName = captureWorklist.pop()!;
+    if (visitedCaptureFunctions.has(referencedName)) continue;
+    visitedCaptureFunctions.add(referencedName);
+    const transitiveCaptures = ctx.nestedFuncCaptures.get(referencedName);
+    if (!transitiveCaptures) continue;
+    for (const capture of transitiveCaptures) {
+      if (ownLocals.has(capture.name)) continue;
+      if (!referencedNames.has(capture.name)) {
+        referencedNames.add(capture.name);
+        captureWorklist.push(capture.name);
+      }
+    }
+  }
+
   // Detect which captured variables are written inside the callback body (#859)
   const writtenInCallback = new Set<string>();
   collectOverBody(collectWrittenIdentifiers, body, writtenInCallback, ownLocals);

@@ -12,10 +12,12 @@
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { reportErrorNoNode } from "../context/errors.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
+import { pushDefaultValue } from "../type-coercion.js";
 import {
   closureArityField,
   getFuncSignature,
@@ -113,7 +115,8 @@ function emitMemoizedNestedFnClosure(
     // name itself. Guarded on localMap-absence so owner-fctx behavior is
     // unchanged (see the #1177 revert note in calls.ts for why a blanket
     // localMap-first lookup is NOT safe).
-    const capUnresolvedHere = fctx.localMap.get(cap.name) === undefined;
+    const sourceLocalIdx = cap.ownerFctx === fctx ? cap.outerLocalIdx : fctx.localMap.get(cap.name);
+    const capUnresolvedHere = sourceLocalIdx === undefined;
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
@@ -136,8 +139,18 @@ function emitMemoizedNestedFnClosure(
         }
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
       } else {
-        // Stage 1 localMap-first lookup reverted — see calls.ts comment.
-        fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+        // The declaring frame owns `outerLocalIdx`. A sibling function that
+        // materializes this closure receives the binding as one of its own
+        // transitively-threaded capture params instead.
+        if (sourceLocalIdx === undefined) {
+          reportErrorNoNode(
+            ctx,
+            `Cannot resolve transitive capture '${cap.name}' while materializing '${funcName}' in '${fctx.name}'`,
+          );
+          pushDefaultValue(fctx, cap.valType, ctx);
+        } else {
+          fctx.body.push({ op: "local.get", index: sourceLocalIdx });
+        }
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
         const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
           kind: "ref",
@@ -157,7 +170,15 @@ function emitMemoizedNestedFnClosure(
         fctx.body.push({ op: "ref.as_non_null" });
       }
     } else {
-      fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+      if (sourceLocalIdx === undefined) {
+        reportErrorNoNode(
+          ctx,
+          `Cannot resolve transitive capture '${cap.name}' while materializing '${funcName}' in '${fctx.name}'`,
+        );
+        pushDefaultValue(fctx, cap.valType ?? { kind: "externref" }, ctx);
+      } else {
+        fctx.body.push({ op: "local.get", index: sourceLocalIdx });
+      }
     }
   }
   // #1205 Stage 3: after all value captures, push the boxed TDZ flag refs

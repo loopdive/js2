@@ -37,7 +37,7 @@ import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
 import { bindingHasMixedAssignmentCarrier } from "../analysis/mixed-assignment-carrier.js";
 
-function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
+export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
   const varName = decl.name.text;
 
@@ -56,6 +56,9 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
   if (!scope) return null;
 
   let inferredElemType: ts.Type | null = null;
+  let inferredElemWasm: ValType | null = null;
+  let mixedElementCarrier = false;
+  let sawDynamicElementWrite = false;
 
   // (#2806) A write whose value type is purely `undefined` / `void` / `null`
   // must NOT pin the array's element kind to a numeric (i32) vec. The canonical
@@ -71,9 +74,27 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
     (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) !== 0 &&
     (t.flags & ~(ts.TypeFlags.Any | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Null)) === 0;
 
-  function visit(node: ts.Node) {
-    if (inferredElemType) return;
+  const recordWriteType = (value: ts.Expression): void => {
+    const valueType = ctx.checker.getTypeAtLocation(value);
+    if (isUnpinnableWriteType(valueType)) {
+      sawDynamicElementWrite = true;
+      return;
+    }
+    const wasmType = resolveWasmType(ctx, valueType);
+    if (!inferredElemType || !inferredElemWasm) {
+      inferredElemType = valueType;
+      inferredElemWasm = wasmType;
+      return;
+    }
+    const sameType =
+      inferredElemWasm.kind === wasmType.kind &&
+      (wasmType.kind !== "ref" && wasmType.kind !== "ref_null"
+        ? true
+        : (inferredElemWasm as { typeIdx: number }).typeIdx === wasmType.typeIdx);
+    if (!sameType) mixedElementCarrier = true;
+  };
 
+  function visit(node: ts.Node) {
     // arr[i] = value
     if (
       ts.isBinaryExpression(node) &&
@@ -82,11 +103,8 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
       ts.isIdentifier(node.left.expression) &&
       node.left.expression.text === varName
     ) {
-      const valType = ctx.checker.getTypeAtLocation(node.right);
-      if (!isUnpinnableWriteType(valType)) {
-        inferredElemType = valType;
-        return;
-      }
+      const writeDecl = ctx.oracle.variableDeclarationOf(node.left.expression);
+      if (writeDecl === decl) recordWriteType(node.right);
     }
 
     // arr.push(value)
@@ -96,23 +114,23 @@ function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): V
       node.expression.name.text === "push" &&
       ts.isIdentifier(node.expression.expression) &&
       node.expression.expression.text === varName &&
+      ctx.oracle.variableDeclarationOf(node.expression.expression) === decl &&
       node.arguments.length >= 1
     ) {
-      const valType = ctx.checker.getTypeAtLocation(node.arguments[0]!);
-      if (!isUnpinnableWriteType(valType)) {
-        inferredElemType = valType;
-        return;
-      }
+      for (const argument of node.arguments) recordWriteType(argument);
     }
 
     forEachChild(node, visit);
   }
 
   visit(scope);
-  if (!inferredElemType) return null;
+  if (!inferredElemType && !sawDynamicElementWrite) return null;
 
-  // Resolve the inferred element type to a wasm type, then register the vec
-  const elemWasm = resolveWasmType(ctx, inferredElemType);
+  // Heterogeneous queue/scratch arrays must preserve every JS value. ReactDOM's
+  // concurrentQueues stores [fiber, queue, update, lane] in one initially-empty
+  // array; committing to the first ref shape coerced the update/lane writes and
+  // later made `update.next = update` operate on boolean false.
+  const elemWasm: ValType = mixedElementCarrier || sawDynamicElementWrite ? { kind: "externref" } : inferredElemWasm!;
   const elemKey =
     elemWasm.kind === "ref" || elemWasm.kind === "ref_null"
       ? `ref_${(elemWasm as { typeIdx: number }).typeIdx}`
@@ -1082,7 +1100,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       const sym = (varType as ts.TypeReference).symbol ?? (varType as ts.Type).symbol;
       if (sym?.name === "Array") {
         const typeArgs = ctx.checker.getTypeArguments(varType as ts.TypeReference);
-        if (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any) {
+        const isInitiallyEmptyArray =
+          decl.initializer !== undefined &&
+          ts.isArrayLiteralExpression(decl.initializer) &&
+          decl.initializer.elements.length === 0;
+        if (isInitiallyEmptyArray || (typeArgs?.[0] && typeArgs[0].flags & ts.TypeFlags.Any)) {
           inferredVecType = inferArrayVecType(ctx, decl);
         }
       }
@@ -1212,54 +1234,69 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       !initIsProtoReceiverLiteral &&
       objectLiteralIsStandaloneAnyObjectCarrier(ctx, decl.initializer);
     const anyObjectCarrierTypeIdx = initIsAnyObjectCarrier ? ensureObjectRuntime(ctx).objectTypeIdx : -1;
+    // A binding that crosses representation domains must keep the same boxed
+    // carrier chosen by the var hoister. In particular, numeric-use analysis
+    // may mark a bitmask initializer as i32 even when the binding is later
+    // reused for an object payload. Letting that specialization outrank the
+    // mixed-assignment proof re-narrows the already-hoisted externref slot at
+    // the declaration site and destroys the later object value.
+    const mixedAssignmentCarrier = bindingHasMixedAssignmentCarrier(ctx, decl);
+    if (mixedAssignmentCarrier) {
+      (fctx.mixedAssignmentCarrierVars ??= new Set()).add(name);
+    }
     const wasmType: ValType =
       // (#3123) A widened fnctor-subclass binding (pre-hoist recorded it in
       // `fnctorWidenedLocals` — reassigned with a foreign/host value) must
       // keep its externref slot even when the block-scoped shadow machinery
       // re-allocates here (the pre-hoisted slot reuse below is gated on
       // plain-fn capture and does not fire for uncaptured bindings).
-      fctx.forInIdentifierVars?.has(name)
+      mixedAssignmentCarrier
         ? { kind: "externref" as const }
-        : fctx.fnctorWidenedLocals?.has(name)
+        : fctx.forInIdentifierVars?.has(name)
           ? { kind: "externref" as const }
-          : initIsAccessorLiteral ||
-              initIsHostSpreadLiteral ||
-              initIsGrowableObjectLiteral ||
-              initIsProtoReceiverLiteral
+          : fctx.fnctorWidenedLocals?.has(name)
             ? { kind: "externref" as const }
-            : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
-              ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
-              : isI32CoercedLocal
-                ? { kind: "i32" }
-                : isI32SpecializedArray
-                  ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
-                  : widenedTypeIdx !== undefined
-                    ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
-                    : (taViewType ??
-                      subarraySubviewType ??
-                      inferredVecType ??
-                      standaloneRegExpMatchArrayType ??
-                      (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
-                        ? { kind: "externref" as const }
-                        : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
+            : initIsAccessorLiteral ||
+                initIsHostSpreadLiteral ||
+                initIsGrowableObjectLiteral ||
+                initIsProtoReceiverLiteral
+              ? { kind: "externref" as const }
+              : initIsAnyObjectCarrier && anyObjectCarrierTypeIdx >= 0
+                ? { kind: "ref_null" as const, typeIdx: anyObjectCarrierTypeIdx }
+                : isI32CoercedLocal
+                  ? { kind: "i32" }
+                  : isI32SpecializedArray
+                    ? { kind: "ref_null" as const, typeIdx: getOrRegisterVecType(ctx, "i32", { kind: "i32" }) }
+                    : widenedTypeIdx !== undefined
+                      ? { kind: "ref_null" as const, typeIdx: widenedTypeIdx }
+                      : (taViewType ??
+                        subarraySubviewType ??
+                        inferredVecType ??
+                        standaloneRegExpMatchArrayType ??
+                        (decl.initializer && isStringMethodReturningHostArray(ctx, decl.initializer)
                           ? { kind: "externref" as const }
-                          : // (#2615) `new Proxy(target, handler)` returns a host/native
-                            // Proxy externref. The checker types it as the TARGET's
-                            // struct (ProxyConstructor returns T), so the default slot
-                            // would `ref.test` the Proxy against that struct, fail, null
-                            // it, and trap every read via a direct `struct.get`. Force an
-                            // externref local so reads route through `__extern_get` (the
-                            // only path that runs the Proxy MOP / trap). Both modes emit
-                            // a Proxy externref, so this is mode-agnostic.
-                            initIsProxy
+                          : decl.initializer && isPromiseHostCall(ctx, decl.initializer)
                             ? { kind: "externref" as const }
-                            : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
-                              // returns a host bound-function externref in JS-host mode;
-                              // force an externref local so the value isn't ref.cast to
-                              // the target's closure struct (which traps → null binding).
-                              decl.initializer && !ctx.standalone && !noJsHost(ctx) && isBindHostCall(decl.initializer)
+                            : // (#2615) `new Proxy(target, handler)` returns a host/native
+                              // Proxy externref. The checker types it as the TARGET's
+                              // struct (ProxyConstructor returns T), so the default slot
+                              // would `ref.test` the Proxy against that struct, fail, null
+                              // it, and trap every read via a direct `struct.get`. Force an
+                              // externref local so reads route through `__extern_get` (the
+                              // only path that runs the Proxy MOP / trap). Both modes emit
+                              // a Proxy externref, so this is mode-agnostic.
+                              initIsProxy
                               ? { kind: "externref" as const }
-                              : localTypeForDeclaration(ctx, varType, decl)));
+                              : // (#1337) `fn.bind(...)` / `Function.prototype.bind.call(...)`
+                                // returns a host bound-function externref in JS-host mode;
+                                // force an externref local so the value isn't ref.cast to
+                                // the target's closure struct (which traps → null binding).
+                                decl.initializer &&
+                                  !ctx.standalone &&
+                                  !noJsHost(ctx) &&
+                                  isBindHostCall(decl.initializer)
+                                ? { kind: "externref" as const }
+                                : localTypeForDeclaration(ctx, varType, decl)));
 
     // (#2814) Bug C: re-align a block-scoped let/const with its OWN pre-hoisted
     // slot. `saveBlockScopedShadows` removed this name's localMap (and TDZ-flag)
