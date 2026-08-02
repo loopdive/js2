@@ -502,12 +502,7 @@ function sealDependencyCompletePreparedComponents(input: {
       const scope = session.beginPreparedComponentScope(component.id, component.terminalUnitIds);
       const requestedBindingIds = new Set(
         component.abiDependencies
-          .filter(
-            (dependency) =>
-              dependency.kind === "external-callable" ||
-              dependency.kind === "external-global" ||
-              dependency.kind === "support",
-          )
+          .filter(({ kind }) => ["external-callable", "external-global", "class-layout", "support"].includes(kind))
           .map((dependency) => dependency.bindingId),
       );
       for (const bindingId of requestedBindingIds) scope.includeBinding(bindingId);

@@ -1957,8 +1957,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
  * placeholder for a later IR overlay. R2 passes the exact same names through
  * `preserveSkippedBodies` after their IR bodies have already been prepared and
  * installed, so declaration compilation leaves those bodies untouched.
- * `classBodyRouting` applies the same exact transaction to top-level static
- * methods only; nested declarations and class expressions remain direct-owned.
+ * `classBodyRouting` applies the same exact transaction to top-level ordinary
+ * class methods; constructors, accessors, nested declarations, and class
+ * expressions remain direct-owned.
  *
  * The funcIdx/typeIdx slot itself is untouched in both modes. Skipped
  * functions are deliberately NOT registered as direct-front-end inlinables:
