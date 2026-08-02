@@ -15,11 +15,13 @@
 // This is the conservative gate from the issue's Risks section: an
 // allocation-bearing instr without a live id, or a dangling/kind-mismatched
 // id, is flagged so audit gaps and pass-discipline drift surface in CI rather
-// than later. It is gated behind a debug flag so it is free in production.
+// than later. Intermediate pass checks are gated behind a debug flag; the
+// final publication boundary is always checked.
 //
 // Like `verifyIrFunction`, this returns errors rather than throwing, so the
-// caller decides whether to bail. `assertAllocProvenance` is the throwing
-// wrapper used at the integration verify boundaries.
+// caller decides whether to bail. `assertAllocProvenance` is the optional
+// intermediate wrapper; `assertFinalAllocProvenance` is the required final
+// wrapper.
 
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import type { AllocKind, AllocSiteId, IrFunction, IrInstr } from "./nodes.js";
@@ -127,11 +129,25 @@ function checkId(
 }
 
 /**
- * Throwing wrapper for the integration verify boundaries. No-op unless the
- * debug flag is on, so it costs nothing in production.
+ * Throwing wrapper for intermediate integration verify boundaries. No-op
+ * unless the debug flag is on, so production does not repeat the walk after
+ * every pass.
  */
 export function assertAllocProvenance(func: IrFunction, registry: AllocSiteRegistry): void {
   if (!allocVerifyEnabled()) return;
+  assertVerifiedAllocProvenance(func, registry);
+}
+
+/**
+ * Required final-artifact gate. This deliberately ignores `IR_VERIFY_ALLOC`:
+ * every artifact must pass once after all transforms and before publication or
+ * lowering.
+ */
+export function assertFinalAllocProvenance(func: IrFunction, registry: AllocSiteRegistry): void {
+  assertVerifiedAllocProvenance(func, registry);
+}
+
+function assertVerifiedAllocProvenance(func: IrFunction, registry: AllocSiteRegistry): void {
   const errors = verifyAllocProvenance(func, registry);
   if (errors.length > 0) {
     const lines = errors.map((e) => `  - [${e.func}] ${e.message}`).join("\n");
