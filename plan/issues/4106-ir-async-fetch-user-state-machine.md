@@ -29,6 +29,7 @@ files:
   - src/ir/ast-lowering-plans.ts
   - src/ir/identity.ts
   - scripts/ir-only-baseline.json
+  - plan/agent-context/ir-migration-handover-2026-08-02.md
   - tests/issue-4106-ir-async-fetch-user.test.ts
   - tests/ir/issue-1373b-async-plan.test.ts
   - plan/issues/4106-ir-async-fetch-user-state-machine.md
