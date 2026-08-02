@@ -493,8 +493,8 @@ export interface IrFromAstResolver {
    *     sentinel conventions incl. #1248 slice/substring-end + #2002
    *     NaN-position; `"native-slice-len"` = `slice(start)`'s implicit end =
    *     recv.length, i32-truncated; `"native-substring"` (#3156) = substring's
-   *     omitted start/end pad `i32 0` / `i32 0x7fffffff` — `__str_substring`
-   *     clamps end to len, matching the legacy native arm's sentinel;
+   *     omitted start/end pad `i32 0` / `i32 0x7fffffff` — both the native and
+   *     guarded host helpers clamp end to len;
    *     `"charcode-zero"` (#3156) = charCodeAt's omitted position pads
    *     `i32 0` in BOTH modes, since the guarded helpers take an i32 index).
    *
@@ -6644,9 +6644,9 @@ function lowerStringMethodCall(
       loweredArgs.push(cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })));
       continue;
     }
-    // (#3156) native substring — omitted start pads 0; omitted end pads the
-    // 0x7fffffff "to end" sentinel (`__str_substring` clamps to len; exactly
-    // the legacy native arm's convention, string-ops.ts `substring`).
+    // (#3156) i32 substring helpers — omitted start pads 0; omitted end pads
+    // the 0x7fffffff "to end" sentinel. Both the native helper and the guarded
+    // host builtin helper clamp it to len.
     if (plan.padOmitted === "native-substring") {
       loweredArgs.push(cx.builder.emitConst({ kind: "i32", value: i === 1 ? 0x7fffffff : 0 }, irVal({ kind: "i32" })));
       continue;

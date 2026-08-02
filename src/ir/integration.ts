@@ -109,11 +109,12 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "../codegen/closures/funcref-wrapper-types.js";
 import { ensureFmod, FMOD_FN } from "../codegen/fmod.js"; // #2945 — on-demand `%` helper materialization
-// (#3156) — on-demand guarded charCodeAt helper materialization
 import {
   ensureHostCharCodeAtGuarded,
+  ensureHostSubstringGuarded,
   ensureNativeCharCodeAtHelper,
   JSSTR_CHARCODEAT_FN,
+  JSSTR_SUBSTRING_FN,
   NATIVE_CHARCODEAT_FN,
 } from "../codegen/char-code-at-helpers.js";
 import {
@@ -3627,10 +3628,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       const sig = STRING_METHOD_TABLE[method];
       if (!sig) return null;
       const omitted = argCount < sig.hostArgs.length;
-      // (#3156) substring — native `__str_substring` clamps both indices to
-      // [0, len], so omissions pad exact sentinels (start 0 / end 0x7fffffff,
-      // the legacy native arm's convention) and every arity lowers; host mode
-      // rides the #1248 length-default pad in from-ast.
+      // Both substring helpers take i32 indices and enforce JS clamp/swap semantics.
       if (method === "substring") {
         return native
           ? {
@@ -3639,9 +3637,9 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
               padOmitted: "native-substring" as const,
             }
           : {
-              funcName: "string_substring",
-              indexArgRep: "f64" as const,
-              padOmitted: "host" as const,
+              funcName: JSSTR_SUBSTRING_FN,
+              indexArgRep: "i32" as const,
+              padOmitted: "native-substring" as const,
             };
       }
       // #1248 — native mode only lowers fully-specified call sites, except
@@ -3966,6 +3964,8 @@ function resolveAndObserveCallableProvider(
     index = Number.isInteger(vecTypeIdx) ? ensureVecNewSized(ctx, vecTypeIdx) : null;
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_FN) {
     index = ensureHostCharCodeAtGuarded(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_SUBSTRING_FN) {
+    index = ensureHostSubstringGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === NATIVE_CHARCODEAT_FN) {
     index = ensureNativeCharCodeAtHelper(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_COMPARE_FN) {
