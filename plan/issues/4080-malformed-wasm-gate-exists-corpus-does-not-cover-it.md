@@ -30,6 +30,7 @@ reframing is the deliverable and the negative result is load-bearing.
 | #4077 | `fixupExternConvertAny`'s backward walk vs a hand-list of exceptions missing `extern.convert_any` |
 | #4079 | eight hand-rolled inc/dec arms each handling `externref` + `ref`/`ref_null` and each forgetting `i32` |
 | #4081 | a third `__call_fn_method_N` dispatch arm inlining the return sequence with no i32 boxing, while two sibling arms box correctly |
+| #4065 | **four** independent walks over a runtime RegExp pattern, each re-deriving the character semantics; only the emitter knew `.` is `ReOp.ANY` |
 
 The first framing was *"a hand-maintained type/op case list that one consumer
 keeps in sync and another does not."* The fourth instance **sharpened it**, and
@@ -37,6 +38,46 @@ the sharper version is the one to design against:
 
 > **A duplicated emission sequence, where one copy carries the type handling and
 > another does not.**
+
+### #4065 sharpens it again: the invariant can have NO HOME AT ALL
+
+#4081 showed the invariant surviving as a **comment** in one copy and a silent
+assumption in the other. #4065 is strictly worse — there is **no place where
+the assumption is written down at all**.
+
+`ensureDynamicStandaloneRegExpCompiler` walks a runtime-built pattern four
+times (count records, find next `|`, emit records, anchored-alternations fast
+path). The load-bearing invariant is *"one source code unit produces one
+program record."* It appears nowhere as prose. It exists as **two independent
+derivations of the same number**:
+
+- walk 1 **counts** it into `CHARS`, which sizes the program array;
+- walk 3 **recomputes** it as the expression `J - I`, a source-unit distance,
+  to target a `SPLIT`.
+
+They agreed only because every construct the runtime grammar accepted happened
+to be one unit wide. Nothing enforced that, nothing stated it, and no lint over
+source shape could find it — the two halves are in different loops, spelled
+differently, and neither mentions the other.
+
+**Consequence for the family:** the shape is not only *"a copy missed the
+treatment."* It is also *"the same quantity is derived twice, by different
+means, and the equality is load-bearing."* A design response has to cover both,
+which argues for **making the quantity have one owner** (here: a single
+tokeniser both walks call) rather than for detecting divergent copies.
+
+**It was already producing a user-visible wrong answer on `main`**, unrelated to
+the escape work that found it — the fast path copies the pattern's *source
+text* as its match payload, so:
+
+```
+^(?:a.c|zz)$  ~  "abc"    Node: "abc"    standalone: NO MATCH   <-- wrong
+a.c           ~  "abc"    Node: "abc"    standalone: "abc"      <-- right
+```
+
+Same construct, two answers, decided only by whether the pattern is anchored.
+That is silent incorrectness, not a conformance corner, and no test262 file in
+the population pointed at it — it fell out of reading the fourth walk.
 
 #4079 and #4081 are both that. And #4081 adds the detail that makes it
 undetectable by construction: the invariant is written down as a **comment** in
@@ -89,6 +130,42 @@ diff-test corpus:
 - a `null` argument positioned before a closure argument (#4077)
 - `++`/`--` on a boolean-initialised (i32-slot) global (#4079)
 - a string `+=` into an externref slot (#3989)
+
+## ⚠ CORRECTION 2026-08-02 — the thesis above covers only HALF the family
+
+**Refuted in part by the `L-enum` lane, and the refutation is accepted.** The
+"`malformed_wasm` already catches it, the gap is only corpus coverage" claim
+holds for the instances that emit **invalid Wasm** — and **not at all** for the
+ones that emit **valid Wasm with a wrong value**.
+
+The family splits in two, and the two halves need **different instruments**:
+
+| half | instances | what would catch it |
+| --- | --- | --- |
+| **invalid Wasm**, compiler reports success | #3989, #4077, #4079, #4081 | `malformed_wasm` (#2143) — **exists**; gap is corpus coverage |
+| **valid Wasm, WRONG VALUE** | `__object_keys` (#4071), `__hasOwnProperty` (#4055), the RegExp anchoring bug in #4065 | **nothing today** — needs a value-level gc-vs-standalone differential oracle |
+
+`Object.keys([10,20,30])` returning `[]`, `hasOwnProperty` answering false for a
+property that was just written, and `^(?:a.c|zz)$` failing to match while `a.c`
+matches — all produce **perfectly valid modules**. `WebAssembly.validate` is
+`true`. A validity invariant is structurally incapable of seeing them.
+
+**So this issue's scope is now two pieces of work, not one:**
+
+1. **(as originally filed)** measure and extend the `malformed_wasm` diff-test
+   corpus, for the invalid-Wasm half.
+2. **(new, and probably the larger)** a **value-level differential oracle**:
+   run the same program through the **gc** lane and the **standalone** lane and
+   compare *results*, not validity. Every silent-wrong-answer instance above is
+   a gc/standalone divergence and would fall out of such an oracle immediately.
+
+Precedent that this is tractable: the #4065 lane already ran a **37-case
+differential against Node** (29 agree / 8 loud refusals / **0 wrong / 0 miss**)
+by hand. The proposal is to make that a standing instrument rather than a
+per-lane improvisation.
+
+**Do not size either piece from the anecdotes.** Neither corpus has been
+measured, and the one screen attempted for this family was refuted (above).
 
 ## Work — sizing FIRST, shape second
 
