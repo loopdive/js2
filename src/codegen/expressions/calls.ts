@@ -323,7 +323,7 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { resolveNamedThisCallTarget } from "../named-this-call.js";
+import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
@@ -6600,12 +6600,20 @@ function compileCallExpression(
           closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
         }
 
+        // (#3983) `.apply(thisArg, …)` dropped the receiver; reshape it onto
+        // the receiver-correct `.call` path (see named-this-call.ts).
+        if (!isCall && !closureInfo && funcIdx !== undefined) {
+          const asCall = tryReshapeApplyToNamedThisCall(ctx, fctx, expr, innerExpr, funcIdx);
+          if (asCall !== undefined) return compileCallExpression(ctx, fctx, asCall);
+        }
+
         // (#3796) A stable named FunctionDeclaration whose own body reads
         // `this` needs the `.call` receiver installed in `__current_this`.
         // Resolve/reserve this before emitting operands so helper publication
         // cannot happen while values are conceptually live on the Wasm stack.
-        // `.apply`, closures, imports, explicit-this declarations, nullable
-        // receivers, and unstable symbols keep their existing lowerings.
+        // Closures, imports, explicit-this declarations, nullable receivers,
+        // and unstable symbols keep their existing lowerings; `.apply` reaches
+        // this via the reshape directly above.
         const namedThisCall =
           isCall && !closureInfo && funcIdx !== undefined && expr.arguments.length > 0
             ? resolveNamedThisCallTarget(ctx, fctx, innerExpr, funcIdx, expr.arguments[0]!, expr.arguments.slice(1))

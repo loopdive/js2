@@ -13,7 +13,7 @@
  * (`native-strings`, `registry/*`, `shared`) — never from `expressions/` — so it
  * introduces no import cycle.
  */
-import type { Instr } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
@@ -120,4 +120,38 @@ export function emitThrowReferenceError(ctx: CodegenContext, fctx: FunctionConte
  */
 export function emitThrowRangeError(ctx: CodegenContext, fctx: FunctionContext, message: string): void {
   emitThrowJsError(ctx, fctx, "RangeError", message);
+}
+
+/**
+ * (#2200 / #3980) Emit `<name> is not defined` for an Annex B B.3.3 name whose
+ * web-compat var binding was NOT created (creating it would have been an Early
+ * Error), and leave an `externref` on the stack for the caller's type contract.
+ * Shared by the per-FunctionContext detector (`fctx.annexBCancelled`) and the
+ * whole-SourceFile one (`collectAnnexBCancelSites`).
+ *
+ * Unlike `emitThrowReferenceError` this keeps the pre-existing host-lane
+ * behaviour of routing through the `__throw_reference_error` late import when a
+ * JS host is present, falling back to a bare `throw` on the exception tag.
+ */
+export function emitAnnexBUnboundReferenceError(ctx: CodegenContext, fctx: FunctionContext, name: string): ValType {
+  const msg = `${name} is not defined`;
+  if (noJsHost(ctx)) {
+    emitThrowReferenceError(ctx, fctx, msg);
+    fctx.body.push({ op: "unreachable" });
+    return { kind: "externref" };
+  }
+  const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
+  flushLateImportShifts(ctx, fctx);
+  if (throwRefErrIdx !== undefined) {
+    addStringConstantGlobal(ctx, msg);
+    const strIdx = ctx.stringGlobalMap.get(msg)!;
+    fctx.body.push({ op: "global.get", index: strIdx });
+    fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
+    fctx.body.push({ op: "unreachable" });
+  } else {
+    const tagIdx = ensureExnTag(ctx);
+    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push({ op: "throw", tagIdx });
+  }
+  return { kind: "externref" };
 }
