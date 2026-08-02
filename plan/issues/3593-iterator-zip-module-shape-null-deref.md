@@ -126,32 +126,71 @@ stale): **both** still trap.
 | `test/built-ins/Iterator/zip/iterables-iteration.js` | `RuntimeError: dereferencing a null pointer in __module_init()` **at source L76** |
 | the `min1` repro above | `RuntimeError: dereferencing a null pointer in __module_init()` **at source L16** |
 
-**The new datum is the source-line attribution, and it points somewhere the
-report did not.** For `min1`, source **L16 is `});`** — the *close of the
-`assert.throws(...)` call* on L14–16 — **not** L17's
-`Iterator.zip([throwingIterator, iterableReturningThrowingIterator])`:
+### ⚠ The "shape sensitivity" section above is REFUTED — the repro is ONE LINE
 
+The report's central claim is *"the trap needs **both** object-literal iterators
+**and** the preceding `assert.throws` **and** the `includes:` harness
+injection"*, and that is why it was routed as a deep module-shape defect.
+Measured on current `main`, **all three of those requirements are false.**
+
+Ablation, one ingredient removed at a time, all through `runTest262File`:
+
+| variant | contents | result |
+| --- | --- | --- |
+| `min1` | decls + `assert.throws` + zip | **TRAP** |
+| `min7` | decls + `assert.throws` | pass |
+| **A** | **decls + zip, NO `assert.throws`** | **TRAP** |
+| R2 | decls + zip, **no `includes:`** | **TRAP** |
+| **R3** | **one line, no decls, no `includes:`, no `assert.throws`** | **TRAP** |
+| R6 | same as R2, array order swapped | **TRAP** |
+| R4 | `Iterator.zip([a])`, `a = {next,return}` | `TypeError` (no trap) |
+| R5 | `Iterator.zip([b])`, `b = {[Symbol.iterator]}` | `TypeError` (no trap) |
+| R7 | `Iterator.zip([b, c])` — **two `@@iterator` objlits** | `TypeError` (no trap) |
+| R8 | `Iterator.zip([a, d])` — **two `next/return` objlits** | `TypeError` (no trap) |
+
+**Minimal repro — this is the whole thing:**
+
+```js
+/*---
+esid: sec-iterator.zip
+description: min
+features: [joint-iteration]
+---*/
+Iterator.zip([{ next() {}, return() {} }, { [Symbol.iterator]() {} }]);
 ```
-14  assert.throws(TypeError, function () {
-15    Iterator.zip(Object.create(null));
-16  });                                      <-- trap attributed HERE
-17  Iterator.zip([throwingIterator, iterableReturningThrowingIterator]);
-```
 
-Put beside the existing shape table this sharpens the question considerably.
-`min6`/`min7` — the `assert.throws` **alone** — *pass*. So the statement the
-trap is attributed to is fine on its own, and **adding L17 changes how L14–16
-is compiled**. That is the signature of a module-level layout effect (the
-struct/closure shape of `__module_init` changing when the second `Iterator.zip`
-call is added), not of a defect inside either statement.
+**The ingredient is two object literals of DIFFERENT shapes in the same array
+argument**, in either order. Two objlits of the *same* shape do not trap (R7,
+R8); one objlit does not trap (R4, R5); `assert.throws` and the harness
+`includes:` are irrelevant. That points at heterogeneous array-element
+lowering — the array's element type being a union of two distinct struct
+shapes — not at `Iterator.zip`'s own logic and not at a harness-induced module
+layout.
 
-Two consequences for whoever continues:
+### Correction to my own first reading of this (recorded, not quietly dropped)
 
-- Chasing `Iterator.zip([...])` — the statement that *looks* guilty — is
-  probably chasing the wrong line. The trap fires at the earlier call.
-- The WAT dump named below should be diffed **min1 vs min7** (trap vs pass,
-  differing by one statement), which is a far smaller diff than min1 vs the
-  real file and isolates exactly the layout change that introduces the null.
+I initially reported that the source-line attribution "points somewhere the
+report did not", because `min1`'s trap is attributed to `});` (the close of
+`assert.throws`) rather than to the `Iterator.zip([...])` line, and inferred a
+module-level layout effect from it.
+
+**That inference was wrong.** Across every variant the attribution is
+consistently the line *immediately before* the `Iterator.zip([...])` call —
+`min1` L16 before L17, variant A L13 before L14, R3 L5 (`---*/`) before L6.
+It is an **off-by-one in source attribution**, not a semantic pointer at
+`assert.throws`. Once `assert.throws` is removed entirely and the trap
+survives, the original reading cannot stand. Do not chase the attributed line.
+
+### Not established — my probe was inconclusive, not negative
+
+The report also says hand-written `compile()` snippets do not reproduce (4
+variants tried). Given the one-line repro above, that is worth re-testing —
+but **I have not disproved it**: my plain-`compile()` probe failed at
+`WebAssembly.instantiate` with `Import #0 "string_constants": module is not an
+object or function`, i.e. it never ran, because I passed an empty import
+object instead of the host imports the runner builds. That is a defect in the
+probe, not evidence either way. Whoever continues should reuse the runner's
+import-object construction rather than an empty `{}`.
 
 ## Suggested next step (WAT dump — still the right move)
 
