@@ -6538,6 +6538,19 @@ export function generateMultiModule(
   // (#2094) Emit-time backstop for the addImport gate — see generateModule.
   assertNoLeakedHostImports(ctx, mod);
 
+  // (#4075) `JS2WASM_CHECK_FRAMES=1` reports every function whose body reads or
+  // writes a local its own frame never declares, AT THE END OF CODEGEN.
+  //
+  // The emitter already rejects these, but only after every post-codegen pass
+  // has run — fixups, peephole, dead-code elision, late-import shifting — so
+  // "the emitter saw it" says nothing about who produced it. Running the same
+  // check here bisects the pipeline in one step: a function reported here was
+  // already inconsistent when codegen finished; one that is clean here but
+  // rejected at emit was corrupted by a later pass. Inert unless set.
+  if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+    reportOutOfFrameLocals(ctx, mod);
+  }
+
   return {
     module: mod,
     errors: ctx.errors,
@@ -6547,6 +6560,40 @@ export function generateMultiModule(
     irOutcomes: ctx.irOutcomes,
     programAbi: ctx.programAbiSession?.publication,
   };
+}
+
+/** (#4075) Report bodies that reference locals outside their own frame. */
+function reportOutOfFrameLocals(ctx: CodegenContext, mod: WasmModule): void {
+  const localOps = new Set(["local.get", "local.set", "local.tee"]);
+  let reported = 0;
+  for (const [position, func] of mod.functions.entries()) {
+    const type = mod.types[func.typeIdx];
+    if (!type || type.kind !== "func") continue;
+    const frame = type.params.length + func.locals.length;
+    let worst = -1;
+    const walk = (instrs: readonly Instr[]): void => {
+      for (const instr of instrs) {
+        if (localOps.has(instr.op)) {
+          const index = (instr as { index?: number }).index;
+          if (typeof index === "number" && index >= frame && index > worst) worst = index;
+        }
+        for (const key of ["body", "then", "else", "catchAll"] as const) {
+          const nested = (instr as unknown as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) walk(nested as Instr[]);
+        }
+        const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+        if (Array.isArray(catches)) for (const c of catches) if (Array.isArray(c.body)) walk(c.body);
+      }
+    };
+    walk(func.body);
+    if (worst < 0) continue;
+    reported += 1;
+    process.stderr.write(
+      `[js2:frames] position ${position} '${func.name}' frame=${frame} ` +
+        `(${type.params.length} params + ${func.locals.length} locals) worst local index=${worst}\n`,
+    );
+  }
+  process.stderr.write(`[js2:frames] ${reported} function(s) reference out-of-frame locals at end of codegen\n`);
 }
 
 // ── Unified single-pass import collector (#592) ─────────────────────

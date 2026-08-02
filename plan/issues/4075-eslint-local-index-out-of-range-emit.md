@@ -260,3 +260,56 @@ falls through to a verbatim copy for any `local.get` index not in `argLocals`.
 If the eligibility gate is ever relaxed — to allow callee locals, control flow,
 or `local.set`/`local.tee` — the loop silently emits foreign local indices. It
 should refuse rather than rely on a distant gate staying strict.
+
+## BISECTED (2026-08-02) — a codegen defect, and there are 14 of them
+
+`JS2WASM_CHECK_FRAMES=1` (added in this session) runs the emitter's frame check
+at the **end of codegen**, before any post-codegen pass. Result on the ESLint
+graph:
+
+```text
+[js2:frames] position 1666 've'             frame=8  (2 params +  6 locals) worst local index=65
+[js2:frames] position 1674 'Se'             frame=58 (3 params + 55 locals) worst local index=68
+[js2:frames] position 1677 '_e'             frame=61 (4 params + 57 locals) worst local index=68
+[js2:frames] position 1679 'Ce'             frame=27 (3 params + 24 locals) worst local index=68
+[js2:frames] position 1680 'Pe'             frame=50 (3 params + 47 locals) worst local index=68
+[js2:frames] position 1687 'De'             frame=56 (4 params + 52 locals) worst local index=68
+[js2:frames] position 1705 'A'              frame=3  (3 params +  0 locals) worst local index=4
+[js2:frames] position 1841 '__closure_288'  frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] position 1843 '__closure_290'  frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] position 1886 'equal'          frame=15 (3 params + 12 locals) worst local index=31
+[js2:frames] position 3904 '__closure_1092' frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] position 3906 '__closure_1094' frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] position 4498 '__closure_1647' frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] position 4500 '__closure_1649' frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] 14 function(s) reference out-of-frame locals at end of codegen
+```
+
+### Three conclusions
+
+1. **This is a CODEGEN defect, not a post-codegen pass.** Every one of these is
+   already inconsistent when `generateMultiModule` returns. Fixups, peephole,
+   dead-code elision and late-import shifting are all ruled out — as is the
+   diagnostic's standing `#2043` attribution, which should be corrected.
+2. **`ve` is not special.** It is simply the first function the emitter reaches.
+   Fixing "the `ve` bug" was always the wrong framing; there are 14, in at least
+   three families.
+3. **The families are structured, and one is highly tractable:**
+   - **`__closure_N`** (6 of 14) — every single one is `frame=6 (2 params + 4
+     locals)` with `worst=17`. Identical shape every time, across four widely
+     separated positions. A compiler-**synthesized** body, so the generator is
+     findable and the pattern is systematic rather than input-dependent. **Start
+     here.**
+   - **the `Se`/`_e`/`Ce`/`Pe`/`De` cluster** (positions 1674-1687) — all
+     `worst=68` with wildly different frames (27 to 61), so they share one
+     producer that bakes a fixed index regardless of the host frame.
+   - **`ve`, `A`, `equal`** — assorted, smallest overshoot (`A` is 4 in a
+     3-slot frame).
+
+### Next step
+
+Take `__closure_288`: identical to five siblings, so a reduced fixture is very
+likely reachable without ESLint. Find what emits `__closure_<n>` bodies and why
+it writes a `local.get 17` into a 6-slot frame — the constant 17 across
+unrelated call sites suggests an index captured from a *template* or a
+lifting context rather than the closure's own frame.
