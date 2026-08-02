@@ -89,12 +89,42 @@ import { flushLateImportShifts } from "./late-imports.js";
 const APPLY_CLOSURE_MAX_ARITY = 8;
 
 /**
+ * The tail of `compileTailDispatch`: the stored-member-closure arm, then the
+ * graceful fallback it guards. Always returns, so the caller's tail is a single
+ * `return`.
+ *
+ * The two live together on purpose. The fallback is what makes this defect
+ * class invisible — it is the point where "no arm recognised this call" is
+ * silently rendered as the VALUE `undefined`, with the callee never invoked.
+ * Anything added in front of it is a narrowing of that silence, and belongs in
+ * the same file as the silence itself so the next reader sees both at once.
+ */
+export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): ValType {
+  const stored = tryEmitStoredMemberClosureCall(ctx, fctx, expr);
+  if (stored !== undefined) return stored;
+
+  // Graceful fallback: compile the callee expression and all arguments for side
+  // effects, then push `ref.null.extern`. This avoids hard compile errors for
+  // unrecognized call patterns (chained calls, dynamic dispatch, uncommon AST
+  // shapes) — at the cost of answering `undefined` for a call that should have
+  // run. Every narrowing arm above it converts one shape out of that bucket.
+  const calleeType = compileExpression(ctx, fctx, expr.expression);
+  if (calleeType) fctx.body.push({ op: "drop" });
+  for (const arg of expr.arguments) {
+    const argType = compileExpression(ctx, fctx, arg);
+    if (argType) fctx.body.push({ op: "drop" });
+  }
+  fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
+}
+
+/**
  * Try to lower `o.f(a, b)` as `__apply_closure(o.f, o, [a, b])`.
  *
  * @returns the result `ValType` when the call was emitted, or `undefined` to
- *          fall through to the caller's graceful fallback.
+ *          fall through to the graceful fallback.
  */
-export function tryEmitStoredMemberClosureCall(
+function tryEmitStoredMemberClosureCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,

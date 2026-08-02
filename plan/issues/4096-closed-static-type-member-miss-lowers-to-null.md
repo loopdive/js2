@@ -1,7 +1,9 @@
 ---
 id: 4096
-title: "A member call on a CLOSED static type lowers to `ref.null extern` — an assigned `String.prototype` method silently returns null on ordinary JavaScript"
-status: ready
+title: "A direct call on an assignment-STORED function member lowers to `ref.null extern` — the callee never runs, on ordinary JavaScript"
+status: done
+completed: 2026-08-02
+assignee: ttraenkler/senior-4096-elision
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
@@ -252,6 +254,155 @@ no arm in `emitStringProtoMemberBody` and hit `emitProtoMemberBodyRefusal`,
 which throws `String.prototype.<M> is not yet implemented in --target
 standalone`. That is a **loud** refusal, so it is strictly less harmful than
 this bug. It is tracked separately as #4095.
+
+## RESOLUTION (2026-08-02) — what was actually wrong, and why the scoping above was half right
+
+**The site is pinned, and the framing changed.** Both are results of
+instrumentation, not reading; the scoping section above is preserved verbatim as
+the record of what was believed going in.
+
+### 1. The emit site — pinned by instrumentation
+
+`src/codegen/expressions/call-tail-dispatch.ts`, the **graceful fallback** at the
+tail of `compileTailDispatch`: compile the callee for side effects → `drop`,
+compile each argument → `drop`, push `ref.null.extern`.
+
+Method (the marker sweep the scoping section asked for, generalised so no
+spelling can hide): wrap `Array.prototype.push` as a chokepoint, record a stack
+trace for every pushed instruction with `op === "ref.null.extern"`, compile the
+FAILING repro and the PASSING one, and diff the site sets. Exactly **one** site
+is in the failing set and not the passing one, on the first run. This catches
+array-literal instruction lists, builder helpers and spread pushes — the
+spellings a per-source-line marker sweep cannot see.
+
+Worth recording for the next investigation: the prior sweep of "all 463
+single-statement `ref.null.extern` pushes" reported the marker as absent from
+this site, yet this site **is** a single-statement push. So that sweep's
+negative result was an instrument failure, not evidence about the code. A
+marker sweep that reports "not found" everywhere is indistinguishable from a
+marker that was never applied — it needed a positive control.
+
+### 2. The framing: NOT "a member absent from a closed type"
+
+Measured on the standalone lane, top-level object literal:
+
+| probe | result | what it proves |
+| --- | --- | --- |
+| `var g = o.f; g()` | correct | the member read is right |
+| `typeof o.f === "function"` | true | the value is a function |
+| `o.f = A; o.f = B; var g = o.f` | sees **B** | it is a REAL runtime store, not a static fold |
+| `o.f()` | **null** | only the direct call form is broken |
+
+The member is **present and correct**. And the trigger is not `String.prototype`
+transfer: `var o = {a:1}; o.f = function(){return 7}; o.f()` returns `undefined`
+on its own. The defect is a **direct call on any assignment-stored function
+member**, which is far more ordinary JavaScript than the original framing.
+
+The top-level/in-function asymmetry is **one** decision point, not two: in
+`call-receiver-method.ts` the any-receiver closed-method dispatcher is gated on
+`isAnyOrExternref`, and an in-function object literal gets an **externref**
+local carrier while a top-level one keeps its concrete struct-ref carrier.
+Arrays and regexps keep a concrete carrier in both placements — hence their rows
+being wrong in both columns. #3117 had already fixed exactly this shape for the
+`any` twin by adding field-stored-closure arms to that dispatcher; the concrete
+carrier is simply what keeps a receiver out of it.
+
+### 3. The fix
+
+One arm immediately before the graceful fallback (both now in
+`src/codegen/expressions/stored-member-closure-call.ts`, which also took over
+the fallback itself so the silence and its narrowings sit together):
+
+```
+T = <receiver as externref>
+F = <o.M   as externref>          ; the member read that already works
+__apply_closure(F, T, [args…])    ; the #1888/#3117 this-threaded bridge
+```
+
+This is option **(i)** — route through the read-then-`.call` lowering already
+proven on this lane — reusing the *same* bridge #3117 uses, so no new dispatch
+vocabulary. Admission: standalone/wasi only · identifier receiver (read twice,
+so it must be side-effect free) · non-builtin-class receiver · no spread · arity
+≤ 8 · and `sourceHasMethodReassignment` sees a `.<name> =` assignment.
+
+That last one is the real gate, and it is the #1397 scan the `#942` note
+already relies on. It is the right predicate because **the assignment is what
+creates the shape**. The `#942` perf objection ("Option B, always dynamic, was
+rejected") does not bite here: the arm runs only after every static arm has
+declined, so `arr.push(x)` / `re.test(s)` never reach it — and nobody writes
+`x.push = …`, so even the scan's deliberate over-approximation cannot pull an
+intrinsic onto the dynamic path. **The `#942` gate was not touched.**
+
+**Three-sided rule.** *Readers* of the fallback: it is the terminal arm of
+`compileTailDispatch`, reached only after IIFE / super / element-access /
+call-of-call / conditional-callee have all declined, so nothing reads a value it
+produces except the call's own consumer. *Mutators*: none — it is emit-only.
+*What consumers tolerate*: they tolerate `undefined`, which is exactly what
+`__apply_closure` answers for a non-callable or an unsupported arity (its S1
+no-throw carve-out). So a mis-admitted shape lands on the identical value the
+fallback produced. The arm can only ever convert an `undefined` into a real
+call; it cannot displace a working path. The #4086/#4010 "a null for an absent
+member may be load-bearing for closed-struct patterns" concern therefore does
+not apply — no closed-struct member READ changed.
+
+### 4. Measured
+
+Kill-switch attribution (revert the arm only): exactly the 7 fix cases in
+`tests/issue-4096-stored-member-closure-call.test.ts` fail, all 5 controls stay
+green.
+
+14-cell-equivalent trigger table, standalone, before → after:
+
+| shape | before | after |
+| --- | --- | --- |
+| top-level obj literal, expando user fn | null | **7** |
+| …with `this.a` | null | **5** |
+| …with 2 args | null | **34** |
+| top-level obj literal, `String.prototype` transfer | null | **"ab"** |
+| …2-arg `substring` | null | **"AB"** |
+| **throwing `toString` — does the callee RUN?** | never ran | **throws** |
+| `new Array(…)`, expando user fn | null | **7** |
+| `new Array(…)`, `String.prototype.substring` | null | correct |
+| array literal, expando user fn | null | **7** |
+| in-function obj literal (control, was OK) | ok | ok |
+| wrapper `new String` transfer (control) | ok | ok |
+| `new Number().valueOf()` (control) | ok | ok |
+| `arr.push` / `re.test` (controls) | ok | ok |
+
+The throwing-`toString` row is the acceptance criterion that matters: it does
+not check a value, it checks that anything happened at all.
+
+## Residuals — measured, NOT fixed here
+
+1. **`o.hasOwnProperty("M")` on an assignment-stored member is still `false`**
+   (and so are `"M" in o`, `for-in`, and the computed read `o["M"]`), while a
+   DECLARED field answers all four correctly. This is a **different subsystem**:
+   `object-ops.ts` answers a closed-struct `hasOwnProperty` from
+   `resolveWasmType(receiverType)`'s struct fields plus the checker's property
+   list, and the assignment-added member is in neither — `propertyFactOf`
+   answers `unresolvable` for it on both a `.ts` and a `.js` compile. Curing it
+   means changing which struct/shape the own-property reflection resolves, which
+   moves `hasOwnProperty` / `in` / `for-in` / `Object.keys` together — the
+   #4086 / #4010 territory this issue's own scoping flagged. Folding it in here
+   would have replaced a narrow, provably-non-displacing arm with a change to
+   the shape registry. Filed separately rather than done badly.
+2. **RegExp receiver, expando function member** is still wrong — but for a
+   reason this fix structurally cannot reach: on a RegExp the **READ** is
+   already broken (`var g = r.f; g()` is wrong on the same lane), so there is no
+   correct value for the call arm to invoke. Object-literal and Array receivers
+   both read correctly, which is why they flipped.
+3. The runtime-`null`/absent-member case answers `undefined` where §7.3.14 step
+   2 wants a `TypeError`. That is `__apply_closure`'s pre-existing S1 no-throw
+   carve-out (documented on `fillApplyClosure`, kept for the late-registration
+   index-shift reason); this arm inherits it and does not widen it.
+
+## Population — honesty note
+
+The "34 shape-matched files is the residue, not a flip prediction" sentence
+above stays true, and is now **also the wrong denominator**: it was sized for
+`String.prototype`-transfer shapes in one directory, and the actual defect is
+any assignment-stored function member anywhere. The corpus-wide population is
+unmeasured; the merge_group run is the measurement.
 
 ## Provenance
 

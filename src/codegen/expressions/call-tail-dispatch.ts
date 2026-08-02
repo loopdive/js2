@@ -52,7 +52,7 @@ import {
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { compileSuperElementMethodCall } from "./new-super.js";
-import { tryEmitStoredMemberClosureCall } from "./stored-member-closure-call.js";
+import { compileCallDispatchTail } from "./stored-member-closure-call.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -1903,35 +1903,8 @@ export function compileTailDispatch(
     }
   }
 
-  // (#4096) LAST arm before the graceful fallback: `o.f(…)` where `f` is a
-  // function-valued member STORED on a closed-typed receiver (the expando shape
-  // `o.f = function(){…}` / `o.m = String.prototype.m`). Its Wasm carrier is a
-  // concrete struct ref, so the any-receiver closed-method dispatcher — where
-  // #3117 already handles the field-stored-closure case — never sees it, and no
-  // static arm claims it either. Without this the call reaches the fallback
-  // below and silently answers `undefined` while the callee never runs. Placed
-  // here deliberately: everything it can claim produces `ref.null.extern` today,
-  // so it cannot displace a working path.
-  {
-    const __smcResult = tryEmitStoredMemberClosureCall(ctx, fctx, expr);
-    if (__smcResult !== undefined) return __smcResult;
-  }
-
-  // Graceful fallback: compile the callee expression and all arguments for side effects,
-  // then push ref.null.extern. This avoids hard compile errors for unrecognized call patterns
-  // (e.g. chained calls, dynamic dispatch, uncommon AST shapes).
-  {
-    const calleeType = compileExpression(ctx, fctx, expr.expression);
-    if (calleeType) {
-      fctx.body.push({ op: "drop" });
-    }
-    for (const arg of expr.arguments) {
-      const argType = compileExpression(ctx, fctx, arg);
-      if (argType) {
-        fctx.body.push({ op: "drop" });
-      }
-    }
-    fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
-  }
+  // (#4096) The last two steps — the stored-member-closure arm and the graceful
+  // `ref.null.extern` fallback it guards — live in `stored-member-closure-call.ts`,
+  // where the rationale sits next to the lowering. See that module's header.
+  return compileCallDispatchTail(ctx, fctx, expr);
 }
