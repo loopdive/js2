@@ -87,6 +87,30 @@ Never `gh pr view --json headRefOid` — a merged PR happily reports a head that
 was never merged. Also never a merge-commit *title*, and never the PR's own
 metadata. Confirm with a content grep for something the change adds.
 
+### ⚠ `headRefOid` is stale on OPEN PRs too (third stale-field instance, 2026-08-02)
+
+`gh pr view --json headRefOid` returned a head one push old while
+`gh api repos/<o>/<r>/pulls/<N> --jq '.head.sha'` (REST) was correct. For any
+**check-runs-on-SHA predicate this is the nastiest form**: every check found
+for the stale SHA is genuinely real, so the verdict is confidently wrong with
+no anomaly to notice. Source head SHAs from REST, never from the GraphQL
+`headRefOid` field. Same family as the stale `mergeStateStatus` sample and the
+lock-blocked local tracking refs — three distinct stale reads in one day (four
+counting `origin` resolving to the fork); the generalisation is: **GitHub
+PR-view fields are cached samples, not live state. For anything load-bearing,
+read the specific REST resource.**
+
+Two refinements from the same day, worth keeping verbatim:
+
+- **Why "sanity-check the value" cannot catch this class:** each stale source
+  returns a value that was *true at some point*, so nothing looks anomalous.
+  The fix has to be structural at the call site (choose the authoritative
+  source), not a validation layered on the cached one.
+- **The fact is safe to automate; the cause is not.** `contexts present on
+  prior head <sha>: yes/no` carries no inferential risk; "dropped synchronize"
+  is a verdict that can be confidently wrong. Detectors should emit observed
+  facts plus a discriminator for the operator, and assert no cause.
+
 ## Companion trap: the TWO-DOT diff false alarm
 
 `git diff <main> <branch-head>` reports **"main has files this branch does not
