@@ -65,7 +65,9 @@ import {
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import {
   ensureVecElemSet,
+  ensureVecElemSetForElement,
   ensureVecNewSized,
+  ensureVecNewSizedForElement,
   VEC_ELEM_SET_PREFIX,
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
@@ -256,6 +258,8 @@ import {
 } from "./prepared-component-dependencies.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
+import { attachIrVecLayouts } from "./vec-layout.js";
+import { IR_VEC_ELEM_SET_PREFIX, IR_VEC_NEW_SIZED_PREFIX, parseIrVectorRuntimeElement } from "./vector-runtime.js";
 import {
   IR_STRING_CHAR_AT_FN,
   IR_STRING_CHAR_CODE_AT_FN,
@@ -1969,6 +1973,7 @@ export function compileIrPathFunctions(
     }
   };
   if (!runGlobalPreparation(() => (healthyForLower = prepareStrings(ctx, healthyForLower)))) return finishReport();
+  if (!runGlobalPreparation(() => (healthyForLower = prepareVectors(ctx, healthyForLower)))) return finishReport();
   if (!runGlobalPreparation(() => preregisterHostDateSnapshotSupport(ctx, healthyForLower))) {
     return finishReport();
   }
@@ -3241,6 +3246,7 @@ function resolveVecForElementImpl(
   const arrayDef = ctx.mod.types[arrayTypeIdx];
   if (!arrayDef || arrayDef.kind !== "array") return null;
   return {
+    valueType: { kind: "ref", typeIdx: vecStructTypeIdx },
     vecStructTypeIdx,
     lengthFieldIdx: 0,
     dataFieldIdx: 1,
@@ -3837,6 +3843,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       const arrayDef = ctx.mod.types[arrayTypeIdx];
       if (!arrayDef || arrayDef.kind !== "array") return null;
       return {
+        valueType: valType,
         vecStructTypeIdx: typeIdx,
         lengthFieldIdx: 0,
         dataFieldIdx: 1,
@@ -3880,6 +3887,12 @@ function resolveAndObserveCallableProvider(ctx: CodegenContext, ref: IrFuncRef):
   const { symbol } = ref.binding;
   if (ref.binding.kind === "intrinsic" && symbol === FMOD_FN) {
     index = ensureFmod(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
+    const element = parseIrVectorRuntimeElement(symbol, IR_VEC_ELEM_SET_PREFIX);
+    index = element ? ensureVecElemSetForElement(ctx, element) : null;
+  } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_NEW_SIZED_PREFIX)) {
+    const element = parseIrVectorRuntimeElement(symbol, IR_VEC_NEW_SIZED_PREFIX);
+    index = element ? ensureVecNewSizedForElement(ctx, element) : null;
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
     const vecTypeIdx = Number(symbol.slice(VEC_ELEM_SET_PREFIX.length));
     index = Number.isInteger(vecTypeIdx) ? ensureVecElemSet(ctx, vecTypeIdx) : null;
@@ -4170,6 +4183,7 @@ function makeResolver(
       const arrayDef = ctx.mod.types[arrayTypeIdx];
       if (!arrayDef || arrayDef.kind !== "array") return null;
       return {
+        valueType: valType,
         vecStructTypeIdx: typeIdx,
         lengthFieldIdx: 0,
         dataFieldIdx: 1,
@@ -4696,6 +4710,33 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     return fn === entry.fn ? entry : { ...entry, fn };
   });
   if (usesString) registry.prepareStringCarrier();
+  return prepared;
+}
+
+/** Attach exact Program-ABI vector layouts after logical IR construction. */
+function prepareVectors(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
+  const registry = ctx.programAbiTypes;
+  if (!registry) return fns;
+  const layouts = new Map<string, import("./nodes.js").IrVecLayoutRef>();
+  const prepared = fns.map((entry) => {
+    const attachment = attachIrVecLayouts(entry.fn, (type) => {
+      const logicalKey = irTypeKey({ kind: "vec", elementType: type.elementType, nullable: false });
+      const cached = layouts.get(logicalKey);
+      if (cached) return cached;
+      const elementValType = asVal(type.elementType);
+      if (!elementValType || (elementValType.kind !== "f64" && elementValType.kind !== "i32")) {
+        throw new Error(`ir/integration: prepared vec element ${irTypeKey(type.elementType)} is not yet supported`);
+      }
+      const vec = resolveVecForElementImpl(ctx, elementValType);
+      if (!vec) {
+        throw new Error(`ir/integration: no physical vector layout for ${logicalKey}`);
+      }
+      const layout = registry.prepareVectorLayout(logicalKey, vec.vecStructTypeIdx, vec.arrayTypeIdx);
+      layouts.set(logicalKey, layout);
+      return layout;
+    });
+    return attachment.function === entry.fn ? entry : { ...entry, fn: attachment.function };
+  });
   return prepared;
 }
 
@@ -5683,6 +5724,7 @@ export function irTypeKey(t: IrType): string {
     return t.val.kind;
   }
   if (t.kind === "string") return "string";
+  if (t.kind === "vec") return `vec<${irTypeKey(t.elementType)}>${t.nullable ? "?" : ""}`;
   if (t.kind === "object") {
     return `object{${t.shape.fields.map((f) => `${f.name}:${irTypeKey(f.type)}`).join(",")}}`;
   }

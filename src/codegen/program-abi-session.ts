@@ -1471,7 +1471,9 @@ export class ProgramAbiSession {
    * Finality is a physical type property, so prepared scopes must not observe
    * it as an unexplained in-place mutation. This narrowly accepts only
    * `final: false -> true` changes at indices reported by
-   * `markLeafStructsFinal`; explicit prepared type/class roots remain frozen.
+   * `markLeafStructsFinal`. Explicit support-type roots participate in the
+   * same refresh because finality is a backend layout optimization applied
+   * after scope sealing; source class roots remain frozen.
    */
   recordLeafTypeFinalization(finalizedTypeIndices: readonly number[]): void {
     this.assertLayoutMutable("record leaf type finalization");
@@ -1486,20 +1488,37 @@ export class ProgramAbiSession {
       }
     }
 
-    const refreshed: Array<readonly [PreparedProgramAbiScopeRecord, Map<number, string>]> = [];
+    const refreshed: Array<{
+      readonly scope: PreparedProgramAbiScopeRecord;
+      readonly typeLayouts: Map<IrBindingId, string>;
+      readonly reachableTypeLayouts: Map<number, string>;
+    }> = [];
     for (const scope of this.preparedScopes.values()) {
+      const typeLayouts = new Map(scope.typeLayouts);
       for (const [id, expectedLayout] of scope.typeLayouts) {
         const locator = this.locators.get(id);
+        if (locator?.kind !== "type-cell" || locator.cell.current === null) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `leaf finalization changed explicit prepared type/class binding ${id}`,
+          );
+        }
+        const currentLayout = canonicalProgramAbiTypeDef(locator.cell.current);
+        if (currentLayout === expectedLayout) continue;
+        const draft = this.drafts.get(id);
+        const index = this.module.types.indexOf(locator.cell.current);
         if (
-          locator?.kind !== "type-cell" ||
-          locator.cell.current === null ||
-          canonicalProgramAbiTypeDef(locator.cell.current) !== expectedLayout
+          draft?.intent.kind !== "type" ||
+          index < 0 ||
+          !finalized.has(index) ||
+          !isLeafFinalizationOnly(expectedLayout, currentLayout)
         ) {
           throw new ProgramAbiInvariantError(
             "type-remap-mismatch",
             `leaf finalization changed explicit prepared type/class binding ${id}`,
           );
         }
+        typeLayouts.set(id, currentLayout);
       }
       const current = this.collectPreparedReachableTypeLayouts(
         this.module,
@@ -1526,11 +1545,13 @@ export class ProgramAbiSession {
           );
         }
       }
-      refreshed.push([scope, current]);
+      refreshed.push({ scope, typeLayouts, reachableTypeLayouts: current });
     }
-    for (const [scope, current] of refreshed) {
+    for (const { scope, typeLayouts, reachableTypeLayouts } of refreshed) {
+      scope.typeLayouts.clear();
+      for (const [id, layout] of typeLayouts) scope.typeLayouts.set(id, layout);
       scope.reachableTypeLayouts.clear();
-      for (const [index, layout] of current) scope.reachableTypeLayouts.set(index, layout);
+      for (const [index, layout] of reachableTypeLayouts) scope.reachableTypeLayouts.set(index, layout);
     }
   }
 

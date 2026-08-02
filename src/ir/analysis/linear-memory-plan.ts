@@ -879,6 +879,10 @@ function collectLayoutsFromType(type: IrType, layouts: Map<string, LinearLayoutP
     case "string":
       internLayout(layouts, planLinearStringLayout());
       return;
+    case "vec":
+      internLayout(layouts, planLinearVectorLayout(type.elementType));
+      collectLayoutsFromType(type.elementType, layouts);
+      return;
     case "closure":
     case "callable":
       for (const param of type.signature.params) collectLayoutsFromType(param, layouts);
@@ -948,6 +952,8 @@ function linearIrTypeKey(type: IrType): string {
       return `scalar:${linearStorageForIrType(type)}`;
     case "string":
       return "string";
+    case "vec":
+      return `vec:${linearIrTypeKey(type.elementType)}${type.nullable ? "?" : ""}`;
     case "object":
       return `object:${shapeKey(type.shape)}`;
     case "class":

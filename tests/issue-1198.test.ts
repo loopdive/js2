@@ -81,7 +81,6 @@ describe("#1198 pre-size dense arrays — matching patterns", () => {
     expect(compiled.irCompiledFuncs ?? [], JSON.stringify(compiled.irOutcomes)).toContain("run");
     expect(compiled.wat).toContain("$__vec_new_sized_");
     expect(compiled.wat).not.toContain("$__vec_elem_set_");
-
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
     const { instance } = await WebAssembly.instantiate(compiled.binary, imports as any);
     const run = instance.exports.run as (n: number) => number;
@@ -89,6 +88,37 @@ describe("#1198 pre-size dense arrays — matching patterns", () => {
     expect(run(0)).toBe(0);
     expect(run(-1)).toBe(0);
     expect(run(2.5)).toBe(3);
+  });
+
+  it("seals the observable dense-fill vector before body emission", async () => {
+    const src = `
+      export function run(n: number): number {
+        const values: number[] = [];
+        for (let i = 0; i < n; i++) {
+          values[i] = i;
+        }
+        return values.length;
+      }
+    `;
+    const compiled = await compile(src, {
+      fileName: "array-fill-prepared.ts",
+      emitWat: true,
+      trackIrOutcomes: true,
+    });
+    expect(compiled.success, compiled.errors?.[0]?.message).toBe(true);
+    expect(compiled.wat).toContain("$__vec_new_sized_");
+    expect(compiled.wat).not.toContain("$__vec_elem_set_");
+    expect(compiled.irOutcomes?.find((outcome) => outcome.displayName === "run")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+
+    const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
+    const { instance } = await WebAssembly.instantiate(compiled.binary, imports as any);
+    const run = instance.exports.run as (n: number) => number;
+    expect([2000, 0, -1, 2.5].map((value) => run(value))).toEqual([2000, 0, 0, 3]);
   });
 
   it("keeps the fused run body when a legacy timing wrapper calls it", async () => {
@@ -280,6 +310,12 @@ describe("#1198 pre-size dense arrays — non-matching patterns (must fall back 
     expect(functionWat).toContain("struct.set");
     expect(functionWat).not.toMatch(/\bcall\b/);
     expect(functionWat).not.toContain("array.copy");
+    expect(compiled.irOutcomes?.find((outcome) => outcome.displayName === "f")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
 
     const imports = buildImports(compiled.imports, undefined, compiled.stringPool);
     const { instance } = await WebAssembly.instantiate(compiled.binary, imports as any);
