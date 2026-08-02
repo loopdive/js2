@@ -733,3 +733,108 @@ callers along that nested-declaration path.
   the inline-unmapped probe, and `dumpFrameBreach` for ordinary functions.
 - `JS2WASM_FRAME_STAGES=1` — breach count after each post-body pass, plus a
   locals/body-length delta per function.
+
+## SECOND CLASS FIXED (2026-08-02) — transitive nested-sibling captures
+
+The `resolve`/`normalize`/`equal` class is a **capture-analysis gap**, not a
+post-pass and not an index-shift.
+
+### Mechanism
+
+A nested function declaration is lifted to a module-level Wasm function with its
+captures as leading synthetic params. At a call site the caller supplies the
+callee's captures by `local.get`-ing the **declaring** frame's slot
+(`nestedFuncCaptures` prepend, `call-identifier.ts`). Capture collection only
+looked at names the body referenced **directly** — so a sibling that merely
+*calls* the capturing function captured nothing, and emitted the declaring
+frame's slot number into its own, much smaller frame.
+
+In `uri.all.js` the UMD factory declares `SCHEMES` (slot 31), `URI_PARSE` (32),
+`NO_MATCH_IS_UNDEFINED` (33) …; nested `parse`/`serialize` capture them; sibling
+`normalize`/`resolve`/`equal` call `parse` without ever naming them. Confirmed
+directly:
+
+```text
+[js2:nested-cap] 'SCHEMES' callee='parse' caller='normalize'
+                 outerLocalIdx=31 frame=2 mapped=none
+```
+
+`mapped=none` — the caller does not have the value at all, which is why the
+first-class fix (prefer the mapped slot when out of frame) could not help.
+
+### Fix
+
+`transitiveSiblingCaptures` closes "captures an outer local" over the
+"references a sibling declaration" edge; those names become the caller's own
+captures and ride in as leading params. `liftedCaptureNames` marks them on the
+`FunctionContext` so the forwarding call site reads the param instead of the
+declaring slot.
+
+Three constraints, each of which cost a wrong attempt:
+
+1. **The closure must be SYNTACTIC, not read from `ctx.nestedFuncCaptures`.**
+   The Phase-0 reservation in `hoistFunctionDeclarations` must reach the same
+   verdict *before any sibling has been compiled*. When the two disagreed —
+   reservation "capture-free", compile "capturing" — the capturing branch never
+   filled the reserved slot and **every call to that function returned 0**.
+2. **Phase 0 consults the same helper**, for the same reason.
+3. **The call site prefers the mapped slot whenever the name is one of THIS
+   function's own capture params**, not merely when the declaring index is out
+   of frame. An in-frame declaring index is equally meaningless and silently
+   read an unrelated local. The narrow condition preserves the #1177 revert.
+
+### This was also a SILENT WRONG ANSWER
+
+The small shape — a 2-local host, no out-of-frame index — compiles fine on base
+and computes **2** where node gives **101**. So the defect's reach is larger than
+"minified bundles fail to validate": any nested function calling a capturing
+sibling could read the wrong slot and return a plausible wrong number.
+
+### Measured
+
+| target | before | after |
+| --- | --- | --- |
+| `uri.all.js` | 3 out-of-frame fns, no binary | **0, valid 131 KB module** |
+| ESLint Tier 1a package entry | 14 out-of-frame fns | **1** |
+| small sibling-call fixture | returns 2 (node: 101) | **101** |
+
+### The remaining ESLint breach is #4045, not this class
+
+`assertASTDidntChange` (eslint's `rule-tester.js`) calls `equal` —
+*fast-deep-equal*, capture-free. But `ctx.nestedFuncCaptures` is keyed by the
+**bare name**, so it collides with **uri-js's** nested `equal`, and the call site
+prepends uri-js's factory locals:
+
+```text
+[js2:nested-cap] 'SCHEMES'    callee='equal'     caller='assertASTDidntChange' outerLocalIdx=31 frame=2
+[js2:nested-cap] 'UNRESERVED' callee='equal'     caller='assertASTDidntChange' outerLocalIdx=51 frame=2
+[js2:nested-cap] 'SCHEMES'    callee='serialize' caller='_addSchema'           outerLocalIdx=31 frame=22
+```
+
+Every name is a uri-js factory local; `assertASTDidntChange` and ajv's
+`_addSchema` have nothing to do with uri-js. This is the **#4045 flat-namespace
+hazard** in `nestedFuncCaptures`, one layer below the `funcMap` collision #4045
+already fixed. That is the next blocker for an ESLint binary, and it belongs to
+#4045, not here.
+
+### Validation notes (honest)
+
+- The 106 test files a full-suite run had not reached were A/B'd against base in
+  three batches — **all identical**.
+- Files that looked newly-failing (`ir/utf8-storage`,
+  `issue-2949-slice2/slice3b`, `issue-1126-stage3`) were A/B'd individually and
+  fail **identically on base** — pre-existing.
+- A full-suite `npm test` OOMs in a ~512 MB vitest worker shortly after
+  `issue-2542-standalone-dynamic-key`. **I did not establish whether this change
+  causes it.** An earlier full run of an intermediate version of the fix
+  completed cleanly and matched base exactly. Worth a dedicated look; do not
+  read the batch results as covering it.
+
+### Instrumentation added
+
+`JS2WASM_FRAME_TRAP=<funcName>` (`src/codegen/frame-trap.ts`) reports, with a
+stack, the moment an out-of-frame local reference is appended to that function's
+body. It installs the accessor on the **FunctionContext**, not on `fctx.body` —
+`fctx.body` is reassigned during compilation, so a proxy on the array stops
+observing writes after the first swap. That is exactly the mistake that produced
+an earlier wrong conclusion on this issue ("introduced after body emission").
