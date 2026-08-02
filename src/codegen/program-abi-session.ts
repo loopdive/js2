@@ -532,6 +532,45 @@ function validOrdinal(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
+function isLeafFinalizationOnly(previousLayout: string, currentLayout: string): boolean {
+  let previous: unknown;
+  let current: unknown;
+  try {
+    previous = JSON.parse(previousLayout);
+    current = JSON.parse(currentLayout);
+  } catch {
+    return false;
+  }
+  let changed = false;
+  const compare = (left: unknown, right: unknown, key?: string): boolean => {
+    if (left === right) return true;
+    if (key === "final" && left === false && right === true) {
+      changed = true;
+      return true;
+    }
+    if (Array.isArray(left) || Array.isArray(right)) {
+      return (
+        Array.isArray(left) &&
+        Array.isArray(right) &&
+        left.length === right.length &&
+        left.every((value, index) => compare(value, right[index]))
+      );
+    }
+    if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) return false;
+    const leftRecord = left as Record<string, unknown>;
+    const rightRecord = right as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (field) => Object.hasOwn(rightRecord, field) && compare(leftRecord[field], rightRecord[field], field),
+      )
+    );
+  };
+  return compare(previous, current) && changed;
+}
+
 interface ProgramAbiDerivedPath {
   readonly rootUnitId: IrUnitId;
   readonly segments: readonly {
@@ -1428,6 +1467,75 @@ export class ProgramAbiSession {
     }
   }
 
+  /**
+   * Record the backend's deterministic leaf-struct finalization pass.
+   *
+   * Finality is a physical type property, so prepared scopes must not observe
+   * it as an unexplained in-place mutation. This narrowly accepts only
+   * `final: false -> true` changes at indices reported by
+   * `markLeafStructsFinal`; explicit prepared type/class roots remain frozen.
+   */
+  recordLeafTypeFinalization(finalizedTypeIndices: readonly number[]): void {
+    this.assertLayoutMutable("record leaf type finalization");
+    if (finalizedTypeIndices.length === 0 || this.preparedScopes.size === 0) return;
+    const finalized = new Set(finalizedTypeIndices);
+    for (const index of finalized) {
+      if (!Number.isSafeInteger(index) || index < 0 || index >= this.module.types.length) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `leaf type finalization reports invalid module type index ${index}`,
+        );
+      }
+    }
+
+    const refreshed: Array<readonly [PreparedProgramAbiScopeRecord, Map<number, string>]> = [];
+    for (const scope of this.preparedScopes.values()) {
+      for (const [id, expectedLayout] of scope.typeLayouts) {
+        const locator = this.locators.get(id);
+        if (
+          locator?.kind !== "type-cell" ||
+          locator.cell.current === null ||
+          canonicalProgramAbiTypeDef(locator.cell.current) !== expectedLayout
+        ) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `leaf finalization changed explicit prepared type/class binding ${id}`,
+          );
+        }
+      }
+      const current = this.collectPreparedReachableTypeLayouts(
+        this.module,
+        scope.typeLayouts.keys(),
+        scope.callableTypeContracts,
+        scope.globalTypeContracts,
+      );
+      if (
+        current.size !== scope.reachableTypeLayouts.size ||
+        [...scope.reachableTypeLayouts.keys()].some((index) => !current.has(index))
+      ) {
+        throw new ProgramAbiInvariantError(
+          "type-remap-mismatch",
+          `leaf finalization changed the reachable type denominator for prepared scope ${scope.scopeId}`,
+        );
+      }
+      for (const [index, previousLayout] of scope.reachableTypeLayouts) {
+        const currentLayout = current.get(index)!;
+        if (currentLayout === previousLayout) continue;
+        if (!finalized.has(index) || !isLeafFinalizationOnly(previousLayout, currentLayout)) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `leaf finalization changed prepared type ${index} beyond final: false -> true`,
+          );
+        }
+      }
+      refreshed.push([scope, current]);
+    }
+    for (const [scope, current] of refreshed) {
+      scope.reachableTypeLayouts.clear();
+      for (const [index, layout] of current) scope.reachableTypeLayouts.set(index, layout);
+    }
+  }
+
   attachLocator(id: IrBindingId, locator: ProgramAbiSlotLocator): void {
     this.assertPlanning(`attach slot locator for ${id}`);
     const draft = this.drafts.get(id);
@@ -2245,9 +2353,14 @@ export class ProgramAbiSession {
         currentReachableLayouts.size !== scope.reachableTypeLayouts.size ||
         [...scope.reachableTypeLayouts].some(([index, layout]) => currentReachableLayouts.get(index) !== layout)
       ) {
+        const changed = [...scope.reachableTypeLayouts]
+          .filter(([index, layout]) => currentReachableLayouts.get(index) !== layout)
+          .map(([index]) => index);
+        const added = [...currentReachableLayouts.keys()].filter((index) => !scope.reachableTypeLayouts.has(index));
         throw new ProgramAbiInvariantError(
           "type-remap-mismatch",
-          `prepared type graph for scope ${scope.scopeId} drifted before exact layout remapping`,
+          `prepared type graph for scope ${scope.scopeId} drifted before exact layout remapping ` +
+            `(changed/missing: ${changed.slice(0, 8).join(",") || "none"}; added: ${added.slice(0, 8).join(",") || "none"})`,
         );
       }
     }

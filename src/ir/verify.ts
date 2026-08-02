@@ -235,7 +235,7 @@ export function irGlobalReferenceProblem(value: unknown): string | null {
     case "support":
       return null;
     case "import":
-      return nonEmptyString(binding.module) && nonEmptyString(binding.field)
+      return nonEmptyString(binding.module) && typeof binding.field === "string"
         ? null
         : "has a malformed import global binding";
     case "runtime":
@@ -295,6 +295,44 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
               func: func.name,
               block: block.id as number,
             });
+          }
+          return;
+        } else if (nested.kind === "string.const" && nested.storage) {
+          const problem = irGlobalReferenceProblem(nested.storage);
+          if (problem !== null) {
+            errors.push({
+              message: `string.const storage ${problem}`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+          return;
+        } else if (nested.kind === "string.len" && nested.provider) {
+          if (nested.provider.kind === "callable") {
+            const problem = callableReferenceProblem(nested.provider.target);
+            if (problem !== null) {
+              errors.push({
+                message: `string.len provider ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          } else {
+            const problem = irTypeReferenceProblem(nested.provider.ownerType);
+            if (
+              problem !== null ||
+              !Number.isSafeInteger(nested.provider.fieldIndex) ||
+              nested.provider.fieldIndex < 0
+            ) {
+              errors.push({
+                message:
+                  problem === null
+                    ? "string.len provider has an invalid struct field index"
+                    : `string.len provider ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
           }
           return;
         } else {

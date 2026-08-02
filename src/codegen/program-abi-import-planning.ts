@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irGlobalBindingKey, irImportGlobalRef } from "../ir/abi-bindings.js";
+import { irGlobalBindingKey, irImportGlobalRef, irPlannedImportGlobalRef } from "../ir/abi-bindings.js";
 import { irCallableBindingKey, irImportFuncRef } from "../ir/callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId } from "../ir/identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
+import type { IrGlobalRef } from "../ir/nodes.js";
 import type { FuncTypeDef, Import, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import {
@@ -439,8 +440,54 @@ export function planProgramAbiStringConstantImport(ctx: CodegenContext, value: I
       mutable: value.desc.mutable,
     },
   });
+  session.registerGlobalTypeContract(ref.binding.bindingId, value.desc.type, value.desc.mutable);
   session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
   if (!session.hasLocator(ref.binding.bindingId, value)) {
     session.attachLocator(ref.binding.bindingId, { kind: "import-global", value });
   }
+}
+
+/**
+ * Recover the exact symbolic ref for a previously registered host string
+ * constant. The allocator object and its Program-ABI owner are authoritative;
+ * `stringGlobalMap` is used only to find that object in the current import
+ * population.
+ */
+export function programAbiStringConstantRef(ctx: CodegenContext, literal: string): IrGlobalRef | undefined {
+  const session = ctx.programAbiSession;
+  const globalIndex = ctx.stringGlobalMap.get(literal);
+  if (!session || globalIndex === undefined || globalIndex < 0) return undefined;
+
+  let currentGlobalIndex = 0;
+  let imported: Import | undefined;
+  for (const value of ctx.mod.imports) {
+    if (value.desc.kind !== "global") continue;
+    if (currentGlobalIndex++ === globalIndex) {
+      imported = value;
+      break;
+    }
+  }
+  if (!imported || imported.desc.kind !== "global") {
+    throw new ProgramAbiInvariantError(
+      "missing-required-locator",
+      `string constant ${JSON.stringify(literal)} has no exact imported-global allocator object`,
+    );
+  }
+  const bindingId = session.locatorBindingId(imported);
+  if (!bindingId) {
+    throw new ProgramAbiInvariantError(
+      "unknown-locator-binding",
+      `string constant ${JSON.stringify(literal)} has no Program ABI owner`,
+    );
+  }
+  const adapterName = ctx.stringLiteralMap.get(literal) ?? `__str_${globalIndex}`;
+  const ref = irPlannedImportGlobalRef(bindingId, imported.module, imported.name, adapterName);
+  const structuralReferenceKey = irGlobalBindingKey(ref.binding);
+  if (!session.bindingIdsForStructuralReference(structuralReferenceKey).includes(bindingId)) {
+    throw new ProgramAbiInvariantError(
+      "binding-reference-mismatch",
+      `string constant ${JSON.stringify(literal)} does not match its planned import identity`,
+    );
+  }
+  return ref;
 }

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   irClassTypeRef,
   irGlobalBindingKey,
+  irImportGlobalRef,
   irModuleGlobalRef,
   irSupportTypeRef,
   irTypeBindingKey,
@@ -31,6 +32,7 @@ import {
   type PreparedComponentAbiLookup,
 } from "../src/ir/prepared-component-dependencies.js";
 import { attachIrStringCarrier } from "../src/ir/string-carrier.js";
+import { attachIrStringSupport } from "../src/ir/string-support.js";
 import { ts } from "../src/ts-api.js";
 
 const VOID_SIGNATURE = Object.freeze({ params: Object.freeze([]), results: Object.freeze([]) });
@@ -441,6 +443,85 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     const mixed = attachIrStringCarrier({ ...unbound, resultTypes: [classType] }, carrierRef).function;
     expect(mixed.resultTypes[0]).toBe(classType);
     expect(mixed.resultTypes[0]).toMatchObject({ kind: "class", shape: classShape });
+  });
+
+  it("turns literal storage and string length into exact prepared dependencies", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
+    const storage = irImportGlobalRef(f.sourceId, "string_constants", "abc", "__str_0", 0);
+    const lengthTarget = irImportFuncRef("wasm:js-string", "length");
+    const literal: IrInstr = {
+      kind: "string.const",
+      result: asValueId(0),
+      resultType: { kind: "string" },
+      value: "abc",
+    };
+    const length: IrInstr = {
+      kind: "string.len",
+      result: asValueId(1),
+      resultType: irVal({ kind: "f64" }),
+      value: asValueId(0),
+    };
+    const unprepared = irFunction(f.first, [literal, length]);
+    const withCarrier = attachIrStringCarrier(unprepared, carrierRef).function;
+    const prepared = attachIrStringSupport(withCarrier, {
+      storageForConst: () => storage,
+      providerForLength: () => ({ kind: "callable", target: lengthTarget }),
+    });
+    expect(
+      attachIrStringSupport(prepared, {
+        storageForConst: () => storage,
+        providerForLength: () => ({ kind: "callable", target: lengthTarget }),
+      }),
+    ).toBe(prepared);
+
+    const callableBindingId = createIrBindingId({
+      ownerId: f.sourceId,
+      domain: "callable",
+      role: "imported-function",
+      ordinal: 0,
+    });
+    const entries: PreparedComponentAbiEntry[] = [
+      sourceCallableEntry(f.first.id),
+      {
+        id: carrierRef.binding.bindingId,
+        structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+        slotPolicy: "none",
+        intent: { kind: "type", shapeKey: '{"kind":"externref"}' },
+      },
+      {
+        id: storage.binding.bindingId,
+        structuralReferenceKey: irGlobalBindingKey(storage.binding),
+        slotPolicy: "required",
+        intent: {
+          kind: "global",
+          origin: "import",
+          valueType: '{"kind":"externref"}',
+          mutable: false,
+        },
+      },
+      {
+        id: callableBindingId,
+        structuralReferenceKey: irCallableBindingKey(lengthTarget.binding),
+        slotPolicy: "required",
+        intent: {
+          kind: "callable",
+          origin: "import",
+          signature: { params: ['{"kind":"externref"}'], results: ['{"kind":"i32"}'] },
+        },
+      },
+    ];
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [prepared] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup(entries),
+    });
+
+    expect(report.components[0]!.status).toBe("complete");
+    expect(new Set(report.components[0]!.abiDependencies.map((dependency) => dependency.bindingId))).toEqual(
+      new Set([carrierRef.binding.bindingId, storage.binding.bindingId, callableBindingId]),
+    );
   });
 
   it("requires a reverse Program ABI identity for import/runtime/intrinsic callables", () => {

@@ -30,6 +30,28 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
 }
 
 describe("#3521 prepare-before-emit free-function routing", () => {
+  it.each([
+    ["gc", "prepared-host-string-length.ts"],
+    ["standalone", "prepared-native-string-length.ts"],
+  ] as const)("dependency-seals a %s literal-length body before lowering", async (target, fileName) => {
+    const result = await compile(`export function literalLength(): number { return "abc".length; }`, {
+      fileName,
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      target,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(outcome(result, "literalLength")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(outcome(result, "literalLength").preparedComponentId).toMatch(/^prepared-component:/);
+    expect((await instantiate(result)).literalLength!()).toBe(3);
+  });
+
   it("IR-owns a string-method body outside the retired primitive skip allowlist", async () => {
     const code = `function codeAtStart(value: string): number { return value.charCodeAt(0); }`;
     expect(irFirstBodyIsProvenLowerable(firstFunction(code), new Map([["codeAtStart", 1]]))).toBe(false);

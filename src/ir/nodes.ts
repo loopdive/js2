@@ -1139,6 +1139,15 @@ export interface IrInstrStringConst extends IrInstrBase {
   readonly kind: "string.const";
   /** Raw JS string; the lowerer treats `value.length` as UTF-16 code units. */
   readonly value: string;
+  /**
+   * Exact immutable storage selected during final program preparation.
+   *
+   * Inference deliberately leaves this absent. The WasmGC preparation layer
+   * attaches either the host `string_constants` import or the interned native
+   * literal global before a component can seal, so lowering never has to
+   * discover or allocate literal storage mid-emission.
+   */
+  readonly storage?: IrGlobalRef;
 }
 
 /**
@@ -1178,7 +1187,23 @@ export interface IrInstrStringLen extends IrInstrBase {
   readonly kind: "string.len";
   readonly value: IrValueId;
   readonly inputEncoding?: IrStringEncoding;
+  /** Exact backend provider selected during final program preparation. */
+  readonly provider?: IrStringLengthProvider;
 }
+
+/** Backend-selected dependency for the representation-neutral `string.len`. */
+export type IrStringLengthProvider =
+  | {
+      readonly kind: "callable";
+      /** Host `wasm:js-string.length` import. */
+      readonly target: IrFuncRef;
+    }
+  | {
+      readonly kind: "struct-field";
+      /** Native `$AnyString` layout; field 0 is the UTF-16 code-unit length. */
+      readonly ownerType: IrTypeRef;
+      readonly fieldIndex: number;
+    };
 
 /** Return one UTF-16 code unit as a string, or the empty string out of bounds. */
 export interface IrInstrStringCharAt extends IrInstrBase {

@@ -86,7 +86,10 @@ import {
   PROGRAM_ABI_CALLABLE_ROLE,
   PROGRAM_ABI_GLOBAL_ROLE,
 } from "../codegen/program-abi-planning.js";
-import { catalogProgramAbiCallableImports } from "../codegen/program-abi-import-planning.js";
+import {
+  catalogProgramAbiCallableImports,
+  programAbiStringConstantRef,
+} from "../codegen/program-abi-import-planning.js";
 // (#2856) Console-variant parity with the legacy collectConsoleImports scan.
 import { isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
 import {
@@ -195,6 +198,7 @@ import {
   type IrInstr,
   type IrModule,
   type IrObjectShape,
+  type IrStringLengthProvider,
   type IrType,
   type IrTypeRef,
 } from "./nodes.js";
@@ -248,6 +252,7 @@ import {
   type PreparedComponentDependencyReport,
 } from "./prepared-component-dependencies.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
+import { attachIrStringSupport } from "./string-support.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -3899,7 +3904,7 @@ function makeResolver(
   // (#2949 slice 3) One dynamic-lowering handle per resolver (undefined =
   // not yet built; null = mode has no dynamic op lowering).
   let dynamicLoweringMemo: IrDynamicLowering | null | undefined;
-  return {
+  const resolver: IrLowerResolver = {
     resolveFunc(ref: IrFuncRef): number {
       if (process.env.JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE === "function") {
         throw new IrInvariantError(
@@ -4128,7 +4133,8 @@ function makeResolver(
     nativeStrings(): boolean {
       return ctx.nativeStrings;
     },
-    emitStringConst(value: string, alloc?: import("./nodes.js").AllocSiteId): readonly Instr[] {
+    emitStringConst(value: string, alloc?: import("./nodes.js").AllocSiteId, storage?: IrGlobalRef): readonly Instr[] {
+      if (storage) return [{ op: "global.get", index: resolver.resolveGlobal(storage) }];
       if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
         // Match direct codegen's interned native-literal representation. Besides
         // avoiding per-execution allocation, shared identity is a prerequisite
@@ -4179,7 +4185,19 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: wasm:js-string equals not registered");
       return [{ op: "call", funcIdx: idx }];
     },
-    emitStringLen(): readonly Instr[] {
+    emitStringLen(_inputEncoding, provider): readonly Instr[] {
+      if (provider?.kind === "callable") {
+        return [{ op: "call", funcIdx: resolver.resolveFunc(provider.target) }];
+      }
+      if (provider?.kind === "struct-field") {
+        return [
+          {
+            op: "struct.get",
+            typeIdx: resolver.resolveType(provider.ownerType),
+            fieldIdx: provider.fieldIndex,
+          },
+        ];
+      }
       if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
         // AnyString.length is field 0 (matches struct definition in
         // src/codegen/native-strings.ts).
@@ -4241,6 +4259,7 @@ function makeResolver(
       return isStandalonePromiseActive(ctx);
     },
   };
+  return resolver;
 }
 
 // ---------------------------------------------------------------------------
@@ -4427,9 +4446,11 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   // body buffers may contain string ops nested inside the for-of.
   const literals = new Set<string>();
   let usesStringOp = false;
+  let usesStringLen = false;
   const walk = (instr: IrInstr): void => {
     if (instrUsesStrings(instr)) usesStringOp = true;
     if (instr.kind === "string.const") literals.add(instr.value);
+    if (instr.kind === "string.len") usesStringLen = true;
     // (#3156) The host guarded-charCodeAt helper wraps the `wasm:js-string`
     // charCodeAt/length builtins — its materialization (resolveFunc) reads
     // `ctx.jsStringImports`, so `addStringImports` must have run BEFORE
@@ -4503,11 +4524,47 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   const registry = ctx.programAbiTypes;
   if (!registry) return fns;
   const carrierRef = registry.stringCarrierRef();
+  let lengthProvider: IrStringLengthProvider | undefined;
+  if (usesStringLen) {
+    if (ctx.nativeStrings) {
+      lengthProvider = { kind: "struct-field", ownerType: carrierRef, fieldIndex: 0 };
+    } else {
+      const target = irImportFuncRef("wasm:js-string", "length", "length");
+      const structuralReferenceKey = irCallableBindingKey(target.binding);
+      const imported = catalogProgramAbiCallableImports(ctx).get(structuralReferenceKey);
+      if (!imported || imported.desc.kind !== "func") {
+        throw new Error("ir/integration: prepared string.len has no exact wasm:js-string.length import");
+      }
+      ctx.programAbiCallableImports?.planPrepared(new Set([imported]));
+      lengthProvider = { kind: "callable", target };
+    }
+  }
+
+  const storageForConst = (instr: Extract<IrInstr, { kind: "string.const" }>): IrGlobalRef | undefined => {
+    if (!ctx.nativeStrings) return programAbiStringConstantRef(ctx, instr.value);
+    if (!ctx.programAbiGlobals || ctx.nativeStrTypeIdx < 0) return undefined;
+    const encoding =
+      ctx.utf8Storage && instr.alloc !== undefined && ctx.allocRegistry
+        ? ctx.allocRegistry.read<StringEncoding>(instr.alloc, ALLOC_NAMESPACES.encoding)
+        : undefined;
+    const ops = nativeStringLiteralInstrs(ctx, instr.value, encoding);
+    if (ops.length !== 1 || ops[0]?.op !== "global.get") return undefined;
+    const global = ctx.mod.globals[ops[0].index - ctx.numImportGlobals];
+    if (!global) {
+      throw new Error(`ir/integration: native string literal ${JSON.stringify(instr.value)} lost its interned global`);
+    }
+    return ctx.programAbiGlobals.prepareNativeStringLiteral(global);
+  };
+
   let usesString = false;
   const prepared = fns.map((entry) => {
     const attachment = attachIrStringCarrier(entry.fn, carrierRef);
     usesString ||= attachment.usesString;
-    return attachment.function === entry.fn ? entry : { ...entry, fn: attachment.function };
+    const fn = attachIrStringSupport(attachment.function, {
+      storageForConst,
+      providerForLength: () => lengthProvider,
+    });
+    return fn === entry.fn ? entry : { ...entry, fn };
   });
   if (usesString) registry.prepareStringCarrier();
   return prepared;

@@ -26,17 +26,25 @@ files:
   - src/ir/program.ts
   - src/ir/prepare.ts
   - src/ir/integration.ts
+  - src/ir/abi-bindings.ts
   - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/string-carrier.ts
+  - src/ir/string-support.ts
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/lower.ts
+  - src/ir/verify.ts
   - src/ir/backend/legality.ts
+  - src/ir/backend/string-contract.ts
+  - src/ir/backend/wasmgc-emitter.ts
+  - src/ir/backend/linear-emitter.ts
   - src/codegen/program-abi-session.ts
+  - src/codegen/program-abi-global-planning.ts
   - src/codegen/program-abi-import-planning.ts
   - src/codegen/program-abi-provider-planning.ts
   - src/codegen/program-abi-type-planning.ts
+  - src/codegen/fixups.ts
   - src/codegen/ir-overlay-preparation.ts
   - src/codegen/ir-overlay-safety.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -60,7 +68,9 @@ loc-budget-allow:
   - src/codegen/program-abi-session.ts
   - src/codegen/index.ts
   - src/ir/integration.ts
+  - src/ir/lower.ts
   - src/ir/nodes.ts
+  - src/ir/verify.ts
 ---
 
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
@@ -600,6 +610,74 @@ equality, length, character operations, and string iteration still name
 implicit backend globals/helpers in their IR instructions. Dynamic carriers,
 object/ref-cell/closure/union/vector layouts, pass-derived callable slots, and
 the explicit emission transaction remain subsequent R2/R6 dependencies.
+
+## Symbolic string literal/length continuation (2026-08-02)
+
+String literals and `.length` now carry their exact backend dependencies into
+the final post-pass IR without exposing those representations to JS inference:
+
+- host literals reference the exact immutable `string_constants` imported
+  global already owned by the Program ABI, while native literals reference the
+  existing interned `__strlit_` global and retain the selected UTF-8 or UTF-16
+  representation;
+- host length reads reference the exact `wasm:js-string.length` callable,
+  while native length reads reference field zero of the symbolic `$AnyString`
+  support type; and
+- dependency discovery records those global, callable, and type bindings
+  before the component scope seals. Lowering consumes the same refs through
+  the resolver instead of rediscovering numeric indices.
+
+The attachment pass runs only after inference and all middle-end transforms,
+so `IrType.string` remains backend-neutral. It is idempotent and rejects an
+attempt to replace an already attached provider with a different binding.
+Prepared native literal lowering continues to use the existing interning,
+hashing, and UTF-8 storage path rather than introducing a second literal
+representation.
+
+Native literal preparation also made the existing V8 leaf-struct finalization
+visible to sealed type graphs. `markLeafStructsFinal` now reports the exact
+types it changed, and `ProgramAbiSession` accepts that event only when every
+reported reachable change is precisely `final: false -> true`. Explicit
+prepared type/class roots, altered fields, changed reachability, and unreported
+mutations still fail closed. This preserves the legacy devirtualization
+optimization without weakening the prepared ABI seal.
+
+Production anti-vacuity covers both `gc` and `standalone` for
+`return "abc".length`: each function records `direct=0`, `IR=1`, and a
+non-empty `preparedComponentId`, validates as Wasm, and returns `3`.
+Dependency coverage separately proves that the carrier, literal storage, and
+length provider form the exact three-entry ABI dependency set.
+
+Validation for this continuation:
+
+- core Program ABI and #3521 preparation/routing coverage: **102/102
+  passing**;
+- numeric-local and focused host/native string coverage: **108/108 passing**,
+  including all ten `str_to_utf8` cases;
+- typecheck, lint, formatting, fallback ratchet, optimization-retirement
+  ledger, adoption check, LOC budget, and function budget: passing;
+- hybrid readiness remains **31/37 IR-emitted**, **6 typed Unsupported**, **0
+  invariants**, and READY; strict IR-only remains NOT READY because all 37 lane
+  units still pass through legacy body emission; and
+- the required completion command is **104/106 passing** with the same two
+  parent-recorded failures: the stale inline-small WAT assertion and the #3214
+  imported-overload inventory-owner failure. The separate imported-string
+  suite is **17/21 passing**; all four failures reproduce on the exact parent
+  commit.
+
+Cross-backend differential coverage is **29/29 passing**. The full equivalence
+gate reports **1,605 passing** and **38 failing** against a 36-entry baseline:
+six failures are outside that stale baseline, but all six reproduce on the
+exact parent commit in the function-variable, branch-hoisting, and function
+property `typeof` cases. No shared baseline file is changed by this slice.
+
+Remaining string dependencies are concat, equality, character operations,
+iteration, and oversized native literals that must materialize inline rather
+than through an interned global. Dynamic/object/ref-cell/closure/union/vector
+layouts, pass-derived callable reservation, and the isolated emission
+transaction remain after those instruction families. This slice unlocks more
+pre-lowering component seals but does not change the retirement-lane headline
+or make the legacy path removable yet.
 
 ## File ownership and locks
 

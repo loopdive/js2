@@ -68,6 +68,7 @@ import {
   type IrInstr,
   type IrLabelId,
   type IrObjectShape,
+  type IrStringLengthProvider,
   type IrType,
   type IrTypeRef,
   type IrValueId,
@@ -88,6 +89,7 @@ import {
 } from "./effects.js";
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
   IrBoxedLowering,
@@ -251,9 +253,9 @@ export interface IrLowerResolver {
    */
   // #1588: `alloc` lets the resolver read the string.const encoding decision.
   // Optional — resolvers/callers that omit it get the i16 path (byte-identical).
-  emitStringConst?(value: string, alloc?: AllocSiteId): readonly Instr[];
+  emitStringConst?(value: string, alloc?: AllocSiteId, storage?: IrGlobalRef): readonly Instr[];
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
-  emitStringConcat?(alloc?: AllocSiteId, mode?: import("./string-runtime.js").IrStringConcatMode): readonly Instr[];
+  emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
   emitStringEquals?(): readonly Instr[];
   /**
@@ -261,13 +263,10 @@ export interface IrLowerResolver {
    * Result is i32 — the `string.len` IR instr appends an
    * `f64.convert_i32_s` after this.
    */
-  emitStringLen?(inputEncoding?: import("./string-runtime.js").IrStringEncoding): readonly Instr[];
+  emitStringLen?(inputEncoding?: IrStringEncoding, provider?: IrStringLengthProvider): readonly Instr[];
   /** Typed character operations consume an already-normalized i32 index. */
-  emitStringCharAt?(
-    alloc?: AllocSiteId,
-    inputEncoding?: import("./string-runtime.js").IrStringEncoding,
-  ): readonly Instr[];
-  emitStringCharCodeAt?(inputEncoding?: import("./string-runtime.js").IrStringEncoding): readonly Instr[];
+  emitStringCharAt?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding): readonly Instr[];
+  emitStringCharCodeAt?(inputEncoding?: IrStringEncoding): readonly Instr[];
   /**
    * Slice 9 (#1169h): resolve (and lazily register) the shared `__exn`
    * exception tag. The tag carries an `externref` payload — every
@@ -1731,7 +1730,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "string.const": {
-        emitter.emitStringConst(instr.value, instr.alloc, out);
+        emitter.emitStringConst(instr.value, instr.alloc, out, instr.storage);
         return;
       }
       case "string.concat": {
@@ -1748,7 +1747,7 @@ export function lowerIrFunctionBody<S, Slot>(
       }
       case "string.len": {
         emitValue(instr.value, out);
-        emitter.emitStringLength(instr.inputEncoding, out);
+        emitter.emitStringLength(instr.inputEncoding, out, instr.provider);
         return;
       }
       case "string.char_at": {

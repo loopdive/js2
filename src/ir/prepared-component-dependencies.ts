@@ -11,6 +11,7 @@ import {
   type IrInstr,
   type IrModule,
   type IrType,
+  type IrTypeRef,
   type IrValueId,
 } from "./nodes.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent, ProgramAbiPlanEntry } from "./program-abi.js";
@@ -360,23 +361,13 @@ function recordImplicitTypeRequirement(
         block("IR string type resolves through backend support without a symbolic Program ABI type ref");
         return;
       }
-      if (carrierRef.binding.kind !== "support") {
-        block("IR string carrier must use a compiler-support Program ABI type ref");
-        return;
-      }
-      let structuralReferenceKey: string;
-      try {
-        structuralReferenceKey = irTypeBindingKey(carrierRef.binding);
-      } catch {
-        block("IR string carrier has a malformed compiler-support Program ABI type ref");
-        return;
-      }
-      addAbiDependency(evidence, abi, ownership, {
-        bindingId: carrierRef.binding.bindingId,
-        kind: "support",
-        structuralReferenceKey,
-        expected: (intent) => intent.kind === "type",
-      });
+      recordSupportTypeReference(
+        evidence,
+        carrierRef,
+        abi,
+        ownership,
+        "IR string carrier must use a compiler-support Program ABI type ref",
+      );
       return;
     }
     case "object":
@@ -399,6 +390,40 @@ function recordImplicitTypeRequirement(
     case "extern":
       return;
   }
+}
+
+function recordSupportTypeReference(
+  evidence: MutableFunctionEvidence,
+  ref: IrTypeRef,
+  abi: PreparedComponentAbiLookup,
+  ownership: OwnershipIndex,
+  invalidDetail: string,
+): void {
+  if (ref.binding.kind !== "support") {
+    addFailure(evidence, {
+      code: "implicit-support-reference-unavailable",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      detail: invalidDetail,
+    });
+    return;
+  }
+  let structuralReferenceKey: string;
+  try {
+    structuralReferenceKey = irTypeBindingKey(ref.binding);
+  } catch {
+    addFailure(evidence, {
+      code: "implicit-support-reference-unavailable",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      detail: `${invalidDetail} (malformed binding)`,
+    });
+    return;
+  }
+  addAbiDependency(evidence, abi, ownership, {
+    bindingId: ref.binding.bindingId,
+    kind: "support",
+    structuralReferenceKey,
+    expected: (intent) => intent.kind === "type",
+  });
 }
 
 function collectClassShape(shape: IrClassShape, classes: Map<IrClassId, IrClassShape>, seen: Set<IrType>): void {
@@ -448,9 +473,15 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "dyn.member_set":
       return `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
     case "string.const":
+      return instr.storage
+        ? null
+        : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
+    case "string.len":
+      return instr.provider
+        ? null
+        : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
     case "string.concat":
     case "string.eq":
-    case "string.len":
     case "string.char_at":
     case "string.char_code_at":
     case "forof.string":
@@ -809,6 +840,20 @@ function collectFunctionEvidence(
           }
         } else if (nested.kind === "global.get" || nested.kind === "global.set") {
           recordGlobalReference(evidence, nested.target, input.abi, ownership, input.terminalUnitIds);
+        } else if (nested.kind === "string.const" && nested.storage) {
+          recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+        } else if (nested.kind === "string.len" && nested.provider) {
+          if (nested.provider.kind === "callable") {
+            recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
+          } else {
+            recordSupportTypeReference(
+              evidence,
+              nested.provider.ownerType,
+              input.abi,
+              ownership,
+              "IR string.len struct field must use a compiler-support Program ABI type ref",
+            );
+          }
         }
         if (
           nested.kind === "class.call" ||

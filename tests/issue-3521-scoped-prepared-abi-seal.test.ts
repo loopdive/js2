@@ -6,6 +6,7 @@ import {
   type ProgramAbiDraft,
   type SealedPreparedProgramAbiScope,
 } from "../src/codegen/program-abi-session.js";
+import { markLeafStructsFinal } from "../src/codegen/fixups.js";
 import {
   canonicalProgramAbiCallableTypeContract,
   canonicalProgramAbiValType,
@@ -435,6 +436,58 @@ function planImportedDependencies(f: Fixture) {
   f.session.attachLocator(callableId, { kind: "import-function", value: callable });
   f.session.attachLocator(globalId, { kind: "import-global", value: global });
   return { callableId, globalId, callable, global };
+}
+
+function planLeafReachableCallable(f: Fixture) {
+  const baseType: TypeDef = {
+    kind: "struct",
+    name: "$Base",
+    fields: [],
+    superTypeIdx: -1,
+    final: false,
+  };
+  const leafType: TypeDef = {
+    kind: "struct",
+    name: "$Leaf",
+    fields: [{ name: "value", type: { kind: "i32" }, mutable: false }],
+    superTypeIdx: 0,
+    final: false,
+  };
+  const callableType: TypeDef = {
+    kind: "func",
+    name: "$consumeLeaf",
+    params: [{ kind: "ref", typeIdx: 1 }],
+    results: [],
+  };
+  f.module.types = [baseType, leafType, callableType];
+
+  const contract: ProgramAbiCallableTypeContract = Object.freeze({
+    params: Object.freeze([{ kind: "ref" as const, typeIdx: 1 }]),
+    results: Object.freeze([]),
+  });
+  const id = createIrBindingId({ ownerId: f.firstUnitId, domain: "callable", role: "leaf-body" });
+  const referenceKey = `unit|${f.firstUnitId}|leaf-body`;
+  const func: WasmFunction = {
+    name: "consumeLeaf",
+    typeIdx: 2,
+    locals: [],
+    body: [],
+    exported: false,
+  };
+  f.module.functions.push(func);
+  f.session.plan({
+    ...callableDraft(f.session, id, f.firstUnitId, "consumeLeaf", referenceKey),
+    intent: {
+      kind: "callable",
+      origin: "source",
+      signature: canonicalProgramAbiCallableTypeContract(contract),
+      unitId: f.firstUnitId,
+    },
+  });
+  f.session.registerCallableTypeContract(id, contract);
+  f.session.registerStructuralReference(id, referenceKey);
+  f.session.attachLocator(id, { kind: "defined-function", value: func });
+  return { id, leafType };
 }
 
 describe("#3521 scoped prepared-component ABI seal", () => {
@@ -973,6 +1026,28 @@ describe("#3521 scoped prepared-component ABI seal", () => {
       space: "function",
       index: 0,
     });
+  });
+
+  it("records only the backend's reported leaf finalization in a sealed reachable type graph", () => {
+    const accepted = fixture();
+    const acceptedLeaf = planLeafReachableCallable(accepted);
+    sealFirst(accepted);
+
+    const finalized = markLeafStructsFinal(accepted.module);
+    expect(finalized).toEqual([1]);
+    accepted.session.recordLeafTypeFinalization(finalized);
+    expect(accepted.session.publish(accepted.module).abi.resolveFinalIndex(acceptedLeaf.id)).toEqual({
+      space: "function",
+      index: 0,
+    });
+
+    const drift = fixture();
+    const driftLeaf = planLeafReachableCallable(drift);
+    sealFirst(drift);
+    driftLeaf.leafType.final = true;
+    if (driftLeaf.leafType.kind !== "struct") throw new Error("invalid leaf finalization fixture");
+    driftLeaf.leafType.fields.push({ name: "late", type: { kind: "i32" }, mutable: false });
+    expectInvariant(() => drift.session.recordLeafTypeFinalization([1]), "type-remap-mismatch");
   });
 
   it("refreshes callable and global aliases that inherit canonical contracts during a valid reorder", () => {

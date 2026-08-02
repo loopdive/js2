@@ -3266,6 +3266,13 @@ function planIrFirstFunctionRouting(
   };
 }
 
+function finalizeLeafStructTypes(ctx: CodegenContext): void {
+  const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
+  const keepOpenTypeIdxs = callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]);
+  const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
+  ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
+}
+
 /** Compile a typed AST into a WasmModule IR */
 export function generateModule(
   ast: TypedAST,
@@ -4354,8 +4361,7 @@ export function generateModule(
     // BEFORE dead-type elimination so the brand-chain refs get remapped.
     brandCollidingShapeTypes(mod, ctx.noBrandShapeTypes);
 
-    const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
-    markLeafStructsFinal(mod, ctx.wasi, callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]));
+    finalizeLeafStructTypes(ctx);
 
     emitDataStructHostBridgeManifest(ctx);
 
@@ -6382,8 +6388,7 @@ export function generateMultiModule(
     // emission, before dead-type elimination.
     brandCollidingShapeTypes(mod, ctx.noBrandShapeTypes);
 
-    const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
-    markLeafStructsFinal(mod, ctx.wasi, callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]));
+    finalizeLeafStructTypes(ctx);
 
     emitDataStructHostBridgeManifest(ctx);
 

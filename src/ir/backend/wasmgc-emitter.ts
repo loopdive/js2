@@ -14,7 +14,16 @@
 // are added here as their groups get wired.
 
 import { emitConstInstr, type IrLowerResolver } from "../lower.js";
-import { asVal, type AllocSiteId, type IrBinop, type IrInstr, type IrType, type IrUnop } from "../nodes.js";
+import {
+  asVal,
+  type AllocSiteId,
+  type IrBinop,
+  type IrGlobalRef,
+  type IrInstr,
+  type IrStringLengthProvider,
+  type IrType,
+  type IrUnop,
+} from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { BlockType, Instr, ValType } from "../types.js";
 import type {
@@ -47,8 +56,8 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push(instr);
   }
 
-  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Instr[]): void {
-    const ops = this.stringRuntime?.emitStringConst?.(value, alloc);
+  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Instr[], storage?: IrGlobalRef): void {
+    const ops = this.stringRuntime?.emitStringConst?.(value, alloc, storage);
     if (!ops) throw new Error("WasmGcEmitter: string.const runtime is unavailable");
     out.push(...ops);
   }
@@ -66,8 +75,12 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     if (negate) out.push({ op: "i32.eqz" });
   }
 
-  emitStringLength(_inputEncoding: IrStringEncoding | undefined, out: Instr[]): void {
-    const ops = this.stringRuntime?.emitStringLen?.(_inputEncoding);
+  emitStringLength(
+    _inputEncoding: IrStringEncoding | undefined,
+    out: Instr[],
+    provider?: IrStringLengthProvider,
+  ): void {
+    const ops = this.stringRuntime?.emitStringLen?.(_inputEncoding, provider);
     if (!ops) throw new Error("WasmGcEmitter: string.len runtime is unavailable");
     out.push(...ops, { op: "f64.convert_i32_s" });
   }
