@@ -422,6 +422,30 @@ function r3PromiseDelaySignatureMatchesAllocatedSlot(
   );
 }
 
+/** Exact #4106 numeric fulfillment ABI projected onto a Promise callable slot. */
+function r3SuspendingAsyncSignatureMatchesAllocatedSlot(
+  ctx: CodegenContext,
+  unitId: IrUnitId,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  if (
+    override.params.some((type) => asVal(type)?.kind !== "f64") ||
+    override.returnType === null ||
+    asVal(override.returnType)?.kind !== "f64"
+  ) {
+    return false;
+  }
+  const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
+  const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
+  return (
+    signature?.kind === "func" &&
+    signature.params.length === override.params.length &&
+    signature.params.every((type) => type.kind === "f64") &&
+    signature.results.length === 1 &&
+    signature.results[0]?.kind === "externref"
+  );
+}
+
 /**
  * Select only exact checker-certified Promise-delay components after their
  * final runtime/import preparation has retained the owner. The two nested
@@ -483,6 +507,47 @@ export function selectR3PreparedPromiseDelayFunctions(input: {
       functionValueTargets.has(unitId) ||
       containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
       !r3PromiseDelaySignatureMatchesAllocatedSlot(input.ctx, unitId, override)
+    ) {
+      continue;
+    }
+    selected.add(legacyName);
+  }
+  return selected;
+}
+
+/** Select the exact #4106 host suspension owners whose Promise ABI is frozen. */
+export function selectR3PreparedSuspendingAsyncFunctions(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly selectedLegacyNames: ReadonlySet<string>;
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
+  readonly overridesByUnitId: ReadonlyMap<
+    IrUnitId,
+    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
+  >;
+  readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
+}): ReadonlySet<string> {
+  const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
+  const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
+  const selected = new Set<string>();
+  for (const legacyName of input.selectedLegacyNames) {
+    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
+    if (!input.suspendingAsyncUnitIds.has(unitId)) continue;
+    const claim = input.claimsByUnitId.get(unitId);
+    const override = input.overridesByUnitId.get(unitId);
+    if (!claim || !override) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `R3 suspending async candidate ${unitId} / ${legacyName} has no exact claim/signature`,
+      );
+    }
+    if (
+      containsNestedExecutableSyntax(claim.declaration) ||
+      functionValueTargets.has(unitId) ||
+      containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
+      !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override)
     ) {
       continue;
     }

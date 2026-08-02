@@ -155,6 +155,7 @@ import {
   prepareIrFreeFunctionBodies,
   selectR2PreparedFreeFunctions,
   selectR3PreparedPromiseDelayFunctions,
+  selectR3PreparedSuspendingAsyncFunctions,
   selectPreparedClassMethodNames,
   type PreparedIrClassMethodBodies,
   type PreparedIrFreeFunctionBodies,
@@ -3211,6 +3212,7 @@ function planIrFirstBodyRouting(
       ...[...plan.hostVoidCallbacks.values()].map((callback) => callback.ownerUnitId),
       ...plan.hostDateImportsByOwnerUnitId.keys(),
       ...[...plan.promiseDelays.constructions.values()].map((delay) => delay.ownerUnitId),
+      ...plan.suspendingAsyncUnitIds,
     ]),
     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
     fast: ctx.fast,
@@ -3241,8 +3243,12 @@ function planIrFirstBodyRouting(
   // edges, so any callable edge that crosses into one of those owners removes
   // the complete affected free-function component before preparation.
   const hasPromiseDelayComponent = plan.promiseDelays.constructions.size > 0;
+  const hasSuspendingAsyncComponent = plan.suspendingAsyncUnitIds.size > 0;
   const usePreparedRouting =
-    preliminaryR2Names.size > 0 || preliminaryClassMethodNames.size > 0 || hasPromiseDelayComponent;
+    preliminaryR2Names.size > 0 ||
+    preliminaryClassMethodNames.size > 0 ||
+    hasPromiseDelayComponent ||
+    hasSuspendingAsyncComponent;
   let finalizedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit"> | undefined;
 
   if (usePreparedRouting) {
@@ -3276,7 +3282,16 @@ function planIrFirstBodyRouting(
       overridesByUnitId: plan.overrideMapByUnitId,
       promiseDelays: plan.promiseDelays,
     });
-    const preparedFreeFunctionNames = new Set([...preliminaryR2Names, ...promiseDelayNames]);
+    const suspendingAsyncNames = selectR3PreparedSuspendingAsyncFunctions({
+      ctx,
+      sourceFile,
+      selectedLegacyNames: preparedSelection.funcs,
+      identityPlan: plan.identityPlan,
+      claimsByUnitId: plan.functionClaimsByUnitId,
+      overridesByUnitId: plan.overrideMapByUnitId,
+      suspendingAsyncUnitIds: plan.suspendingAsyncUnitIds,
+    });
+    const preparedFreeFunctionNames = new Set([...preliminaryR2Names, ...promiseDelayNames, ...suspendingAsyncNames]);
     if (preparedFreeFunctionNames.size === 0 && preliminaryClassMethodNames.size === 0) {
       // Final-context Promise preparation may reject an occupied/mismatched
       // runtime ABI. Keep that owner on the established direct route.
