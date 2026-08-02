@@ -27,6 +27,14 @@ interface ObjectIntegrityMutationState {
   OBJ_FLAG_NONEXTENSIBLE: number;
   OBJ_FLAG_SEALED: number;
   OBJ_FLAG_FROZEN: number;
+  /**
+   * (#4032) `__integrity_bag(externref) -> externref` — the per-carrier
+   * own-property bag (`$Object`) that holds the `[[Extensible]]`/sealed/frozen
+   * slot for an Array/closure receiver. `undefined` in host mode (the bag
+   * substrates are standalone/wasi-only), which keeps the emitted body
+   * byte-identical there.
+   */
+  integrityBagIdx: number | undefined;
 }
 
 function entryFlagClearInstrs(
@@ -103,30 +111,65 @@ export function buildObjectIntegrityMutationHelpers(s: ObjectIntegrityMutationSt
     OBJ_FLAG_NONEXTENSIBLE,
     OBJ_FLAG_SEALED,
     OBJ_FLAG_FROZEN,
+    integrityBagIdx,
   } = s;
 
   const emitSetFlags = (name: string, bits: number, entryClearMask: number): void => {
+    // A FACTORY, never a shared array: the same instruction sequence is spliced
+    // into two arms of the same body, and aliasing one `Instr[]` into both makes
+    // the finalize walks remap it twice (see
+    // reference_shared_instr_object_dce_double_remap).
+    const setFlagsOnLocal1 = (): Instr[] => [
+      { op: "local.get", index: 1 },
+      { op: "ref.cast", typeIdx: objectTypeIdx },
+      { op: "local.tee", index: 2 },
+      { op: "local.get", index: 2 },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+      { op: "i32.const", value: bits },
+      { op: "i32.or" },
+      { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
+      ...entryFlagClearInstrs(objectTypeIdx, propMapTypeIdx, propEntryTypeIdx, entryClearMask),
+    ];
+    // (#4032) Non-`$Object` receiver (Array `__vec_*`, closure struct, …): route
+    // the integrity bits into the carrier's own-property bag, which IS a
+    // `$Object` and therefore owns a real flags slot. Without this the mutators
+    // were a silent no-op for every non-`$Object` carrier — which is why the
+    // matching predicates had to be *wrong in the pristine direction* to make
+    // `Object.freeze(arr); Object.isFrozen(arr)` look right. `integrityBagIdx`
+    // is undefined in host mode, restoring the previous body byte-for-byte.
+    const bagArm: Instr[] =
+      integrityBagIdx === undefined
+        ? []
+        : [
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: setFlagsOnLocal1(),
+              else: [
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: integrityBagIdx },
+                { op: "any.convert_extern" },
+                { op: "local.tee", index: 1 },
+                { op: "ref.test", typeIdx: objectTypeIdx },
+                { op: "if", blockType: { kind: "empty" }, then: setFlagsOnLocal1() },
+              ],
+            },
+          ];
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: objectTypeIdx },
-          { op: "local.tee", index: 2 },
-          { op: "local.get", index: 2 },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-          { op: "i32.const", value: bits },
-          { op: "i32.or" },
-          { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
-          ...entryFlagClearInstrs(objectTypeIdx, propMapTypeIdx, propEntryTypeIdx, entryClearMask),
-        ],
-      },
+      ...(bagArm.length > 0
+        ? bagArm
+        : ([
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: setFlagsOnLocal1(),
+            },
+          ] satisfies Instr[])),
       { op: "local.get", index: 0 },
     ];
     registerNative(
