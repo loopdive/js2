@@ -6386,8 +6386,7 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
 }
 
 /**
- * Finalize `__getOwnPropertyNames` **and `__object_keys`** with closed-struct
- * own-field enumeration.
+ * Finalize `__getOwnPropertyNames` with closed-struct own-field enumeration.
  *
  * The eager object runtime only knows its open `$Object` map. Closed compiler
  * structs are discovered throughout codegen, so splice one complete-shape arm
@@ -6398,24 +6397,27 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
  * Direct and stored `Object.getOwnPropertyNames` calls both target this native
  * helper, keeping their `$ObjVec`/native-string carrier contract identical.
  *
- * (#4071) `__object_keys` gets the SAME arms rather than a hand-maintained
- * fifth copy. It is legitimate to share the field list even though `Object.keys`
- * is enumerable-only and `getOwnPropertyNames` is all-own: the names collected
- * here are *source* fields of a closed compiler struct, which are always
- * ordinary enumerable data properties (`$`/`__`-prefixed compiler internals are
- * filtered out above), so the enumerable subset and the own set coincide. Both
- * helpers were registered with the identical signature and local layout
- * (`0=obj … 7=vec`) and both open with `__objvec_new; local.set 7`, which is the
- * anchor the splice searches for — so one arm set is correct for both.
+ * (#4071) **`__object_keys` deliberately does NOT share these arms.** Extending
+ * them to it was implemented and MEASURED, then reverted: the struct set here is
+ * every non-synthetic entry of `ctx.structFields`, which includes BUILTIN
+ * carriers, and their internal fields are not `$`/`__`-prefixed so the filter
+ * above does not remove them. Sharing the arms therefore made
+ * `Object.keys(new Date(0))` answer `["timestamp"]` and `Object.keys(/ab/)`
+ * answer 7 internal RegExp fields — both correctly `[]` before, so it traded a
+ * real gain on class instances for a NEW silent wrong answer on two very common
+ * spellings. `Object.keys` is enumerable-only and builtin internals are not own
+ * enumerable properties.
  *
- * Before this, `Object.keys(classInstance)` returned `[]` in standalone (a class
- * instance is a closed nominal struct, not a `$Object`) while
- * `Object.getOwnPropertyNames` on the same value was correct — a silent wrong
- * answer, not a refusal.
+ * That leak is ALREADY LATENT here: `Object.getOwnPropertyNames(/ab/)` returns
+ * those same 7 internal fields in standalone today (host answers 1). Fixing it
+ * needs a principled user-declared-vs-builtin struct predicate, which does not
+ * exist yet — `isSyntheticStructName` only screens `Wrapper*` / `$AnyValue` /
+ * `__vec_*` / `__arr_*`. Tracked separately; do not re-share these arms until
+ * that predicate lands.
  */
 export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
   if (!ctx.standalone) return;
-  const targets = ["__getOwnPropertyNames", "__object_keys"]
+  const targets = ["__getOwnPropertyNames"]
     .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
     .filter((f): f is NonNullable<typeof f> => f !== undefined);
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");

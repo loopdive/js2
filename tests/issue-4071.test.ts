@@ -84,14 +84,32 @@ describe("#4071 standalone own-property enumeration", () => {
     ).toBe(0);
   });
 
-  it("Object.keys enumerates a class instance's own fields", async () => {
+  // Class instances are NOT fixed here. Sharing
+  // `fillClosedStructOwnPropertyNamesArms` with `__object_keys` would fix them,
+  // but it also leaks builtin struct internals (see the two guards below), so it
+  // was measured and reverted. Documented as a known gap rather than asserted,
+  // so that whoever lands the user-vs-builtin struct predicate can flip it.
+
+  it("does NOT leak builtin struct internals: Object.keys(new Date(0))", async () => {
+    // Regression guard for the reverted closed-struct sharing: this answered
+    // ["timestamp"] with those arms shared. Spec says [] — Date's internal slot
+    // is not an own enumerable property.
     expect(
       await runHostFree(`export function test(): number {
-        class C { a = 1; b = 2; }
-        const v: any = new C();
+        const v: any = new Date(0);
         return Object.keys(v).length;
       }`),
-    ).toBe(2);
+    ).toBe(0);
+  });
+
+  it("does NOT leak builtin struct internals: Object.keys(/ab/)", async () => {
+    // Answered 7 (internal RegExp fields) with the closed-struct arms shared.
+    expect(
+      await runHostFree(`export function test(): number {
+        const v: any = /ab/;
+        return Object.keys(v).length;
+      }`),
+    ).toBe(0);
   });
 
   it("Object.keys still enumerates a plain object (no regression)", async () => {
@@ -127,7 +145,7 @@ describe("#4071 standalone own-property enumeration", () => {
     ).toBe(3);
   });
 
-  it("getOwnPropertyNames on a class instance is unchanged by the shared fill", async () => {
+  it("getOwnPropertyNames on a class instance is unchanged", async () => {
     expect(
       await runHostFree(`export function test(): number {
         class C { a = 1; b = 2; }
@@ -135,5 +153,24 @@ describe("#4071 standalone own-property enumeration", () => {
         return Object.getOwnPropertyNames(v).length;
       }`),
     ).toBe(2);
+  });
+
+  it("the 15.2.3.14-6-1 shape now actually executes its assertions", async () => {
+    // This test262 shape passed VACUOUSLY before: `Object.keys(denseArray)` was
+    // empty, so `for (index in returnedArray)` ran ZERO assertions. Assert both
+    // that comparisons now happen AND that they agree — a count alone would go
+    // back to passing vacuously if enumeration broke again.
+    expect(
+      await runHostFree(`export function test(): number {
+        const a: any = [1, 2, 3];
+        const t: any = [];
+        for (const p in a) { if (a.hasOwnProperty(p)) t.push(p); }
+        const r: any = Object.keys(a);
+        let compared = 0;
+        let bad = 0;
+        for (const i in r) { compared++; if (t[i] !== r[i]) bad++; }
+        return compared === 3 && bad === 0 ? 1 : 0;
+      }`),
+    ).toBe(1);
   });
 });
