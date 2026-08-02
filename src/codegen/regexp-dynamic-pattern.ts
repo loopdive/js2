@@ -32,6 +32,17 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
+import {
+  ReOp,
+  RE_FLAG_D,
+  RE_FLAG_G,
+  RE_FLAG_I,
+  RE_FLAG_M,
+  RE_FLAG_S,
+  RE_FLAG_U,
+  RE_FLAG_V,
+  RE_FLAG_Y,
+} from "./regex/bytecode.js";
 
 /** Token kinds, packed into bits 0..2 of the decoder's result. */
 export const TOKEN_UNSUPPORTED = 0;
@@ -372,4 +383,152 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
     exported: false,
   });
   return funcIdx;
+}
+
+/** Caller locals the accessors below read. */
+export interface DynamicPatternLocals {
+  /** `ref $NativeStrData` holding the pattern's code units. */
+  pdata: number;
+  /** Offset of the pattern's first unit within `pdata`. */
+  poff: number;
+  /** One past the last pattern unit to consider. */
+  end: number;
+  /** i32 scratch holding the packed token most recently decoded. */
+  tok: number;
+  /** i32 scratch holding a decoded literal code unit. */
+  ch: number;
+  /** i32 holding the parsed flag bits. */
+  fbits: number;
+}
+
+/**
+ * The read side of the token format, kept next to the writer so the packing
+ * and unpacking cannot drift apart. Returned as builders over the caller's
+ * own local indices; the caller owns the traversal, this owns the encoding.
+ */
+export interface DynamicPatternAccessors {
+  /** `tok = __regex_dyn_token(pdata, poff, <indexLocal>, end)` */
+  readToken(indexLocal: number): Instr[];
+  /** `(tok & KIND_MASK) == kind` */
+  kindIs(kind: number): Instr[];
+  /** the token's source width, always >= 1 */
+  len(): Instr[];
+  /** the token's literal code unit */
+  value(): Instr[];
+  /** `<indexLocal> += len` — the ONLY sanctioned way to advance a walk */
+  advance(indexLocal: number): Instr[];
+  /**
+   * The match operand for a literal unit in `ch`: folded to lower case when
+   * the `i` flag is set, so `ReOp.CHARI` compares case-insensitively.
+   */
+  charOperand(): Instr[];
+  /** Maps the flag character in `ch` to its `RE_FLAG_*` bit, or 0. */
+  flagBit(): Instr[];
+  /** `ReOp.ANY` for a `.` token, else `ReOp.CHARI`/`ReOp.CHAR` per the `i` flag. */
+  recordOp(): Instr[];
+}
+
+export function makeDynamicPatternAccessors(decoderIdx: number, L: DynamicPatternLocals): DynamicPatternAccessors {
+  const kind = (): Instr[] => [
+    { op: "local.get", index: L.tok },
+    { op: "i32.const", value: TOKEN_KIND_MASK },
+    { op: "i32.and" },
+  ];
+  const len = (): Instr[] => [
+    { op: "local.get", index: L.tok },
+    { op: "i32.const", value: TOKEN_LEN_SHIFT },
+    { op: "i32.shr_u" },
+    { op: "i32.const", value: TOKEN_LEN_MASK },
+    { op: "i32.and" },
+  ];
+  const kindIs = (k: number): Instr[] => [...kind(), { op: "i32.const", value: k }, { op: "i32.eq" }];
+  return {
+    readToken: (indexLocal: number) => [
+      { op: "local.get", index: L.pdata },
+      { op: "local.get", index: L.poff },
+      { op: "local.get", index: indexLocal },
+      { op: "local.get", index: L.end },
+      { op: "call", funcIdx: decoderIdx },
+      { op: "local.set", index: L.tok },
+    ],
+    kindIs,
+    len,
+    value: () => [
+      { op: "local.get", index: L.tok },
+      { op: "i32.const", value: TOKEN_VALUE_SHIFT },
+      { op: "i32.shr_u" },
+      { op: "i32.const", value: 0xffff },
+      { op: "i32.and" },
+    ],
+    advance: (indexLocal: number) => [
+      { op: "local.get", index: indexLocal },
+      ...len(),
+      { op: "i32.add" },
+      { op: "local.set", index: indexLocal },
+    ],
+    charOperand: () => [
+      { op: "local.get", index: L.fbits },
+      { op: "i32.const", value: RE_FLAG_I },
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          ...inRange(L.ch, 0x41, 0x5a),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "local.get", index: L.ch }, { op: "i32.const", value: 0x20 }, { op: "i32.add" }],
+            else: [{ op: "local.get", index: L.ch }],
+          },
+        ],
+        else: [{ op: "local.get", index: L.ch }],
+      },
+    ],
+    flagBit: () => {
+      const entries: Array<[number, number]> = [
+        ["g".charCodeAt(0), RE_FLAG_G],
+        ["i".charCodeAt(0), RE_FLAG_I],
+        ["m".charCodeAt(0), RE_FLAG_M],
+        ["s".charCodeAt(0), RE_FLAG_S],
+        ["u".charCodeAt(0), RE_FLAG_U],
+        ["y".charCodeAt(0), RE_FLAG_Y],
+        ["d".charCodeAt(0), RE_FLAG_D],
+        ["v".charCodeAt(0), RE_FLAG_V],
+      ];
+      let tail: Instr[] = [{ op: "i32.const", value: 0 }];
+      for (let idx = entries.length - 1; idx >= 0; idx--) {
+        const [unit, bit] = entries[idx]!;
+        tail = [
+          ...eqConst(L.ch, unit),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: bit }],
+            else: tail,
+          },
+        ];
+      }
+      return tail;
+    },
+    recordOp: () => [
+      ...kindIs(TOKEN_ANY),
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: ReOp.ANY }],
+        else: [
+          { op: "local.get", index: L.fbits },
+          { op: "i32.const", value: RE_FLAG_I },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: ReOp.CHARI }],
+            else: [{ op: "i32.const", value: ReOp.CHAR }],
+          },
+        ],
+      },
+    ],
+  };
 }

@@ -86,13 +86,10 @@ import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import {
   ensureDynamicPatternTokenDecoder,
+  makeDynamicPatternAccessors,
   TOKEN_ANY,
-  TOKEN_KIND_MASK,
-  TOKEN_LEN_MASK,
-  TOKEN_LEN_SHIFT,
   TOKEN_PIPE,
   TOKEN_UNSUPPORTED,
-  TOKEN_VALUE_SHIFT,
 } from "./regexp-dynamic-pattern.js";
 
 export const STANDALONE_REGEXP_ABI_VERSION = 1;
@@ -907,78 +904,23 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
   ];
 
-  const flagBit = (): Instr[] => {
-    const entries: Array<[number, number]> = [
-      ["g".charCodeAt(0), RE_FLAG_G],
-      ["i".charCodeAt(0), RE_FLAG_I],
-      ["m".charCodeAt(0), RE_FLAG_M],
-      ["s".charCodeAt(0), RE_FLAG_S],
-      ["u".charCodeAt(0), RE_FLAG_U],
-      ["y".charCodeAt(0), RE_FLAG_Y],
-      ["d".charCodeAt(0), RE_FLAG_D],
-      ["v".charCodeAt(0), RE_FLAG_V],
-    ];
-    let tail: Instr[] = [{ op: "i32.const", value: 0 }];
-    for (let idx = entries.length - 1; idx >= 0; idx--) {
-      const [unit, bit] = entries[idx]!;
-      tail = [
-        { op: "local.get", index: CH },
-        { op: "i32.const", value: unit },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "i32.const", value: bit }],
-          else: tail,
-        },
-      ];
-    }
-    return tail;
-  };
-
-  // #4065 — the single shared tokeniser. All three walks over the pattern (count,
-  // find-next-alternation, emit) go through this, so the token *boundaries* and
-  // the character *semantics* are decided in exactly one place. Previously each
-  // walk advanced one source unit at a time and only the emitter knew `.` is
-  // `ReOp.ANY`; that agreed only because every accepted construct was one unit
-  // wide. See regexp-dynamic-pattern.ts for why that had to change.
+  // #4065 — the single shared tokeniser. All FOUR walks over the pattern (count
+  // records, find next `|`, emit records, and the anchored-alternations fast
+  // path) go through this, so token *boundaries* and character *semantics* are
+  // decided in exactly one place. Each walk used to advance one source unit at
+  // a time and only the emitter knew `.` is `ReOp.ANY`; that agreed only
+  // because every accepted construct was one unit wide. See
+  // regexp-dynamic-pattern.ts for why that had to change.
   const tokenDecoderIdx = ensureDynamicPatternTokenDecoder(ctx, strDataRef);
-  /** `TOK = __regex_dyn_token(pdata, poff, <index>, end)` */
-  const readToken = (indexLocal: number): Instr[] => [
-    { op: "local.get", index: PDATA },
-    { op: "local.get", index: POFF },
-    { op: "local.get", index: indexLocal },
-    { op: "local.get", index: END },
-    { op: "call", funcIdx: tokenDecoderIdx },
-    { op: "local.set", index: TOK },
-  ];
-  const tokKind = (): Instr[] => [
-    { op: "local.get", index: TOK },
-    { op: "i32.const", value: TOKEN_KIND_MASK },
-    { op: "i32.and" },
-  ];
-  const tokKindIs = (kind: number): Instr[] => [...tokKind(), { op: "i32.const", value: kind }, { op: "i32.eq" }];
-  const tokLen = (): Instr[] => [
-    { op: "local.get", index: TOK },
-    { op: "i32.const", value: TOKEN_LEN_SHIFT },
-    { op: "i32.shr_u" },
-    { op: "i32.const", value: TOKEN_LEN_MASK },
-    { op: "i32.and" },
-  ];
-  const tokValue = (): Instr[] => [
-    { op: "local.get", index: TOK },
-    { op: "i32.const", value: TOKEN_VALUE_SHIFT },
-    { op: "i32.shr_u" },
-    { op: "i32.const", value: 0xffff },
-    { op: "i32.and" },
-  ];
-  /** `<indexLocal> += tokenLength` */
-  const advanceByToken = (indexLocal: number): Instr[] => [
-    { op: "local.get", index: indexLocal },
-    ...tokLen(),
-    { op: "i32.add" },
-    { op: "local.set", index: indexLocal },
-  ];
+  const tk = makeDynamicPatternAccessors(tokenDecoderIdx, {
+    pdata: PDATA,
+    poff: POFF,
+    end: END,
+    tok: TOK,
+    ch: CH,
+    fbits: FBITS,
+  });
+  const { readToken, advance: advanceByToken } = tk;
 
   const progCell = (offset: number, value: Instr[]): Instr[] => [
     { op: "local.get", index: PROG },
@@ -1004,31 +946,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.set", index: PC },
   ];
 
-  const dynamicCharOperand: Instr[] = [
-    { op: "local.get", index: FBITS },
-    { op: "i32.const", value: RE_FLAG_I },
-    { op: "i32.and" },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: CH },
-        { op: "i32.const", value: 0x41 },
-        { op: "i32.ge_s" },
-        { op: "local.get", index: CH },
-        { op: "i32.const", value: 0x5a },
-        { op: "i32.le_s" },
-        { op: "i32.and" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "local.get", index: CH }, { op: "i32.const", value: 0x20 }, { op: "i32.add" }],
-          else: [{ op: "local.get", index: CH }],
-        },
-      ],
-      else: [{ op: "local.get", index: CH }],
-    },
-  ];
+  const dynamicCharOperand: Instr[] = tk.charOperand();
 
   const throwConstructed = (ctorIdx: number, message: string): Instr[] => [
     ...stringConstantExternrefInstrs(ctx, message),
@@ -1083,7 +1001,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
             { op: "br_if", depth: 1 },
             ...readFlatUnit(FDATA, FOFF, I),
             { op: "local.set", index: CH },
-            ...flagBit(),
+            ...tk.flagBit(),
             { op: "local.tee", index: BIT },
             { op: "i32.eqz" },
             {
@@ -1219,8 +1137,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
             // longer the text it matches, so the raw-source ALTS fast path
             // must not be taken. (`.` in an anchored alternation silently
             // mismatched before this — same construct, two answers.)
-            ...tokKindIs(TOKEN_ANY),
-            ...tokLen(),
+            ...tk.kindIs(TOKEN_ANY),
+            ...tk.len(),
             { op: "i32.const", value: 1 },
             { op: "i32.ne" },
             { op: "i32.or" },
@@ -1232,7 +1150,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 { op: "local.set", index: PLAIN },
               ],
             },
-            ...tokKindIs(TOKEN_PIPE),
+            ...tk.kindIs(TOKEN_PIPE),
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -1254,7 +1172,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 },
               ],
               else: [
-                ...tokKindIs(TOKEN_UNSUPPORTED),
+                ...tk.kindIs(TOKEN_UNSUPPORTED),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -1387,7 +1305,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         // must NOT be mistaken for an alternation separator.
                         // `ALTN` counts this alternative's records as it goes.
                         ...readToken(J),
-                        ...tokKindIs(TOKEN_PIPE),
+                        ...tk.kindIs(TOKEN_PIPE),
                         { op: "br_if", depth: 1 },
                         { op: "local.get", index: ALTN },
                         { op: "i32.const", value: 1 },
@@ -1444,30 +1362,9 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         // exactly `CHARS` records and stays inside the
                         // `NINSTR * 3` program array.
                         ...readToken(K),
-                        ...tokValue(),
+                        ...tk.value(),
                         { op: "local.set", index: CH },
-                        ...emitRecord(
-                          [
-                            ...tokKindIs(TOKEN_ANY),
-                            {
-                              op: "if",
-                              blockType: { kind: "val", type: { kind: "i32" } },
-                              then: [{ op: "i32.const", value: ReOp.ANY }],
-                              else: [
-                                { op: "local.get", index: FBITS },
-                                { op: "i32.const", value: RE_FLAG_I },
-                                { op: "i32.and" },
-                                {
-                                  op: "if",
-                                  blockType: { kind: "val", type: { kind: "i32" } },
-                                  then: [{ op: "i32.const", value: ReOp.CHARI }],
-                                  else: [{ op: "i32.const", value: ReOp.CHAR }],
-                                },
-                              ],
-                            },
-                          ],
-                          dynamicCharOperand,
-                        ),
+                        ...emitRecord(tk.recordOp(), dynamicCharOperand),
                         ...advanceByToken(K),
                         { op: "br", depth: 0 },
                       ],

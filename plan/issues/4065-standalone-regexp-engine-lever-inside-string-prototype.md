@@ -16,8 +16,6 @@ language_feature: n/a
 goal: standalone-mode
 assignee: ttraenkler/L-regexp
 related: [4016, 4042, 4056, 4067]
-loc-budget-allow:
-  - src/codegen/regexp-standalone.ts
 ---
 
 # RegExp engine is a separate lever hiding inside String.prototype
@@ -142,9 +140,28 @@ followed by an ASCII letter decodes as a literal backslash of width 1.
 Still refused, on purpose: `\d \D \s \S \w \W \b \B \k \p \P`, octal /
 back-references, every other `\`+alphanumeric, and `^ $ * + ? ( ) [ ] { }`.
 
-The new module keeps `regexp-standalone.ts` off its #3102 cap growth path; the
-`loc-budget-allow` above covers only the seam (the token-call helpers and the
-four call sites), not the logic, which lives in the new module.
+### The budget gates improved the decomposition
+
+The first cut put the token accessors, `flagBit` and `dynamicCharOperand`
+inside `ensureDynamicStandaloneRegExpCompiler`, and the per-function ceiling
+(#3400 / R-FUNC) rejected it: **824 > 750 (+74)**. The gate's instruction is
+*split, don't allow*, and following it was right — the read side of the token
+format belongs next to the writer, so packing and unpacking cannot drift apart.
+Moving the accessors (plus `flagBit`, which decodes the runtime *flags* string,
+and `charOperand`, which turns a decoded unit into its match operand) into
+`regexp-dynamic-pattern.ts` put the function back under budget **without an
+allowance**.
+
+| file | cap | before | after | |
+| --- | ---: | ---: | ---: | --- |
+| `src/codegen/regexp-standalone.ts` | 4,261 | 4,280 (+19, #4016's allowance) | **4,261** | **at cap — no allowance** |
+| `src/codegen/regexp-dynamic-pattern.ts` | — | — | 534 | new |
+| `…::ensureDynamicStandaloneRegExpCompiler` | 750 | 824 (+74) | **under** | — |
+
+`regexp-standalone.ts` ends up **smaller than it was before this change**, and
+this PR claims **no `loc-budget-allow` and no `func-budget-allow`**. As in
+#4016, following the gate produced a better structure than the design it
+rejected.
 
 ## Test Results
 
