@@ -191,6 +191,42 @@ attribution stand unchallenged for three weeks. The 26-file `NO-CARRIER` bucket
 is blocked on the exotic-receiver own-property substrate (#4010) and is not
 fixable here.
 
+## Result
+
+Scoped CI-path run over the same 952 files, read from the JSONL (the artifact
+CI actually diffs — the vitest `it()`-level tallies drifted under load and are
+not the number):
+
+```
+before   604 pass / 347 fail / 1 CE
+after    617 pass / 334 fail / 1 CE
+         +13 pass, 0 regressions
+```
+
+Run **twice**, at 1-min load 8 and 13 — **0 flips between the two runs**,
+file for file. That is what makes the number quotable rather than a
+contention artifact.
+
+Attribution proved by **kill-switch removal**, not by correlation: restoring the
+`ref.test $Object` gate on `Properties` reverts `B1 FUNCTION Properties` from
+`0` (defined) to `2` (threw).
+
+**Reachable ≠ flipped, and the gap is real.** 22 goal-scope files sat in the
+arms this addresses; 13 flipped. The rest fail *past* the refusal for unrelated
+reasons — e.g. `15.2.3.5-4-6.js` asserts `this instanceof Array` inside the
+descriptor getter, and reading the descriptor through the carrier bag gives the
+bag as `this`. Removing a refusal exposes whatever was behind it; that is the
+point, but it is not a flip.
+
+**Trigger population** (files that can move for this reason at all): 683 corpus
+files mention `defineProperties`, 338 spell `Object.create(x, y)`, union
+**1,018**. **Zero harness files** carry either shape, so the trigger set is a
+real subset rather than "everything". Files without the shape cannot move
+through the edited paths. The one caveat: hoisting the `__integrity_bag`
+registration changes the *emission order* of one defined function, so byte
+identity does not hold module-wide even for non-trigger files; behaviour is
+`funcMap`-resolved and the #4032 consumer is pinned by test G4.
+
 ## Validation
 
 `tests/issue-4047.test.ts` — 23 cases, all zero-import, each pinned to an exact
