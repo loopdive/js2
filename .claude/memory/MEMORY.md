@@ -116,6 +116,7 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - reference_grep_false_empties_diff_test262 · reference_false_done_audit_nnnn_vs_wasm_funcidx · reference_runtest262file_not_ci_path_status_only · reference_baseline_jsonl_authoritative_over_local_repro_status · reference_surgical_baselines_push_partial_clone
 - reference_park_diagnosis_check_runs_on_sha_not_run_jobs · reference_admin_merge_active_queue_conflict_not_orphan · reference_compile_time_guard_1942_flake_skips_promote
 - [git-checkout--b-silently-does-not-switch](reference_git_checkout_dash_b_silently_does_not_switch.md) — verify the branch you landed on, never assume the checkout moved
+- **[stale-ref-locks-make-fetch-silently-not-update](reference_stale_ref_locks_make_fetch_silently_not_update.md)** — ahead/behind read from a tracking ref `fetch` could not write is confidently WRONG. Use `ls-remote`, or the server-side `compare` API for ancestry
 - [precommit-hook-exceeds-tool-timeout](reference_precommit_hook_exceeds_tool_timeout_leaves_stash_debris.md) — leaves `lint-staged automatic backup` entries on the SHARED stash stack; the commit still lands. Clear only your own two
 
 ### Merge queue & fork topology
