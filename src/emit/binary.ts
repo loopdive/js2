@@ -527,6 +527,23 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     // local-index breach is a mismatch between a body and its frame, so the
     // actionable question is "which function has a frame that index WOULD fit"
     // — answerable only against the whole table. Inert unless set.
+    // (#4075) Do two defined functions SHARE one body array? Bodies are assigned
+    // by reference from a FunctionContext, and a shared array is a documented
+    // hazard in this codebase ("`body: []` in FunctionContext (NOT
+    // `body: func.body`) — shared references break savedBody/swap"). A body that
+    // is still being appended to by another context is one way a function ends
+    // up referencing locals its own frame never declared.
+    if (typeof process !== "undefined" && process.env?.JS2WASM_EMIT_DUMP) {
+      const bodyOwners = new Map<Instr[], number[]>();
+      for (const [position, f] of mod.functions.entries()) {
+        bodyOwners.set(f.body, [...(bodyOwners.get(f.body) ?? []), position]);
+      }
+      for (const [, positions] of bodyOwners) {
+        if (positions.length < 2) continue;
+        const named = positions.map((p) => `${p}:${mod.functions[p]!.name}`).join(", ");
+        process.stderr.write(`[js2:emit] SHARED BODY ARRAY across ${positions.length} functions: ${named}\n`);
+      }
+    }
     if (typeof process !== "undefined" && process.env?.JS2WASM_EMIT_DUMP) {
       const lines = mod.functions.map((f, position) => {
         const params = resolveParamCount(f.typeIdx);

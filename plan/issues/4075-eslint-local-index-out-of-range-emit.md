@@ -220,3 +220,43 @@ a pre-existing entry is adopted rather than created.
 reuses a slot someone else claimed; the traced write shows the entry for `ve`
 being freshly pushed, but a LATER nested declaration reusing that reserved entry
 would not appear as a second slot write and would still swap in a foreign body.
+
+## Hypotheses ELIMINATED (2026-08-02)
+
+Recorded so none of these is paid for twice. Each ESLint iteration is ~16 min, so
+the negative results are most of the cost already spent.
+
+| # | hypothesis | how it was eliminated |
+| - | ---------- | --------------------- |
+| 1 | #4045 cross-module **name collision** | the emit diagnostic reports `NAME SHARED BY n` when a defined-function name is duplicated. It did not fire for `ve`; the name is unique in the table. |
+| 2 | a competing **slot write** (`replaceDefinedFuncAt`, a trampoline rebuild, a finalize pass) | `JS2WASM_TRACE_SLOT=1666` shows slot 1666 written **exactly once**, as an empty placeholder. Nothing overwrites it. |
+| 3 | **shared body array** between two functions (a documented hazard here) | the emit dump compares body array identity across all 8,225 defined functions: **zero** shared arrays. |
+| 4 | nested declaration compiled against the **enclosing frame** | three fixtures — nested in a 70-local host, called-before-declaration, and capturing host locals — all compile and emit cleanly. |
+| 5 | `ctx.currentFunc` not switched during nested body compilation, so temps land in the enclosing frame | it *is* switched: `ctx.currentFunc = liftedFctx` before, restored after (`nested-declarations.ts:627/781`). |
+| 6 | **call-site inlining** copying unmappable local indices | the inliner remaps only parameter `local.get`s and copies everything else verbatim — which *would* be unsound — but `INLINE_DISALLOWED_OPS` bars `block`/`loop`/`if`/`try`/`local.set`/`local.tee`, and registration rejects any callee with its own locals or a top-level `local.get >= paramCount`. Bodies are therefore flat, local-free and param-only, so the verbatim copy cannot produce an out-of-range index. |
+
+### What is still true and unexplained
+
+`ve` owns its slot, owns its body array, is written once, has 2 params + 6
+locals, and its body contains `local.get 65`. Whatever produced that instruction
+allocated against a frame of ≥ 66 and wrote into `ve`'s own body — so the next
+step is to catch the **instruction** as it is appended, not the slot as it is
+written.
+
+### Concretely, the next probe
+
+Extend the tracer to a body-append hook: wrap the `ve` placeholder's `body`
+array (a `Proxy`, or a push-site assertion behind the same env var) that throws
+the moment an instruction with a local index ≥ the current frame size is
+appended. The stack at that throw names the producer directly, exactly as
+`JS2WASM_TRACE_SLOT` named the slot writer. That is a ~20-line, one-run change
+and is the cheapest remaining path.
+
+### A latent unsoundness found on the way (separate issue material)
+
+The inliner is safe **only because** of its gate. Its remap loop
+(`call-identifier.ts`) copies every non-`local.get` instruction verbatim and
+falls through to a verbatim copy for any `local.get` index not in `argLocals`.
+If the eligibility gate is ever relaxed — to allow callee locals, control flow,
+or `local.set`/`local.tee` — the loop silently emits foreign local indices. It
+should refuse rather than rely on a distant gate staying strict.
