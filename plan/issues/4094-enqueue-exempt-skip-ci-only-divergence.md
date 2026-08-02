@@ -32,6 +32,38 @@ excludes it → un-enqueueable until the refresh cron (~0.7/hour actual) catches
 up → possibly raced by the next baseline commit. A commit that declares "this
 changes nothing needing testing" currently disqualifies every PR in flight.
 
+## ⚠ MEASURED 2026-08-02 14:16Z — `mergeStateStatus: BEHIND` is NOT "behind by commits"
+
+Direct counter-example, observed by the shepherd during the STEP-0 attempt:
+PR #4002 at `behind_by = 1` (missing exactly the `[skip ci]` baseline commit
+`a23eb628`) reported **`CLEAN`**, with all six required checks SUCCESS — while
+#4028, behind by the same single commit, read `UNSTABLE` (a pending
+non-required check). Neither read `BEHIND`.
+
+**Consequences for this issue:**
+
+1. **The predicate must derive behindness from `compare(head...main).behind_by`
+   — never from the status string.** Treat `BEHIND` as an opaque GitHub verdict
+   that only *sometimes* coincides with being behind.
+2. **The causal story this issue was filed under is weaker than written.** The
+   #4093 loop ("a `[skip ci]` commit removes every open PR from enqueue
+   eligibility by making them BEHIND") was inferred from two PRs that did read
+   BEHIND at behind=1. The counter-example shows GitHub does not always emit
+   BEHIND in that state — a PR can be CLEAN-while-behind, in which case
+   auto-enqueue takes it unaided and no exemption is needed. The correlation
+   (churn, dead time) is measured and real; the mechanism is NOT established.
+3. **Therefore the FIRST work item is now: measure when GitHub actually emits
+   `BEHIND`** (branch-protection strictness? recompute timing? per-check
+   settings?). If BEHIND-at-behind=1 turns out to be a transient recompute
+   state rather than a stable disqualification, the right fix may be smaller
+   than this issue proposes — possibly nothing beyond the #4093 detection work.
+   Do not build the exemption until this is answered.
+
+STEP 0's original question (does `enqueuePullRequest` accept a BEHIND PR?)
+remains unanswered — the green-but-BEHIND condition never obtained on the test
+subject. The one-shot directive to the shepherd stands for the next natural
+subject.
+
 ## Semantics
 
 A `BEHIND` PR is treated as enqueueable **iff every commit main is ahead by
