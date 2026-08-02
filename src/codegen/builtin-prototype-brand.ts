@@ -56,7 +56,7 @@
  *
  * ---
  *
- * ## (#4044) Sibling arm: the BORROWED receiver
+ * ## (#4076) Sibling arm: the BORROWED receiver
  *
  * The gate above answers "the receiver **is** `<Ctor>.prototype`". This module
  * also hosts the complementary question: `<Ctor>.prototype.<m>.call(recv, …)`,
@@ -416,7 +416,7 @@ export function tryBuiltinPrototypeMethodBrandThrow(
   );
 }
 
-// ───────────────────────── (#4044) borrowed-receiver arm ─────────────────────
+// ───────────────────────── (#4076) borrowed-receiver arm ─────────────────────
 
 /**
  * `<Ctor>.prototype.<method>` pairs whose spec algorithm rejects a nullish

@@ -1,5 +1,5 @@
 ---
-id: 4044
+id: 4076
 title: "Standalone: borrowed `<Builtin>.prototype.<m>.call(<invalid this>)` answers a value instead of throwing"
 status: done
 completed: 2026-08-02
@@ -197,7 +197,7 @@ the same gate but has **0 corpus files** (verified over all 25 trigger files).
 
 ## Tests
 
-`tests/issue-4044-borrowed-proto-this-brand.test.ts` — 60 assertions, each on an
+`tests/issue-4076-borrowed-proto-this-brand.test.ts` — 60 assertions, each on an
 observable value returned from the compiled module (`2` = the module itself
 caught a `TypeError`), never on "it compiles":
 

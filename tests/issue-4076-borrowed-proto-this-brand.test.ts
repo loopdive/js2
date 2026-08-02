@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #4044 — `<Builtin>.prototype.<m>.call(<invalid this>, …)` answered a VALUE in
+// #4076 — `<Builtin>.prototype.<m>.call(<invalid this>, …)` answered a VALUE in
 // standalone where the spec demands a TypeError.
 //
 // Root cause (measured, not inferred). In JS-host mode the borrowed call rides
@@ -43,7 +43,7 @@ const guarded = (body: string) =>
 
 const NULLISH = ["undefined", "null", "void 0"] as const;
 
-describe("#4044 Object.prototype borrowed call — ToObject(this) rejects a nullish receiver", () => {
+describe("#4076 Object.prototype borrowed call — ToObject(this) rejects a nullish receiver", () => {
   // §20.1.3.7 valueOf s1 · §20.1.3.5 toLocaleString (Invoke → GetV → ToObject) ·
   // §20.1.3.2 hasOwnProperty s2 · §20.1.3.4 propertyIsEnumerable s2.
   const CASES: [string, string][] = [
@@ -61,7 +61,7 @@ describe("#4044 Object.prototype borrowed call — ToObject(this) rejects a null
   }
 });
 
-describe("#4044 Function.prototype borrowed call — IsCallable(func) rejects a non-callable receiver", () => {
+describe("#4076 Function.prototype borrowed call — IsCallable(func) rejects a non-callable receiver", () => {
   // §20.2.3.{1,2,3,5} all begin "Let func be the this value. If IsCallable(func)
   // is false, throw a TypeError exception."
   const CASES: [string, string][] = [
@@ -83,7 +83,7 @@ describe("#4044 Function.prototype borrowed call — IsCallable(func) rejects a 
   }
 });
 
-describe("#4044 the gate must NOT fire — positive controls", () => {
+describe("#4076 the gate must NOT fire — positive controls", () => {
   // Each of these is a spec-legal call. A gate that threw here would be trading
   // a missing throw for a manufactured one, which is strictly worse.
   const LEGAL: [string, string][] = [
@@ -120,7 +120,7 @@ describe("#4044 the gate must NOT fire — positive controls", () => {
   });
 });
 
-describe("#4044 host lane is untouched", () => {
+describe("#4076 host lane is untouched", () => {
   // The gate is `noJsHost`-gated. In JS-host mode the host import already
   // produces a genuine TypeError, so behaviour there must be unchanged — this
   // asserts the OBSERVED host verdict, which is also 2 but by a different route.
@@ -132,7 +132,7 @@ describe("#4044 host lane is untouched", () => {
   });
 });
 
-describe("#4044 the emitted standalone module stays host-free", () => {
+describe("#4076 the emitted standalone module stays host-free", () => {
   // The whole point is a compile-away decision: the fix must not reintroduce a
   // host import to carry the throw (#2961 refuses any standalone import).
   it("emits zero imports for every gated shape", async () => {

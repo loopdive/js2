@@ -80,7 +80,7 @@ import {
 } from "../closures.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
-import { tryBorrowedPrototypeNullishThisThrow } from "../builtin-prototype-brand.js"; // (#4044)
+import { tryBorrowedPrototypeNullishThisThrow } from "../builtin-prototype-brand.js"; // (#4076)
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "../context/speculative.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
@@ -6393,7 +6393,7 @@ function compileCallExpression(
       const isCall = propAccess.name.text === "call";
       const innerExpr = propAccess.expression;
 
-      // (#4044) `<Ctor>.prototype.<m>.call/apply(<invalid this>, …)` is a
+      // (#4076) `<Ctor>.prototype.<m>.call/apply(<invalid this>, …)` is a
       // compile-time-decidable TypeError. MUST stay first — arms below claim the
       // shape and answer without running step 1. Rationale: builtin-prototype-brand.ts.
       const compileOneArg = (a: ts.Expression) => compileExpression(ctx, fctx, a);
