@@ -3494,7 +3494,7 @@ function compilePropertyAssignment(
     return { kind: "f64" }; // unreachable, but need a type
   }
 
-  // Handle static property assignment: ClassName.staticProp = value
+  // Handle declared and dynamically-added static properties on a class value.
   if (ts.isIdentifier(target.expression) && ctx.classSet.has(target.expression.text)) {
     const clsName = target.expression.text;
     const propName = ts.isPrivateIdentifier(target.name) ? "__priv_" + target.name.text.slice(1) : target.name.text;
@@ -3511,8 +3511,8 @@ function compilePropertyAssignment(
       fctx.body.push({ op: "local.get", index: tmpVal });
       return valType;
     }
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, propName, true);
   }
-
   // #1697: `this.X = v` / `this.#X = v` inside a static method body —
   // mirror the read path's ThisKeyword+staticContext arm in
   // property-access.ts:1427. Without this, the LHS is `this` (not an
