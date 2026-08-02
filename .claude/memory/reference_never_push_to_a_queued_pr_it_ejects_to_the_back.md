@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 417b718f-2c4e-4164-9782-006e2e33f7ff
+  modified: 2026-07-28T13:17:50.499Z
   modified: 2026-08-01T08:46:35.441Z
 ---
 
@@ -91,6 +92,37 @@ load-bearing, not cosmetic.
 **If a queued PR genuinely must change**, accept that it goes to the back, and say
 so explicitly when recommending it.
 
+## ⚠ Ejection is NOT guaranteed — the in-flight merge group can win the race
+
+**Measured 2026-07-28 on PR #3715, and this is the DANGEROUS direction.**
+A push to a queued PR does **not** reliably eject it. If a merge group is
+already in flight, it can complete and merge the **OLD head**, silently
+discarding the push:
+
+| event | time (UTC) | on main? |
+|---|---|---|
+| queued head `479e439af` | committed 12:05:26Z | **YES — merged** |
+| fix pushed `1a72a06a1` | committed **13:04:00Z** | **NO** |
+| queue merged #3715 | **13:07:22Z** | (landed the old head) |
+
+The push landed **three minutes before** the merge and was still left behind.
+
+**Why this is worse than ejection.** Ejection is loud and self-correcting — you
+go to the back and your fix lands eventually. This failure is silent: you push a
+correction, reasonably believe it is in, and the **uncorrected** version merges
+to main. On #3715 that put an unwanted repo-wide `.nvmrc` Node-25 pin onto main
+after the removal had already been pushed.
+
+**Rules:**
+
+- The "don't push to a queued PR" advice above still stands — but treat the
+  outcome as **undefined**, not as "it will be ejected". You may get ejection,
+  or you may get your push silently dropped.
+- **After any push near a queue merge, verify by ancestry which head actually
+  landed** — `git merge-base --is-ancestor <your-sha> upstream/main`. Do not
+  infer it from the PR showing MERGED.
+- If your commit lost the race, **fix forward with a follow-up PR** (public main
+  is append-only — never rewrite). That is what #3729 does for #3715.
 ---
 
 ## Catch-up merge when the author's WORKTREE IS LIVE — use the API, not a push

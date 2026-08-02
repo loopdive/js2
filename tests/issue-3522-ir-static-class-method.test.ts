@@ -26,9 +26,11 @@ describe("#3522 static class-method IR integration", () => {
       `
       class MathBox {
         static double(value: number): number { return value * 2; }
-        offset(): number { return 2; }
       }
-      export function run(value: number): number { return MathBox.double(value) + new MathBox().offset(); }
+      class OffsetBox {
+        offset(value: number = 2): number { return value; }
+      }
+      export function run(value: number): number { return MathBox.double(value) + new OffsetBox().offset(); }
       `,
       {
         fileName: `ir-static-method-${target}.ts`,
@@ -46,12 +48,12 @@ describe("#3522 static class-method IR integration", () => {
       irBodyEmitted: true,
       preparedComponentId: expect.any(String),
     });
-    expect(classMemberOutcome(result, "MathBox_offset")).toMatchObject({
-      kind: "emitted",
+    expect(classMemberOutcome(result, "OffsetBox_offset")).toMatchObject({
+      kind: "unsupported",
       legacyBodyEmitted: true,
-      irBodyEmitted: true,
+      irBodyEmitted: false,
     });
-    expect(classMemberOutcome(result, "MathBox_offset")).not.toHaveProperty("preparedComponentId");
+    expect(classMemberOutcome(result, "OffsetBox_offset")).not.toHaveProperty("preparedComponentId");
     expect(result.irPostClaimErrors ?? []).toEqual([]);
     expect((await instantiate(result)).run!(20)).toBe(42);
   });

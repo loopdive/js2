@@ -30,6 +30,7 @@ files:
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/prepared-component-dependencies.ts
   - src/codegen/class-bodies.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
@@ -37,6 +38,7 @@ files:
   - src/codegen/ir-overlay-outcomes.ts
   - src/codegen/program-abi-class-callable-planning.ts
   - src/codegen/program-abi-session.ts
+  - src/codegen/program-abi-type-planning.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
@@ -117,8 +119,8 @@ physical class slot back for unit-ID correlation. The shared audit proves every
 skipped class slot has one patched terminal result. Unsealed static probes are
 removed from the early report, compile direct, and run through the established
 late overlay; they do not produce duplicate terminal evidence. Instance
-methods, constructors, accessors, fields, and closures remain on that
-transitional route.
+methods, constructors, accessors, fields, and closures remained on that
+transitional route at this slice.
 
 Focused runtime coverage proves:
 
@@ -126,8 +128,9 @@ Focused runtime coverage proves:
   emit no legacy body, validate as Wasm, and return the expected value;
 - same-named static overrides on separate structural class owners retain
   distinct slots and runtime behavior; and
-- an adjacent instance method still emits its direct body, preventing a
-  source-wide or flat-name skip from satisfying the test.
+- an adjacent Unsupported instance method in a separate class still emits its
+  direct body, preventing a source-wide or flat-name skip from satisfying the
+  test.
 
 The authoritative single-host lane moves from **31 to 33 IR-emitted units**,
 from **6 to 4 Unsupported units**, and from **37 to 35 legacy bodies**, with
@@ -136,10 +139,57 @@ async-body shape, and one call-graph closure. Hybrid is READY; strict IR-only
 is still NOT READY because 35 units retain legacy bodies.
 
 This is the first bounded R3 production slice, not issue completion. The
-no-receiver static ABI is preserved, but constructors, instance methods,
-accessors, field work, inheritance support, class expressions, nested units,
+no-receiver static ABI is preserved, but constructors, accessors, field work,
+inheritance support, class expressions, nested units,
 object methods, and closures still need component-atomic prepare/emit ownership
 and optimization-parity evidence before their direct handlers can retire.
+
+## Flat instance-method production slice (2026-08-02)
+
+Ordinary instance methods on exact top-level class declarations without an
+`extends` clause now join the pre-direct class-method preparation pass when the
+method contains no nested executable syntax and the already-collected class
+layout is index-stable and scalar. Scalar here is a structural contract: the
+layout has no parent edge and every field is `i32`, `i64`, `f32`, `f64`,
+`v128`, `i8`, or `i16`. Reference-bearing layouts stay on the established late
+route because their physical type indices may move during compaction. The
+eligible layout is published into Program ABI before IR integration, and the
+exact `class-layout` binding is included in the prepared component scope before
+it seals. This keeps the receiver ABI and class callable handle immutable
+before any class body emitter can run.
+
+Methods that depend on the same canonical class-layout binding are unioned into
+one atomic prepared component. `compileClassBodies` skips only the exact sealed
+ordinary-method slots, preserves the installed IR bodies, and reports their
+physical handles for terminal reconciliation. Constructors and accessors remain
+direct, as do Unsupported instance methods; the direct emitter and its existing
+optimizations are unchanged for those paths. A verifier Invariant is terminal
+and cannot retry the direct body emitter.
+
+Focused `gc` and `standalone` coverage proves:
+
+- two instance methods on the same flat class each record `direct=0, IR=1` and
+  share one prepared component ID, so omitting class-layout ownership or
+  component union cannot satisfy the test;
+- a default-parameter method on a separate string-field class records
+  `direct=1, IR=0`; a direct structural-policy test rejects its `ref_null`
+  layout, while the combined program validates as Wasm and returns the expected
+  runtime value; and
+- an injected verifier failure records one Invariant with `direct=0, IR=0`,
+  proving there is no post-claim legacy retry.
+
+The authoritative single-host readiness corpus is unchanged before versus
+after this bounded slice: **37 terminal units, 33 IR bodies, 35 legacy bodies,
+4 Unsupported, and zero Invariants** on both `origin/main` and this branch.
+None of its five entries contains an eligible scalar-layout instance method;
+the physical ownership improvement is therefore measured by the focused
+per-unit counters above rather than an artificial corpus change. Hybrid remains
+READY, while strict IR-only remains NOT READY with the same four typed async /
+closure blockers and 35 retained legacy bodies.
+
+Reference-bearing class layouts, constructors, accessors, fields,
+derived/inherited classes, class expressions, nested class units, object
+methods, and closures remain for later R3 slices.
 
 ## Exhaustive source-unit census
 
@@ -329,7 +379,7 @@ Run adjacent coverage from `tests/issue-1983-funcmap-collision.test.ts`,
 ## Required completion evidence
 
 ```bash
-pnpm exec vitest run tests/issue-3522-ir-class-compile-once.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-3000-1b.test.ts tests/issue-3000-e.test.ts tests/issue-3144-ir-class-claims.test.ts tests/class-expressions.test.ts tests/nested-class-declarations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+pnpm exec vitest run tests/issue-3522-ir-class-compile-once.test.ts tests/issue-3522-ir-static-class-method.test.ts tests/issue-1983-funcmap-collision.test.ts tests/issue-3000-1b.test.ts tests/issue-3000-e.test.ts tests/issue-3144-ir-class-claims.test.ts tests/class-expressions.test.ts tests/nested-class-declarations.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
 pnpm run check:ir-only -- --policy=hybrid
 pnpm run check:ir-only -- --policy=ir-only --json
 pnpm run check:ir-fallbacks -- --verbose

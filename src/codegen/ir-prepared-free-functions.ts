@@ -1,11 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
-import type { IrUnitId } from "../ir/identity.js";
+import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
-import { buildIrLegacyUnitProjection, type IrLegacyUnitProjection } from "../ir/planning-identity.js";
+import {
+  buildIrLegacyUnitProjection,
+  type IrLegacyUnitProjection,
+  type IrPlanningIdentityContext,
+} from "../ir/planning-identity.js";
+import type { IrPromiseDelayLoweringPlan, IrPromiseDelayLoweringPlans } from "../ir/promise-delay-lowering.js";
 import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
@@ -15,11 +20,76 @@ import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import {
   buildIrRequestedFunctionSkipProjection,
+  computeIrFirstSkipUnitIds,
   mergeIrIntegrationReports,
   preparedIrBodyRouting,
   type IrExactBodyClaim,
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
+
+/** Preserve the inherited compile-once allowlist for owners not prepared early. */
+export function computePreparedInheritedIrFirstSkipUnitIds(input: {
+  readonly sourceFile: ts.SourceFile;
+  readonly identityContext: IrPlanningIdentityContext;
+  readonly safeFunctionUnitIds: ReadonlySet<IrUnitId>;
+  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
+  readonly overridesByUnitId: ReadonlyMap<
+    IrUnitId,
+    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
+  >;
+  readonly potentiallyBlockedOwnerUnitIds: ReadonlySet<IrUnitId>;
+  readonly generatorsSkippable: boolean;
+  readonly fast: boolean;
+}): Set<IrUnitId> {
+  const requestedSkipUnitIds = new Set(
+    computeIrFirstSkipUnitIds({
+      sourceFile: input.sourceFile,
+      identityContext: input.identityContext,
+      safeFunctionUnitIds: input.safeFunctionUnitIds,
+      claimsByUnitId: input.claimsByUnitId,
+      overridesByUnitId: input.overridesByUnitId,
+      potentiallyBlockedOwnerUnitIds: input.potentiallyBlockedOwnerUnitIds,
+      generatorsSkippable: input.generatorsSkippable,
+    }),
+  );
+  // Fast mode can ground source `number` positions to i32 during direct body
+  // discovery even though the early IR override still says f64. Keep only the
+  // annotation-proven boolean subset on the inherited compile-once route until
+  // exact callable-contract comparison moves into preparation.
+  if (!input.fast) return requestedSkipUnitIds;
+
+  const fastBlockedUnitIds = new Set<IrUnitId>();
+  for (const unitId of requestedSkipUnitIds) {
+    const declaration = input.claimsByUnitId.get(unitId)?.declaration;
+    const stableFastSignature =
+      declaration !== undefined &&
+      declaration.parameters.every(
+        (parameter) =>
+          !parameter.questionToken &&
+          !parameter.dotDotDotToken &&
+          !parameter.initializer &&
+          parameter.type?.kind === ts.SyntaxKind.BooleanKeyword,
+      ) &&
+      (declaration.type?.kind === ts.SyntaxKind.BooleanKeyword || declaration.type?.kind === ts.SyntaxKind.VoidKeyword);
+    if (!stableFastSignature) {
+      requestedSkipUnitIds.delete(unitId);
+      fastBlockedUnitIds.add(unitId);
+    }
+  }
+  const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityContext);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const unitId of requestedSkipUnitIds) {
+      if (![...(callEdges.callees.get(unitId) ?? [])].some((calleeUnitId) => fastBlockedUnitIds.has(calleeUnitId))) {
+        continue;
+      }
+      requestedSkipUnitIds.delete(unitId);
+      fastBlockedUnitIds.add(unitId);
+      changed = true;
+    }
+  }
+  return requestedSkipUnitIds;
+}
 
 export interface PreparedIrFreeFunctionBodies {
   readonly report: IrIntegrationReport;
@@ -30,7 +100,7 @@ export interface PreparedIrFreeFunctionBodies {
   readonly preserveBodies: ReadonlySet<string>;
 }
 
-export interface PreparedIrStaticClassMethodBodies {
+export interface PreparedIrClassMethodBodies {
   readonly report: IrIntegrationReport;
   readonly requestedSkipProjection: IrLegacyUnitProjection;
   readonly completedBodies: ReadonlySet<string>;
@@ -38,27 +108,44 @@ export interface PreparedIrStaticClassMethodBodies {
   readonly preserveBodies: ReadonlySet<string>;
 }
 
-/** Project selected static methods through exact structural class ownership. */
-export function selectPreparedStaticClassMethodNames(input: {
-  readonly selection: Pick<IrSelection, "classMembers">;
-  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
-}): ReadonlySet<string> {
-  const selectedNames = new Set(input.selection.classMembers ?? []);
-  const staticNames = new Set<string>();
-  for (const claim of input.identityPlan.identitySelection.classMembers?.values() ?? []) {
-    const terminal = input.identityPlan.identityContext.terminalByUnitId.get(claim.unitId);
-    const declaration = input.identityPlan.identityContext.declarationByUnitId.get(claim.unitId);
+/** Project selected ordinary methods through exact structural class ownership. */
+export function selectPreparedClassMethodNames(
+  ctx: CodegenContext,
+  selection: Pick<IrSelection, "classMembers">,
+  identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
+): ReadonlySet<string> {
+  const selectedNames = new Set(selection.classMembers ?? []);
+  const methodNames = new Set<string>();
+  for (const claim of identityPlan.identitySelection.classMembers?.values() ?? []) {
+    const terminal = identityPlan.identityContext.terminalByUnitId.get(claim.unitId);
+    const declaration = identityPlan.identityContext.declarationByUnitId.get(claim.unitId);
+    const owner = declaration?.parent;
+    const instanceClassId =
+      owner !== undefined && ts.isClassDeclaration(owner)
+        ? identityPlan.identityContext.classIdByDeclaration.get(owner)
+        : undefined;
+    // Derived layouts receive a late leaf-finality decision and constructors /
+    // inherited support still cross the direct boundary. Keep this first
+    // instance-method owner on exact top-level classes without `extends`.
+    const instanceOwnerIsFlat =
+      owner !== undefined &&
+      ts.isClassDeclaration(owner) &&
+      ts.isSourceFile(owner.parent) &&
+      !(owner.heritageClauses?.some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword) ?? false) &&
+      instanceClassId !== undefined &&
+      ctx.programAbiTypes?.canPrepareScalarClassLayout(instanceClassId) === true;
     if (
       selectedNames.has(claim.legacyMatchName) &&
-      terminal?.staticClassMember === true &&
+      (terminal?.kind === "class-static-method" ||
+        (terminal?.kind === "class-instance-method" && instanceOwnerIsFlat)) &&
       declaration !== undefined &&
       ts.isMethodDeclaration(declaration) &&
       !containsNestedExecutableSyntax(declaration)
     ) {
-      staticNames.add(claim.legacyMatchName);
+      methodNames.add(claim.legacyMatchName);
     }
   }
-  return staticNames;
+  return methodNames;
 }
 
 function deferUnsealedPreparedComponents(
@@ -306,6 +393,105 @@ function r2SignatureMatchesAllocatedSlot(
 }
 
 /**
+ * The certified Promise-delay owner is the first R3 closure component whose
+ * complete derived population is already produced by the IR lowerer. Its
+ * source return type is reference-shaped, so keep this ABI proof separate
+ * from the scalar/string R2 predicate rather than widening R2 implicitly.
+ */
+function r3PromiseDelaySignatureMatchesAllocatedSlot(
+  ctx: CodegenContext,
+  unitId: IrUnitId,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  if (
+    override.params.length !== 2 ||
+    override.params.some((type) => asVal(type)?.kind !== "f64") ||
+    override.returnType?.kind !== "extern" ||
+    override.returnType.className !== "Promise"
+  ) {
+    return false;
+  }
+  const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
+  const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
+  return (
+    signature?.kind === "func" &&
+    signature.params.length === 2 &&
+    signature.params.every((type) => type.kind === "f64") &&
+    signature.results.length === 1 &&
+    signature.results[0]?.kind === "externref"
+  );
+}
+
+/**
+ * Select only exact checker-certified Promise-delay components after their
+ * final runtime/import preparation has retained the owner. The two nested
+ * arrows are not a generic nested-syntax widening: the lowering plan owns
+ * their derived unit IDs, capture order, signatures, and lifted bodies.
+ */
+export function selectR3PreparedPromiseDelayFunctions(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly selectedLegacyNames: ReadonlySet<string>;
+  readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+  readonly claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
+  readonly overridesByUnitId: ReadonlyMap<
+    IrUnitId,
+    { readonly params: readonly IrType[]; readonly returnType: IrType | null }
+  >;
+  readonly promiseDelays: IrPromiseDelayLoweringPlans;
+}): ReadonlySet<string> {
+  const planByOwnerUnitId = new Map<IrUnitId, IrPromiseDelayLoweringPlan>();
+  for (const [construction, plan] of input.promiseDelays.constructions) {
+    if (construction !== plan.construction) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `R3 Promise-delay construction map lost exact AST identity for ${plan.ownerUnitId}`,
+      );
+    }
+    const prior = planByOwnerUnitId.get(plan.ownerUnitId);
+    if (prior && prior !== plan) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `R3 Promise-delay owner ${plan.ownerUnitId} has multiple lowering plans`,
+      );
+    }
+    planByOwnerUnitId.set(plan.ownerUnitId, plan);
+  }
+
+  const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
+  const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
+  const selected = new Set<string>();
+  for (const legacyName of input.selectedLegacyNames) {
+    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
+    const plan = planByOwnerUnitId.get(unitId);
+    if (!plan) continue;
+    const claim = input.claimsByUnitId.get(unitId);
+    const override = input.overridesByUnitId.get(unitId);
+    if (!claim || !override) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `R3 Promise-delay candidate ${unitId} / ${legacyName} has no exact claim/signature`,
+      );
+    }
+    if (
+      plan.ownerName !== legacyName ||
+      plan.construction.getSourceFile() !== input.sourceFile ||
+      claim.declaration !== plan.construction.parent?.parent?.parent ||
+      functionValueTargets.has(unitId) ||
+      containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
+      !r3PromiseDelaySignatureMatchesAllocatedSlot(input.ctx, unitId, override)
+    ) {
+      continue;
+    }
+    selected.add(legacyName);
+  }
+  return selected;
+}
+
+/**
  * R2 prepares only components whose top-level callable contracts are
  * ABI-stable scalars/strings. Reference-shaped callable contracts, fast-mode
  * grounded numerics, and async/generator frames still require direct discovery
@@ -450,8 +636,8 @@ export function prepareIrFreeFunctionBodies(input: {
   };
 }
 
-/** Prepare selected top-level static class methods before direct class bodies. */
-export function prepareIrStaticClassMethodBodies(input: {
+/** Prepare selected top-level ordinary class methods before direct class bodies. */
+export function prepareIrClassMethodBodies(input: {
   readonly ctx: CodegenContext;
   readonly sourceFile: ts.SourceFile;
   readonly selection: Pick<IrSelection, "classMembers">;
@@ -459,17 +645,44 @@ export function prepareIrStaticClassMethodBodies(input: {
   readonly overrideMap: IrTypeOverrideMap;
   readonly classShapes: ReadonlyMap<string, IrClassShape>;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
-}): PreparedIrStaticClassMethodBodies | undefined {
-  const staticNames = selectPreparedStaticClassMethodNames(input);
+}): PreparedIrClassMethodBodies | undefined {
+  const methodNames = selectPreparedClassMethodNames(input.ctx, input.selection, input.identityPlan);
   const claimsByUnitId = new Map<IrUnitId, IrExactBodyClaim>();
   for (const claim of input.identityPlan.identitySelection.classMembers?.values() ?? []) {
-    if (!staticNames.has(claim.legacyMatchName)) continue;
+    if (!methodNames.has(claim.legacyMatchName)) continue;
     claimsByUnitId.set(claim.unitId, { unitId: claim.unitId, legacyName: claim.legacyMatchName });
   }
   if (claimsByUnitId.size === 0) return undefined;
+  const classLayouts = new Set<IrClassId>();
+  for (const unitId of claimsByUnitId.keys()) {
+    const terminal = input.identityPlan.identityContext.terminalByUnitId.get(unitId);
+    if (terminal?.kind !== "class-instance-method") continue;
+    const declaration = input.identityPlan.identityContext.declarationByUnitId.get(unitId);
+    const owner = declaration?.parent;
+    const classId =
+      owner !== undefined && ts.isClassDeclaration(owner)
+        ? input.identityPlan.identityContext.classIdByDeclaration.get(owner)
+        : undefined;
+    if (!classId) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared instance method ${unitId} has no exact class-layout owner`,
+      );
+    }
+    classLayouts.add(classId);
+  }
+  if (classLayouts.size > 0 && !input.ctx.programAbiTypes) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "prepared instance methods require one exact class-layout ABI registry",
+    );
+  }
+  for (const classId of classLayouts) input.ctx.programAbiTypes!.prepareScalarClassLayout(classId);
   const selection: IrSelection = {
     funcs: new Set<string>(),
-    classMembers: staticNames,
+    classMembers: methodNames,
     moduleInit: undefined,
   };
   const initialReport = compileIrPathFunctions(
@@ -490,7 +703,7 @@ export function prepareIrStaticClassMethodBodies(input: {
   return {
     report,
     requestedSkipProjection,
-    completedBodies: new Set([...staticNames].filter((legacyName) => !deferredBodies.has(legacyName))),
+    completedBodies: new Set([...methodNames].filter((legacyName) => !deferredBodies.has(legacyName))),
     skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
     preserveBodies: new Set(preparedProjection.entries.map(({ legacyName }) => legacyName)),
   };

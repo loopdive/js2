@@ -493,8 +493,8 @@ export interface IrFromAstResolver {
    *     sentinel conventions incl. #1248 slice/substring-end + #2002
    *     NaN-position; `"native-slice-len"` = `slice(start)`'s implicit end =
    *     recv.length, i32-truncated; `"native-substring"` (#3156) = substring's
-   *     omitted start/end pad `i32 0` / `i32 0x7fffffff` — `__str_substring`
-   *     clamps end to len, matching the legacy native arm's sentinel;
+   *     omitted start/end pad `i32 0` / `i32 0x7fffffff` — both the native and
+   *     guarded host helpers clamp end to len;
    *     `"charcode-zero"` (#3156) = charCodeAt's omitted position pads
    *     `i32 0` in BOTH modes, since the guarded helpers take an i32 index).
    *
@@ -5986,9 +5986,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     return null;
   }
 
-  // (#1371/#2856) Exact-arity Math builtin. Direct Wasm unary ops remain
-  // direct; transcendental methods call the self-hosted Math_<method> helper
-  // already registered by the legacy declaration scan.
+  // (#1371/#2856/#3526 M1) Exact-arity Math builtin. Every accepted method
+  // becomes a semantic intrinsic here; runtime/backend provider selection is
+  // deferred until final IR preparation, after all middle-end transforms.
   // the shape BEFORE lowering the receiver, because `Math` is a host
   // global with no IR type binding (lowerExpr on `Math` would throw
   // "unknown identifier"). The selector's `isPhase1Expr` already
@@ -6018,11 +6018,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         }
         return arg;
       });
-      if ("op" in plan) return cx.builder.emitUnary(plan.op, args[0]!, irVal({ kind: "f64" }));
-      const result = cx.builder.emitCall(irRuntimeFuncRef(plan.helper), args, irVal({ kind: "f64" }));
-      if (result === null)
-        throw new Error(`ir/from-ast: Math.${methodName} helper produced no result (${cx.funcName})`);
-      return result;
+      const source = expr.getSourceFile();
+      const position = source.getLineAndCharacterOfPosition(expr.getStart(source));
+      return cx.builder.emitIntrinsic(plan.intrinsic, args, {
+        line: position.line + 1,
+        column: position.character,
+      });
     }
     throw new Error(`ir/from-ast: Math.${methodName} not in IR whitelist (${cx.funcName})`);
   }
@@ -6643,9 +6644,9 @@ function lowerStringMethodCall(
       loweredArgs.push(cx.builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" })));
       continue;
     }
-    // (#3156) native substring — omitted start pads 0; omitted end pads the
-    // 0x7fffffff "to end" sentinel (`__str_substring` clamps to len; exactly
-    // the legacy native arm's convention, string-ops.ts `substring`).
+    // (#3156) i32 substring helpers — omitted start pads 0; omitted end pads
+    // the 0x7fffffff "to end" sentinel. Both the native helper and the guarded
+    // host builtin helper clamp it to len.
     if (plan.padOmitted === "native-substring") {
       loweredArgs.push(cx.builder.emitConst({ kind: "i32", value: i === 1 ? 0x7fffffff : 0 }, irVal({ kind: "i32" })));
       continue;

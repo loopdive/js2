@@ -21,6 +21,8 @@ import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./ide
 // nodes.ts stays free of value imports.
 import type { JsTag } from "./js-tag.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
+import type { IrAsyncPlan, PreparedIrAsyncRuntime } from "./async-plan.js";
 
 // ---------------------------------------------------------------------------
 // Symbolic references
@@ -686,6 +688,31 @@ export interface IrInstrCall extends IrInstrBase {
   readonly kind: "call";
   readonly target: IrFuncRef;
   readonly args: readonly IrValueId[];
+}
+
+/** Backend primitive choices available to the first semantic-intrinsic family. */
+export type IrIntrinsicBackendOp = "f64.abs" | "f64.sqrt" | "f64.floor" | "f64.ceil" | "f64.trunc";
+
+/**
+ * Provider attachment selected after middle-end transforms and manifest
+ * freeze. Source/type lowering emits no provider; preparation attaches either
+ * a backend primitive or one exact symbolic callable.
+ */
+export type IrIntrinsicProvider =
+  | { readonly kind: "backend-op"; readonly opcode: IrIntrinsicBackendOp }
+  | { readonly kind: "callable"; readonly target: IrFuncRef };
+
+/**
+ * Versioned semantic intrinsic. Unlike `call`, this names source meaning, not
+ * a concrete runtime helper. The optional provider is a preparation artifact
+ * and must be present before backend lowering.
+ */
+export interface IrInstrIntrinsic extends IrInstrBase {
+  readonly kind: "intrinsic";
+  readonly id: IntrinsicId;
+  readonly version: IntrinsicSignatureVersion;
+  readonly args: readonly IrValueId[];
+  readonly provider?: IrIntrinsicProvider;
 }
 
 /** Read a global by symbolic reference. */
@@ -2604,6 +2631,7 @@ export interface IrInstrSwitch extends IrInstrBase {
 export type IrInstr =
   | IrInstrConst
   | IrInstrCall
+  | IrInstrIntrinsic
   | IrInstrGlobalGet
   | IrInstrGlobalSet
   | IrInstrBinary
@@ -2827,6 +2855,18 @@ export interface IrFunction extends IrFunctionIdentity {
    */
   readonly funcKind?: "regular" | "generator" | "async";
   /**
+   * Canonical, target-neutral suspension graph for a genuinely asynchronous
+   * function. It is produced before backend selection and contains no AST,
+   * Wasm indices, or concrete host adapter spellings.
+   */
+  readonly asyncPlan?: IrAsyncPlan;
+  /**
+   * Lookup-only backend attachment added after runtime-manifest freeze. This
+   * is deliberately separate from `asyncPlan` so plan hashes stay target
+   * independent while Program ABI sealing can see exact adapter callables.
+   */
+  readonly asyncRuntime?: PreparedIrAsyncRuntime;
+  /**
    * Slice 7a (#1169f) — for `funcKind === "generator"` functions only,
    * the slot index (in `slots`) of the `__gen_buffer` Wasm-local. The
    * lowerer reads this when emitting `gen.push` / `gen.epilogue` to
@@ -2922,6 +2962,7 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     // here — the single point that must know about every buffer.
     case "const":
     case "call":
+    case "intrinsic":
     case "global.get":
     case "global.set":
     case "binary":
@@ -3088,6 +3129,7 @@ export function mapNestedBuffers(
     // set as forEachNestedBuffer; the never-check enforces parity.)
     case "const":
     case "call":
+    case "intrinsic":
     case "global.get":
     case "global.set":
     case "binary":
@@ -3188,6 +3230,8 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
     case "class.alloc":
       return [];
     case "call":
+      return instr.args;
+    case "intrinsic":
       return instr.args;
     case "global.set":
       return [instr.value];

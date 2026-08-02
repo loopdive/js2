@@ -66,6 +66,7 @@ import {
   type IrFunction,
   type IrGlobalRef,
   type IrInstr,
+  type IrInstrIntrinsic,
   type IrLabelId,
   type IrObjectShape,
   type IrStringLengthProvider,
@@ -346,6 +347,26 @@ export interface IrLoweredBody<S, Slot> {
   readonly locals: readonly IrLoweredValue<Slot>[];
   readonly results: readonly (readonly Slot[])[];
   readonly exported: boolean;
+}
+
+function emitPreparedIntrinsic<S>(
+  instr: IrInstrIntrinsic,
+  out: S,
+  emitter: BackendEmitter<S>,
+  resolver: IrLowerResolver,
+  emitValue: (value: IrValueId, out: S) => void,
+  funcName: string,
+): void {
+  for (const arg of instr.args) emitValue(arg, out);
+  if (!instr.provider) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: semantic intrinsic ${instr.id} has no frozen provider (${funcName})`,
+    );
+  }
+  if (instr.provider.kind === "backend-op") emitter.emitUnary(instr.provider.opcode, out);
+  else emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
 }
 
 /**
@@ -1246,6 +1267,10 @@ export function lowerIrFunctionBody<S, Slot>(
         // primitive — byte-identical {op:"call"} on WasmGC, OP.CALL on bytecode.
         for (const a of instr.args) emitValue(a, out);
         emitter.emitCall(resolver.resolveFunc(instr.target), out);
+        return;
+      }
+      case "intrinsic": {
+        emitPreparedIntrinsic(instr, out, emitter, resolver, emitValue, func.name);
         return;
       }
       case "global.get":
@@ -3428,6 +3453,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "const":
       return [];
     case "call":
+      return instr.args;
+    case "intrinsic":
       return instr.args;
     case "global.get":
       return [];

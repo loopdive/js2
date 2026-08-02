@@ -150,6 +150,17 @@ function linearInstrError(instr: IrInstr): string | null {
           // null/ref/string/undefined consts are representation-divergent.
           return `linear backend does not support const '${instr.value.kind}'`;
       }
+    case "intrinsic":
+      switch (instr.id) {
+        case "math.abs":
+        case "math.ceil":
+        case "math.floor":
+        case "math.sqrt":
+        case "math.trunc":
+          return null;
+        default:
+          return `linear backend does not support semantic intrinsic '${instr.id}' without a native backend operation`;
+      }
     case "binary":
     case "unary":
     case "select":

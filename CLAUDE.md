@@ -41,6 +41,7 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   - Read/Edit/Write tools use absolute paths and are unaffected.
   - The `pre-git-commit.sh` hook injects a "VERIFY BEFORE COMMITTING: pwd=/workspace branch=main" reminder; that's the hook reading the (reset) shell cwd, NOT the actual command's working dir. The reminder is informational — verify by reading the commit's branch in git output (`[issue-1183-string-forof-ir 0527c7c5]`-style line shows the real branch).
 - **Worktree creation**: `git worktree add /workspace/.claude/worktrees/issue-NNN-slug -b issue-NNN-slug origin/main`. Always branch from `origin/main` (post-fetch), never from local `main`.
+  - ⚠ **Check what `origin` IS first — in some checkouts (including agent worktrees of `/workspace`) `origin` is the FORK, whose `main` has diverged from upstream.** Branching from fork-main silently bundles unrelated fork-side commits into your PR, invisible until a conflict forces a look (bit a dev 2026-08-02: 18-file PR, 16 unintended). When in doubt: `git fetch upstream && git worktree add … upstream/main`, and verify with `git merge-base --is-ancestor upstream/main <your-base>` reasoning — the authoritative base is **upstream**, whatever the remote is named.
 - **Branch base — `origin/main`, never the merge-queue tip (#2522)**: for independent work, branch from `origin/main`, then `git merge origin/main` again right before enqueue — that catch-up rebases the work onto future-main but incorporates only PRs that _actually landed_. Do **not** branch from a `gh-readonly-queue/main/pr-N-<sha>` tip or otherwise base work on the queue's _speculative_ end-state: queued PRs eject, and a base built on an ejected PR carries phantom commits that force a rebase (forbidden — public main is append-only). **Exception — known dependency (explicit predecessor-stacking)**: when a new task is known to depend on / heavily overlap a specific in-flight PR, branch from _that PR's real branch_ (durable, not the ephemeral queue ref) and enqueue only after the predecessor lands; re-merge it if it changes. The inter-PR conflict rate is a queue-_speculation_ lever (`max_entries_to_build > 1`, re-raise once runner capacity from #2519 allows), not a dev-branch-base lever.
 - **Push safety**: `.git/config` sets `push.default=current` — `git push` always pushes to the remote branch matching the local branch name, regardless of upstream tracking. This prevents the `git worktree add -b <branch> origin/main` trap where the inherited tracking ref routes pushes to origin/main.
 - **NEVER use `git stash` in a worktree — `refs/stash` is a SINGLE SHARED STACK across every worktree of the repo.** It lives in the common `.git` dir, not per-worktree, so with agents running in parallel it is an interleaved free-for-all: your `git stash pop` takes whatever entry is on top, which is very likely **another agent's**, and drops it from the stack. This is not theoretical — on 2026-07-31 two agents popped each other's stashes within minutes, losing 546 lines of `native-strings-rewrite.ts` and 240 lines of `src/runtime.ts`. Both were recoverable only as dangling commits.
@@ -226,6 +227,12 @@ Two consequences worth knowing:
   CI's job.
 
 **Baseline JSONL is no longer committed to the main repo (#1528).** It lives only in `loopdive/js2wasm-baselines` and is fetched on demand by `scripts/fetch-baseline-jsonl.mjs` to `.test262-cache/test262-current.jsonl` (gitignored). Consumers (validator, `dev-self-merge` bucket analysis, regression triage, sprint wrap-up harvest) either call the helper directly or accept the cache path via fallback. This removes the ~15 MB blob from every clone and retired the dedicated `refresh-committed-baseline.yml` workflow.
+
+**The bare `node scripts/fetch-baseline-jsonl.mjs` is now SAFE — freshness is the default (#3629).** It used to be a **silent no-op whenever any cache existed**: exit 0, zero bytes of output, serving whatever was on disk. That is indistinguishable from a successful fresh fetch, and the error scales with cache age. Measured 2026-07-25: it served a **seven-day-old** cache reading `pass 25,545` while main was at `30,931` — a 5,386-test gap, an entire session's landed work invisible — to multiple dev lanes that had been told to "fetch fresh" with exactly that command.
+
+- It now **refetches automatically** when the cache is older than 6h, and **always reports what it served and how old it is**. Reporting goes to **stderr**, so stdout stays parseable (`--print-path` and the path echoed under `--force`/`--no-cache` are unchanged).
+- `--force` still forces; **`--offline`** is the new opt-in for the genuinely disconnected case, and it says loudly that freshness was not established. `--max-age-hours N` overrides the window.
+- **A failed download with a cache present is a THIRD state, not a success.** It falls back to the cache but names the cache's age and states explicitly that this is *not* a confirmation the cache is current. "The fetch command exited 0" never means "the cache is up to date".
 
 To validate the baseline on demand, run `pnpm run test:262:validate-baseline` — the validator calls the fetch helper itself, then spot-checks 50 random `pass` entries against current HEAD (uses a deterministic seed; pass `PR_NUMBER=N` to reproduce a specific CI run, or `SAMPLE_SIZE=10 SEED=12345` for a quicker check). Set `SAMPLE_SIZE=50` to match CI exactly. The validator fails fast on the first 5 most-affected entries with a pointer to the fetch helper for forcing a refresh.
 
@@ -610,7 +617,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 30,780 / 43,490 (70.8 %)
+**test262 conformance**: 30,750 / 43,491 (70.7 %)
 
 <!-- AUTO:conformance-end -->
 

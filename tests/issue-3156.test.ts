@@ -207,6 +207,23 @@ describe("#3156 IR string substring/charCodeAt — host mode", () => {
       expect(r.irPostClaimErrors).toEqual([]);
     });
   }
+
+  it("routes substring through the wasm:js-string builtin instead of an env host call", async () => {
+    const r = await compile(
+      `export function test(s: string): string {
+        return s.substring(1, 3);
+      }`,
+      { emitWat: true, optimize: 0 },
+    );
+
+    expect(r.success).toBe(true);
+    const moduleImports = WebAssembly.Module.imports(new WebAssembly.Module(r.binary));
+    expect(moduleImports).toContainEqual(
+      expect.objectContaining({ module: "wasm:js-string", name: "substring", kind: "function" }),
+    );
+    expect(moduleImports.some((imp) => imp.module === "env" && imp.name === "string_substring")).toBe(false);
+    expect(r.wat).toContain("(func $__jsstr_substring");
+  });
 });
 
 describe("#3156 IR string substring/charCodeAt — standalone (native strings)", () => {

@@ -4,7 +4,7 @@ title: "IR-only R6: typed semantic runtime contract and frozen feature manifest"
 status: blocked
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-08-02
 priority: critical
 horizon: xl
 complexity: XL
@@ -26,12 +26,16 @@ files:
   - src/ir/intrinsics.ts
   - src/ir/runtime-manifest.ts
   - src/ir/nodes.ts
+  - src/ir/intrinsic-support.ts
+  - src/ir/math-runtime-providers.ts
   - src/ir/types.ts
   - src/ir/effects.ts
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower.ts
+  - src/ir/backend/legality.ts
+  - src/ir/backend/linear-integration.ts
   - src/ir/backend/emitter.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
@@ -47,6 +51,24 @@ files:
   - src/runtime.ts
   - src/index.ts
   - tests/issue-3526-ir-runtime-manifest.test.ts
+  - tests/issue-3526-ir-math-intrinsic-integration.test.ts
+  - tests/issue-3526-ir-linear-math-intrinsics.test.ts
+loc-budget-allow:
+  - src/ir/integration.ts
+  - src/ir/builder.ts
+  - src/ir/nodes.ts
+  - src/ir/lower.ts
+  - src/ir/verify.ts
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+func-budget-allow:
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower.ts::emitInstrTree
+  - src/ir/backend/linear-integration.ts::compileLinearIrFunctions
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/integration.ts::makeResolver
+  - src/ir/passes/inline-small.ts::renameInstrOperands
 ---
 
 # #3526 — IR-only R6: typed semantic runtime contract and frozen feature manifest
@@ -71,10 +93,10 @@ Runtime, builtin, scheduler, coercion, collection, regex, and host adapter
 implementations remain single-sourced providers; their behavior is not deleted
 with the old front-end.
 
-## Current evidence
+## Baseline evidence and current seam
 
-There is no `IntrinsicId`, `RuntimeFeature`, or `HostCapability` type today.
-Instead, semantics and concrete imports are discovered during emission:
+Before C0, there was no `IntrinsicId`, `RuntimeFeature`, or `HostCapability`
+type. Semantics and concrete imports were discovered during emission:
 
 - `src/index.ts:39-92` exposes a broad string-shaped `ImportIntent` union for
   math, console, extern classes, strings, builtins, callbacks, await, boxing,
@@ -110,13 +132,14 @@ Instead, semantics and concrete imports are discovered during emission:
   and registers providers against the live codegen context, including helper
   materialization, type interning, slot allocation, and `funcMap` mutation.
 
-The first safe semantic slice already has a bounded vocabulary:
+The first safe semantic slice has a bounded vocabulary:
 
 - `src/ir/select.ts:176-189` defines exactly twelve certified, exact-arity,
   proven-f64 `IR_MATH_METHOD_TABLE` specializations: five direct deterministic
   operations and seven symbolic self-host helpers.
-- `src/ir/from-ast.ts:4548-4566` lowers those calls to either direct IR or a
-  stringly `Math_<method>` helper and assumes legacy scanning registered it.
+- `src/ir/from-ast.ts` now lowers those calls to versioned semantic intrinsic
+  nodes with no provider attached. Final IR preparation selects the provider
+  from the frozen runtime manifest.
 - `src/codegen/math-helpers.ts:71-87` emits deterministic inline/self-host Math
   providers. They are runtime substrate to retain. `Math.random` at `:89-153`
   adds host/WASI randomness and is deliberately not part of the first pure
@@ -187,6 +210,33 @@ is permitted.
   without granting authority to observed strings. Add poison seams for every
   late mutation path.
 
+#### C0 foundation landing (2026-08-02)
+
+The isolated schema seam now defines the exact twelve certified pure-Math
+`IntrinsicId`s, their fourteen-entry transitive `RuntimeFeature` vocabulary
+(including `math.atan` and `math.reduce-trig` provider dependencies), and the
+deliberately empty `HostCapability` vocabulary for this host-free family.
+Signatures are versioned f64 contracts; effect evidence is opaque and can only
+be created through the existing `effectsOf` authority. The runtime-manifest
+builder verifies intrinsic uses and provider signatures/adapters, expands
+dependencies to a deterministic fixed point, requires explicit declarations
+for cycles, emits canonical dependency components, and rejects both mutation
+and unplanned lookup after deep freeze.
+
+Focused anti-vacuity coverage proves all twelve methods against
+`IR_MATH_METHOD_TABLE`, canonical output under reversed use/provider traversal,
+the shared `pow -> exp + log`, `atan2 -> atan`, and `sin/cos -> reduce-trig`
+closure, an injected declared cycle, all eight target/backend policy pairs,
+zero host capabilities, provider-name independence, and typed failures for bad
+IDs/signatures/effects/providers/adapters and late requests.
+
+This landing intentionally stops before M1 routing. The exact follow-up is to
+add the semantic intrinsic use to prepared IR in the sequential owner of
+`nodes.ts`/`effects.ts`/`from-ast.ts`, collect it into this builder before ABI
+publication, and make backend lowering resolve only the frozen provider plan.
+Until that shared integration lands, the existing `Math_*` discovery and
+providers remain unchanged and authoritative for production emission.
+
 ### M1 — deterministic pure Math
 
 - Convert the exact twelve deterministic, exact-arity, proven-f64 methods in
@@ -201,6 +251,48 @@ is permitted.
   after zero-direct and late-mutation tests pass. Retain selector/from-AST
   recognition, provider bodies, and legacy direct Math dispatch needed by
   non-Prepared unit kinds/coercive shapes until their migration or R9/R10.
+
+#### M1 production landing (2026-08-02)
+
+The exact twelve certified Math calls now enter IR as a closed, versioned
+`intrinsic` instruction. AST/type lowering records only the semantic ID,
+arguments, result signature, and source location. It no longer selects a Wasm
+opcode or names a `Math_*` helper. The builder and verifier reject arity, type,
+version, result, or callable-binding drift.
+
+After all current middle-end passes, `prepareIrRuntimeManifest` collects the
+final reachable intrinsic uses, expands and freezes their provider graph, and
+attaches lookup-only provider choices before callable discovery and prepared
+component sealing. Unprepared nodes are explicit dependency failures and
+lowering invariants. Provider attachment is recursive and idempotent, including
+nested instruction buffers and pass-created functions.
+
+Provider behavior and existing optimizations are preserved:
+
+- WasmGC still emits native `f64.abs`, `f64.sqrt`, `f64.floor`, `f64.ceil`, and
+  `f64.trunc` instructions without boxing or calls.
+- `sin`, `cos`, `exp`, `log`, `log2`, `pow`, and `atan2` still use the same
+  self-hosted `Math_*` provider bodies and the same dependency helpers.
+- Provider materialization is driven by the frozen manifest rather than the
+  legacy pending-Math AST scan. Self-hosted provider IR uses the same manifest
+  preparation recursively, so its own `Math.abs`/`floor`/`trunc` operations do
+  not depend on ambient registry mutation.
+- Linear IR admits exactly the five native backend operations at its legality
+  boundary. The seven callable-backed operations remain fail-closed until the
+  linear backend has an explicit self-host provider ABI.
+
+Focused integration coverage proves all twelve source methods become semantic
+nodes without magic helper calls, provider-free lowering fails before emission,
+the frozen manifest attaches the exact five native and seven callable choices,
+all twelve production bodies emit through IR with
+`legacyBodyEmitted:false`, no Math host imports appear, native opcodes remain in
+WAT, the established self-host helper names remain reachable, and runtime
+results match the direct backend. Shadowed, coercive, wrong-arity, and
+`Math.random` shapes remain outside M1.
+
+M1 changes semantic authority but does not widen the selector, so the strict
+fixed-corpus census is unchanged. The legacy direct Math route remains only for
+non-Prepared shapes until their owning family slices and final R9/R10 deletion.
 
 ### Later measured family slices
 
