@@ -35,6 +35,7 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - project_test262_lane_parity_program · project_acorn_dogfood_regression_20260723
 - project_bigint_i64_brand_gate · project_linear_backend_no_console_log · project_proxy_no_ts_type_brand · project_1917_coercion_engine_byte_diff_gate · project_2106_undefined_singleton_s1_atomic
 - project_2602_forawait_rest_aliases_source_recompile · project_2602_forof_assign_rest_write_unimplemented
+- [es5-standalone-goal-ex-dynamic-code](project_es5_standalone_goal_restated_ex_dynamic_code.md) — goal restated 2026-08-01: ~95.4% ES5+untagged standalone **EX-DYNAMIC-CODE**; the 317 dynamic-code files are OUT OF SCOPE, not failures
 
 ### Team & agents
 
@@ -53,12 +54,14 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - feedback_dispatch_status · feedback_dedicated_pr_shepherd · feedback_lead_shepherds_prs · feedback_auto_ff_workspace_main · feedback_merge_queue_wedge_recovery · feedback_reconcile_carried_slate_against_git_on_reopen
 - feedback_no_duplicate_issue_dispatch · feedback_dispatch_against_upstream_not_stale_fork · feedback_mandatory_predispatch_gate_and_lane_partition
 - feedback_slice_claim_collision_check_assignments_log · feedback_shared_worktree_clobber_check_claim_first · feedback_no_shared_worktree_assignment · feedback_release_claim_on_standdown_multiphase_issue
+- feedback_confirm_author_is_done_before_shepherding_their_pr — a PR whose author is still working is not a stray; ask before adopting it
 
 ### Issue management
 
 - **A merged PR citing #N is NOT evidence #N is done** — measured **0/26**; 4 bugs: slice-closes-epic · incidental mention · filed-by-as-fixed-by · docs-PR-as-fix. The issue's own acceptance checkboxes reject all — [title-citation-is-not-completion](reference_pr_title_citation_is_not_completion_evidence.md)
 - feedback_issue_completion · feedback_unblock_on_completion · feedback_document_findings · feedback_update_backlog · feedback_po_boundary · feedback_bare_numbers_are_plan_tasks
 - feedback_verify_fix_in_git_not_narrative · feedback_reground_spec_against_current_main · feedback_verify_first_beats_architect_spec
+- feedback_file_defects_as_issue_markdown_not_tasklist — a defect lives in `plan/issues/<id>-<slug>.md`, not as a TaskList line; the TaskList is a queue, not a record
 
 ### Testing & CI gates
 
@@ -78,6 +81,10 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - reference_never_push_to_a_queued_pr_it_ejects_to_the_back · reference_autoenqueue_grace0_races_mergestate_recompute · reference_dropped_synchronize_only_cla_check_repush
 - reference_quality_failfast_masks_downstream_gates · reference_baseline_gates_need_postmerge_autorefresh · reference_ci_quality_format_uses_prettier_not_biome · feedback_trigger_deploy_pages · feedback_cla_check_rerun_after_merge_commit
 - reference_host_restore_triage_verify_first_measure · reference_error_analysis · reference_standalone_harvest_rootcausemap_mislabeled · project_wrapforhost_setexports_harness
+- **[cached-baseline-jsonl-stale-within-hours](reference_cached_baseline_jsonl_goes_stale_within_hours.md)** — `.test262-cache` JSONL is a SNAPSHOT; 16h stale reproduced its own checks EXACTLY and cost a 4-agent dispatch. `--force` before sizing; a vanished bucket usually MOVED (138→0, only 4 flipped)
+- **[goal-scope-is-not-the-es5-bucket](reference_goal_scope_is_not_the_landing_page_es5_bucket.md)** — 8,544 goal scope ≠ 8,930 ES5 bucket; both correct. "untagged" means TWO different populations (430 vs 5,444)
+- [long-single-process-sweep-overcounts](reference_long_single_process_sweep_overcounts_failures.md) — one long-lived process accumulates state; re-run every apparent regression SOLO before believing it
+- [shape-matrix-is-not-a-population-estimate](reference_shape_matrix_is_not_a_population_estimate.md) — a matrix of shapes says which shapes exist, never how many files have them
 
 ### Development methodology & codegen hazards
 
@@ -87,6 +94,10 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - feedback_spec_first_fixes · feedback_compile_away · feedback_nothing_impossible · feedback_refactoring_failures · project_type_index_shift_and_deadelim · reference_subview_type_idx_stability
 - project_brand_check_swap_savedbodies · reference_no_rebuild_helper_body_at_finalize · reference_shared_instr_object_dce_double_remap
 - reference_1927_pipeline_pass_gates_fresh_errors · reference_2873_funcref_wrapper_chain_rtt_order · reference_3343_forlet_loopvar_module_global_alias_recursion
+- **[bigger-number-with-a-silent-wrong-answer-is-NEGATIVE](reference_bigger_number_bought_with_a_silent_wrong_answer_is_negative_value.md)** — a conformance gain paid for by turning a loud refusal into a quiet wrong result is worse than not shipping
+- **[wire-the-fix-at-the-NARROWEST-site](reference_wire_the_fix_at_the_narrowest_site_not_the_most_general.md)** — blast radius lives at the general point (−684 on #4055 v1). When a regression's mechanism resists isolation, NARROW until it's out of scope rather than chase it
+- **[constant-folded-probe-tests-the-STATIC-path](reference_constant_folded_probe_tests_the_static_path.md)** — `new RegExp("a"+".c")` folds; the "dynamic" probe never ran. **A broken instrument announces itself as good news that arrives slightly too easily**
+- [static-fast-path-claiming-a-case-it-cannot-handle](reference_static_fast_path_claiming_a_case_it_cannot_handle.md) — a fast path that accepts input it mishandles is worse than one that declines
 
 ### Model usage & reporting
 
@@ -104,6 +115,8 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - feedback_check_declared_rebaseline_before_crying_corruption · reference_worktree_pnpm_install_corrupts_shared_node_modules · reference_untested_recovery_paths_rot_silently · reference_label_evidence_by_source_before_reasoning
 - reference_grep_false_empties_diff_test262 · reference_false_done_audit_nnnn_vs_wasm_funcidx · reference_runtest262file_not_ci_path_status_only · reference_baseline_jsonl_authoritative_over_local_repro_status · reference_surgical_baselines_push_partial_clone
 - reference_park_diagnosis_check_runs_on_sha_not_run_jobs · reference_admin_merge_active_queue_conflict_not_orphan · reference_compile_time_guard_1942_flake_skips_promote
+- [git-checkout--b-silently-does-not-switch](reference_git_checkout_dash_b_silently_does_not_switch.md) — verify the branch you landed on, never assume the checkout moved
+- [precommit-hook-exceeds-tool-timeout](reference_precommit_hook_exceeds_tool_timeout_leaves_stash_debris.md) — leaves `lint-staged automatic backup` entries on the SHARED stash stack; the commit still lands. Clear only your own two
 
 ### Merge queue & fork topology
 
@@ -111,6 +124,8 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - project_dup_prs_upstream_vs_fork_same_branch_name · feedback_batch_doc_commits_before_pr_push · project_sprint64_parallel_session_dup_prs · feedback_longlived_branch_silent_revert
 - reference_pr_creation_500_bisect_before_blaming_local_setup · reference_pr_stuck_mergeable_null_only_cla_runs
 - reference_cross_session_issue_id_collision_renumber_loser · reference_hold_label_does_not_dequeue_inflight_merge_queue_pr · reference_issue_id_collides_while_pr_is_open · reference_change_scoped_allowance_wedges_postmerge_promote
+- **[queue-snapshots-HEAD-at-enqueue-time](reference_merge_queue_snapshots_head_at_enqueue_time.md)** — a later push is not rejected, it is SILENTLY ABSENT from the merged SHA. `BEHIND` is NOT "not queued". **Verify CONTENT on main; three levels of merge verification**
+- [unstable-FAILED-vs-UNFINISHED](reference_unstable_failed_vs_unfinished_before_rerunning.md) — distinguish the two before re-running; `UNSTABLE` is never auto-enqueued either way
 
 ### Substrate / value-rep / standalone root-causes
 
