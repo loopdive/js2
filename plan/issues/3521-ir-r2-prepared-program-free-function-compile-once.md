@@ -4,7 +4,7 @@ title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-07-30
+updated: 2026-08-02
 priority: critical
 horizon: xl
 complexity: XL
@@ -34,6 +34,7 @@ files:
   - src/codegen/ir-overlay-preparation.ts
   - src/codegen/ir-overlay-safety.ts
   - src/codegen/ir-prepared-free-functions.ts
+  - src/codegen/program-abi-export-planning.ts
   - src/codegen/module-global-registration.ts
   - src/codegen/context/types.ts
   - src/codegen/context/create-context.ts
@@ -42,7 +43,9 @@ files:
   - src/index.ts
   - src/compiler.ts
   - tests/issue-3521-prepared-ir-program.test.ts
+  - tests/issue-3521-prepared-component-dependencies.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
+  - tests/issue-3765-numeric-locals.test.ts
 loc-budget-allow:
   - src/codegen/program-abi-session.ts
   - src/codegen/index.ts
@@ -409,6 +412,58 @@ failure. No optimization test regressed under R2.
 Remaining R2 work before closing this issue is the full required gate matrix,
 explicit component/counter reconciliation evidence, and removal of the
 compatibility placeholder branch once #3522/#3523 no longer consume it.
+
+## Production dependency-complete component seal (2026-08-02)
+
+The next R2 slice now consumes post-pass component dependency evidence in the
+production prepared free-function route. For each dependency-complete scalar
+component, preparation:
+
+- registers every terminal source callable against its exact preallocated
+  `WasmFunction` object and structured signature;
+- registers any already-declared public export aliases of those exact objects;
+- derives the final local call component from optimized IR and resolves its
+  symbolic external/support dependencies through the planning session; and
+- seals the component scope before Wasm lowering starts.
+
+Lowering fills `locals` and `body` on the already sealed allocator object. It
+does not replace that object, allocate a second source slot, or rediscover the
+public export target. Successful terminal evidence carries a
+`preparedComponentId`, providing an observable distinction between this
+sealed route and the older transitional prepare/patch route. The new scalar
+call-component test proves two non-inlined functions share one sealed
+component, record `legacyBodyEmitted: false` and `irBodyEmitted: true`, and
+execute with the expected result.
+
+This is a bounded production adoption, not R2 completion. Components using
+string, dynamic, object, class-layout, or other still-implicit support remain
+on the established route because the current IR does not yet express every
+such dependency as a symbolic Program ABI intent. Components containing a
+pass-derived executable likewise remain unsealed until its callable slot can
+be reserved before lowering. No fallback category was widened and no legacy
+optimization was retired.
+
+Current validation on `origin/main` plus this slice:
+
+- focused component dependency, scoped ABI, and production routing tests:
+  **39/39 passing**;
+- TypeScript validation, IR fallback gate, optimization-retirement ledger,
+  adoption check, and hybrid IR-only readiness gate: passing;
+- the pre-push numeric-local parity gate: **17/17 passing** after replacing a
+  stale debug-WAT type-name/index coupling with direct f64/no-boxing body
+  evidence;
+- readiness denominator: **31/37 IR-emitted**, **6 typed Unsupported**, **0
+  invariants**; and
+- broad #3520/#3521 ABI matrix: **384/390 passing**. The same six failures
+  reproduce on an untouched `origin/main` worktree: four stale host-bridge
+  census totals, the nested source-callable reservation assertion, and the
+  linear inventory build-count assertion.
+
+The shortest remaining R2 path is to make runtime/layout dependencies
+symbolic during IR preparation, reserve derived callable objects before
+lowering, then consume the sealed component view in an explicit emission
+transaction with exact direct/IR counters. Only after that evidence is green
+can the free-function placeholder/patch compatibility branch be deleted.
 
 ## File ownership and locks
 

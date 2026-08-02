@@ -481,7 +481,13 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
               detail: `${unit.matchName} was unsupported after its legacy slot was skipped: ${evidence.error.message}`,
             });
     } else if (evidence?.kind === "patched") {
-      outcome = { ...base, kind: "emitted", stage: "patch", irBodyEmitted: true };
+      outcome = {
+        ...base,
+        kind: "emitted",
+        stage: "patch",
+        irBodyEmitted: true,
+        ...(evidence.preparedComponentId === undefined ? {} : { preparedComponentId: evidence.preparedComponentId }),
+      };
     } else {
       outcome = observedFailure(base, {
         kind: "invariant",

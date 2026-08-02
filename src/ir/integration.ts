@@ -145,6 +145,7 @@ import {
   indexIrTerminalDeclarations,
   type IrBindingId,
   type IrClassId,
+  type IrUnitInventory,
   type IrUnitId,
 } from "./identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
@@ -217,7 +218,7 @@ import { verifyIrFunction } from "./verify.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance } from "./verify-alloc.js";
-import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType } from "./types.js";
+import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType, WasmFunction } from "./types.js";
 import {
   definedFuncAt,
   definedFuncHandleOf,
@@ -242,6 +243,7 @@ import {
   type IrIntegrationReport,
   type IrIntegrationTerminalFailureEvent,
 } from "./integration-report.js";
+import { derivePreparedComponentDependencies } from "./prepared-component-dependencies.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -310,6 +312,157 @@ export interface IrTypeOverrideMap {
   // void-returning function (zero Wasm result types). Plumbs through to
   // `from-ast.ts` so the IR builder can be constructed with `[]` results.
   get(name: string): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined;
+}
+
+export interface IrIntegrationOptions {
+  /**
+   * Derive post-pass R2 components and seal every dependency-complete ABI
+   * component before lowering. Components with still-implicit runtime/layout
+   * support retain the established transitional route.
+   */
+  readonly sealPreparedComponents?: boolean;
+}
+
+interface BuiltFn {
+  /** Exact pass-created/source artifact identity. */
+  readonly artifactUnitId: IrUnitId;
+  /** Exact R0 terminal owner; labels below are compatibility metadata only. */
+  readonly terminalOwnerUnitId: IrUnitId;
+  readonly name: string;
+  /** Public/legacy terminal-owner label; synthesized artifacts never become rows. */
+  readonly ownerName: string;
+  readonly fn: IrFunction;
+  /** Complete Program ABI provenance when this artifact was lifted from a source unit. */
+  readonly derivedUnit?: ProgramAbiDerivedUnitRecord;
+  /** True when a pass-created artifact owns a fresh callable slot. */
+  readonly synthesized?: boolean;
+  /** True when the artifact patches a preallocated class-member slot. */
+  readonly classMember?: boolean;
+  /** True when the artifact patches the exact module-initializer slot. */
+  readonly moduleInit?: boolean;
+}
+
+function sealDependencyCompletePreparedComponents(input: {
+  readonly ctx: CodegenContext;
+  readonly entries: readonly BuiltFn[];
+  readonly inventory: IrUnitInventory;
+  readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrInvariantError) => void;
+}): ReadonlyMap<IrUnitId, string> {
+  const { ctx, entries, inventory } = input;
+  const session = ctx.programAbiSession;
+  if (!session) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "R2 prepared-component sealing requires one production ProgramAbiSession",
+    );
+  }
+  const terminalUnitIds = new Set(entries.map((entry) => entry.terminalOwnerUnitId));
+  const terminalEntries = new Map(
+    entries
+      .filter((entry) => entry.artifactUnitId === entry.terminalOwnerUnitId && !entry.derivedUnit)
+      .map((entry) => [entry.terminalOwnerUnitId, entry] as const),
+  );
+  const terminalCallableBindingIds = new Set<IrBindingId>();
+  for (const terminalUnitId of terminalUnitIds) {
+    const entry = terminalEntries.get(terminalUnitId);
+    const func = ctx.programAbiSourceCallables?.functionForUnit(terminalUnitId);
+    const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
+    if (!entry || !func || !signature || signature.kind !== "func") {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `dependency preparation has no exact allocated source callable for terminal ${terminalUnitId}`,
+      );
+    }
+    const bindingId = planProgramAbiUnitCallable(ctx, {
+      ref: irUnitFuncRef(entry.fn),
+      signature,
+      func,
+    });
+    if (bindingId !== irUnitCallableBindingId(terminalUnitId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `dependency preparation could not plan the exact source callable for terminal ${terminalUnitId}`,
+      );
+    }
+    terminalCallableBindingIds.add(bindingId);
+  }
+  ctx.programAbiExports?.planAliasesForTargets(terminalCallableBindingIds);
+
+  const derivedUnits = [
+    ...new Map(
+      entries.flatMap((entry) => (entry.derivedUnit ? ([[entry.derivedUnit.id, entry.derivedUnit]] as const) : [])),
+    ).values(),
+  ];
+  const dependencyReport = derivePreparedComponentDependencies({
+    module: { functions: entries.map((entry) => entry.fn) },
+    terminalUnitIds,
+    inventory,
+    derivedUnits,
+    abi: {
+      get: (id) => session.getDraft(id),
+      bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),
+    },
+  });
+  const componentIdByTerminalUnitId = new Map<IrUnitId, string>();
+  for (const component of dependencyReport.components) {
+    // String/dynamic/object/layout operations still carry implicit support in
+    // transitional IR. R6 must make those dependencies symbolic first.
+    if (component.status !== "complete") continue;
+    try {
+      const scope = session.beginPreparedComponentScope(component.id, component.terminalUnitIds);
+      const requestedBindingIds = new Set(
+        component.abiDependencies
+          .filter(
+            (dependency) =>
+              dependency.kind === "external-callable" ||
+              dependency.kind === "external-global" ||
+              dependency.kind === "support",
+          )
+          .map((dependency) => dependency.bindingId),
+      );
+      for (const bindingId of requestedBindingIds) scope.includeBinding(bindingId);
+      scope.seal();
+      for (const terminalUnitId of component.terminalUnitIds) {
+        componentIdByTerminalUnitId.set(terminalUnitId, component.id);
+      }
+    } catch (error) {
+      const failure = new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `dependency-complete R2 component ${component.id} failed ABI sealing: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        error,
+      );
+      for (const terminalUnitId of component.terminalUnitIds) input.onSealFailure(terminalUnitId, failure);
+    }
+  }
+  return componentIdByTerminalUnitId;
+}
+
+function fillSealedPreparedCallable(
+  componentId: string,
+  previous: WasmFunction,
+  replacement: WasmFunction,
+): WasmFunction {
+  if (
+    previous.typeIdx !== replacement.typeIdx ||
+    previous.name !== replacement.name ||
+    previous.exported !== replacement.exported
+  ) {
+    throw new IrInvariantError(
+      "abi-type-index-mismatch",
+      "patch",
+      `prepared component ${componentId} cannot change the reserved callable contract for ${previous.name}`,
+    );
+  }
+  // The prepared ABI scope pins this allocator object before lowering.
+  previous.locals = replacement.locals;
+  previous.body = replacement.body;
+  return previous;
 }
 
 function makeAmbientStringBindingPredicate(checker: ts.TypeChecker): (node: ts.Identifier) => boolean {
@@ -405,6 +558,7 @@ export function compileIrPathFunctions(
   overrides?: IrTypeOverrideMap,
   classShapes?: ReadonlyMap<string, IrClassShape>,
   loweringPlans?: IrIntegrationLoweringPlans,
+  options?: IrIntegrationOptions,
 ): IrIntegrationReport {
   const jsHostExterns = !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -766,45 +920,6 @@ export function compileIrPathFunctions(
   // -------------------------------------------------------------------------
   // Phase 1 — Build: lower every selected AST function to an IrFunction.
   // -------------------------------------------------------------------------
-  interface BuiltFn {
-    /** Exact pass-created/source artifact identity. */
-    readonly artifactUnitId: IrUnitId;
-    /** Exact R0 terminal owner; labels below are compatibility metadata only. */
-    readonly terminalOwnerUnitId: IrUnitId;
-    readonly name: string;
-    /** Public/legacy terminal-owner label; synthesized artifacts never become rows. */
-    readonly ownerName: string;
-    readonly fn: IrFunction;
-    /** Complete Program ABI provenance when this artifact was lifted from a source unit. */
-    readonly derivedUnit?: ProgramAbiDerivedUnitRecord;
-    /**
-     * Slice 3 (#1169c): set when `fn` is a lifted closure or nested
-     * function rather than a top-level FunctionDeclaration. Synthesized
-     * fns have no ts.FunctionDeclaration and no pre-allocated funcIdx —
-     * the integration loop allocates a fresh slot in `ctx.mod.functions`
-     * (mirrors the monomorphize-clone path).
-     */
-    readonly synthesized?: boolean;
-    /**
-     * #1370 Phase B: marks instance class methods. The legacy
-     * `class-bodies.ts` already pre-allocated a typeIdx + signature for
-     * the slot; before patching the body, the Phase 3 loop verifies the
-     * IR-lowered typeIdx matches the existing one. On mismatch it skips
-     * the patch — the legacy body stays in place, callers' `call $...`
-     * ops keep working, and a warning is logged so the divergence is
-     * visible. This guard is unnecessary for top-level FunctionDeclarations
-     * where the slot's pre-allocated typeIdx is whatever the integration
-     * lowerer chose (no legacy callers depending on it).
-     */
-    readonly classMember?: boolean;
-    /**
-     * (#3142 Slice 2) The synthetic `<module-init>` unit. Its target slot is
-     * the legacy module-initializer function (resolved from its exact source
-     * unit through the allocator registry), patched in place with the same typeIdx
-     * parity guard class members use. Never allocated a fresh slot.
-     */
-    readonly moduleInit?: boolean;
-  }
   const built: BuiltFn[] = [];
   const requireArtifactUnitId = (declaration: ts.Node, displayName: string) => {
     const unitId =
@@ -1828,7 +1943,21 @@ export function compileIrPathFunctions(
     return finishReport();
   }
   const importedCallableCatalog = catalogProgramAbiCallableImports(ctx);
-
+  let preparedComponentIdByTerminalUnitId: ReadonlyMap<IrUnitId, string> = new Map();
+  if (options?.sealPreparedComponents) {
+    runGlobalPreparation(() => {
+      preparedComponentIdByTerminalUnitId = sealDependencyCompletePreparedComponents({
+        ctx,
+        entries: healthyForLower,
+        inventory: moduleBindingIdentityContext.inventory,
+        onSealFailure: (terminalUnitId, error) => {
+          const owner = activeOwnerProjection.requireUnit(terminalUnitId);
+          markOwnerFailure(owner, terminalUnitId, owner.legacyName, error, "resolve");
+        },
+      });
+    });
+    if ((healthyForLower = retainHealthyOwners(healthyForLower)).length === 0) return finishReport();
+  }
   // -------------------------------------------------------------------------
   // Register monomorphized clones in `ctx` — append a placeholder
   // WasmFunction slot and record the assigned funcIdx in `ctx.funcMap`.
@@ -2253,10 +2382,11 @@ export function compileIrPathFunctions(
   };
   const replaceUnitCallableAt = (
     unitId: IrUnitId,
+    terminalOwnerUnitId: IrUnitId,
     funcIdx: number,
     previous: NonNullable<ReturnType<typeof definedFuncAt>>,
     replacement: NonNullable<ReturnType<typeof definedFuncAt>>,
-  ): void => {
+  ): NonNullable<ReturnType<typeof definedFuncAt>> => {
     const mapped = ctx.irUnitFuncMap.get(unitId);
     if (mapped && mapped !== previous) {
       throw new IrInvariantError(
@@ -2265,12 +2395,19 @@ export function compileIrPathFunctions(
         `ir/integration: exact unit ${unitId} replacement does not match its allocator function`,
       );
     }
+    const preparedComponentId = preparedComponentIdByTerminalUnitId.get(terminalOwnerUnitId);
+    if (preparedComponentId !== undefined) {
+      const installed = fillSealedPreparedCallable(preparedComponentId, previous, replacement);
+      ctx.irUnitFuncMap.set(unitId, installed);
+      return installed;
+    }
     replaceDefinedFuncAt(ctx, funcIdx, replacement);
     ctx.irUnitFuncMap.set(unitId, replacement);
     const bindingId = unitCallableSlots.get(unitId)?.programAbiBindingId;
     if (bindingId) {
       ctx.programAbiSession!.replaceDefinedFunctionLocator(bindingId, previous, replacement);
     }
+    return replacement;
   };
   const planSettledDerivedCallable = (
     entry: BuiltFn,
@@ -2531,13 +2668,24 @@ export function compileIrPathFunctions(
       body: patch.finalBody,
       exported: patch.existing.exported,
     };
-    replaceUnitCallableAt(patch.entry.artifactUnitId, patch.funcIdx, patch.existing, replacement);
-    planSettledDerivedCallable(patch.entry, replacement);
+    const installed = replaceUnitCallableAt(
+      patch.entry.artifactUnitId,
+      patch.entry.terminalOwnerUnitId,
+      patch.funcIdx,
+      patch.existing,
+      replacement,
+    );
+    planSettledDerivedCallable(patch.entry, installed);
     compiled.push(patch.entry.name);
     compiledArtifactEvidence.push({
       artifactUnitId: patch.entry.artifactUnitId,
       terminalOwnerUnitId: patch.entry.terminalOwnerUnitId,
       name: patch.entry.name,
+      ...(preparedComponentIdByTerminalUnitId.get(patch.entry.terminalOwnerUnitId) === undefined
+        ? {}
+        : {
+            preparedComponentId: preparedComponentIdByTerminalUnitId.get(patch.entry.terminalOwnerUnitId)!,
+          }),
     });
     if (patch.entry.artifactUnitId === patch.entry.terminalOwnerUnitId) {
       compiledOwners.push(patch.entry.ownerName);
@@ -2556,19 +2704,24 @@ export function compileIrPathFunctions(
   // only on a path that actually enters the orphaned artifact. Empty VOID
   // bodies are already valid Wasm (fall-through) — leave those as-is rather
   // than converting today's silent no-op into a trap.
-  const stubIfOrphanedEmpty = (unitId: IrUnitId, funcIdx: number): void => {
+  const stubIfOrphanedEmpty = (unitId: IrUnitId, terminalOwnerUnitId: IrUnitId, funcIdx: number): void => {
     const orphan = definedFuncAt(ctx, funcIdx);
     if (!orphan || orphan.body.length > 0) return;
     const typeDef = ctx.mod.types[orphan.typeIdx];
     if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) return;
-    replaceUnitCallableAt(unitId, funcIdx, orphan, { ...orphan, body: [{ op: "unreachable" }] });
+    replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
+      ...orphan,
+      body: [{ op: "unreachable" }],
+    });
   };
   for (const slot of freshSlots) {
-    if (failedOwners.has(slot.terminalOwnerUnitId)) stubIfOrphanedEmpty(slot.artifactUnitId, slot.funcIdx);
+    if (failedOwners.has(slot.terminalOwnerUnitId)) {
+      stubIfOrphanedEmpty(slot.artifactUnitId, slot.terminalOwnerUnitId, slot.funcIdx);
+    }
   }
   for (const patch of pendingPatches) {
     if (failedOwners.has(patch.entry.terminalOwnerUnitId)) {
-      stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.funcIdx);
+      stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
     }
   }
 

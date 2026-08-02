@@ -202,6 +202,7 @@ export function prepareIrFreeFunctionBodies(input: {
           input.overrideMap,
           input.classShapes,
           input.loweringPlans,
+          { sealPreparedComponents: true },
         );
   const routing = preparedIrFunctionRouting(report, input.claimsByUnitId);
   const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(routing.irOwnedUnitIds, input.claimsByUnitId);

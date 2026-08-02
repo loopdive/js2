@@ -53,7 +53,37 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: false,
       irBodyEmitted: true,
     });
+    expect(outcome(result, "codeAtStart").preparedComponentId).toBeUndefined();
     expect((await instantiate(result)).run()).toBe(65);
+  });
+
+  it("dependency-seals a scalar call component before lowering either body", async () => {
+    const result = await compile(
+      `
+      function increment(value: number): number {
+        if (value > 0) return value + 1;
+        return 1;
+      }
+      export function run(): number { return increment(41); }
+      `,
+      {
+        fileName: "prepared-scalar-component.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const incrementOutcome = outcome(result, "increment");
+    const runOutcome = outcome(result, "run");
+    expect(incrementOutcome).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(incrementOutcome.preparedComponentId).toMatch(/^prepared-component:/);
+    expect(runOutcome.preparedComponentId).toBe(incrementOutcome.preparedComponentId);
+    expect((await instantiate(result)).run!()).toBe(42);
   });
 
   it("direct-emits a selector-unsupported free function once", async () => {
