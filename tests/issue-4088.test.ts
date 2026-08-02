@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #3593 — permanent probe (#2093) for the uncatchable
+// #4088 — permanent probe (#2093) for the uncatchable
 // `dereferencing a null pointer in __module_init()` trap.
 //
-// The issue was filed as an `Iterator.zip`-over-object-literal-iterators defect
-// that "needs the real test262 harness module shape", where hand-written
-// snippets supposedly could not reproduce it. Ablation through the real runner
-// refuted every part of that:
+// Split out of #3593, which was filed as an
+// `Iterator.zip`-over-object-literal-iterators defect that "needs the real
+// test262 harness module shape", where hand-written snippets supposedly could
+// not reproduce it. Ablation through the real runner refuted every part of
+// that — the defect is general array-literal lowering, so it lives under its
+// own id rather than behind an Iterator title nobody would search:
 //
 //   * `assert.throws` is NOT required
 //   * the `includes:` harness injection is NOT required
@@ -51,7 +53,7 @@ async function moduleInit(body: string): Promise<Verdict> {
 
 const len2 = (expr: string) => `var arr = ${expr}; if (arr.length !== 2) throw new Error("len");`;
 
-describe("#3593 instrument controls (these must keep discriminating)", () => {
+describe("#4088 instrument controls (these must keep discriminating)", () => {
   it("a same-arity heterogeneous array instantiates and runs", async () => {
     // Positive control: proves the harness really runs the program. If this
     // ever reports SETUP-FAILED, every `it.fails` below is meaningless.
@@ -75,7 +77,7 @@ describe("#3593 instrument controls (these must keep discriminating)", () => {
 
 // LIVE DEFECT. `it.fails` passes while the body throws, and turns RED the
 // moment the trap is fixed — at which point flip these to plain `it`.
-describe("#3593 array literal, differing object-literal member counts — LIVE DEFECT", () => {
+describe("#4088 array literal, differing object-literal member counts — LIVE DEFECT", () => {
   it.fails("[{a,b},{c}] — the minimal repro, no Iterator, no Symbol, no harness", async () => {
     expect(await moduleInit(len2(`[{ a() {}, b() {} }, { c() {} }]`))).toBe("ok");
   });
@@ -92,7 +94,7 @@ describe("#3593 array literal, differing object-literal member counts — LIVE D
     expect(await moduleInit(len2(`[{ a() {}, b() {}, e() {} }, { c() {} }]`))).toBe("ok");
   });
 
-  it.fails("the original #3593 spelling: [{next,return},{[Symbol.iterator]}]", async () => {
+  it.fails("the original #3593 spelling (the file that surfaced it): [{next,return},{[Symbol.iterator]}]", async () => {
     expect(await moduleInit(len2(`[{ next() {}, return() {} }, { [Symbol.iterator]() {} }]`))).toBe("ok");
   });
 });
