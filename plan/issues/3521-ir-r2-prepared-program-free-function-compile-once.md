@@ -31,6 +31,8 @@ files:
   - src/ir/lower.ts
   - src/ir/backend/legality.ts
   - src/codegen/program-abi-session.ts
+  - src/codegen/program-abi-import-planning.ts
+  - src/codegen/program-abi-provider-planning.ts
   - src/codegen/ir-overlay-preparation.ts
   - src/codegen/ir-overlay-safety.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -45,8 +47,11 @@ files:
   - tests/issue-3521-prepared-ir-program.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
+  - tests/issue-3520-program-abi-import-callable-planning.test.ts
+  - tests/issue-3520-callable-provider-abi.test.ts
   - tests/issue-3765-numeric-locals.test.ts
 loc-budget-allow:
+  - src/codegen/context/types.ts
   - src/codegen/program-abi-session.ts
   - src/codegen/index.ts
   - src/ir/integration.ts
@@ -493,31 +498,46 @@ records `legacyBodyEmitted: false`, `irBodyEmitted: true`, a non-empty
 proves that preparing `__fmod` neither retains a candidate-only import nor
 allows a new provider key to appear after the denominator is sealed.
 
-Import-backed providers deliberately remain on the transitional component
-route unless their exact import object already has a canonical Program ABI
-owner. Letting a semantic provider take that locator first would make final
-import planning double-own the slot. Selective pre-DCE import planning is the
-next callable-provider step; this slice fails closed instead of creating that
-ordering bug.
+### Canonical import-backed provider preparation
+
+Import-backed providers now cross the same preparation boundary without
+letting the semantic provider take ownership from the canonical import:
+
+- ordinary compilations keep the existing dense final-import ordering;
+- the first prepared import seals the complete sorted pre-DCE import
+  population as a stable sparse denominator;
+- only exact imports required by otherwise complete components are planned at
+  that point. Dead siblings never become required ABI entries;
+- imports registered after the seal receive deterministic trailing ordinals,
+  so they cannot renumber or reuse a prepared identity; and
+- the runtime/intrinsic provider aliases the canonical import binding before
+  the component scope seals. Final planning reuses both identities and their
+  exact locator instead of double-owning the slot.
+
+The import-planner regression removes a pre-DCE sibling, adds a new import
+after the seal, and proves the required binding keeps its original identity
+and final index. The provider regression additionally proves a runtime
+provider aliases that canonical import while a candidate-only semantic import
+is discarded.
 
 Validation after this continuation:
 
-- focused provider, dependency, scoped-ABI, and production-routing tests:
-  **65/65 passing**;
+- focused provider/import-planning, dependency, scoped-ABI, and
+  production-routing tests: **75/75 passing**;
 - numeric-local optimization parity: **17/17 passing**;
 - typecheck, scoped Biome/Prettier, LOC/function budgets, fallback ratchet,
   adoption, and hybrid IR-only readiness: passing;
 - readiness remains **31/37 IR-emitted**, **6 typed Unsupported**, and **0
   invariants**; and
-- the broad #3520/#3521 matrix has the same six parent-reproduced failures:
-  four stale host-bridge census totals, the nested source-callable reservation
-  assertion, and the linear inventory build-count assertion. Both new provider
-  tests pass.
+- the broad #3520/#3521 matrix is **388/394 passing** with the same six
+  parent-reproduced failures: four stale host-bridge census totals, the nested
+  source-callable reservation assertion, and the linear inventory build-count
+  assertion. All four new provider/import tests pass.
 
-The next R2 dependencies are canonical pre-DCE planning for required provider
-imports, symbolic string/dynamic/object/layout support, and pre-reserved
-pass-derived callable slots. The explicit emission transaction and removal of
-the remaining placeholder/patch branch follow those dependency families.
+The next R2 dependencies are symbolic string/dynamic/object/layout support and
+pre-reserved pass-derived callable slots. The explicit emission transaction
+and removal of the remaining placeholder/patch branch follow those dependency
+families.
 
 ## File ownership and locks
 

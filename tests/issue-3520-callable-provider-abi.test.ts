@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import { analyzeSource } from "../src/checker/index.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { generateModule } from "../src/codegen/index.js";
-import { planProgramAbiCallableImports } from "../src/codegen/program-abi-import-planning.js";
+import {
+  catalogProgramAbiCallableImports,
+  planProgramAbiCallableImports,
+} from "../src/codegen/program-abi-import-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { irCallableBindingKey, irIntrinsicFuncRef, irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
@@ -227,6 +230,48 @@ describe("#3520 runtime/intrinsic callable-provider Program ABI", () => {
       space: "function",
       index: 0,
     });
+  });
+
+  it("aliases a prepared import-backed provider to its canonical import while discarding a dead sibling", () => {
+    const module = createEmptyModule();
+    module.types.push(F64_TO_F64);
+    const deadImport = functionImport("env", "__candidate_only", 0);
+    const targetImport = functionImport("env", "runtime_target", 0);
+    module.imports.push(deadImport, targetImport);
+    const { ctx, providers, session } = fixture(module);
+    const deadRef = irRuntimeFuncRef("__candidate_only");
+    const targetRef = irRuntimeFuncRef("runtime_target");
+    const deadKey = irCallableBindingKey(deadRef.binding);
+    const targetKey = irCallableBindingKey(targetRef.binding);
+    providers.observe(deadRef, 0);
+    providers.observe(targetRef, 1);
+
+    catalogProgramAbiCallableImports(ctx);
+    const providerImports = providers.importsForPreparedProviders(new Set([targetKey]));
+    if (!providerImports || !ctx.programAbiCallableImports) throw new Error("missing prepared import population");
+    ctx.programAbiCallableImports.planPrepared(providerImports);
+    expect(providers.canPlanPrepared(new Set([targetKey]))).toBe(true);
+    const providerId = providers.planPrepared(new Set([targetKey])).get(targetKey)!;
+    const importId = session.locatorBindingId(targetImport)!;
+    expect(session.getDraft(providerId)).toMatchObject({
+      structuralReferenceKey: targetKey,
+      slotPolicy: "alias",
+      aliasOf: importId,
+      intent: { kind: "callable", origin: "runtime" },
+    });
+    expect(session.getDraft(importId)).toMatchObject({
+      slotPolicy: "required",
+      intent: { kind: "callable", origin: "import" },
+    });
+
+    module.imports = [targetImport];
+    ctx.numImportFuncs = 1;
+    planProgramAbiCallableImports(ctx);
+    expect([...providers.planRetained().keys()]).toEqual([targetKey]);
+    expect(session.bindingIdsForStructuralReference(deadKey)).toEqual([]);
+    const { abi } = session.publish(module);
+    expect(abi.canonicalId(providerId)).toBe(importId);
+    expect(abi.resolveFinalIndex(providerId)).toEqual({ space: "function", index: 0 });
   });
 
   it("publishes production Math and remainder providers without compatibility labels owning their slots", () => {

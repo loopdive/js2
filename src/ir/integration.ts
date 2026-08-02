@@ -352,12 +352,14 @@ function planDependencyBlockingCallableProviders(
   const registry = ctx.programAbiCallableProviders;
   if (!registry) return false;
   const selectedKeys = new Set<string>();
+  const selectedImports = new Set<Import>();
   for (const component of report.components) {
     const unresolvedKeys = new Set(
       component.externalCallables
         .filter((dependency) => dependency.programAbiBindingId === null)
         .map((dependency) => dependency.structuralReferenceKey),
     );
+    const providerImports = registry.importsForPreparedProviders(unresolvedKeys);
     if (
       unresolvedKeys.size === 0 ||
       component.failures.length === 0 ||
@@ -367,13 +369,32 @@ function planDependencyBlockingCallableProviders(
           failure.structuralReferenceKey !== undefined &&
           unresolvedKeys.has(failure.structuralReferenceKey),
       ) ||
-      !registry.canPlanPrepared(unresolvedKeys)
+      providerImports === undefined
     ) {
       continue;
     }
     for (const key of unresolvedKeys) selectedKeys.add(key);
+    for (const imported of providerImports) selectedImports.add(imported);
   }
   if (selectedKeys.size === 0) return false;
+  if (selectedImports.size > 0) {
+    const importRegistry = ctx.programAbiCallableImports;
+    if (!importRegistry) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "prepared callable providers require one canonical callable-import registry",
+      );
+    }
+    importRegistry.planPrepared(selectedImports);
+  }
+  if (!registry.canPlanPrepared(selectedKeys)) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "prepared callable provider imports did not acquire canonical Program ABI owners",
+    );
+  }
   registry.planPrepared(selectedKeys);
   return true;
 }

@@ -202,6 +202,17 @@ export class ProgramAbiCallableProviderRegistry {
     return true;
   }
 
+  /** Return exact import objects for a complete set of observed provider keys. */
+  importsForPreparedProviders(structuralReferenceKeys: ReadonlySet<string>): ReadonlySet<Import> | undefined {
+    const imports = new Set<Import>();
+    for (const key of structuralReferenceKeys) {
+      const provider = this.observed.get(key);
+      if (!provider) return undefined;
+      if (provider.locator.kind === "import-function") imports.add(provider.locator.value);
+    }
+    return imports;
+  }
+
   planPrepared(structuralReferenceKeys: ReadonlySet<string>): ReadonlyMap<string, IrBindingId> {
     if (this.plannedValue) {
       return new Map(

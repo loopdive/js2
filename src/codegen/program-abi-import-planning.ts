@@ -212,6 +212,158 @@ function collectProgramAbiCallableImports(ctx: CodegenContext): readonly Program
   return Object.freeze(imports.sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)));
 }
 
+interface PlannedCallableImport {
+  readonly key: string;
+  readonly bindingId: IrBindingId;
+  readonly ordinal: number;
+}
+
+/**
+ * Compilation-wide callable-import planner with a selective pre-DCE seal.
+ *
+ * Ordinary compilations retain the historical dense, final-population order.
+ * Once a prepared component needs an import, the complete current import
+ * population becomes a stable sparse denominator: required imports can be
+ * planned immediately, dead siblings remain unplanned, and imports registered
+ * later receive deterministic trailing ordinals.
+ */
+export class ProgramAbiCallableImportRegistry {
+  private sealedEntries: readonly ProgramAbiCallableImport[] | undefined;
+  private readonly plannedByImport = new Map<Import, PlannedCallableImport>();
+  private plannedValue: ReadonlyMap<string, IrBindingId> | undefined;
+
+  constructor(
+    readonly session: NonNullable<CodegenContext["programAbiSession"]>,
+    readonly ctx: CodegenContext,
+  ) {
+    session.assertModule(ctx.mod);
+  }
+
+  catalog(): ReadonlyMap<string, Import> {
+    const entries = this.sealedEntries ?? collectProgramAbiCallableImports(this.ctx);
+    return new ImmutableProgramAbiImportCatalog(entries.map(({ key, value }) => Object.freeze([key, value] as const)));
+  }
+
+  planPrepared(values: ReadonlySet<Import>): void {
+    if (values.size === 0) return;
+    if (this.plannedValue) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        "cannot prepare callable imports after retained import planning",
+      );
+    }
+    const entries = this.sealEntries();
+    const byImport = new Map(entries.map((entry, ordinal) => [entry.value, { entry, ordinal }] as const));
+    for (const value of values) {
+      const selected = byImport.get(value);
+      if (!selected) {
+        throw callableImportError("prepared callable import is outside the sealed pre-DCE import population");
+      }
+      this.planEntry(selected.entry, selected.ordinal);
+    }
+  }
+
+  planRetained(): ReadonlyMap<string, IrBindingId> {
+    if (this.plannedValue) return this.plannedValue;
+    const current = collectProgramAbiCallableImports(this.ctx);
+    if (!this.sealedEntries) {
+      current.forEach((entry, ordinal) => this.planEntry(entry, ordinal));
+    } else {
+      const currentImports = new Set(current.map((entry) => entry.value));
+      const sealedImports = new Set(this.sealedEntries.map((entry) => entry.value));
+      this.sealedEntries.forEach((entry, ordinal) => {
+        if (currentImports.has(entry.value)) {
+          this.planEntry(entry, ordinal);
+        } else if (this.plannedByImport.has(entry.value)) {
+          throw callableImportError(`prepared callable import ${entry.key} was removed after its ABI scope sealed`);
+        }
+      });
+
+      const reservedKeys = new Set(this.sealedEntries.map((entry) => entry.key));
+      let ordinal = this.sealedEntries.length;
+      for (const entry of current.filter((candidate) => !sealedImports.has(candidate.value))) {
+        let key = entry.key;
+        for (let duplicate = 0; reservedKeys.has(key); duplicate++) {
+          key = `${entry.key}|post-preparation|${duplicate}`;
+        }
+        reservedKeys.add(key);
+        this.planEntry(Object.freeze({ ...entry, key }), ordinal++);
+      }
+    }
+    const retainedImports = new Set(current.map((entry) => entry.value));
+    const planned = [...this.plannedByImport.entries()]
+      .filter(([value]) => retainedImports.has(value))
+      .map(([, entry]) => entry)
+      .sort((left, right) => left.ordinal - right.ordinal);
+    this.plannedValue = new ImmutableProgramAbiImportCatalog(
+      planned.map(({ key, bindingId }) => Object.freeze([key, bindingId] as const)),
+    );
+    return this.plannedValue;
+  }
+
+  private sealEntries(): readonly ProgramAbiCallableImport[] {
+    if (this.sealedEntries) return this.sealedEntries;
+    const entries = collectProgramAbiCallableImports(this.ctx);
+    const exactImports = new Set<Import>();
+    for (const entry of entries) {
+      if (exactImports.has(entry.value)) {
+        throw callableImportError(`callable import ${entry.key} reuses one allocator object in multiple slots`);
+      }
+      exactImports.add(entry.value);
+    }
+    this.sealedEntries = entries;
+    return entries;
+  }
+
+  private planEntry(entry: ProgramAbiCallableImport, ordinal: number): IrBindingId {
+    const existing = this.plannedByImport.get(entry.value);
+    if (existing) {
+      if (existing.key !== entry.key || existing.ordinal !== ordinal) {
+        throw callableImportError(`callable import ${entry.key} changed its sealed structural identity`);
+      }
+      return existing.bindingId;
+    }
+    const entrySourceId = canonicalEntrySource(this.ctx);
+    const bindingId = createIrBindingId({
+      ownerId: entrySourceId,
+      domain: "callable",
+      role: PROGRAM_ABI_IMPORT_CALLABLE_BINDING_ROLE,
+      ordinal,
+    });
+    const typeContract = cloneProgramAbiCallableTypeContract(callableImportSignature(this.ctx, entry.value));
+    this.session.ensurePlan({
+      id: bindingId,
+      structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
+        domain: "callable",
+        roleOrdinal: PROGRAM_ABI_IMPORT_CALLABLE_ROLE.importedFunction,
+        derivedOrdinal: ordinal,
+      }),
+      structuralReferenceKey: entry.key,
+      displayName: entry.value.name,
+      slotPolicy: "required",
+      slotSpace: "function",
+      intent: {
+        kind: "callable",
+        origin: "import",
+        signature: canonicalProgramAbiCallableTypeContract(typeContract),
+      },
+    });
+    this.session.registerCallableTypeContract(bindingId, typeContract);
+    this.session.registerStructuralReference(bindingId, entry.key);
+    if (!this.session.hasLocator(bindingId, entry.value)) {
+      this.session.attachLocator(bindingId, { kind: "import-function", value: entry.value });
+    }
+    this.plannedByImport.set(entry.value, Object.freeze({ key: entry.key, bindingId, ordinal }));
+    return bindingId;
+  }
+}
+
+function callableImportRegistry(ctx: CodegenContext): ProgramAbiCallableImportRegistry | undefined {
+  const session = ctx.programAbiSession;
+  if (!session) return undefined;
+  return (ctx.programAbiCallableImports ??= new ProgramAbiCallableImportRegistry(session, ctx));
+}
+
 /**
  * Snapshot the exact function-import objects available to pre-DCE lowering.
  *
@@ -221,6 +373,8 @@ function collectProgramAbiCallableImports(ctx: CodegenContext): readonly Program
  * at final publication.
  */
 export function catalogProgramAbiCallableImports(ctx: CodegenContext): ReadonlyMap<string, Import> {
+  const registry = callableImportRegistry(ctx);
+  if (registry) return registry.catalog();
   return new ImmutableProgramAbiImportCatalog(
     collectProgramAbiCallableImports(ctx).map(({ key, value }) => Object.freeze([key, value] as const)),
   );
@@ -236,46 +390,7 @@ export function catalogProgramAbiCallableImports(ctx: CodegenContext): ReadonlyM
  * accidentally mutate or re-key the authoritative population.
  */
 export function planProgramAbiCallableImports(ctx: CodegenContext): ReadonlyMap<string, IrBindingId> {
-  const session = ctx.programAbiSession;
-  if (!session) return EMPTY_PROGRAM_ABI_IMPORT_CATALOG;
-  const entrySourceId = canonicalEntrySource(ctx);
-  const imports = collectProgramAbiCallableImports(ctx);
-  const catalogEntries: Array<readonly [string, IrBindingId]> = [];
-  for (let ordinal = 0; ordinal < imports.length; ordinal++) {
-    const imported = imports[ordinal]!;
-    const bindingId = createIrBindingId({
-      ownerId: entrySourceId,
-      domain: "callable",
-      role: PROGRAM_ABI_IMPORT_CALLABLE_BINDING_ROLE,
-      ordinal,
-    });
-    const typeContract = cloneProgramAbiCallableTypeContract(imported.signature);
-    session.ensurePlan({
-      id: bindingId,
-      structuralOrder: session.structuralOrder.forSource(entrySourceId, {
-        domain: "callable",
-        roleOrdinal: PROGRAM_ABI_IMPORT_CALLABLE_ROLE.importedFunction,
-        derivedOrdinal: ordinal,
-      }),
-      structuralReferenceKey: imported.key,
-      displayName: imported.value.name,
-      slotPolicy: "required",
-      slotSpace: "function",
-      intent: {
-        kind: "callable",
-        origin: "import",
-        signature: canonicalProgramAbiCallableTypeContract(typeContract),
-      },
-    });
-    session.registerCallableTypeContract(bindingId, typeContract);
-    session.registerStructuralReference(bindingId, imported.key);
-    if (!session.hasLocator(bindingId, imported.value)) {
-      session.attachLocator(bindingId, { kind: "import-function", value: imported.value });
-    }
-    catalogEntries.push(Object.freeze([imported.key, bindingId] as const));
-  }
-
-  return new ImmutableProgramAbiImportCatalog<IrBindingId>(catalogEntries);
+  return callableImportRegistry(ctx)?.planRetained() ?? EMPTY_PROGRAM_ABI_IMPORT_CATALOG;
 }
 
 /**
