@@ -819,7 +819,7 @@ export function fixupStructNewResultCoercion(ctx: CodegenContext): void {
  * Must run after ALL other codegen/fixup passes.
  */
 /**
- * (#4072) EXACT (pops, pushes) for a single instruction.
+ * (#4077) EXACT (pops, pushes) for a single instruction.
  *
  * Deliberately NOT the same thing as {@link instrStackDelta}, which returns the
  * NET delta and is documented as "a conservative approximation". Net delta
@@ -998,7 +998,7 @@ function callTargetFuncType(instr: Instr, mod: WasmModule): FuncTypeDef | null {
 }
 
 /**
- * (#4072) Map every `call` / `return_call` in a LINEAR instruction list to the
+ * (#4077) Map every `call` / `return_call` in a LINEAR instruction list to the
  * instruction index that finally produces each of its arguments.
  *
  * WHY THIS EXISTS — the bug it replaces. The previous implementation walked
@@ -1187,7 +1187,7 @@ export function fixupExternConvertAny(ctx: CodegenContext): void {
 
     // Fix return_call/call: ref.null extern where (ref null N) is expected.
     //
-    // (#4072) Preferred path: an exact forward stack model that says which
+    // (#4077) Preferred path: an exact forward stack model that says which
     // instruction produces each argument. Calls it could not model are absent
     // from the map and fall through to the legacy backwards walk below, so this
     // pass can never rewrite fewer call sites than it did before.

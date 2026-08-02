@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
 
-// #4072 — `fixupExternConvertAny`'s call-argument repair paired arguments with
+// #4077 — `fixupExternConvertAny`'s call-argument repair paired arguments with
 // the WRONG parameters, and then retyped a `null` argument with a neighbouring
 // parameter's GC type.
 //
@@ -68,7 +68,7 @@ var result = f({}, "length", null, function () {
 });
 `;
 
-describe("#4072 — call-argument producer attribution is exact", () => {
+describe("#4077 — call-argument producer attribution is exact", () => {
   it("a null argument followed by a closure argument still validates", async () => {
     const binary = await compileStandalone(NULL_ARG_BEFORE_CLOSURE_ARG);
     // Before the fix this was `false`: the null had been retyped to the
