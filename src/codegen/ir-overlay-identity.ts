@@ -8,6 +8,7 @@ import {
 } from "../ir/ast-lowering-plans.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrUnitId } from "../ir/identity.js";
+import { irVal } from "../ir/nodes.js";
 import {
   makeIrIdentityImportedFunctionResolver,
   projectIrIdentityImportedFunctionResolverToLegacy,
@@ -281,7 +282,7 @@ export function projectIrIntegrationLoweringPlans(
     readonly directCalls?: IrIntegrationLoweringPlans["directCalls"];
   } & Pick<
     IrIntegrationLoweringPlans,
-    "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays"
+    "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
   >,
   selection: {
     readonly funcs: ReadonlySet<string>;
@@ -293,9 +294,17 @@ export function projectIrIntegrationLoweringPlans(
   const ownerUnitIdByLegacyName = new Map(
     ownerProjection.entries.map(({ legacyName, unitId }) => [legacyName, unitId]),
   );
+  const activeOwnerUnitIds = new Set(ownerProjection.entries.map(({ unitId }) => unitId));
+  const signaturesByUnitId = new Map(plan.overrideMapByUnitId);
+  const callableSignaturesByUnitId = new Map(signaturesByUnitId);
+  for (const unitId of plan.suspendingAsyncUnitIds) {
+    if (!activeOwnerUnitIds.has(unitId)) continue;
+    const signature = callableSignaturesByUnitId.get(unitId);
+    if (signature) callableSignaturesByUnitId.set(unitId, { ...signature, returnType: irVal({ kind: "externref" }) });
+  }
   const directCallTargets = new Map<string, IrDirectCallTarget>();
   for (const { unitId, legacyName } of ownerProjection.entries) {
-    const signature = plan.overrideMapByUnitId.get(unitId);
+    const signature = callableSignaturesByUnitId.get(unitId);
     if (!signature) continue;
     directCallTargets.set(legacyName, {
       target: irUnitFuncRef({ unitId, name: legacyName }),
@@ -315,11 +324,14 @@ export function projectIrIntegrationLoweringPlans(
     ownerProjection,
     ownerUnitIdByLegacyName,
     directCalls,
-    signaturesByUnitId: plan.overrideMapByUnitId,
+    signaturesByUnitId,
     importedCalls: plan.importedCalls,
     topLevelFunctionValues: plan.topLevelFunctionValues,
     hostVoidCallbacks: plan.hostVoidCallbacks,
     promiseDelays: plan.promiseDelays,
+    suspendingAsyncUnitIds: new Set(
+      [...plan.suspendingAsyncUnitIds].filter((unitId) => activeOwnerUnitIds.has(unitId)),
+    ),
   };
 }
 
