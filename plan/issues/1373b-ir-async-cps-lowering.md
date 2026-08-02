@@ -4,7 +4,7 @@ title: "IR async Phase C: CPS lowering for await + async-return + async-throw"
 status: in-progress
 assignee: ttraenkler/fable-4
 created: 2026-05-09
-updated: 2026-07-18
+updated: 2026-08-02
 priority: top
 feasibility: hard
 model: fable
@@ -24,11 +24,45 @@ loc-budget-allow:
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/builder.ts
+  - src/ir/async-plan.ts
+  - src/ir/index.ts
   - src/ir/integration.ts
   - src/codegen/index.ts
   - src/codegen/context/types.ts
+  - tests/ir/issue-1373b-async-plan.test.ts
 ---
 # #1373b — IR async Phase C: CPS lowering
+
+## Update — AST-free plan/Promise ABI foundation (2026-08-02)
+
+The strict R0 production ledger was re-measured on `origin/main` at
+`b310b3b3c5e`: 5/5 playground entries produced 37 terminal units, 33 IR
+bodies, 35 legacy bodies, and exactly four typed async blockers in
+`website/playground/examples/js/async.ts`:
+
+- `fetchAllParallel` — `select/body-shape-rejected`;
+- `fetchAllSequential` — `select/call-graph-closure`;
+- `fetchUser` and `main` — `select/async-function`.
+
+These are three distinct production populations, so widening or relabeling a
+selector cannot safely close them. This bounded foundation adds
+`src/ir/async-plan.ts`: one immutable, target-neutral `IrAsyncPlan` contract
+with canonical Promise-only ABI, semantic Promise/scheduler intents, explicit
+suspend/resume/rejection-handler edges, typed frame spills, deterministic
+serialization/content hashing, and a fail-closed graph/liveness/purity
+verifier. It rejects AST/checker/codegen callbacks, raw Wasm, target/backend
+selection, concrete Wasm indices, raw-value-or-Promise ABI, bad edges, and
+under/over-reported suspension liveness.
+
+This slice intentionally changes no selector, async activation, planner,
+frame, scheduler, import manifest, or production route. Anti-vacuity tests pin
+the exact four typed outcomes and execute the existing two-suspension frame
+engine, while hand-built plan tests cover two suspends, a branch/back-edge,
+handler routing, exact liveness, target-independent hashes, and malformed-plan
+negative controls. The next critical-path slice is to produce this plan from a
+Prepared async free-function unit and adapt the existing frame engine to
+consume it; it must not build a second suspension engine or revive C-1's
+consumer-sensitive raw-`T` ABI.
 
 ## Implementation Plan (AUTHORITATIVE — re-grounded 2026-07-18, fable-4, fable-final sprint)
 
