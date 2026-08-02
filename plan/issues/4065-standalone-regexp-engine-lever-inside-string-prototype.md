@@ -205,10 +205,28 @@ corpus: **0 / 10 pass**, all 10 failing with exactly
 | `RegExp/S15.10.4.1_A8_T2` (`a\|b\|[]`) | fail | fail |
 | `annexB/.../RegExp-control-escape-russian-letter` | fail | fail |
 
-The Cyrillic file was expected to flip (the Annex B `\c` fallback is
-implemented and passes in isolation) and does **not**: the test also iterates
-ASCII punctuation, so it constructs `\c*`, which needs **quantifiers**. Named
-rather than absorbed.
+### Why the Cyrillic annexB file did NOT flip, though it was expected to
+
+This is the one prediction that failed, so the reason is recorded rather than
+left for the next reader to rediscover.
+
+The Annex B `\c` fallback **is** implemented and **does** work. Measured: all
+**three** assertions the file's Cyrillic loop makes pass in isolation for
+`\cЖ` — it does not wrap around to `String.fromCharCode(0x416 % 32)`, it does
+not match the bare `cЖ`, and it does match the literal text `\cЖ`.
+
+It fails on the **third** loop, which is not about Cyrillic at all
+(lines 27–32): it iterates ASCII `0x00`–`0x7F` and yields every character *not*
+matching `/[0-9A-Za-z_\$(|)\[\]\/\\^]/`. Measured, that set is **56
+characters**, and **6 of them** (`* + . ? { }`) form a quantifier or meta
+construct when appended to `\c`. So the test constructs
+`source = "\\c" + "*"`, i.e. the pattern `\c*` — under Annex B a literal `\`
+followed by `c*`, a **quantifier**. Measured: `\c*` returns
+`TOKEN_UNSUPPORTED` (Node returns `"\ccc"`), so the whole file refuses.
+
+The file therefore needs **quantifier support**, not more escape work. Its
+`es5id` is `15.10.2.10_A2.1_T3`, which makes it look like a sibling of the
+`_T1`/`_T2` files that *did* flip — that resemblance is the trap.
 
 ### Differential probe vs Node (Node is the oracle, computed per case)
 
