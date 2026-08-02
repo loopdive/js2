@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { CompileResult, IrObservedOutcome } from "../src/index.js";
 import { evaluateIrOutcomePolicy } from "../src/ir/outcomes.js";
 import {
+  baselineFrom,
   evaluateIrOnlyReport,
   observeSingleHostLane,
   type IrOnlyBaseline,
@@ -70,6 +71,7 @@ function baseline(overrides: Partial<IrOnlyBaseline["lanes"][string]> = {}): IrO
         terminalUnitFloor: 1,
         emittedFloor: 1,
         irBodyEmittedFloor: 1,
+        legacyBodyEmittedCeiling: 0,
         unsupportedCeiling: 0,
         unsupportedByCode: {},
         invariantCeiling: 0,
@@ -170,6 +172,7 @@ describe("#3519 honest IR-only gate", () => {
           terminalUnitFloor: 2,
           emittedFloor: 1,
           irBodyEmittedFloor: 1,
+          legacyBodyEmittedCeiling: 2,
           unsupportedCeiling: 1,
           unsupportedByCode: { "select/async-function": 1 },
         }),
@@ -183,12 +186,56 @@ describe("#3519 honest IR-only gate", () => {
           terminalUnitFloor: 2,
           emittedFloor: 1,
           irBodyEmittedFloor: 1,
+          legacyBodyEmittedCeiling: 2,
           unsupportedCeiling: 1,
           unsupportedByCode: { "select/async-function": 1 },
         }),
         "ir-only",
       ).ready,
     ).toBe(false);
+  });
+
+  it("banks hybrid legacy-body reductions and rejects growth", () => {
+    const prior = baseline({ legacyBodyEmittedCeiling: 1 });
+    expect(evaluateIrOnlyReport([lane([entry([emitted("ir-only")])])], prior, "hybrid").ready).toBe(true);
+
+    const growth = evaluateIrOnlyReport(
+      [lane([entry([emitted("legacy-a", true), emitted("legacy-b", true)])])],
+      baseline({
+        terminalUnitFloor: 2,
+        emittedFloor: 2,
+        irBodyEmittedFloor: 2,
+        legacyBodyEmittedCeiling: 1,
+      }),
+      "hybrid",
+    );
+    expect(growth.failures).toContain("single-host: legacy-body-emitted population grew 2 > 1");
+  });
+
+  it("records the measured legacy-body population during baseline regeneration", () => {
+    const regenerated = baselineFrom([lane([entry([emitted("legacy", true), emitted("ir")])])]);
+    expect(regenerated.lanes["single-host"]?.legacyBodyEmittedCeiling).toBe(1);
+  });
+
+  it("fails closed when legacy-body evidence or its committed ceiling is unobservable", () => {
+    const missingEvidence = {
+      ...emitted("unobservable"),
+      legacyBodyEmitted: undefined,
+    } as unknown as IrObservedOutcome;
+    const evidenceVerdict = evaluateIrOnlyReport([lane([entry([missingEvidence])])], baseline(), "hybrid");
+    expect(evidenceVerdict.failures).toContain(
+      "single-host/fixture.ts: terminal unobservable lacks observable legacy-body evidence",
+    );
+
+    const baselineWithoutCeiling = baseline();
+    (baselineWithoutCeiling.lanes["single-host"] as Partial<IrOnlyBaseline["lanes"][string]>).legacyBodyEmittedCeiling =
+      undefined;
+    const ceilingVerdict = evaluateIrOnlyReport(
+      [lane([entry([emitted("observed")])])],
+      baselineWithoutCeiling,
+      "hybrid",
+    );
+    expect(ceilingVerdict.failures).toContain("single-host: missing or invalid legacy-body-emitted ceiling");
   });
 
   it("rejects unsupported units without a retained legacy body and malformed body evidence in both policies", () => {

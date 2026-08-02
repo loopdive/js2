@@ -47,6 +47,7 @@ export interface IrOnlyBaselineLane {
   readonly terminalUnitFloor: number;
   readonly emittedFloor: number;
   readonly irBodyEmittedFloor: number;
+  readonly legacyBodyEmittedCeiling: number;
   readonly unsupportedCeiling: number;
   readonly unsupportedByCode: Readonly<Record<string, number>>;
   readonly invariantCeiling: 0;
@@ -224,6 +225,11 @@ export function evaluateIrOnlyReport(
       const compiled = new Set(entry.irCompiledFuncs);
       const skipped = new Set(entry.irFirstSkipped);
       for (const outcome of entry.outcomes) {
+        if (typeof outcome.legacyBodyEmitted !== "boolean") {
+          failures.push(
+            `${lane.name}/${entry.entry}: terminal ${outcome.displayName} lacks observable legacy-body evidence`,
+          );
+        }
         if (outcome.kind === "emitted" && !compiled.has(outcome.displayName)) {
           failures.push(
             `${lane.name}/${entry.entry}: emitted terminal ${outcome.displayName} is absent from irCompiledFuncs`,
@@ -287,6 +293,13 @@ export function evaluateIrOnlyReport(
           `${lane.name}: IR-body-emitted floor regressed ${summary.irBodyEmitted} < ${expected.irBodyEmittedFloor}`,
         );
       }
+      if (!Number.isSafeInteger(expected.legacyBodyEmittedCeiling) || expected.legacyBodyEmittedCeiling < 0) {
+        failures.push(`${lane.name}: missing or invalid legacy-body-emitted ceiling`);
+      } else if (summary.legacyBodyEmitted > expected.legacyBodyEmittedCeiling) {
+        failures.push(
+          `${lane.name}: legacy-body-emitted population grew ${summary.legacyBodyEmitted} > ${expected.legacyBodyEmittedCeiling}`,
+        );
+      }
       if (summary.unsupported > expected.unsupportedCeiling) {
         failures.push(
           `${lane.name}: unsupported population grew ${summary.unsupported} > ${expected.unsupportedCeiling}`,
@@ -320,7 +333,7 @@ export function evaluateIrOnlyReport(
   return { policy, ready: failures.length === 0, lanes: summaries, failures: [...new Set(failures)] };
 }
 
-function baselineFrom(lanes: readonly IrOnlyLaneObservation[]): IrOnlyBaseline {
+export function baselineFrom(lanes: readonly IrOnlyLaneObservation[]): IrOnlyBaseline {
   const baselineLanes: Record<string, IrOnlyBaselineLane> = {};
   for (const summary of lanes.map(summarizeLane)) {
     baselineLanes[summary.name] = {
@@ -328,6 +341,7 @@ function baselineFrom(lanes: readonly IrOnlyLaneObservation[]): IrOnlyBaseline {
       terminalUnitFloor: summary.terminalUnits,
       emittedFloor: summary.emitted,
       irBodyEmittedFloor: summary.irBodyEmitted,
+      legacyBodyEmittedCeiling: summary.legacyBodyEmitted,
       unsupportedCeiling: summary.unsupported,
       unsupportedByCode: summary.unsupportedByCode,
       invariantCeiling: 0,
