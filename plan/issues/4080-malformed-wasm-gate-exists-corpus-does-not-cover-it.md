@@ -154,9 +154,10 @@ matches — all produce **perfectly valid modules**. `WebAssembly.validate` is
 
 1. **(as originally filed)** measure and extend the `malformed_wasm` diff-test
    corpus, for the invalid-Wasm half.
-2. **(new, and probably the larger)** a **value-level differential oracle**:
-   run the same program through the **gc** lane and the **standalone** lane and
-   compare *results*, not validity. Every silent-wrong-answer instance above is
+2. **(new, and probably the larger)** a **value-level differential oracle**
+   — ⚠ **against a REAL ENGINE, not the other lane. See the second correction
+   below before building this.** The originally-proposed gc-vs-standalone
+   comparison is refuted. Every silent-wrong-answer instance above is
    a gc/standalone divergence and would fall out of such an oracle immediately.
 
 Precedent that this is tractable: the #4065 lane already ran a **37-case
@@ -185,3 +186,63 @@ Three instances in one cluster in one session, each found only because a
 conformance test happened to exercise the shape. The invariant that would have
 caught all three at authoring time already runs — it just never sees these
 inputs.
+
+## ⚠⚠ SECOND CORRECTION 2026-08-02 — the gc-vs-standalone oracle is REFUTED
+
+The correction above proposed a **gc-vs-standalone** differential for the
+valid-Wasm/wrong-value half. **That reference is wrong**, refuted by the
+`L-descriptor` lane with a measured table. Recording it here **before the oracle
+gets built against a reference that cannot see the family it is for.**
+
+Measured on `trimEnd`, per coercion shape
+(`0` = nothing thrown · `1` = the user's sentinel, by identity · `2` = threw
+something else):
+
+| shape | Node (truth) | standalone | gc (host) |
+| --- | :--: | :--: | :--: |
+| user `toString` throws | 1 | **1** ✓ | **0** ✗ |
+| user `valueOf` throws | 1 | **1** ✓ | **2** ✗ |
+| user `@@toPrimitive` throws | 1 | **0** ✗ | **2** ✗ |
+| `@@toPrimitive` returns an object (spec TypeError) | 2 | **0** ✗ | 2 ✓ |
+| Symbol receiver (spec TypeError) | 2 | **0** ✗ | 2 ✓ |
+| **argument** `valueOf` throws (`charAt` pos) | 1 | **0** ✗ | **0** ✗ |
+
+**Two independent failure modes, both fatal to a lane-vs-lane oracle:**
+
+1. **Rows 1 and 6 — both lanes are wrong.** A differential reports **AGREE** and
+   stays **silent** on a genuine defect. This is the majority case in the
+   coercion family, so the oracle would be quietest exactly where the bugs are.
+2. **Rows 2 and 3 — the host is wrong in a *different* way.** The differential
+   fires, but the divergence points at the wrong lane. Acting on it would send
+   someone to "fix" standalone toward a host answer that is itself incorrect.
+
+**The host lane is not ground truth.** It silently swallows a throwing user
+`toString` on a reflective `String` method (row 1: Node throws the sentinel, gc
+throws nothing at all). Any instrument that treats one of our own lanes as the
+reference inherits that lane's bugs as its definition of correct — the
+[[reference_broken_instrument_can_still_give_right_answer]] shape, promoted to
+infrastructure.
+
+**Requirement, therefore:** the oracle's reference must be a **real engine**
+(Node), and each comparison needs **three axes**, not one:
+
+- **capability** — the non-throwing path still works (catches "gave up loudly",
+  i.e. satisfying a throw-assertion by refusing the whole operation);
+- **propagation** — a user throw escapes at all;
+- **identity** — `caught === sentinel` (catches a TypeError *manufactured at the
+  wrong step*, which satisfies the test while testing nothing).
+
+That design was validated in-lane before use: a positive control (`throw
+sentinel` direct / via a callee / via a builtin callback) scored **21/21 in both
+lanes**, so an identity MISS is the coercion path and not the instrument.
+
+**Precedent that a real-engine differential is tractable:** the #4065 lane
+hand-ran a 37-case differential against Node (29 agree / 8 loud refusals /
+**0 wrong / 0 miss**). The proposal is to make that standing rather than
+per-lane improvisation.
+
+**Corollary already paid for:** a bucket named "missing throw" is satisfied by
+*any* throw. In the #2875 partition, shapes 4 and 5 above would have booked
+flips without touching the three propagation shapes that actually need identity
+— i.e. a real conformance gain that leaves the defect in place. Size and audit
+such buckets on identity, never on "an exception appeared".
