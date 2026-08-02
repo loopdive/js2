@@ -1,13 +1,21 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { Instr } from "../../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { buildClosureResultBoxing } from "./result-boxing.js";
 
 export interface TransferredNativeReceiverEntry {
   typeIdx: number;
   funcTypeIdx: number;
   /** Declared USER parameter count (closure params minus the `thisValue` slot). */
   declaredUserArity: number;
+  /**
+   * (#4082) The closure's declared result type, so this arm can lower it to the
+   * externref the `__call_fn_method_N` ABI returns. Without it the arm assumed
+   * `call_ref` already yields an externref — see the note on
+   * {@link buildTransferredNativeProtoCallInstrs}.
+   */
+  returnType: ValType | null;
 }
 
 /**
@@ -59,7 +67,12 @@ export function collectTransferredNativeProtoReceivers(
     // The shared base wrapper is also in the set but has no such field, and
     // dispatching on it would capture every structurally equal closure.
     if (!ctx.builtinFnMetaByTypeIdx?.has(typeIdx)) continue;
-    entries.push({ typeIdx, funcTypeIdx: info.funcTypeIdx, declaredUserArity: info.paramTypes.length - 1 });
+    entries.push({
+      typeIdx,
+      funcTypeIdx: info.funcTypeIdx,
+      declaredUserArity: info.paramTypes.length - 1,
+      returnType: info.returnType,
+    });
   }
   return entries;
 }
@@ -92,16 +105,33 @@ export function resolveClosureBaseWrapperTypeIdx(
  * `0` = thisVal, `1` = closure, `2 … arity+1` = the user args. `arity` is the
  * USER arity — one less than the closure's declared param count.
  *
- * Stack balance: each arm pushes exactly one externref (the `call_ref` result)
- * and immediately sinks it into `resultSaveLocal`, so the arm is stack-neutral
- * up to its own `return`; the enclosing `if` is `blockType: empty`.
+ * Stack balance: each arm pushes exactly one externref and immediately sinks it
+ * into `resultSaveLocal`, so the arm is stack-neutral up to its own `return`;
+ * the enclosing `if` is `blockType: empty`.
+ *
+ * (#4082) That externref is produced by `buildClosureResultBoxing`, NOT by
+ * `call_ref` directly.
+ * This comment used to claim the `call_ref` result *was* the externref, and the
+ * arm emitted no coercion — true only for reference-returning closures. A
+ * closure returning i32 (`RegExp.prototype.test`) pushed an i32 into the
+ * externref `resultSaveLocal` and the module failed validation:
+ * `local.set[0] expected type externref, found call_ref of type i32`. The
+ * caller supplies the same boxing every other dispatch arm in this ABI uses, so
+ * there is one decision rather than a per-arm copy.
  */
 export function buildTransferredNativeProtoCallInstrs(
+  ctx: CodegenContext,
   entries: TransferredNativeReceiverEntry[],
   arity: number,
-  slots: { anyLocal: number; resultSaveLocal: number; prevThisLocal: number; currentThisGlobalIdx: number },
+  slots: {
+    anyLocal: number;
+    resultSaveLocal: number;
+    prevThisLocal: number;
+    currentThisGlobalIdx: number;
+    boxNumberIdx: number | undefined;
+  },
 ): Instr[] {
-  const { anyLocal, resultSaveLocal, prevThisLocal, currentThisGlobalIdx } = slots;
+  const { anyLocal, resultSaveLocal, prevThisLocal, currentThisGlobalIdx, boxNumberIdx } = slots;
   const body: Instr[] = [];
   for (const entry of entries) {
     // Supplied args come from locals 2 … arity+1; any trailing slot the closure
@@ -139,6 +169,9 @@ export function buildTransferredNativeProtoCallInstrs(
               { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: 0 },
               { op: "ref.cast", typeIdx: entry.funcTypeIdx },
               { op: "call_ref", typeIdx: entry.funcTypeIdx },
+              // (#4082) Lower the callee's ACTUAL result to the ABI's externref
+              // before it reaches the externref `resultSaveLocal`.
+              ...buildClosureResultBoxing(ctx, entry.returnType, boxNumberIdx),
               { op: "local.set", index: resultSaveLocal },
               { op: "local.get", index: prevThisLocal },
               { op: "global.set", index: currentThisGlobalIdx },
