@@ -1,7 +1,8 @@
 ---
 id: 4094
 title: "Enqueue eligibility: a PR behind ONLY by [skip ci] commits counts as enqueueable — break the BEHIND-churn loop at its narrow end"
-status: ready
+status: done
+completed: 2026-08-02
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
