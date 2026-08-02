@@ -139,7 +139,6 @@ describe("#1700 TypedArray export-parameter marshalling", () => {
     // `__vec_len` directly to confirm the vec made it across.
     const r = await compile(`export function echoBytes(input: Uint8Array): Uint8Array { return input; }`, {
       target: "wasi",
-      hostBridge: "always",
     });
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
     expect(r.exportSignatures?.echoBytes?.result).toBe("uint8array");

@@ -39,7 +39,7 @@ const SRC = `
 `;
 
 async function makeInstance(): Promise<{ run: () => void; getOut: () => number }> {
-  const r = await compile(SRC, { fileName: "t.ts", target: "standalone", hostBridge: "always" });
+  const r = await compile(SRC, { fileName: "t.ts", target: "standalone" });
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
   // Point the module-level callback bridge at THIS instance's exports — the

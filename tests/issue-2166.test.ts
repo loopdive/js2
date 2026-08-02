@@ -22,7 +22,7 @@ import { compile } from "../src/index.js";
 type Mode = { label: string; opts: Record<string, unknown> };
 const MODES: Mode[] = [
   { label: "host", opts: {} },
-  { label: "standalone", opts: { target: "standalone", hostBridge: "always" } },
+  { label: "standalone", opts: { target: "standalone" } },
 ];
 
 async function runBool(src: string, opts: Record<string, unknown>): Promise<unknown> {
@@ -96,7 +96,7 @@ async function standaloneNum(body: string, target: "standalone" | "wasi" = "stan
 }
 
 async function expectRefused(body: string): Promise<void> {
-  const r = await compile(body, { target: "standalone", hostBridge: "always" });
+  const r = await compile(body, { target: "standalone" });
   expect(r.success, `expected compile failure for:\n${body}`).toBe(false);
   expect(r.errors.some((e) => /#1599/.test(e.message))).toBe(true);
 }

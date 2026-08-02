@@ -38,8 +38,7 @@ type Lane = "host" | "standalone";
 const LANES: Lane[] = ["host", "standalone"];
 
 async function run(source: string, lane: Lane): Promise<unknown> {
-  const opts =
-    lane === "standalone" ? ({ target: "standalone", nativeStrings: true, hostBridge: "always" } as const) : {};
+  const opts = lane === "standalone" ? ({ target: "standalone", nativeStrings: true } as const) : {};
   const r = await compile(source, { fileName: "test.ts", ...opts });
   expect(r.success, r.success ? "" : r.errors.map((e) => e.message).join("\n")).toBe(true);
   if (!r.success) return undefined;

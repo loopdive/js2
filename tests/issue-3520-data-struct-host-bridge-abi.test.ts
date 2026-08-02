@@ -308,7 +308,6 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
     const standalone = await compile(DATA_SOURCE, {
       fileName: "issue-3520-data-struct-standalone-token.ts",
       target: "standalone",
-      hostBridge: "always",
       experimentalIR: true,
     });
     expect(standalone.success, standalone.errors.map((error) => error.message).join("\n")).toBe(true);
