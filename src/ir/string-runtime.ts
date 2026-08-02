@@ -1,14 +1,21 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /** String operations whose observable behavior is shared by every IR backend. */
-export type IrStringRuntimeIntrinsic = "constant" | "concat" | "length" | "char-at" | "char-code-at";
+export type IrStringRuntimeIntrinsic = "constant" | "concat" | "equals" | "length" | "char-at" | "char-code-at";
 
 /** Audited producer evidence consumed by linear string backends. */
 export type IrStringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";
 export type IrStringConcatMode = "immutable" | "owned-append";
 
 export type IrStringRuntimeOperand = "string" | "number-index";
-export type IrStringRuntimeResult = "string" | "number";
+export type IrStringRuntimeResult = "string" | "number" | "boolean";
+
+/** Backend-neutral callable intents attached during final IR preparation. */
+export const IR_STRING_CONCAT_FN = "__ir_string_concat";
+export const IR_STRING_CONCAT_OWNED_FN = "__ir_string_concat_owned";
+export const IR_STRING_EQUALS_FN = "__ir_string_equals";
+export const IR_STRING_CHAR_AT_FN = "__ir_string_char_at";
+export const IR_STRING_CHAR_CODE_AT_FN = "__ir_string_char_code_at";
 
 export interface IrStringIndexContract {
   readonly conversion: "ToIntegerOrInfinity";
@@ -48,6 +55,11 @@ export const IR_STRING_RUNTIME: Readonly<Record<IrStringRuntimeIntrinsic, IrStri
     operands: Object.freeze(["string", "string"] as const),
     result: "string",
     allocatesResult: true,
+  }),
+  equals: Object.freeze({
+    operands: Object.freeze(["string", "string"] as const),
+    result: "boolean",
+    allocatesResult: false,
   }),
   length: Object.freeze({ operands: Object.freeze(["string"] as const), result: "number", allocatesResult: false }),
   "char-at": Object.freeze({

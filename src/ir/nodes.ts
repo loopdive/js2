@@ -1163,6 +1163,8 @@ export interface IrInstrStringConcat extends IrInstrBase {
   readonly encodingEvidence?: IrStringEncoding;
   /** `owned-append` is legal only after the producer proves prior values unobservable. */
   readonly concatMode?: IrStringConcatMode;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -1174,6 +1176,8 @@ export interface IrInstrStringEq extends IrInstrBase {
   readonly lhs: IrValueId;
   readonly rhs: IrValueId;
   readonly negate: boolean;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -1213,6 +1217,8 @@ export interface IrInstrStringCharAt extends IrInstrBase {
   readonly index: IrValueId;
   readonly inputEncoding: IrStringEncoding;
   readonly encodingEvidence: IrStringEncoding;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /** Return one UTF-16 code unit as f64, or NaN out of bounds. */
@@ -1222,6 +1228,8 @@ export interface IrInstrStringCharCodeAt extends IrInstrBase {
   /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
   readonly index: IrValueId;
   readonly inputEncoding: IrStringEncoding;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 // ---------------------------------------------------------------------------

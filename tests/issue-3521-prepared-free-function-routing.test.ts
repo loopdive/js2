@@ -52,6 +52,69 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).literalLength!()).toBe(3);
   });
 
+  it.each([
+    ["gc", "prepared-host-string-callables.ts"],
+    ["standalone", "prepared-native-string-callables.ts"],
+  ] as const)("dependency-seals %s concat, equality, and character providers", async (target, fileName) => {
+    const result = await compile(
+      `
+      export function concatEquals(): boolean { return "a" + "b" === "ab"; }
+      export function characterCode(): number { return "abc".charAt(1).charCodeAt(0); }
+      `,
+      {
+        fileName,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    for (const name of ["concatEquals", "characterCode"]) {
+      expect(outcome(result, name)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      expect(outcome(result, name).preparedComponentId).toMatch(/^prepared-component:/);
+    }
+    const exports = await instantiate(result);
+    expect(exports.concatEquals!()).toBe(1);
+    expect(exports.characterCode!()).toBe(98);
+  });
+
+  it.each([
+    ["gc", "prepared-host-owned-append.ts"],
+    ["standalone", "prepared-native-owned-append.ts"],
+  ] as const)("dependency-seals the %s owned-append provider", async (target, fileName) => {
+    const result = await compile(
+      `
+      export function builderLength(count: number): number {
+        let value = "";
+        for (let index = 0; index < count; index++) value += "ab";
+        return value.length;
+      }
+      `,
+      {
+        fileName,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(outcome(result, "builderLength")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(outcome(result, "builderLength").preparedComponentId).toMatch(/^prepared-component:/);
+    expect((await instantiate(result)).builderLength!(4)).toBe(8);
+  });
+
   it("IR-owns a string-method body outside the retired primitive skip allowlist", async () => {
     const code = `function codeAtStart(value: string): number { return value.charCodeAt(0); }`;
     expect(irFirstBodyIsProvenLowerable(firstFunction(code), new Map([["codeAtStart", 1]]))).toBe(false);

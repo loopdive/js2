@@ -335,6 +335,22 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
             }
           }
           return;
+        } else if (
+          (nested.kind === "string.concat" ||
+            nested.kind === "string.eq" ||
+            nested.kind === "string.char_at" ||
+            nested.kind === "string.char_code_at") &&
+          nested.provider
+        ) {
+          const problem = callableReferenceProblem(nested.provider);
+          if (problem !== null) {
+            errors.push({
+              message: `${nested.kind} provider ${problem}`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+          return;
         } else {
           return;
         }

@@ -255,9 +255,9 @@ export interface IrLowerResolver {
   // Optional — resolvers/callers that omit it get the i16 path (byte-identical).
   emitStringConst?(value: string, alloc?: AllocSiteId, storage?: IrGlobalRef): readonly Instr[];
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
-  emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode): readonly Instr[];
+  emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
-  emitStringEquals?(): readonly Instr[];
+  emitStringEquals?(provider?: IrFuncRef): readonly Instr[];
   /**
    * `[call length]` (host) or `[struct.get $AnyString $len]` (native).
    * Result is i32 — the `string.len` IR instr appends an
@@ -265,8 +265,8 @@ export interface IrLowerResolver {
    */
   emitStringLen?(inputEncoding?: IrStringEncoding, provider?: IrStringLengthProvider): readonly Instr[];
   /** Typed character operations consume an already-normalized i32 index. */
-  emitStringCharAt?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding): readonly Instr[];
-  emitStringCharCodeAt?(inputEncoding?: IrStringEncoding): readonly Instr[];
+  emitStringCharAt?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
+  emitStringCharCodeAt?(inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
   /**
    * Slice 9 (#1169h): resolve (and lazily register) the shared `__exn`
    * exception tag. The tag carries an `externref` payload — every
@@ -1736,13 +1736,13 @@ export function lowerIrFunctionBody<S, Slot>(
       case "string.concat": {
         emitValue(instr.lhs, out);
         emitValue(instr.rhs, out);
-        emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out);
+        emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out, instr.provider);
         return;
       }
       case "string.eq": {
         emitValue(instr.lhs, out);
         emitValue(instr.rhs, out);
-        emitter.emitStringEquals(instr.negate, out);
+        emitter.emitStringEquals(instr.negate, out, instr.provider);
         return;
       }
       case "string.len": {
@@ -1753,13 +1753,13 @@ export function lowerIrFunctionBody<S, Slot>(
       case "string.char_at": {
         emitValue(instr.value, out);
         emitValue(instr.index, out);
-        emitter.emitStringCharAt(instr.alloc, instr.inputEncoding, out);
+        emitter.emitStringCharAt(instr.alloc, instr.inputEncoding, out, instr.provider);
         return;
       }
       case "string.char_code_at": {
         emitValue(instr.value, out);
         emitValue(instr.index, out);
-        emitter.emitStringCharCodeAt(instr.inputEncoding, out);
+        emitter.emitStringCharCodeAt(instr.inputEncoding, out, instr.provider);
         return;
       }
       case "object.new": {

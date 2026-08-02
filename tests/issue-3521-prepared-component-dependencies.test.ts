@@ -12,6 +12,7 @@ import {
 import {
   irCallableBindingKey,
   irImportFuncRef,
+  irIntrinsicFuncRef,
   irSupportFuncRef,
   irUnitCallableBindingId,
   irUnitFuncRef,
@@ -33,6 +34,13 @@ import {
 } from "../src/ir/prepared-component-dependencies.js";
 import { attachIrStringCarrier } from "../src/ir/string-carrier.js";
 import { attachIrStringSupport } from "../src/ir/string-support.js";
+import {
+  IR_STRING_CHAR_AT_FN,
+  IR_STRING_CHAR_CODE_AT_FN,
+  IR_STRING_CONCAT_FN,
+  IR_STRING_CONCAT_OWNED_FN,
+  IR_STRING_EQUALS_FN,
+} from "../src/ir/string-runtime.js";
 import { ts } from "../src/ts-api.js";
 
 const VOID_SIGNATURE = Object.freeze({ params: Object.freeze([]), results: Object.freeze([]) });
@@ -521,6 +529,123 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     expect(report.components[0]!.status).toBe("complete");
     expect(new Set(report.components[0]!.abiDependencies.map((dependency) => dependency.bindingId))).toEqual(
       new Set([carrierRef.binding.bindingId, storage.binding.bindingId, callableBindingId]),
+    );
+  });
+
+  it("turns final string operations into exact callable dependencies without collapsing owned append", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
+    const operations: readonly IrInstr[] = [
+      {
+        kind: "string.concat",
+        result: asValueId(0),
+        resultType: { kind: "string" },
+        lhs: asValueId(20),
+        rhs: asValueId(21),
+        encodingEvidence: "ascii",
+        concatMode: "immutable",
+      },
+      {
+        kind: "string.concat",
+        result: asValueId(1),
+        resultType: { kind: "string" },
+        lhs: asValueId(22),
+        rhs: asValueId(23),
+        encodingEvidence: "ascii",
+        concatMode: "owned-append",
+      },
+      {
+        kind: "string.eq",
+        result: asValueId(2),
+        resultType: irVal({ kind: "bool" }),
+        lhs: asValueId(24),
+        rhs: asValueId(25),
+        negate: false,
+      },
+      {
+        kind: "string.char_at",
+        result: asValueId(3),
+        resultType: { kind: "string" },
+        value: asValueId(26),
+        index: asValueId(27),
+        inputEncoding: "wtf16",
+        encodingEvidence: "wtf16",
+      },
+      {
+        kind: "string.char_code_at",
+        result: asValueId(4),
+        resultType: irVal({ kind: "f64" }),
+        value: asValueId(28),
+        index: asValueId(29),
+        inputEncoding: "wtf16",
+      },
+    ];
+    const withCarrier = attachIrStringCarrier(irFunction(f.first, operations), carrierRef).function;
+    const prepared = attachIrStringSupport(withCarrier, {
+      storageForConst: () => undefined,
+      providerForLength: () => undefined,
+    });
+    expect(
+      attachIrStringSupport(prepared, {
+        storageForConst: () => undefined,
+        providerForLength: () => undefined,
+      }),
+    ).toBe(prepared);
+
+    const symbols = [
+      IR_STRING_CONCAT_FN,
+      IR_STRING_CONCAT_OWNED_FN,
+      IR_STRING_EQUALS_FN,
+      IR_STRING_CHAR_AT_FN,
+      IR_STRING_CHAR_CODE_AT_FN,
+    ];
+    expect(prepared.blocks[0]!.instrs).toEqual(
+      symbols.map((symbol, index) =>
+        expect.objectContaining({
+          kind: operations[index]!.kind,
+          provider: expect.objectContaining({ binding: { kind: "intrinsic", symbol } }),
+        }),
+      ),
+    );
+
+    const providerRefs = symbols.map((symbol) => irIntrinsicFuncRef(symbol));
+    const providerIds = providerRefs.map((_ref, ordinal) =>
+      createIrBindingId({
+        ownerId: f.sourceId,
+        domain: "callable",
+        role: "string-provider",
+        ordinal,
+      }),
+    );
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [prepared] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([
+        sourceCallableEntry(f.first.id),
+        {
+          id: carrierRef.binding.bindingId,
+          structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+          slotPolicy: "none",
+          intent: { kind: "type", shapeKey: '{"kind":"externref"}' },
+        },
+        ...providerRefs.map(
+          (ref, index): PreparedComponentAbiEntry => ({
+            id: providerIds[index]!,
+            structuralReferenceKey: irCallableBindingKey(ref.binding),
+            slotPolicy: "required",
+            intent: { kind: "callable", origin: "intrinsic" },
+          }),
+        ),
+      ]),
+    });
+
+    expect(report.components[0]!.status).toBe("complete");
+    expect(new Set(report.components[0]!.externalCallables.map((entry) => entry.structuralReferenceKey))).toEqual(
+      new Set(providerRefs.map((ref) => irCallableBindingKey(ref.binding))),
+    );
+    expect(new Set(report.components[0]!.abiDependencies.map((dependency) => dependency.bindingId))).toEqual(
+      new Set([carrierRef.binding.bindingId, ...providerIds]),
     );
   });
 

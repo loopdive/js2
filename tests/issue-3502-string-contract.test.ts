@@ -325,7 +325,7 @@ describe("#3502 backend-neutral string contract", () => {
         memoryPlan: report!.memoryPlan,
         prefs: { gc: false },
       }),
-    ).toThrow("porffor assembler: unresolved function '__linear_ir_str_char_code_at'");
+    ).toThrow("porffor assembler: unresolved intrinsic '__linear_ir_str_char_code_at'");
 
     const { instance } = await WebAssembly.instantiate(compiled.binary, compiled.importObject ?? {});
     const exports = instance.exports as Record<string, WebAssembly.ExportValue>;
@@ -371,11 +371,44 @@ describe("#3502 backend-neutral string contract", () => {
       allocator: "bump",
     });
     const expressionReport = getLastLinearIrReport();
-    expect(expressionReport?.compiled).toStrictEqual([]);
+    expect(expressionReport?.compiled).toStrictEqual(["elseJoin"]);
     expect(expressionReport?.rejected).toStrictEqual([
-      { func: "elseJoin", reason: "select:body-shape-rejected", detail: undefined },
       { func: "ternaryJoin", reason: "select:body-shape-rejected", detail: undefined },
       { func: "shortCircuitJoin", reason: "select:body-shape-rejected", detail: undefined },
     ]);
+
+    const executableExpression = await compile(
+      `
+        /** @param {number} take @param {string} input @returns {number} */
+        export function elseJoin(take, input) {
+          let text = "A";
+          if (take > 0) text = "B";
+          else text = input;
+          return text.charCodeAt(0) === input.charCodeAt(0) ? 1 : 0;
+        }
+      `,
+      {
+        fileName: "issue-3502-executable-else-join.js",
+        target: "linear",
+        allocator: "bump",
+      },
+    );
+    expect(executableExpression.success, executableExpression.errors.map((error) => error.message).join("\n")).toBe(
+      true,
+    );
+    const expressionInstance = await WebAssembly.instantiate(
+      executableExpression.binary,
+      executableExpression.importObject ?? {},
+    );
+    const expressionExports = expressionInstance.instance.exports as Record<string, WebAssembly.ExportValue>;
+    const expressionMemory = expressionExports.memory;
+    const elseJoin = expressionExports.elseJoin;
+    if (!(expressionMemory instanceof WebAssembly.Memory) || typeof elseJoin !== "function") {
+      throw new Error("linear expression-join exports are incomplete");
+    }
+    const expressionInputPointer = 60_000;
+    writeLinearUtf8String(expressionMemory, expressionInputPointer, "é");
+    expect((elseJoin as (take: number, input: number) => number)(0, expressionInputPointer)).toBe(1);
+    expect((elseJoin as (take: number, input: number) => number)(1, expressionInputPointer)).toBe(0);
   });
 });

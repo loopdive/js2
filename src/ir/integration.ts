@@ -253,6 +253,13 @@ import {
 } from "./prepared-component-dependencies.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
+import {
+  IR_STRING_CHAR_AT_FN,
+  IR_STRING_CHAR_CODE_AT_FN,
+  IR_STRING_CONCAT_FN,
+  IR_STRING_CONCAT_OWNED_FN,
+  IR_STRING_EQUALS_FN,
+} from "./string-runtime.js";
 export {
   buildIrIntegrationReport,
   caughtIntegrationFailure,
@@ -3877,6 +3884,32 @@ function resolveAndObserveCallableProvider(ctx: CodegenContext, ref: IrFuncRef):
     } else {
       index = ctx.funcMap.get("string_compare");
     }
+  } else if (
+    ref.binding.kind === "intrinsic" &&
+    (symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN || symbol === IR_STRING_EQUALS_FN)
+  ) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      const helper =
+        symbol === IR_STRING_CONCAT_OWNED_FN
+          ? "__str_concat_owned"
+          : symbol === IR_STRING_CONCAT_FN
+            ? "__str_concat"
+            : "__str_equals";
+      index = nativeStrHelperHandle(ctx, helper);
+    } else {
+      const field = symbol === IR_STRING_EQUALS_FN ? "equals" : "concat";
+      index = exactCallableImportIndex(ctx, "wasm:js-string", field);
+    }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_AT_FN) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, "__str_charAt");
+    } else {
+      index = exactCallableImportIndex(ctx, "env", "string_charAt");
+    }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
+    index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
   } else {
     index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol);
   }
@@ -3888,6 +3921,16 @@ function resolveAndObserveCallableProvider(ctx: CodegenContext, ref: IrFuncRef):
     );
   }
   return registry?.observe(ref, index) ?? index;
+}
+
+function exactCallableImportIndex(ctx: CodegenContext, module: string, field: string): number | undefined {
+  let functionIndex = 0;
+  for (const imported of ctx.mod.imports) {
+    if (imported.desc.kind !== "func") continue;
+    if (imported.module === module && imported.name === field) return functionIndex;
+    functionIndex++;
+  }
+  return undefined;
 }
 
 function makeResolver(
@@ -4154,7 +4197,10 @@ function makeResolver(
       }
       return [{ op: "global.get", index: globalIdx }];
     },
-    emitStringConcat(_alloc, mode): readonly Instr[] {
+    emitStringConcat(_alloc, mode, provider): readonly Instr[] {
+      if (provider) {
+        return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
+      }
       if (ctx.nativeStrings) {
         // (#3744) `owned-append` — the builder-loop license computed by
         // `collectOwnedStringAppendSymbols`; see src/ir/string-builder-shape.ts.
@@ -4173,7 +4219,10 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: wasm:js-string concat not registered");
       return [{ op: "call", funcIdx: idx }];
     },
-    emitStringEquals(): readonly Instr[] {
+    emitStringEquals(provider): readonly Instr[] {
+      if (provider) {
+        return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
+      }
       if (ctx.nativeStrings) {
         const idx = stringBackend.nativeHelpers.get("__str_equals");
         if (idx === undefined) {
@@ -4207,7 +4256,11 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: wasm:js-string length not registered");
       return [{ op: "call", funcIdx: idx }];
     },
-    emitStringCharAt(): readonly Instr[] {
+    emitStringCharAt(_alloc, _inputEncoding, provider): readonly Instr[] {
+      if (provider) {
+        const call = { op: "call" as const, funcIdx: resolver.resolveFunc(provider) };
+        return ctx.nativeStrings ? [call] : [{ op: "f64.convert_i32_s" }, call];
+      }
       if (ctx.nativeStrings) {
         // (#3909) stable handle first — see `nativeStrHelperHandle`.
         const h = nativeStrHelperHandle(ctx, "__str_charAt");
@@ -4218,7 +4271,10 @@ function makeResolver(
       if (idx === undefined) throw new Error("ir/integration: string_charAt import not registered");
       return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: idx }];
     },
-    emitStringCharCodeAt(): readonly Instr[] {
+    emitStringCharCodeAt(_inputEncoding, provider): readonly Instr[] {
+      if (provider) {
+        return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
+      }
       const idx = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
       if (idx === null) throw new Error("ir/integration: guarded charCodeAt helper unavailable");
       return [{ op: "call", funcIdx: idx }];
@@ -4303,6 +4359,11 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
     case "class.static_call":
     case "class.new":
       return instr.target;
+    case "string.concat":
+    case "string.eq":
+    case "string.char_at":
+    case "string.char_code_at":
+      return instr.provider;
     default:
       return undefined;
   }
@@ -4447,10 +4508,12 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   const literals = new Set<string>();
   let usesStringOp = false;
   let usesStringLen = false;
+  let usesStringCharAt = false;
   const walk = (instr: IrInstr): void => {
     if (instrUsesStrings(instr)) usesStringOp = true;
     if (instr.kind === "string.const") literals.add(instr.value);
     if (instr.kind === "string.len") usesStringLen = true;
+    if (instr.kind === "string.char_at") usesStringCharAt = true;
     // (#3156) The host guarded-charCodeAt helper wraps the `wasm:js-string`
     // charCodeAt/length builtins — its materialization (resolveFunc) reads
     // `ctx.jsStringImports`, so `addStringImports` must have run BEFORE
@@ -4512,6 +4575,13 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     // by the legacy path) are no-ops.
     for (const value of literals) {
       addStringConstantGlobal(ctx, value);
+    }
+    if (usesStringCharAt && exactCallableImportIndex(ctx, "env", "string_charAt") === undefined) {
+      ensureLateImport(ctx, "string_charAt", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+      if (exactCallableImportIndex(ctx, "env", "string_charAt") === undefined) {
+        throw new Error("ir/integration: prepared string.char_at has no exact env.string_charAt import");
+      }
     }
   }
   // Native strings: nothing to pre-register here. The native-string struct

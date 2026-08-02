@@ -1,16 +1,24 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
-import { sameIrCallableBinding } from "./callable-bindings.js";
+import { irIntrinsicFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
 import {
   mapNestedBuffers,
   type IrFunction,
+  type IrFuncRef,
   type IrGlobalRef,
   type IrInstr,
   type IrInstrStringConst,
   type IrInstrStringLen,
   type IrStringLengthProvider,
 } from "./nodes.js";
+import {
+  IR_STRING_CHAR_AT_FN,
+  IR_STRING_CHAR_CODE_AT_FN,
+  IR_STRING_CONCAT_FN,
+  IR_STRING_CONCAT_OWNED_FN,
+  IR_STRING_EQUALS_FN,
+} from "./string-runtime.js";
 
 export interface IrStringSupportProviders {
   readonly storageForConst: (instr: IrInstrStringConst) => IrGlobalRef | undefined;
@@ -38,6 +46,22 @@ function sameLengthProvider(left: IrStringLengthProvider, right: IrStringLengthP
     left.fieldIndex === right.fieldIndex &&
     irTypeBindingKey(left.ownerType.binding) === irTypeBindingKey(right.ownerType.binding)
   );
+}
+
+/** Semantic callable selected from final string IR, before backend binding. */
+export function irStringCallableProviderRef(instr: IrInstr): IrFuncRef | undefined {
+  switch (instr.kind) {
+    case "string.concat":
+      return irIntrinsicFuncRef(instr.concatMode === "owned-append" ? IR_STRING_CONCAT_OWNED_FN : IR_STRING_CONCAT_FN);
+    case "string.eq":
+      return irIntrinsicFuncRef(IR_STRING_EQUALS_FN);
+    case "string.char_at":
+      return irIntrinsicFuncRef(IR_STRING_CHAR_AT_FN);
+    case "string.char_code_at":
+      return irIntrinsicFuncRef(IR_STRING_CHAR_CODE_AT_FN);
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -72,6 +96,21 @@ export function attachIrStringSupport(fn: IrFunction, providers: IrStringSupport
       if (nested.provider) {
         if (!sameLengthProvider(nested.provider, provider)) {
           throw new Error("IR string.len already carries a different prepared provider binding");
+        }
+        return nested;
+      }
+      return { ...nested, provider };
+    }
+    if (
+      nested.kind === "string.concat" ||
+      nested.kind === "string.eq" ||
+      nested.kind === "string.char_at" ||
+      nested.kind === "string.char_code_at"
+    ) {
+      const provider = irStringCallableProviderRef(nested)!;
+      if (nested.provider) {
+        if (!sameIrCallableBinding(nested.provider.binding, provider.binding)) {
+          throw new Error(`IR ${nested.kind} already carries a different prepared provider binding`);
         }
         return nested;
       }

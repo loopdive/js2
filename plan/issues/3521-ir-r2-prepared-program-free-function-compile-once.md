@@ -679,6 +679,71 @@ transaction remain after those instruction families. This slice unlocks more
 pre-lowering component seals but does not change the retirement-lane headline
 or make the legacy path removable yet.
 
+## Symbolic string callable continuation (2026-08-02)
+
+The remaining non-iteration string instructions now carry exact callable
+dependencies in final IR instead of rediscovering backend indices while the
+body is emitted:
+
+- immutable `string.concat`, owned-append `string.concat`, `string.eq`,
+  `string.char_at`, and `string.char_code_at` each receive a backend-neutral
+  intrinsic ref after inference and all middle-end passes;
+- host preparation binds those refs to the exact `wasm:js-string.concat`,
+  `wasm:js-string.equals`, `env.string_charAt`, and guarded host char-code
+  providers. A char-at-only component now registers and verifies the exact
+  import before provider planning rather than trusting the compatibility
+  function map;
+- native preparation binds the same intents to stable handles for
+  `__str_concat`, `__str_concat_owned`, `__str_equals`, `__str_charAt`, and
+  `__str_charCodeAt`; and
+- dependency discovery records all five semantic callable identities before
+  the prepared component scope seals. Reattachment is idempotent and rejects
+  binding drift.
+
+Owned append deliberately remains a distinct semantic intent even though the
+host backend aliases it to ordinary concat. This preserves the migrated legacy
+string-builder optimization on the native backend: production disassembly now
+proves the prepared IR body calls `__str_concat_owned`, and the existing growth
+boundary and string-hash runtime matrix remains green. The compatibility
+numeric-index branches remain only for unprepared callers; sealed production
+components lower through their exact provider refs.
+
+The focused Program ABI, prepared-program, scoped-seal, production-routing,
+string-contract, and owned-append matrix is **96/96 passing**. The expanded
+numeric-local and host/native string matrix is **238/238 passing**, including
+all ten `str_to_utf8` cases. Typecheck, lint, targeted formatting, fallback
+ratchet, optimization-retirement ledger, adoption check, LOC budget, and
+function budget pass. The fallback shape diagnostic reports **0 attributed
+body-shape rejections**.
+
+The required broad completion command remains **104/106 passing**, with the
+same inline-small tail-call assertion and imported-overload inventory-owner
+failure recorded by the parent slice. Cross-backend differential coverage is
+**29/29 passing**. The full equivalence gate again reports **1,605 passing**
+and **38 failing** against its 36-entry baseline: the same six function-value,
+branch-hoisting, and function-property `typeof` failures remain outside that
+stale baseline. The first local equivalence attempt lost its worker IPC channel
+before writing a report; an otherwise identical single-fork rerun with a 1.5
+GiB test heap completed and produced these counts.
+
+Hybrid readiness remains **31/37 IR-emitted**, **6 typed Unsupported**, **0
+invariants**, and READY. Strict IR-only remains NOT READY: **37/37** lane units
+still have a legacy body emitted, and the six unsupported units are two async
+functions, one call-graph closure, one async-body shape, and two static class
+members. This callable slice changes preparation coverage, not that bounded
+headline.
+
+The remaining string preparation blockers are `forof.string` and oversized
+native literals that cannot use an interned global. Two string-builder
+optimizations also remain: the generic owned-append loop is IR-owned, but IR
+does not yet preallocate a backing array from the direct path's exact static
+trip-count proof, and constant-count literal append loops remain intentionally
+selector-deferred to the direct path's one `repeat(N)` plus one concat
+transform. Both optimizations must be migrated before their direct handlers can
+be retired. Dynamic carriers, object/ref-cell/closure/union/vector layouts,
+iterator/generator/exception/async providers, pass-derived callable slots, and
+the explicit emission transaction remain subsequent R2 dependencies.
+
 ## File ownership and locks
 
 Lock `src/codegen/index.ts`, `src/codegen/declarations.ts`,
