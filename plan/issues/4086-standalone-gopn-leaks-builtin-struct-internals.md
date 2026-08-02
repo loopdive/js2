@@ -124,22 +124,37 @@ ARMSTRUCT  __subview_i8_byte    length,data,byteOffset
    leak for a far more common silent wrong answer, i.e. exactly the trade #4071
    refused to make.
 
-   Note the asymmetry that makes this trap easy to fall into: the FIELD filter
-   already screens `$`/`__` prefixes and works fine, so reaching for the same
-   prefix rule on the STRUCT name looks consistent. It is not — user-declared
-   names (`MyClass`, `Shape`) are unprefixed, but so is nothing else useful, and
-   the compiler-generated *user-data* shapes share the builtin prefix.
+   **Why the trap is inviting — read this before reaching for a predicate: the
+   field-name filter already uses a `$`/`__` prefix rule and works fine, so
+   reusing it on the struct name looks like consistency rather than a category
+   error. Two different namespaces, one naming convention.** In the FIELD
+   namespace the prefix reliably means "compiler internal". In the STRUCT
+   namespace it does not: it marks *compiler-generated*, which covers both
+   builtin carriers (`__Date`, `__StandaloneRegExp`, `__subview_*`) and the
+   anonymous shapes of ordinary user object literals (`__anon_N`). Only
+   user-*declared* names (`MyClass`, `Shape`) are unprefixed, and they are not
+   the whole set of things that must keep their arms.
 
-### Implied design
+### Implied design — derived from the dump above, not from taste
 
-The predicate must key on **carrier identity recorded at registration time**,
-not on a name shape. Concretely: a `ctx.builtinCarrierStructs: Set<string>` (or
-a flag on the `structFields` entry) populated where these carriers are created —
+The dump forces the conclusion: the two categories that must be separated
+(`__Date` vs `__anon_0`) are **indistinguishable by name**, so no name-shape
+predicate can exist. The information simply is not in the string. It therefore
+has to come from somewhere that knows the answer at the time the struct is made.
+
+The predicate must key on **carrier identity recorded at registration time**.
+Concretely: a `ctx.builtinCarrierStructs: Set<string>` (or a flag on the
+`structFields` entry) populated where these carriers are created —
 `native-regex.ts` (`__StandaloneRegExp`), the Date carrier, the `__subview_*`
 TypedArray views, and any sibling built the same way. The registration site is
 the only place that knows "this struct is a builtin's internal representation,
 not user data", and it is the only source that stays correct as carriers are
-added. A deny-list of literal names would work today and rot on the next carrier.
+added.
+
+A deny-list of literal struct names is the tempting shortcut and should be
+rejected for the same reason: it is correct for exactly the four carriers this
+probe happened to surface, and silently wrong for the next one added. The bug
+being fixed here IS a filter that did not keep up with the carriers around it.
 
 Scope note: the same predicate is the prerequisite for the closed-struct halves
 of BOTH #4071 (`Object.keys` on class instances, measured at +5 net flips) and
