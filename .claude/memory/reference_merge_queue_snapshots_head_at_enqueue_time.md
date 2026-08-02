@@ -41,8 +41,11 @@ PR #4011, verified on main rather than inferred:
 ```
 git rev-parse c078883af^2  → 4e49df476    (the branch-side parent that MERGED)
 gh pr view 4011 --json headRefOid → 126b226cf   (the head that did NOT)
-plan/issues/4083-*.md  → ABSENT from main
-plan/issues/4081-*.md  → still `status: ready` on main
+issue 4083 → its file ABSENT from main
+issue 4081 → its file still `status: ready` on main
+(paths spelled out as "issue NNNN" deliberately: the #1616 issue-link gate
+resolves any `plan/issues/NNNN-` shaped path, so prose ASSERTING a file is
+missing is indistinguishable, to the gate, from a dangling link to it)
 ```
 
 **No status string reliably means "not queued".** The only safe reading is: once
