@@ -1,8 +1,9 @@
 ---
 id: 4071
 title: "Own-property ENUMERATION is dead in standalone for array indices and function own properties — Object.keys returns [] while writes round-trip"
-status: ready
+status: in-progress
 sprint: current
+assignee: ttraenkler/L-enum
 created: 2026-08-02
 updated: 2026-08-02
 priority: high
@@ -14,6 +15,13 @@ area: standalone
 language_feature: object-enumeration
 goal: standalone-mode
 related: [4055, 4061, 4062]
+# The fix EXTENDS two existing fills in this file in place
+# (`fillClosedStructOwnPropertyNamesArms`, `fillDynamicForinVecArms`) so that
+# `__object_keys` shares them. Moving them to a subsystem module would separate
+# them from the sibling arms they are defined against; adding a fifth
+# hand-maintained copy elsewhere is the very pattern that caused this defect.
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
 ---
 
 # Own-property enumeration is dead in standalone for array indices and function own properties
