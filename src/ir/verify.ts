@@ -28,6 +28,7 @@ import type { ValType } from "./types.js";
 // from the dependency-free leaf, so this adds no codegen module-graph pull.
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
+import { verifyIrAsyncPlan } from "./async-plan.js";
 
 /**
  * #1850 — successor block ids of a block, derived from its terminator.
@@ -387,6 +388,33 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
 export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
   const defs = new Set<IrValueId>();
+
+  if (func.asyncPlan) {
+    if (func.funcKind !== "async") {
+      errors.push({ message: "asyncPlan requires funcKind=async", func: func.name });
+    }
+    if (func.asyncPlan.ownerUnitId !== func.unitId) {
+      errors.push({ message: "asyncPlan ownerUnitId does not match its IrFunction", func: func.name });
+    }
+    for (const error of verifyIrAsyncPlan(func.asyncPlan)) {
+      errors.push({ message: `asyncPlan ${error.code}: ${error.message}`, func: func.name });
+    }
+  } else if (func.asyncRuntime) {
+    errors.push({ message: "asyncRuntime requires a semantic asyncPlan", func: func.name });
+  }
+  if (func.asyncRuntime) {
+    const capabilities = new Set<string>();
+    for (const adapter of func.asyncRuntime.adapters) {
+      if (capabilities.has(adapter.capability)) {
+        errors.push({ message: `asyncRuntime duplicates capability ${adapter.capability}`, func: func.name });
+      }
+      capabilities.add(adapter.capability);
+      const problem = callableReferenceProblem(adapter.target);
+      if (problem !== null) {
+        errors.push({ message: `asyncRuntime adapter ${adapter.capability} ${problem}`, func: func.name });
+      }
+    }
+  }
 
   verifySymbolicReferences(func, errors);
 

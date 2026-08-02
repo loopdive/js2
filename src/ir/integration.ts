@@ -228,6 +228,7 @@ import { verifyIrFunction } from "./verify.js";
 import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
 import { isIntrinsicId, type IntrinsicId } from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
+import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
 import type { RuntimeProviderPlan } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
@@ -444,6 +445,7 @@ function prepareBuiltFnRuntimeManifest(
     return fn === entry.fn ? entry : { ...entry, fn };
   });
   materializePreparedMathProviders(ctx, runtime);
+  materializePreparedAsyncHostAdapters(ctx, runtime.functions);
   return { entries: preparedEntries, runtime };
 }
 

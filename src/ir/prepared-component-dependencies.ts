@@ -491,6 +491,7 @@ function collectClassShape(shape: IrClassShape, classes: Map<IrClassId, IrClassS
 function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
   const types = new Map<IrValueId, IrType>();
   for (const param of fn.params) types.set(param.value, param.type);
+  for (const value of fn.asyncPlan?.values ?? []) types.set(value.value, value.type);
   for (const block of fn.blocks) {
     block.blockArgs.forEach((value, index) => {
       const type = block.blockArgTypes[index];
@@ -868,6 +869,11 @@ function collectFunctionEvidence(
   };
   for (const param of fn.params) collectType(param.type);
   for (const result of fn.resultTypes) collectType(result);
+  if (fn.asyncPlan) {
+    if (fn.asyncPlan.abi.fulfillmentType) collectType(fn.asyncPlan.abi.fulfillmentType);
+    for (const value of fn.asyncPlan.values) collectType(value.type);
+    for (const spill of fn.asyncPlan.spills) collectType(spill.type);
+  }
   if (fn.closureSubtype) {
     for (const capture of fn.closureSubtype.captureFieldTypes) collectType(capture);
   }
@@ -877,122 +883,130 @@ function collectFunctionEvidence(
     "prepared IR lifted closure body must use Program ABI support refs",
   );
 
+  const collectInstr = (instr: IrInstr): void => {
+    forEachInstrDeep(instr, (nested) => {
+      if (nested.resultType) collectType(nested.resultType);
+      for (const shape of explicitClassShapes(nested, valueTypes)) collectClassShape(shape, classes, seenTypes);
+      const instructionClosureSupport = input.closureSupport?.instructionRefs.get(nested);
+      recordPreparedClosureRefs(
+        instructionClosureSupport,
+        `prepared IR ${nested.kind} must use Program ABI support refs`,
+      );
+      const hasPreparedClosureSupport =
+        nested.kind === "closure.cap"
+          ? (functionClosureSupport?.length ?? 0) > 0
+          : (instructionClosureSupport?.length ?? 0) > 0;
+      const implicitSupport = implicitSupportRequirement(nested, hasPreparedClosureSupport);
+      if (implicitSupport) {
+        addFailure(evidence, {
+          code: "implicit-support-reference-unavailable",
+          ownerUnitId: terminalOwnerUnitId,
+          detail: implicitSupport,
+        });
+      }
+      if (nested.kind === "call") {
+        if (nested.target.binding.kind === "unit") {
+          recordUnitReference(
+            evidence,
+            nested.target.binding.unitId,
+            functionsByUnitId,
+            input.terminalUnitIds,
+            input.abi,
+            ownership,
+          );
+        } else {
+          recordExternalCallable(evidence, nested.target, input.abi, ownership);
+        }
+      } else if (nested.kind === "intrinsic") {
+        if (nested.provider?.kind === "callable") {
+          recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
+        }
+      } else if (nested.kind === "closure.new") {
+        if (nested.liftedFunc.binding.kind === "unit") {
+          recordUnitReference(
+            evidence,
+            nested.liftedFunc.binding.unitId,
+            functionsByUnitId,
+            input.terminalUnitIds,
+            input.abi,
+            ownership,
+          );
+        } else {
+          recordExternalCallable(evidence, nested.liftedFunc, input.abi, ownership);
+        }
+      } else if (nested.kind === "global.get" || nested.kind === "global.set") {
+        recordGlobalReference(evidence, nested.target, input.abi, ownership, input.terminalUnitIds);
+      } else if (nested.kind === "string.const") {
+        if (nested.storage) {
+          recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+        } else if (nested.materializer) {
+          recordExternalCallable(evidence, nested.materializer, input.abi, ownership);
+        }
+      } else if (nested.kind === "string.len" && nested.provider) {
+        if (nested.provider.kind === "callable") {
+          recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
+        } else {
+          recordSupportTypeReference(
+            evidence,
+            nested.provider.ownerType,
+            input.abi,
+            ownership,
+            "IR string.len struct field must use a compiler-support Program ABI type ref",
+          );
+        }
+      } else if (
+        (nested.kind === "string.concat" ||
+          nested.kind === "string.eq" ||
+          nested.kind === "string.char_at" ||
+          nested.kind === "string.char_code_at" ||
+          nested.kind === "forof.string") &&
+        nested.provider
+      ) {
+        recordExternalCallable(evidence, nested.provider, input.abi, ownership);
+      }
+      if (
+        nested.kind === "class.call" ||
+        nested.kind === "class.super_init" ||
+        nested.kind === "class.super_call" ||
+        nested.kind === "class.static_call" ||
+        nested.kind === "class.new"
+      ) {
+        const shape = explicitClassShapes(nested, valueTypes)[0];
+        const target = nested.target;
+        if (!target) {
+          addFailure(evidence, {
+            code: "class-member-callable-unavailable",
+            ownerUnitId: terminalOwnerUnitId,
+            ...(shape ? { referencedClassId: shape.classId } : {}),
+            detail:
+              `${nested.kind} carries a class/member descriptor but no exact symbolic callable reference; ` +
+              "dependency ownership cannot be inferred from compatibility names",
+          });
+        } else if (target.binding.kind === "unit") {
+          recordUnitReference(
+            evidence,
+            target.binding.unitId,
+            functionsByUnitId,
+            input.terminalUnitIds,
+            input.abi,
+            ownership,
+          );
+        } else {
+          recordExternalCallable(evidence, target, input.abi, ownership);
+        }
+      }
+    });
+  };
   for (const block of fn.blocks) {
     for (const type of block.blockArgTypes) collectType(type);
-    for (const instr of block.instrs) {
-      forEachInstrDeep(instr, (nested) => {
-        if (nested.resultType) collectType(nested.resultType);
-        for (const shape of explicitClassShapes(nested, valueTypes)) collectClassShape(shape, classes, seenTypes);
-        const instructionClosureSupport = input.closureSupport?.instructionRefs.get(nested);
-        recordPreparedClosureRefs(
-          instructionClosureSupport,
-          `prepared IR ${nested.kind} must use Program ABI support refs`,
-        );
-        const hasPreparedClosureSupport =
-          nested.kind === "closure.cap"
-            ? (functionClosureSupport?.length ?? 0) > 0
-            : (instructionClosureSupport?.length ?? 0) > 0;
-        const implicitSupport = implicitSupportRequirement(nested, hasPreparedClosureSupport);
-        if (implicitSupport) {
-          addFailure(evidence, {
-            code: "implicit-support-reference-unavailable",
-            ownerUnitId: terminalOwnerUnitId,
-            detail: implicitSupport,
-          });
-        }
-        if (nested.kind === "call") {
-          if (nested.target.binding.kind === "unit") {
-            recordUnitReference(
-              evidence,
-              nested.target.binding.unitId,
-              functionsByUnitId,
-              input.terminalUnitIds,
-              input.abi,
-              ownership,
-            );
-          } else {
-            recordExternalCallable(evidence, nested.target, input.abi, ownership);
-          }
-        } else if (nested.kind === "intrinsic") {
-          if (nested.provider?.kind === "callable") {
-            recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
-          }
-        } else if (nested.kind === "closure.new") {
-          if (nested.liftedFunc.binding.kind === "unit") {
-            recordUnitReference(
-              evidence,
-              nested.liftedFunc.binding.unitId,
-              functionsByUnitId,
-              input.terminalUnitIds,
-              input.abi,
-              ownership,
-            );
-          } else {
-            recordExternalCallable(evidence, nested.liftedFunc, input.abi, ownership);
-          }
-        } else if (nested.kind === "global.get" || nested.kind === "global.set") {
-          recordGlobalReference(evidence, nested.target, input.abi, ownership, input.terminalUnitIds);
-        } else if (nested.kind === "string.const") {
-          if (nested.storage) {
-            recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
-          } else if (nested.materializer) {
-            recordExternalCallable(evidence, nested.materializer, input.abi, ownership);
-          }
-        } else if (nested.kind === "string.len" && nested.provider) {
-          if (nested.provider.kind === "callable") {
-            recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
-          } else {
-            recordSupportTypeReference(
-              evidence,
-              nested.provider.ownerType,
-              input.abi,
-              ownership,
-              "IR string.len struct field must use a compiler-support Program ABI type ref",
-            );
-          }
-        } else if (
-          (nested.kind === "string.concat" ||
-            nested.kind === "string.eq" ||
-            nested.kind === "string.char_at" ||
-            nested.kind === "string.char_code_at" ||
-            nested.kind === "forof.string") &&
-          nested.provider
-        ) {
-          recordExternalCallable(evidence, nested.provider, input.abi, ownership);
-        }
-        if (
-          nested.kind === "class.call" ||
-          nested.kind === "class.super_init" ||
-          nested.kind === "class.super_call" ||
-          nested.kind === "class.static_call" ||
-          nested.kind === "class.new"
-        ) {
-          const shape = explicitClassShapes(nested, valueTypes)[0];
-          const target = nested.target;
-          if (!target) {
-            addFailure(evidence, {
-              code: "class-member-callable-unavailable",
-              ownerUnitId: terminalOwnerUnitId,
-              ...(shape ? { referencedClassId: shape.classId } : {}),
-              detail:
-                `${nested.kind} carries a class/member descriptor but no exact symbolic callable reference; ` +
-                "dependency ownership cannot be inferred from compatibility names",
-            });
-          } else if (target.binding.kind === "unit") {
-            recordUnitReference(
-              evidence,
-              target.binding.unitId,
-              functionsByUnitId,
-              input.terminalUnitIds,
-              input.abi,
-              ownership,
-            );
-          } else {
-            recordExternalCallable(evidence, target, input.abi, ownership);
-          }
-        }
-      });
-    }
+    for (const instr of block.instrs) collectInstr(instr);
+  }
+  for (const state of fn.asyncRuntime?.states ?? fn.asyncPlan?.states ?? []) {
+    if (state.resume) collectType(state.resume.type);
+    for (const instr of state.body) collectInstr(instr);
+  }
+  for (const adapter of fn.asyncRuntime?.adapters ?? []) {
+    recordExternalCallable(evidence, adapter.target, input.abi, ownership);
   }
   for (const shape of classes.values()) {
     addClassLayout(evidence, shape, input.terminalUnitIds, input.abi, ownership);
