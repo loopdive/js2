@@ -6396,12 +6396,32 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
  *
  * Direct and stored `Object.getOwnPropertyNames` calls both target this native
  * helper, keeping their `$ObjVec`/native-string carrier contract identical.
+ *
+ * (#4071) **`__object_keys` deliberately does NOT share these arms.** Extending
+ * them to it was implemented and MEASURED, then reverted: the struct set here is
+ * every non-synthetic entry of `ctx.structFields`, which includes BUILTIN
+ * carriers, and their internal fields are not `$`/`__`-prefixed so the filter
+ * above does not remove them. Sharing the arms therefore made
+ * `Object.keys(new Date(0))` answer `["timestamp"]` and `Object.keys(/ab/)`
+ * answer 7 internal RegExp fields — both correctly `[]` before, so it traded a
+ * real gain on class instances for a NEW silent wrong answer on two very common
+ * spellings. `Object.keys` is enumerable-only and builtin internals are not own
+ * enumerable properties.
+ *
+ * That leak is ALREADY LATENT here: `Object.getOwnPropertyNames(/ab/)` returns
+ * those same 7 internal fields in standalone today (host answers 1). Fixing it
+ * needs a principled user-declared-vs-builtin struct predicate, which does not
+ * exist yet — `isSyntheticStructName` only screens `Wrapper*` / `$AnyValue` /
+ * `__vec_*` / `__arr_*`. Tracked separately; do not re-share these arms until
+ * that predicate lands.
  */
 export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void {
   if (!ctx.standalone) return;
-  const fn = ctx.mod.functions.find((candidate) => candidate.name === "__getOwnPropertyNames");
+  const targets = ["__getOwnPropertyNames"]
+    .map((name) => ctx.mod.functions.find((candidate) => candidate.name === name))
+    .filter((f): f is NonNullable<typeof f> => f !== undefined);
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
-  if (!fn || objVecPushIdx === undefined) return;
+  if (targets.length === 0 || objVecPushIdx === undefined) return;
 
   type OwnField = { name: string; presenceSlot?: PresenceSlot };
   type ShapeEntry = {
@@ -6439,68 +6459,80 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
   }
   if (entries.length === 0) return;
 
-  const arms: Instr[] = [];
-  for (const entry of entries) {
-    const pushFields: Instr[] = [];
-    for (const field of entry.fields) {
-      const pushName: Instr[] = [
-        { op: "local.get", index: 7 },
-        ...nativeStringLiteralInstrs(ctx, field.name),
-        { op: "extern.convert_any" },
-        { op: "call", funcIdx: objVecPushIdx },
-      ];
-      if (field.presenceSlot === undefined) {
-        pushFields.push(...pushName);
-      } else {
-        pushFields.push(
-          { op: "local.get", index: 0 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: entry.typeIdx },
-          ...presenceTestInstrs(entry.typeIdx, field.presenceSlot),
-          { op: "if", blockType: { kind: "empty" }, then: pushName },
-        );
-      }
-    }
-    const returnNames: Instr[] = [...pushFields, { op: "local.get", index: 7 }, { op: "return" }];
-    const exactThen: Instr[] =
-      entry.shapeFieldIdx === undefined || entry.shapeId === undefined
-        ? returnNames
-        : [
+  // (#4071) Built fresh PER TARGET, never cloned. `structuredClone` preserves
+  // internal aliasing, so a shared `Instr` object reachable from two function
+  // bodies would be remapped twice by `shiftLateImportIndices` (the #1302
+  // hazard). Re-running the builder is cheap and sidesteps that entirely.
+  const buildArms = (): Instr[] => {
+    const arms: Instr[] = [];
+    for (const entry of entries) {
+      const pushFields: Instr[] = [];
+      for (const field of entry.fields) {
+        const pushName: Instr[] = [
+          { op: "local.get", index: 7 },
+          ...nativeStringLiteralInstrs(ctx, field.name),
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: objVecPushIdx },
+        ];
+        if (field.presenceSlot === undefined) {
+          pushFields.push(...pushName);
+        } else {
+          pushFields.push(
             { op: "local.get", index: 0 },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: entry.typeIdx },
-            { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
-            { op: "i32.const", value: entry.shapeId },
-            { op: "i32.eq" },
-            { op: "if", blockType: { kind: "empty" }, then: returnNames },
-          ];
-    arms.push(
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: entry.typeIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: exactThen,
-      },
-    );
-  }
+            ...presenceTestInstrs(entry.typeIdx, field.presenceSlot),
+            { op: "if", blockType: { kind: "empty" }, then: pushName },
+          );
+        }
+      }
+      const returnNames: Instr[] = [...pushFields, { op: "local.get", index: 7 }, { op: "return" }];
+      const exactThen: Instr[] =
+        entry.shapeFieldIdx === undefined || entry.shapeId === undefined
+          ? returnNames
+          : [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
+              { op: "i32.const", value: entry.shapeId },
+              { op: "i32.eq" },
+              { op: "if", blockType: { kind: "empty" }, then: returnNames },
+            ];
+      arms.push(
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: entry.typeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: exactThen,
+        },
+      );
+    }
+    return arms;
+  };
 
   // Other finalize fills may already have prepended family classifiers. Anchor
   // to the semantic provider's actual result-vector initialization rather than
   // a positional index: declaration/fill order must not move these arms before
   // `vec = __objvec_new()`.
-  const initIdx = fn.body.findIndex((instr, index) => {
-    const next = fn.body[index + 1];
-    return (
-      instr.op === "call" &&
-      instr.funcIdx === ctx.funcMap.get("__objvec_new") &&
-      next?.op === "local.set" &&
-      next.index === 7
-    );
-  });
-  if (initIdx < 0) return;
-  fn.body.splice(initIdx + 2, 0, ...arms);
+  for (const fn of targets) {
+    const initIdx = fn.body.findIndex((instr, index) => {
+      const next = fn.body[index + 1];
+      return (
+        instr.op === "call" &&
+        instr.funcIdx === ctx.funcMap.get("__objvec_new") &&
+        next?.op === "local.set" &&
+        next.index === 7
+      );
+    });
+    // Anchor absent (preamble shape changed) — skip THIS target rather than
+    // splicing at a guessed offset; the others are unaffected.
+    if (initIdx < 0) continue;
+    // Each target owns its own instruction objects — see `buildArms` above.
+    fn.body.splice(initIdx + 2, 0, ...buildArms());
+  }
 }
 
 /**
@@ -7117,9 +7149,20 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
           { op: "call", funcIdx: strEqualsIdx },
         ];
 
-  // ── __object_keys_forin: enumerate "0".."len-1" ──
-  const keysFn = findFn("__object_keys_forin");
-  if (keysFn && numToStringIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined) {
+  // ── __object_keys_forin / __object_keys: enumerate "0".."len-1" ──
+  //
+  // (#4071) `__object_keys` gets the SAME arm as its for-in sibling instead of a
+  // hand-maintained copy. Both take `(externref obj) -> externref` and treat a
+  // non-`$Object` receiver as "no properties", so an ANY-typed array — a
+  // `__vec_<k>` struct, not a `$Object` — made `Object.keys([10,20,30])` answer
+  // `[]` while `for (k in [10,20,30])` (fixed by #3183) answered correctly.
+  // Index keys are the complete answer for BOTH helpers here: `Object.keys` and
+  // for-in are each enumerable-only, and `length` is non-enumerable. Expando
+  // properties written onto a vec live in the separate #3537 side table and are
+  // enumerated by NEITHER — that gap is unchanged by this arm (see #4010).
+  for (const keysFn of [findFn("__object_keys_forin"), findFn("__object_keys")]) {
+    if (!(keysFn && numToStringIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined))
+      continue;
     // params: 0=obj ; append locals: kAny(anyref) kVec(externref) kLen(i32) kI(i32)
     const kAny = 1 + keysFn.locals.length;
     const kVec = kAny + 1;
