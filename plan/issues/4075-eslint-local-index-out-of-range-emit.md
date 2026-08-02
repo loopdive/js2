@@ -196,3 +196,27 @@ The diagnostic's boilerplate blames the late-import index-shift class. For this
 defect the evidence points elsewhere — a single placeholder write followed by an
 in-place fill, with no shift involved. The text should be softened to name both
 candidate classes rather than assert one.
+
+### Hypothesis TESTED and NOT confirmed (2026-08-02)
+
+The "nested body filled against the enclosing frame" reading above was tried
+directly and **does not reproduce**. Three shapes, each a nested function
+declaration inside a host with 70 locals, all compile and emit cleanly:
+
+| shape | result |
+| --- | --- |
+| nested declaration in a 70-local host | clean |
+| nested declaration **called before** its declaration (hoisting) | clean |
+| nested declaration **capturing** two of the host's 70 locals | clean |
+
+So the plain nested-declaration path is fine, and the trigger needs something
+further: the real `ve` lives in a **minified, CJS-rewritten** source, so the
+untested variables are the CJS rewrite, the enclosing construct (an IIFE, a
+class method, or a deeper nesting level), and `opts.reuseReservedEntry` — the
+branch that does NOT mint a fresh placeholder and is therefore the one path where
+a pre-existing entry is adopted rather than created.
+
+`reuseReservedEntry` is the most promising remaining lead precisely because it
+reuses a slot someone else claimed; the traced write shows the entry for `ve`
+being freshly pushed, but a LATER nested declaration reusing that reserved entry
+would not appear as a second slot write and would still swap in a foreign body.
