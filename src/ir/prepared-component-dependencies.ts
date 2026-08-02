@@ -11,6 +11,7 @@ import {
   type IrInstr,
   type IrModule,
   type IrType,
+  type IrTypeRef,
   type IrValueId,
 } from "./nodes.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent, ProgramAbiPlanEntry } from "./program-abi.js";
@@ -56,6 +57,7 @@ export interface PreparedComponentDependencyFailure {
   readonly code: PreparedComponentDependencyFailureCode;
   readonly ownerUnitId: IrUnitId;
   readonly detail: string;
+  readonly structuralReferenceKey?: string;
   readonly referencedUnitId?: IrUnitId;
   readonly referencedClassId?: IrClassId;
   readonly bindingId?: IrBindingId;
@@ -149,7 +151,10 @@ function readonlyMap<K, V>(entries: Iterable<readonly [K, V]>): ReadonlyMap<K, V
 }
 
 function terminalInventoryUnit(inventory: IrUnitInventory, unitId: IrUnitId): IrTerminalUnitRecord | undefined {
-  return inventory.terminalUnits.find((unit) => unit.id === unitId && unit.kind === "top-level-function");
+  // R2 components are keyed by terminal executable ownership, not by syntax
+  // family. Free functions, class members, and module init all carry the same
+  // exact terminal-owner contract in the inventory.
+  return inventory.terminalUnits.find((unit) => unit.id === unitId);
 }
 
 function buildOwnershipIndex(
@@ -239,6 +244,7 @@ function failureKey(failure: PreparedComponentDependencyFailure): string {
     failure.referencedUnitId ?? "",
     failure.referencedClassId ?? "",
     failure.bindingId ?? "",
+    failure.structuralReferenceKey ?? "",
     failure.detail,
   ].join("\u0000");
 }
@@ -330,7 +336,13 @@ function collectIrTypeClasses(type: IrType, classes: Map<IrClassId, IrClassShape
   }
 }
 
-function recordImplicitTypeRequirement(evidence: MutableFunctionEvidence, type: IrType, seen: Set<IrType>): void {
+function recordImplicitTypeRequirement(
+  evidence: MutableFunctionEvidence,
+  type: IrType,
+  seen: Set<IrType>,
+  abi: PreparedComponentAbiLookup,
+  ownership: OwnershipIndex,
+): void {
   if (seen.has(type)) return;
   seen.add(type);
   const block = (detail: string): void => {
@@ -346,9 +358,21 @@ function recordImplicitTypeRequirement(evidence: MutableFunctionEvidence, type: 
         block(`raw IR reference type ${type.val.kind}:${type.val.typeIdx} has no symbolic Program ABI type ref`);
       }
       return;
-    case "string":
-      block("IR string type resolves through backend support without a symbolic Program ABI type ref");
+    case "string": {
+      const carrierRef = type.carrierRef;
+      if (!carrierRef) {
+        block("IR string type resolves through backend support without a symbolic Program ABI type ref");
+        return;
+      }
+      recordSupportTypeReference(
+        evidence,
+        carrierRef,
+        abi,
+        ownership,
+        "IR string carrier must use a compiler-support Program ABI type ref",
+      );
       return;
+    }
     case "object":
       block("IR object shape resolves a backend type without a symbolic Program ABI type ref");
       return;
@@ -369,6 +393,40 @@ function recordImplicitTypeRequirement(evidence: MutableFunctionEvidence, type: 
     case "extern":
       return;
   }
+}
+
+function recordSupportTypeReference(
+  evidence: MutableFunctionEvidence,
+  ref: IrTypeRef,
+  abi: PreparedComponentAbiLookup,
+  ownership: OwnershipIndex,
+  invalidDetail: string,
+): void {
+  if (ref.binding.kind !== "support") {
+    addFailure(evidence, {
+      code: "implicit-support-reference-unavailable",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      detail: invalidDetail,
+    });
+    return;
+  }
+  let structuralReferenceKey: string;
+  try {
+    structuralReferenceKey = irTypeBindingKey(ref.binding);
+  } catch {
+    addFailure(evidence, {
+      code: "implicit-support-reference-unavailable",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      detail: `${invalidDetail} (malformed binding)`,
+    });
+    return;
+  }
+  addAbiDependency(evidence, abi, ownership, {
+    bindingId: ref.binding.bindingId,
+    kind: "support",
+    structuralReferenceKey,
+    expected: (intent) => intent.kind === "type",
+  });
 }
 
 function collectClassShape(shape: IrClassShape, classes: Map<IrClassId, IrClassShape>, seen: Set<IrType>): void {
@@ -418,11 +476,18 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "dyn.member_set":
       return `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
     case "string.const":
+      return instr.storage
+        ? null
+        : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
+    case "string.len":
+      return instr.provider
+        ? null
+        : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
     case "string.concat":
     case "string.eq":
-    case "string.len":
     case "string.char_at":
     case "string.char_code_at":
+      return instr.provider ? null : `${instr.kind} resolves a string callable without an explicit symbolic ref`;
     case "forof.string":
       return `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
     case "object.new":
@@ -685,6 +750,7 @@ function recordExternalCallable(
     addFailure(evidence, {
       code: "unplanned-abi-binding",
       ownerUnitId: evidence.terminalOwnerUnitId,
+      structuralReferenceKey: key,
       detail:
         `external callable ${key} has no Program ABI identity; planning-time discovery requires ` +
         "an exact structural-key reverse lookup",
@@ -728,7 +794,7 @@ function collectFunctionEvidence(
   const seenImplicitTypes = new Set<IrType>();
   const collectType = (type: IrType): void => {
     collectIrTypeClasses(type, classes, seenTypes);
-    recordImplicitTypeRequirement(evidence, type, seenImplicitTypes);
+    recordImplicitTypeRequirement(evidence, type, seenImplicitTypes, input.abi, ownership);
   };
   for (const param of fn.params) collectType(param.type);
   for (const result of fn.resultTypes) collectType(result);
@@ -778,6 +844,28 @@ function collectFunctionEvidence(
           }
         } else if (nested.kind === "global.get" || nested.kind === "global.set") {
           recordGlobalReference(evidence, nested.target, input.abi, ownership, input.terminalUnitIds);
+        } else if (nested.kind === "string.const" && nested.storage) {
+          recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+        } else if (nested.kind === "string.len" && nested.provider) {
+          if (nested.provider.kind === "callable") {
+            recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
+          } else {
+            recordSupportTypeReference(
+              evidence,
+              nested.provider.ownerType,
+              input.abi,
+              ownership,
+              "IR string.len struct field must use a compiler-support Program ABI type ref",
+            );
+          }
+        } else if (
+          (nested.kind === "string.concat" ||
+            nested.kind === "string.eq" ||
+            nested.kind === "string.char_at" ||
+            nested.kind === "string.char_code_at") &&
+          nested.provider
+        ) {
+          recordExternalCallable(evidence, nested.provider, input.abi, ownership);
         }
         if (
           nested.kind === "class.call" ||

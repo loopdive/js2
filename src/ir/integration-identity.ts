@@ -253,7 +253,7 @@ export function validateIrIntegrationPopulation(
         );
       }
       ownerUnitIdByDeclaration.set(member, terminal.id);
-      if (!isStatic) addExpectedOwner(expectedOwners, legacyName, terminal.id);
+      addExpectedOwner(expectedOwners, legacyName, terminal.id);
     }
   }
   if (missingMembers.size > 0) {

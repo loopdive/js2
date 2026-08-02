@@ -277,7 +277,13 @@ export type IrType =
   // Keeping the IR type backend-agnostic mirrors how `union`/`boxed` defer
   // their concrete struct to the resolver. From the middle-end's point of
   // view a `string` value is a single SSA def with no member structure.
-  | { readonly kind: "string" }
+  //
+  // Final prepared IR carries `carrierRef`: a Program-ABI identity for the
+  // backend-selected storage carrier. It deliberately does not expose that
+  // carrier's Wasm shape to type inference. Transitional/pre-preparation IR
+  // may omit the ref; prepared-component discovery then fails closed instead
+  // of consulting ambient backend state.
+  | { readonly kind: "string"; readonly carrierRef?: IrTypeRef }
   // Backend-agnostic object-shape marker (#1169b). The actual WasmGC struct
   // is registered lazily by `IrLowerResolver.resolveObject`. Like `union`
   // and `boxed`, the IR carries enough information to drive the resolver
@@ -1133,6 +1139,15 @@ export interface IrInstrStringConst extends IrInstrBase {
   readonly kind: "string.const";
   /** Raw JS string; the lowerer treats `value.length` as UTF-16 code units. */
   readonly value: string;
+  /**
+   * Exact immutable storage selected during final program preparation.
+   *
+   * Inference deliberately leaves this absent. The WasmGC preparation layer
+   * attaches either the host `string_constants` import or the interned native
+   * literal global before a component can seal, so lowering never has to
+   * discover or allocate literal storage mid-emission.
+   */
+  readonly storage?: IrGlobalRef;
 }
 
 /**
@@ -1148,6 +1163,8 @@ export interface IrInstrStringConcat extends IrInstrBase {
   readonly encodingEvidence?: IrStringEncoding;
   /** `owned-append` is legal only after the producer proves prior values unobservable. */
   readonly concatMode?: IrStringConcatMode;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -1159,6 +1176,8 @@ export interface IrInstrStringEq extends IrInstrBase {
   readonly lhs: IrValueId;
   readonly rhs: IrValueId;
   readonly negate: boolean;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /**
@@ -1172,7 +1191,23 @@ export interface IrInstrStringLen extends IrInstrBase {
   readonly kind: "string.len";
   readonly value: IrValueId;
   readonly inputEncoding?: IrStringEncoding;
+  /** Exact backend provider selected during final program preparation. */
+  readonly provider?: IrStringLengthProvider;
 }
+
+/** Backend-selected dependency for the representation-neutral `string.len`. */
+export type IrStringLengthProvider =
+  | {
+      readonly kind: "callable";
+      /** Host `wasm:js-string.length` import. */
+      readonly target: IrFuncRef;
+    }
+  | {
+      readonly kind: "struct-field";
+      /** Native `$AnyString` layout; field 0 is the UTF-16 code-unit length. */
+      readonly ownerType: IrTypeRef;
+      readonly fieldIndex: number;
+    };
 
 /** Return one UTF-16 code unit as a string, or the empty string out of bounds. */
 export interface IrInstrStringCharAt extends IrInstrBase {
@@ -1182,6 +1217,8 @@ export interface IrInstrStringCharAt extends IrInstrBase {
   readonly index: IrValueId;
   readonly inputEncoding: IrStringEncoding;
   readonly encodingEvidence: IrStringEncoding;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 /** Return one UTF-16 code unit as f64, or NaN out of bounds. */
@@ -1191,6 +1228,8 @@ export interface IrInstrStringCharCodeAt extends IrInstrBase {
   /** Index after ToIntegerOrInfinity-compatible numeric normalization. */
   readonly index: IrValueId;
   readonly inputEncoding: IrStringEncoding;
+  /** Semantic callable intent bound to the exact backend provider during preparation. */
+  readonly provider?: IrFuncRef;
 }
 
 // ---------------------------------------------------------------------------

@@ -14,7 +14,17 @@
 // are added here as their groups get wired.
 
 import { emitConstInstr, type IrLowerResolver } from "../lower.js";
-import { asVal, type AllocSiteId, type IrBinop, type IrInstr, type IrType, type IrUnop } from "../nodes.js";
+import {
+  asVal,
+  type AllocSiteId,
+  type IrBinop,
+  type IrFuncRef,
+  type IrGlobalRef,
+  type IrInstr,
+  type IrStringLengthProvider,
+  type IrType,
+  type IrUnop,
+} from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { BlockType, Instr, ValType } from "../types.js";
 import type {
@@ -47,39 +57,48 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push(instr);
   }
 
-  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Instr[]): void {
-    const ops = this.stringRuntime?.emitStringConst?.(value, alloc);
+  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Instr[], storage?: IrGlobalRef): void {
+    const ops = this.stringRuntime?.emitStringConst?.(value, alloc, storage);
     if (!ops) throw new Error("WasmGcEmitter: string.const runtime is unavailable");
     out.push(...ops);
   }
 
-  emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: Instr[]): void {
-    const ops = this.stringRuntime?.emitStringConcat?.(alloc, mode);
+  emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.stringRuntime?.emitStringConcat?.(alloc, mode, provider);
     if (!ops) throw new Error("WasmGcEmitter: string.concat runtime is unavailable");
     out.push(...ops);
   }
 
-  emitStringEquals(negate: boolean, out: Instr[]): void {
-    const ops = this.stringRuntime?.emitStringEquals?.();
+  emitStringEquals(negate: boolean, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.stringRuntime?.emitStringEquals?.(provider);
     if (!ops) throw new Error("WasmGcEmitter: string.eq runtime is unavailable");
     out.push(...ops);
     if (negate) out.push({ op: "i32.eqz" });
   }
 
-  emitStringLength(_inputEncoding: IrStringEncoding | undefined, out: Instr[]): void {
-    const ops = this.stringRuntime?.emitStringLen?.(_inputEncoding);
+  emitStringLength(
+    _inputEncoding: IrStringEncoding | undefined,
+    out: Instr[],
+    provider?: IrStringLengthProvider,
+  ): void {
+    const ops = this.stringRuntime?.emitStringLen?.(_inputEncoding, provider);
     if (!ops) throw new Error("WasmGcEmitter: string.len runtime is unavailable");
     out.push(...ops, { op: "f64.convert_i32_s" });
   }
 
-  emitStringCharAt(_alloc: AllocSiteId | undefined, _inputEncoding: IrStringEncoding, out: Instr[]): void {
-    const ops = this.stringRuntime?.emitStringCharAt?.(_alloc, _inputEncoding);
+  emitStringCharAt(
+    _alloc: AllocSiteId | undefined,
+    _inputEncoding: IrStringEncoding,
+    out: Instr[],
+    provider?: IrFuncRef,
+  ): void {
+    const ops = this.stringRuntime?.emitStringCharAt?.(_alloc, _inputEncoding, provider);
     if (!ops) throw new Error("WasmGcEmitter: string.char_at runtime is unavailable");
     out.push(...ops);
   }
 
-  emitStringCharCodeAt(_inputEncoding: IrStringEncoding, out: Instr[]): void {
-    const ops = this.stringRuntime?.emitStringCharCodeAt?.(_inputEncoding);
+  emitStringCharCodeAt(_inputEncoding: IrStringEncoding, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.stringRuntime?.emitStringCharCodeAt?.(_inputEncoding, provider);
     if (!ops) throw new Error("WasmGcEmitter: string.char_code_at runtime is unavailable");
     out.push(...ops);
   }

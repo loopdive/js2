@@ -122,6 +122,21 @@ export function irImportGlobalRef(
   });
 }
 
+/** Rehydrate an imported-global reference from its already-planned binding. */
+export function irPlannedImportGlobalRef(
+  bindingId: IrBindingId,
+  module: string,
+  field: string,
+  adapterName: string,
+): IrGlobalRef {
+  return globalRef(adapterName, {
+    kind: "import",
+    bindingId: requireBindingId(bindingId, "planned import global bindingId", "global"),
+    module: requireNonEmpty(module, "planned import global module"),
+    field: requireString(field, "planned import global field"),
+  });
+}
+
 /**
  * Catalog one retained import-global allocator slot not already owned by a
  * semantic import binding.
