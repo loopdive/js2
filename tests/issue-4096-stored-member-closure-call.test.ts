@@ -188,4 +188,61 @@ describe("#4096 direct call on an assignment-stored member (standalone)", () => 
       ).toBe(1234);
     });
   });
+
+  /**
+   * POSITIVE CONTROLS for the gate's cost.
+   *
+   * The admission scan `sourceHasMethodReassignment` is per-MODULE and
+   * per-method-NAME, not per call site and not per receiver type: one
+   * `x.push = …` anywhere in the file turns it on for every `.push` in that
+   * file. Stated that way it sounds like the #942 "always dynamic was rejected
+   * on perf grounds" hazard.
+   *
+   * It is not, because the arm runs only at the TAIL of `compileTailDispatch`
+   * — after every static arm has already declined — so an intrinsic call never
+   * reaches it no matter what the scan says. The cases below turn the scan ON
+   * for `push` and for `test` in the same module that makes the hot call, which
+   * is the exact shape that would expose the problem if the gate were
+   * load-bearing for dispatch.
+   *
+   * What the assertions prove, precisely: the intrinsic still has its EFFECT,
+   * and the reassigned same-named member still runs. That discriminates,
+   * because a `push` re-routed through `__apply_closure` would read `a.push` as
+   * a member value on a native vec, get a non-callable, receive the undefined
+   * sentinel and mutate nothing — so `a.length === 3` would fail. It is a
+   * behavioural control, not an instruction-sequence one; it does not claim
+   * byte-identical output.
+   *
+   * Anything the arm CAN claim was, by construction, returning `undefined`
+   * without running — so the marginal cost is one dynamic dispatch on a call
+   * that previously did nothing at all.
+   */
+  describe("gate cost — the scan being ON must not pull an intrinsic off its fast path", () => {
+    it("arr.push stays native even with `x.push = …` in the same module", async () => {
+      expect(
+        await runStandalone(`
+          var x = { a: 1 };
+          x.push = function () { return 99; };
+          export function test() {
+            var a = [1, 2];
+            a.push(3);
+            return a.length === 3 && a[2] === 3 && x.push() === 99 ? 1 : 0;
+          }
+        `),
+      ).toBe(1);
+    });
+
+    it("re.test stays native even with `x.test = …` in the same module", async () => {
+      expect(
+        await runStandalone(`
+          var x = { a: 1 };
+          x.test = function () { return 99; };
+          export function test() {
+            var re = /ab/;
+            return re.test("xaby") && x.test() === 99 ? 1 : 0;
+          }
+        `),
+      ).toBe(1);
+    });
+  });
 });

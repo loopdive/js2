@@ -275,12 +275,26 @@ is in the failing set and not the passing one, on the first run. This catches
 array-literal instruction lists, builder helpers and spread pushes — the
 spellings a per-source-line marker sweep cannot see.
 
-Worth recording for the next investigation: the prior sweep of "all 463
-single-statement `ref.null.extern` pushes" reported the marker as absent from
-this site, yet this site **is** a single-statement push. So that sweep's
-negative result was an instrument failure, not evidence about the code. A
-marker sweep that reports "not found" everywhere is indistinguishable from a
-marker that was never applied — it needed a positive control.
+**The earlier 463-site sweep's negative result was an INSTRUMENT FAILURE, not
+evidence about the code — and the conclusion drawn from it misdirected this
+issue.** That sweep marked "all 463 single-statement
+`fctx.body.push({ op: "ref.null.extern" })` sites across 60 files" and reported
+the marker absent from both repros. The site above **is** a plain
+single-statement push of exactly that form, i.e. inside the class the sweep
+claimed to have covered. From the absence it concluded "the null does not come
+from any single-statement push — start by widening the marker sweep to array
+literals / builder helpers / coerceType / post-codegen passes", which sent the
+follow-up brief looking in four places the bug was never in.
+
+This is not a criticism of that sweep — reporting a refuted attribution
+honestly is what made the second attempt possible at all. It is the epistemic
+correction, and it generalises: **a negative sweep with no fired positive
+control rules out nothing.** "Marker absent everywhere" and "marker never
+applied" produce byte-identical output. Any future marker/bisect sweep in this
+area should first mark a site it KNOWS is on the path and confirm that marker
+appears; without that, a clean negative is not a result. The push-chokepoint
+instrument used here has the property built in — it records every site it sees,
+so an empty capture set is visibly an instrument failure rather than a finding.
 
 ### 2. The framing: NOT "a member absent from a closed type"
 
@@ -298,14 +312,17 @@ transfer: `var o = {a:1}; o.f = function(){return 7}; o.f()` returns `undefined`
 on its own. The defect is a **direct call on any assignment-stored function
 member**, which is far more ordinary JavaScript than the original framing.
 
-The top-level/in-function asymmetry is **one** decision point, not two: in
-`call-receiver-method.ts` the any-receiver closed-method dispatcher is gated on
-`isAnyOrExternref`, and an in-function object literal gets an **externref**
-local carrier while a top-level one keeps its concrete struct-ref carrier.
-Arrays and regexps keep a concrete carrier in both placements — hence their rows
-being wrong in both columns. #3117 had already fixed exactly this shape for the
-`any` twin by adding field-stored-closure arms to that dispatcher; the concrete
-carrier is simply what keeps a receiver out of it.
+**This SUPERSEDES the scoping section's "there are two decision points, not
+one".** There is **one**: in `call-receiver-method.ts` the any-receiver
+closed-method dispatcher is gated on `isAnyOrExternref`, and an in-function
+object literal gets an **externref** local carrier while a top-level one keeps
+its concrete struct-ref carrier. Arrays and regexps keep a concrete carrier in
+both placements — hence their rows being wrong in both columns. #3117 had
+already fixed exactly this shape for the `any` twin by adding
+field-stored-closure arms to that dispatcher; the concrete carrier is simply
+what keeps a receiver out of it. The placement axis and the receiver-kind axis
+are not resolved in different places — they are the same question ("is the
+carrier externref?") asked once.
 
 ### 3. The fix
 
@@ -332,6 +349,28 @@ rejected") does not bite here: the arm runs only after every static arm has
 declined, so `arr.push(x)` / `re.test(s)` never reach it — and nobody writes
 `x.push = …`, so even the scan's deliberate over-approximation cannot pull an
 intrinsic onto the dynamic path. **The `#942` gate was not touched.**
+
+**What the gate costs when it is ON.** `sourceHasMethodReassignment` is a
+per-**module**, per-method-**name** source scan (cached per
+`(SourceFile, name)`), not a per-call-site or per-receiver-type test: one
+`x.push = …` anywhere in a file turns it on for every `.push` in that file. That
+sounds like the #942 hazard, and is not, for a reason that does not depend on
+the gate at all: **the arm runs only at the TAIL of `compileTailDispatch`**,
+after every static arm has declined. `arr.push` / `re.test` / a declared
+object-literal method / a class method / the wrapper methods are all claimed
+earlier and never reach it, whatever the scan answers. So the gate does not
+route "all direct member calls" anywhere — it can only narrow the set of calls
+that were *already* falling to `ref.null.extern`, i.e. already returning
+`undefined` without running. The marginal cost is one dynamic dispatch on a call
+that previously did nothing; the perf blast radius on hot intrinsic calls is
+zero by construction.
+
+Asserted-and-then-measured, not just argued: the
+`gate cost — the scan being ON must not pull an intrinsic off its fast path`
+tests compile a module that reassigns `push` (resp. `test`) AND makes the hot
+`a.push(3)` / `re.test(s)` call, which is the exact shape that would expose the
+regression if the gate were load-bearing for dispatch. Both keep their native
+paths and the reassigned member also runs.
 
 **Three-sided rule.** *Readers* of the fallback: it is the terminal arm of
 `compileTailDispatch`, reached only after IIFE / super / element-access /
@@ -385,7 +424,7 @@ not check a value, it checks that anything happened at all.
    moves `hasOwnProperty` / `in` / `for-in` / `Object.keys` together — the
    #4086 / #4010 territory this issue's own scoping flagged. Folding it in here
    would have replaced a narrow, provably-non-displacing arm with a change to
-   the shape registry. Filed separately rather than done badly.
+   the shape registry. Filed as **#4116** rather than done badly.
 2. **RegExp receiver, expando function member** is still wrong — but for a
    reason this fix structurally cannot reach: on a RegExp the **READ** is
    already broken (`var g = r.f; g()` is wrong on the same lane), so there is no
@@ -396,13 +435,34 @@ not check a value, it checks that anything happened at all.
    carve-out (documented on `fillApplyClosure`, kept for the late-registration
    index-shift reason); this arm inherits it and does not widen it.
 
-## Population — honesty note
+## Population — DO NOT RE-SIZE FROM THE OLD BASIS
 
 The "34 shape-matched files is the residue, not a flip prediction" sentence
-above stays true, and is now **also the wrong denominator**: it was sized for
-`String.prototype`-transfer shapes in one directory, and the actual defect is
-any assignment-stored function member anywhere. The corpus-wide population is
-unmeasured; the merge_group run is the measurement.
+above stays true **and is now also the wrong denominator.** Both the 630/130/76
+table and the 34-file residue were sized over
+`built-ins/String/prototype`, ≤ES5, for the shape
+`obj.M = String.prototype.M`. That is one *instance* of the defect, not its
+extent: the mechanism is a direct call on **any** assignment-stored function
+member, on any receiver whose Wasm carrier is a concrete struct ref, with a
+plain `o.f = function(){…}` affected identically. Anything sized from
+`String.prototype` transfers is a lower bound on an unknown quantity.
+
+Corrected basis for any future sizing: files containing a `<expr>.<name> = …`
+assignment whose `<name>` is later CALLED directly on a concretely-carried
+receiver — corpus-wide, not one directory, and not restricted to builtin
+prototype sources.
+
+What was actually measured here (scoped standalone, per-file solo,
+`runTest262File` status — **not** the CI path):
+
+| population | n | fail→pass | pass→fail |
+| --- | --- | --- | --- |
+| `built-ins/String/prototype`, shape-matched | 144 | **+21** | **0** |
+| `built-ins/Array/prototype`, shape-matched (control) | 153 | 0 | **0** |
+
+The Array control is all-fail on both sides — it constrains regressions, and
+says nothing about gains. The corpus-wide population stays unmeasured; the
+`merge_group` run is the measurement.
 
 ## Provenance
 

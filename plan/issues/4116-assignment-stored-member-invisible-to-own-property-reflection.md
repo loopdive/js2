@@ -1,5 +1,5 @@
 ---
-id: 4113
+id: 4116
 title: "An assignment-stored member is invisible to own-property reflection — `hasOwnProperty`/`in`/`for-in`/computed read all say NO while the static read says YES"
 status: ready
 sprint: current
@@ -17,7 +17,7 @@ goal: standalone-mode
 related: [4096, 4086, 4010, 3537, 3468]
 ---
 
-# #4113 — an assignment-stored member exists for the static read and for nothing else
+# #4116 — an assignment-stored member exists for the static read and for nothing else
 
 Split out of **#4096** with the evidence already measured. #4096 fixed the
 *call* half (`o.f()` silently answered `undefined` and never ran the callee).
