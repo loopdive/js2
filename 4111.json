@@ -1,10 +1,11 @@
 {
   "id": "4111",
   "assignee": "ttraenkler/codex-reservation-cleanup",
-  "requested_by": "ttraenkler/codex-reservation-cleanup",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/4111-unused-reservation",
   "claimed_at": "2026-08-02T20:14:00Z",
-  "updated_at": "2026-08-02T20:14:00Z",
-  "write_id": "56675-k1q3ccp6"
+  "updated_at": "2026-08-02T20:14:15Z",
+  "write_id": "56984-f5zbz230",
+  "released_at": "2026-08-02T20:14:15Z"
 }
