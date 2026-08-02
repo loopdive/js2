@@ -16,7 +16,41 @@ goal: dogfood
 related: [4093, 2786, 3878, 3904]
 ---
 
-# Stakeholder decision 2026-08-02: exempt `[skip ci]`-only divergence
+# ⚠ RE-SCOPED — stakeholder decision #2, 2026-08-02 (~14:30Z)
+
+After the mechanism measurements below, the stakeholder chose **"re-scope to
+the real mechanism"** over wiring the original exemption or parking:
+
+> Make the enqueue sweep derive eligibility from real signals — required
+> checks via the checks API + behindness via the compare API — instead of
+> trusting the stale status string. Fixes the coin-flip for ALL strandings,
+> not just `[skip ci]` ones.
+
+**The `[skip ci]`-specific exemption below is SUPERSEDED as the deliverable.**
+It survives only as history and as the origin of the (reusable) marker
+predicate. The new scope:
+
+1. `scripts/enqueue-green-prs.mjs` derives eligibility from **real signals**:
+   every required check SUCCESS/skipped (checks API), **zero
+   FAILURE-conclusion checks of any kind** (preserving the #3878/#3904 intent
+   behind the UNSTABLE exclusion — a red non-required check still blocks), not
+   draft, no hold label, author-trust gate unchanged, and **not
+   conflicting/DIRTY** (compare/mergeable, not the status string).
+2. **Behind-by-ancestry no longer disqualifies.** Observed 2026-08-02
+   14:21:49Z: the live queue held #4002 (1 behind) at pos 1 and #4033
+   (4 behind) at pos 2, both enqueued by the server-side workflow, both
+   verified behind via the compare API — the queue builds merge groups
+   against main, now observed rather than assumed.
+3. **Residual unknown, handled by design instead of blocking:** whether the
+   `enqueuePullRequest` mutation refuses when GitHub's stale string happens to
+   read `BEHIND` at call time. Implementation attempts the mutation, captures
+   the raw error if refused, logs it as telemetry, and degrades to skip-this-
+   sweep — so production answers the question and a refusal costs one sweep,
+   not a stranding.
+4. Constraints unchanged: **eligibility only, never branch updates**
+   (2026-06-11 incident); positive AND negative controls still required.
+
+# ORIGINAL (superseded) — Stakeholder decision 2026-08-02: exempt `[skip ci]`-only divergence
 
 The project lead chose this remedy for the BEHIND-churn loop documented in
 issue 4093 (see its "REFRAME" section), over the two alternatives (admit
