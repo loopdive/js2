@@ -1,7 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /** String operations whose observable behavior is shared by every IR backend. */
-export type IrStringRuntimeIntrinsic = "constant" | "concat" | "equals" | "length" | "char-at" | "char-code-at";
+export type IrStringRuntimeIntrinsic =
+  | "constant"
+  | "concat"
+  | "equals"
+  | "length"
+  | "char-at"
+  | "char-code-at"
+  | "iterator-char-at";
 
 /** Audited producer evidence consumed by linear string backends. */
 export type IrStringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";
@@ -16,6 +23,10 @@ export const IR_STRING_CONCAT_OWNED_FN = "__ir_string_concat_owned";
 export const IR_STRING_EQUALS_FN = "__ir_string_equals";
 export const IR_STRING_CHAR_AT_FN = "__ir_string_char_at";
 export const IR_STRING_CHAR_CODE_AT_FN = "__ir_string_char_code_at";
+/** String-iterator extraction: returns one full code point, unlike `char-at`'s UTF-16 code unit. */
+export const IR_STRING_ITERATOR_CHAR_AT_FN = "__ir_string_iterator_char_at";
+/** Prefix for per-literal backend materializers used beyond `array.new_fixed` limits. */
+export const IR_STRING_LITERAL_MATERIALIZE_FN = "__ir_string_literal_materialize";
 
 export interface IrStringIndexContract {
   readonly conversion: "ToIntegerOrInfinity";
@@ -73,6 +84,11 @@ export const IR_STRING_RUNTIME: Readonly<Record<IrStringRuntimeIntrinsic, IrStri
     result: "number",
     allocatesResult: false,
     index: CHAR_CODE_AT_INDEX,
+  }),
+  "iterator-char-at": Object.freeze({
+    operands: Object.freeze(["string", "number-index"] as const),
+    result: "string",
+    allocatesResult: true,
   }),
 });
 

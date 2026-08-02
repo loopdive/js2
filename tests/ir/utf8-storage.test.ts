@@ -23,9 +23,11 @@ import { nativeStringLiteralInstrs } from "../../src/codegen/native-strings.js";
 // read ctx.mod.types, ctx.utf8Storage, and the *TypeIdx fields only.
 function ctxWith(utf8Storage: boolean): CodegenContext {
   const ctx = {
-    mod: { types: [] as unknown[] },
+    mod: { types: [] as unknown[], globals: [] as unknown[] },
     nativeStrings: true,
     utf8Storage,
+    numImportGlobals: 0,
+    nativeStrLiteralGlobals: new Map(),
     nativeStrDataTypeIdx: -1,
     anyStrTypeIdx: -1,
     nativeStrTypeIdx: -1,
@@ -35,6 +37,14 @@ function ctxWith(utf8Storage: boolean): CodegenContext {
   } as unknown as CodegenContext;
   registerNativeStringTypes(ctx);
   return ctx;
+}
+
+function literalInitializer(ctx: CodegenContext, value: string, encoding: "ascii" | "utf8-guaranteed" | "wtf16") {
+  const instrs = nativeStringLiteralInstrs(ctx, value, encoding);
+  expect(instrs).toHaveLength(1);
+  expect(instrs[0]?.op).toBe("global.get");
+  const globalIndex = (instrs[0] as { op: "global.get"; index: number }).index - ctx.numImportGlobals;
+  return ctx.mod.globals[globalIndex]!.init;
 }
 
 describe("#1588 PR-B — type registration gating", () => {
@@ -69,7 +79,7 @@ describe("#1588 PR-B — type registration gating", () => {
 describe("#1588 PR-B — literal materialization", () => {
   it("ascii literal with flag on → i8 Utf8String", () => {
     const ctx = ctxWith(true);
-    const instrs = nativeStringLiteralInstrs(ctx, "hi", "ascii");
+    const instrs = literalInitializer(ctx, "hi", "ascii");
     // struct.new of the Utf8String type, array.new_fixed of the i8 data type.
     expect(instrs.some((i) => i.op === "struct.new" && (i as { typeIdx: number }).typeIdx === ctx.utf8StrTypeIdx)).toBe(
       true,
@@ -87,24 +97,24 @@ describe("#1588 PR-B — literal materialization", () => {
 
   it("wtf16 literal with flag on → i16 NativeString (unchanged path)", () => {
     const ctx = ctxWith(true);
-    const instrs = nativeStringLiteralInstrs(ctx, "\uD800x", "wtf16");
+    const instrs = literalInitializer(ctx, "\uD800x", "wtf16");
     expect(
-      instrs.some((i) => i.op === "struct.new" && (i as { typeIdx: number }).typeIdx === ctx.nativeStrTypeIdx),
+      instrs.some((i) => i.op === "struct.new" && (i as { typeIdx: number }).typeIdx === ctx.hashedStrTypeIdx),
     ).toBe(true);
   });
 
   it("ascii literal with flag OFF → i16 NativeString even if encoding says ascii", () => {
     const ctx = ctxWith(false);
-    const instrs = nativeStringLiteralInstrs(ctx, "hi", "ascii");
+    const instrs = literalInitializer(ctx, "hi", "ascii");
     expect(
-      instrs.some((i) => i.op === "struct.new" && (i as { typeIdx: number }).typeIdx === ctx.nativeStrTypeIdx),
+      instrs.some((i) => i.op === "struct.new" && (i as { typeIdx: number }).typeIdx === ctx.hashedStrTypeIdx),
     ).toBe(true);
   });
 
   it("utf8-guaranteed multi-byte literal encodes correct UTF-8 bytes", () => {
     const ctx = ctxWith(true);
     // "é" = U+00E9 → 0xC3 0xA9 (2 bytes); len=1, byteLen=2.
-    const instrs = nativeStringLiteralInstrs(ctx, "é", "utf8-guaranteed");
+    const instrs = literalInitializer(ctx, "é", "utf8-guaranteed");
     const consts = instrs.filter((i) => i.op === "i32.const").map((i) => (i as { value: number }).value);
     expect(consts[0]).toBe(1); // len (1 code unit)
     expect(consts[1]).toBe(2); // byteLen (2 UTF-8 bytes)
@@ -115,10 +125,22 @@ describe("#1588 PR-B — literal materialization", () => {
   it("astral scalar (surrogate pair) encodes as 4 UTF-8 bytes", () => {
     const ctx = ctxWith(true);
     // U+1F600 😀 = surrogate pair (len 2 code units) → F0 9F 98 80.
-    const instrs = nativeStringLiteralInstrs(ctx, "\u{1f600}", "utf8-guaranteed");
+    const instrs = literalInitializer(ctx, "\u{1f600}", "utf8-guaranteed");
     const consts = instrs.filter((i) => i.op === "i32.const").map((i) => (i as { value: number }).value);
     expect(consts[0]).toBe(2); // len (2 code units)
     expect(consts[1]).toBe(4); // byteLen
     expect(consts.slice(3)).toEqual([0xf0, 0x9f, 0x98, 0x80]);
+  });
+
+  it("falls back to one interned i16 global when UTF-8 bytes alone exceed the fixed-array limit", () => {
+    const ctx = ctxWith(true);
+    const value = "💩".repeat(2_501); // 10,004 UTF-8 bytes, 5,002 UTF-16 code units.
+    const instrs = literalInitializer(ctx, value, "utf8-guaranteed");
+    expect(instrs).toContainEqual({
+      op: "array.new_fixed",
+      typeIdx: ctx.nativeStrDataTypeIdx,
+      length: 5_002,
+    });
+    expect(instrs).toContainEqual({ op: "struct.new", typeIdx: ctx.hashedStrTypeIdx });
   });
 });

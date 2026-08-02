@@ -476,7 +476,7 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "dyn.member_set":
       return `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
     case "string.const":
-      return instr.storage
+      return instr.storage || instr.materializer
         ? null
         : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
     case "string.len":
@@ -489,7 +489,7 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "string.char_code_at":
       return instr.provider ? null : `${instr.kind} resolves a string callable without an explicit symbolic ref`;
     case "forof.string":
-      return `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
+      return instr.provider ? null : `${instr.kind} resolves a string callable without an explicit symbolic ref`;
     case "object.new":
     case "object.get":
     case "object.set":
@@ -844,8 +844,12 @@ function collectFunctionEvidence(
           }
         } else if (nested.kind === "global.get" || nested.kind === "global.set") {
           recordGlobalReference(evidence, nested.target, input.abi, ownership, input.terminalUnitIds);
-        } else if (nested.kind === "string.const" && nested.storage) {
-          recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+        } else if (nested.kind === "string.const") {
+          if (nested.storage) {
+            recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+          } else if (nested.materializer) {
+            recordExternalCallable(evidence, nested.materializer, input.abi, ownership);
+          }
         } else if (nested.kind === "string.len" && nested.provider) {
           if (nested.provider.kind === "callable") {
             recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
@@ -862,7 +866,8 @@ function collectFunctionEvidence(
           (nested.kind === "string.concat" ||
             nested.kind === "string.eq" ||
             nested.kind === "string.char_at" ||
-            nested.kind === "string.char_code_at") &&
+            nested.kind === "string.char_code_at" ||
+            nested.kind === "forof.string") &&
           nested.provider
         ) {
           recordExternalCallable(evidence, nested.provider, input.abi, ownership);

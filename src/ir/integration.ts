@@ -70,11 +70,13 @@ import {
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
+import { ensureNativeStringHelpers } from "../codegen/native-strings.js";
 import {
-  ensureNativeStringHelpers,
+  nativeStringLiteralMaterialization,
   nativeStringLiteralInstrs,
+  type NativeStringLiteralMaterialization,
   type StringEncoding,
-} from "../codegen/native-strings.js";
+} from "../codegen/native-string-literals.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../codegen/regexp-runtime-contract.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../codegen/regexp-standalone.js";
 import { addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../codegen/registry/imports.js";
@@ -196,6 +198,7 @@ import {
   type IrFunction,
   type IrGlobalRef,
   type IrInstr,
+  type IrInstrStringConst,
   type IrModule,
   type IrObjectShape,
   type IrStringLengthProvider,
@@ -259,6 +262,8 @@ import {
   IR_STRING_CONCAT_FN,
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
+  IR_STRING_ITERATOR_CHAR_AT_FN,
+  IR_STRING_LITERAL_MATERIALIZE_FN,
 } from "./string-runtime.js";
 export {
   buildIrIntegrationReport,
@@ -3918,6 +3923,11 @@ function resolveAndObserveCallableProvider(ctx: CodegenContext, ref: IrFuncRef):
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
     index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_ITERATOR_CHAR_AT_FN) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
+    }
   } else {
     index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol);
   }
@@ -3939,6 +3949,33 @@ function exactCallableImportIndex(ctx: CodegenContext, module: string, field: st
     functionIndex++;
   }
   return undefined;
+}
+
+function emitResolvedStringConst(
+  ctx: CodegenContext,
+  resolver: Pick<IrLowerResolver, "resolveFunc" | "resolveGlobal">,
+  value: string,
+  alloc?: import("./nodes.js").AllocSiteId,
+  storage?: IrGlobalRef,
+  materializer?: IrFuncRef,
+): readonly Instr[] {
+  if (storage && materializer) {
+    throw new Error("ir/integration: string literal cannot use storage and a materializer together");
+  }
+  if (storage) return [{ op: "global.get", index: resolver.resolveGlobal(storage) }];
+  if (materializer) return [{ op: "call", funcIdx: resolver.resolveFunc(materializer) }];
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    const encoding =
+      ctx.utf8Storage && alloc !== undefined && ctx.allocRegistry
+        ? ctx.allocRegistry.read<StringEncoding>(alloc, ALLOC_NAMESPACES.encoding)
+        : undefined;
+    return nativeStringLiteralInstrs(ctx, value, encoding);
+  }
+  const globalIdx = ctx.stringGlobalMap.get(value);
+  if (globalIdx === undefined || globalIdx < 0) {
+    throw new Error(`ir/integration: string literal "${value}" was not pre-registered`);
+  }
+  return [{ op: "global.get", index: globalIdx }];
 }
 
 function makeResolver(
@@ -4184,26 +4221,13 @@ function makeResolver(
     nativeStrings(): boolean {
       return ctx.nativeStrings;
     },
-    emitStringConst(value: string, alloc?: import("./nodes.js").AllocSiteId, storage?: IrGlobalRef): readonly Instr[] {
-      if (storage) return [{ op: "global.get", index: resolver.resolveGlobal(storage) }];
-      if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
-        // Match direct codegen's interned native-literal representation. Besides
-        // avoiding per-execution allocation, shared identity is a prerequisite
-        // for the native method/property fast paths. The optional encoding fact
-        // retains the existing Utf8String selection.
-        const encoding =
-          ctx.utf8Storage && alloc !== undefined && ctx.allocRegistry
-            ? ctx.allocRegistry.read<StringEncoding>(alloc, ALLOC_NAMESPACES.encoding)
-            : undefined;
-        return nativeStringLiteralInstrs(ctx, value, encoding);
-      }
-      // Host strings: pre-registration in `preregisterStringSupport` already
-      // ensured the string global exists. Look up the (now-final) index.
-      const globalIdx = ctx.stringGlobalMap.get(value);
-      if (globalIdx === undefined || globalIdx < 0) {
-        throw new Error(`ir/integration: string literal "${value}" was not pre-registered`);
-      }
-      return [{ op: "global.get", index: globalIdx }];
+    emitStringConst(
+      value: string,
+      alloc?: import("./nodes.js").AllocSiteId,
+      storage?: IrGlobalRef,
+      materializer?: IrFuncRef,
+    ): readonly Instr[] {
+      return emitResolvedStringConst(ctx, resolver, value, alloc, storage, materializer);
     },
     emitStringConcat(_alloc, mode, provider): readonly Instr[] {
       if (provider) {
@@ -4367,10 +4391,13 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
     case "class.static_call":
     case "class.new":
       return instr.target;
+    case "string.const":
+      return instr.materializer;
     case "string.concat":
     case "string.eq":
     case "string.char_at":
     case "string.char_code_at":
+    case "forof.string":
       return instr.provider;
     default:
       return undefined;
@@ -4618,20 +4645,43 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     }
   }
 
-  const storageForConst = (instr: Extract<IrInstr, { kind: "string.const" }>): IrGlobalRef | undefined => {
-    if (!ctx.nativeStrings) return programAbiStringConstantRef(ctx, instr.value);
-    if (!ctx.programAbiGlobals || ctx.nativeStrTypeIdx < 0) return undefined;
+  const nativeMaterializations = new Map<IrInstrStringConst, NativeStringLiteralMaterialization>();
+  const nativeMaterializationFor = (instr: IrInstrStringConst): NativeStringLiteralMaterialization | undefined => {
+    if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return undefined;
+    const existing = nativeMaterializations.get(instr);
+    if (existing) return existing;
     const encoding =
       ctx.utf8Storage && instr.alloc !== undefined && ctx.allocRegistry
         ? ctx.allocRegistry.read<StringEncoding>(instr.alloc, ALLOC_NAMESPACES.encoding)
         : undefined;
-    const ops = nativeStringLiteralInstrs(ctx, instr.value, encoding);
-    if (ops.length !== 1 || ops[0]?.op !== "global.get") return undefined;
-    const global = ctx.mod.globals[ops[0].index - ctx.numImportGlobals];
+    const materialization = nativeStringLiteralMaterialization(ctx, instr.value, encoding);
+    nativeMaterializations.set(instr, materialization);
+    return materialization;
+  };
+
+  const storageForConst = (instr: IrInstrStringConst): IrGlobalRef | undefined => {
+    if (!ctx.nativeStrings) return programAbiStringConstantRef(ctx, instr.value);
+    if (!ctx.programAbiGlobals || ctx.nativeStrTypeIdx < 0) return undefined;
+    const materialization = nativeMaterializationFor(instr);
+    if (!materialization || materialization.kind !== "global") return undefined;
+    const global = ctx.mod.globals[materialization.globalIdx - ctx.numImportGlobals];
     if (!global) {
       throw new Error(`ir/integration: native string literal ${JSON.stringify(instr.value)} lost its interned global`);
     }
     return ctx.programAbiGlobals.prepareNativeStringLiteral(global);
+  };
+
+  const materializerRefs = new Map<number, IrFuncRef>();
+  const materializerForConst = (instr: IrInstrStringConst): IrFuncRef | undefined => {
+    const materialization = nativeMaterializationFor(instr);
+    const providerRegistry = ctx.programAbiCallableProviders;
+    if (!materialization || materialization.kind !== "callable" || !providerRegistry) return undefined;
+    const existing = materializerRefs.get(materialization.funcIdx);
+    if (existing) return existing;
+    const provider = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:${materializerRefs.size}`);
+    providerRegistry.observe(provider, materialization.funcIdx);
+    materializerRefs.set(materialization.funcIdx, provider);
+    return provider;
   };
 
   let usesString = false;
@@ -4640,6 +4690,7 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
     usesString ||= attachment.usesString;
     const fn = attachIrStringSupport(attachment.function, {
       storageForConst,
+      materializerForConst,
       providerForLength: () => lengthProvider,
     });
     return fn === entry.fn ? entry : { ...entry, fn };
@@ -4655,7 +4706,8 @@ function instrUsesStrings(instr: IrInstr): boolean {
     instr.kind === "string.eq" ||
     instr.kind === "string.len" ||
     instr.kind === "string.char_at" ||
-    instr.kind === "string.char_code_at"
+    instr.kind === "string.char_code_at" ||
+    instr.kind === "forof.string"
   );
 }
 
