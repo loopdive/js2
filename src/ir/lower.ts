@@ -88,8 +88,8 @@ import {
   type IrEffects,
 } from "./effects.js";
 import { IrInvariantError } from "./outcomes.js";
-import { irImportFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
-import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
+import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import { IR_STRING_ITERATOR_CHAR_AT_FN, type IrStringConcatMode, type IrStringEncoding } from "./string-runtime.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
   IrBoxedLowering,
@@ -2850,7 +2850,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // iteration yields code points: a well-formed surrogate pair is ONE
         // 2-code-unit element. The cursor advances by the element's `len`
         // (1, or 2 for a pair) below instead of a fixed +1.
-        const charAtIdx = resolver.resolveFunc(irRuntimeFuncRef("__str_charAt_cp"));
+        const charAtIdx = resolver.resolveFunc(instr.provider ?? irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN));
         // The AnyString struct's `len` field is at index 0 (matches
         // `nativeStringType` in src/codegen/native-strings.ts).
         // We recover the typeIdx from the SSA value's IrType — must be

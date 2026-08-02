@@ -734,8 +734,8 @@ functions, one call-graph closure, one async-body shape, and two static class
 members. This callable slice changes preparation coverage, not that bounded
 headline.
 
-The remaining string preparation blockers are `forof.string` and oversized
-native literals that cannot use an interned global. Two string-builder
+The remaining string preparation blocker is oversized native literals that
+cannot use an interned global. Two string-builder
 optimizations also remain: the generic owned-append loop is IR-owned, but IR
 does not yet preallocate a backing array from the direct path's exact static
 trip-count proof, and constant-count literal append loops remain intentionally
@@ -791,6 +791,43 @@ pass-derived dependencies sealable, then replace the transitional probe/direct/
 late-overlay sequence with one isolated prepare/emit transaction and exact
 emission counters. The compatibility placeholder branch cannot be deleted
 until the remaining R3/R4 owners consume that transaction.
+
+## Native string-iteration provider continuation (2026-08-02)
+
+Native `forof.string` no longer discovers `__str_charAt_cp` by compatibility
+name during lowering. Final string preparation attaches the backend-neutral
+`__ir_string_iterator_char_at` callable intent; provider pre-registration
+binds that intent to the exact allocator object, and prepared-component
+discovery records the resulting Program ABI dependency before sealing.
+
+The semantic distinction from `string.char_at` remains explicit: ordinary
+`charAt` returns one UTF-16 code unit, while string iteration returns one full
+code point and advances by that element's one- or two-code-unit length. The
+lowerer retains its transitional semantic-provider default for standalone IR
+fixtures, but production preparation always supplies the exact symbolic ref;
+an absent provider still blocks component sealing.
+
+The new anti-vacuity route failed before the change with
+`legacyBodyEmitted: true`. It now compiles the supplementary-character fixture
+once through IR, reports a prepared component, emits no legacy body, validates
+as Wasm, and returns three code points for `"A💩B"`. Exact dependency coverage
+also proves both the string-carrier type and iterator callable are present in
+the sealed ABI component. The focused R2/string-for-of/contract matrix is
+**96/96 passing**; typecheck, lint, formatting, fallback, and the optimization
+retirement ledger pass. The ledger now records **15** decisions, **4** with
+complete IR ownership, and **0** retirement-ready.
+
+The bounded readiness corpus does not contain this source shape, so its
+headline is intentionally unchanged: hybrid is READY at **33/37 IR bodies**,
+**4 typed Unsupported**, **0 invariants**, and **35 legacy bodies**. Strict
+IR-only remains NOT READY on those exact four unsupported units and 35 legacy
+bodies; the production anti-vacuity fixture, rather than an unrelated corpus
+delta, proves this slice's compile-once effect.
+
+String preparation now has one known residual: oversized native literals that
+cannot use an interned global. Dynamic/object/layout, closure/ref-cell/vector,
+iterator/generator/exception/async, and pass-derived dependencies remain the
+larger R2/R6 continuation.
 
 ## File ownership and locks
 

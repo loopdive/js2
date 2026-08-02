@@ -339,7 +339,8 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
           (nested.kind === "string.concat" ||
             nested.kind === "string.eq" ||
             nested.kind === "string.char_at" ||
-            nested.kind === "string.char_code_at") &&
+            nested.kind === "string.char_code_at" ||
+            nested.kind === "forof.string") &&
           nested.provider
         ) {
           const problem = callableReferenceProblem(nested.provider);

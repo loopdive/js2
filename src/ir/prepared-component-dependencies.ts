@@ -489,7 +489,7 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "string.char_code_at":
       return instr.provider ? null : `${instr.kind} resolves a string callable without an explicit symbolic ref`;
     case "forof.string":
-      return `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
+      return instr.provider ? null : `${instr.kind} resolves a string callable without an explicit symbolic ref`;
     case "object.new":
     case "object.get":
     case "object.set":
@@ -862,7 +862,8 @@ function collectFunctionEvidence(
           (nested.kind === "string.concat" ||
             nested.kind === "string.eq" ||
             nested.kind === "string.char_at" ||
-            nested.kind === "string.char_code_at") &&
+            nested.kind === "string.char_code_at" ||
+            nested.kind === "forof.string") &&
           nested.provider
         ) {
           recordExternalCallable(evidence, nested.provider, input.abi, ownership);

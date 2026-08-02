@@ -1,4 +1,4 @@
-# The IR interchange contract — v5.0
+# The IR interchange contract — v5.1
 
 > **Normative.** The #3030 contract is the union of this document,
 > [`ir-module.schema.json`](ir-module.schema.json), and the exported
@@ -37,10 +37,11 @@ One JSON document per compiled module.
 
 ## D2 — Versioning
 
-`IR_FORMAT_VERSION = "5.0"` (exported from `src/ir/contract.ts`). Version 5
-makes global and symbolic type references carry required closed structural
-bindings; their `name` fields are compatibility/debug metadata. Source-qualified
-class shapes from version 4, callable bindings from version 3, and
+`IR_FORMAT_VERSION = "5.1"` (exported from `src/ir/contract.ts`). Version 5.1
+adds the optional prepared callable provider on `forof.string`; version 5.0
+made global and symbolic type references carry required closed structural
+bindings. Their `name` fields are compatibility/debug metadata. Source-
+qualified class shapes from version 4, callable bindings from version 3, and
 function/coverage `unitId` fields from version 2 remain required.
 
 - **Additive** (minor bump): new instruction kinds, new optional fields, new
@@ -86,7 +87,7 @@ function/coverage `unitId` fields from version 2 remain required.
    classification") is part of this contract; instruction order within a
    block is program order, and any reordering the compiler performed
    respected the classification (#2134). Effects are _derived_ (published
-   table), not serialized per instruction in v5.0.
+   table), not serialized per instruction in v5.1.
 6. **Source positions.** Instructions and terminators may carry
    `site: {line, column}` (1-based line, 0-based column, in the `source`
    file named by the header). Alloc-site provenance rides on `alloc`
@@ -186,7 +187,7 @@ landed.
 
 ```
 IrModuleDocument
-├─ irVersion: "5.0"
+├─ irVersion: "5.1"
 ├─ source?: string
 ├─ coverage: [{unitId, name, carrier: "ir"|"legacy", exported, reason?}]   (D3.7)
 └─ functions: [IrFunctionDoc]           (exactly the carrier:"ir" entries)
@@ -297,7 +298,7 @@ must not diverge (T4 acceptance).
 | -------------- | ----------- | --------------------------------------------- | ----------------------------------------------------- | --------------- | ------------------------ |
 | `forof.vec`    | `vec`       | `elementType`, slot indices, `loopLabel?`     | ∅                                                     | join of body    | `body`                   |
 | `forof.iter`   | `iterable`  | slot indices, `loopLabel?`                    | ∅                                                     | full barrier    | `body`                   |
-| `forof.string` | `str`       | slot indices, `loopLabel?`                    | ∅                                                     | join of body    | `body`                   |
+| `forof.string` | `str`       | slot indices, `provider?: FuncRef`, `loopLabel?` | ∅                                                   | join of body    | `body`                   |
 | `while.loop`   | `condValue` | `loopLabel?`                                  | ∅; `τ(condValue)=val:i32`, defined in `cond`          | join of buffers | `cond`, `body`           |
 | `for.loop`     | `condValue` | `loopLabel?`                                  | ∅; as `while.loop`                                    | join of buffers | `cond`, `body`, `update` |
 | `br.label`     | —           | `label: LabelId`, `mode: "break"\|"continue"` | ∅; label must name an enclosing loop/labeled frame    | control         | —                        |
@@ -381,7 +382,7 @@ boxed, dynamic`.
 
 ## Slice status
 
-| Slice | What                                                        | Status at v5.0                                               |
+| Slice | What                                                        | Status at v5.1                                               |
 | ----- | ----------------------------------------------------------- | ------------------------------------------------------------ |
 | T1    | this document + schema + `IR_FORMAT_VERSION`                | **v5 structural callable/global/type identity** (#3520)      |
 | T2    | purge module-relative indices from in-memory `IrType` (D5)  | open — until then, affected functions are `carrier:"legacy"` |

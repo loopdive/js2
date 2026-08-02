@@ -18,6 +18,7 @@ import {
   IR_STRING_CONCAT_FN,
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
+  IR_STRING_ITERATOR_CHAR_AT_FN,
 } from "./string-runtime.js";
 
 export interface IrStringSupportProviders {
@@ -59,6 +60,8 @@ export function irStringCallableProviderRef(instr: IrInstr): IrFuncRef | undefin
       return irIntrinsicFuncRef(IR_STRING_CHAR_AT_FN);
     case "string.char_code_at":
       return irIntrinsicFuncRef(IR_STRING_CHAR_CODE_AT_FN);
+    case "forof.string":
+      return irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN);
     default:
       return undefined;
   }
@@ -105,7 +108,8 @@ export function attachIrStringSupport(fn: IrFunction, providers: IrStringSupport
       nested.kind === "string.concat" ||
       nested.kind === "string.eq" ||
       nested.kind === "string.char_at" ||
-      nested.kind === "string.char_code_at"
+      nested.kind === "string.char_code_at" ||
+      nested.kind === "forof.string"
     ) {
       const provider = irStringCallableProviderRef(nested)!;
       if (nested.provider) {

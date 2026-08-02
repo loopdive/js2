@@ -2204,6 +2204,8 @@ export interface IrInstrForOfString extends IrInstrBase {
   readonly elementSlot: number;
   /** Body instrs emitted inside the loop. */
   readonly body: readonly IrInstr[];
+  /** Code-point extraction intent bound to the exact native provider during preparation. */
+  readonly provider?: IrFuncRef;
   /** #2952 slice 2 — loop identity for `br.label` (see IrInstrWhileLoop). */
   readonly loopLabel?: IrLabelId;
 }

@@ -259,6 +259,7 @@ import {
   IR_STRING_CONCAT_FN,
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
+  IR_STRING_ITERATOR_CHAR_AT_FN,
 } from "./string-runtime.js";
 export {
   buildIrIntegrationReport,
@@ -3918,6 +3919,11 @@ function resolveAndObserveCallableProvider(ctx: CodegenContext, ref: IrFuncRef):
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
     index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_ITERATOR_CHAR_AT_FN) {
+    if (ctx.nativeStrings) {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, "__str_charAt_cp");
+    }
   } else {
     index = ctx.funcMap.get(symbol) ?? nativeStrHelperHandle(ctx, symbol);
   }
@@ -4371,6 +4377,7 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
     case "string.eq":
     case "string.char_at":
     case "string.char_code_at":
+    case "forof.string":
       return instr.provider;
     default:
       return undefined;
@@ -4655,7 +4662,8 @@ function instrUsesStrings(instr: IrInstr): boolean {
     instr.kind === "string.eq" ||
     instr.kind === "string.len" ||
     instr.kind === "string.char_at" ||
-    instr.kind === "string.char_code_at"
+    instr.kind === "string.char_code_at" ||
+    instr.kind === "forof.string"
   );
 }
 

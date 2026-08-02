@@ -84,6 +84,32 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(exports.characterCode!()).toBe(98);
   });
 
+  it("dependency-seals native string iteration and its code-point provider", async () => {
+    const result = await compile(
+      `export function countCodePoints(): number {
+        let count = 0;
+        for (const value of "A💩B") count += 1;
+        return count;
+      }`,
+      {
+        fileName: "prepared-native-string-iteration.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target: "standalone",
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(outcome(result, "countCodePoints")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(outcome(result, "countCodePoints").preparedComponentId).toMatch(/^prepared-component:/);
+    expect((await instantiate(result)).countCodePoints!()).toBe(3);
+  });
+
   it.each([
     ["gc", "prepared-host-owned-append.ts"],
     ["standalone", "prepared-native-owned-append.ts"],
