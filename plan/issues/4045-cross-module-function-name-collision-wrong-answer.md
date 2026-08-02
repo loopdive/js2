@@ -210,3 +210,43 @@ other three pass there because a small `shared` is **inlined** at its call site,
 so each caller gets the right code regardless of which slot the name denotes.
 The collision is only observable once a body is too large to inline. That is
 recorded in the test file so the small rungs are not mistaken for evidence.
+
+## Next layer, located precisely (2026-08-02)
+
+The ABI trampoline error above is the **same bare-name keying**, in
+`ensureFuncClosureSingleton` (`src/codegen/closures/method-trampolines.ts`):
+
+```ts
+const trampolineName = `__fn_tramp_${funcName}_cached`;
+let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
+let cacheGlobalIdx = ctx.funcClosureGlobals.get(funcName);
+```
+
+Both the synthetic trampoline name and the closure-cache global are keyed by the
+bare `funcName`, so two units that share a name share **one trampoline object**.
+Its caller (`src/codegen/index.ts`, the `plan.topLevelFunctionValues` loop) then
+hands that one `WasmFunction` to `planProgramAbiFunctionValue` under two
+different unit-anchored binding ids, and
+`ProgramAbiSession.locatorOwners` rejects the second — correctly, since a slot
+cannot have two owners.
+
+Note the caller's `ctx.funcMap.get(valuePlan.target.name)` now resolves to the
+right per-source function (that is the landed fix), which is exactly why the
+duplicate is now visible instead of silently collapsing.
+
+### Suggested next step
+
+Give the trampoline and its cache global a per-owner discriminator when the name
+collides — e.g. derive them from the owning **unit id** rather than the bare
+name, mirroring what the binding ids already do. Scope check before starting:
+`ensureFuncClosureSingleton` is shared closure infrastructure used well beyond
+the multi-source path, so this needs the full equivalence suite plus the
+closure/trampoline-focused tests, not just the #4045 rungs.
+
+### Beyond that, still unaudited for this defect class
+
+- `ref.func` references and closure captures of a colliding name.
+- Re-exports and `export { x as y }` chains across colliding modules.
+- Whether two versions of the *same package* (the eslint-visitor-keys 3.4.3 /
+  5.0.1 case) need anything beyond per-unit naming — they are distinct units by
+  construction, so probably not, but it has not been verified.
