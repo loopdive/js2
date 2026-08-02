@@ -1,7 +1,7 @@
 ---
 horizon: m
 id: 4075
-title: "ESLint: binary emit fails with local index 65 in an 8-slot frame at function 've'"
+title: "Codegen leaves out-of-frame local references; reproduces in ONE file (uri.all.js)"
 status: ready
 created: 2026-08-02
 updated: 2026-08-02
@@ -337,3 +337,51 @@ INPUT rather than by guessing shapes: run `JS2WASM_CHECK_FRAMES=1` over each of
 the 146 resolved sources compiled alone, find which single file produces a
 `__closure_N` breach, and reduce from that file's real text. That converts an
 open-ended search into a bounded one, and each probe is seconds.
+
+## REPRODUCER FOUND (2026-08-02) — one file, seconds
+
+Bisecting **by input** (compile each of the 146 resolved sources as its own
+entry under `JS2WASM_CHECK_FRAMES=1`) localises it to a handful of files, the
+smallest being `uri-js`'s minified ES5 bundle — **57 KB, self-contained**:
+
+```sh
+JS2WASM_CHECK_FRAMES=1 node --max-old-space-size=4096 --import tsx \
+  tests/helpers/compile-project-probe.ts \
+  node_modules/.pnpm/uri-js@4.4.1/node_modules/uri-js/dist/es5/uri.all.js \
+  '{"allowJs":true,"target":"gc","platform":"node","allowFs":true}'
+```
+
+```text
+[js2:frames] position  28 '__closure_21' frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] position  30 '__closure_23' frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] position  77 'resolve'      frame=15 (3 params + 12 locals) worst local index=33
+[js2:frames] position  78 'normalize'    frame=7  (2 params +  5 locals) worst local index=33
+[js2:frames] position  79 'equal'        frame=21 (3 params + 18 locals) worst local index=33
+[js2:frames] position 134 '__closure_63' frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] position 136 '__closure_65' frame=6  (2 params +  4 locals) worst local index=17
+[js2:frames] 7 function(s) reference out-of-frame locals at end of codegen
+```
+
+**Identical signature to the ESLint graph** — `__closure_N` at `frame=6
+(2 params + 4 locals)` with `worst=17` — so this is the same defect, not a
+lookalike. A ~15-minute, 146-source compile is now a seconds-long one-file probe.
+
+Other single-file reproducers from the same sweep, all likewise self-contained:
+`resolve.js`, `error_classes.js`, `index.js`, `ajv.js` (8 breaches each).
+
+### Why the constants matter
+
+Within one file every breach shares an index: `17` for the `__closure_N` family
+and `33` for `resolve`/`normalize`/`equal`, **regardless of each function's own
+frame** (7, 15 and 21 slots respectively). A constant that ignores the host frame
+is not an off-by-one — it is an index carried over from **one specific other
+frame**, so the producer is copying instructions from a shared source rather than
+miscomputing per function. Find which function in `uri.all.js` has ≥ 34 slots and
+the origin is likely immediate.
+
+### Status
+
+This supersedes the earlier framing entirely: the issue is **not** "the `ve`
+bug", and not ESLint-specific. It is a general codegen defect that any minified
+bundle appears to trigger, of which ESLint's failure is one instance. Retitled
+accordingly.
