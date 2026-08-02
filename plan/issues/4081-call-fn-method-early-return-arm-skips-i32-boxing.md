@@ -35,6 +35,12 @@ related: [4077, 4079, 4080]
 >
 > #4082 also records a residual it deliberately did not fix: **#4083**, where
 > the same borrowed call now answers `null` instead of crashing.
+>
+> **Permanent repro** (#2093): `tests/issue-4082-closure-result-boxing.test.ts`
+> — its first two cases are exactly the shape below, and the second asserts by
+> value that a genuine `TypeError` is thrown. Conformance repros:
+> `test262/test/built-ins/RegExp/prototype/test/S15.10.6.3_A2_T1.js` and
+> `test262/test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-166.js`.
 
 Located 2026-08-02 by the `H-crashes` agent, which **deliberately stopped short
 of implementing** because it had not finished identifying the emitting site.

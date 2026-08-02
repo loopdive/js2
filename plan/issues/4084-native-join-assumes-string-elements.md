@@ -35,10 +35,16 @@ var x = new Array(object);
 var s = x.toString();
 ```
 
-Goal-scope population: **2** files —
-`built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js` and
-`built-ins/Array/prototype/toLocaleString/S15.4.4.3_A3_T1.js` (baseline row
-`2.8.2026, 03:32`).
+Goal-scope population: **2** files (baseline row `2.8.2026, 03:32`) — these are
+also the permanent conformance repros (#2093):
+
+- `test262/test/built-ins/Array/prototype/toString/S15.4.4.2_A1_T4.js`
+- `test262/test/built-ins/Array/prototype/toLocaleString/S15.4.4.3_A3_T1.js`
+
+Whoever lands the fix should add a `tests/issue-4084.test.ts` carrying the
+7-line repro above, asserting `WebAssembly.validate(...) === true` **and** that
+the spec `TypeError` is thrown — validation alone would not catch a wrong
+value.
 
 ## Root cause
 
