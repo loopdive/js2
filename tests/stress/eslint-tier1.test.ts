@@ -70,7 +70,11 @@ const TIER1_HEAP_LIMIT_MB = 2048;
 // by a parent supervisor), exit 0, structured report emitted. The heap cap is
 // therefore still honest and stays at 2048.
 //
-// 1,500 s is ~1.8x the measurement. This is a slow rung, and deliberately so —
+// (2026-08-02) Re-measured once more after #4033 and with `allowFs` on: 955 s.
+// Still inside 1,500 s (~1.6x), so the budget is unchanged. Each cleared blocker
+// costs wall time because more of the graph actually lowers.
+//
+// 1,500 s is ~1.6x the measurement. This is a slow rung, and deliberately so —
 // the dominant cost is the single surviving module-init compile (#4031, ~51 % of
 // the ESLint compile). Shrink this budget when #4031 lands, do not leave it wide.
 // `tests/stress/` runs in no required check, so this does not gate CI.
@@ -113,7 +117,12 @@ export function test(): number {
     // budget broke, so a breach can never be read as a compiler diagnostic.
     tier1EntryCompile = runCompileProjectProbe({
       entry,
-      options: { allowJs: true, target: "gc", platform: "node" },
+      // (#4033) `allowFs` is REQUIRED, not a convenience: ESLint calls
+      // `fs.readFileSync`, and the #1491 policy gate refuses to emit for a
+      // non-WASI target without it. That refusal is correct behaviour, not a
+      // compiler defect, and leaving it in the run buried a real policy decision
+      // in the middle of a defect ladder.
+      options: { allowJs: true, target: "gc", platform: "node", allowFs: true },
       heapLimitMb: TIER1_HEAP_LIMIT_MB,
       timeoutMs: TIER1_WALL_CLOCK_BUDGET_MS,
     }).then((outcome) => outcome.report);
@@ -161,21 +170,23 @@ describe.skipIf(ESLINT_LINTER === null)(
       expect(diagnostics).not.toContain("Cannot find module");
       expect(diagnostics).not.toContain("object destructuring source must be IrType.object or IrType.class");
 
-      // Pin the frontier: one hard codegen abort. When that is fixed this rung
-      // goes red on purpose — advance the ladder, do not relax the assertion.
+      // Frontier as of 2026-08-02. The single-hard-abort ladder is FINISHED:
+      // #4018 (ambient `.d.ts` owning a module TDZ global), #4019 (unbounded
+      // recursion on cyclic types), #4027 (documented IR deferrals classified as
+      // fatal invariants), #4028 (a nested `FunctionDeclaration` admitted as an
+      // imported direct-call target the inventory can never own) and #4033
+      // (`callableProvider` duplicating `moduleInit`'s role ordinal) each retired
+      // the abort before it. There is now NO hard codegen abort at all.
       const codegenErrors = r.errors.filter((error) => error.message.startsWith("Codegen error:"));
       expect(
         codegenErrors.map((error) => error.message),
-        "the ESLint package-entry frontier moved — advance this rung",
-      ).toHaveLength(1);
-      // Frontier as of 2026-08-01, after #4018 (ambient `.d.ts` owning a module
-      // TDZ global), #4019 (unbounded recursion on cyclic types), #4027
-      // (documented IR deferrals classified as fatal invariants) and #4028 (a
-      // nested `FunctionDeclaration` admitted as an imported direct-call target
-      // the unit inventory can never own) each retired the abort before it.
-      // Now: two entry-source support drafts collide on one structural order.
-      expect(codegenErrors[0]?.message).toContain("ABI drafts");
-      expect(codegenErrors[0]?.message).toContain("share structural order");
+        "a hard codegen abort came back on the ESLint package entry",
+      ).toEqual([]);
+
+      // What blocks emission now is a SET of independent gaps, not one abort.
+      // Pin them by identity so fixing any one turns this rung red on purpose.
+      expect(diagnostics).toContain("$ObjVecArr"); // #4037
+      expect(diagnostics).toContain("Internal error compiling expression"); // #4038
 
       // Retired rungs must not come back — each of these WAS the frontier.
       expect(diagnostics).not.toContain("inherited class callable");
@@ -183,6 +194,10 @@ describe.skipIf(ESLINT_LINTER === null)(
       expect(diagnostics).not.toContain("Maximum call stack size exceeded"); // #4019
       expect(diagnostics).not.toContain("concrete return needs a dynamic box"); // #4027
       expect(diagnostics).not.toContain("has no exact structural unit identity"); // #4028
+      expect(diagnostics).not.toContain("share structural order"); // #4033
+      // #1491's fs gate is a POLICY refusal, not a defect — `allowFs` above
+      // settles it. If it reappears the option was dropped, not a bug found.
+      expect(diagnostics).not.toContain("requires the --allow-fs flag");
     }, 1_560_000);
 
     /**
