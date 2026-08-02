@@ -57,6 +57,47 @@ function gitTry(repoRoot, argv) {
   }
 }
 
+/** Canonical form of a remote URL, for comparing two remotes for identity. */
+function normalizeRemoteUrl(url) {
+  if (!url) return undefined;
+  return url
+    .trim()
+    .toLowerCase()
+    .replace(/^git@([^:]+):/, "https://$1/") // scp-style -> https
+    .replace(/^ssh:\/\//, "https://")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "");
+}
+
+/**
+ * The ref that means "main" for gate purposes (#4002).
+ *
+ * In CI `origin` IS the upstream repo, so this returns `origin/main` and every
+ * gate behaves exactly as before — the fix is a no-op there BY CONSTRUCTION,
+ * which is also why CI cannot regression-test it (see tests/issue-4026).
+ *
+ * In a fork-based checkout `origin` is the FORK, whose `main` lags upstream by
+ * however long since it was last synced (139 commits when this was written).
+ * Diffing against it makes every commit upstream landed in the meantime look
+ * like part of YOUR change-set, so gates blame files the branch never touched:
+ * the oracle ratchet reported `getTypeAtLocation +2` for another agent's file,
+ * and the changed-root-test hook selected 14 unrelated test files instead of 1.
+ * The dangerous outcome is not the noise — it is an agent "fixing" someone
+ * else's code to silence a phantom.
+ *
+ * Detection compares remote URLs rather than merely preferring an `upstream`
+ * remote, because plenty of checkouts have no `upstream` at all and some have
+ * one pointing at the same repo as `origin`.
+ */
+export function resolveMainRef(repoRoot) {
+  const origin = normalizeRemoteUrl(gitTry(repoRoot, ["remote", "get-url", "origin"]));
+  const upstream = normalizeRemoteUrl(gitTry(repoRoot, ["remote", "get-url", "upstream"]));
+  if (upstream && upstream !== origin && gitTry(repoRoot, ["rev-parse", "--verify", "--quiet", "upstream/main"])) {
+    return { ref: "upstream/main", how: "upstream-remote(origin-is-a-fork)" };
+  }
+  return { ref: "origin/main", how: "origin" };
+}
+
 /**
  * Resolve the change-set's diff base. Returns `{ base, how }` where `base`
  * is a committish (or undefined when not in a usable git worktree) and `how`
@@ -83,11 +124,13 @@ export function resolveChangeBase(repoRoot) {
       if (p1) return { base: p1, how: `ci-merge-parent(${ev})` };
     }
   }
-  if (!gitTry(repoRoot, ["rev-parse", "--verify", "--quiet", "origin/main"]))
-    return { base: undefined, how: "no-origin-main" };
-  const mb = gitTry(repoRoot, ["merge-base", "origin/main", "HEAD"]);
-  if (mb) return { base: mb, how: "merge-base" };
-  return { base: "origin/main", how: "origin-main-tree" };
+  // #4002: "main" is `upstream/main` when `origin` is a fork, else `origin/main`.
+  const { ref: mainRef, how: refHow } = resolveMainRef(repoRoot);
+  if (!gitTry(repoRoot, ["rev-parse", "--verify", "--quiet", mainRef]))
+    return { base: undefined, how: `no-${mainRef}` };
+  const mb = gitTry(repoRoot, ["merge-base", mainRef, "HEAD"]);
+  if (mb) return { base: mb, how: `merge-base(${refHow})` };
+  return { base: mainRef, how: `main-tree(${refHow})` };
 }
 
 /**

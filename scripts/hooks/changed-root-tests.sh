@@ -13,7 +13,24 @@ if [ -z "$repo_root" ]; then
 fi
 cd "$repo_root" || exit 1
 
-base_ref="${CHANGED_ROOT_TESTS_BASE:-origin/main}"
+# #4002: "main" is upstream/main when `origin` is a FORK, else origin/main.
+# In CI `origin` IS upstream, so this resolves to origin/main and behaviour is
+# unchanged. In a fork checkout, diffing against the fork's stale main makes
+# every commit upstream landed since the last sync look like this branch's own:
+# measured 14 root test files selected instead of 1, each a cold vitest process,
+# turning a ~20s gate into ~40min.
+resolve_main_ref() {
+  _origin="$(git remote get-url origin 2>/dev/null || true)"
+  _upstream="$(git remote get-url upstream 2>/dev/null || true)"
+  _norm() { printf '%s' "$1" | tr 'A-Z' 'a-z' | sed -e 's#^git@\([^:]*\):#https://\1/#' -e 's#^ssh://#https://#' -e 's#\.git$##' -e 's#/*$##'; }
+  if [ -n "$_upstream" ] && [ "$(_norm "$_upstream")" != "$(_norm "$_origin")" ] &&
+    git rev-parse --verify --quiet upstream/main >/dev/null 2>&1; then
+    printf 'upstream/main'
+  else
+    printf 'origin/main'
+  fi
+}
+base_ref="${CHANGED_ROOT_TESTS_BASE:-$(resolve_main_ref)}"
 base="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
 if [ -z "$base" ]; then
   echo "changed-root-tests: cannot resolve a merge base with $base_ref." >&2
