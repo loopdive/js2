@@ -196,6 +196,7 @@ import {
   forEachInstrDeep, // (#2949 slice 3) deep instr walk for preregisterDynamicSupport
   irVal,
   irTypeEquals,
+  mapNestedBuffers,
   type IrClassMemberKind,
   type IrClassShape,
   type IrClosureSignature,
@@ -234,7 +235,7 @@ import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtim
 import type { RuntimeProviderPlan } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
-import { assertAllocProvenance } from "./verify-alloc.js";
+import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
 import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType, WasmFunction } from "./types.js";
 import {
   definedFuncAt,
@@ -486,6 +487,69 @@ function prepareBuiltFnRuntimeManifest(
   materializePreparedMathProviders(ctx, runtime);
   materializePreparedAsyncHostAdapters(ctx, runtime.functions);
   return { entries: preparedEntries, runtime };
+}
+
+/** Test-only negative control for the required #4113 final gate. */
+function injectFinalAllocProvenanceFailure(
+  fn: IrFunction,
+  compatibilityName: string,
+  artifactKind: "ordinary" | "synthetic" | "monomorphized",
+): IrFunction {
+  const selector = process.env.JS2WASM_TEST_INJECT_IR_FINAL_ALLOC_FAILURE;
+  if (selector === undefined || (selector !== "1" && selector !== compatibilityName && selector !== artifactKind)) {
+    return fn;
+  }
+
+  let removed = false;
+  const rewriteInstr = (instr: IrInstr): IrInstr => {
+    const withNested = mapNestedBuffers(instr, (buffer) => {
+      const rewritten = buffer.map(rewriteInstr);
+      return rewritten.some((candidate, index) => candidate !== buffer[index]) ? rewritten : buffer;
+    });
+    if (removed || withNested.alloc === undefined) return withNested;
+    const { alloc: _removedAlloc, ...withoutAlloc } = withNested;
+    removed = true;
+    return withoutAlloc as IrInstr;
+  };
+  const blocks = fn.blocks.map((block) => {
+    const instrs = block.instrs.map(rewriteInstr);
+    return instrs.some((instr, index) => instr !== block.instrs[index]) ? { ...block, instrs } : block;
+  });
+  if (!removed) {
+    throw new Error(
+      `final allocation-provenance injection for ${compatibilityName} requires one allocation instruction`,
+    );
+  }
+  return { ...fn, blocks };
+}
+
+/**
+ * Require final provenance after all IR attachments and before component
+ * sealing, publication, or lowering. The collection includes source,
+ * synthetic, async-state, and monomorphized artifacts.
+ */
+function verifyFinalAllocArtifacts(
+  entries: readonly BuiltFn[],
+  registry: AllocSiteRegistry,
+  cloneOrigins: ReadonlyMap<IrUnitId, IrUnitId>,
+  onFailure: (entry: BuiltFn, error: unknown) => void,
+): BuiltFn[] {
+  const verified: BuiltFn[] = [];
+  for (const entry of entries) {
+    try {
+      const artifactKind = cloneOrigins.has(entry.artifactUnitId)
+        ? "monomorphized"
+        : entry.synthesized
+          ? "synthetic"
+          : "ordinary";
+      const fn = injectFinalAllocProvenanceFailure(entry.fn, entry.name, artifactKind);
+      assertFinalAllocProvenance(fn, registry);
+      verified.push(fn === entry.fn ? entry : { ...entry, fn });
+    } catch (error) {
+      onFailure(entry, error);
+    }
+  }
+  return verified;
 }
 
 function fillSealedPreparedCallable(
@@ -1885,7 +1949,6 @@ export function compileIrPathFunctions(
 
   // -------------------------------------------------------------------------
   // 2g. Ownership + access-semantics analysis (#1587) — gated, default OFF.
-  //
   // Runs on the final (post-mono/TU) IR shape, writing inferred ownership /
   // access annotations to the registry `ownership` namespace. The analysis is
   // purely an optimization aid: it does NOT mutate the IR and registry
@@ -1895,7 +1958,6 @@ export function compileIrPathFunctions(
   // is likewise gated and annotation-only). Behind `JS2WASM_IR_OWNERSHIP=1`
   // for the rollout period.
   // -------------------------------------------------------------------------
-  //
   // 2h. Escape analysis (#747) — gated, default OFF. When
   // `JS2WASM_IR_ESCAPE=1`, classifies each allocation
   // (local/returned/stored/captured/opaque) on top of the ownership result and
@@ -1917,10 +1979,7 @@ export function compileIrPathFunctions(
   }
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
-
-  // Every late-registration boundary is part of IR preparation. Unknown
-  // throws are invariants and must fan out to the active source owners rather
-  // than escaping or being silently demoted.
+  // Late registrations are preparation; unknown throws fan out to active owners.
   const runGlobalPreparation = (action: () => void): boolean => {
     try {
       action();
@@ -1942,6 +2001,11 @@ export function compileIrPathFunctions(
   ) {
     return finishReport();
   }
+  healthyForLower = verifyFinalAllocArtifacts(healthyForLower, allocRegistry, monoResult.cloneOrigins, (entry, error) =>
+    markOwnerFailure(terminalOwnerOf(entry), entry.artifactUnitId, entry.name, error, "verify"),
+  );
+  healthyForLower = retainHealthyOwners(healthyForLower);
+  if (healthyForLower.length === 0) return finishReport();
   if (!runGlobalPreparation(() => preregisterHostDateSnapshotSupport(ctx, healthyForLower))) {
     return finishReport();
   }

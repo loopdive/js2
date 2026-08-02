@@ -3275,6 +3275,8 @@ export function compileTupleLiteral(
  *
  * Returns N (the trip count) if the pattern is statically provable, 0 otherwise.
  * This allows preallocating the backing WasmGC array to eliminate growth overhead.
+ *
+ * @irOptimizationOwner IR-OPT-COUNTED-VECTOR-PUSH-PRESIZE
  */
 function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
   // Walk up: ArrayLiteralExpression → VariableDeclaration → VariableDeclarationList → VariableStatement → Block/SourceFile
@@ -3383,6 +3385,8 @@ function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
  * - The loop body must not reference `arr` anywhere else (rules out `arr
  *   .length` reads, which would observe the pre-sized length immediately
  *   instead of the grow-as-you-go length).
+ *
+ * @irOptimizationOwner IR-OPT-DENSE-VECTOR-PRESIZE
  */
 function detectCountedFillLoopBound(expr: ts.ArrayLiteralExpression): ts.Expression | null {
   // Same outer-walk as detectCountedPushLoopSize: literal must be the
