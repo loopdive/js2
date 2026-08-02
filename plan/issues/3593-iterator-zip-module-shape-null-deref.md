@@ -1,10 +1,11 @@
 ---
 id: 3593
 title: "codegen: Iterator.zip over object-literal iterators null-derefs in __module_init (shape-sensitive, pre-existing) — uncatchable trap"
-status: ready
+status: in-progress
 sprint: current
+assignee: ttraenkler/L-regexp
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-08-02
 priority: high
 horizon: l
 feasibility: hard
@@ -115,7 +116,44 @@ spec-correct here.
 
 The trap is in **compiled Wasm** (`__module_init`), not in the polyfill.
 
-## Suggested next step (not yet done)
+## 2026-08-02 — re-confirmed live on main, plus a NEW datum the report lacked
+
+Re-run through the real runner on `upstream/main` @ `5f2070245` (so this is not
+stale): **both** still trap.
+
+| target | result |
+| --- | --- |
+| `test/built-ins/Iterator/zip/iterables-iteration.js` | `RuntimeError: dereferencing a null pointer in __module_init()` **at source L76** |
+| the `min1` repro above | `RuntimeError: dereferencing a null pointer in __module_init()` **at source L16** |
+
+**The new datum is the source-line attribution, and it points somewhere the
+report did not.** For `min1`, source **L16 is `});`** — the *close of the
+`assert.throws(...)` call* on L14–16 — **not** L17's
+`Iterator.zip([throwingIterator, iterableReturningThrowingIterator])`:
+
+```
+14  assert.throws(TypeError, function () {
+15    Iterator.zip(Object.create(null));
+16  });                                      <-- trap attributed HERE
+17  Iterator.zip([throwingIterator, iterableReturningThrowingIterator]);
+```
+
+Put beside the existing shape table this sharpens the question considerably.
+`min6`/`min7` — the `assert.throws` **alone** — *pass*. So the statement the
+trap is attributed to is fine on its own, and **adding L17 changes how L14–16
+is compiled**. That is the signature of a module-level layout effect (the
+struct/closure shape of `__module_init` changing when the second `Iterator.zip`
+call is added), not of a defect inside either statement.
+
+Two consequences for whoever continues:
+
+- Chasing `Iterator.zip([...])` — the statement that *looks* guilty — is
+  probably chasing the wrong line. The trap fires at the earlier call.
+- The WAT dump named below should be diffed **min1 vs min7** (trap vs pass,
+  differing by one statement), which is a far smaller diff than min1 vs the
+  real file and isolates exactly the layout change that introduces the null.
+
+## Suggested next step (WAT dump — still the right move)
 
 Source-level minimization stopped converging. The file **compiles on the #3563
 branch**, so the direct move is to dump its **WAT** (`compile(src, { emitWat:
