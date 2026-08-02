@@ -42,6 +42,7 @@ import { execSync } from "child_process";
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { openPrIssueFiles, findOpenPrCollisions } from "./lib/open-pr-issue-files.mjs";
+import { resolveMainRef } from "./lib/change-scope.mjs";
 
 const args = process.argv.slice(2);
 const mode = args.includes("--against-main")
@@ -183,7 +184,7 @@ function introducedIssueFiles(base) {
 }
 
 function checkAgainstMain() {
-  const base = process.env.GATE_BASE || "origin/main";
+  const base = process.env.GATE_BASE || resolveMainRef(process.cwd()).ref;
   const r = introducedIssueFiles(base);
   if (r === null) {
     // Base ref unavailable (shallow clone without it). Skip cleanly rather than
@@ -240,7 +241,7 @@ function checkAgainstMain() {
 // the PR raced. FAIL-OPEN when the scan can't run (network gate must not be
 // able to freeze all of CI); the merge_group dup gate stays the hard backstop.
 function checkAgainstOpenPrs() {
-  const base = process.env.GATE_BASE || "origin/main";
+  const base = process.env.GATE_BASE || resolveMainRef(process.cwd()).ref;
   const r = introducedIssueFiles(base);
   if (r === null) {
     console.log(
