@@ -17,13 +17,44 @@ goal: correctness
 related: [3024, 3189, 2093]
 ---
 
+> **⚠ THE ROOT CAUSE HAS MOVED TO #4088 — read that first.**
+>
+> The trap this issue was filed for is **not** an `Iterator.zip` defect. It is
+> an array-literal lowering defect: an array literal whose object-literal
+> elements have **different non-zero member counts** null-derefs, with no
+> iterator, no `Symbol`, and no harness involved. Filed separately as **#4088**
+> because a misleading title is expensive here — #1906's wrong error string
+> caused four consecutive misaimed fixes (#3983/#3984/#3991/#4032), and nobody
+> hitting an array-literal trap would search an issue called "Iterator.zip null
+> deref".
+>
+> **#3593 is now a CONSUMER of #4088.** Its own residual is separated under
+> "What remains in #3593" below. Fix #4088 first, then re-test this file.
+>
 > **RECLASSIFIED 2026-08-02 — frontmatter changed, deliberately.** `horizon`
 > l→m, `feasibility` hard→medium, `reasoning_effort` max→high,
 > `language_feature` iterator-helpers→object-literals, and the
 > **"Routing: senior-dev"** line below is withdrawn. Those fields are what the
 > picker and the next dispatcher read, so leaving them describing a defect that
-> has been measured away would misroute the next person. Evidence: the ablation
-> table under "REFUTED" — the repro is one line and involves no iterator.
+> has been measured away would misroute the next person.
+>
+> ## What remains in #3593, once #4088 is fixed
+>
+> 1. **Re-test `built-ins/Iterator/zip/iterables-iteration.js`.** It is expected
+>    to stop trapping, but that is a **prediction, not a measurement** — the
+>    real file may have further failures behind the trap. Do not close #3593 on
+>    the strength of #4088 alone.
+> 2. **The "second defect" recorded below is still open and is NOT known to
+>    share a root cause with #4088.** `Iterator.zip([{ next(){}, return(){} }])`
+>    reports `TypeError: Iterator helper: argument is not iterable`, which is
+>    wrong per GetIteratorFlattenable (with no `@@iterator`, step 3a sets
+>    `iterator = obj`, and `.next` **is** a function). Single-element arrays do
+>    **not** trap, so this is reached independently of #4088. **Same wrong
+>    answer is not the same cause** — assuming otherwise is what made #4059
+>    blame `Function.prototype.bind` for a `fixupExternConvertAny` miscount. If
+>    they do share a root, prove it by showing one change moves both.
+>
+> The permanent probe moved to `tests/issue-4088.test.ts` with the root cause.
 
 # #3593 — `Iterator.zip` over object-literal iterators traps (`dereferencing a null pointer` in `__module_init`)
 
