@@ -61,6 +61,7 @@ Three fresh collisions in one session, all from this mechanism:
 | 4047 | this lane + `H-descriptor` | ceded to H-descriptor |
 | 4046 | this lane + PR #4002 | this lane renumbered to 4073 |
 | 4076 | this lane + `H-errmodel` | ceded to H-errmodel; took 4078 |
+| 4072 | `H-crashes` + PR #4002 | H-crashes renumbered to 4077 |
 
 Two things this pinned down that the original report did not:
 
@@ -81,6 +82,46 @@ command, same id, opposite answers — and both exit 0. The identical thing
 happened with #4010, where one lane got exit 3 (claimed) and another got exit 0
 (unassigned), stranding the issue on a claim that did not exist from where the
 next dispatcher was standing.
+
+### ⚠ It manufactures plausible WRONG diagnoses — do not file what it suggests
+
+The #4072 collision is worth recording in full, because the split-brain did not
+merely hide a claim — it **produced a confident, wrong root cause** that was
+about to be filed as its own defect.
+
+The agent that hit it reported: *"#4002 reached 4072 by renumbering away from an
+earlier collision and **never recorded it on the assignments ref** —
+`claim-issue.mjs --check 4072` still answers UNASSIGNED. The renumber path is
+what re-opens the hole #2531/#3880 exist to close."*
+
+That is a coherent, specific, actionable-sounding defect in the **renumber
+path**. It is also false. Checked against both books at the same moment:
+
+```
+origin (fork) : #4072 is UNASSIGNED                                   (exit 0)
+upstream      : #4072 is CLAIMED by ttraenkler/claude since 03:25:45Z (exit 3)
+```
+
+The renumber **did** record the reservation — on the upstream ledger. The
+`--check` read the fork ledger, because `CLAIM_ASSIGN_REMOTE` defaults to
+`origin` and `origin` is the fork. There is nothing wrong with the renumber path.
+
+**So the failure mode of this bug is not just "collisions". It is "an agent
+reads one book, gets a self-consistent story, and files a defect against
+innocent code."** That is the same shape as the gate-base defect in #4002/#4039,
+where agents "fixed" other agents' files to silence phantom blame. Cost here was
+caught only because a second lane checked both refs.
+
+### What is genuinely broken, separately from the ledger
+
+`--allocate` reported **`pr_scan=ok`** while handing out an id that an open PR
+had already held for **40 minutes**. The open-PR scan is a **point-in-time
+check, not a lock**, and it is the second of the two mechanisms that were
+supposed to make allocation safe. Both failed together here.
+
+**Working practice until this lands** (adopted from the lane that hit #4072):
+after `--allocate`, independently re-scan every open PR's added issue files
+rather than trusting `pr_scan=ok`.
 
 **Until this is fixed, state the ref alongside any claim assertion**, and treat
 "the ledger says X" as unusable evidence on its own. Today the **CI open-PR
