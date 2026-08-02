@@ -42,9 +42,9 @@ ${LEDGER_END}`;
 describe("#3792 IR optimization retirement ledger gate", () => {
   it("accepts the committed ledger and reports a non-empty measured inventory", () => {
     const summary = checkLedgerFile("plan/log/ir-optimization-retirement-ledger.md");
-    expect(summary.rows).toBe(11);
-    expect(summary.complete).toBeGreaterThan(0);
-    expect(summary.retirementReady).toBe(0);
+    expect(summary.rows).toBe(22);
+    expect(summary.complete).toBe(11);
+    expect(summary.retirementReady).toBe(1);
   });
 
   it("rejects malformed JSON rows", () => {
@@ -157,7 +157,7 @@ describe("#3792 IR optimization retirement ledger gate", () => {
       { encoding: "utf8" },
     );
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("11/11 rows are not ready");
+    expect(result.stderr).toContain("21/22 rows are not ready");
     expect(result.stderr).toContain("IR-OPT-NUMERIC-SWITCH-PROOF");
   });
 });
