@@ -31,6 +31,9 @@ import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
+import { noJsHost } from "./js-errors.js";
+import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
+import { compileExpression } from "./shared.js";
 import { ensureNativeStringHelpers, nativeStringLiteralInstrs, nativeStringType } from "./native-strings.js";
 import { regexI32ArrayType } from "./native-regex.js";
 import {
@@ -284,30 +287,96 @@ export function tryCompileCoercedStringMatch(
 }
 
 /**
- * `String.prototype.split(separator, limit)` where `separator` takes the
- * plain-ToString path (§22.1.3.23 step 5) — `s.split(123)`, `s.split(null)`,
- * `s.split(objWithToString)`. Routes to the same native `__str_split` the
- * string-separator arm uses; no regex engine is involved at all.
+ * §22.1.3.23 step 2 — the whole "what does `split` do with THIS separator?"
+ * decision, for the two arms the native lane owns:
  *
- * Operands are emitted receiver → separator → limit, matching the string-like
- * arm, so ARGUMENT evaluation stays left-to-right as at any call site. The spec
- * coerces `ToUint32(limit)` (step 4) before `ToString(separator)` (step 5),
- * which is the reverse; reordering the two coercions would require holding an
- * un-coerced arbitrary value across the limit coercion and, worse, would invert
- * argument evaluation for `s.split(f(), g())` — trading a non-observable
- * deviation for an observable one. The string-separator arm already ships this
- * order, so this introduces no new deviation.
+ *  - **undefined separator** (#2161 B2) — `s.split()`, `s.split(void 0)`,
+ *    `s.split(undefined, lim)`. Steps 5-8: an undefined separator never splits,
+ *    so the result is `[S]`, or `[]` when `ToUint32(limit) === 0`. Built
+ *    directly as a one-element vec — no engine call. These forms used to fall
+ *    through to the host marshal path, which has no standalone `string_split`
+ *    and null-deref'd.
+ *  - **plain-`ToString` separator** (#4016) — `s.split(123)`, `s.split(null)`,
+ *    `s.split(objWithToString)`. Step 5's `R = ToString(separator)` is the whole
+ *    of the semantics; routes to the same native `__str_split` the string-
+ *    separator arm uses, with no regex engine involved at all.
  *
- * Returns `undefined` when this is not the right arm, so the caller falls
- * through to its existing dispatch.
+ * Returns `undefined` for a string-like separator so the caller's existing
+ * (byte-identical) arm still handles it.
+ *
+ * Operands are emitted receiver → separator → limit, matching that arm, so
+ * ARGUMENT evaluation stays left-to-right as at any call site. The spec coerces
+ * `ToUint32(limit)` (step 4) before `ToString(separator)` (step 5), which is the
+ * reverse; reordering the two coercions would require holding an un-coerced
+ * arbitrary value across the limit coercion and, worse, would invert argument
+ * evaluation for `s.split(f(), g())` — trading a non-observable deviation for an
+ * observable one. The string-separator arm already ships this order, so this
+ * introduces no new deviation.
  */
-export function tryCompileCoercedStringSplit(
+export function tryCompileStandaloneSplitSeparator(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.CallExpression,
   emitReceiver: () => ValType | null,
+  firstArgIsStringLike: boolean,
 ): ValType | null | undefined {
   const sepExpr = expr.arguments[0];
+  const limitExpr = expr.arguments[1];
+  const emitLimit = (): void => {
+    // Absent / statically-undefined limit → unbounded, encoded as -1 (#2125).
+    if (limitExpr !== undefined && !isStaticallyUndefinedExpr(limitExpr)) {
+      compileStringIntegerArg(ctx, fctx, limitExpr);
+    } else {
+      fctx.body.push({ op: "i32.const", value: -1 });
+    }
+  };
+
+  if (
+    ctx.nativeStrings &&
+    ctx.anyStrTypeIdx >= 0 &&
+    (sepExpr === undefined || isDefinitelyUndefinedExpr(ctx, sepExpr))
+  ) {
+    const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    const vecTypeIdx = getOrRegisterVecType(ctx, `ref_${ctx.anyStrTypeIdx}`, elemType);
+    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+    // Receiver → native-string local (kept nullable; a null receiver would have
+    // thrown at the property access already).
+    const recvLocal = allocLocal(fctx, `__split_recv_${fctx.locals.length}`, nativeStringType(ctx));
+    emitReceiver();
+    fctx.body.push({ op: "local.set", index: recvLocal });
+    // (#4016) The separator's VALUE is unused, but its EXPRESSION is still
+    // evaluated at the call site — a type-level `void` one (`f()`) is not
+    // side-effect-free like the syntactic forms, so discard rather than delete.
+    if (sepExpr !== undefined && !isStaticallyUndefinedExpr(sepExpr)) {
+      const sepType = compileExpression(ctx, fctx, sepExpr);
+      if (sepType) fctx.body.push({ op: "drop" });
+    }
+    const limLocal = allocLocal(fctx, `__split_lim_${fctx.locals.length}`, { kind: "i32" });
+    emitLimit();
+    fctx.body.push({ op: "local.set", index: limLocal });
+    // lim === 0 ? { length: 0, data: [] } : { length: 1, data: [S] }
+    fctx.body.push({ op: "local.get", index: limLocal });
+    fctx.body.push({ op: "i32.eqz" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref", typeIdx: vecTypeIdx } as ValType },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "i32.const", value: 0 },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "struct.new", typeIdx: vecTypeIdx },
+      ],
+      else: [
+        { op: "i32.const", value: 1 },
+        { op: "local.get", index: recvLocal },
+        { op: "array.new_fixed", typeIdx: arrTypeIdx, length: 1 },
+        { op: "struct.new", typeIdx: vecTypeIdx },
+      ],
+    });
+    return { kind: "ref", typeIdx: vecTypeIdx };
+  }
+
+  if (firstArgIsStringLike || !noJsHost(ctx)) return undefined;
   if (sepExpr === undefined || !isPlainToStringSearchValue(ctx, sepExpr, "split")) return undefined;
   const splitIdx = ctx.nativeStrHelpers.get("__str_split");
   const nstrVecTypeIdx = ctx.vecTypeMap.get(`ref_${ctx.anyStrTypeIdx}`);
@@ -316,13 +385,7 @@ export function tryCompileCoercedStringSplit(
   emitReceiver();
   // Emit from the same node the gate proved on — see `searchValueOperand`.
   emitArgAsNativeString(ctx, fctx, searchValueOperand(sepExpr));
-  const limitExpr = expr.arguments[1];
-  if (limitExpr !== undefined && !isStaticallyUndefinedExpr(limitExpr)) {
-    compileStringIntegerArg(ctx, fctx, limitExpr);
-  } else {
-    // Absent / statically-undefined limit → unbounded, encoded as -1 (#2125).
-    fctx.body.push({ op: "i32.const", value: -1 });
-  }
+  emitLimit();
   fctx.body.push({ op: "call", funcIdx: splitIdx });
   return { kind: "ref", typeIdx: nstrVecTypeIdx };
 }

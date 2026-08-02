@@ -14,7 +14,6 @@ completed: 2026-08-02
 oracle-ratchet-allow: []
 loc-budget-allow:
   - src/codegen/regexp-standalone.ts
-  - src/codegen/string-ops.ts
 ---
 
 ## Problem
@@ -196,14 +195,39 @@ The §22.1.3 search-value dispatch is a genuine subsystem, so it now lives in
 the **decision** (is the spec's plain-ToString path the whole of the semantics
 here?), `regexp-standalone.ts` keeps the **engine plumbing** it calls into.
 
-That took the growth to **+19 / +19** (−93 % / −65 %). What is left is the seam
-itself and nothing else: one import line per file, four `export` keywords on
-primitives the subsystem calls (`stripStaticWrapper`,
+A **third** gate then caught what the first extraction still left behind: the
+per-function ceiling (#3400 / R-FUNC) failed on
+`string-ops.ts::compileNativeStringMethodCall` (+18 on a 1,135-line function).
+The honest reading is that only *my* arm had moved while the decision it belongs
+to was still split across the god-function. So the **whole** §22.1.3.23 step-2
+separator decision moved — the pre-existing undefined-separator arm (#2161 B2)
+along with the new ToString one — behind a single
+`tryCompileStandaloneSplitSeparator` entry point that declines for a string-like
+separator so the byte-identical existing arm still handles it.
+
+Final state:
+
+| file | cap | before | after | |
+| --- | ---: | ---: | ---: | --- |
+| `src/codegen/regexp-standalone.ts` | 4,261 | 4,516 (+255) | **4,280 (+19)** | allowance |
+| `src/codegen/string-ops.ts` | 3,795 | 3,850 (+55) | **3,755 (−40)** | **below cap — no allowance** |
+| `src/codegen/string-search-value.ts` | — | — | 391 | new |
+| `compileNativeStringMethodCall` | 1,135 | 1,153 (+18) | **under** | — |
+
+`string-ops.ts` ends up **smaller than before this change**, and the per-function
+gate passes without an allowance. The one remaining `loc-budget-allow` covers the
+seam in `regexp-standalone.ts` and nothing else: one import line, four `export`
+keywords on primitives the subsystem calls (`stripStaticWrapper`,
 `ensureDynamicStandaloneRegExpCompiler`, `emitRegexSearchCall`,
-`emitRegexExecArrayCall`, `compileStringIntegerArg`, `emitArgAsNativeString`),
-the `regexpOverride` option field on the two shared emitters, and a two-line
-delegation at each of the three call sites. `loc-budget-allow` covers that
-residual; it is not a licence for the logic, which is in the new module.
+`emitRegexExecArrayCall`), the `regexpOverride` option field on the two shared
+emitters, and a two-line delegation at each call site. It is not a licence for
+the logic, which lives in the new module.
+
+Worth recording as a process point: three independent budget gates
+(LOC-regrowth, per-function ceiling, oracle ratchet) each rejected a different
+shortcut here, and following all three produced a **better** decomposition than
+the design I started with — the two split arms are now one decision in one place
+instead of two arms 50 lines apart inside a god-function.
 
 ## Test Results
 
