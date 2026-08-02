@@ -1,10 +1,12 @@
 ---
 id: 4085
 title: "JSON.stringify emits the literal `null` for every non-empty array, class instance and object-holding-an-array in standalone — silently corrupt output"
-status: ready
+status: done
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
+completed: 2026-08-02
+assignee: ttraenkler/L-enum
 priority: high
 horizon: m
 feasibility: medium
@@ -14,6 +16,18 @@ area: standalone
 language_feature: json
 goal: standalone-mode
 related: [4071, 4080, 2166]
+# The arm must live in the emitter that builds `__json_stringify_value`, beside
+# the `$Object` / `$ObjVec` / `$AnyString` arms it is one more case of, and it
+# re-points the shared `L_ANY` local so the existing `$ObjVec` arm runs. Hoisting
+# it to another module would separate a switch case from its switch. The
+# alternative — duplicating the ~120-instruction array arm — is the duplication
+# habit that produced this whole defect family.
+loc-budget-allow:
+  - src/codegen/json-codec-native.ts
+# Same rationale: the normalisation is one more case in this function's own
+# receiver-type ladder and re-points its `L_ANY` local.
+func-budget-allow:
+  - src/codegen/json-codec-native.ts::emitJsonStringifyValue
 ---
 
 # `JSON.stringify` returns `"null"` for ordinary arrays in standalone
@@ -88,3 +102,71 @@ oracle (gc lane vs standalone lane on the same input), not a validity check.
    baseline, denominator stated. Report flips, not file counts.
 5. Empty array / literal plain object (the two shapes that work today) must not
    regress.
+
+---
+
+## Test Results (2026-08-02, `ttraenkler/L-enum`)
+
+### Fix
+
+Normalise a `$__vec_base` receiver into a `$ObjVec` (elements read via
+`__extern_get_idx`, already vec-aware since #2190), then fall into the
+**existing, untouched** `$ObjVec` array arm. This reuses ~120 instructions of
+element / replacer / indent / toJSON logic instead of duplicating it into a
+second copy that would have to be kept in sync — the duplication habit is what
+produced this family of defects in the first place.
+
+Inserted AFTER the `$Object` test and BEFORE the `$ObjVec` test; a `__vec_<k>`
+struct is not a `$Object`, so the earlier arm cannot claim it.
+
+### Per-shape before/after (in-Wasm comparison against the spec-correct literal)
+
+| input | expected | gc | standalone BEFORE | standalone AFTER |
+| --- | --- | --- | --- | --- |
+| `[10,20,30]` | `[10,20,30]` | ok | **`null`** | **ok** |
+| `[[1],[2]]` | `[[1],[2]]` | ok | wrong | **ok** |
+| `["a","b"]` | `["a","b"]` | ok | wrong | **ok** |
+| `{a:[1,2]}` | `{"a":[1,2]}` | ok | wrong | **ok** |
+| `[true,false,null]` | `[true,false,null]` | ok | wrong | **ok** |
+| `[]` | `[]` | ok | ok | ok (no regression) |
+| `{a:1,b:2}` | `{"a":1,"b":2}` | ok | ok | ok (no regression) |
+| `new C()` (class inst.) | `{"a":1,"b":2}` | ok | wrong | **still wrong** |
+| `o={}; o.p=1; o.q=2` | `{"p":1,"q":2}` | ok | wrong | **still wrong** |
+
+### test262 flips: **NET ZERO** — stated plainly, not buried
+
+| stage | count |
+| --- | --- |
+| 1 population (corpus mentions `JSON.stringify`) | 155 |
+| 2a present in standalone baseline | 84 (unopenable / absent: 71) |
+| 2b not passing today | 62 |
+| 3 swept before + after (force-refreshed baseline) | **84** |
+| 4 **flips** | **+0 / −0 = net 0** |
+
+Before-state of the 84 swept: 22 `pass`, 32 `fail`, 20 `compile_error`, 10 `skip`.
+
+**This is a real result, not a broken instrument.** Positive control: the *same*
+sweep harness and code path measured +3/−2 on the `Object.keys` population for
+#4071, so it demonstrably detects flips. The 52 non-passing files here fail for
+reasons this fix does not touch — 20 of them do not even compile.
+
+So: a genuine silent-corruption fix for ordinary user code that moves the
+conformance number by **zero**. Shipped on correctness grounds, with the number
+reported as-is rather than dressed up. Also worth noting the inverse of the usual
+worry — **zero regressions**, including both shapes that already worked.
+
+### Deliberately NOT shipped
+
+**The closed-struct half** (class instances, assignment-built objects). Same
+carrier class whose closed-struct arms leak BUILTIN internals — see #4086, where
+extending exactly that mechanism made `Object.keys(/ab/)` report 7 internal
+RegExp fields. A JSON closed-struct arm would serialise those same internals into
+user-visible output. It needs #4086's user-declared-vs-builtin struct predicate
+first.
+
+### Known deviation
+
+Inside the array arm, `holder` passed to a function `replacer` is the normalised
+`$ObjVec` rather than the original array object. Observable only via `this` in a
+replacer over an array; the entire value previously serialised as `null`, so this
+is strictly an improvement.
