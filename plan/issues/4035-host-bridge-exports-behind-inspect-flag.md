@@ -198,7 +198,7 @@ which routes through the polymorphic `__any_to_string`, whose number arm is
 force-emitted (#2969) and pulls `number_toString` → Ryu. The message here is a
 *constant string*; nothing needs float formatting. Specialising
 `__any_to_string` when the argument is statically a string is a separate lever
-— filed as #4046.
+— filed as #4072.
 
 ### Harness opt-in (the sequencing the issue called for)
 

@@ -1,5 +1,5 @@
 ---
-id: 4046
+id: 4072
 title: "a standalone `throw new TypeError('msg')` ships the Ryu float tables — __any_to_string is monolithic, so any use pulls its number arm"
 status: ready
 sprint: current
@@ -17,7 +17,7 @@ related: [4034, 4035, 2969, 1470]
 origin: "2026-08-02 — the residual after #4035: every measured standalone program is now <1.1 kB EXCEPT the ones that throw"
 ---
 
-# #4046 — throwing a constant-message error costs ~18 kB of float formatting
+# #4072 — throwing a constant-message error costs ~18 kB of float formatting
 
 ## Problem
 
