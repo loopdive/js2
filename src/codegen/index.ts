@@ -68,6 +68,11 @@ import { makeIrHostDateSnapshotResolver } from "../ir/host-date.js";
 import { supportsIrBackendTargetCapability, type IrBackendTargetCapability } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import {
+  buildIrModuleInitPlan,
+  reconcileIrModuleInitPlan,
+  type IrModuleInitPlanningEvidence,
+} from "../ir/module-init-plan.js";
+import {
   buildIrUnitInventory,
   type BuildIrUnitInventoryOptions,
   type IrClassId,
@@ -3378,6 +3383,8 @@ export function generateModule(
   irOutcomes?: readonly IrObservedOutcome[];
   // #3520 — finalized structural ABI when an IR identity inventory was requested.
   programAbi?: PublishedProgramAbi;
+  // #3523 — source-ordered module-init plan plus direct-queue parity evidence.
+  moduleInitPlanning?: IrModuleInitPlanningEvidence;
 } {
   const mod = createEmptyModule();
   const irPlanningIdentityContext =
@@ -3397,6 +3404,7 @@ export function generateModule(
   // whose legacy body emission was skipped (IR owns the slot). Declared out
   // here so the return statement below (outside the try) can surface it.
   let irFirstSkipped: readonly string[] | undefined;
+  let moduleInitPlanning: IrModuleInitPlanningEvidence | undefined;
   // (#1983) Pre-scan top-level user `function` declaration names BEFORE any
   // class member registers a funcMap key, so `classMemberFuncKey` can detect a
   // `${className}_${member}` ↔ user-function collision (e.g. `class A { m() {} }`
@@ -3791,6 +3799,28 @@ export function generateModule(
     // mutable live-binding module global so later reads observe the write.
     // No-op unless a function declaration is reassigned.
     registerReassignedFunctionGlobals(ctx, [ast.sourceFile]);
+
+    // (#3523 R4/C1) Build the semantic top-level plan independently from the
+    // direct front-end's three mutable queues. This first landing observes and
+    // reports parity only; body routing remains unchanged until R3 ownership
+    // and the remaining module-init capabilities are prepared.
+    if (irPlanningIdentityContext) {
+      const plan = buildIrModuleInitPlan({
+        sourceFile: ast.sourceFile,
+        checker: ast.checker,
+        identityContext: irPlanningIdentityContext,
+        target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "host",
+        deferTopLevelInit: ctx.deferTopLevelInit,
+      });
+      moduleInitPlanning = Object.freeze({
+        plan,
+        parity: reconcileIrModuleInitPlan(plan, ast.sourceFile, {
+          liveFunctionNames: ctx.liveFuncBindingGlobals ?? [],
+          staticEntries: ctx.staticInitExprs,
+          moduleStatements: ctx.moduleInitStatements,
+        }),
+      });
+    }
 
     // (#2138/#3521) IR-first compile-once inversion.
     // (#3143) Default ON. R2 prepares, optimizes, lowers, and installs every
@@ -4547,6 +4577,7 @@ export function generateModule(
     irFirstSkipped,
     irOutcomes: ctx.irOutcomes,
     programAbi: ctx.programAbiSession?.publication,
+    moduleInitPlanning,
   };
 }
 

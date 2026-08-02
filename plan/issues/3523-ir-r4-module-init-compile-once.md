@@ -1,10 +1,10 @@
 ---
 id: 3523
 title: "IR-only R4: typed ordered module-init compile-once ownership"
-status: blocked
-sprint: Backlog
+status: in-progress
+sprint: current
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-08-02
 priority: critical
 horizon: xl
 complexity: XL
@@ -24,6 +24,7 @@ related: [1789, 2796, 2931, 2965, 2992, 3142, 3517, 3518]
 origin: "#3518 R4 — replace compile-first/patch-later __module_init with typed ordered prepare-before-emit ownership"
 files:
   - src/ir/module-init.ts
+  - src/ir/module-init-plan.ts
   - src/ir/program.ts
   - src/ir/prepare.ts
   - src/ir/from-ast.ts
@@ -33,6 +34,10 @@ files:
   - src/codegen/index.ts
   - src/codegen/context/types.ts
   - tests/issue-3523-ir-module-init-compile-once.test.ts
+loc-budget-allow:
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
 ---
 
 # #3523 — IR-only R4: typed ordered module-init compile-once ownership
@@ -151,6 +156,37 @@ silently dropped because it has no direct-codegen queue representation.
   statics, TDZ actions, live seeds, exports, and invocation mode in telemetry.
 - Add failure injection for missing/duplicate/reordered entries and prove
   inventory equals one terminal outcome before touching body routing.
+
+### Ordered-plan foundation (2026-08-02)
+
+The first Commit 1 seam now builds an immutable, source-qualified
+`IrModuleInitPlan` directly from the exact source and R1 identity inventory
+before any function body emitter runs. It records top-level binding storage and
+TDZ identities, reassigned-function live seeds, source-ordered statement and
+class-static evaluation entries, export aliases, and the host/deferred/WASI
+exactly-once invocation policy. Empty/function-only modules receive an explicit
+non-executable plan instead of a synthetic initializer.
+
+This landing deliberately does not change routing. Production single-source
+compilation compares the semantic plan with the existing live-seed,
+`staticInitExprs`, and `moduleInitStatements` queues and publishes the complete
+parity record. The anti-vacuity fixture proves the record catches the current
+all-statics-before-statements reorder while distinguishing it from missing or
+extra entries. Destructuring bindings and executable top-level semantics with
+no inventory-owned module-init unit remain explicit typed plan gaps; neither is
+silently dropped.
+
+Focused validation is **6/6 passing**, and TypeScript validation passes. The
+seven-file adjacent matrix is **51/55 passing**: both #3142 failures reproduce
+unchanged on an untouched `origin/main` control, while the other two tests
+require the optional `test262-fyi/data` submodule that is absent in this
+worktree. Fallback, hybrid-readiness, optimization-retirement, issue, lint,
+format, LOC, and function-budget gates pass. R4 routing remains blocked on the
+remaining R3 class ownership and on consuming these plan entries through the
+prepared emission transaction. The next R4 slice should replace the legacy
+static/module queue partition with this ordered entry stream for a
+capability-complete scalar module, then prove `direct=0, IR=1` without changing
+startup behavior.
 
 ### Commit 2 — prepare/lower module init and make fallback one-pass
 
