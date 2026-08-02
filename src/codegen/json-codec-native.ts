@@ -51,7 +51,7 @@ import {
 } from "./native-strings.js";
 import { ensureObjectRuntime, OBJ_FLAG_RAWJSON } from "./object-runtime.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { emitJsonQuoteString } from "./json-runtime.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
@@ -160,6 +160,19 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const objVecTypeIdx = objTypes.objVecTypeIdx;
   const objVecArrTypeIdx = objTypes.objVecArrTypeIdx;
 
+  // (#4085) A real standalone JS array is a `__vec_<elemKind>` struct subtyping
+  // `$__vec_base` (#2186). `$ObjVec` is the enumeration-RESULT vector — a
+  // DIFFERENT type — so the value dispatch below matched NO arm for an ordinary
+  // array and fell through to "unsupported ref", rendering the JSON literal
+  // `null` for `JSON.stringify([10,20,30])`. These four let the ladder normalise
+  // a vec receiver into a `$ObjVec` and then reuse the existing array arm
+  // verbatim, rather than duplicating ~120 instructions of element / replacer /
+  // indent logic that would then have to be kept in sync.
+  const vecBaseIdx = getOrRegisterVecBaseType(ctx);
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+
   const i32: ValType = { kind: "i32" };
   const f64: ValType = { kind: "f64" };
   const anyref: ValType = { kind: "anyref" };
@@ -239,6 +252,13 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
   const L_TJM = 23; // externref — the toJSON method looked up on the value
   const L_CHILDV = 24; // anyref — child value after replacer transform (recursion arg)
   const L_CKEY = 25; // externref — current child key (object/array arms)
+  // (#4085) `$__vec_base` → `$ObjVec` normalisation scratch. Dedicated locals
+  // rather than reusing L_CAP/L_I: normalisation runs BEFORE the array arm,
+  // which re-initialises those, but keeping them separate makes the two loops
+  // independently readable and immune to a future reordering of the ladder.
+  const L_VB = 26; // externref — the normalised $ObjVec built from a vec receiver
+  const L_VBLEN = 27; // i32 — vec length
+  const L_VBI = 28; // i32 — normalisation loop index
 
   const litStr = (s: string): Instr[] => nativeStringLiteralInstrs(ctx, s);
 
@@ -876,6 +896,73 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       blockType: { kind: "empty" },
       then: objectArm,
     },
+    // (#4085) $__vec_base (a REAL JS array) → normalise to $ObjVec, then fall
+    // into the $ObjVec arm below. Elements are read through `__extern_get_idx`,
+    // which is already `$__vec_base`-aware (#2190) and handles every element
+    // kind (f64 / i32 / externref / …), so this needs no per-elemKind cases.
+    //
+    // Ordering: this sits AFTER the `$Object` test and BEFORE the `$ObjVec`
+    // test. A `__vec_<k>` struct is not a `$Object`, so the earlier arm cannot
+    // claim it; re-pointing L_ANY here is what lets the untouched `$ObjVec` arm
+    // do the actual serialisation.
+    //
+    // Known deviation: inside the arm, `holder` for a function `replacer` is the
+    // normalised $ObjVec rather than the original array object. Only observable
+    // via `this` in a replacer over an array; today the entire value serialises
+    // as `null`, so this is strictly an improvement. Noted in #4085.
+    ...(objVecNewIdx !== undefined && objVecPushIdx !== undefined && externGetIdxIdx !== undefined
+      ? ([
+          { op: "local.get", index: L_ANY },
+          { op: "ref.test", typeIdx: vecBaseIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "call", funcIdx: objVecNewIdx },
+              { op: "local.set", index: L_VB },
+              { op: "local.get", index: L_ANY },
+              { op: "ref.cast", typeIdx: vecBaseIdx },
+              { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 }, // len
+              { op: "local.set", index: L_VBLEN },
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: L_VBI },
+              {
+                op: "block",
+                blockType: { kind: "empty" },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      { op: "local.get", index: L_VBI },
+                      { op: "local.get", index: L_VBLEN },
+                      { op: "i32.ge_s" },
+                      { op: "br_if", depth: 1 },
+                      // __objvec_push(out, __extern_get_idx(vec, f64(i)))
+                      { op: "local.get", index: L_VB },
+                      { op: "local.get", index: L_ANY },
+                      { op: "extern.convert_any" },
+                      { op: "local.get", index: L_VBI },
+                      { op: "f64.convert_i32_s" },
+                      { op: "call", funcIdx: externGetIdxIdx },
+                      { op: "call", funcIdx: objVecPushIdx },
+                      { op: "local.get", index: L_VBI },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: L_VBI },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
+                ],
+              },
+              // Re-point the tested value at the $ObjVec so the arm below runs.
+              { op: "local.get", index: L_VB },
+              { op: "any.convert_extern" },
+              { op: "local.set", index: L_ANY },
+            ],
+          },
+        ] satisfies Instr[])
+      : []),
     // $ObjVec?
     { op: "local.get", index: L_ANY },
     { op: "ref.test", typeIdx: objVecTypeIdx },
@@ -993,6 +1080,9 @@ export function emitJsonStringifyValue(ctx: CodegenContext): number {
       { count: 1, type: { kind: "externref" } }, // L_TJM   (#2166 PR-D2)
       { count: 1, type: anyref }, // L_CHILDV (#2166 PR-D3)
       { count: 1, type: { kind: "externref" } }, // L_CKEY (#2166 PR-D3)
+      { count: 1, type: { kind: "externref" } }, // L_VB (#4085)
+      { count: 1, type: i32 }, // L_VBLEN (#4085)
+      { count: 1, type: i32 }, // L_VBI (#4085)
     ],
     // (#2166 PR-D2) Deep-clone so every `call`/operand occurrence is an
     // INDEPENDENT object. The body spreads shared helper `Instr[]` arrays
