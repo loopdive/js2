@@ -80,3 +80,84 @@ Do **not** re-share the arms before the predicate lands.
    Date/RegExp guards in `tests/issue-4071.test.ts` still green.
 4. Flips reported against a force-refreshed standalone baseline, denominator
    stated.
+
+---
+
+## Investigation (2026-08-02, `ttraenkler/L-enum`) — the obvious fix is REFUTED
+
+Instrumented `fillClosedStructOwnPropertyNamesArms` to dump every
+`ctx.structFields` entry that survives both existing filters
+(`isSyntheticStructName` on the struct name, `$`/`__` prefix on FIELD names) and
+therefore actually produces an arm. Probe source declared a user class, an
+interface-typed object, object literals (flat + nested + inside an array), a
+RegExp, a Date and a TypedArray.
+
+```
+ARMSTRUCT  __anon_0             alpha,beta
+ARMSTRUCT  __anon_1             w,h
+ARMSTRUCT  __anon_2             deep
+ARMSTRUCT  __anon_3             inner
+ARMSTRUCT  __anon_4             k
+ARMSTRUCT  __Date               timestamp
+ARMSTRUCT  MyClass              a,b
+ARMSTRUCT  Shape                w,h
+ARMSTRUCT  __StandaloneRegExp   flags,nGroups,prog,classTable,source,nScratch,lastIndex
+ARMSTRUCT  __subview_f64        length,data,byteOffset
+ARMSTRUCT  __subview_i16_byte   length,data,byteOffset
+ARMSTRUCT  __subview_i32_elem   length,data,byteOffset
+ARMSTRUCT  __subview_i8_byte    length,data,byteOffset
+```
+
+### What this settles
+
+1. **The leak is confirmed and named.** `__StandaloneRegExp` contributes exactly
+   the 7 fields `Object.getOwnPropertyNames(/ab/)` wrongly reports
+   (`flags,nGroups,prog,classTable,source,nScratch,lastIndex`); `__Date`
+   contributes `timestamp`. `__subview_*` (TypedArray views) leak
+   `length,data,byteOffset` the same way.
+
+2. **A `startsWith("__")` prefix predicate is WRONG — do not use it.** This is
+   the obvious cheap fix and it would silently break ordinary user code:
+   **object literals are named `__anon_N`** and carry genuine USER data
+   (`alpha,beta` / `w,h` / `deep` / `inner` / `k`). Excluding `__`-prefixed
+   structs would make `Object.keys({alpha:1, beta:2})` return `[]` — trading this
+   leak for a far more common silent wrong answer, i.e. exactly the trade #4071
+   refused to make.
+
+   **Why the trap is inviting — read this before reaching for a predicate: the
+   field-name filter already uses a `$`/`__` prefix rule and works fine, so
+   reusing it on the struct name looks like consistency rather than a category
+   error. Two different namespaces, one naming convention.** In the FIELD
+   namespace the prefix reliably means "compiler internal". In the STRUCT
+   namespace it does not: it marks *compiler-generated*, which covers both
+   builtin carriers (`__Date`, `__StandaloneRegExp`, `__subview_*`) and the
+   anonymous shapes of ordinary user object literals (`__anon_N`). Only
+   user-*declared* names (`MyClass`, `Shape`) are unprefixed, and they are not
+   the whole set of things that must keep their arms.
+
+### Implied design — derived from the dump above, not from taste
+
+The dump forces the conclusion: the two categories that must be separated
+(`__Date` vs `__anon_0`) are **indistinguishable by name**, so no name-shape
+predicate can exist. The information simply is not in the string. It therefore
+has to come from somewhere that knows the answer at the time the struct is made.
+
+The predicate must key on **carrier identity recorded at registration time**.
+Concretely: a `ctx.builtinCarrierStructs: Set<string>` (or a flag on the
+`structFields` entry) populated where these carriers are created —
+`native-regex.ts` (`__StandaloneRegExp`), the Date carrier, the `__subview_*`
+TypedArray views, and any sibling built the same way. The registration site is
+the only place that knows "this struct is a builtin's internal representation,
+not user data", and it is the only source that stays correct as carriers are
+added.
+
+A deny-list of literal struct names is the tempting shortcut and should be
+rejected for the same reason: it is correct for exactly the four carriers this
+probe happened to surface, and silently wrong for the next one added. The bug
+being fixed here IS a filter that did not keep up with the carriers around it.
+
+Scope note: the same predicate is the prerequisite for the closed-struct halves
+of BOTH #4071 (`Object.keys` on class instances, measured at +5 net flips) and
+#4085 (`JSON.stringify` of class instances / assignment-built objects). Landing
+it unblocks two deferred fixes, which is most of its value — its own direct flip
+count is likely small.

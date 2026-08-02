@@ -148,11 +148,14 @@ describe("#3765 — a provably-numeric local gets an f64 slot", () => {
     const { wat, binary } = result;
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irCompiledFuncs).toContain("scan");
-    const inlineParam = wat!.match(/\(func \$isAscii \(param f64\)/);
-    const sharedType = wat!.match(/\(func \$isAscii \(type (\d+)\)/);
-    const sharedTypeIsF64 =
-      sharedType !== null && wat!.includes(`(type $type${sharedType[1]} (func (param f64) (result i32)))`);
-    expect(inlineParam !== null || sharedTypeIsF64).toBe(true);
+    // DCE compacts the current type index while debug type labels retain
+    // their allocation-time name, so `$type${index}` is not a stable lookup.
+    // These operations can validate only when parameter zero is the grounded
+    // f64 carrier, and they pin the no-boxing property directly.
+    const helperBody = readWat(wat!).body("isAscii");
+    expect(helperBody).toMatch(/local\.get 0\s+f64\.const 0\s+f64\.ge/);
+    expect(helperBody).toMatch(/local\.get 0\s+local\.get 2\s+f64\.le/);
+    expect(helperBody).not.toMatch(/call \$__(?:box_number|to_primitive|unbox_number)/);
     const { exports } = await WebAssembly.instantiate(await WebAssembly.compile(binary!), {});
     expect((exports as { main: () => number }).main()).toBe(1);
   });

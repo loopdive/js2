@@ -48,7 +48,15 @@
 // selected by which emitter `lower.ts` was handed. That is the proof.
 
 import { emitConstInstr, type IrLowerResolver } from "../lower.js";
-import type { AllocSiteId, IrBinop, IrInstr, IrUnop } from "../nodes.js";
+import type {
+  AllocSiteId,
+  IrBinop,
+  IrFuncRef,
+  IrGlobalRef,
+  IrInstr,
+  IrStringLengthProvider,
+  IrUnop,
+} from "../nodes.js";
 import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js";
 import type { BlockType, Instr, ValType } from "../types.js";
 import type { LinearRuntimeOperation } from "../analysis/linear-memory-plan.js";
@@ -166,39 +174,48 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
     out.push(instr);
   }
 
-  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Instr[]): void {
-    const ops = this.options.stringRuntime?.emitStringConst?.(value, alloc);
+  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Instr[], storage?: IrGlobalRef): void {
+    const ops = this.options.stringRuntime?.emitStringConst?.(value, alloc, storage);
     if (!ops) throw new Error("LinearEmitter: string.const runtime is unavailable");
     out.push(...ops);
   }
 
-  emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: Instr[]): void {
-    const ops = this.options.stringRuntime?.emitStringConcat?.(alloc, mode);
+  emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.options.stringRuntime?.emitStringConcat?.(alloc, mode, provider);
     if (!ops) throw new Error("LinearEmitter: string.concat runtime is unavailable");
     out.push(...ops);
   }
 
-  emitStringEquals(negate: boolean, out: Instr[]): void {
-    const ops = this.options.stringRuntime?.emitStringEquals?.();
+  emitStringEquals(negate: boolean, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.options.stringRuntime?.emitStringEquals?.(provider);
     if (!ops) throw new Error("LinearEmitter: string.eq runtime is unavailable");
     out.push(...ops);
     if (negate) out.push({ op: "i32.eqz" });
   }
 
-  emitStringLength(_inputEncoding: IrStringEncoding | undefined, out: Instr[]): void {
-    const ops = this.options.stringRuntime?.emitStringLen?.(_inputEncoding);
+  emitStringLength(
+    _inputEncoding: IrStringEncoding | undefined,
+    out: Instr[],
+    provider?: IrStringLengthProvider,
+  ): void {
+    const ops = this.options.stringRuntime?.emitStringLen?.(_inputEncoding, provider);
     if (!ops) throw new Error("LinearEmitter: string.len runtime is unavailable");
     out.push(...ops, { op: "f64.convert_i32_s" });
   }
 
-  emitStringCharAt(_alloc: AllocSiteId | undefined, _inputEncoding: IrStringEncoding, out: Instr[]): void {
-    const ops = this.options.stringRuntime?.emitStringCharAt?.(_alloc, _inputEncoding);
+  emitStringCharAt(
+    _alloc: AllocSiteId | undefined,
+    _inputEncoding: IrStringEncoding,
+    out: Instr[],
+    provider?: IrFuncRef,
+  ): void {
+    const ops = this.options.stringRuntime?.emitStringCharAt?.(_alloc, _inputEncoding, provider);
     if (!ops) throw new Error("LinearEmitter: string.char_at runtime is unavailable");
     out.push(...ops);
   }
 
-  emitStringCharCodeAt(_inputEncoding: IrStringEncoding, out: Instr[]): void {
-    const ops = this.options.stringRuntime?.emitStringCharCodeAt?.(_inputEncoding);
+  emitStringCharCodeAt(_inputEncoding: IrStringEncoding, out: Instr[], provider?: IrFuncRef): void {
+    const ops = this.options.stringRuntime?.emitStringCharCodeAt?.(_inputEncoding, provider);
     if (!ops) throw new Error("LinearEmitter: string.char_code_at runtime is unavailable");
     out.push(...ops);
   }

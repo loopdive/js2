@@ -30,6 +30,91 @@ async function instantiate(result: CompileResult): Promise<Record<string, Functi
 }
 
 describe("#3521 prepare-before-emit free-function routing", () => {
+  it.each([
+    ["gc", "prepared-host-string-length.ts"],
+    ["standalone", "prepared-native-string-length.ts"],
+  ] as const)("dependency-seals a %s literal-length body before lowering", async (target, fileName) => {
+    const result = await compile(`export function literalLength(): number { return "abc".length; }`, {
+      fileName,
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      target,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(outcome(result, "literalLength")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(outcome(result, "literalLength").preparedComponentId).toMatch(/^prepared-component:/);
+    expect((await instantiate(result)).literalLength!()).toBe(3);
+  });
+
+  it.each([
+    ["gc", "prepared-host-string-callables.ts"],
+    ["standalone", "prepared-native-string-callables.ts"],
+  ] as const)("dependency-seals %s concat, equality, and character providers", async (target, fileName) => {
+    const result = await compile(
+      `
+      export function concatEquals(): boolean { return "a" + "b" === "ab"; }
+      export function characterCode(): number { return "abc".charAt(1).charCodeAt(0); }
+      `,
+      {
+        fileName,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    for (const name of ["concatEquals", "characterCode"]) {
+      expect(outcome(result, name)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      expect(outcome(result, name).preparedComponentId).toMatch(/^prepared-component:/);
+    }
+    const exports = await instantiate(result);
+    expect(exports.concatEquals!()).toBe(1);
+    expect(exports.characterCode!()).toBe(98);
+  });
+
+  it.each([
+    ["gc", "prepared-host-owned-append.ts"],
+    ["standalone", "prepared-native-owned-append.ts"],
+  ] as const)("dependency-seals the %s owned-append provider", async (target, fileName) => {
+    const result = await compile(
+      `
+      export function builderLength(count: number): number {
+        let value = "";
+        for (let index = 0; index < count; index++) value += "ab";
+        return value.length;
+      }
+      `,
+      {
+        fileName,
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    expect(outcome(result, "builderLength")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(outcome(result, "builderLength").preparedComponentId).toMatch(/^prepared-component:/);
+    expect((await instantiate(result)).builderLength!(4)).toBe(8);
+  });
+
   it("IR-owns a string-method body outside the retired primitive skip allowlist", async () => {
     const code = `function codeAtStart(value: string): number { return value.charCodeAt(0); }`;
     expect(irFirstBodyIsProvenLowerable(firstFunction(code), new Map([["codeAtStart", 1]]))).toBe(false);
@@ -53,7 +138,60 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: false,
       irBodyEmitted: true,
     });
+    expect(outcome(result, "codeAtStart").preparedComponentId).toMatch(/^prepared-component:/);
     expect((await instantiate(result)).run()).toBe(65);
+  });
+
+  it("dependency-seals a scalar call component before lowering either body", async () => {
+    const result = await compile(
+      `
+      function increment(value: number): number {
+        if (value > 0) return value + 1;
+        return 1;
+      }
+      export function run(): number { return increment(41); }
+      `,
+      {
+        fileName: "prepared-scalar-component.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const incrementOutcome = outcome(result, "increment");
+    const runOutcome = outcome(result, "run");
+    expect(incrementOutcome).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(incrementOutcome.preparedComponentId).toMatch(/^prepared-component:/);
+    expect(runOutcome.preparedComponentId).toBe(incrementOutcome.preparedComponentId);
+    expect((await instantiate(result)).run!()).toBe(42);
+  });
+
+  it("dependency-seals scalar runtime/intrinsic providers before lowering", async () => {
+    const result = await compile(
+      `export function compute(value: number): number {
+      return Math.sin(value) + (value % 5);
+    }`,
+      {
+        fileName: "prepared-intrinsic-provider.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const computeOutcome = outcome(result, "compute");
+    expect(computeOutcome).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+    expect(computeOutcome.preparedComponentId).toMatch(/^prepared-component:/);
+    expect((await instantiate(result)).compute!(1)).toBeCloseTo(Math.sin(1) + 1, 10);
   });
 
   it("direct-emits a selector-unsupported free function once", async () => {
@@ -198,7 +336,7 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect((await instantiate(result)).answer!()).toBe(42);
   });
 
-  it("keeps module-global and class-owned dependencies on the post-direct overlay", async () => {
+  it("defers unsealed module-global and class-owned dependencies to the post-direct overlay", async () => {
     const moduleGlobal = await compile(
       `
       let answer = 42;
@@ -213,6 +351,7 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(moduleGlobal.success, moduleGlobal.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(moduleGlobal.irFirstSkipped ?? []).not.toContain("readAnswer");
     expect(outcome(moduleGlobal, "readAnswer")).toMatchObject({
+      kind: "emitted",
       legacyBodyEmitted: true,
       irBodyEmitted: true,
     });
@@ -232,10 +371,133 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     expect(classOwned.success, classOwned.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(classOwned.irFirstSkipped ?? []).not.toContain("readClass");
     expect(outcome(classOwned, "readClass")).toMatchObject({
+      kind: "emitted",
       legacyBodyEmitted: true,
       irBodyEmitted: true,
     });
     expect((await instantiate(classOwned)).readClass!()).toBe(42);
+  });
+
+  it("keeps nested callable owners off the retrying preparation route", async () => {
+    const result = await compile(
+      `
+      export function run(value: number): number {
+        let bias = 3;
+        function double(input: number): number { return input * 2; }
+        function addBias(input: number): number { return input + bias; }
+        return double(value) + addBias(value);
+      }
+      `,
+      {
+        fileName: "prepared-nested-callable-boundary.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irFirstSkipped ?? []).not.toContain("run");
+    expect(outcome(result, "run")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+    });
+    expect((await instantiate(result)).run!(7)).toBe(24);
+  });
+
+  it.each([
+    [
+      "local variable",
+      `
+      function answer(): number { return 42; }
+      export function run(): number {
+        const callable = answer;
+        return callable();
+      }
+      `,
+    ],
+    [
+      "module object",
+      `
+      function answer(): number { return 42; }
+      const holder = { callable: answer };
+      export function run(): number { return holder.callable(); }
+      `,
+    ],
+  ] as const)("keeps a function value materialized through a %s off the sealed route", async (_kind, source) => {
+    const result = await compile(source, {
+      fileName: `prepared-function-value-${_kind.replace(" ", "-")}.ts`,
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(outcome(result, "answer")).toMatchObject({ kind: "emitted", irBodyEmitted: true });
+    expect(outcome(result, "answer")).not.toHaveProperty("preparedComponentId");
+    expect((await instantiate(result)).run!()).toBe(42);
+  });
+
+  it("prepares a closed free-function component beside direct class and module owners", async () => {
+    const result = await compile(
+      `
+      let moduleSeed = 40;
+      class LegacyBox { value(): number { return moduleSeed + 2; } }
+      function increment(value: number): number { return value + 1; }
+      export function run(value: number): number { return increment(value); }
+      `,
+      {
+        fileName: "prepared-mixed-owner-components.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irOutcomes?.some((candidate) => candidate.unitKind === "class-member")).toBe(true);
+    expect(result.irOutcomes?.some((candidate) => candidate.unitKind === "module-init")).toBe(true);
+    for (const name of ["increment", "run"]) {
+      expect(result.irFirstSkipped).toContain(name);
+      expect(outcome(result, name)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      });
+      expect(outcome(result, name).preparedComponentId).toMatch(/^prepared-component:/);
+    }
+    expect((await instantiate(result)).run!(41)).toBe(42);
+  });
+
+  it.each([
+    [
+      "module-init",
+      `
+      function increment(value: number): number { return value + 1; }
+      let seeded = increment(41);
+      export function run(): number { return seeded; }
+      `,
+    ],
+    [
+      "class-member",
+      `
+      function increment(value: number): number { return value + 1; }
+      class Box { value(): number { return increment(41); } }
+      export function run(): number { return new Box().value(); }
+      `,
+    ],
+  ] as const)("keeps a free function called by a direct %s in the direct component", async (owner, source) => {
+    const result = await compile(source, {
+      fileName: `prepared-${owner}-call-boundary.ts`,
+      experimentalIR: true,
+      trackIrOutcomes: true,
+    });
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irFirstSkipped ?? []).not.toContain("increment");
+    expect(outcome(result, "increment")).toMatchObject({
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+    });
+    expect((await instantiate(result)).run!()).toBe(42);
   });
 
   it("keeps prepared bodies valid when a later direct owner adds a host import", async () => {
@@ -271,6 +533,8 @@ describe("#3521 prepare-before-emit free-function routing", () => {
       legacyBodyEmitted: false,
       irBodyEmitted: true,
     });
+    expect(outcome(result, "codeAtStart").preparedComponentId).toMatch(/^prepared-component:/);
+    expect(outcome(result, "caller").preparedComponentId).toMatch(/^prepared-component:/);
     expect(outcome(result, "lateDirect")).toMatchObject({
       kind: "unsupported",
       legacyBodyEmitted: true,

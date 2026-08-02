@@ -10,7 +10,10 @@ import type { CodegenContext } from "./context/types.js";
 import { canonicalProgramAbiValType } from "./program-abi-signatures.js";
 import type { ProgramAbiSession, ProgramAbiSlotLocator } from "./program-abi-session.js";
 
-const PROGRAM_ABI_RETAINED_GLOBAL_ROLE = 5;
+const PROGRAM_ABI_GLOBAL_ROLE = Object.freeze({
+  nativeStringLiteral: 4,
+  retained: 5,
+} as const);
 const RETAINED_MODULE_GLOBAL_ROLE = "retained-module-global";
 type ProgramAbiGlobalLocator = Extract<ProgramAbiSlotLocator, { readonly kind: "defined-global" | "import-global" }>;
 
@@ -84,18 +87,45 @@ export class ProgramAbiGlobalRegistry {
     return observation;
   }
 
+  /**
+   * Plan one immutable native-string literal global before a prepared IR
+   * component seals. Its initializer owns the exact flat-string subtype/type
+   * graph, while users depend only on this symbolic global and the common
+   * string carrier.
+   */
+  prepareNativeStringLiteral(value: GlobalDef): IrGlobalRef {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot prepare native string literal ${value.name} after retained global planning`,
+      );
+    }
+    const localOrdinal = this.ctx.mod.globals.indexOf(value);
+    if (localOrdinal < 0 || value.mutable || !value.name.startsWith("__strlit_")) {
+      throw new ProgramAbiInvariantError(
+        "missing-required-locator",
+        "native string literal preparation requires one immutable allocator-owned __strlit_ global",
+      );
+    }
+    const entrySourceId = this.canonicalEntrySource();
+    const ref = irSupportGlobalRef(entrySourceId, "native-string-literal", value.name, localOrdinal);
+    this.planGlobal(
+      entrySourceId,
+      ref,
+      localOrdinal,
+      value.type,
+      value.mutable,
+      { kind: "defined-global", value },
+      PROGRAM_ABI_GLOBAL_ROLE.nativeStringLiteral,
+    );
+    return ref;
+  }
+
   planRetained(): void {
     if (this.planned) return;
     this.planned = true;
 
-    const entrySources = this.session.inventory.sources.filter((source) => source.kind === "entry");
-    if (entrySources.length !== 1) {
-      throw new ProgramAbiInvariantError(
-        "unknown-order-anchor",
-        `global ABI planning requires exactly one canonical entry source, found ${entrySources.length}`,
-      );
-    }
-    const entrySourceId = entrySources[0]!.id;
+    const entrySourceId = this.canonicalEntrySource();
     const seen = new Set<object>();
     let finalIndex = 0;
 
@@ -141,13 +171,14 @@ export class ProgramAbiGlobalRegistry {
     type: ValType,
     mutable: boolean,
     locator: ProgramAbiGlobalLocator,
+    roleOrdinal: number = PROGRAM_ABI_GLOBAL_ROLE.retained,
   ): void {
     const structuralReferenceKey = irGlobalBindingKey(ref.binding);
     this.session.ensurePlan({
       id: ref.binding.bindingId,
       structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
         domain: "global",
-        roleOrdinal: PROGRAM_ABI_RETAINED_GLOBAL_ROLE,
+        roleOrdinal,
         derivedOrdinal: finalIndex,
       }),
       structuralReferenceKey,
@@ -163,7 +194,20 @@ export class ProgramAbiGlobalRegistry {
     });
     this.session.registerGlobalTypeContract(ref.binding.bindingId, type, mutable);
     this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
-    this.session.attachLocator(ref.binding.bindingId, locator);
+    if (!this.session.hasLocator(ref.binding.bindingId, locator.value)) {
+      this.session.attachLocator(ref.binding.bindingId, locator);
+    }
+  }
+
+  private canonicalEntrySource(): IrSourceId {
+    const entrySources = this.session.inventory.sources.filter((source) => source.kind === "entry");
+    if (entrySources.length !== 1) {
+      throw new ProgramAbiInvariantError(
+        "unknown-order-anchor",
+        `global ABI planning requires exactly one canonical entry source, found ${entrySources.length}`,
+      );
+    }
+    return entrySources[0]!.id;
   }
 
   private assertUniqueAllocatorObject(seen: Set<object>, value: Import | GlobalDef, finalIndex: number): void {

@@ -12,6 +12,8 @@ import type { IrLegacyUnitProjection, IrLegacyUnitProjectionEntry } from "./plan
 export interface IrIntegrationReport {
   readonly compiled: readonly string[];
   readonly errors: readonly IrIntegrationError[];
+  /** Exact emitted artifacts retained for component-local report routing. */
+  readonly compiledArtifactEvidence?: readonly IrIntegrationCompiledArtifactEvidence[];
   /** Exact terminal-owner evidence retained beside the public name lists. */
   readonly terminalEvidence?: readonly IrIntegrationTerminalEvidence[];
   /** Public compiled entries that are exact terminal owners. */
@@ -21,7 +23,13 @@ export interface IrIntegrationReport {
 }
 
 export type IrIntegrationTerminalEvidence =
-  | { readonly kind: "patched"; readonly unitId: IrUnitId; readonly legacyName: string }
+  | {
+      readonly kind: "patched";
+      readonly unitId: IrUnitId;
+      readonly legacyName: string;
+      /** R2 component whose ABI was dependency-derived and sealed before lowering. */
+      readonly preparedComponentId?: string;
+    }
   | {
       readonly kind: "failed";
       readonly unitId: IrUnitId;
@@ -47,6 +55,8 @@ export interface IrIntegrationCompiledArtifactEvidence {
   readonly terminalOwnerUnitId: IrUnitId;
   /** Public compiled-artifact label retained for compatibility telemetry. */
   readonly name: string;
+  /** R2 component whose ABI was dependency-derived and sealed before lowering. */
+  readonly preparedComponentId?: string;
 }
 
 export interface IrIntegrationError {
@@ -236,7 +246,12 @@ export function buildIrIntegrationReport(
     }
     if (artifact.artifactUnitId === artifact.terminalOwnerUnitId) {
       structuralCompiledOwners.push(owner.legacyName);
-      terminalEvidence.push({ kind: "patched", unitId: owner.unitId, legacyName: owner.legacyName });
+      terminalEvidence.push({
+        kind: "patched",
+        unitId: owner.unitId,
+        legacyName: owner.legacyName,
+        ...(artifact.preparedComponentId === undefined ? {} : { preparedComponentId: artifact.preparedComponentId }),
+      });
     } else {
       structuralSyntheticArtifacts.push(artifact.name);
     }
@@ -277,6 +292,7 @@ export function buildIrIntegrationReport(
   return {
     compiled,
     errors,
+    compiledArtifactEvidence,
     terminalEvidence,
     terminalCompiledOwners: structuralCompiledOwners,
     syntheticCompiledArtifacts: structuralSyntheticArtifacts,

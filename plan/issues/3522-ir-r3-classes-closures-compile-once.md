@@ -1,10 +1,10 @@
 ---
 id: 3522
 title: "IR-only R3: compile-once classes, members, and closures"
-status: blocked
-sprint: Backlog
+status: in-progress
+sprint: current
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-08-02
 priority: critical
 horizon: xl
 complexity: XL
@@ -33,9 +33,20 @@ files:
   - src/codegen/class-bodies.ts
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
+  - src/codegen/ir-prepared-free-functions.ts
+  - src/codegen/ir-overlay-outcomes.ts
+  - src/codegen/program-abi-class-callable-planning.ts
+  - src/codegen/program-abi-session.ts
   - src/codegen/context/types.ts
   - src/codegen/index.ts
   - tests/issue-3522-ir-class-compile-once.test.ts
+  - tests/issue-3522-ir-static-class-method.test.ts
+loc-budget-allow:
+  - src/codegen/class-bodies.ts
+  - src/codegen/declarations.ts
+func-budget-allow:
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/declarations.ts::compileDeclarations
 ---
 
 # #3522 — IR-only R3: compile-once classes, members, and closures
@@ -90,6 +101,45 @@ Class integration still depends on direct compilation as its ABI producer:
 
 R3 splits class/closure planning from body emission and makes every hidden
 support unit visible to `PreparedIrProgram`.
+
+## Static-method production slice (2026-08-02)
+
+The selector/integration mismatch for ordinary static methods is closed.
+Static methods lower as class-owned, no-receiver IR functions; exact owner
+projection, terminal evidence, and outcome reconciliation now include them.
+Their allocated class-callable handles survive pre-direct function-record
+replacement, and dependency-complete static components can seal through the
+same Program ABI transaction as free functions.
+
+For a sealed static component, `compileClassBodies` receives an exact requested
+skip projection, preserves the already installed IR body, and reports the
+physical class slot back for unit-ID correlation. The shared audit proves every
+skipped class slot has one patched terminal result. Unsealed static probes are
+removed from the early report, compile direct, and run through the established
+late overlay; they do not produce duplicate terminal evidence. Instance
+methods, constructors, accessors, fields, and closures remain on that
+transitional route.
+
+Focused runtime coverage proves:
+
+- numeric static methods on `gc` and `standalone` have no synthetic `self`,
+  emit no legacy body, validate as Wasm, and return the expected value;
+- same-named static overrides on separate structural class owners retain
+  distinct slots and runtime behavior; and
+- an adjacent instance method still emits its direct body, preventing a
+  source-wide or flat-name skip from satisfying the test.
+
+The authoritative single-host lane moves from **31 to 33 IR-emitted units**,
+from **6 to 4 Unsupported units**, and from **37 to 35 legacy bodies**, with
+zero invariants. The remaining Unsupported units are two async functions, one
+async-body shape, and one call-graph closure. Hybrid is READY; strict IR-only
+is still NOT READY because 35 units retain legacy bodies.
+
+This is the first bounded R3 production slice, not issue completion. The
+no-receiver static ABI is preserved, but constructors, instance methods,
+accessors, field work, inheritance support, class expressions, nested units,
+object methods, and closures still need component-atomic prepare/emit ownership
+and optimization-parity evidence before their direct handlers can retire.
 
 ## Exhaustive source-unit census
 
