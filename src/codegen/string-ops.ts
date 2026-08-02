@@ -39,6 +39,7 @@ import {
   tryCompileStandaloneStringSearch,
   tryCompileStandaloneStringSplit,
 } from "./regexp-standalone.js";
+import { tryCompileStandaloneSplitSeparator } from "./string-search-value.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
   getArrTypeIdxFromVec,
@@ -413,7 +414,7 @@ function argIsStaticRegExp(ctx: CodegenContext, arg: ts.Expression): boolean {
  *
  * Leaves exactly one `ref $AnyString` on the stack.
  */
-function emitArgAsNativeString(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): void {
+export function emitArgAsNativeString(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): void {
   if (noJsHost(ctx)) {
     // §7.1.17 ToString(Symbol) throws. Guard before the engine (which would
     // otherwise route a symbol through `$__any_to_string`).
@@ -2314,7 +2315,7 @@ function tryThrowOnBigIntOrSymbolArg(ctx: CodegenContext, fctx: FunctionContext,
  * Returns true when emission succeeded (caller continues building the
  * arg list); false when an unreachable throw was emitted instead.
  */
-function compileStringIntegerArg(
+export function compileStringIntegerArg(
   ctx: CodegenContext,
   fctx: FunctionContext,
   arg: ts.Expression,
@@ -3223,55 +3224,14 @@ export function compileNativeStringMethodCall(
     return nativeStringType(ctx);
   }
 
-  // (#2161 B2) split with an UNDEFINED separator — `s.split()`, `s.split(void
-  // 0)`, `s.split(undefined, lim)` — §22.1.3.23 steps 5-8: an undefined
-  // separator never splits, so the result is `[S]` (the whole string), or `[]`
-  // when ToUint32(limit) === 0. The native-helper arm below requires a
-  // string-like separator, so these forms fell through to the host marshal
-  // path, which has no standalone `string_split` and null-deref'd. Handled
-  // natively here: build the one-element vec directly (no engine call).
-  if (
-    method === "split" &&
-    ctx.nativeStrings &&
-    ctx.anyStrTypeIdx >= 0 &&
-    (expr.arguments.length === 0 || isStaticallyUndefinedExpr(expr.arguments[0]!))
-  ) {
-    const elemType: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
-    const vecTypeIdx = getOrRegisterVecType(ctx, `ref_${ctx.anyStrTypeIdx}`, elemType);
-    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-    // Receiver → native-string local (kept nullable; a null receiver would have
-    // thrown at the property access already).
-    const recvLocal = allocLocal(fctx, `__split_recv_${fctx.locals.length}`, nativeStringType(ctx));
-    emitReceiver();
-    fctx.body.push({ op: "local.set", index: recvLocal });
-    // lim = ToUint32(limit); absent / statically-undefined → unbounded (-1).
-    const limLocal = allocLocal(fctx, `__split_lim_${fctx.locals.length}`, { kind: "i32" });
-    if (expr.arguments.length > 1 && !isStaticallyUndefinedExpr(expr.arguments[1]!)) {
-      compileStringIntegerArg(ctx, fctx, expr.arguments[1]!);
-    } else {
-      fctx.body.push({ op: "i32.const", value: -1 });
-    }
-    fctx.body.push({ op: "local.set", index: limLocal });
-    // lim === 0 ? { length: 0, data: [] } : { length: 1, data: [S] }
-    fctx.body.push({ op: "local.get", index: limLocal });
-    fctx.body.push({ op: "i32.eqz" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: { kind: "ref", typeIdx: vecTypeIdx } as ValType },
-      then: [
-        { op: "i32.const", value: 0 },
-        { op: "i32.const", value: 0 },
-        { op: "array.new_default", typeIdx: arrTypeIdx },
-        { op: "struct.new", typeIdx: vecTypeIdx },
-      ],
-      else: [
-        { op: "i32.const", value: 1 },
-        { op: "local.get", index: recvLocal },
-        { op: "array.new_fixed", typeIdx: arrTypeIdx, length: 1 },
-        { op: "struct.new", typeIdx: vecTypeIdx },
-      ],
-    });
-    return { kind: "ref", typeIdx: vecTypeIdx };
+  // (#2161 B2 / #4016) The two split-separator arms the native lane owns — an
+  // UNDEFINED separator (never splits: `[S]`) and a plain-`ToString` one
+  // (`s.split(123)`) — both live in `string-search-value.ts`, which is where the
+  // §22.1.3.23 step-2 decision belongs. It declines for a string-like separator
+  // so the byte-identical arm below still handles that case.
+  if (method === "split") {
+    const sep = tryCompileStandaloneSplitSeparator(ctx, fctx, expr, emitReceiver, firstArgIsStringLike);
+    if (sep !== undefined) return sep;
   }
 
   // split: native helper, returns native string array
