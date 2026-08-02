@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex-ir-inventory-gate",
   "requested_by": "ttraenkler/codex-ir-inventory-gate",
   "status": "in-progress",
-  "branch": "codex/ir-optimization-inventory-gate",
-  "reserved_at": "2026-08-02T21:24:00Z",
-  "claimed_at": "2026-08-02T21:24:00Z",
-  "updated_at": "2026-08-02T21:24:00Z",
-  "write_id": "98906-py89ix5y",
-  "pr_scan": "ok"
+  "branch": "codex/4115-ir-optimization-inventory-gate",
+  "claimed_at": "2026-08-02T21:24:25Z",
+  "updated_at": "2026-08-02T21:24:25Z",
+  "write_id": "715-q1099hqc"
 }
