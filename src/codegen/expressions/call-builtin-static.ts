@@ -89,7 +89,7 @@ import {
   emitArrayIsArrayExternrefPredicate,
   tryEnsureNativeProtoBrand,
 } from "../property-access.js";
-import { isGlobalRegExpIdentifier } from "../regexp-standalone.js";
+import { isGlobalRegExpIdentifier, isStaticallyUndefinedExpr } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
@@ -2172,6 +2172,26 @@ export function compileBuiltinStaticCall(
             fctx.body.push({ op: "drop" });
           }
         }
+        fctx.body.push({ op: "local.get", index: objLocal });
+      } else if (expr.arguments.length >= 2 && isStaticallyUndefinedExpr(expr.arguments[1]!)) {
+        // (#4047) §20.1.2.2 step 3 is conditional: "If properties is NOT
+        // undefined, return ? ObjectDefineProperties(obj, properties)".
+        // `Object.create(proto, undefined)` therefore defines nothing and is
+        // NOT a ToObject error — but the generic arm below handed `undefined`
+        // straight to `__defineProperties`, whose §20.1.2.3.1 step 1
+        // ToObject(undefined) correctly throws a TypeError. Two different
+        // spec steps, one of which does not apply here.
+        //
+        // Only the STATIC spelling is folded away (`undefined` / `void 0`).
+        // A runtime-valued `properties` that happens to be `undefined` still
+        // reaches the helper and throws; that residual needs an is-undefined
+        // test at the externref boundary and is left to the receiver work in
+        // #4010. Compiling the argument for its side effects is still required
+        // (`void sideEffect()` is a legal spelling).
+        const objLocal = allocLocal(fctx, `__ocreate_obj_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: objLocal });
+        const propsType = compileExpression(ctx, fctx, expr.arguments[1]!);
+        if (propsType) fctx.body.push({ op: "drop" });
         fctx.body.push({ op: "local.get", index: objLocal });
       } else if (expr.arguments.length >= 2) {
         // Non-literal second arg: use __defineProperties host import
