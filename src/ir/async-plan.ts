@@ -14,6 +14,7 @@
  * consume an IrAsyncPlan.
  */
 
+import { ASYNC_RUNTIME_FEATURES, isAsyncRuntimeFeature, type AsyncRuntimeFeature } from "./async-runtime-providers.js";
 import type { IrUnitId } from "./identity.js";
 import { collectUses, forEachInstrDeep, irTypeEquals, type IrInstr, type IrType, type IrValueId } from "./nodes.js";
 
@@ -50,14 +51,7 @@ export function canonicalPromiseAbi(fulfillmentType: IrType | null): IrCanonical
 }
 
 /** Semantic requirements. A backend selects providers only after preparation. */
-export type IrAsyncRuntimeIntent =
-  | "promise.capability.create"
-  | "promise.resolve"
-  | "promise.react"
-  | "promise.settle.fulfill"
-  | "promise.settle.reject"
-  | "scheduler.enqueue"
-  | "scheduler.drain";
+export type IrAsyncRuntimeIntent = AsyncRuntimeFeature;
 
 export interface IrAsyncPlanValue {
   readonly value: IrValueId;
@@ -182,6 +176,7 @@ export type IrAsyncPlanInvariantCode =
   | "unknown-handler"
   | "handler-cycle"
   | "invalid-handler"
+  | "unknown-runtime-intent"
   | "duplicate-runtime-intent"
   | "missing-runtime-intent"
   | "liveness-mismatch";
@@ -211,15 +206,7 @@ interface StateEdge {
   readonly boundValue?: IrValueId;
 }
 
-const runtimeIntentOrder: readonly IrAsyncRuntimeIntent[] = [
-  "promise.capability.create",
-  "promise.resolve",
-  "promise.react",
-  "promise.settle.fulfill",
-  "promise.settle.reject",
-  "scheduler.enqueue",
-  "scheduler.drain",
-];
+const runtimeIntentOrder: readonly IrAsyncRuntimeIntent[] = ASYNC_RUNTIME_FEATURES;
 
 const runtimeIntentRank = new Map(runtimeIntentOrder.map((intent, index) => [intent, index] as const));
 
@@ -708,6 +695,10 @@ export function verifyIrAsyncPlan(plan: IrAsyncPlan): readonly IrAsyncPlanVerify
 
   const intents = new Set<IrAsyncRuntimeIntent>();
   for (const intent of plan.runtimeIntents) {
+    if (!isAsyncRuntimeFeature(intent)) {
+      addError(errors, "unknown-runtime-intent", `runtime intent ${String(intent)} is not semantic async vocabulary`);
+      continue;
+    }
     if (intents.has(intent)) addError(errors, "duplicate-runtime-intent", `runtime intent ${intent} is duplicated`);
     intents.add(intent);
   }
@@ -750,7 +741,9 @@ function canonicalPlanInput(plan: IrAsyncPlan): IrAsyncPlan {
     states,
     handlers: [...plan.handlers].sort((left, right) => compareNumber(left.id, right.id)),
     runtimeIntents: [...plan.runtimeIntents].sort(
-      (left, right) => (runtimeIntentRank.get(left) ?? Number.MAX_SAFE_INTEGER) - (runtimeIntentRank.get(right) ?? 0),
+      (left, right) =>
+        (runtimeIntentRank.get(left) ?? Number.MAX_SAFE_INTEGER) -
+          (runtimeIntentRank.get(right) ?? Number.MAX_SAFE_INTEGER) || String(left).localeCompare(String(right)),
     ),
   };
 }

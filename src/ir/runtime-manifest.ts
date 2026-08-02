@@ -11,23 +11,33 @@
  */
 import { irTypeEquals, type IrIntrinsicBackendOp } from "./nodes.js";
 import {
+  ASYNC_HOST_CAPABILITY_IDS,
+  ASYNC_RUNTIME_FEATURES,
+  ASYNC_RUNTIME_PROVIDERS,
+  ASYNC_RUNTIME_PROVIDER_IDS,
+  type AsyncHostCapabilityId,
+  type AsyncRuntimeFeature,
+  type AsyncRuntimeProviderId,
+} from "./async-runtime-providers.js";
+import {
   F64_BINARY_INTRINSIC_SIGNATURE,
   F64_UNARY_INTRINSIC_SIGNATURE,
   INTRINSIC_DEFINITIONS,
   PURE_MATH_HOST_CAPABILITIES,
   PURE_MATH_RUNTIME_FEATURES,
-  type HostCapability,
   type IntrinsicEffectEvidence,
   type IntrinsicId,
   type IntrinsicSignature,
   type IntrinsicUse,
   type IntrinsicVerificationCode,
-  type RuntimeFeature,
+  type RuntimeFeature as MathRuntimeFeature,
   verifyIntrinsicUse,
 } from "./intrinsics.js";
 
 export type RuntimeTarget = "host" | "strict-no-host" | "standalone" | "wasi";
 export type RuntimeBackend = "wasmgc" | "linear";
+export type RuntimeFeature = MathRuntimeFeature | AsyncRuntimeFeature;
+export type HostCapabilityId = AsyncHostCapabilityId;
 
 export interface RuntimeManifestPolicy {
   readonly target: RuntimeTarget;
@@ -51,7 +61,8 @@ export const PURE_MATH_RUNTIME_PROVIDER_IDS = Object.freeze([
   "selfhost.math.sin",
 ] as const);
 
-export type RuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
+export type MathRuntimeProviderId = (typeof PURE_MATH_RUNTIME_PROVIDER_IDS)[number];
+export type RuntimeProviderId = MathRuntimeProviderId | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
   | {
@@ -62,20 +73,38 @@ export type RuntimeProviderImplementation =
       readonly kind: "self-hosted";
       /** Concrete ABI spelling, deliberately below the semantic feature. */
       readonly symbol: string;
+    }
+  | {
+      /** The provider closes over one or more declared host capabilities. */
+      readonly kind: "host-capability";
+    }
+  | {
+      /** Scheduling is supplied by the host Promise job queue, with no import. */
+      readonly kind: "host-managed";
+      readonly service: "promise-job-queue";
     };
+
+export type MathRuntimeProviderImplementation = Extract<
+  RuntimeProviderImplementation,
+  { readonly kind: "backend-op" | "self-hosted" }
+>;
 
 export interface RuntimeProviderDefinition {
   readonly id: RuntimeProviderId;
   readonly feature: RuntimeFeature;
-  readonly signature: IntrinsicSignature;
+  /** Present for source intrinsics; semantic runtime requirements need no call ABI. */
+  readonly signature?: IntrinsicSignature;
   readonly dependencies: readonly RuntimeFeature[];
-  readonly hostCapabilities: readonly HostCapability[];
+  readonly hostCapabilities: readonly HostCapabilityId[];
   readonly supportedTargets: readonly RuntimeTarget[];
   readonly supportedBackends: readonly RuntimeBackend[];
   readonly implementation: RuntimeProviderImplementation;
 }
 
-export type RuntimeProviderPlan = RuntimeProviderDefinition;
+/** Math lowering compatibility view; async providers are consumed by later adapters. */
+export type RuntimeProviderPlan = RuntimeProviderDefinition & {
+  readonly implementation: MathRuntimeProviderImplementation;
+};
 
 export interface RuntimeProviderComponent {
   readonly features: readonly RuntimeFeature[];
@@ -87,9 +116,9 @@ export interface FrozenRuntimeManifest {
   readonly policy: RuntimeManifestPolicy;
   readonly intrinsicUses: readonly IntrinsicUse[];
   readonly features: readonly RuntimeFeature[];
-  readonly providers: readonly RuntimeProviderPlan[];
+  readonly providers: readonly RuntimeProviderDefinition[];
   readonly providerComponents: readonly RuntimeProviderComponent[];
-  readonly hostCapabilities: readonly HostCapability[];
+  readonly hostCapabilities: readonly HostCapabilityId[];
 }
 
 export type RuntimeManifestInvariantCode =
@@ -131,7 +160,7 @@ export class RuntimeManifestInvariantError extends Error {
 const ALL_TARGETS = Object.freeze<readonly RuntimeTarget[]>(["host", "standalone", "strict-no-host", "wasi"]);
 const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc"]);
 
-export const RUNTIME_FEATURE_SIGNATURES: Readonly<Record<RuntimeFeature, IntrinsicSignature>> = Object.freeze({
+export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
   "math.abs": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.atan": F64_UNARY_INTRINSIC_SIGNATURE,
   "math.atan2": F64_BINARY_INTRINSIC_SIGNATURE,
@@ -167,7 +196,7 @@ function provider(
   });
 }
 
-const PROVIDERS_BY_FEATURE: Readonly<Record<RuntimeFeature, RuntimeProviderDefinition>> = Object.freeze({
+const PROVIDERS_BY_FEATURE: Readonly<Record<MathRuntimeFeature, RuntimeProviderDefinition>> = Object.freeze({
   "math.abs": provider("backend.f64.abs", "math.abs", F64_UNARY_INTRINSIC_SIGNATURE, {
     kind: "backend-op",
     opcode: "f64.abs",
@@ -245,8 +274,17 @@ export const PURE_MATH_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] =
   ),
 );
 
-const FEATURE_SET: ReadonlySet<string> = new Set(PURE_MATH_RUNTIME_FEATURES);
-const PROVIDER_ID_SET: ReadonlySet<string> = new Set(PURE_MATH_RUNTIME_PROVIDER_IDS);
+/** Closed, canonically ordered catalogue used by production manifest builders. */
+export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
+  [...PURE_MATH_RUNTIME_PROVIDERS, ...ASYNC_RUNTIME_PROVIDERS].sort((left, right) => left.id.localeCompare(right.id)),
+);
+
+const FEATURE_SET: ReadonlySet<string> = new Set([...PURE_MATH_RUNTIME_FEATURES, ...ASYNC_RUNTIME_FEATURES]);
+const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
+  ...PURE_MATH_RUNTIME_PROVIDER_IDS,
+  ...ASYNC_RUNTIME_PROVIDER_IDS,
+]);
+const HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(ASYNC_HOST_CAPABILITY_IDS);
 const TARGET_SET: ReadonlySet<string> = new Set(ALL_TARGETS);
 const BACKEND_SET: ReadonlySet<string> = new Set(ALL_BACKENDS);
 
@@ -267,16 +305,19 @@ function signatureEquals(left: IntrinsicSignature, right: IntrinsicSignature): b
 }
 
 function cloneProvider(value: RuntimeProviderDefinition): RuntimeProviderDefinition {
-  const signature = signatureEquals(value.signature, F64_UNARY_INTRINSIC_SIGNATURE)
-    ? F64_UNARY_INTRINSIC_SIGNATURE
-    : signatureEquals(value.signature, F64_BINARY_INTRINSIC_SIGNATURE)
-      ? F64_BINARY_INTRINSIC_SIGNATURE
-      : value.signature;
+  const signature =
+    value.signature === undefined
+      ? undefined
+      : signatureEquals(value.signature, F64_UNARY_INTRINSIC_SIGNATURE)
+        ? F64_UNARY_INTRINSIC_SIGNATURE
+        : signatureEquals(value.signature, F64_BINARY_INTRINSIC_SIGNATURE)
+          ? F64_BINARY_INTRINSIC_SIGNATURE
+          : value.signature;
   return Object.freeze({
     ...value,
-    signature,
+    ...(signature === undefined ? {} : { signature }),
     dependencies: Object.freeze([...new Set(value.dependencies)].sort(compareStrings)),
-    hostCapabilities: Object.freeze([...value.hostCapabilities]),
+    hostCapabilities: Object.freeze([...new Set(value.hostCapabilities)].sort(compareStrings)),
     supportedTargets: Object.freeze([...new Set(value.supportedTargets)].sort(compareStrings)),
     supportedBackends: Object.freeze([...new Set(value.supportedBackends)].sort(compareStrings)),
     implementation: Object.freeze({ ...value.implementation }),
@@ -340,7 +381,7 @@ function stronglyConnectedComponents(
 
 function buildProviderComponents(
   features: readonly RuntimeFeature[],
-  providers: ReadonlyMap<RuntimeFeature, RuntimeProviderPlan>,
+  providers: ReadonlyMap<RuntimeFeature, RuntimeProviderDefinition>,
   declaredCycles: ReadonlyMap<string, readonly RuntimeFeature[]>,
 ): readonly RuntimeProviderComponent[] {
   const dependencies = new Map<RuntimeFeature, readonly RuntimeFeature[]>();
@@ -420,12 +461,14 @@ type BuilderState = "open" | "building" | "frozen" | "failed";
 export class RuntimeManifestBuilder {
   readonly #policy: RuntimeManifestPolicy;
   readonly #uses: IntrinsicUse[] = [];
+  readonly #requestedFeatures = new Set<RuntimeFeature>();
   readonly #providers: RuntimeProviderDefinition[];
   readonly #addedDependencies = new Map<RuntimeFeature, Set<RuntimeFeature>>();
   readonly #declaredCycles = new Map<string, readonly RuntimeFeature[]>();
   readonly #plannedIntrinsicIds = new Set<IntrinsicId>();
   readonly #plannedProviderIds = new Set<RuntimeProviderId>();
-  readonly #providerPlans = new Map<RuntimeFeature, RuntimeProviderPlan>();
+  readonly #plannedHostCapabilityIds = new Set<HostCapabilityId>();
+  readonly #providerPlans = new Map<RuntimeFeature, RuntimeProviderDefinition>();
   #state: BuilderState = "open";
   #manifest?: FrozenRuntimeManifest;
 
@@ -437,7 +480,7 @@ export class RuntimeManifestBuilder {
       );
     }
     this.#policy = Object.freeze({ ...policy });
-    this.#providers = (options.providers ?? PURE_MATH_RUNTIME_PROVIDERS).map(cloneProvider);
+    this.#providers = (options.providers ?? RUNTIME_PROVIDERS).map(cloneProvider);
   }
 
   addIntrinsicUse(use: IntrinsicUse, effects: IntrinsicEffectEvidence): void {
@@ -454,6 +497,13 @@ export class RuntimeManifestBuilder {
         location: Object.freeze({ ...use.location }),
       }),
     );
+  }
+
+  /** Register a semantic runtime requirement discovered during preparation. */
+  requestFeature(feature: RuntimeFeature): void {
+    this.#assertMutable();
+    this.#assertKnownFeature(feature);
+    this.#requestedFeatures.add(feature);
   }
 
   registerProvider(value: RuntimeProviderDefinition): void {
@@ -519,7 +569,9 @@ export class RuntimeManifestBuilder {
     return this.#manifest;
   }
 
-  resolveProvider(feature: RuntimeFeature): RuntimeProviderPlan {
+  resolveProvider(feature: MathRuntimeFeature): RuntimeProviderPlan;
+  resolveProvider(feature: AsyncRuntimeFeature): RuntimeProviderDefinition;
+  resolveProvider(feature: RuntimeFeature): RuntimeProviderDefinition {
     this.#assertFrozen();
     const provider = this.#providerPlans.get(feature);
     if (!provider) {
@@ -553,15 +605,17 @@ export class RuntimeManifestBuilder {
 
   assertHostCapabilityPlanned(capability: string): void {
     this.#assertFrozen();
-    throw new RuntimeManifestInvariantError(
-      "late-unplanned-host-capability",
-      `host capability ${capability} is outside the host-free pure-Math manifest`,
-    );
+    if (!this.#plannedHostCapabilityIds.has(capability as HostCapabilityId)) {
+      throw new RuntimeManifestInvariantError(
+        "late-unplanned-host-capability",
+        `host capability ${capability} was not present at manifest freeze`,
+      );
+    }
   }
 
   #buildManifest(): FrozenRuntimeManifest {
     const providersByFeature = this.#indexProviders();
-    const pending = new Set<RuntimeFeature>();
+    const pending = new Set<RuntimeFeature>(this.#requestedFeatures);
     for (const use of this.#uses) pending.add(INTRINSIC_DEFINITIONS[use.id].feature);
 
     while (pending.size > 0) {
@@ -570,7 +624,10 @@ export class RuntimeManifestBuilder {
       if (this.#providerPlans.has(feature)) continue;
       const selected = this.#selectProvider(feature, providersByFeature);
       const expectedSignature = RUNTIME_FEATURE_SIGNATURES[feature];
-      if (!signatureEquals(selected.signature, expectedSignature)) {
+      if (
+        expectedSignature !== undefined &&
+        (selected.signature === undefined || !signatureEquals(selected.signature, expectedSignature))
+      ) {
         throw new RuntimeManifestInvariantError(
           "provider-signature-mismatch",
           `provider ${selected.id} does not implement the ${feature} signature`,
@@ -592,9 +649,15 @@ export class RuntimeManifestBuilder {
       [...this.#providerPlans.values()].sort((left, right) => compareStrings(left.id, right.id)),
     );
     const intrinsicUses = Object.freeze([...this.#uses].sort(useOrder));
+    const hostCapabilityIds = new Set<HostCapabilityId>();
+    for (const provider of providers) {
+      for (const capability of provider.hostCapabilities) hostCapabilityIds.add(capability);
+    }
+    const hostCapabilities = Object.freeze([...hostCapabilityIds].sort(compareStrings));
 
     for (const use of intrinsicUses) this.#plannedIntrinsicIds.add(use.id);
     for (const value of providers) this.#plannedProviderIds.add(value.id);
+    for (const capability of hostCapabilities) this.#plannedHostCapabilityIds.add(capability);
 
     return Object.freeze({
       policy: this.#policy,
@@ -602,7 +665,7 @@ export class RuntimeManifestBuilder {
       features,
       providers,
       providerComponents,
-      hostCapabilities: PURE_MATH_HOST_CAPABILITIES,
+      hostCapabilities,
     });
   }
 
@@ -625,10 +688,24 @@ export class RuntimeManifestBuilder {
       }
       ids.add(provider.id);
       for (const dependency of provider.dependencies) this.#assertKnownFeature(dependency);
-      if (provider.hostCapabilities.length > 0) {
+      for (const capability of provider.hostCapabilities) {
+        if (!HOST_CAPABILITY_ID_SET.has(capability)) {
+          throw new RuntimeManifestInvariantError(
+            "unknown-host-capability",
+            `provider ${provider.id} requests unknown host capability ${String(capability)}`,
+          );
+        }
+      }
+      if (provider.implementation.kind === "host-managed" && provider.hostCapabilities.length > 0) {
         throw new RuntimeManifestInvariantError(
           "unknown-host-capability",
-          `provider ${provider.id} requests a capability outside the host-free pure-Math vocabulary`,
+          `host-managed provider ${provider.id} cannot request concrete host capabilities`,
+        );
+      }
+      if (provider.implementation.kind === "host-capability" && provider.hostCapabilities.length === 0) {
+        throw new RuntimeManifestInvariantError(
+          "unknown-host-capability",
+          `host-capability provider ${provider.id} must request at least one host capability`,
         );
       }
       if (!provider.supportedTargets.every((target) => TARGET_SET.has(target))) {
