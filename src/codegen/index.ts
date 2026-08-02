@@ -143,7 +143,6 @@ import {
 import {
   buildIrExactFunctionClaimIndex,
   buildIrRequestedFunctionSkipProjection,
-  computeIrFirstSkipUnitIds,
   correlateIrSkippedBodyNames,
   correlateIrSkippedFunctionNames,
   mergeIrIntegrationReports,
@@ -151,9 +150,11 @@ import {
 } from "./ir-overlay-safety.js";
 import {
   completePreparedIrIntegration,
+  computePreparedInheritedIrFirstSkipUnitIds,
   prepareIrClassMethodBodies,
   prepareIrFreeFunctionBodies,
   selectR2PreparedFreeFunctions,
+  selectR3PreparedPromiseDelayFunctions,
   selectPreparedClassMethodNames,
   type PreparedIrClassMethodBodies,
   type PreparedIrFreeFunctionBodies,
@@ -3200,6 +3201,20 @@ function planIrFirstBodyRouting(
   plan: IrOverlayPlan,
 ): IrFirstBodyRouting {
   const preliminarySelection = plan.safeSelection;
+  const inheritedSkipInput = {
+    sourceFile,
+    identityContext: plan.identityPlan.identityContext,
+    safeFunctionUnitIds: plan.identityPlan.safeFunctionUnitIds,
+    claimsByUnitId: plan.functionClaimsByUnitId,
+    overridesByUnitId: plan.overrideMapByUnitId,
+    potentiallyBlockedOwnerUnitIds: new Set([
+      ...[...plan.hostVoidCallbacks.values()].map((callback) => callback.ownerUnitId),
+      ...plan.hostDateImportsByOwnerUnitId.keys(),
+      ...[...plan.promiseDelays.constructions.values()].map((delay) => delay.ownerUnitId),
+    ]),
+    generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
+    fast: ctx.fast,
+  };
   const hasLateFeaturePreparation =
     plan.importedCalls.size > 0 ||
     plan.hostVoidCallbacks.size > 0 ||
@@ -3225,14 +3240,18 @@ function planIrFirstBodyRouting(
   // selectR2PreparedFreeFunctions closes candidates over exact local call
   // edges, so any callable edge that crosses into one of those owners removes
   // the complete affected free-function component before preparation.
-  const useR2PreparedRouting = preliminaryR2Names.size > 0 || preliminaryClassMethodNames.size > 0;
+  const hasPromiseDelayComponent = plan.promiseDelays.constructions.size > 0;
+  const usePreparedRouting =
+    preliminaryR2Names.size > 0 || preliminaryClassMethodNames.size > 0 || hasPromiseDelayComponent;
+  let finalizedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit"> | undefined;
 
-  if (useR2PreparedRouting) {
+  if (usePreparedRouting) {
     // TDZ globals are part of the frozen Program ABI and may be read while
-    // the IR program is prepared. The fallback branch deliberately keeps
-    // their legacy declaration-pass order.
+    // the IR program is prepared. The exact Promise-delay route also settles
+    // its late runtime imports here, before any direct body can bake funcIdxs.
     prepareModuleTdzGlobals(ctx, sourceFile);
     const preparedSelection = finalizePreparedIrSelection(ctx, sourceFile, plan);
+    finalizedSelection = preparedSelection;
     if ([...preliminaryR2Names].some((legacyName) => !preparedSelection.funcs.has(legacyName))) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
@@ -3248,41 +3267,64 @@ function planIrFirstBodyRouting(
         "R3 final-context preparation changed a preflight-certified class-method component",
       );
     }
-    const freeFunctionSelection = {
-      funcs: preliminaryR2Names,
-      classMembers: new Set<string>(),
-      moduleInit: undefined,
-    };
-    const preparedFreeFunctions = prepareIrFreeFunctionBodies({
+    const promiseDelayNames = selectR3PreparedPromiseDelayFunctions({
       ctx,
       sourceFile,
-      selection: freeFunctionSelection,
-      claimsByUnitId: plan.functionClaimsByUnitId,
-      overrideMap: plan.overrideMap,
-      classShapes: plan.classShapes,
-      loweringPlans: irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, freeFunctionSelection),
-    });
-    const preparedClassMethods = prepareIrClassMethodBodies({
-      ctx,
-      sourceFile,
-      selection: { classMembers: preliminaryClassMethodNames },
+      selectedLegacyNames: preparedSelection.funcs,
       identityPlan: plan.identityPlan,
-      overrideMap: plan.overrideMap,
-      classShapes: plan.classShapes,
-      projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+      claimsByUnitId: plan.functionClaimsByUnitId,
+      overridesByUnitId: plan.overrideMapByUnitId,
+      promiseDelays: plan.promiseDelays,
     });
-    const preparedReport = preparedClassMethods
-      ? mergeIrIntegrationReports(preparedFreeFunctions.report, preparedClassMethods.report)
-      : preparedFreeFunctions.report;
-    return {
-      requestedSkipProjection: preparedFreeFunctions.requestedSkipProjection,
-      preparedFreeFunctions,
-      ...(preparedClassMethods ? { preparedClassMethods } : {}),
-      preparedReport,
-      preparedSelection,
-      skipBodies: preparedFreeFunctions.skipBodies,
-      preserveBodies: preparedFreeFunctions.preserveBodies,
-    };
+    const preparedFreeFunctionNames = new Set([...preliminaryR2Names, ...promiseDelayNames]);
+    if (preparedFreeFunctionNames.size === 0 && preliminaryClassMethodNames.size === 0) {
+      // Final-context Promise preparation may reject an occupied/mismatched
+      // runtime ABI. Keep that owner on the established direct route.
+    } else {
+      const freeFunctionSelection = {
+        funcs: preparedFreeFunctionNames,
+        classMembers: new Set<string>(),
+        moduleInit: undefined,
+      };
+      const preparedFreeFunctions = prepareIrFreeFunctionBodies({
+        ctx,
+        sourceFile,
+        selection: freeFunctionSelection,
+        claimsByUnitId: plan.functionClaimsByUnitId,
+        overrideMap: plan.overrideMap,
+        classShapes: plan.classShapes,
+        loweringPlans: irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, freeFunctionSelection),
+      });
+      const preparedClassMethods = prepareIrClassMethodBodies({
+        ctx,
+        sourceFile,
+        selection: { classMembers: preliminaryClassMethodNames },
+        identityPlan: plan.identityPlan,
+        overrideMap: plan.overrideMap,
+        classShapes: plan.classShapes,
+        projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+      });
+      const preparedReport = preparedClassMethods
+        ? mergeIrIntegrationReports(preparedFreeFunctions.report, preparedClassMethods.report)
+        : preparedFreeFunctions.report;
+      const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
+      for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
+        requestedSkipUnitIds.add(entry.unitId);
+      }
+      const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(
+        requestedSkipUnitIds,
+        plan.functionClaimsByUnitId,
+      );
+      return {
+        requestedSkipProjection,
+        preparedFreeFunctions,
+        ...(preparedClassMethods ? { preparedClassMethods } : {}),
+        preparedReport,
+        preparedSelection,
+        skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
+        preserveBodies: preparedFreeFunctions.preserveBodies,
+      };
+    }
   }
 
   // Free-function components outside the bounded R2 population retain the
@@ -3290,59 +3332,7 @@ function planIrFirstBodyRouting(
   // This keeps fast numeric, structured ABI, cross-policy call components,
   // and late support discovery byte-compatible until their state moves into
   // preparation.
-  const generatorsSkippable = !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
-  const requestedSkipUnitIds = new Set(
-    computeIrFirstSkipUnitIds({
-      sourceFile,
-      identityContext: plan.identityPlan.identityContext,
-      safeFunctionUnitIds: plan.identityPlan.safeFunctionUnitIds,
-      claimsByUnitId: plan.functionClaimsByUnitId,
-      overridesByUnitId: plan.overrideMapByUnitId,
-      potentiallyBlockedOwnerUnitIds: new Set([
-        ...[...plan.hostVoidCallbacks.values()].map((callback) => callback.ownerUnitId),
-        ...plan.hostDateImportsByOwnerUnitId.keys(),
-        ...[...plan.promiseDelays.constructions.values()].map((delay) => delay.ownerUnitId),
-      ]),
-      generatorsSkippable,
-    }),
-  );
-  // Fast mode can ground source `number` positions to i32 during direct body
-  // discovery even though the early IR override still says f64. Keep only the
-  // annotation-proven boolean subset on the inherited compile-once route until
-  // exact callable-contract comparison moves into R2 preparation.
-  if (ctx.fast) {
-    const fastBlockedUnitIds = new Set<IrUnitId>();
-    for (const unitId of requestedSkipUnitIds) {
-      const declaration = plan.functionClaimsByUnitId.get(unitId)?.declaration;
-      const stableFastSignature =
-        declaration !== undefined &&
-        declaration.parameters.every(
-          (parameter) =>
-            !parameter.questionToken &&
-            !parameter.dotDotDotToken &&
-            !parameter.initializer &&
-            parameter.type?.kind === ts.SyntaxKind.BooleanKeyword,
-        ) &&
-        (declaration.type?.kind === ts.SyntaxKind.BooleanKeyword ||
-          declaration.type?.kind === ts.SyntaxKind.VoidKeyword);
-      if (!stableFastSignature) {
-        requestedSkipUnitIds.delete(unitId);
-        fastBlockedUnitIds.add(unitId);
-      }
-    }
-    const callEdges = collectLocalCallEdgesByIdentity(sourceFile, plan.identityPlan.identityContext);
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const unitId of requestedSkipUnitIds) {
-        if (![...(callEdges.callees.get(unitId) ?? [])].some((calleeUnitId) => fastBlockedUnitIds.has(calleeUnitId))) {
-          continue;
-        }
-        requestedSkipUnitIds.delete(unitId);
-        fastBlockedUnitIds.add(unitId);
-        changed = true;
-      }
-    }
-  }
+  const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
   const requestedSkipProjection = buildIrRequestedFunctionSkipProjection(
     requestedSkipUnitIds,
     plan.functionClaimsByUnitId,
@@ -3350,6 +3340,7 @@ function planIrFirstBodyRouting(
   return {
     requestedSkipProjection,
     skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
+    ...(finalizedSelection ? { preparedSelection: finalizedSelection } : {}),
   };
 }
 
@@ -3882,7 +3873,7 @@ export function generateModule(
         : undefined,
     );
     if (irFirst) {
-      const skipProjection = preparedFreeFunctions?.requestedSkipProjection ?? requestedSkipProjection;
+      const skipProjection = requestedSkipProjection;
       if (!skipProjection) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
