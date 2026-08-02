@@ -57,8 +57,14 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push(instr);
   }
 
-  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Instr[], storage?: IrGlobalRef): void {
-    const ops = this.stringRuntime?.emitStringConst?.(value, alloc, storage);
+  emitStringConst(
+    value: string,
+    alloc: AllocSiteId | undefined,
+    out: Instr[],
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ): void {
+    const ops = this.stringRuntime?.emitStringConst?.(value, alloc, storage, materializer);
     if (!ops) throw new Error("WasmGcEmitter: string.const runtime is unavailable");
     out.push(...ops);
   }

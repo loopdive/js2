@@ -18,10 +18,12 @@ import {
   IR_STRING_CONCAT_FN,
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
+  IR_STRING_ITERATOR_CHAR_AT_FN,
 } from "./string-runtime.js";
 
 export interface IrStringSupportProviders {
   readonly storageForConst: (instr: IrInstrStringConst) => IrGlobalRef | undefined;
+  readonly materializerForConst?: (instr: IrInstrStringConst) => IrFuncRef | undefined;
   readonly providerForLength: (instr: IrInstrStringLen) => IrStringLengthProvider | undefined;
 }
 
@@ -59,6 +61,8 @@ export function irStringCallableProviderRef(instr: IrInstr): IrFuncRef | undefin
       return irIntrinsicFuncRef(IR_STRING_CHAR_AT_FN);
     case "string.char_code_at":
       return irIntrinsicFuncRef(IR_STRING_CHAR_CODE_AT_FN);
+    case "forof.string":
+      return irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN);
     default:
       return undefined;
   }
@@ -81,14 +85,30 @@ export function attachIrStringSupport(fn: IrFunction, providers: IrStringSupport
     const nested = mapNestedBuffers(instr, mapBuffer);
     if (nested.kind === "string.const") {
       const storage = providers.storageForConst(nested);
-      if (!storage) return nested;
-      if (nested.storage) {
+      const materializer = providers.materializerForConst?.(nested);
+      if ((storage && materializer) || (nested.storage && nested.materializer)) {
+        throw new Error("IR string.const cannot carry both prepared storage and a materializer");
+      }
+      if (storage) {
+        if (nested.materializer) {
+          throw new Error("IR string.const materializer conflicts with prepared storage");
+        }
+        if (!nested.storage) return { ...nested, storage };
         if (irGlobalBindingKey(nested.storage.binding) !== irGlobalBindingKey(storage.binding)) {
           throw new Error("IR string.const already carries a different prepared storage binding");
         }
         return nested;
       }
-      return { ...nested, storage };
+      if (materializer) {
+        if (nested.storage) {
+          throw new Error("IR string.const storage conflicts with a prepared materializer");
+        }
+        if (!nested.materializer) return { ...nested, materializer };
+        if (!sameIrCallableBinding(nested.materializer.binding, materializer.binding)) {
+          throw new Error("IR string.const already carries a different prepared materializer binding");
+        }
+      }
+      return nested;
     }
     if (nested.kind === "string.len") {
       const provider = providers.providerForLength(nested);
@@ -105,7 +125,8 @@ export function attachIrStringSupport(fn: IrFunction, providers: IrStringSupport
       nested.kind === "string.concat" ||
       nested.kind === "string.eq" ||
       nested.kind === "string.char_at" ||
-      nested.kind === "string.char_code_at"
+      nested.kind === "string.char_code_at" ||
+      nested.kind === "forof.string"
     ) {
       const provider = irStringCallableProviderRef(nested)!;
       if (nested.provider) {

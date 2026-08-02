@@ -21,7 +21,7 @@
 // callers can decide whether to bail or fall back to the legacy path.
 
 import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrType, IrValueId } from "./nodes.js";
-import { asVal, forEachInstrDeep, forEachNestedBuffer } from "./nodes.js";
+import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
 import type { ValType } from "./types.js";
 // #2949 slice 1 — canonical JsTag policy for the dynamic-operand rules
 // (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
@@ -297,14 +297,33 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
             });
           }
           return;
-        } else if (nested.kind === "string.const" && nested.storage) {
-          const problem = irGlobalReferenceProblem(nested.storage);
-          if (problem !== null) {
+        } else if (nested.kind === "string.const") {
+          if (nested.storage && nested.materializer) {
             errors.push({
-              message: `string.const storage ${problem}`,
+              message: "string.const cannot carry both storage and a materializer",
               func: func.name,
               block: block.id as number,
             });
+          }
+          if (nested.storage) {
+            const problem = irGlobalReferenceProblem(nested.storage);
+            if (problem !== null) {
+              errors.push({
+                message: `string.const storage ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          }
+          if (nested.materializer) {
+            const problem = callableReferenceProblem(nested.materializer);
+            if (problem !== null) {
+              errors.push({
+                message: `string.const materializer ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
           }
           return;
         } else if (nested.kind === "string.len" && nested.provider) {
@@ -339,7 +358,8 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
           (nested.kind === "string.concat" ||
             nested.kind === "string.eq" ||
             nested.kind === "string.char_at" ||
-            nested.kind === "string.char_code_at") &&
+            nested.kind === "string.char_code_at" ||
+            nested.kind === "forof.string") &&
           nested.provider
         ) {
           const problem = callableReferenceProblem(nested.provider);
@@ -1650,6 +1670,26 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
             block: blockId,
           });
         }
+        const vecType = typeOf.get(instr.vec);
+        if (vecType?.kind === "vec") {
+          if (instr.kind === "vec.get" && instr.resultType && !irTypeEquals(instr.resultType, vecType.elementType)) {
+            errors.push({
+              message: `vec.get result type ${describeKind(instr.resultType)} does not match element type ${describeKind(vecType.elementType)}`,
+              func: func.name,
+              block: blockId,
+            });
+          }
+          if (instr.kind === "vec.set") {
+            const valueType = typeOf.get(instr.newValue);
+            if (valueType && !irTypeEquals(valueType, vecType.elementType)) {
+              errors.push({
+                message: `vec.set value type ${describeKind(valueType)} does not match element type ${describeKind(vecType.elementType)}`,
+                func: func.name,
+                block: blockId,
+              });
+            }
+          }
+        }
         break;
       }
       case "vec.set_length": {
@@ -1671,6 +1711,23 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
             func: func.name,
             block: blockId,
           });
+        }
+        if (instr.resultType?.kind === "vec" && !irTypeEquals(instr.resultType.elementType, instr.elementType)) {
+          errors.push({
+            message: `vec.new_fixed result element type ${describeKind(instr.resultType.elementType)} does not match instruction element type ${describeKind(instr.elementType)}`,
+            func: func.name,
+            block: blockId,
+          });
+        }
+        for (const element of instr.elements) {
+          const elementType = typeOf.get(element);
+          if (elementType && !irTypeEquals(elementType, instr.elementType)) {
+            errors.push({
+              message: `vec.new_fixed element type ${describeKind(elementType)} does not match ${describeKind(instr.elementType)}`,
+              func: func.name,
+              block: blockId,
+            });
+          }
         }
         break;
       }

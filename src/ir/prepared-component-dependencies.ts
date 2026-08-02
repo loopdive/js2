@@ -317,6 +317,9 @@ function collectIrTypeClasses(type: IrType, classes: Map<IrClassId, IrClassShape
     case "object":
       for (const field of type.shape.fields) collectIrTypeClasses(field.type, classes, seen);
       return;
+    case "vec":
+      collectIrTypeClasses(type.elementType, classes, seen);
+      return;
     case "closure":
     case "callable":
       for (const param of type.signature.params) collectIrTypeClasses(param, classes, seen);
@@ -371,6 +374,38 @@ function recordImplicitTypeRequirement(
         ownership,
         "IR string carrier must use a compiler-support Program ABI type ref",
       );
+      return;
+    }
+    case "vec": {
+      if (!type.layout) {
+        block("IR vec type resolves through backend support without a symbolic Program ABI layout");
+        return;
+      }
+      if (
+        !Number.isSafeInteger(type.layout.lengthFieldIndex) ||
+        type.layout.lengthFieldIndex < 0 ||
+        !Number.isSafeInteger(type.layout.dataFieldIndex) ||
+        type.layout.dataFieldIndex < 0 ||
+        type.layout.lengthFieldIndex === type.layout.dataFieldIndex
+      ) {
+        block("IR vec type carries an invalid prepared field layout");
+        return;
+      }
+      recordSupportTypeReference(
+        evidence,
+        type.layout.carrierType,
+        abi,
+        ownership,
+        "IR vec carrier must use a compiler-support Program ABI type ref",
+      );
+      recordSupportTypeReference(
+        evidence,
+        type.layout.dataType,
+        abi,
+        ownership,
+        "IR vec backing array must use a compiler-support Program ABI type ref",
+      );
+      recordImplicitTypeRequirement(evidence, type.elementType, seen, abi, ownership);
       return;
     }
     case "object":
@@ -476,7 +511,7 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "dyn.member_set":
       return `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
     case "string.const":
-      return instr.storage
+      return instr.storage || instr.materializer
         ? null
         : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
     case "string.len":
@@ -489,7 +524,7 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "string.char_code_at":
       return instr.provider ? null : `${instr.kind} resolves a string callable without an explicit symbolic ref`;
     case "forof.string":
-      return `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
+      return instr.provider ? null : `${instr.kind} resolves a string callable without an explicit symbolic ref`;
     case "object.new":
     case "object.get":
     case "object.set":
@@ -508,7 +543,10 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "vec.set_length":
     case "vec.new_fixed":
     case "forof.vec":
-      return `${instr.kind} resolves vec layout/helper support without an explicit symbolic ref`;
+      // Final vec types carry their carrier/backing-array refs. The type walk
+      // above records both dependencies and fails closed for transitional raw
+      // references or a missing layout.
+      return null;
     case "iter.new":
     case "iter.next":
     case "iter.done":
@@ -844,8 +882,12 @@ function collectFunctionEvidence(
           }
         } else if (nested.kind === "global.get" || nested.kind === "global.set") {
           recordGlobalReference(evidence, nested.target, input.abi, ownership, input.terminalUnitIds);
-        } else if (nested.kind === "string.const" && nested.storage) {
-          recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+        } else if (nested.kind === "string.const") {
+          if (nested.storage) {
+            recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+          } else if (nested.materializer) {
+            recordExternalCallable(evidence, nested.materializer, input.abi, ownership);
+          }
         } else if (nested.kind === "string.len" && nested.provider) {
           if (nested.provider.kind === "callable") {
             recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);
@@ -862,7 +904,8 @@ function collectFunctionEvidence(
           (nested.kind === "string.concat" ||
             nested.kind === "string.eq" ||
             nested.kind === "string.char_at" ||
-            nested.kind === "string.char_code_at") &&
+            nested.kind === "string.char_code_at" ||
+            nested.kind === "forof.string") &&
           nested.provider
         ) {
           recordExternalCallable(evidence, nested.provider, input.abi, ownership);

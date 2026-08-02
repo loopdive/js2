@@ -6,7 +6,7 @@ import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
-import { fillHostFnctorMethodDrivers, maxReservedHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
+import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
@@ -34,6 +34,7 @@ import {
   irDynamic,
   isDynamic,
   irVal,
+  irVec,
   type IrClassMethodDescriptor,
   type IrFuncRef,
   type IrType,
@@ -98,6 +99,7 @@ import { asyncEngineWouldActivate } from "./async-activation.js"; // (#1373b C-1
 import { unwrapPromiseTypeNode } from "./async-static.js"; // (#1373b C-1)
 import { createCodegenContext } from "./context/create-context.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
+import { stripHostBridgeExports } from "./host-bridge-exports.js";
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -170,6 +172,8 @@ import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
 import { scanForArrayHoles, ensureHoleType } from "./array-holes.js"; // (#2001 S1)
 import { hoistedVarRetypesToConcreteRef, usageInferredLocalType } from "./statements/variables.js"; // (#2106 S1 PR-2) hoist undefined-init retype predicate; (#684) usage-based any-local f64 override
+import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-carrier.js";
+import { symbolBrand } from "./symbol-field-carrier.js";
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
 import { collectClosureBaseWrapperTypeIdxs, buildClosureRefTestArms } from "./closure-classifier.js"; // (#2175 V2-S1)
 import { ensureRuntimeEvalAotCallableCarrierTypes } from "./runtime-eval-callable.js";
@@ -837,6 +841,11 @@ function isConcreteLattice(t: LatticeType | undefined): t is LatticeType & { kin
   return t !== undefined && (t.kind === "f64" || t.kind === "bool" || t.kind === "string");
 }
 
+function arrayElementRequiresOpaqueStorage(node: ts.TypeNode): boolean {
+  while (ts.isParenthesizedTypeNode(node) || ts.isTypeOperatorNode(node)) node = node.type;
+  return node.kind === ts.SyntaxKind.UnknownKeyword || ts.isUnionTypeNode(node);
+}
+
 /**
  * Resolve the IR type for a function's param or return position, using
  * the AST's explicit TypeNode first (authoritative) and the TypeMap
@@ -888,7 +897,12 @@ function resolvePositionType(
     // string element types are accepted; nested-vec or object-element
     // types throw and fall back to legacy.
     if (ts.isArrayTypeNode(node)) {
-      const elemIr = resolvePositionType(node.elementType, undefined, ctx, classShapes);
+      const elemIr = arrayElementRequiresOpaqueStorage(node.elementType)
+        ? irDynamic()
+        : resolvePositionType(node.elementType, undefined, ctx, classShapes);
+      if (elemIr.kind === "val" && (elemIr.val.kind === "f64" || elemIr.val.kind === "i32")) {
+        return irVec(elemIr, true);
+      }
       // (#2949 slice 3b) `any[]` elements keep their historical externref
       // vec representation — the AnyKeyword POSITION arm above now returns
       // `dynamic`, but element storage is a vec-layout decision (the
@@ -942,9 +956,19 @@ function resolvePositionType(
       ) {
         const typeArgs = node.typeArguments;
         if (typeArgs && typeArgs.length === 1) {
-          const elemIr = resolvePositionType(typeArgs[0]!, undefined, ctx, classShapes);
+          const elementType = typeArgs[0]!;
+          const elemIr = arrayElementRequiresOpaqueStorage(elementType)
+            ? irDynamic()
+            : resolvePositionType(elementType, undefined, ctx, classShapes);
+          if (elemIr.kind === "val" && (elemIr.val.kind === "f64" || elemIr.val.kind === "i32")) {
+            return irVec(elemIr, true);
+          }
           const elemVal =
-            elemIr.kind === "val" ? elemIr.val : elemIr.kind === "string" ? ({ kind: "externref" } as ValType) : null;
+            elemIr.kind === "val"
+              ? elemIr.val
+              : elemIr.kind === "string" || elemIr.kind === "dynamic"
+                ? ({ kind: "externref" } as ValType)
+                : null;
           if (!elemVal) {
             throw new Error(
               `Array<T> element TypeNode ${ts.SyntaxKind[typeArgs[0]!.kind]} could not be lowered to a primitive ValType`,
@@ -1894,6 +1918,9 @@ function makeIrImplicitParamTypeResolver(
     }
     if (inferred?.kind === "ref" || inferred?.kind === "ref_null") {
       const structName = ctx.typeIdxToStructName.get(inferred.typeIdx);
+      if (structName === "__vec_f64") {
+        return { kind: "object", type: irVec(irVal({ kind: "f64" }), true) };
+      }
       if (structName?.startsWith("__vec_") || structName?.startsWith("__arr_")) {
         return { kind: "object", type: irVal(inferred) };
       }
@@ -2029,6 +2056,7 @@ function planIrOverlay(
   const implicitParamUsesNumericVecAbi = (parameter: ts.ParameterDeclaration): boolean => {
     const projection = resolveImplicitParamType(parameter);
     if (projection?.kind !== "object") return false;
+    if (projection.type.kind === "vec") return asVal(projection.type.elementType)?.kind === "f64";
     const valueType = asVal(projection.type);
     if (valueType?.kind !== "ref" && valueType?.kind !== "ref_null") return false;
     return ctx.typeIdxToStructName.get(valueType.typeIdx) === "__vec_f64";
@@ -4150,7 +4178,7 @@ export function generateModule(
       for (const info of ctx.closureInfoByTypeIdx.values()) {
         if (info.paramTypes.length > maxClosureArity) maxClosureArity = info.paramTypes.length;
       }
-      maxClosureArity = Math.max(maxClosureArity, maxReservedHostFnctorMethodArity(ctx));
+      maxClosureArity = maxHostFnctorMethodArity(ctx, maxClosureArity);
       // (#3981) A standalone `new <function value>(a, b, …)` driver calls
       // `__call_fn_method_<argc>`; without this the dispatcher for an
       // above-5-arity construct would never be emitted and the driver would
@@ -4457,6 +4485,11 @@ export function generateModule(
     finalizeLeafStructTypes(ctx);
 
     emitDataStructHostBridgeManifest(ctx);
+
+    // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
+    // the functions/types those exports pin are actually reclaimed. No-op when
+    // the bridge is published (js-host default).
+    stripHostBridgeExports(ctx);
 
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
@@ -6485,6 +6518,11 @@ export function generateMultiModule(
 
     emitDataStructHostBridgeManifest(ctx);
 
+    // (#4035) Apply the host-bridge export policy BEFORE dead elimination, so
+    // the functions/types those exports pin are actually reclaimed. No-op when
+    // the bridge is published (js-host default).
+    stripHostBridgeExports(ctx);
+
     // Dead import and type elimination pass
     eliminateDeadLayoutAndPlanProgramAbi(ctx); // #1899 authoritative remap, then #3520 retained ABI
 
@@ -7411,7 +7449,6 @@ export function resolveWasmTypeForClosureReturn(ctx: CodegenContext, retType: ts
 
 /**
  * Compute a hash key for a list of struct fields (for O(1) structural dedup).
- * The key encodes field names, type kinds, and typeIdx for ref/ref_null types.
  */
 function fieldsHashKey(fields: FieldDef[]): string {
   const parts: string[] = [];
@@ -7419,12 +7456,12 @@ function fieldsHashKey(fields: FieldDef[]): string {
     const t = f.type;
     if (t.kind === "ref" || t.kind === "ref_null") {
       parts.push(`${f.name}:${t.kind}:${(t as { typeIdx: number }).typeIdx}`);
-    } else if (t.kind === "i32" && (t as { boolean?: true }).boolean) {
+    } else if (t.kind === "i32" && ((t as { boolean?: true }).boolean || t.symbol === true)) {
       // (#1788) Keep boolean-branded i32 fields distinct from numeric i32 in the
       // structural dedup key — they box differently (`__box_boolean` vs
       // `__box_number`), so two shapes that differ only in boolean-vs-number must
       // not collapse to one struct (which would inherit the wrong getter boxing).
-      parts.push(`${f.name}:i32:bool`);
+      parts.push(`${f.name}:i32:${t.symbol === true ? "sym" : "bool"}`);
     } else {
       parts.push(`${f.name}:${t.kind}`);
     }
@@ -7609,10 +7646,8 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
   const methodSigParts: string[] = [];
   for (const prop of props) {
     const propType = ctx.checker.getTypeOfSymbol(prop);
-    // Recursively register nested object types as structs before resolving
     ensureStructForType(ctx, propType);
-    // Use resolveWasmType so nested structs get ref types, not externref
-    let wasmType = resolveWasmType(ctx, propType);
+    let wasmType = symbolBrand(propType, resolveWasmType(ctx, propType));
     // (#1468) `{ k: undefined }` makes TS infer the property's type as the
     // literal `undefined`. `mapTsTypeToWasm` maps that to i32 because for
     // function return types `undefined`/`void` indicate "no result". For a
@@ -8117,12 +8152,11 @@ function hoistVarDecl(ctx: CodegenContext, fctx: FunctionContext, decl: ts.Varia
     if (forInTargetForcesExternref) {
       (fctx.forInIdentifierVars ??= new Set()).add(name);
     }
-    const usageF64 = initForcesExternref || forInTargetForcesExternref ? null : usageInferredLocalType(ctx, decl);
+    const carrierForcesExternref =
+      initForcesExternref || forInTargetForcesExternref || bindingHasMixedAssignmentCarrier(ctx, decl);
+    const usageF64 = carrierForcesExternref ? null : usageInferredLocalType(ctx, decl);
     const wasmType: ValType =
-      initForcesExternref ||
-      forInTargetForcesExternref ||
-      isNullablePrimitiveType(varType) ||
-      varBindingNeedsExternrefForUndefined(decl, ctx)
+      carrierForcesExternref || isNullablePrimitiveType(varType) || varBindingNeedsExternrefForUndefined(decl, ctx)
         ? { kind: "externref" as const }
         : (usageF64 ?? resolveWasmType(ctx, varType));
     if (initForcesExternref) ctx.externrefAccessorVars.add(name);
@@ -8743,19 +8777,20 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           decl.initializer !== undefined &&
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.dynamicProtoLiteralNodes.has(decl.initializer);
-        if (initIsAccessorLiteral || initIsHostSpreadLiteral || initIsProtoReceiverLiteral) {
+        const initForcesExternref = initIsAccessorLiteral || initIsHostSpreadLiteral || initIsProtoReceiverLiteral;
+        if (initForcesExternref) {
           ctx.externrefAccessorVars.add(name);
         }
-        let wasmType: ValType =
-          initIsAccessorLiteral || initIsHostSpreadLiteral || initIsProtoReceiverLiteral
-            ? { kind: "externref" }
-            : isI32Coerced
-              ? { kind: "i32" }
-              : isNullablePrimitiveType(varType)
-                ? { kind: "externref" }
-                : (inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
-                  usageInferredLocalType(ctx, decl) ??
-                  resolveWasmType(ctx, varType));
+        const carrierForcesExternref = initForcesExternref || bindingHasMixedAssignmentCarrier(ctx, decl);
+        let wasmType: ValType = carrierForcesExternref
+          ? { kind: "externref" }
+          : isI32Coerced
+            ? { kind: "i32" }
+            : isNullablePrimitiveType(varType)
+              ? { kind: "externref" }
+              : (inferLetConstInitializerWasmType(ctx, fctx, decl.initializer) ??
+                usageInferredLocalType(ctx, decl) ??
+                resolveWasmType(ctx, varType));
         // (#3123) A let-binding declared as a FNCTOR-SUBCLASS class instance
         // (`class C extends F`, F a top-level plain function) that is
         // REASSIGNED with another static type can hold a HOST object at

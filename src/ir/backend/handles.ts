@@ -169,6 +169,8 @@ export interface LinearRefCellLowering extends IrRefCellLowering {
  *                           declared type when needed.
  */
 export interface IrVecLowering {
+  /** Backend value carrier (`ref $vec` on WasmGC, `i32` arena pointer on linear). */
+  readonly valueType?: ValType;
   readonly vecStructTypeIdx: number;
   readonly lengthFieldIdx: number;
   readonly dataFieldIdx: number;

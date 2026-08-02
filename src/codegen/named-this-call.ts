@@ -254,3 +254,55 @@ export function resolveNamedThisCallTarget(
   );
   return { trampolineFuncIdx };
 }
+
+/**
+ * (#3983) `.apply(thisArg[, argsArray])` counterpart to the `.call` path above.
+ *
+ * `.apply` used to fall through to a lowering that evaluated `thisArg` and
+ * DROPPED it, so the callee's `this` was the ambient receiver rather than the
+ * requested one — a silent wrong answer, not a refusal.
+ *
+ * `.apply(t, [a, b])` is exactly `.call(t, a, b)` whenever the argv array is
+ * statically known, so rather than duplicating the receiver-install lowering
+ * this returns the equivalent `.call` CallExpression for the caller to compile.
+ * Returns undefined — leaving every existing lowering authoritative — unless
+ * the trampoline actually resolves, so only shapes that are wrong today change.
+ *
+ * The argv check here is deliberately narrower than the caller's general
+ * `flattenStaticArrayElements`: only a spread-free, hole-free array literal
+ * qualifies. Anything else (dynamic argv, spreads, elisions) keeps its existing
+ * behaviour.
+ */
+export function tryReshapeApplyToNamedThisCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  callee: ts.Identifier,
+  targetFuncIdx: FuncHandle,
+): ts.CallExpression | undefined {
+  if (expr.arguments.length === 0) return undefined;
+  let argv: readonly ts.Expression[] | undefined;
+  if (expr.arguments.length === 1) {
+    argv = [];
+  } else if (expr.arguments.length === 2) {
+    const spread = expr.arguments[1]!;
+    if (
+      ts.isArrayLiteralExpression(spread) &&
+      !spread.elements.some((el) => ts.isSpreadElement(el) || ts.isOmittedExpression(el))
+    ) {
+      argv = spread.elements;
+    }
+  }
+  if (argv === undefined) return undefined;
+  if (resolveNamedThisCallTarget(ctx, fctx, callee, targetFuncIdx, expr.arguments[0]!, argv) === undefined) {
+    return undefined;
+  }
+  const reshaped = ts.factory.createCallExpression(
+    ts.factory.createPropertyAccessExpression(callee, "call"),
+    undefined,
+    [expr.arguments[0]!, ...argv],
+  );
+  ts.setTextRange(reshaped, expr);
+  (reshaped as { parent?: ts.Node }).parent = expr.parent;
+  return reshaped;
+}

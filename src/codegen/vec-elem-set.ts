@@ -24,12 +24,33 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import type { CodegenContext } from "./context/types.js";
-import { addFuncType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { ensureExnTag } from "./registry/imports.js";
 
 /** Reserved name prefix; the suffix is the vec STRUCT typeIdx. */
 export const VEC_ELEM_SET_PREFIX = "__vec_elem_set_";
 export const VEC_NEW_SIZED_PREFIX = "__vec_new_sized_";
+
+function vecTypeIndexForElement(ctx: CodegenContext, elementValType: ValType): number | null {
+  const elemKind =
+    elementValType.kind === "ref" || elementValType.kind === "ref_null"
+      ? `ref_${elementValType.typeIdx}`
+      : elementValType.kind;
+  const vecTypeIdx = getOrRegisterVecType(ctx, elemKind, elementValType);
+  return vecTypeIdx >= 0 ? vecTypeIdx : null;
+}
+
+/** Resolve a logical element type at the final WasmGC helper boundary. */
+export function ensureVecNewSizedForElement(ctx: CodegenContext, elementValType: ValType): number | null {
+  const vecTypeIdx = vecTypeIndexForElement(ctx, elementValType);
+  return vecTypeIdx === null ? null : ensureVecNewSized(ctx, vecTypeIdx);
+}
+
+/** Resolve a logical element type at the final WasmGC helper boundary. */
+export function ensureVecElemSetForElement(ctx: CodegenContext, elementValType: ValType): number | null {
+  const vecTypeIdx = vecTypeIndexForElement(ctx, elementValType);
+  return vecTypeIdx === null ? null : ensureVecElemSet(ctx, vecTypeIdx);
+}
 
 /**
  * Ensure a one-shot sized-vector allocator for a canonical dense-fill loop.

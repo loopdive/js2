@@ -41,6 +41,8 @@ import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
+import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
+import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
 import {
   emitArrayBufferResize,
   emitArrayBufferSlice,
@@ -2852,14 +2854,10 @@ export function compileReceiverMethodCall(
   const lateFnctorCall = tryCompileLateFnctorPrototypeMethodCall(ctx, fctx, expr, propAccess);
   if (lateFnctorCall !== undefined) return lateFnctorCall;
 
-  // Fallback for method calls on any-typed / externref / unresolvable receivers.
-  // This handles patterns like: ref(args).next(), anyObj.someMethod(), etc.
-  // Common in test262 where variables are typed as `any` or inferred as `any`.
-  // (#3201) recvTsType/recvWasm are hoisted out of the arm's block so the
-  // end-of-ladder native-receiver arm below reuses the SAME checker resolution
-  // (oracle ratchet #1930/#3273: no net-new direct checker usage).
+  // Generic dynamic fallback; the native tail reuses this receiver resolution.
   const recvTsType = ctx.checker.getTypeAtLocation(propAccess.expression);
-  const recvWasm = resolveWasmType(ctx, recvTsType);
+  // A mixed mutable local's physical carrier outranks its stale checker type.
+  const recvWasm = effectiveLocalCarrier(fctx, propAccess.expression, resolveWasmType(ctx, recvTsType));
   {
     const isAnyOrExternref = (recvTsType.flags & ts.TypeFlags.Any) !== 0 || recvWasm.kind === "externref";
 
@@ -3428,6 +3426,7 @@ export function compileReceiverMethodCall(
       // (#965) For known built-in class identifiers (Object, Array, Proxy, etc.) that would
       // otherwise compile to ref.null.extern, use __get_builtin to get the real JS object.
       {
+        observeHostDynamicMethodCallArity(ctx, expr.arguments);
         // (#1888 Slice 2) Under --target standalone the native
         // __extern_method_call reads its args via __extern_length /
         // __extern_get_idx over a $ObjVec (no JS array exists). Build the args

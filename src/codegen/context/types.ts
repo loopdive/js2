@@ -114,6 +114,12 @@ export interface CodegenOptions {
    *  runnable under pure-Wasm engines (wasmtime, wasmer) without a JS host. */
   standalone?: boolean;
   /**
+   * (#4035) Host-bridge export policy — see `CompileOptions.hostBridge`.
+   * `"auto"` (default) resolves to `"always"` for js-host and `"off"` for
+   * standalone/WASI; the resolved boolean lands on `ctx.emitHostBridge`.
+   */
+  hostBridge?: "auto" | "always" | "off";
+  /**
    * (#2141 S1) Honest generic `any` boxing — the Stage-B regime flag. When ON,
    * `boxToAny`'s externref arm routes through `__any_box_extern` (runtime
    * classification → true `JsTag`) instead of the historical tag-5
@@ -1367,6 +1373,16 @@ export interface CodegenContext {
    */
   usesVecValue: boolean;
   /**
+   * (#4035) Resolved host-bridge policy: true = publish the JS-host
+   * inspection/interop export surface, false = strip it at finalize so DCE
+   * can reclaim everything it was pinning. Derived once in
+   * `createCodegenContext` from `options.hostBridge` ("auto" ⇒ on for
+   * js-host, off for standalone/WASI). Read only by
+   * `stripHostBridgeExports`; individual emitters stay unconditional so the
+   * decision lives in exactly one place.
+   */
+  emitHostBridge: boolean;
+  /**
    * (#2083) When true, `getOrRegisterVecType` does NOT flip `usesVecValue`.
    * Set only for the duration of the two pre-registration calls in
    * `createCodegenContext` (the `externref`/`f64` type-index-stability stubs),
@@ -1886,8 +1902,8 @@ export interface CodegenContext {
   skippedClosureRecastDecls?: Set<ts.Node>;
   /** Map from local variable name → closure metadata (for call_ref dispatch) */
   closureMap: Map<string, ClosureInfo>;
-  /** Map from closure struct type index → closure metadata (for anonymous closures) */
   closureInfoByTypeIdx: Map<number, ClosureInfo>;
+  maxHostDynamicMethodCallArity?: number;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */

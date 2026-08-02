@@ -21,7 +21,7 @@ import { compile } from "../src/index.js";
  */
 
 async function compileStandalone(src: string, target: "standalone" | "wasi" = "standalone") {
-  const r = await compile(src, { fileName: "test.ts", target });
+  const r = await compile(src, { fileName: "test.ts", target, hostBridge: "always" });
   expect(r.success, r.success ? undefined : r.errors?.[0]?.message).toBe(true);
   const mod = await WebAssembly.compile(r.binary);
   const imports = WebAssembly.Module.imports(mod);

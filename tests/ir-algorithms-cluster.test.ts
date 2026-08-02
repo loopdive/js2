@@ -22,7 +22,7 @@
 // `experimentalIR: false` compile, so a silent legacy demote fails the test
 // (the vacuous-pass hazard).
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { compile, type IrObservedOutcome } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 const ENV_STUB = {
@@ -47,11 +47,12 @@ interface RunResult {
   binary: Uint8Array;
   postClaim: unknown[];
   logs: string[];
+  irOutcomes: readonly IrObservedOutcome[];
 }
 
 async function compileRun(source: string, fn: string, args: unknown[], experimentalIR: boolean): Promise<RunResult> {
   const logs: string[] = [];
-  const r = await compile(source, { experimentalIR, trackFallbacks: true });
+  const r = await compile(source, { experimentalIR, trackFallbacks: true, trackIrOutcomes: true });
   if (!r.success) {
     throw new Error(`compile failed (${experimentalIR ? "IR" : "legacy"}): ${r.errors[0]?.message ?? "unknown"}`);
   }
@@ -70,6 +71,7 @@ async function compileRun(source: string, fn: string, args: unknown[], experimen
     binary: r.binary,
     postClaim: r.irPostClaimErrors ?? [],
     logs,
+    irOutcomes: r.irOutcomes ?? [],
   };
 }
 
@@ -84,7 +86,7 @@ async function expectParity(
   args: unknown[],
   expected: unknown,
   opts: { expectClaimed?: boolean } = {},
-): Promise<void> {
+): Promise<RunResult> {
   const legacy = await compileRun(source, fn, args, false);
   const ir = await compileRun(source, fn, args, true);
   expect(legacy.value, "legacy value").toStrictEqual(expected);
@@ -96,6 +98,7 @@ async function expectParity(
       "IR path exercised (bytes differ from legacy)",
     ).toBe(true);
   }
+  return ir;
 }
 
 describe("#2856 C1 — if / early-return inside body buffers", () => {
@@ -203,7 +206,7 @@ describe("#2856 C1 — if / early-return inside body buffers", () => {
 
 describe("#2856 C2 — element store arr[i] = v", () => {
   it("in-place swap writes (quicksort) — whole component claims", async () => {
-    await expectParity(
+    const ir = await expectParity(
       `function quicksort(arr: number[], lo: number, hi: number): void {
          if (lo >= hi) return;
          const pivot = arr[hi];
@@ -234,6 +237,17 @@ describe("#2856 C2 — element store arr[i] = v", () => {
       [],
       123456789,
     );
+    const componentNames = ["quicksort", "main"];
+    const outcomes = new Map(ir.irOutcomes.map((outcome) => [outcome.displayName, outcome]));
+    for (const name of componentNames) {
+      expect(outcomes.get(name), `${name} is emitted once through prepared IR`).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+    }
+    expect(new Set(componentNames.map((name) => outcomes.get(name)?.preparedComponentId)).size).toBe(1);
   });
 
   it("growing store — write past the end grows capacity and length", async () => {
@@ -257,6 +271,37 @@ describe("#2856 C2 — element store arr[i] = v", () => {
       [],
       42,
     );
+  });
+
+  it("reassigned vector locals and parameters remain prepared slot values", async () => {
+    const ir = await expectParity(
+      `function sum(arr: number[]): number {
+         let total = 0;
+         for (let i = 0; i < arr.length; i++) {
+           total += arr[i];
+           if (i === 1) arr = [9, 9];
+         }
+         return total;
+       }
+       export function main(): number {
+         let xs: number[] = [1, 2, 3, 4];
+         const result = sum(xs);
+         xs = [7, 8];
+         return result * 100 + xs[1];
+       }`,
+      "main",
+      [],
+      308,
+    );
+    const outcomes = new Map(ir.irOutcomes.map((outcome) => [outcome.displayName, outcome]));
+    for (const name of ["sum", "main"]) {
+      expect(outcomes.get(name), `${name} is emitted once through prepared IR`).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+    }
   });
 });
 
@@ -502,6 +547,7 @@ describe("#2856 — whole algorithms.ts component end-to-end", () => {
     expect(ir.logs.length).toBeGreaterThan(0);
     expect(ir.logs[ir.logs.length - 1]).toBe("after = [0,1,2,3,4,5,6,7,8,9]");
     expect(Buffer.compare(Buffer.from(legacy.binary), Buffer.from(ir.binary)) !== 0, "IR path exercised").toBe(true);
+    expect(WebAssembly.validate(ir.binary)).toBe(true);
   });
 
   it("standalone / wasi compiles stay clean (host-gated Map arm defers)", async () => {

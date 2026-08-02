@@ -16,7 +16,7 @@ import { compile } from "../src/index.js";
 import { extractWasmExceptionMessage } from "./test262-runner.js";
 
 async function throwAndExtract(src: string): Promise<string> {
-  const r = await compile(src, { fileName: "t.ts", target: "standalone" as never });
+  const r = await compile(src, { fileName: "t.ts", target: "standalone" as never, hostBridge: "always" });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   const { instance } = await WebAssembly.instantiate(r.binary, {});
   try {

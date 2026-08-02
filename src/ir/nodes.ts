@@ -82,6 +82,23 @@ export interface IrTypeRef {
   readonly binding: IrTypeBinding;
 }
 
+/**
+ * Final, backend-selected storage identities for one logical dense vector.
+ *
+ * The middle end reasons about {@link IrType}'s `vec` arm and its element
+ * type. Program preparation later attaches these symbolic Program-ABI refs;
+ * neither inference nor optimization observes module-relative type indices.
+ * Field indices are part of the compiler/runtime vector ABI rather than a
+ * backend registry lookup, so lowering can consume the prepared layout
+ * without rediscovering a struct shape from ambient module state.
+ */
+export interface IrVecLayoutRef {
+  readonly carrierType: IrTypeRef;
+  readonly dataType: IrTypeRef;
+  readonly lengthFieldIndex: number;
+  readonly dataFieldIndex: number;
+}
+
 // ---------------------------------------------------------------------------
 // IR types
 // ---------------------------------------------------------------------------
@@ -284,6 +301,17 @@ export type IrType =
   // may omit the ref; prepared-component discovery then fails closed instead
   // of consulting ambient backend state.
   | { readonly kind: "string"; readonly carrierRef?: IrTypeRef }
+  // Backend-neutral dense JS-array/vector marker. The element type and
+  // nullability are JS/middle-end facts; the physical WasmGC struct/array
+  // identities are attached only at the final preparation boundary. Linear
+  // lowering consumes the same logical type and deliberately ignores the
+  // WasmGC-specific symbolic layout attachment.
+  | {
+      readonly kind: "vec";
+      readonly elementType: IrType;
+      readonly nullable: boolean;
+      readonly layout?: IrVecLayoutRef;
+    }
   // Backend-agnostic object-shape marker (#1169b). The actual WasmGC struct
   // is registered lazily by `IrLowerResolver.resolveObject`. Like `union`
   // and `boxed`, the IR carries enough information to drive the resolver
@@ -368,6 +396,11 @@ export function irVal(v: ValType): IrType {
   return { kind: "val", val: v };
 }
 
+/** Construct a backend-neutral dense-vector type. */
+export function irVec(elementType: IrType, nullable = true): IrType {
+  return { kind: "vec", elementType, nullable };
+}
+
 /**
  * Wrap a ValType as an IrType with an explicit signedness fact (#1126 Stage 1).
  * Use this only for `i32` ValTypes where the value-domain (signed `int32` vs
@@ -428,6 +461,9 @@ export function irTypeEquals(a: IrType, b: IrType): boolean {
     return aSigned === bSigned;
   }
   if (a.kind === "string" && b.kind === "string") return true;
+  if (a.kind === "vec" && b.kind === "vec") {
+    return a.nullable === b.nullable && irTypeEquals(a.elementType, b.elementType);
+  }
   // #1926 — `inner`/`members` are IrTypes now, so recurse via irTypeEquals
   // (a boxed-of-string or union-of-symbolic-kind compares structurally).
   if (a.kind === "boxed" && b.kind === "boxed") return irTypeEquals(a.inner, b.inner);
@@ -1132,8 +1168,8 @@ export interface IrInstrDynMemberSet extends IrInstrBase {
  * backend representation is determined by `IrLowerResolver.emitStringConst`:
  *   - host strings → register a `string_constants.<value>` global import,
  *                    emit `global.get`.
- *   - native       → emit inline `array.new_fixed` of the WTF-16 code units,
- *                    then `struct.new $NativeString`.
+ *   - native       → read an interned immutable literal global, or call the
+ *                    prepared materializer for an oversized literal.
  */
 export interface IrInstrStringConst extends IrInstrBase {
   readonly kind: "string.const";
@@ -1148,6 +1184,12 @@ export interface IrInstrStringConst extends IrInstrBase {
    * discover or allocate literal storage mid-emission.
    */
   readonly storage?: IrGlobalRef;
+  /**
+   * Exact backend callable selected when the literal cannot use immutable
+   * storage. Mutually exclusive with `storage`; production preparation uses
+   * this only for native literals beyond the backend's fixed-array limit.
+   */
+  readonly materializer?: IrFuncRef;
 }
 
 /**
@@ -2204,6 +2246,8 @@ export interface IrInstrForOfString extends IrInstrBase {
   readonly elementSlot: number;
   /** Body instrs emitted inside the loop. */
   readonly body: readonly IrInstr[];
+  /** Code-point extraction intent bound to the exact native provider during preparation. */
+  readonly provider?: IrFuncRef;
   /** #2952 slice 2 — loop identity for `br.label` (see IrInstrWhileLoop). */
   readonly loopLabel?: IrLabelId;
 }

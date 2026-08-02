@@ -67,13 +67,20 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/program-abi-session.ts
   - src/codegen/index.ts
+  - src/ir/backend/porffor/assembler.ts
+  - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower.ts
   - src/ir/nodes.ts
   - src/ir/verify.ts
 func-budget-allow:
+  - src/codegen/index.ts::planIrOverlay
   - src/codegen/index.ts::generateModule
+  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
   - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::makeResolver
+  - src/ir/lower.ts::lowerIrFunctionBody
 ---
 
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
@@ -734,8 +741,8 @@ functions, one call-graph closure, one async-body shape, and two static class
 members. This callable slice changes preparation coverage, not that bounded
 headline.
 
-The remaining string preparation blockers are `forof.string` and oversized
-native literals that cannot use an interned global. Two string-builder
+At that point, the remaining string preparation blocker was oversized native
+literals that cannot use an interned global. Two string-builder
 optimizations also remain: the generic owned-append loop is IR-owned, but IR
 does not yet preallocate a backing array from the direct path's exact static
 trip-count proof, and constant-count literal append loops remain intentionally
@@ -791,6 +798,90 @@ pass-derived dependencies sealable, then replace the transitional probe/direct/
 late-overlay sequence with one isolated prepare/emit transaction and exact
 emission counters. The compatibility placeholder branch cannot be deleted
 until the remaining R3/R4 owners consume that transaction.
+
+## Native string-iteration provider continuation (2026-08-02)
+
+Native `forof.string` no longer discovers `__str_charAt_cp` by compatibility
+name during lowering. Final string preparation attaches the backend-neutral
+`__ir_string_iterator_char_at` callable intent; provider pre-registration
+binds that intent to the exact allocator object, and prepared-component
+discovery records the resulting Program ABI dependency before sealing.
+
+The semantic distinction from `string.char_at` remains explicit: ordinary
+`charAt` returns one UTF-16 code unit, while string iteration returns one full
+code point and advances by that element's one- or two-code-unit length. The
+lowerer retains its transitional semantic-provider default for standalone IR
+fixtures, but production preparation always supplies the exact symbolic ref;
+an absent provider still blocks component sealing.
+
+The new anti-vacuity route failed before the change with
+`legacyBodyEmitted: true`. It now compiles the supplementary-character fixture
+once through IR, reports a prepared component, emits no legacy body, validates
+as Wasm, and returns three code points for `"A💩B"`. Exact dependency coverage
+also proves both the string-carrier type and iterator callable are present in
+the sealed ABI component. The focused R2/string-for-of/contract matrix is
+**96/96 passing**; typecheck, lint, formatting, fallback, and the optimization
+retirement ledger pass. The ledger now records **15** decisions, **4** with
+complete IR ownership, and **0** retirement-ready.
+
+The bounded readiness corpus does not contain this source shape, so its
+headline is intentionally unchanged: hybrid is READY at **33/37 IR bodies**,
+**4 typed Unsupported**, **0 invariants**, and **35 legacy bodies**. Strict
+IR-only remains NOT READY on those exact four unsupported units and 35 legacy
+bodies; the production anti-vacuity fixture, rather than an unrelated corpus
+delta, proves this slice's compile-once effect.
+
+After this continuation, string preparation had one known residual: oversized
+native literals that could not use an interned global. Dynamic/object/layout,
+closure/ref-cell/vector, iterator/generator/exception/async, and pass-derived
+dependencies remained the larger R2/R6 continuation.
+
+## Oversized native-literal materializer continuation (2026-08-02)
+
+Oversized native literals now have a symbolic, dependency-closed route instead
+of falling back to direct body emission. Final preparation attaches one
+per-literal `__ir_string_literal_materialize:*` callable intent after inference
+and middle-end transforms. The callable-provider registry binds it to the exact
+allocator-owned helper, prepared-component discovery records that dependency,
+and lowering consumes the ref without consulting a compatibility name or
+backend index.
+
+The anti-vacuity test also exposed a pre-existing direct-backend defect: V8
+rejects `array.new_fixed` lengths above 10,000, so the former inline fallback
+produced a nominally successful but invalid Wasm module. The shared native
+literal materializer now keeps every common literal on the existing immutable
+interned-global path. An oversized literal is split into fixed-array-safe,
+interned chunks, and one cached zero-argument helper assembles those chunks as
+a native `ConsString` rope. Both direct and prepared IR bodies call the same
+helper; no oversized `array.new_fixed` remains.
+
+Production coverage exercises 10,001 code units in both ordinary and UTF-8
+storage lanes, with a surrogate pair deliberately straddling the 10,000-unit
+chunk boundary. Both direct and IR modules validate, return the exact JS
+code-unit length, and iterate the boundary pair as one code point. A separate
+10,004-byte/5,002-code-unit UTF-8 fixture proves byte-only overflow falls back
+to one interned i16 global rather than building a rope with unsupported UTF-8
+leaves. The prepared functions report `legacyBodyEmitted: false`,
+`irBodyEmitted: true`, and a non-empty component ID. WAT assertions require the
+cached materializer and 10,000-element chunks while rejecting every
+10,001–10,009 fixed allocation. Exact dependency coverage proves the string
+carrier and materializer callable are both present in the sealed component.
+
+The focused R2/string/contract matrix is **108/108 passing** across nine test
+files. Typecheck, lint, formatting, fallback, issue/adoption, LOC, and function
+budget gates pass. The optimization ledger now records **16** decisions,
+**5** with complete IR ownership, and **0** retirement-ready; the literal row
+deliberately retains its performance follow-up before direct-path deletion.
+Hybrid readiness remains READY at **33/37 IR bodies**, **4 typed Unsupported**,
+**0 invariants**, and **35 legacy bodies**. Strict IR-only remains NOT READY on
+those four units and the retained legacy-body population; this bounded corpus
+does not contain the oversized source shape.
+
+This closes the known instruction-level string preparation residual. String
+builder presizing and counted-literal append remain separate optimization
+migrations rather than component-sealing blockers. Dynamic/object/layout,
+closure/ref-cell/vector, iterator/generator/exception/async, and pass-derived
+dependencies remain the larger R2/R6 work.
 
 ## File ownership and locks
 
@@ -930,3 +1021,40 @@ publication.
 This is a prerequisite seam only. Prepared free-function ownership, terminal
 component outcomes, support-intent collection, and direct/IR emission
 accounting remain for the main R2 implementation.
+
+## 2026-08-02 symbolic vector-layout continuation
+
+Vector types in typed IR now carry only their logical element type and
+nullability. The WasmGC carrier struct and backing-array references are
+attached during final Program ABI preparation, after the backend and numeric
+element representation are known. Prepared-component dependency collection
+records both exact support-type roots and fails closed for a missing, invalid,
+or drifting layout. Vector helper identities are likewise logical; WasmGC,
+linear, and Porffor resolve them at their final lowering boundaries without
+embedding physical type indexes in IR provider names.
+
+The post-rebase equivalence shard also proved that logical vectors must use the
+same representation boundary for mutable locals and parameters. Slot planning
+now resolves string, dynamic, and vector storage through one helper, while
+identifier reads and assignments retain their logical IR types. #1196 covers
+both a reassigned local vector and a reassigned vector parameter, with the
+counted-loop bounds proof correctly withdrawn after reassignment.
+
+Anti-vacuity coverage now proves that the quicksort-plus-main vector component
+is prepared and emits with `direct=0, IR=1`. The original #1198 complex fixture
+is retained and still exposes its separate bitwise/runtime-support dependency;
+a smaller dense-fill fixture proves the vector preparation path independently.
+#1001 counted push, #2780 fixed literals, #2766 bounds-sensitive reads, and
+#3734 i32 elements cover the migrated vector optimizations. The focused core
+matrix passes 58/58, the optimization matrix passes 69/69, and #3501 passes
+9 tests with 2 optional native tests skipped. Typecheck, formatting, staged
+lint, the changed-root hook, and the optimization-ledger checker pass. The
+ledger contains 21 decisions: 10 are IR-owned and the i32-element row is the
+first retirement-ready vector decision; four performance-attribution rows
+remain open.
+
+This slice does not claim the whole six-function Algorithms fixture. Its
+remaining component blockers are source-global storage, TDZ, and module-init
+ownership in #3523, plus throw/exception, `extern.call`, box/unbox, undefined,
+numeric, string, and console support providers in #3526. Those are independent
+of vector layout and remain the next prepared-ownership work.

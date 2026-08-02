@@ -26,7 +26,15 @@ import {
   type IrTerminalUnitRecord,
   type IrUnitId,
 } from "../src/ir/identity.js";
-import { asBlockId, asValueId, irVal, type IrClassShape, type IrFunction, type IrInstr } from "../src/ir/nodes.js";
+import {
+  asBlockId,
+  asValueId,
+  irVal,
+  irVec,
+  type IrClassShape,
+  type IrFunction,
+  type IrInstr,
+} from "../src/ir/nodes.js";
 import {
   derivePreparedComponentDependencies,
   type PreparedComponentAbiEntry,
@@ -40,7 +48,17 @@ import {
   IR_STRING_CONCAT_FN,
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
+  IR_STRING_ITERATOR_CHAR_AT_FN,
+  IR_STRING_LITERAL_MATERIALIZE_FN,
 } from "../src/ir/string-runtime.js";
+import { attachIrVecLayouts } from "../src/ir/vec-layout.js";
+import {
+  IR_VEC_ELEM_SET_PREFIX,
+  IR_VEC_NEW_SIZED_PREFIX,
+  irVecElemSetSymbol,
+  irVecNewSizedSymbol,
+  parseIrVectorRuntimeElement,
+} from "../src/ir/vector-runtime.js";
 import { ts } from "../src/ts-api.js";
 
 const VOID_SIGNATURE = Object.freeze({ params: Object.freeze([]), results: Object.freeze([]) });
@@ -453,6 +471,173 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     expect(mixed.resultTypes[0]).toMatchObject({ kind: "class", shape: classShape });
   });
 
+  it("fails closed for logical vectors without a layout and transitional raw reference types", () => {
+    const f = fixture();
+    const logical: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "values", type: irVec(irVal({ kind: "f64" })) }],
+      valueCount: 1,
+    };
+    const logicalReport = derivePreparedComponentDependencies({
+      module: { functions: [logical] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+    expect(logicalReport.components[0]!.status).toBe("blocked");
+    expect(logicalReport.components[0]!.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("symbolic Program ABI layout"),
+      }),
+    ]);
+
+    const raw: IrFunction = {
+      ...logical,
+      params: [{ value: asValueId(0), name: "values", type: irVal({ kind: "ref", typeIdx: 17 }) }],
+    };
+    const rawReport = derivePreparedComponentDependencies({
+      module: { functions: [raw] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+    expect(rawReport.components[0]!.status).toBe("blocked");
+    expect(rawReport.components[0]!.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("raw IR reference type ref:17"),
+      }),
+    ]);
+  });
+
+  it("records the exact carrier and backing-array dependencies for a prepared logical vector", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "vector-carrier:vec<f64>", "__ir_vec_carrier_f64");
+    const dataRef = irSupportTypeRef(f.sourceId, "vector-data:vec<f64>", "__ir_vec_data_f64");
+    const layout = Object.freeze({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 1,
+    });
+    const logical: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "values", type: irVec(irVal({ kind: "f64" })) }],
+      valueCount: 1,
+    };
+    const attached = attachIrVecLayouts(logical, () => layout);
+    expect(attached.usesVec).toBe(true);
+    expect(attached.function.params[0]!.type).toMatchObject({ kind: "vec", layout });
+    expect(attachIrVecLayouts(attached.function, () => layout).function).toBe(attached.function);
+
+    const supportTypeEntry = (ref: typeof carrierRef, shapeKey: string): PreparedComponentAbiEntry => ({
+      id: ref.binding.bindingId,
+      structuralReferenceKey: irTypeBindingKey(ref.binding),
+      slotPolicy: "required",
+      intent: { kind: "type", shapeKey },
+    });
+    const carrierEntry = supportTypeEntry(carrierRef, "vector-carrier-f64");
+    const dataEntry = supportTypeEntry(dataRef, "vector-data-f64");
+    const prepared = derivePreparedComponentDependencies({
+      module: { functions: [attached.function] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), carrierEntry, dataEntry]),
+    });
+
+    expect(prepared.components[0]!.status).toBe("complete");
+    expect(prepared.components[0]!.failures).toEqual([]);
+    expect(prepared.components[0]!.abiDependencies.map((dependency) => dependency.bindingId)).toEqual([
+      carrierRef.binding.bindingId,
+      dataRef.binding.bindingId,
+    ]);
+    expect(prepared.components[0]!.abiDependencies).toEqual([
+      expect.objectContaining({
+        kind: "support",
+        bindingId: carrierRef.binding.bindingId,
+        structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+        terminalOwnerUnitId: null,
+      }),
+      expect.objectContaining({
+        kind: "support",
+        bindingId: dataRef.binding.bindingId,
+        structuralReferenceKey: irTypeBindingKey(dataRef.binding),
+        terminalOwnerUnitId: null,
+      }),
+    ]);
+
+    const missingData = derivePreparedComponentDependencies({
+      module: { functions: [attached.function] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), carrierEntry]),
+    });
+    expect(missingData.components[0]!.status).toBe("blocked");
+    expect(missingData.components[0]!.failures).toContainEqual(
+      expect.objectContaining({
+        code: "unplanned-abi-binding",
+        bindingId: dataRef.binding.bindingId,
+      }),
+    );
+  });
+
+  it("keeps logical vector helper identities independent of physical type indices", () => {
+    const f64 = irVal({ kind: "f64" });
+    const i32 = irVal({ kind: "i32" });
+    expect(irVecElemSetSymbol(f64)).toBe("__ir_vec_elem_set_f64");
+    expect(irVecNewSizedSymbol(f64)).toBe("__ir_vec_new_sized_f64");
+    expect(irVecElemSetSymbol(i32)).toBe("__ir_vec_elem_set_i32");
+    expect(parseIrVectorRuntimeElement("__ir_vec_elem_set_f64", IR_VEC_ELEM_SET_PREFIX)).toEqual({ kind: "f64" });
+    expect(parseIrVectorRuntimeElement("__ir_vec_new_sized_i32", IR_VEC_NEW_SIZED_PREFIX)).toEqual({ kind: "i32" });
+    expect(parseIrVectorRuntimeElement("__ir_vec_elem_set_17", IR_VEC_ELEM_SET_PREFIX)).toBeNull();
+  });
+
+  it("rejects invalid or drifting prepared vector layouts", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "vector-carrier:vec<f64>", "__ir_vec_carrier_f64");
+    const dataRef = irSupportTypeRef(f.sourceId, "vector-data:vec<f64>", "__ir_vec_data_f64");
+    const logical: IrFunction = {
+      ...irFunction(f.first),
+      params: [{ value: asValueId(0), name: "values", type: irVec(irVal({ kind: "f64" })) }],
+      valueCount: 1,
+    };
+    const invalid = attachIrVecLayouts(logical, () => ({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 0,
+    }));
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [invalid.function] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id)]),
+    });
+    expect(report.components[0]!.status).toBe("blocked");
+    expect(report.components[0]!.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("invalid prepared field layout"),
+      }),
+    ]);
+
+    const attached = attachIrVecLayouts(logical, () => ({
+      carrierType: carrierRef,
+      dataType: dataRef,
+      lengthFieldIndex: 0,
+      dataFieldIndex: 1,
+    }));
+    expect(() =>
+      attachIrVecLayouts(attached.function, () => ({
+        carrierType: carrierRef,
+        dataType: dataRef,
+        lengthFieldIndex: 1,
+        dataFieldIndex: 0,
+      })),
+    ).toThrow(/different prepared layout/);
+  });
+
   it("turns literal storage and string length into exact prepared dependencies", () => {
     const f = fixture();
     const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
@@ -529,6 +714,61 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     expect(report.components[0]!.status).toBe("complete");
     expect(new Set(report.components[0]!.abiDependencies.map((dependency) => dependency.bindingId))).toEqual(
       new Set([carrierRef.binding.bindingId, storage.binding.bindingId, callableBindingId]),
+    );
+  });
+
+  it("turns oversized literal materialization into an exact callable dependency", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
+    const materializer = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:0`);
+    const literal: IrInstr = {
+      kind: "string.const",
+      result: asValueId(0),
+      resultType: { kind: "string" },
+      value: "x".repeat(10_001),
+    };
+    const withCarrier = attachIrStringCarrier(irFunction(f.first, [literal]), carrierRef).function;
+    const prepared = attachIrStringSupport(withCarrier, {
+      storageForConst: () => undefined,
+      materializerForConst: () => materializer,
+      providerForLength: () => undefined,
+    });
+    const providerBindingId = createIrBindingId({
+      ownerId: f.sourceId,
+      domain: "callable",
+      role: "string-literal-materializer",
+    });
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [prepared] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([
+        sourceCallableEntry(f.first.id),
+        {
+          id: carrierRef.binding.bindingId,
+          structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+          slotPolicy: "required",
+          intent: { kind: "type", shapeKey: '{"kind":"struct","name":"AnyString"}' },
+        },
+        {
+          id: providerBindingId,
+          structuralReferenceKey: irCallableBindingKey(materializer.binding),
+          slotPolicy: "required",
+          intent: { kind: "callable", origin: "intrinsic" },
+        },
+      ]),
+    });
+
+    expect(prepared.blocks[0]!.instrs[0]).toMatchObject({
+      kind: "string.const",
+      materializer: { binding: materializer.binding },
+    });
+    expect(report.components[0]!.status).toBe("complete");
+    expect(report.components[0]!.abiDependencies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ bindingId: carrierRef.binding.bindingId, kind: "support" }),
+        expect.objectContaining({ bindingId: providerBindingId, kind: "external-callable" }),
+      ]),
     );
   });
 
@@ -646,6 +886,70 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     );
     expect(new Set(report.components[0]!.abiDependencies.map((dependency) => dependency.bindingId))).toEqual(
       new Set([carrierRef.binding.bindingId, ...providerIds]),
+    );
+  });
+
+  it("turns native string iteration into an exact code-point provider dependency", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
+    const loop: IrInstr = {
+      kind: "forof.string",
+      str: asValueId(0),
+      counterSlot: 0,
+      lengthSlot: 1,
+      strSlot: 2,
+      elementSlot: 3,
+      body: [],
+      result: null,
+      resultType: null,
+    };
+    const unbound: IrFunction = {
+      ...irFunction(f.first, [loop]),
+      params: [{ value: asValueId(0), name: "value", type: { kind: "string" } }],
+      valueCount: 1,
+    };
+    const withCarrier = attachIrStringCarrier(unbound, carrierRef).function;
+    const prepared = attachIrStringSupport(withCarrier, {
+      storageForConst: () => undefined,
+      providerForLength: () => undefined,
+    });
+    const provider = irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN);
+    const providerBindingId = createIrBindingId({
+      ownerId: f.sourceId,
+      domain: "callable",
+      role: "string-iterator-provider",
+    });
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [prepared] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([
+        sourceCallableEntry(f.first.id),
+        {
+          id: carrierRef.binding.bindingId,
+          structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+          slotPolicy: "none",
+          intent: { kind: "type", shapeKey: '{"kind":"externref"}' },
+        },
+        {
+          id: providerBindingId,
+          structuralReferenceKey: irCallableBindingKey(provider.binding),
+          slotPolicy: "required",
+          intent: { kind: "callable", origin: "intrinsic" },
+        },
+      ]),
+    });
+
+    expect(prepared.blocks[0]!.instrs[0]).toMatchObject({
+      kind: "forof.string",
+      provider: { binding: provider.binding },
+    });
+    expect(report.components[0]!.status).toBe("complete");
+    expect(report.components[0]!.abiDependencies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ bindingId: carrierRef.binding.bindingId, kind: "support" }),
+        expect.objectContaining({ bindingId: providerBindingId, kind: "external-callable" }),
+      ]),
     );
   });
 

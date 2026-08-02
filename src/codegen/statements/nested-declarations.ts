@@ -61,6 +61,7 @@ import {
   collectDirectEvalBindingNames,
   functionMayReachDirectEval,
 } from "../direct-eval-environment.js";
+import { annexBHoistCancels } from "../annexb-cancel.js";
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -69,7 +70,7 @@ import {
  * must throw ReferenceError (e.g. `class x extends x {}`). Returns true if the
  * extends heritage clause contains an identifier equal to the class name.
  */
-function extendsReferencesClassName(decl: ts.ClassDeclaration | ts.ClassExpression, className: string): boolean {
+function extendsOwnClass(ctx: CodegenContext, decl: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (!decl.heritageClauses) return false;
   for (const clause of decl.heritageClauses) {
     if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
@@ -77,7 +78,7 @@ function extendsReferencesClassName(decl: ts.ClassDeclaration | ts.ClassExpressi
       let found = false;
       const visit = (node: ts.Node): void => {
         if (found) return;
-        if (ts.isIdentifier(node) && node.text === className) {
+        if (ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === decl) {
           found = true;
           return;
         }
@@ -108,7 +109,7 @@ export function compileNestedClassDeclaration(
   // evaluated. `class x extends x {}` must throw ReferenceError (#1594B). Only
   // a NAMED class can self-reference in its own heritage (`decl.name` present);
   // an anonymous class expression has no name to hit the TDZ.
-  if (decl.name && extendsReferencesClassName(decl, decl.name.text)) {
+  if (decl.name && extendsOwnClass(ctx, decl)) {
     emitThrowReferenceError(ctx, fctx, `Cannot access '${decl.name.text}' before initialization`);
     return;
   }
@@ -1264,68 +1265,6 @@ function isAnnexBScopeBoundary(node: ts.Node): boolean {
     ts.isSourceFile(node) ||
     ts.isModuleBlock(node)
   );
-}
-
-/** (#2200) Does a Block (or case clause / module body) lexically bind `name` via
- * a top-level `let`/`const`/class declaration? */
-function blockBindsLexically(stmts: ts.NodeArray<ts.Statement> | ts.Statement[], name: string): boolean {
-  for (const s of stmts) {
-    if (ts.isVariableStatement(s) && (s.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) {
-      for (const d of s.declarationList.declarations) {
-        if (ts.isIdentifier(d.name) && d.name.text === name) return true;
-      }
-    }
-    if (ts.isClassDeclaration(s) && s.name?.text === name) return true;
-  }
-  return false;
-}
-
-/**
- * (#2200, Annex B B.3.3) Decide whether a block-nested `function` declaration's
- * web-compat outer var-binding is *cancelled*. Returns the declaring `Block`
- * (so the caller can record its position range) when the function is block-nested
- * AND an intervening lexical (`let`/`const`/class) binding for the same name
- * exists between the block and the enclosing function/global scope, OR a
- * same-named parameter exists; otherwise `null` (not block-nested, or eligible
- * for the outer binding — left to the existing unconditional hoist).
- *
- * Per §B.3.3.1: the outer binding is created only when replacing the function
- * with `var F` would not produce an early error — i.e. no intervening lexical
- * `F` and `F` is not a parameter. Strict-mode functions get no Annex B outer
- * binding at all, but a *cancelled* binding behaves the same observable way for
- * case A (reading `F` outside the block throws), so strict mode is not gated
- * here.
- */
-function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | null {
-  const name = fnDecl.name?.text;
-  if (!name || !fnDecl.body) return null;
-  const block = fnDecl.parent;
-  // Must be directly inside a Block (not the function body itself, not a case
-  // clause statement list, etc.). A direct function-body decl keeps its hoist.
-  if (!ts.isBlock(block)) return null;
-  if (isAnnexBScopeBoundary(block.parent)) return null; // block IS the fn body → direct decl
-
-  // The block that holds the function may itself carry a sibling lexical shadow.
-  if (blockBindsLexically(block.statements, name)) return block;
-
-  // Walk up from the holding block to the enclosing fn/global, checking each
-  // intervening Block for a lexical binding, and the enclosing function's params.
-  let node: ts.Node = block.parent;
-  while (node && !isAnnexBScopeBoundary(node)) {
-    if (ts.isBlock(node) && blockBindsLexically(node.statements, name)) return block;
-    if (ts.isCaseClause(node) || ts.isDefaultClause(node)) {
-      if (blockBindsLexically(node.statements, name)) return block;
-    }
-    node = node.parent;
-  }
-  // node is now the enclosing function/global boundary. If it is a function with
-  // a parameter named `name`, the Annex B hoist is also cancelled (§B.3.3 param
-  // exclusion).
-  if (node && !ts.isSourceFile(node) && !ts.isModuleBlock(node) && "parameters" in node) {
-    const params = (node as ts.FunctionLikeDeclarationBase).parameters;
-    if (params?.some((p) => ts.isIdentifier(p.name) && p.name.text === name)) return block;
-  }
-  return null;
 }
 
 /**

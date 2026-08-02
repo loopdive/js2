@@ -239,7 +239,7 @@ function localExpr(local: PorfforLocalRef): PorfforExpr {
 }
 
 function irTypeSlot(type: IrType): PorfforValueSlot {
-  if (type.kind === "string") return "ptr";
+  if (type.kind === "string" || type.kind === "vec") return "ptr";
   const val = asVal(type);
   if (!val) throw new Error(`porffor backend does not support IR type '${type.kind}'`);
   switch (val.kind) {
