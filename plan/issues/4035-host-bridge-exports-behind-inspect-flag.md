@@ -1,10 +1,11 @@
 ---
 id: 4035
 title: "gate the host-bridge export suite behind an inspect/debug option — standalone modules pay ~17-20 kB for a JS-interop ABI no wasmtime deployment uses"
-status: ready
+status: done
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-02
+completed: 2026-08-02
 priority: high
 horizon: l
 feasibility: medium
@@ -134,3 +135,62 @@ of any new option.
   users, does the *standalone* target want it at all? Not a dupe.
 - **#2962 / #3469** — introduced `__exn_render_*` and the stdout sink for the
   harness. They establish the consumers this issue would make opt-in. Not dupes.
+
+## Resolution (2026-08-02)
+
+Implemented as `hostBridge: "auto" | "always" | "off"` (`CompileOptions`) /
+`--host-bridge <mode>` (CLI). `"auto"` — the default — resolves to `"always"`
+for js-host and `"off"` for standalone/WASI.
+
+**Naming**: `--host-bridge`, not `--inspect` (the issue flagged the Node
+collision). The mode says what is published, not why.
+
+**Mechanism — one sink, not ~15 gated emitters.** Every producer stays
+unconditional; `stripHostBridgeExports` (`src/codegen/host-bridge-exports.ts`)
+removes the bridge export entries at finalize, immediately **before**
+`eliminateDeadLayoutAndPlanProgramAbi`, so the existing DCE + `-O3` reclaim
+everything those roots were pinning. Gating each emitter would have spread the
+policy across codegen and invented new half-built-bridge states. Both
+`generateModule` finalize sites are patched.
+
+Not stripped, because they are not JS-inspection surface: `memory`, `_start`,
+`__exn_tag`, `__module_init`, and every user export.
+
+### Measured, `-O3`
+
+| program | standalone before | standalone after | js-host |
+| --- | --- | --- | --- |
+| `run(n){return n}` | 804 | **51** | 37 |
+| fib | 848 | **90** | 76 |
+| `return [1,2,3]` | 21,082 | **125** | 778 |
+| `return 'a,b'.split(',')` | 21,356 | **447** | 989 |
+| class + array + closure + `join` | ~21 k | **1,000** | 3,715 |
+| class + array + closure + **throw** | 23,149 | 18,472 | 3,715 |
+
+js-host is byte-identical (asserted in the test).
+
+### The throw case is NOT fixed — and it is a different bug
+
+A module that genuinely throws still pays ~19 kB even with the bridge off and
+no `_start` (measured on both `wasi` and `standalone`). The Ryu tables are
+reachable from `run` itself: `throw new TypeError('neg')` constructs the error,
+which routes through the polymorphic `__any_to_string`, whose number arm is
+force-emitted (#2969) and pulls `number_toString` → Ryu. The message here is a
+*constant string*; nothing needs float formatting. Specialising
+`__any_to_string` when the argument is statically a string is a separate lever
+— filed as #4046.
+
+### Harness opt-in (the sequencing the issue called for)
+
+Done FIRST, in the same change, or standalone conformance would have collapsed
+onto opaque labels:
+
+- `scripts/test262-worker.mjs` — injected in `compileSingleSource` /
+  `compileMultipleSources`, the two wrappers every worker compile funnels
+  through, so no call site can be missed. Callers may still override.
+- `tests/test262-runner.ts` — passes `hostBridge: "always"` on its compile.
+
+Guarded by `tests/issue-4035-host-bridge-policy.test.ts` (6 tests): default off
+for standalone, opt-in restores it, js-host keeps it, explicit `off` works for
+js-host too, `auto` is byte-identical to the default, and a user export named
+`__vector_norm` is not eaten by prefix matching.

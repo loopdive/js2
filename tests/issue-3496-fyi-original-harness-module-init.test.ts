@@ -41,7 +41,7 @@ async function instantiateWithPrelude(prelude: string) {
       `,
     },
     "./entry.js",
-    { allowJs: true, skipSemanticDiagnostics: true, target: "standalone" },
+    { allowJs: true, skipSemanticDiagnostics: true, target: "standalone", hostBridge: "always" },
   );
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(result.imports).toEqual([]);
@@ -61,7 +61,7 @@ async function instantiateSimple(prelude: string, writer: string) {
       `,
     },
     "./entry.js",
-    { allowJs: true, skipSemanticDiagnostics: true, target: "standalone" },
+    { allowJs: true, skipSemanticDiagnostics: true, target: "standalone", hostBridge: "always" },
   );
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   const { instance } = await WebAssembly.instantiate(result.binary, {});
@@ -116,6 +116,7 @@ describe("#3496 — FYI harness initialization with module fixtures", () => {
       allowJs: true,
       skipSemanticDiagnostics: true,
       target: "standalone",
+      hostBridge: "always",
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.imports).toEqual([]);

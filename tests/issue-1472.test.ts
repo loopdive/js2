@@ -56,7 +56,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return p.x * p.x + p.y * p.y;
         }
       `,
-      { target: "standalone" },
+      { target: "standalone", hostBridge: "always" },
     );
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
@@ -75,7 +75,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return c.inc();
         }
       `,
-      { target: "standalone" },
+      { target: "standalone", hostBridge: "always" },
     );
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
@@ -94,7 +94,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.y as number;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__new_plain_object")).toBe(false);
@@ -113,7 +113,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (o.a as number) + (o.k0 as number) + (o.k7 as number) + (o.k14 as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -137,7 +137,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (o.a as number) + (o.b as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__delete_property")).toBe(false);
@@ -171,7 +171,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return first === null ? -1 : 7;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     // No host array bridge leaked either (the $ObjVec is the array).
@@ -205,7 +205,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return a * 100 + b * 10 + c;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -247,7 +247,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return c;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(r.imports.some((i) => i.module === "env" && i.name.startsWith("__array_from"))).toBe(false);
@@ -262,7 +262,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (ks.length as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -294,7 +294,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (vs.length as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__object_values")).toBe(false);
@@ -318,7 +318,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (es.length as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     const wat = (r as unknown as { wat?: string }).wat ?? "";
@@ -344,7 +344,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return s;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -361,7 +361,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return Object.freeze(o);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -400,7 +400,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (t[ka] as number) + (t[kb] as number);  // 11 + 7 = 18
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     // The JS-host array builders must NOT leak — standalone builds a $ObjVec.
@@ -426,7 +426,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (o[kx] as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__js_array_new")).toBe(false);
@@ -451,7 +451,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (out as any).length as number;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     // The helper is provided natively — no env::__extern_has_idx host import leaks.
     expect(r.imports.some((i) => i.module === "env" && i.name === "__extern_has_idx")).toBe(false);
@@ -474,7 +474,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (ka in o ? 1 : 0) + ("missing" in o ? 10 : 0); // present:1 absent:0 → 1
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__extern_has")).toBe(false);
     assertNoHostObjectImports(r.imports);
@@ -494,7 +494,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (Object.hasOwn(o, ka) ? 1 : 0) + (Object.hasOwn(o, "b") ? 10 : 0); // own:1 absent:0 → 1
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__object_hasOwn")).toBe(false);
     assertNoHostObjectImports(r.imports);
@@ -520,7 +520,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (p === proto ? 1 : 0) + (p[kt] as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__getPrototypeOf")).toBe(false);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__object_create")).toBe(false);
@@ -541,7 +541,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return p === null ? 5 : 0;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__getPrototypeOf")).toBe(false);
     assertNoHostObjectImports(r.imports);
@@ -569,7 +569,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (p === proto ? 1 : 0) + (o[kt] as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__object_setPrototypeOf")).toBe(false);
     assertNoHostObjectImports(r.imports);
@@ -591,7 +591,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (ret === o ? 1 : 0) + (ret["v"] as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -613,7 +613,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return p === null ? 7 : 0; // refused write ⇒ null proto ⇒ 7
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -657,7 +657,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return pick([5]);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     // The helper is provided natively — no env::__extern_is_undefined host import.
     expect(r.imports.some((i) => i.module === "env" && i.name === "__extern_is_undefined")).toBe(false);
@@ -677,7 +677,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return f();   // omitted ⇒ default {a:41} ⇒ 42
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__extern_is_undefined")).toBe(false);
     assertNoHostObjectImports(r.imports);
@@ -697,7 +697,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return proxy.value;
         }
       `,
-      { target: "standalone" },
+      { target: "standalone", hostBridge: "always" },
     );
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
@@ -719,7 +719,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
         }
       `,
     ]) {
-      const r = await compile(source, { target: "standalone" });
+      const r = await compile(source, { target: "standalone", hostBridge: "always" });
       expect(r.success).toBe(false);
       const joined = r.errors.map((e) => e.message).join("\n");
       expect(joined).toMatch(/Proxy not supported in standalone mode/);
@@ -741,7 +741,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (ks.length as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     const wat = (r as unknown as { wat?: string }).wat ?? "";
@@ -767,7 +767,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
         const got: any = Reflect.getPrototypeOf(o);
         return defined && set && descriptor.value === 7 && got === proto ? 1 : 0;
       }`,
-      { target: "standalone" },
+      { target: "standalone", hostBridge: "always" },
     );
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.imports.some((i) => i.module === "env" && i.name.startsWith("__reflect_"))).toBe(false);
@@ -782,7 +782,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
       `export function f(fn: any, receiver: any, args: any): any {
         return Reflect.apply(fn, receiver, args);
       }`,
-      { target: "standalone" },
+      { target: "standalone", hostBridge: "always" },
     );
     expect(r.success).toBe(false);
     const joined = r.errors.map((e) => e.message).join("\n");
@@ -870,7 +870,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return (o.before as number) + (o.after as number);
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(r.imports.some((i) => i.module === "env" && i.name === "__defineProperty_accessor")).toBe(false);
@@ -893,7 +893,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.sentinel as number;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -915,7 +915,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return Object.getOwnPropertyDescriptor(o, k);
         }
       `,
-      { target: "standalone" },
+      { target: "standalone", hostBridge: "always" },
     );
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
@@ -949,7 +949,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.x as number;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     // Both the define and the get run native — no JS-host bridge.
@@ -973,7 +973,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.ro as number; // getter still returns 42
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -994,7 +994,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.d as number;       // 42, not the accessor
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -1027,7 +1027,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.x as number;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -1045,7 +1045,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.x as number;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -1069,7 +1069,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.v as number;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
@@ -1091,7 +1091,7 @@ describe("#1472 — --target standalone object/Proxy host-import refusal", () =>
           return o.x as number;
         }
       `;
-    const r = await compile(source, { target: "standalone" });
+    const r = await compile(source, { target: "standalone", hostBridge: "always" });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     assertNoHostObjectImports(r.imports);
     expect(WebAssembly.validate(r.binary)).toBe(true);
