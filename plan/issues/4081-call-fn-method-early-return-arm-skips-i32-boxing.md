@@ -1,10 +1,12 @@
 ---
 id: 4081
 title: "`__call_fn_method_N` has a THIRD dispatch arm that inlines save-result/restore-`__current_this`/return without the i32 boxing the other two arms do — 12 files"
-status: ready
+status: done
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
+completed: 2026-08-02
+assignee: ttraenkler/H-crashes
 priority: high
 horizon: m
 feasibility: medium
@@ -17,6 +19,22 @@ related: [4077, 4079, 4080]
 ---
 
 # A third `__call_fn_method_N` dispatch arm skips return-type boxing
+
+> **DONE — implemented as #4082 (PR #4011). Do NOT dispatch this issue.**
+>
+> `H-crashes` handed this over mid-investigation and then finished it in the
+> same session, so the finding and the fix ended up in two issue files. This
+> one is the finding; **#4082** is the fix and carries the measurements
+> (population 53 → mechanism 12 → reachable 12 → **9 flips**; kill-switch
+> 12/12 fail; regression control 500 → 496 with 0 attributable).
+>
+> The emitting site named as "not yet identified" below **was** identified:
+> `src/codegen/closures/transferred-native-proto.ts` — the #3992
+> transferred-native-proto arm, **not** `closed-method-dispatch.ts`. See the
+> correction at the end of this file.
+>
+> #4082 also records a residual it deliberately did not fix: **#4083**, where
+> the same borrowed call now answers `null` instead of crashing.
 
 Located 2026-08-02 by the `H-crashes` agent, which **deliberately stopped short
 of implementing** because it had not finished identifying the emitting site.
@@ -79,6 +97,24 @@ all**.
 The emitter that writes it has **not** been identified. It is not either of the
 two arms above. Next place to look: **`closed-method-dispatch.ts:547`**, which
 also calls `__call_fn_method_<arity>`.
+
+### CORRECTION (resolved in #4082) — the lead above was wrong
+
+`closed-method-dispatch.ts` was the wrong place to look; it emits no `call_ref`
+at all. The arm is `buildTransferredNativeProtoCallInstrs` in
+**`src/codegen/closures/transferred-native-proto.ts`** — the #3992
+transferred-native-proto arm, reached from `closure-exports.ts` via
+`buildTransferredNativeProtoCallInstrs(...)`, not from a `closed-method`
+path. Recording the miss because a confidently-named "next place to look" is
+the kind of hint that costs the next reader an hour.
+
+Its doc block is also the sharpest evidence for #4080: the invariant it
+violates is written *in that same doc block* — *"each arm pushes exactly one
+externref (the `call_ref` result)"* — so the copy missing the type handling is
+the copy asserting its own correctness in prose.
+
+Fixed by giving the whole ABI one owner for the decision, a new subsystem
+module `src/codegen/closures/result-boxing.ts`, imported by all three arms.
 
 ## Why this matters beyond 12 files
 
