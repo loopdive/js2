@@ -18,6 +18,7 @@ import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
+import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 /**
  * Emit exported getter/setter helper functions so the JS runtime can read
@@ -178,6 +179,14 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
 
   if (fieldMap.size === 0) return;
 
+  const hasSymbolField = [...fieldMap.values()].some((entries) =>
+    entries.some((entry) => entry.fieldType.kind === "i32" && entry.fieldType.symbol === true),
+  );
+  if (hasSymbolField && !ctx.standalone && !ctx.wasi) {
+    ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, null);
+  }
+
   // (#1320) A getter that returns a numeric/boolean field as externref boxes it
   // via __box_number / __box_boolean. Those helpers are registered lazily at
   // boxing call-sites during expression compilation — but a module whose only
@@ -197,11 +206,12 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
   let needsBox = false;
   for (const entries of fieldMap.values()) {
     const hasF64 = entries.some((e) => e.fieldType.kind === "f64");
-    const hasI32 = entries.some((e) => e.fieldType.kind === "i32");
+    const hasI32 = entries.some((e) => e.fieldType.kind === "i32" && e.fieldType.symbol !== true);
     const hasRef = entries.some((e) => e.fieldType.kind !== "f64" && e.fieldType.kind !== "i32");
     const hasBool = entries.some((e) => e.jsBoolean);
+    const hasSymbol = entries.some((e) => e.fieldType.kind === "i32" && e.fieldType.symbol === true);
     const allF64 = hasF64 && !hasI32 && !hasRef && !hasBool;
-    const allI32 = hasI32 && !hasF64 && !hasRef && !hasBool;
+    const allI32 = hasI32 && !hasF64 && !hasRef && !hasBool && !hasSymbol;
     // f64-only / i32-only buckets return the raw value (no box call). Only a
     // mixed/boolean (extern-mode) bucket carrying a numeric or boolean field
     // emits a __box_number / __box_boolean call.
@@ -219,6 +229,7 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
   // as a JS boolean so `typeof o.x === "boolean"` and `o.x === true` hold on a
   // dynamic read, instead of the value boxing as the number 1.
   const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+  const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
   // (#3032 W6 / #2979) The native-generator IteratorResult `value` field uses
   // the UNDEF_F64 signaling-NaN sentinel as its absent/done marker — the
   // `__sget_value` getter (the host `_safeGet` / `__gen_result_value` shim
@@ -257,8 +268,9 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
     // which the host reads back as a number — so an all-i32 bucket that
     // contains any boolean field is forced to externref/box mode instead.
     const hasBool = entries.some((e) => e.jsBoolean);
+    const hasSymbol = entries.some((e) => e.fieldType.kind === "i32" && e.fieldType.symbol === true);
     const allF64 = hasF64 && !hasI32 && !hasRef && !hasBool;
-    const allI32 = hasI32 && !hasF64 && !hasRef && !hasBool;
+    const allI32 = hasI32 && !hasF64 && !hasRef && !hasBool && !hasSymbol;
 
     let getterTypeIdx: number;
     let returnMode: "extern" | "f64" | "i32";
@@ -291,6 +303,7 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
       boxNumIdx,
       returnMode,
       boxBoolIdx,
+      boxSymbolIdx,
       useSentinel ? sentinelArms : undefined,
     );
 
@@ -404,6 +417,14 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
 
   if (fieldMap.size === 0) return;
 
+  const hasSymbolField = [...fieldMap.values()].some((entries) =>
+    entries.some((entry) => entry.fieldType.kind === "i32" && entry.fieldType.symbol === true),
+  );
+  if (hasSymbolField && !ctx.standalone && !ctx.wasi) {
+    ensureLateImport(ctx, "__unbox_symbol", [{ kind: "externref" }], [{ kind: "i32", symbol: true }]);
+    flushLateImportShifts(ctx, null);
+  }
+
   // Only kinds we can emit a correct `struct.set` for after the externref →
   // anyref convert. Abstract heap types other than `anyref` (eqref / structref /
   // funcref) would need a `ref.cast` to an abstract heap type, which the
@@ -427,15 +448,20 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
   let needsUnbox = false;
   for (const entries of fieldMap.values()) {
     const allF64 = entries.every((e) => e.fieldType.kind === "f64");
-    const allI32 = entries.every((e) => e.fieldType.kind === "i32");
+    const allI32 =
+      entries.every((e) => e.fieldType.kind === "i32") &&
+      !entries.some((e) => e.fieldType.kind === "i32" && e.fieldType.symbol === true);
     if (allF64 || allI32) continue;
-    if (entries.some((e) => e.fieldType.kind === "f64" || e.fieldType.kind === "i32")) {
+    if (
+      entries.some((e) => e.fieldType.kind === "f64" || (e.fieldType.kind === "i32" && e.fieldType.symbol !== true))
+    ) {
       needsUnbox = true;
       break;
     }
   }
   if (needsUnbox) addUnionImports(ctx);
   const unboxNumIdx = ctx.funcMap.get("__unbox_number");
+  const unboxSymbolIdx = ctx.funcMap.get("__unbox_symbol");
 
   // Setter signatures: 3 variants by val type. All return i32 (1 = an arm
   // matched and wrote the live struct field, 0 = no arm matched) so the
@@ -462,7 +488,8 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
 
   for (const [fieldName, entries] of fieldMap) {
     const allF64 = entries.every((e) => e.fieldType.kind === "f64");
-    const allI32 = entries.every((e) => e.fieldType.kind === "i32");
+    const hasSymbol = entries.some((e) => e.fieldType.kind === "i32" && e.fieldType.symbol === true);
+    const allI32 = entries.every((e) => e.fieldType.kind === "i32") && !hasSymbol;
 
     let setterTypeIdx: number;
     let valMode: "extern" | "f64" | "i32";
@@ -481,7 +508,11 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
       useEntries = entries.filter(
         (e) =>
           isRefKind(e.fieldType.kind) ||
-          ((e.fieldType.kind === "f64" || e.fieldType.kind === "i32") && unboxNumIdx !== undefined),
+          (e.fieldType.kind === "i32" &&
+            e.fieldType.symbol === true &&
+            (unboxSymbolIdx !== undefined || ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0))) ||
+          ((e.fieldType.kind === "f64" || (e.fieldType.kind === "i32" && e.fieldType.symbol !== true)) &&
+            unboxNumIdx !== undefined),
       );
       if (useEntries.length === 0) continue;
       setterTypeIdx = setterExternTypeIdx;
@@ -493,7 +524,15 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
     const anyLocal = 2; // locals after the two params (local 0 = obj, local 1 = val)
     const wroteLocal = 3; // i32 "an arm matched and wrote" flag (defaults 0)
 
-    const funcBody = buildSetterNestedIfElse(ctx, useEntries, anyLocal, valMode, wroteLocal, unboxNumIdx);
+    const funcBody = buildSetterNestedIfElse(
+      ctx,
+      useEntries,
+      anyLocal,
+      valMode,
+      wroteLocal,
+      unboxNumIdx,
+      unboxSymbolIdx,
+    );
 
     mod.functions.push({
       name: funcName,
@@ -521,6 +560,7 @@ function buildSetterNestedIfElse(
   valMode: "extern" | "f64" | "i32",
   wroteLocal: number,
   unboxNumIdx?: number,
+  unboxSymbolIdx?: number,
 ): Instr[] {
   const body: Instr[] = [];
 
@@ -534,7 +574,7 @@ function buildSetterNestedIfElse(
 
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    let thenBranch = buildSetterStore(ctx, entry, anyLocal, valMode, wroteLocal, unboxNumIdx);
+    let thenBranch = buildSetterStore(ctx, entry, anyLocal, valMode, wroteLocal, unboxNumIdx, unboxSymbolIdx);
 
     // (#2009) Colliding struct: `ref.test typeIdx` matched, but same-shape
     // canonicalization means the instance might be a DIFFERENT struct that
@@ -577,6 +617,7 @@ function buildSetterStore(
   valMode: "extern" | "f64" | "i32",
   wroteLocal: number,
   unboxNumIdx?: number,
+  unboxSymbolIdx?: number,
 ): Instr[] {
   const then: Instr[] = [];
   const ft = entry.fieldType;
@@ -615,6 +656,18 @@ function buildSetterStore(
     // (#2853 B) Numeric field in an extern-mode (mixed) bucket: unbox the
     // externref value to f64 (Number coercion host-side), truncating for i32
     // fields. Boolean-branded i32 fields coerce true/false → 1/0 the same way.
+    if (ft.kind === "i32" && ft.symbol === true) {
+      if ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0) {
+        then.push({ op: "any.convert_extern" });
+        then.push({ op: "ref.cast", typeIdx: ctx.symbolTypeIdx });
+        then.push({ op: "struct.get", typeIdx: ctx.symbolTypeIdx, fieldIdx: 0 });
+      } else {
+        then.push({ op: "call", funcIdx: unboxSymbolIdx! });
+      }
+      then.push({ op: "struct.set", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx });
+      then.push(...markWrote);
+      return then;
+    }
     if (ft.kind === "f64" || ft.kind === "i32") {
       // Caller guarantees unboxNumIdx is defined for these arms (bucket filter).
       then.push({ op: "call", funcIdx: unboxNumIdx! });
@@ -733,6 +786,7 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): void {
   const typeKindKey = (t: ValType): string => {
     if (t.kind === "ref" || t.kind === "ref_null") return `${t.kind}:${(t as { typeIdx: number }).typeIdx}`;
     if (t.kind === "i32" && (t as { boolean?: true }).boolean) return "i32:bool";
+    if (t.kind === "i32" && t.symbol === true) return "i32:sym";
     return t.kind;
   };
   type Member = { structName: string; typeIdx: number; names: string[] };
@@ -1038,6 +1092,7 @@ function buildNestedIfElse(
   boxNumIdx: number | undefined,
   returnMode: "extern" | "f64" | "i32" = "extern",
   boxBoolIdx?: number,
+  boxSymbolIdx?: number,
   sentinelArms?: SentinelArmConfig,
 ): Instr[] {
   const body: Instr[] = [];
@@ -1066,7 +1121,15 @@ function buildNestedIfElse(
 
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    const thenBranch = buildGetterExtract(entry, anyLocal, boxNumIdx, returnMode, boxBoolIdx, sentinelArms);
+    const thenBranch = buildGetterExtract(
+      entry,
+      anyLocal,
+      boxNumIdx,
+      returnMode,
+      boxBoolIdx,
+      boxSymbolIdx,
+      sentinelArms,
+    );
 
     const ifInstr: Instr = {
       op: "if",
@@ -1089,6 +1152,7 @@ function buildGetterExtract(
   boxNumIdx: number | undefined,
   returnMode: "extern" | "f64" | "i32" = "extern",
   boxBoolIdx?: number,
+  boxSymbolIdx?: number,
   sentinelArms?: SentinelArmConfig,
 ): Instr[] {
   const then: Instr[] = [];
@@ -1163,6 +1227,10 @@ function buildGetterExtract(
         then.push({ op: "drop" });
         then.push({ op: "ref.null.extern" });
       }
+    } else if (ft.kind === "i32" && ft.symbol === true && boxSymbolIdx !== undefined) {
+      // (#3961) Symbol handles are i32 internally but cross the host boundary
+      // as genuine identity-stable JS Symbols.
+      then.push({ op: "call", funcIdx: boxSymbolIdx });
     } else if (ft.kind === "i32" && entry.jsBoolean && boxBoolIdx !== undefined) {
       // (#1788) Boolean-branded i32 field — box as a JS boolean (not a number)
       // so `typeof o.x === "boolean"` and `o.x === true` hold on a dynamic read.

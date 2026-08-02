@@ -131,7 +131,17 @@ export function inferParamTypeFromCallSites(
                 const wasmType: ValType = { kind: "f64" };
                 if (agreed === null) agreed = wasmType;
                 else if (agreed.kind !== wasmType.kind) conflict = true;
+              } else {
+                // (#3961) A genuinely dynamic call argument is part of the
+                // callee's runtime domain, not missing evidence that may be
+                // discarded. React's recursive `mapIntoArray(children, ...)`
+                // is called with several `any` values and one proven array;
+                // ignoring the dynamic calls narrowed `children` to the vec
+                // carrier and destroyed every element argument at the ABI.
+                conflict = true;
               }
+            } else {
+              conflict = true;
             }
           } else {
             const wasmType = resolveWasmType(ctx, argType);

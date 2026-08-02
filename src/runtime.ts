@@ -17,6 +17,7 @@
 import { compileSource } from "./compiler.js";
 import type { ImportDescriptor, ImportIntent, ImportPolicy } from "./index.js";
 import { createEvalShim, createNewFunctionShim } from "./runtime-eval.js";
+import * as wsh from "./runtime/wasm-struct-host-semantics.js";
 import { STRING_CONSTANTS16_NS } from "./string-surrogate.js";
 import {
   _GeneratorState,
@@ -9337,30 +9338,24 @@ assert._isSameValue = isSameValue;
           if (_isWasmStruct(obj)) {
             const sc = _wasmStructProps.get(obj);
             const descs = _wasmPropDescs.get(obj);
-            if ((sc && key in sc) || descs?.has(_normalizeDescKey(key))) return undefined;
+            const flags = descs?.get(_normalizeDescKey(key));
+            const owns = typeof key === "string" && _structHasOwnFieldName(obj, key, callbackState?.getExports());
+            if (wsh.masksField(sc, key, flags, owns, _SC_ACCESSOR)) return undefined;
           }
           if (_isWasmStruct(obj) && typeof key === "string") {
-            // (#2179) A deleted key must NOT be resurrected by the struct-field
-            // getter fast-path: `delete o.a` sets the tombstone but cannot clear
-            // the underlying WasmGC field, so `__sget_a` still returns the stale
-            // value. Consult the tombstone before reading the live field.
+            // A delete tombstone outranks the immutable backing field (#2179).
             const tomb = _wasmStructDeletedKeys.get(obj);
             if (tomb && tomb.has(key)) return undefined;
             const exports = callbackState?.getExports();
             const getter = exports?.[`__sget_${key}`];
-            if (typeof getter === "function") return getter(obj);
-            // (#3097) `.byteLength` on an ArrayBuffer/DataView-backing byte-vec
-            // struct via the generic getter (any-typed receiver) — e.g.
-            // `sample.buffer.byteLength` after the exit-boundary un-marshal.
+            const fieldValue = wsh.readField(getter, obj, _structHasOwnFieldName(obj, key, exports));
+            if (fieldValue !== wsh.NO_GENERATED_FIELD) return fieldValue;
+            // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
             if (key === "byteLength") {
               const bl = _byteVecByteLength(obj, exports);
               if (bl !== undefined) return bl;
             }
-            // (#3058) `maxByteLength` / `resizable` on a compiled-AB byte-vec
-            // struct: resizable-ness is the -1 sentinel from __ab_max_len; a
-            // fixed buffer reports maxByteLength === byteLength (§25.1.5.4);
-            // a detached buffer reports maxByteLength 0 (§25.1.5.2 step 4)
-            // while `resizable` keeps answering from the retained max slot.
+            // Compiled-AB max/resizable semantics use __ab_max_len (#3058).
             if (key === "maxByteLength" || key === "resizable") {
               const bl = _byteVecByteLength(obj, exports);
               if (bl !== undefined) {
@@ -9370,11 +9365,7 @@ assert._isSameValue = isSameValue;
                 return ml >= 0 ? ml : bl;
               }
             }
-            // (#3058) `.resize` read as a VALUE off a compiled-AB byte-vec
-            // struct (`typeof ab.resize === 'function'` — the lead assert of
-            // every resize-behavior test). An arrow function is deliberately
-            // non-constructible so `new ab.resize()` throws TypeError
-            // (resize/nonconstructor.js).
+            // The resize value is deliberately non-constructible (#3058).
             if (key === "resize") {
               const bl = _byteVecByteLength(obj, exports);
               if (bl !== undefined) {
@@ -9384,6 +9375,8 @@ assert._isSameValue = isSameValue;
                 };
               }
             }
+            const fields = key === "constructor" ? _getStructFieldNames(obj, callbackState?.getExports()) : null;
+            if (key === "constructor" && wsh.ordinaryFields(fields)) return Object;
           }
           return undefined;
         };
@@ -14898,6 +14891,10 @@ assert._isSameValue = isSameValue;
       return (v: number) => v;
     case "unbox":
       if (intent.targetType === "boolean") return (v: any) => (v ? 1 : 0);
+      if (intent.targetType === "symbol") {
+        const symbolCache = _resolveSymbolCache(instanceState);
+        return (value: unknown): number => wsh.unboxSymbol(symbolCache, value);
+      }
       // (#1644) __to_bigint: §7.1.13 ToBigInt. Identity on a bigint; parse
       // strings / coerce booleans via the BigInt() constructor (SyntaxError on
       // bad string syntax); number and Symbol arguments throw TypeError. The
@@ -15011,26 +15008,23 @@ assert._isSameValue = isSameValue;
         }
         const sc = _wasmStructProps.get(obj);
         const descs = _wasmPropDescs.get(obj);
-        if ((sc && key in sc) || descs?.has(_normalizeDescKey(key))) return undefined;
+        const flags = descs?.get(_normalizeDescKey(key));
+        const owns = typeof key === "string" && _structHasOwnFieldName(obj, key, callbackState?.getExports());
+        if (wsh.masksField(sc, key, flags, owns, _SC_ACCESSOR)) return undefined;
         if (typeof key === "string") {
-          // (#2179) A deleted key must NOT be resurrected by the struct-field
-          // getter fast-path: `delete o.a` sets the tombstone but cannot clear
-          // the underlying WasmGC field, so `__sget_a` still returns the stale
-          // value. Consult the tombstone before reading the live field.
+          // A delete tombstone outranks the immutable backing field (#2179).
           const tomb = _wasmStructDeletedKeys.get(obj);
           if (tomb && tomb.has(key)) return undefined;
           const exports = callbackState?.getExports();
           const getter = exports?.[`__sget_${key}`];
-          if (typeof getter === "function") return getter(obj);
-          // (#3097) `.byteLength` on an ArrayBuffer/DataView-backing byte-vec
-          // struct via the generic getter (any-typed receiver) — e.g.
-          // `sample.buffer.byteLength` after the exit-boundary un-marshal.
+          const fieldValue = wsh.readField(getter, obj, _structHasOwnFieldName(obj, key, exports));
+          if (fieldValue !== wsh.NO_GENERATED_FIELD) return fieldValue;
+          // Generic `.byteLength` on an ArrayBuffer/DataView byte vec (#3097).
           if (key === "byteLength") {
             const bl = _byteVecByteLength(obj, exports);
             if (bl !== undefined) return bl;
           }
-          // (#3058) `maxByteLength` / `resizable` / `resize` on a compiled-AB
-          // byte-vec struct (mirrors the __extern_get arms).
+          // Compiled-AB max/resizable/resize semantics (#3058).
           if (key === "maxByteLength" || key === "resizable") {
             const bl = _byteVecByteLength(obj, exports);
             if (bl !== undefined) {
@@ -15117,6 +15111,10 @@ assert._isSameValue = isSameValue;
               // Not a vec wrapper — fall through
             }
           }
+        }
+        if (key === "constructor" && obj != null && _isWasmStruct(obj)) {
+          const fields = _getStructFieldNames(obj, callbackState?.getExports());
+          if (wsh.ordinaryFields(fields)) return globalSandbox?.Object ?? Object;
         }
         // (#1712) `<fn>.prototype` on a Wasm closure struct: auto-vivify an
         // identity-stable real JS object in the closure's sidecar (mirrors

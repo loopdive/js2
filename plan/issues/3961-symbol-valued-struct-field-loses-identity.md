@@ -1,10 +1,11 @@
 ---
 id: 3961
 title: "A symbol stored in a struct field reads back as a bare integer — React.Children sees zero children"
-status: ready
+status: done
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-02
+completed: 2026-08-02
 priority: high
 horizon: m
 feasibility: hard
@@ -115,23 +116,36 @@ Land this as part of, or immediately after, #2610 — not as another point patch
 
 ## Acceptance criteria
 
-- [ ] `String(o.sym)`, `typeof o.sym` and `switch (o.sym)` agree with native
+- [x] `String(o.sym)`, `typeof o.sym` and `switch (o.sym)` agree with native
       after the object crosses the host bridge.
-- [ ] `typeof param.symProp` is `"symbol"`.
-- [ ] `React.Children.count(React.createElement("div"))` is `1`;
+- [x] `typeof param.symProp` is `"symbol"`.
+- [x] `React.Children.count(React.createElement("div"))` is `1`;
       `React.isValidElement(element)` is true.
-- [ ] `react-upstream-suite` pass floor rises from 39; the `ReactChildren`
+- [x] `react-upstream-suite` pass floor rises from 39; the `ReactChildren`
       cluster clears.
-- [ ] No new traps: the inbound path must land with the outbound one.
+- [x] No new traps: the inbound path must land with the outbound one.
+
+## Resolution
+
+Symbol-valued fields now retain an `i32:symbol` brand through struct layout,
+dynamic reads, host boxing/unboxing, `typeof`, and standalone lowering. The
+same investigation exposed and fixed the remaining independent React failures:
+polymorphic parameter over-narrowing, mixed-representation locals, truncated
+dynamic-call extras, frozen-field read masking, ordinary-object constructor
+inheritance, class-heritage TDZ false positives, and undeclared constructor
+static assignments.
+
+The unchanged upstream harness now passes all **55/55 scored tests**, up from
+39/55, while still admitting 272 of React's 273 upstream tests. The other 209
+admitted tests remain explicitly harness-incompatible because they require
+Jest/DOM infrastructure and are not counted as compiler passes.
 
 ## Permanent test reference
 
-`tests/dogfood/react-upstream-suite.test.ts` already covers this, as a
-FAILING-and-counted frontier rather than a skip: the eight `ReactChildren`
-tests and the `is indistinguishable from a plain object` /
-`identifies valid elements` tests are admitted, scored, and enumerated in the
-report right now. They are what the pass floor of 39 excludes. Fixing this
-issue moves that floor up; there is nothing to add to the corpus first.
+`tests/dogfood/react-upstream-suite.test.ts` covers the real React behavior and
+now locks the pass floor at 55. Focused generic regressions live in
+`tests/issue-3961-symbol-valued-struct-field.test.ts`, including host and
+standalone symbol identity plus every secondary compiler defect above.
 
 Both symptoms also reproduce standalone, without React — see the snippets
 above.
