@@ -53,6 +53,51 @@ import {
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
 
 /**
+ * (#4035) True when `expr` is STATICALLY the `undefined` value — the bare
+ * `undefined` identifier or the `undefined` keyword, through any number of
+ * parens / `as T` / `satisfies T` / `!` wrappers (the failing shape was
+ * `new Error(undefined as any)`). A local named `undefined` shadows the global,
+ * so the identifier form defers to `fctx.localMap` exactly as the `map-runtime`
+ * / `array-methods` callers of this same idiom do. Conservative by
+ * construction: anything it cannot prove returns false and keeps the existing
+ * runtime path.
+ *
+ * Why static: §20.5.1.1 step 3 is "if message is not undefined", so an
+ * explicitly-undefined message must behave exactly like NO message. The
+ * `ref.is_null` guard in the ToString block cannot see that by itself —
+ * under the #2106 undefinedSingleton regime (standalone/native-strings)
+ * `undefined` is a DISTINCT non-null sentinel externref, so
+ * `new Error(undefined)` stored ToString(undefined) and rendered
+ * "Error: undefined". Recognising the literal here routes it to the
+ * argument-less path at ZERO code size. The alternative — always emitting a
+ * runtime undefined-test — has to `ensureObjectRuntime` for
+ * `__extern_is_undefined`, measured at +3KB (19.0 → 22.9KB) on every
+ * standalone module that constructs any Error, which would defeat the
+ * binary-size goal this very PR exists to serve (it broke that very test).
+ *
+ * KNOWN RESIDUAL, deliberately not fixed here: a message that is undefined
+ * only at RUNTIME (`let m; new Error(m)`) still renders "Error: undefined".
+ * Closing that needs the cheap undefined-sentinel comparison this site cannot
+ * afford today, not a wider guard.
+ */
+function isStaticUndefinedExpr(expr: ts.Expression, fctx: FunctionContext): boolean {
+  let node: ts.Expression = expr;
+  for (;;) {
+    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node)) {
+      node = node.expression;
+      continue;
+    }
+    if (ts.isSatisfiesExpression(node)) {
+      node = node.expression;
+      continue;
+    }
+    break;
+  }
+  if (node.kind === ts.SyntaxKind.UndefinedKeyword) return true;
+  return ts.isIdentifier(node) && node.text === "undefined" && !fctx.localMap.has("undefined");
+}
+
+/**
  * Emit the argument stored in a String wrapper's [[StringData]] slot.
  * Returns true when a statically-known Symbol emitted a terminal TypeError.
  */
@@ -248,7 +293,7 @@ export function tryCompileBuiltinGlobalNew(
       ctorName === "Test262Error"
     ) {
       const args = expr.arguments ?? [];
-      if (args.length >= 1) {
+      if (args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
         // Compile the message argument to externref
         const resultType = compileExpression(ctx, fctx, args[0]!, {
           kind: "externref",
@@ -273,7 +318,7 @@ export function tryCompileBuiltinGlobalNew(
       // #3032). Host mode's `__new_<Name>` import does ToString in JS, so only
       // the native path needs this. Applies to both the WASI-error and
       // Test262Error branches below (both native, both standalone/WASI).
-      if ((ctx.wasi || ctx.standalone) && args.length >= 1) {
+      if ((ctx.wasi || ctx.standalone) && args.length >= 1 && !isStaticUndefinedExpr(args[0]!, fctx)) {
         // Force `number_toString` before `__any_to_string` bakes so its number
         // arm renders a raw numeric message ("42") instead of degrading to
         // "[object Object]" (a module that only constructs `new Error(n)` never

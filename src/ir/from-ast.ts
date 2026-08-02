@@ -142,7 +142,7 @@ import {
   isIrBitwiseOperatorToken,
 } from "./i32-pure-bitwise.js";
 import { tryEmitUnrolledReduction } from "./reduction-unroll.js";
-import { IrUnsupportedError } from "./outcomes.js";
+import { demoteToLegacy, IrUnsupportedError } from "./outcomes.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { effectiveIrParamTypeNode, effectiveIrReturnTypeNode, IR_MATH_METHOD_TABLE } from "./select.js";
 import { JsTag } from "./js-tag.js"; // #2949 S5.2 — box-refinement tags for dynamic equality operands
@@ -5475,7 +5475,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   }
 
   if (!shape) {
-    throw new Error(`ir/from-ast: unknown class "${className}" in ${cx.funcName}`);
+    demoteToLegacy("unknown-class-construction", `ir/from-ast: unknown class "${className}" in ${cx.funcName}`);
   }
   const argExprs = expr.arguments ?? [];
   if (argExprs.length !== shape.constructorParams.length) {
@@ -10673,16 +10673,16 @@ function analyseCaptures(
  */
 function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   if (!stmt.expression) {
-    throw new Error(`ir/from-ast: bare 'throw' (no expression) not in slice 9 (${cx.funcName})`);
+    demoteToLegacy("throw-value-unsupported", `ir/from-ast: bare 'throw' not in slice 9 (${cx.funcName})`);
   }
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);
   const valTy = asVal(valueType);
-  if (valTy?.kind === "f64" || valTy?.kind === "i32") {
-    // Numeric throws would need a box helper. Slice 9 defers — fall back
-    // to legacy by throwing here so the function compilation aborts
-    // cleanly and the legacy path takes over.
-    throw new Error(`ir/from-ast: throw of numeric type (${valTy.kind}) not in slice 9 (${cx.funcName})`);
+  if (valTy?.kind === "f64" || valTy?.kind === "i32" || valueType.kind === "class") {
+    // Slice 9 defers numerics (need a box helper) and class instances (#4035:
+    // `extern.convert_any` on an IR class struct renders as "[object Object]"
+    // not "Cls: msg" — a SILENT wrong answer, so IR declines). Legacy takes over.
+    demoteToLegacy("throw-value-unsupported", `ir/from-ast: throw ${valueType.kind} not in slice 9 (${cx.funcName})`);
   }
   // Reference-shaped — coerce to externref. The helper is a no-op
   // when the value is already externref or `IrType.string` in host
