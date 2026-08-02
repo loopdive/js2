@@ -313,3 +313,27 @@ likely reachable without ESLint. Find what emits `__closure_<n>` bodies and why
 it writes a `local.get 17` into a 6-slot frame — the constant 17 across
 unrelated call sites suggests an index captured from a *template* or a
 lifting context rather than the closure's own frame.
+
+### Reduced-repro sweep — 8 more shapes, all clean
+
+With `JS2WASM_CHECK_FRAMES=1` a candidate now costs **milliseconds** instead of a
+15-minute ESLint compile, so shapes can be swept in bulk. Eight closure-heavy
+programs — each with a 20-local host — all compile with **no** out-of-frame
+local:
+
+arrow capturing many host locals · arrow nested in arrow · arrow created in a
+loop · arrow as an `Array.map` callback · `function` expression capturing ·
+arrow inside `try`/`catch` · two-param arrow capturing · arrow inside a nested
+function declaration.
+
+So the `__closure_N` breach is **not** reached by ordinary closure creation over
+a wide host frame. The remaining distinguishing features of the real sites are
+the ones these fixtures lack: **minified, CJS-rewritten** sources, and whatever
+enclosing construct the ESLint dependency uses (IIFE / class body / deeper
+nesting).
+
+**Use the checker, not a hypothesis.** The productive next move is to bisect by
+INPUT rather than by guessing shapes: run `JS2WASM_CHECK_FRAMES=1` over each of
+the 146 resolved sources compiled alone, find which single file produces a
+`__closure_N` breach, and reduce from that file's real text. That converts an
+open-ended search into a bounded one, and each probe is seconds.
