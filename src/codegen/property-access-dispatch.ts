@@ -31,6 +31,7 @@ import {
   isStringType,
   isStringWrapperType,
 } from "../checker/type-mapper.js";
+import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { emitSymbolDescLoad } from "./symbol-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -3463,7 +3464,7 @@ export function finalizeStructAndDynamicMemberGet(
   // (e.g., properties on Object, {}, undefined, or dynamically-typed values).
   // Determine the expected result type from the TS checker at the access site.
   const accessType = ctx.checker.getTypeAtLocation(expr);
-  const accessWasm = widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)); // (#2984)
+  const accessWasm = symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time
@@ -3564,11 +3565,7 @@ export function finalizeStructAndDynamicMemberGet(
         [{ kind: "externref" }, { kind: "externref" }],
         [{ kind: "externref" }],
       );
-      let unboxIdx: number | undefined;
-      if (accessWasm.kind === "f64" || accessWasm.kind === "i32") {
-        unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-      }
-      flushLateImportShifts(ctx, fctx);
+      let unboxIdx = ensureScalarUnbox(ctx, fctx, accessWasm);
       if (getIdx !== undefined) {
         const objExprType = compileExpression(ctx, fctx, expr.expression);
         // If the expression produced a ref/ref_null (struct), convert to externref
@@ -3663,13 +3660,12 @@ export function finalizeStructAndDynamicMemberGet(
                 // partition saw number-vs-boolean, fell to ref identity, and
                 // answered UNEQUAL (the residual wrong-value failure of the
                 // #2938 no-yield relax — generators/no-yield.js, return.js).
-                const allBoolean =
-                  k === "i32" &&
-                  structCandidates.every((c) => c.fieldType.kind === "i32" && c.fieldType.boolean === true);
-                resultWasm = allBoolean ? { kind: "i32", boolean: true } : ({ kind: k } as ValType);
+                resultWasm = commonScalarFieldType(
+                  k,
+                  structCandidates.map((candidate) => candidate.fieldType),
+                );
                 if (unboxIdx === undefined) {
-                  unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
-                  flushLateImportShifts(ctx, fctx);
+                  unboxIdx = ensureScalarUnbox(ctx, fctx, resultWasm);
                 }
               }
             }
@@ -3685,7 +3681,7 @@ export function finalizeStructAndDynamicMemberGet(
             externGetFallback.push({ op: "call", funcIdx: unboxIdx });
           } else if (resultWasm.kind === "i32" && unboxIdx !== undefined) {
             externGetFallback.push({ op: "call", funcIdx: unboxIdx });
-            externGetFallback.push({ op: "i32.trunc_sat_f64_s" });
+            if (resultWasm.symbol !== true) externGetFallback.push({ op: "i32.trunc_sat_f64_s" });
           }
           externGetFallback.push({ op: "local.set", index: resultLocal });
 
@@ -3821,7 +3817,7 @@ export function finalizeStructAndDynamicMemberGet(
             }
             if (accessWasm.kind === "i32") {
               if (unboxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx });
-              fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+              if (accessWasm.symbol !== true) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
               return { kind: "i32" };
             }
             return { kind: "externref" };
@@ -3843,8 +3839,8 @@ export function finalizeStructAndDynamicMemberGet(
           if (unboxIdx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx });
           }
-          fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-          return { kind: "i32" };
+          if (accessWasm.symbol !== true) fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+          return accessWasm;
         }
         return { kind: "externref" };
       }

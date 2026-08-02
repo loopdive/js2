@@ -604,9 +604,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 39,
+        "passed": 55,
         "total": 55,
-        "passRatePct": 70.91,
+        "passRatePct": 100,
         "admitted": 272,
         "upstreamTestsSeen": 273,
         "harnessIncompatible": 209,

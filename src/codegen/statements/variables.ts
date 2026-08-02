@@ -35,6 +35,7 @@ import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
+import { bindingHasMixedAssignmentCarrier } from "../analysis/mixed-assignment-carrier.js";
 
 function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
@@ -142,13 +143,11 @@ export function usageInferredLocalType(ctx: CodegenContext, decl: ts.VariableDec
 
 function localTypeForDeclaration(ctx: CodegenContext, type: ts.Type, decl?: ts.VariableDeclaration): ValType {
   // (#3673) Explicit native type annotation — `let x: i32` where
-  // `type i32 = number`. TypeScript never puts an `aliasSymbol` on an alias of
-  // an intrinsic primitive, so the annotation only survives on the type NODE;
-  // see `native-type-annotations.ts` for the measurement that established this.
-  // Checked first: an explicit annotation is a user assertion about the slot's
-  // representation and outranks every inference below it.
+  // `type i32 = number`; the annotation node is the only surviving evidence.
+  // It is a user assertion and outranks every inference below it.
   const nativeLocal = nativeTypeOfDeclaration(ctx.checker, decl);
   if (nativeLocal) return nativeLocal;
+  if (decl && bindingHasMixedAssignmentCarrier(ctx, decl)) return { kind: "externref" };
   if (isNullablePrimitiveType(type)) return { kind: "externref" };
   // (#2806) A `var x = (void 0)` binding needs an externref slot (the same one
   // `= undefined` gets), so a later reference assignment isn't coerced to numeric
