@@ -188,7 +188,7 @@ needs an explicit maintained compile mode that prefers runtime eval; it must not
 silently disable constant folding, because existing acceptance tests require
 literal eval to remain provider-free.
 
-The final full-lane A/B run (`20260802-073632`) remained **207 / 816** with the
+The final post-merge full-lane A/B run (`20260802-075946`) remained **207 / 816** with the
 exact same 207 passing files as the pre-slice baseline: zero pass-to-fail and
 zero fail-to-pass transitions. Candidate non-pass outcomes were 569 runtime
 failures, 16 compile errors, and 24 compile timeouts. The only four status
