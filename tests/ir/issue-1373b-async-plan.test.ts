@@ -18,6 +18,7 @@ import {
 import { createIrBindingId, createIrSourceId, createIrUnitId } from "../../src/ir/identity.js";
 import { asValueId, irVal, type IrType } from "../../src/ir/nodes.js";
 import { evaluateIrOutcomePolicy } from "../../src/ir/outcomes.js";
+import { ASYNC_RUNTIME_FEATURES } from "../../src/ir/async-runtime-providers.js";
 import { compileToWasm } from "../equivalence/helpers.js";
 
 const EXTERN: IrType = irVal({ kind: "externref" });
@@ -165,6 +166,24 @@ describe("#1373b IrAsyncPlan contract", () => {
     });
     expect(new Set(prepared.map((item) => item.serialized)).size).toBe(1);
     expect(new Set(prepared.map((item) => item.hash)).size).toBe(1);
+  });
+
+  it("uses the shared semantic vocabulary and rejects concrete host adapter names", () => {
+    const plan = makePlan();
+    expect(new Set(plan.runtimeIntents)).toEqual(new Set(ASYNC_RUNTIME_FEATURES));
+    for (const adapter of [
+      "Promise_new_pending",
+      "Promise_resolve",
+      "Promise_then2",
+      "__make_callback",
+      "Promise_settle_resolve",
+      "Promise_settle_reject",
+    ]) {
+      expect(serializeIrAsyncPlan(plan)).not.toContain(adapter);
+    }
+
+    (plan as { runtimeIntents: readonly string[] }).runtimeIntents = [...plan.runtimeIntents, "Promise_resolve"];
+    expect(errorCodes(plan)).toContain("unknown-runtime-intent");
   });
 
   it("fails closed on an unknown state and handler", () => {
