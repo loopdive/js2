@@ -251,7 +251,7 @@ describe("#1373b IrAsyncPlan contract", () => {
 });
 
 describe("#1042/#1373b async migration anti-vacuity", () => {
-  it("keeps the four playground blockers typed and strict while routing is unchanged", async () => {
+  it("IR-emits fetchUser while keeping the three remaining playground blockers typed", async () => {
     const source = readFileSync(new URL("../../website/playground/examples/js/async.ts", import.meta.url), "utf8");
     const result = await compile(source, {
       fileName: "website/playground/examples/js/async.ts",
@@ -259,14 +259,18 @@ describe("#1042/#1373b async migration anti-vacuity", () => {
     });
     expect(result.success).toBe(true);
     const blockers = (result.irOutcomes ?? []).filter((outcome) => outcome.kind !== "emitted");
-    expect(blockers).toHaveLength(4);
+    expect(blockers).toHaveLength(3);
     expect(blockers.map((outcome) => [outcome.displayName, outcome.kind, outcome.stage, outcome.code]).sort()).toEqual([
-      ["fetchAllParallel", "unsupported", "select", "body-shape-rejected"],
-      ["fetchAllSequential", "unsupported", "select", "call-graph-closure"],
-      ["fetchUser", "unsupported", "select", "async-function"],
+      ["fetchAllParallel", "unsupported", "select", "async-function"],
+      ["fetchAllSequential", "unsupported", "select", "async-function"],
       ["main", "unsupported", "select", "async-function"],
     ]);
     expect(blockers.every((outcome) => outcome.legacyBodyEmitted && !outcome.irBodyEmitted)).toBe(true);
+    expect((result.irOutcomes ?? []).find((outcome) => outcome.displayName === "fetchUser")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: true,
+      irBodyEmitted: true,
+    });
     expect(evaluateIrOutcomePolicy(blockers, "ir-only").ready).toBe(false);
   });
 

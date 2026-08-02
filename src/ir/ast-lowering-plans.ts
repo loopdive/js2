@@ -128,6 +128,8 @@ export interface IrIntegrationLoweringPlans {
   readonly topLevelFunctionValues: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   readonly promiseDelays: IrPromiseDelayLoweringPlans;
+  /** Exact engine-activated source owners admitted by the async-plan producer. */
+  readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
 }
 
 export function requireMatchingLoweringPlanOwner(

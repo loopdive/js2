@@ -104,6 +104,7 @@ import {
 } from "../codegen/registry/types.js";
 import type { CodegenContext, FunctionContext } from "../codegen/context/types.js";
 import { applyIrTailCalls } from "../codegen/ir-tail-call.js";
+import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
 import {
   getFuncRefWrapperRootTypeIdx,
   getOrCreateFuncRefWrapperTypes,
@@ -125,6 +126,7 @@ import {
   type LoweredFunctionResult,
   type ModuleBindingGlobal,
 } from "./from-ast.js";
+import { prepareSingleAwaitIrFunction } from "./async-prepare.js";
 import {
   collectIrDirectCallLoweringPlans,
   type IrDirectCallLoweringPlan,
@@ -290,6 +292,43 @@ export {
   type IrIntegrationTerminalFailureEvent,
   type IrIntegrationTerminalEvidence,
 } from "./integration-report.js";
+
+function prepareSuspendingAsyncLowering(
+  lowered: LoweredFunctionResult,
+  ownerUnitId: IrUnitId,
+  name: string,
+  suspendingOwners: ReadonlySet<IrUnitId> | undefined,
+): LoweredFunctionResult {
+  if (!suspendingOwners?.has(ownerUnitId)) return lowered;
+  const prepared = prepareSingleAwaitIrFunction(lowered.main);
+  if (!prepared) {
+    throw new IrUnsupportedError(
+      "body-shape-rejected",
+      "build",
+      `async-plan producer could not split the certified single-await body ${name}`,
+    );
+  }
+  return {
+    main: prepared.main,
+    lifted: [...lowered.lifted, ...prepared.stateFunctions],
+    liftedUnitProvenance: [...lowered.liftedUnitProvenance, ...prepared.provenance],
+  };
+}
+
+function isLiftedExecutableRole(role: ProgramAbiDerivedUnitRecord["role"]): boolean {
+  return role === "lifted-closure" || role === "ir-async-state";
+}
+
+function lowerIrEntryFunction(
+  ctx: CodegenContext,
+  fn: IrFunction,
+  resolver: IrLowerResolver,
+  existing: WasmFunction,
+): WasmFunction {
+  return fn.asyncPlan
+    ? lowerPreparedIrAsyncFunction(ctx, fn, resolver, existing)
+    : lowerIrFunctionToWasm(fn, resolver).func;
+}
 
 /**
  * Find checker-certified ambient Date snapshots in owners that have already
@@ -584,8 +623,7 @@ export function compileIrPathFunctions(
     allowHostExterns: jsHostExterns && !ctx.nativeStrings,
     allowBuiltinMapExtern: jsHostExterns && !ctx.nativeStrings,
   };
-  // Compatibility-only direct callers still receive one exact local planning
-  // context. Structural global refs must never fall back to declaration names.
+  // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
     ? undefined
     : buildIrUnitInventory([sourceFile], { entrySource: sourceFile, checker: ctx.checker });
@@ -623,7 +661,7 @@ export function compileIrPathFunctions(
     }
     const records = new Map<IrUnitId, ProgramAbiDerivedUnitRecord>();
     for (const provenance of result.liftedUnitProvenance) {
-      if (provenance.parentId !== parentUnitId || provenance.role !== "lifted-closure") {
+      if (provenance.parentId !== parentUnitId || !isLiftedExecutableRole(provenance.role)) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "build",
@@ -980,7 +1018,7 @@ export function compileIrPathFunctions(
         );
       }
       const o = effectiveOverride(name);
-      const result = lowerFunctionAstToIr(stmt, {
+      const lowered = lowerFunctionAstToIr(stmt, {
         exported: hasExportModifier(stmt),
         ownerUnitId,
         directCalls: directCallsFor(stmt, ownerUnitId),
@@ -1003,6 +1041,7 @@ export function compileIrPathFunctions(
         // #3765: share direct-codegen's grounded numeric-local oracle with IR.
         numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
       });
+      const result = prepareSuspendingAsyncLowering(lowered, ownerUnitId, name, loweringPlans?.suspendingAsyncUnitIds);
       if (result.main.unitId !== ownerUnitId) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
@@ -2520,7 +2559,7 @@ export function compileIrPathFunctions(
         continue;
       }
 
-      const { func: wasmFunc } = lowerIrFunctionToWasm(entry.fn, resolver);
+      const wasmFunc = lowerIrEntryFunction(ctx, entry.fn, resolver, existing);
       // #1370 Phase B: signature parity guard for class methods.
       //
       // The legacy `class-bodies.ts` pass pre-allocated this method's
