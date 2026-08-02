@@ -268,8 +268,9 @@ describe("#1042/#1373b async migration anti-vacuity", () => {
     expect(blockers.every((outcome) => outcome.legacyBodyEmitted && !outcome.irBodyEmitted)).toBe(true);
     expect((result.irOutcomes ?? []).find((outcome) => outcome.displayName === "fetchUser")).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
     expect(evaluateIrOutcomePolicy(blockers, "ir-only").ready).toBe(false);
   });
