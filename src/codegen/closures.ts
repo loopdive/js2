@@ -3385,6 +3385,16 @@ export function compileArrowAsCallback(
         }
       } else {
         // Immutable capture or already-boxed: push directly
+        if (process.env?.JS2WASM_FRAME_OPS) {
+          const liveFrame = fctx.params.length + fctx.locals.length;
+          if (cap.localIdx >= liveFrame) {
+            process.stderr.write(
+              `[js2:cap-emit] '${cap.name}' localIdx=${cap.localIdx} >= liveFrame=${liveFrame} ` +
+                `(params=${fctx.params.length} locals=${fctx.locals.length}) in ${fctx.name} ` +
+                `mapNow=${fctx.localMap.get(cap.name)} alreadyBoxed=${cap.alreadyBoxed}\n`,
+            );
+          }
+        }
         fctx.body.push({ op: "local.get", index: cap.localIdx });
       }
     }

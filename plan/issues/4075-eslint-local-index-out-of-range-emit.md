@@ -571,3 +571,78 @@ emitted into this body.
 
 `JS2WASM_FRAME_OPS=1` is committed and does exactly this dump, so the next step
 costs seconds, not another compile cycle.
+
+## ROOT CAUSE FOUND AND ONE CLASS FIXED (2026-08-02)
+
+A `push`-trap on the lifted body (`JS2WASM_FRAME_OPS=2`, since removed) printed
+the stack of whoever wrote the out-of-frame index. It is
+`compileIdentifierCall` (`src/codegen/expressions/call-identifier.ts`), in the
+branch that pushes a nested function's capture values at its call site:
+
+```ts
+fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+```
+
+`cap.outerLocalIdx` is a slot in the **declaring** function's frame. When the
+nested function is called from a DIFFERENT frame — here, from inside a lifted
+closure — that index can point past the current frame entirely.
+
+Confirmed with the exact values:
+
+```text
+[js2:nested-cap] 'regexSeparators' outerLocalIdx=4 frame=4 in __closure_2
+                 mapped=3 capturedGlobal=false moduleGlobal=false
+```
+
+`mapped=3` — the lifted closure genuinely HAS the capture, materialised by its
+own prologue at slot 3. The emitter simply used the declaring function's slot
+number instead.
+
+**Mechanism**: `mapDomain` is a nested function capturing `regexSeparators`.
+`toUnicode` is a lifted closure that CALLS `mapDomain`, so it transitively
+captures `regexSeparators` into its own frame. At the call site the emitter
+pushed the declaring frame's index.
+
+### Why the fix is narrow, and why that matters
+
+The obvious fix — `localMap.get(name) ?? outerLocalIdx` — is **known to be
+unsafe**: the in-file note records that #1177 tried exactly that and caused
+**100+ test262 regressions**, because main's wrong-slot read is load-bearing for
+tests relying on the resulting null deref throwing.
+
+So the guard prefers the mapped slot **only when `outerLocalIdx` is out of the
+current frame** — i.e. only where the existing behaviour emits provably invalid
+Wasm and there is therefore no working behaviour to preserve. Every in-frame
+case is byte-identical. Equivalence confirms it: 32 failed / 1611 passed, empty
+diff against base.
+
+### Measured
+
+| fixture | before | after |
+| --- | --- | --- |
+| 200-line reduced fixture | 2 breaches, compile fails | **0 breaches, compiles** |
+| real `uri.all.js` | 8 breaches | **3** |
+| ESLint package entry | blocked at binary emit | still blocked (see below) |
+
+### What is NOT fixed — a SECOND, distinct class
+
+The 3 survivors on `uri.all.js` are `resolve`, `normalize` and `equal` — **top-level
+functions, not lifted closures** — and the `nested-cap` probe does not fire for
+them. All three breach at **exactly index 33**, despite frames of 15, 7 and 21.
+A single shared index across three unrelated functions points at an inlined body
+carrying its own frame indices, not at a capture mis-resolution.
+
+ESLint's remaining blocker is this second class: `local (local.get) index out of
+range — 65 (valid: [0, 8)) at function 've' (position 1666, 6 declared locals)`.
+
+### No synthetic test ships with this fix
+
+Six synthetic shapes were tried across this investigation — named function
+expression + inline callback, plain declarations, arrow callback, shadowed
+parameter name, forwarded callback, the UMD-nested sibling-closure layout, and
+finally the exact declaring-frame/lifted-frame mechanism above. **All compile
+clean on both sides.** The real `uri.all.js` remains the only reproducer, and the
+evidence for the fix is the measured breach-count drop plus the reduced fixture
+going 2 → 0. A committed test needs either the cleaned 200-line fixture (see the
+validity caveat above) or a programmatic surface for the frame checker's result,
+which today is env-gated stderr only.

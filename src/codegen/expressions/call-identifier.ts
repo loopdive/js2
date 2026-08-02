@@ -1970,11 +1970,29 @@ export function compileIdentifierCall(
           // (#1177: TDZ check moved above the mutable/non-mutable branch.
           // Stage 1 localMap-first lookup reverted — see comment in mutable
           // branch above.)
-          fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+          // (#4075) `cap.outerLocalIdx` is a slot in the DECLARING function's
+          // frame. When the nested function is called from a different frame —
+          // e.g. from inside a lifted closure — that index can point past the
+          // current frame entirely, and the emitted `local.get` makes the whole
+          // module fail to validate ("local index out of range").
+          //
+          // A blanket `localMap.get(name) ?? outerLocalIdx` is NOT safe here:
+          // #1177 tried exactly that and caused 100+ test262 regressions,
+          // because main's wrong-slot read is load-bearing for tests that rely
+          // on the resulting null deref throwing (see the revert note in the
+          // mutable branch above). So this prefers the mapped slot ONLY when
+          // `outerLocalIdx` is out of THIS frame — i.e. only where the current
+          // behaviour emits provably invalid Wasm and there is no working
+          // behaviour to preserve. Every in-frame case is byte-identical.
+          const capFrameSize = fctx.params.length + fctx.locals.length;
+          const mappedCapIdx = fctx.localMap.get(cap.name);
+          const capSourceIdx =
+            cap.outerLocalIdx < capFrameSize ? cap.outerLocalIdx : (mappedCapIdx ?? cap.outerLocalIdx);
+          fctx.body.push({ op: "local.get", index: capSourceIdx });
           // Coerce capture value to expected param type if they differ
           const expectedCapType = captureParamTypes?.[capIdx];
           if (expectedCapType) {
-            const actualType = getLocalType(fctx, cap.outerLocalIdx);
+            const actualType = getLocalType(fctx, capSourceIdx);
             if (actualType && !valTypesMatch(actualType, expectedCapType)) {
               coerceType(ctx, fctx, actualType, expectedCapType);
             }
