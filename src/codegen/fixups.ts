@@ -47,8 +47,9 @@ export function markLeafStructsFinal(
   mod: WasmModule,
   skipFinal = false,
   keepOpenTypeIdxs: ReadonlySet<number> = new Set<number>(),
-): void {
-  if (skipFinal) return;
+): readonly number[] {
+  if (skipFinal) return [];
+  const finalizedTypeIndices: number[] = [];
   // Collect all type indices that are used as a supertype
   const hasSubtypes = new Set<number>();
 
@@ -73,12 +74,16 @@ export function markLeafStructsFinal(
   for (let i = 0; i < mod.types.length; i++) {
     const td = mod.types[i];
     if (td.kind === "struct" && td.superTypeIdx !== undefined && !hasSubtypes.has(i) && !keepOpenTypeIdxs.has(i)) {
-      td.final = true;
+      if (td.final !== true) {
+        td.final = true;
+        finalizedTypeIndices.push(i);
+      }
     } else if (td.kind === "rec") {
       // Types inside rec groups have their own indices (rec groups occupy consecutive indices)
       // We need to compute the base index for types within the rec group
       // Actually, rec group members are indexed consecutively starting at i
       let innerIdx = i;
+      let finalizedRec = false;
       for (const inner of td.types) {
         if (
           inner.kind === "struct" &&
@@ -86,12 +91,17 @@ export function markLeafStructsFinal(
           !hasSubtypes.has(innerIdx) &&
           !keepOpenTypeIdxs.has(innerIdx)
         ) {
-          inner.final = true;
+          if (inner.final !== true) {
+            inner.final = true;
+            finalizedRec = true;
+          }
         }
         innerIdx++;
       }
+      if (finalizedRec) finalizedTypeIndices.push(i);
     }
   }
+  return finalizedTypeIndices;
 }
 
 /**

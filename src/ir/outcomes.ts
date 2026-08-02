@@ -193,6 +193,8 @@ interface IrObservedOutcomeBase {
   readonly target: IrObservedTarget;
   readonly legacyBodyEmitted: boolean;
   readonly irBodyEmitted: boolean;
+  /** R2 component whose ABI was dependency-derived and sealed before lowering. */
+  readonly preparedComponentId?: string;
 }
 
 export type IrObservedOutcome =

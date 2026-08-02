@@ -22,6 +22,11 @@ export interface IrExactFunctionClaim {
   readonly declaration: ts.FunctionDeclaration;
 }
 
+export interface IrExactBodyClaim {
+  readonly unitId: IrUnitId;
+  readonly legacyName: string;
+}
+
 export interface IrCorrelatedSkippedFunctions {
   readonly unitIds: ReadonlySet<IrUnitId>;
   /** Preserves the declaration compiler's public return order after validation. */
@@ -96,13 +101,11 @@ export function buildIrRequestedFunctionSkipProjection(
   return buildIrLegacyUnitProjection(entries);
 }
 
-/**
- * Correlate names returned by `compileDeclarations` only against the requested
- * projection. Foreign, duplicate, and missing results all fail closed.
- */
-export function correlateIrSkippedFunctionNames(
+/** Correlate one direct-emitter result list against its exact requested projection. */
+export function correlateIrSkippedBodyNames(
   requested: IrLegacyUnitProjection,
   returnedLegacyNames: readonly string[],
+  kind: "function" | "class member",
 ): IrCorrelatedSkippedFunctions {
   const correlation = requested.startResultCorrelation<true>();
   for (const legacyName of returnedLegacyNames) {
@@ -110,7 +113,7 @@ export function correlateIrSkippedFunctionNames(
     if (!entry) {
       throw new IrLegacyUnitProjectionInvariantError(
         "foreign-result-correlation",
-        `legacy declaration compiler returned unrequested skipped function ${JSON.stringify(legacyName)}`,
+        `legacy declaration compiler returned unrequested skipped ${kind} ${JSON.stringify(legacyName)}`,
       );
     }
     correlation.consume({ ...entry, result: true });
@@ -123,16 +126,29 @@ export function correlateIrSkippedFunctionNames(
 }
 
 /**
+ * Correlate top-level function names returned by `compileDeclarations` only
+ * against the requested projection. Foreign, duplicate, and missing results
+ * all fail closed.
+ */
+export function correlateIrSkippedFunctionNames(
+  requested: IrLegacyUnitProjection,
+  returnedLegacyNames: readonly string[],
+): IrCorrelatedSkippedFunctions {
+  return correlateIrSkippedBodyNames(requested, returnedLegacyNames, "function");
+}
+
+/**
  * Derive exact free-function body ownership from prepare-before-direct terminal
  * evidence. Public compiled-name lists are deliberately insufficient here:
  * every terminal row must correlate to the authoritative claim index.
  */
-export function preparedIrFunctionRouting(
+export function preparedIrBodyRouting(
   report: IrIntegrationReport,
-  claimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>,
+  claimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
 ): {
   readonly irOwnedUnitIds: ReadonlySet<IrUnitId>;
   readonly preparedUnitIds: ReadonlySet<IrUnitId>;
+  readonly deferredUnitIds: ReadonlySet<IrUnitId>;
 } {
   if (!report.terminalEvidence) {
     throw new IrInvariantError(
@@ -143,6 +159,7 @@ export function preparedIrFunctionRouting(
   }
   const irOwned = new Set<IrUnitId>();
   const prepared = new Set<IrUnitId>();
+  const deferred = new Set<IrUnitId>();
   for (const evidence of report.terminalEvidence) {
     const claim = claimsByUnitId.get(evidence.unitId);
     if (!claim || claim.legacyName !== evidence.legacyName) {
@@ -153,8 +170,12 @@ export function preparedIrFunctionRouting(
       );
     }
     if (evidence.kind === "patched") {
-      irOwned.add(evidence.unitId);
-      prepared.add(evidence.unitId);
+      if (evidence.preparedComponentId === undefined) {
+        deferred.add(evidence.unitId);
+      } else {
+        irOwned.add(evidence.unitId);
+        prepared.add(evidence.unitId);
+      }
     } else if (evidence.error.outcome.kind === "invariant") {
       // A failed invariant is terminal IR ownership: compilation must fail
       // without giving the direct emitter a retry. The declaration pass will
@@ -162,7 +183,7 @@ export function preparedIrFunctionRouting(
       irOwned.add(evidence.unitId);
     }
   }
-  return { irOwnedUnitIds: irOwned, preparedUnitIds: prepared };
+  return { irOwnedUnitIds: irOwned, preparedUnitIds: prepared, deferredUnitIds: deferred };
 }
 
 /** Combine disjoint preparation/emission reports without losing exact rows. */
@@ -180,6 +201,14 @@ export function mergeIrIntegrationReports(
   return {
     compiled: [...first.compiled, ...second.compiled],
     errors: [...first.errors, ...second.errors],
+    ...(!first.compiledArtifactEvidence && !second.compiledArtifactEvidence
+      ? {}
+      : {
+          compiledArtifactEvidence: [
+            ...(first.compiledArtifactEvidence ?? []),
+            ...(second.compiledArtifactEvidence ?? []),
+          ],
+        }),
     terminalEvidence: [...first.terminalEvidence, ...second.terminalEvidence],
     terminalCompiledOwners: [...(first.terminalCompiledOwners ?? []), ...(second.terminalCompiledOwners ?? [])],
     syntheticCompiledArtifacts: [

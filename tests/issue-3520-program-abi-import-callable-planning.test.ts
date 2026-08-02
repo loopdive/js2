@@ -234,6 +234,49 @@ describe("#3520 production imported-callable Program ABI planning", () => {
     expect(abi.entries().map((entry) => entry.id)).toEqual([retainedId]);
   });
 
+  it("prepares one import from a stable pre-DCE denominator and gives later imports trailing identities", () => {
+    const module = createEmptyModule();
+    module.types.push({ kind: "func", params: [], results: [] });
+    const dead = functionImport("env", "a-dead", 0);
+    const required = functionImport("env", "required", 0);
+    module.imports.push(dead, required);
+    const { ctx, inventory, session } = fixture(module);
+    const deadKey = structuralKey("env", "a-dead");
+    const requiredKey = structuralKey("env", "required");
+    const denominator = [...catalogProgramAbiCallableImports(ctx).keys()];
+    const importRegistry = ctx.programAbiCallableImports;
+    if (!importRegistry) throw new Error("missing callable-import registry");
+
+    importRegistry.planPrepared(new Set([required]));
+    const requiredId = session.locatorBindingId(required)!;
+    expect(session.getDraft(requiredId)).toMatchObject({
+      structuralReferenceKey: requiredKey,
+      structuralOrder: { derivedOrdinal: denominator.indexOf(requiredKey) },
+      intent: { kind: "callable", origin: "import" },
+    });
+
+    const late = functionImport("late", "after-seal", 0);
+    const lateKey = structuralKey("late", "after-seal");
+    module.imports = [late, required];
+    const finalCatalog = planProgramAbiCallableImports(ctx);
+    const lateId = finalCatalog.get(lateKey)!;
+    expect(finalCatalog.get(requiredKey)).toBe(requiredId);
+    expect(finalCatalog.has(deadKey)).toBe(false);
+    expect(session.getDraft(lateId)?.structuralOrder.derivedOrdinal).toBe(denominator.length);
+
+    const entrySource = inventory.sources.find((candidate) => candidate.kind === "entry")!;
+    const deadId = createIrBindingId({
+      ownerId: entrySource.id,
+      domain: "callable",
+      role: "imported-function",
+      ordinal: denominator.indexOf(deadKey),
+    });
+    expect(session.hasPlan(deadId)).toBe(false);
+    const { abi } = session.publish(module);
+    expect(abi.resolveFinalIndex(lateId)).toEqual({ space: "function", index: 0 });
+    expect(abi.resolveFinalIndex(requiredId)).toEqual({ space: "function", index: 1 });
+  });
+
   it("gives allocator-distinct duplicate imports unique plans while preserving one structural resolver target", () => {
     const module = createEmptyModule();
     module.types.push({ kind: "func", params: [], results: [] });

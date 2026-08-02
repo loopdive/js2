@@ -132,7 +132,7 @@ function reconcile(
     initialSelection: options.initialSelection ?? planned.selection,
     preparedSelection: options.preparedSelection ?? planned.selection,
     preparationFailuresByUnitId: options.preparationFailuresByUnitId ?? new Map(),
-    skippedFunctionUnitIds: new Set(),
+    skippedBodyUnitIds: new Set(),
     report,
     existingOutcomes: [],
     target: "gc",

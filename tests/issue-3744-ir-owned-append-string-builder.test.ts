@@ -31,6 +31,40 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
+function functionBodyWithCallNames(wat: string, name: string): string {
+  const lines = wat.split("\n");
+  const functionNames: string[] = [];
+  for (const line of lines) {
+    const imported = /^\s*\(import "[^"]*" "([^"]+)" \(func/.exec(line);
+    if (imported) {
+      functionNames.push(imported[1]!);
+      continue;
+    }
+    const defined = /^\s*\(func \$([^\s()]+)/.exec(line);
+    if (defined) functionNames.push(defined[1]!);
+  }
+  const start = lines.findIndex((line) => new RegExp(`\\(func \\$${name}[\\s()]`).test(line));
+  expect(start, `func $${name} not found`).toBeGreaterThanOrEqual(0);
+  const body: string[] = [];
+  let depth = 0;
+  let seen = false;
+  for (let index = start; index < lines.length; index++) {
+    const line = lines[index]!;
+    const call = /\bcall (\d+)\b/.exec(line);
+    body.push(call ? `${line} ;; ${functionNames[Number(call[1])] ?? "?"}` : line);
+    for (const character of line) {
+      if (character === "(") {
+        depth++;
+        seen = true;
+      } else if (character === ")") {
+        depth--;
+      }
+    }
+    if (seen && depth <= 0) break;
+  }
+  return body.join("\n");
+}
+
 async function compileAndInstantiate(src: string, opts: Record<string, unknown>) {
   const r = await compile(src, { fileName: "owned-append.ts", ...opts });
   if (!r.success) {
@@ -43,6 +77,7 @@ async function compileAndInstantiate(src: string, opts: Record<string, unknown>)
   return {
     exports: instance.exports as unknown as Record<string, CallableFunction>,
     irCompiledFuncs: r.irCompiledFuncs,
+    wat: r.wat,
   };
 }
 
@@ -85,11 +120,12 @@ describe("#3744 IR owned-append string-builder fast path", () => {
 
   it("default: IR claims this shape and uses the owned-append fast path", async () => {
     process.env.JS2WASM_IR_STRING_BUILDER = undefined;
-    const { irCompiledFuncs } = await compileAndInstantiate(BUILDER_SRC, {
+    const { irCompiledFuncs, wat } = await compileAndInstantiate(BUILDER_SRC, {
       target: "wasi",
       nativeStrings: true,
     });
     expect(irCompiledFuncs ?? []).toContain("run");
+    expect(functionBodyWithCallNames(wat, "run")).toContain(";; __str_concat_owned");
   });
 
   it("JS2WASM_IR_STRING_BUILDER=0: kill switch defers this shape to legacy", async () => {

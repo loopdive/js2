@@ -7,7 +7,7 @@ import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncHandle, FuncTypeDef, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
-import { definedFuncAt, definedFuncHandleOf, isImportFuncIdx, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt, isImportFuncIdx, pushDefinedFunc } from "./func-space.js";
 import {
   planProgramAbiSupportCallable,
   planProgramAbiUnitCallable,
@@ -22,6 +22,7 @@ const PROMISE_SUBCLASS_ONHOST_CALLABLE_ROLE = "promise-subclass-onhost-construct
 interface ProgramAbiClassUnitCallableObservation {
   readonly unitId: IrUnitId;
   readonly displayName: string;
+  readonly funcIdx: FuncHandle;
   readonly func: WasmFunction;
 }
 
@@ -31,6 +32,7 @@ interface ProgramAbiClassSupportCallableObservation {
   readonly role: string;
   readonly roleOrdinal: number;
   readonly displayName: string;
+  readonly funcIdx: FuncHandle;
   readonly func: WasmFunction;
 }
 
@@ -185,8 +187,8 @@ export class ProgramAbiClassCallableRegistry {
     const func = this.requireDefinedFunction(displayName, funcIdx);
     const observations = this.units.get(unitId) ?? [];
     const previous = observations.at(-1);
-    if (previous?.func !== func || previous.displayName !== displayName) {
-      observations.push(Object.freeze({ unitId, displayName, func }));
+    if (previous?.funcIdx !== funcIdx || previous.func !== func || previous.displayName !== displayName) {
+      observations.push(Object.freeze({ unitId, displayName, funcIdx, func }));
       this.units.set(unitId, observations);
     }
     return unitId;
@@ -265,7 +267,7 @@ export class ProgramAbiClassCallableRegistry {
       );
     }
     const canonicalUnitIds = [...this.units.entries()]
-      .filter(([, observations]) => observations.some((observation) => observation.func === func))
+      .filter(([, observations]) => observations.some((observation) => observation.funcIdx === funcIdx))
       .map(([unitId]) => unitId);
     if (canonicalUnitIds.length === 0) return undefined;
     if (canonicalUnitIds.length > 1) {
@@ -327,8 +329,8 @@ export class ProgramAbiClassCallableRegistry {
     }
     const observations = this.supports.get(bindingId) ?? [];
     const previous = observations.at(-1);
-    if (previous?.func !== func || previous.displayName !== displayName) {
-      observations.push(Object.freeze({ bindingId, classId, role, roleOrdinal, displayName, func }));
+    if (previous?.funcIdx !== funcIdx || previous.func !== func || previous.displayName !== displayName) {
+      observations.push(Object.freeze({ bindingId, classId, role, roleOrdinal, displayName, funcIdx, func }));
       this.supports.set(bindingId, observations);
     }
     return bindingId;
@@ -338,14 +340,13 @@ export class ProgramAbiClassCallableRegistry {
   planRetained(): void {
     if (this.planned) return;
     this.planned = true;
-    const live = new Set(this.ctx.mod.functions);
-
     for (const [unitId, observations] of this.units) {
-      const canonical = observations.filter((observation) => live.has(observation.func)).at(-1);
-      if (!canonical) continue;
+      const canonical = observations.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx)).at(-1);
+      const func = canonical ? definedFuncAt(this.ctx, canonical.funcIdx) : undefined;
+      if (!canonical || !func) continue;
       const expectedBindingId = irUnitCallableBindingId(unitId);
       if (this.session.hasPlan(expectedBindingId)) {
-        if (!this.session.hasLocator(expectedBindingId, canonical.func)) {
+        if (!this.session.hasLocator(expectedBindingId, func)) {
           throw new ProgramAbiInvariantError(
             "duplicate-slot-locator",
             `retained class callable ${canonical.displayName} is not the exact allocator owned by ${expectedBindingId}`,
@@ -355,8 +356,8 @@ export class ProgramAbiClassCallableRegistry {
       }
       const bindingId = planProgramAbiUnitCallable(this.ctx, {
         ref: irUnitFuncRef({ unitId, name: canonical.displayName }),
-        signature: functionSignature(this.ctx, canonical.func),
-        func: canonical.func,
+        signature: functionSignature(this.ctx, func),
+        func,
       });
       if (bindingId !== expectedBindingId) {
         throw new ProgramAbiInvariantError(
@@ -367,10 +368,11 @@ export class ProgramAbiClassCallableRegistry {
     }
 
     for (const [bindingId, observations] of this.supports) {
-      const canonical = observations.filter((observation) => live.has(observation.func)).at(-1);
-      if (!canonical) continue;
+      const canonical = observations.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx)).at(-1);
+      const func = canonical ? definedFuncAt(this.ctx, canonical.funcIdx) : undefined;
+      if (!canonical || !func) continue;
       if (this.session.hasPlan(bindingId)) {
-        if (!this.session.hasLocator(bindingId, canonical.func)) {
+        if (!this.session.hasLocator(bindingId, func)) {
           throw new ProgramAbiInvariantError(
             "duplicate-slot-locator",
             `retained class support callable ${canonical.displayName} is not the exact allocator owned by ${bindingId}`,
@@ -384,8 +386,8 @@ export class ProgramAbiClassCallableRegistry {
         anchor: { kind: "class", classId: canonical.classId },
         role: canonical.role,
         roleOrdinal: canonical.roleOrdinal,
-        signature: functionSignature(this.ctx, canonical.func),
-        func: canonical.func,
+        signature: functionSignature(this.ctx, func),
+        func,
       });
       if (plannedBindingId !== bindingId) {
         throw new ProgramAbiInvariantError(
@@ -400,18 +402,18 @@ export class ProgramAbiClassCallableRegistry {
   handleForUnit(unitId: IrUnitId): FuncHandle | undefined {
     const canonical = this.units
       .get(unitId)
-      ?.filter((observation) => this.ctx.mod.functions.includes(observation.func))
+      ?.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx))
       .at(-1);
-    return canonical ? definedFuncHandleOf(this.ctx, canonical.func) : undefined;
+    return canonical?.funcIdx;
   }
 
   /** Resolve one exact class support binding to its current stable allocator handle. */
   handleForSupport(bindingId: IrBindingId): FuncHandle | undefined {
     const canonical = this.supports
       .get(bindingId)
-      ?.filter((observation) => this.ctx.mod.functions.includes(observation.func))
+      ?.filter((observation) => definedFuncAt(this.ctx, observation.funcIdx))
       .at(-1);
-    return canonical ? definedFuncHandleOf(this.ctx, canonical.func) : undefined;
+    return canonical?.funcIdx;
   }
 
   /** Resolve one inherited alias to its exact canonical source unit and handle. */

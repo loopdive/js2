@@ -84,6 +84,13 @@ import { nativeStringRepr } from "./builtin-scaffold.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
+import {
+  ensureDynamicPatternTokenDecoder,
+  makeDynamicPatternAccessors,
+  TOKEN_ANY,
+  TOKEN_PIPE,
+  TOKEN_UNSUPPORTED,
+} from "./regexp-dynamic-pattern.js";
 
 export const STANDALONE_REGEXP_ABI_VERSION = 1;
 
@@ -800,6 +807,70 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
 }
 
 /**
+ * (#4089) Resolve the runtime ToString the standalone regex lane uses, as ONE
+ * coercion site.
+ *
+ * Both the `.test`/`.exec` subject path and the dynamic-constructor argument
+ * path need this exact conversion. Each having its own `ensureLateImport` +
+ * `funcMap` lookup is a hand-rolled ToString site per the coercion-site drift
+ * gate (#2108/#3131/#3279) — and the gate is right: that is precisely how the
+ * two paths drifted apart in the first place, with only one of them actually
+ * applying ToString. One resolver, two callers.
+ */
+function ensureRuntimeToStringIdx(ctx: CodegenContext, fctx: FunctionContext | null): number | undefined {
+  const idx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (idx === undefined) return undefined;
+  return ctx.funcMap.get("__extern_toString") ?? idx;
+}
+
+/**
+ * (#4089) Compile `expr` and leave a native `$AnyString` on the stack, applying
+ * the SPEC's ToString — i.e. an object argument gets its own `toString()`
+ * called, per §7.1.17.
+ *
+ * This is the conversion `emitRegexSearchCall` has always done for a `.test`/
+ * `.exec` SUBJECT (#3724). The dynamic `new RegExp(pattern, flags)` path did
+ * something different: it compiled the argument with a native-string
+ * expectation and then `coerceType`d it. For a string that is the same thing;
+ * for an OBJECT it is not a conversion at all, and the emitted cast dereferenced
+ * a null at runtime:
+ *
+ *     new RegExp("abc{1}", { toString() { return ""; } })
+ *       → RuntimeError: dereferencing a null pointer in __module_init()
+ *
+ * which kills the module during top-level evaluation, so the whole file's
+ * assertions are lost. Two call sites needed the identical conversion and only
+ * one had it — the recurring shape of #4080 — so this is the single owner and
+ * both sites now call it.
+ *
+ * Returns false when the argument fails to compile (caller bails).
+ */
+function emitArgAsNativeString(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  argExpr: ts.Expression,
+  strType: ValType,
+): boolean {
+  const emitted = compileExpression(ctx, fctx, argExpr, { kind: "externref" });
+  if (emitted === null) return false;
+  if (emitted.kind !== "externref") {
+    coerceType(ctx, fctx, emitted, { kind: "externref" }, "string", compileStringLiteral);
+  }
+  const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
+  if (toStringIdx === undefined) {
+    // No runtime ToString available — fall back to the previous direct coercion
+    // rather than emitting nothing.
+    coerceType(ctx, fctx, { kind: "externref" }, strType, "string", compileStringLiteral);
+    return true;
+  }
+  fctx.body.push({ op: "call", funcIdx: toStringIdx });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+  return true;
+}
+
+/**
  * Emit the runtime constructor used for genuinely dynamic standalone patterns.
  *
  * The first runtime slice deliberately compiles the shape Acorn executes for
@@ -868,6 +939,18 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   const HAS_MORE = 25;
   const BIT = 26;
   const INVALID_FLAGS = 27;
+  // #4065 — the packed token from `__regex_dyn_token`, and the *counted*
+  // number of program records in the current alternative. `ALTN` replaces the
+  // old `J - I` source-unit arithmetic, which silently assumed one source unit
+  // per record and would mis-target the SPLIT the moment a multi-unit escape
+  // appeared in an alternation.
+  const TOK = 28;
+  const ALTN = 29;
+  // 1 while every token so far is a ONE-UNIT literal or `|`. Only then may the
+  // anchored-literal-alternations fast path below copy the pattern SOURCE text
+  // verbatim as its match payload. `.` (ANY) and any multi-unit escape make
+  // source text != matched text, which that path has no way to express.
+  const PLAIN = 30;
 
   const readFlatUnit = (dataLocal: number, offLocal: number, indexLocal: number): Instr[] => [
     { op: "local.get", index: dataLocal },
@@ -885,44 +968,23 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
   ];
 
-  const flagBit = (): Instr[] => {
-    const entries: Array<[number, number]> = [
-      ["g".charCodeAt(0), RE_FLAG_G],
-      ["i".charCodeAt(0), RE_FLAG_I],
-      ["m".charCodeAt(0), RE_FLAG_M],
-      ["s".charCodeAt(0), RE_FLAG_S],
-      ["u".charCodeAt(0), RE_FLAG_U],
-      ["y".charCodeAt(0), RE_FLAG_Y],
-      ["d".charCodeAt(0), RE_FLAG_D],
-      ["v".charCodeAt(0), RE_FLAG_V],
-    ];
-    let tail: Instr[] = [{ op: "i32.const", value: 0 }];
-    for (let idx = entries.length - 1; idx >= 0; idx--) {
-      const [unit, bit] = entries[idx]!;
-      tail = [
-        { op: "local.get", index: CH },
-        { op: "i32.const", value: unit },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "i32.const", value: bit }],
-          else: tail,
-        },
-      ];
-    }
-    return tail;
-  };
-
-  const isRegexMeta = (): Instr[] => {
-    const units = "\\^$*+?()[]{}".split("").map((ch) => ch.charCodeAt(0));
-    const out: Instr[] = [];
-    for (let idx = 0; idx < units.length; idx++) {
-      out.push({ op: "local.get", index: CH }, { op: "i32.const", value: units[idx]! }, { op: "i32.eq" });
-      if (idx > 0) out.push({ op: "i32.or" });
-    }
-    return out;
-  };
+  // #4065 — the single shared tokeniser. All FOUR walks over the pattern (count
+  // records, find next `|`, emit records, and the anchored-alternations fast
+  // path) go through this, so token *boundaries* and character *semantics* are
+  // decided in exactly one place. Each walk used to advance one source unit at
+  // a time and only the emitter knew `.` is `ReOp.ANY`; that agreed only
+  // because every accepted construct was one unit wide. See
+  // regexp-dynamic-pattern.ts for why that had to change.
+  const tokenDecoderIdx = ensureDynamicPatternTokenDecoder(ctx, strDataRef);
+  const tk = makeDynamicPatternAccessors(tokenDecoderIdx, {
+    pdata: PDATA,
+    poff: POFF,
+    end: END,
+    tok: TOK,
+    ch: CH,
+    fbits: FBITS,
+  });
+  const { readToken, advance: advanceByToken } = tk;
 
   const progCell = (offset: number, value: Instr[]): Instr[] => [
     { op: "local.get", index: PROG },
@@ -948,31 +1010,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.set", index: PC },
   ];
 
-  const dynamicCharOperand: Instr[] = [
-    { op: "local.get", index: FBITS },
-    { op: "i32.const", value: RE_FLAG_I },
-    { op: "i32.and" },
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: CH },
-        { op: "i32.const", value: 0x41 },
-        { op: "i32.ge_s" },
-        { op: "local.get", index: CH },
-        { op: "i32.const", value: 0x5a },
-        { op: "i32.le_s" },
-        { op: "i32.and" },
-        {
-          op: "if",
-          blockType: { kind: "val", type: { kind: "i32" } },
-          then: [{ op: "local.get", index: CH }, { op: "i32.const", value: 0x20 }, { op: "i32.add" }],
-          else: [{ op: "local.get", index: CH }],
-        },
-      ],
-      else: [{ op: "local.get", index: CH }],
-    },
-  ];
+  const dynamicCharOperand: Instr[] = tk.charOperand();
 
   const throwConstructed = (ctorIdx: number, message: string): Instr[] => [
     ...stringConstantExternrefInstrs(ctx, message),
@@ -1027,7 +1065,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
             { op: "br_if", depth: 1 },
             ...readFlatUnit(FDATA, FOFF, I),
             { op: "local.set", index: CH },
-            ...flagBit(),
+            ...tk.flagBit(),
             { op: "local.tee", index: BIT },
             { op: "i32.eqz" },
             {
@@ -1140,6 +1178,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.set", index: PIPES },
     { op: "i32.const", value: 0 },
     { op: "local.set", index: CHARS },
+    { op: "i32.const", value: 1 },
+    { op: "local.set", index: PLAIN },
     { op: "local.get", index: START },
     { op: "local.set", index: I },
     {
@@ -1154,11 +1194,27 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
             { op: "local.get", index: END },
             { op: "i32.ge_s" },
             { op: "br_if", depth: 1 },
-            ...readFlatUnit(PDATA, POFF, I),
-            { op: "local.set", index: CH },
-            { op: "local.get", index: CH },
-            { op: "i32.const", value: 0x7c },
-            { op: "i32.eq" },
+            // One token per iteration — `CHARS` counts program RECORDS, not
+            // source units, so a 4-unit `\x41` contributes exactly 1.
+            ...readToken(I),
+            // `.` or any multi-unit escape ⇒ the pattern's source text is no
+            // longer the text it matches, so the raw-source ALTS fast path
+            // must not be taken. (`.` in an anchored alternation silently
+            // mismatched before this — same construct, two answers.)
+            ...tk.kindIs(TOKEN_ANY),
+            ...tk.len(),
+            { op: "i32.const", value: 1 },
+            { op: "i32.ne" },
+            { op: "i32.or" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: PLAIN },
+              ],
+            },
+            ...tk.kindIs(TOKEN_PIPE),
             {
               op: "if",
               blockType: { kind: "empty" },
@@ -1180,7 +1236,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 },
               ],
               else: [
-                ...isRegexMeta(),
+                ...tk.kindIs(TOKEN_UNSUPPORTED),
                 {
                   op: "if",
                   blockType: { kind: "empty" },
@@ -1197,10 +1253,7 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 },
               ],
             },
-            { op: "local.get", index: I },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: I },
+            ...advanceByToken(I),
             { op: "br", depth: 0 },
           ],
         },
@@ -1298,6 +1351,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
               body: [
                 { op: "local.get", index: I },
                 { op: "local.set", index: J },
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: ALTN },
                 {
                   op: "block",
                   blockType: { kind: "empty" },
@@ -1310,14 +1365,17 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         { op: "local.get", index: END },
                         { op: "i32.ge_s" },
                         { op: "br_if", depth: 1 },
-                        ...readFlatUnit(PDATA, POFF, J),
-                        { op: "i32.const", value: 0x7c },
-                        { op: "i32.eq" },
+                        // Token-aware: an escaped `\|` is a LITERAL token and
+                        // must NOT be mistaken for an alternation separator.
+                        // `ALTN` counts this alternative's records as it goes.
+                        ...readToken(J),
+                        ...tk.kindIs(TOKEN_PIPE),
                         { op: "br_if", depth: 1 },
-                        { op: "local.get", index: J },
+                        { op: "local.get", index: ALTN },
                         { op: "i32.const", value: 1 },
                         { op: "i32.add" },
-                        { op: "local.set", index: J },
+                        { op: "local.set", index: ALTN },
+                        ...advanceByToken(J),
                         { op: "br", depth: 0 },
                       ],
                     },
@@ -1335,13 +1393,15 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                     ...emitRecord(
                       [{ op: "i32.const", value: ReOp.SPLIT }],
                       [{ op: "local.get", index: PC }, { op: "i32.const", value: 1 }, { op: "i32.add" }],
+                      // Second SPLIT target = first record AFTER this
+                      // alternative. Counted (`ALTN`), never derived from the
+                      // source-unit distance `J - I` — those two agree only
+                      // while every token is one unit wide (#4065).
                       [
                         { op: "local.get", index: PC },
                         { op: "i32.const", value: 2 },
                         { op: "i32.add" },
-                        { op: "local.get", index: J },
-                        { op: "local.get", index: I },
-                        { op: "i32.sub" },
+                        { op: "local.get", index: ALTN },
                         { op: "i32.add" },
                       ],
                     ),
@@ -1362,36 +1422,14 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         { op: "local.get", index: J },
                         { op: "i32.ge_s" },
                         { op: "br_if", depth: 1 },
-                        ...readFlatUnit(PDATA, POFF, K),
+                        // Same tokeniser as the counting walk, so this emits
+                        // exactly `CHARS` records and stays inside the
+                        // `NINSTR * 3` program array.
+                        ...readToken(K),
+                        ...tk.value(),
                         { op: "local.set", index: CH },
-                        ...emitRecord(
-                          [
-                            { op: "local.get", index: CH },
-                            { op: "i32.const", value: 0x2e },
-                            { op: "i32.eq" },
-                            {
-                              op: "if",
-                              blockType: { kind: "val", type: { kind: "i32" } },
-                              then: [{ op: "i32.const", value: ReOp.ANY }],
-                              else: [
-                                { op: "local.get", index: FBITS },
-                                { op: "i32.const", value: RE_FLAG_I },
-                                { op: "i32.and" },
-                                {
-                                  op: "if",
-                                  blockType: { kind: "val", type: { kind: "i32" } },
-                                  then: [{ op: "i32.const", value: ReOp.CHARI }],
-                                  else: [{ op: "i32.const", value: ReOp.CHAR }],
-                                },
-                              ],
-                            },
-                          ],
-                          dynamicCharOperand,
-                        ),
-                        { op: "local.get", index: K },
-                        { op: "i32.const", value: 1 },
-                        { op: "i32.add" },
-                        { op: "local.set", index: K },
+                        ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                        ...advanceByToken(K),
                         { op: "br", depth: 0 },
                       ],
                     },
@@ -1451,6 +1489,10 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "i32.and" },
     { op: "local.get", index: FBITS },
     { op: "i32.eqz" },
+    { op: "i32.and" },
+    // #4065 — and only when every token is a one-unit literal, so that the raw
+    // source span copied below really is the text to match.
+    { op: "local.get", index: PLAIN },
     { op: "i32.and" },
     {
       op: "if",
@@ -1557,6 +1599,9 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
       { name: "hasMore", type: { kind: "i32" } },
       { name: "bit", type: { kind: "i32" } },
       { name: "invalidFlags", type: { kind: "i32" } },
+      { name: "tok", type: { kind: "i32" } },
+      { name: "altn", type: { kind: "i32" } },
+      { name: "plain", type: { kind: "i32" } },
     ],
     body,
     exported: false,
@@ -1746,11 +1791,8 @@ export function compileStandaloneRegExpConstructor(
     const strType = nativeStringType(ctx);
     const patternLocal = allocLocal(fctx, `__re_dyn_pattern_${fctx.locals.length}`, strType);
     if (pattern === null) {
-      const emitted = compileExpression(ctx, fctx, patternArg!, strType);
-      if (emitted === null) return null;
-      if (emitted.kind !== "ref" || emitted.typeIdx !== ctx.anyStrTypeIdx) {
-        coerceType(ctx, fctx, emitted, strType, "string", compileStringLiteral);
-      }
+      // (#4089) §22.2.3.1 step 5/7: ToString, not a cast.
+      if (!emitArgAsNativeString(ctx, fctx, patternArg!, strType)) return null;
     } else {
       for (const instr of nativeStringLiteralInstrs(ctx, pattern ?? "")) fctx.body.push(instr);
     }
@@ -1758,11 +1800,7 @@ export function compileStandaloneRegExpConstructor(
 
     const flagsLocal = allocLocal(fctx, `__re_dyn_flags_${fctx.locals.length}`, strType);
     if (flags === null) {
-      const emitted = compileExpression(ctx, fctx, flagsArg!, strType);
-      if (emitted === null) return null;
-      if (emitted.kind !== "ref" || emitted.typeIdx !== ctx.anyStrTypeIdx) {
-        coerceType(ctx, fctx, emitted, strType, "string", compileStringLiteral);
-      }
+      if (!emitArgAsNativeString(ctx, fctx, flagsArg!, strType)) return null;
     } else {
       for (const instr of nativeStringLiteralInstrs(ctx, flags ?? "")) fctx.body.push(instr);
     }
@@ -1958,11 +1996,10 @@ export function emitRegexSearchCall(
     if (inputType !== null && inputType.kind !== "externref") {
       coerceType(ctx, fctx, inputType, { kind: "externref" }, "string", compileStringLiteral);
     }
-    const toStringIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
+    // (#4089) Same single resolver the constructor path uses.
+    const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
     if (toStringIdx !== undefined) {
-      const finalToStringIdx = ctx.funcMap.get("__extern_toString") ?? toStringIdx;
-      fctx.body.push({ op: "call", funcIdx: finalToStringIdx });
+      fctx.body.push({ op: "call", funcIdx: toStringIdx });
       fctx.body.push({ op: "any.convert_extern" });
       fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
       inputType = nativeStringType(ctx);
