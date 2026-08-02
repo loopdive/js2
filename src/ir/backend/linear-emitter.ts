@@ -174,8 +174,14 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
     out.push(instr);
   }
 
-  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Instr[], storage?: IrGlobalRef): void {
-    const ops = this.options.stringRuntime?.emitStringConst?.(value, alloc, storage);
+  emitStringConst(
+    value: string,
+    alloc: AllocSiteId | undefined,
+    out: Instr[],
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ): void {
+    const ops = this.options.stringRuntime?.emitStringConst?.(value, alloc, storage, materializer);
     if (!ops) throw new Error("LinearEmitter: string.const runtime is unavailable");
     out.push(...ops);
   }

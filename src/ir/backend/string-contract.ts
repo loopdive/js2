@@ -9,7 +9,13 @@ import type { IrStringConcatMode, IrStringEncoding } from "../string-runtime.js"
  * exactly the result described by `IR_STRING_RUNTIME`.
  */
 export interface StringBackendEmitter<Sink> {
-  emitStringConst(value: string, alloc: AllocSiteId | undefined, out: Sink, storage?: IrGlobalRef): void;
+  emitStringConst(
+    value: string,
+    alloc: AllocSiteId | undefined,
+    out: Sink,
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ): void;
   emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: Sink, provider?: IrFuncRef): void;
   emitStringEquals(negate: boolean, out: Sink, provider?: IrFuncRef): void;
   emitStringLength(inputEncoding: IrStringEncoding | undefined, out: Sink, provider?: IrStringLengthProvider): void;

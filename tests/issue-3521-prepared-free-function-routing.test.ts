@@ -111,6 +111,60 @@ describe("#3521 prepare-before-emit free-function routing", () => {
   });
 
   it.each([
+    ["utf16", `${"x".repeat(9_999)}💩`, {}, 10_001, 10_000, true],
+    ["utf8", `${"x".repeat(9_999)}💩`, { utf8Storage: true }, 10_001, 10_000, true],
+    ["utf8-byte-only", "💩".repeat(2_501), { utf8Storage: true }, 5_002, 2_501, false],
+  ] as const)(
+    "dependency-seals an oversized %s native literal through exact prepared materialization",
+    async (lane, literal, options, expectedLength, expectedCodePoints, expectsMaterializer) => {
+      const source = `
+        export function oversizedLength(): number { return "${literal}".length; }
+        export function oversizedCodePoints(): number {
+          let count = 0;
+          for (const value of "${literal}") count += 1;
+          return count;
+        }
+      `;
+      const result = await compile(source, {
+        ...options,
+        fileName: `prepared-oversized-${lane}-native-literal.ts`,
+        experimentalIR: true,
+        emitWat: true,
+        trackIrOutcomes: true,
+        target: "standalone",
+      });
+
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
+      for (const name of ["oversizedLength", "oversizedCodePoints"]) {
+        expect(outcome(result, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+        });
+        expect(outcome(result, name).preparedComponentId).toMatch(/^prepared-component:/);
+      }
+      const irExports = await instantiate(result);
+      expect(irExports.oversizedLength!()).toBe(expectedLength);
+      expect(irExports.oversizedCodePoints!()).toBe(expectedCodePoints);
+      expect(result.wat.includes("__strlit_materialize_")).toBe(expectsMaterializer);
+      expect(result.wat).toMatch(expectsMaterializer ? /array\.new_fixed \d+ 10000/ : /array\.new_fixed \d+ 5002/);
+      expect(result.wat).not.toMatch(/array\.new_fixed \d+ 1000[1-9]/);
+
+      const direct = await compile(source, {
+        ...options,
+        fileName: `direct-oversized-${lane}-native-literal.ts`,
+        target: "standalone",
+      });
+      expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(() => new WebAssembly.Module(direct.binary)).not.toThrow();
+      const directExports = await instantiate(direct);
+      expect(directExports.oversizedLength!()).toBe(expectedLength);
+      expect(directExports.oversizedCodePoints!()).toBe(expectedCodePoints);
+    },
+  );
+
+  it.each([
     ["gc", "prepared-host-owned-append.ts"],
     ["standalone", "prepared-native-owned-append.ts"],
   ] as const)("dependency-seals the %s owned-append provider", async (target, fileName) => {

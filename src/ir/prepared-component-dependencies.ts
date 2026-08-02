@@ -476,7 +476,7 @@ function implicitSupportRequirement(instr: IrInstr): string | null {
     case "dyn.member_set":
       return `${instr.kind} resolves dynamic carrier/helper support without an explicit symbolic ref`;
     case "string.const":
-      return instr.storage
+      return instr.storage || instr.materializer
         ? null
         : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
     case "string.len":
@@ -844,8 +844,12 @@ function collectFunctionEvidence(
           }
         } else if (nested.kind === "global.get" || nested.kind === "global.set") {
           recordGlobalReference(evidence, nested.target, input.abi, ownership, input.terminalUnitIds);
-        } else if (nested.kind === "string.const" && nested.storage) {
-          recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+        } else if (nested.kind === "string.const") {
+          if (nested.storage) {
+            recordGlobalReference(evidence, nested.storage, input.abi, ownership, input.terminalUnitIds);
+          } else if (nested.materializer) {
+            recordExternalCallable(evidence, nested.materializer, input.abi, ownership);
+          }
         } else if (nested.kind === "string.len" && nested.provider) {
           if (nested.provider.kind === "callable") {
             recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);

@@ -41,6 +41,7 @@ import {
   IR_STRING_CONCAT_OWNED_FN,
   IR_STRING_EQUALS_FN,
   IR_STRING_ITERATOR_CHAR_AT_FN,
+  IR_STRING_LITERAL_MATERIALIZE_FN,
 } from "../src/ir/string-runtime.js";
 import { ts } from "../src/ts-api.js";
 
@@ -530,6 +531,61 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     expect(report.components[0]!.status).toBe("complete");
     expect(new Set(report.components[0]!.abiDependencies.map((dependency) => dependency.bindingId))).toEqual(
       new Set([carrierRef.binding.bindingId, storage.binding.bindingId, callableBindingId]),
+    );
+  });
+
+  it("turns oversized literal materialization into an exact callable dependency", () => {
+    const f = fixture();
+    const carrierRef = irSupportTypeRef(f.sourceId, "string-carrier", "__string_carrier");
+    const materializer = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:0`);
+    const literal: IrInstr = {
+      kind: "string.const",
+      result: asValueId(0),
+      resultType: { kind: "string" },
+      value: "x".repeat(10_001),
+    };
+    const withCarrier = attachIrStringCarrier(irFunction(f.first, [literal]), carrierRef).function;
+    const prepared = attachIrStringSupport(withCarrier, {
+      storageForConst: () => undefined,
+      materializerForConst: () => materializer,
+      providerForLength: () => undefined,
+    });
+    const providerBindingId = createIrBindingId({
+      ownerId: f.sourceId,
+      domain: "callable",
+      role: "string-literal-materializer",
+    });
+    const report = derivePreparedComponentDependencies({
+      module: { functions: [prepared] },
+      terminalUnitIds: new Set([f.first.id]),
+      inventory: f.inventory,
+      abi: abiLookup([
+        sourceCallableEntry(f.first.id),
+        {
+          id: carrierRef.binding.bindingId,
+          structuralReferenceKey: irTypeBindingKey(carrierRef.binding),
+          slotPolicy: "required",
+          intent: { kind: "type", shapeKey: '{"kind":"struct","name":"AnyString"}' },
+        },
+        {
+          id: providerBindingId,
+          structuralReferenceKey: irCallableBindingKey(materializer.binding),
+          slotPolicy: "required",
+          intent: { kind: "callable", origin: "intrinsic" },
+        },
+      ]),
+    });
+
+    expect(prepared.blocks[0]!.instrs[0]).toMatchObject({
+      kind: "string.const",
+      materializer: { binding: materializer.binding },
+    });
+    expect(report.components[0]!.status).toBe("complete");
+    expect(report.components[0]!.abiDependencies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ bindingId: carrierRef.binding.bindingId, kind: "support" }),
+        expect.objectContaining({ bindingId: providerBindingId, kind: "external-callable" }),
+      ]),
     );
   });
 

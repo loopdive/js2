@@ -297,14 +297,33 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
             });
           }
           return;
-        } else if (nested.kind === "string.const" && nested.storage) {
-          const problem = irGlobalReferenceProblem(nested.storage);
-          if (problem !== null) {
+        } else if (nested.kind === "string.const") {
+          if (nested.storage && nested.materializer) {
             errors.push({
-              message: `string.const storage ${problem}`,
+              message: "string.const cannot carry both storage and a materializer",
               func: func.name,
               block: block.id as number,
             });
+          }
+          if (nested.storage) {
+            const problem = irGlobalReferenceProblem(nested.storage);
+            if (problem !== null) {
+              errors.push({
+                message: `string.const storage ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          }
+          if (nested.materializer) {
+            const problem = callableReferenceProblem(nested.materializer);
+            if (problem !== null) {
+              errors.push({
+                message: `string.const materializer ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
           }
           return;
         } else if (nested.kind === "string.len" && nested.provider) {

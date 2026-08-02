@@ -248,12 +248,17 @@ export interface IrLowerResolver {
    * Emit the Wasm op sequence that materializes a string literal.
    *   - host strings → register a `string_constants.<value>` global import
    *                    and emit `[global.get]`.
-   *   - native       → inline `i32.const len`, `i32.const 0`, code-unit
-   *                    `i32.const`s, `array.new_fixed`, `struct.new`.
+   *   - native       → read prepared immutable storage or call an exact
+   *                    prepared oversized-literal materializer.
    */
   // #1588: `alloc` lets the resolver read the string.const encoding decision.
   // Optional — resolvers/callers that omit it get the i16 path (byte-identical).
-  emitStringConst?(value: string, alloc?: AllocSiteId, storage?: IrGlobalRef): readonly Instr[];
+  emitStringConst?(
+    value: string,
+    alloc?: AllocSiteId,
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ): readonly Instr[];
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
   emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
@@ -1730,7 +1735,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "string.const": {
-        emitter.emitStringConst(instr.value, instr.alloc, out, instr.storage);
+        emitter.emitStringConst(instr.value, instr.alloc, out, instr.storage, instr.materializer);
         return;
       }
       case "string.concat": {

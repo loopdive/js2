@@ -38,10 +38,11 @@ One JSON document per compiled module.
 ## D2 — Versioning
 
 `IR_FORMAT_VERSION = "5.1"` (exported from `src/ir/contract.ts`). Version 5.1
-adds the optional prepared callable provider on `forof.string`; version 5.0
-made global and symbolic type references carry required closed structural
-bindings. Their `name` fields are compatibility/debug metadata. Source-
-qualified class shapes from version 4, callable bindings from version 3, and
+adds optional prepared callable providers on `forof.string` and oversized
+`string.const` materialization; version 5.0 made global and symbolic type
+references carry required closed structural bindings. Their `name` fields are
+compatibility/debug metadata. Source-qualified class shapes from version 4,
+callable bindings from version 3, and
 function/coverage `unitId` fields from version 2 remain required.
 
 - **Additive** (minor bump): new instruction kinds, new optional fields, new
@@ -261,7 +262,7 @@ must not diverge (T4 acceptance).
 
 | kind            | operands     | immediates        | result rule                              | effects |
 | --------------- | ------------ | ----------------- | ---------------------------------------- | ------- |
-| `string.const`  | —            | `value: string`   | ⇒ `string`                               | pure    |
+| `string.const`  | —            | `value: string`, `storage?: GlobalRef`, `materializer?: FuncRef` | ⇒ `string`; storage and materializer are mutually exclusive | pure    |
 | `string.concat` | `lhs`, `rhs` | —                 | operands `string` ⇒ `string`             | pure    |
 | `string.eq`     | `lhs`, `rhs` | `negate: boolean` | operands `string` ⇒ `val:i32`            | pure    |
 | `string.len`    | `value`      | —                 | operand `string` ⇒ `val:f64` (JS Number) | pure    |

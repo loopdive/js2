@@ -1132,8 +1132,8 @@ export interface IrInstrDynMemberSet extends IrInstrBase {
  * backend representation is determined by `IrLowerResolver.emitStringConst`:
  *   - host strings → register a `string_constants.<value>` global import,
  *                    emit `global.get`.
- *   - native       → emit inline `array.new_fixed` of the WTF-16 code units,
- *                    then `struct.new $NativeString`.
+ *   - native       → read an interned immutable literal global, or call the
+ *                    prepared materializer for an oversized literal.
  */
 export interface IrInstrStringConst extends IrInstrBase {
   readonly kind: "string.const";
@@ -1148,6 +1148,12 @@ export interface IrInstrStringConst extends IrInstrBase {
    * discover or allocate literal storage mid-emission.
    */
   readonly storage?: IrGlobalRef;
+  /**
+   * Exact backend callable selected when the literal cannot use immutable
+   * storage. Mutually exclusive with `storage`; production preparation uses
+   * this only for native literals beyond the backend's fixed-array limit.
+   */
+  readonly materializer?: IrFuncRef;
 }
 
 /**
