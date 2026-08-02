@@ -227,6 +227,12 @@ Two consequences worth knowing:
 
 **Baseline JSONL is no longer committed to the main repo (#1528).** It lives only in `loopdive/js2wasm-baselines` and is fetched on demand by `scripts/fetch-baseline-jsonl.mjs` to `.test262-cache/test262-current.jsonl` (gitignored). Consumers (validator, `dev-self-merge` bucket analysis, regression triage, sprint wrap-up harvest) either call the helper directly or accept the cache path via fallback. This removes the ~15 MB blob from every clone and retired the dedicated `refresh-committed-baseline.yml` workflow.
 
+**The bare `node scripts/fetch-baseline-jsonl.mjs` is now SAFE — freshness is the default (#3629).** It used to be a **silent no-op whenever any cache existed**: exit 0, zero bytes of output, serving whatever was on disk. That is indistinguishable from a successful fresh fetch, and the error scales with cache age. Measured 2026-07-25: it served a **seven-day-old** cache reading `pass 25,545` while main was at `30,931` — a 5,386-test gap, an entire session's landed work invisible — to multiple dev lanes that had been told to "fetch fresh" with exactly that command.
+
+- It now **refetches automatically** when the cache is older than 6h, and **always reports what it served and how old it is**. Reporting goes to **stderr**, so stdout stays parseable (`--print-path` and the path echoed under `--force`/`--no-cache` are unchanged).
+- `--force` still forces; **`--offline`** is the new opt-in for the genuinely disconnected case, and it says loudly that freshness was not established. `--max-age-hours N` overrides the window.
+- **A failed download with a cache present is a THIRD state, not a success.** It falls back to the cache but names the cache's age and states explicitly that this is *not* a confirmation the cache is current. "The fetch command exited 0" never means "the cache is up to date".
+
 To validate the baseline on demand, run `pnpm run test:262:validate-baseline` — the validator calls the fetch helper itself, then spot-checks 50 random `pass` entries against current HEAD (uses a deterministic seed; pass `PR_NUMBER=N` to reproduce a specific CI run, or `SAMPLE_SIZE=10 SEED=12345` for a quicker check). Set `SAMPLE_SIZE=50` to match CI exactly. The validator fails fast on the first 5 most-affected entries with a pointer to the fetch helper for forcing a refresh.
 
 ## IR Fallback Budget (#1376) — being phased out (#2855)
