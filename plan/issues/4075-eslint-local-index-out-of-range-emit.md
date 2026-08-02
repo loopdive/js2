@@ -507,3 +507,67 @@ The reducer is a ~70-line script: parse the file, take the UMD factory body's
 statement list, greedily try deleting each statement from last to first, keep the
 deletion when `compileMulti` still prints `[js2:closure-frame]`, repeat to
 fixpoint. With in-process `compileMulti` each probe is well under a second.
+
+## The exact bad instruction, and four ruled-out hypotheses (2026-08-02)
+
+`JS2WASM_FRAME_OPS=1` dumps the offending lifted body instruction-by-instruction.
+On the 200-line fixture, both breaching closures are byte-identical:
+
+```text
+__closure_2  params=ref_null,externref  locals=__self_cast:ref, regexSeparators:externref
+  local.get 0          ; __self
+  ref.cast
+  local.set 2          ; __self_cast
+  local.get 2
+  struct.get           ; read capture field
+  local.set 3          ; regexSeparators
+  local.get 4          ; <<<< OUT OF FRAME (frame is 0..3)
+  local.get 1          ; input
+  ref.func
+  i32.const
+  struct.new           ; build the INNER callback's closure
+  extern.convert_any
+  call                 ; mapDomain(...)
+  extern.convert_any
+  call
+  return
+```
+
+So the bad read is **not** in the capture prologue — that ran correctly, once,
+for the single capture `regexSeparators` (local 3). `local.get 4` is emitted
+immediately before `struct.new`, i.e. while **constructing the inner callback's
+closure struct**: it is pushing a capture VALUE for the inner closure, read from
+the outer frame, at an index the outer frame does not have.
+
+### Ruled out, with evidence — do not re-investigate these
+
+1. **`allocLocal` off-by-one.** It computes `index = params.length + locals.length`
+   *before* pushing, which is correct.
+2. **A body-swap crossing a speculative probe.** `snapshotSpeculative` records
+   `bodyLen` as a number, not the array identity, so a `savedBodies` swap between
+   snapshot and rollback would truncate the wrong array. Instrumented
+   `rollbackSpeculative` to report when `fctx.body !== ` the snapshot array:
+   **never fires** on the fixture.
+3. **A stale `localMap` entry.** The callback-capture collector
+   (`closures.ts`, `fctx.localMap.get(name)`) skips names it cannot find, so a
+   `localMap` entry pointing past the frame would explain it exactly.
+   Instrumented the reporter to list `localMap` entries `>= frame`:
+   **`STALE-localMap=none`** for both closures.
+4. **A second truncation site.** `fctx.locals.length = …` appears exactly ONCE in
+   all of `src/codegen/` (`restoreLocals`), whose only caller is
+   `rollbackSpeculative` — and that truncates `fctx.body` too. So this is not a
+   case of some other path shrinking locals behind the body's back.
+
+### Where that leaves it
+
+The value pushed for the inner closure's capture is resolved through some path
+OTHER than the outer `localMap` — the collector at `closures.ts` (the
+`callbackCaptures` construction) is the place to instrument next: print, for each
+capture it emits at the construct site, the name and the index it chose and where
+that index came from. The frame is only 4 slots wide, so the wrong index is
+almost certainly `params.length + locals.length` computed against a DIFFERENT
+FunctionContext (the inner callback's, or the enclosing non-lifted one) and then
+emitted into this body.
+
+`JS2WASM_FRAME_OPS=1` is committed and does exactly this dump, so the next step
+costs seconds, not another compile cycle.

@@ -2639,6 +2639,28 @@ function reportClosureFrameBreach(
   };
   walk(liftedFctx.body);
   if (worst < 0) return;
+  if (process.env?.JS2WASM_FRAME_OPS) {
+    const flat: string[] = [];
+    const dump = (instrs: readonly Instr[], depth: number): void => {
+      for (const instr of instrs) {
+        const idx = (instr as { index?: number }).index;
+        flat.push(
+          `${"  ".repeat(depth)}${instr.op}${idx === undefined ? "" : ` ${idx}`}${typeof idx === "number" && idx >= frame ? "   <<<< OUT OF FRAME" : ""}`,
+        );
+        for (const key of ["body", "then", "else", "catchAll"] as const) {
+          const nested = (instr as unknown as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) dump(nested as Instr[], depth + 1);
+        }
+      }
+    };
+    dump(liftedFctx.body, 0);
+    const stale = [...liftedFctx.localMap.entries()].filter(([, v]) => v >= frame);
+    process.stderr.write(
+      `[js2:frame-ops] ${closureName} params=${type.params.map((p) => p.kind).join(",")} locals=${liftedFctx.locals.map((l) => `${l.name}:${l.type.kind}`).join(",")}` +
+        ` STALE-localMap=${stale.map(([k, v]) => `${k}->${v}`).join(",") || "none"}\n`,
+    );
+    for (const line of flat) process.stderr.write(`[js2:frame-ops]   ${line}\n`);
+  }
   let text = "<unavailable>";
   try {
     text = arrow.getText().replace(/\s+/g, " ").slice(0, 200);
