@@ -44,6 +44,17 @@
     "issue": 1033
   },
   {
+    "name": "jsdom",
+    "version": "30.0.1",
+    "tarball": "fixtures/jsdom-30.0.1.tgz",
+    "registryTarball": "https://registry.npmjs.org/jsdom/-/jsdom-30.0.1.tgz",
+    "shasum": "1b0751cbd0abce86762c48697583b5e91433f6e4",
+    "integrity": "sha512-52v7mUVUfNQVYYqE1lcdaymWL0njO7lTLUog6ZvW2U5KsbiLk/GnZlVJ+qx0xfNJZ6Gn+KSpPNE52vurbxZwrA==",
+    "entryModule": "package/lib/api.js",
+    "shape": "cjs-project",
+    "timeoutMs": 180000
+  },
+  {
     "name": "webpack",
     "version": "5.109.2",
     "tarball": "fixtures/webpack-5.109.2.tgz",
