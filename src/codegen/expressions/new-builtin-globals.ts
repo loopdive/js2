@@ -25,6 +25,7 @@ import { compileObjectLiteralAsExternref } from "../literals.js";
 import { ensureAnyToStringHelper } from "../native-strings.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
+import { undefinedSingletonActive } from "../any-helpers.js";
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js";
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import { coerceType, compileExpression } from "../shared.js";
@@ -51,6 +52,64 @@ import {
 
 /** Sentinel: the `new` target is not one of the built-in global constructors. */
 export const NEW_GLOBAL_FALLTHROUGH = Symbol("new-builtin-global-fallthrough");
+
+/**
+ * (#4100) "Is the Error message null-or-undefined?" — leaves an i32 on the stack.
+ *
+ * `ref.is_null` alone misses a RUNTIME-undefined message: under the #2106
+ * singleton regime `undefined` in the externref plane is a tag-1 `$AnyValue` box
+ * (`global.get $undefined; extern.convert_any`), which is NOT null. So
+ * `let m; new Error(m)` stored ToString(undefined) and rendered
+ * "Error: undefined" where §20.5.1.1 step 3 requires the name alone.
+ *
+ * #4035 fixed only the STATIC literal because the obvious runtime test —
+ * `__extern_is_undefined` — requires `ensureObjectRuntime`, measured at **+3KB**
+ * on every standalone Error-constructing module. This is that predicate INLINED:
+ * a `ref.test` plus one `struct.get` of the tag field. No helper, no import, no
+ * object runtime. **Measured cost: +28 bytes** on a module that constructs an
+ * Error, and **+0** on one that does not.
+ *
+ * It stays free because of the gate: emitted ONLY when the module ALREADY has
+ * the `$AnyValue` machinery. `ensureAnyValueType` is deliberately NOT called —
+ * if the regime is inactive there is no undefined singleton in this module to
+ * miss, so the bare `ref.is_null` is already the complete and correct test.
+ *
+ * KNOWN RESIDUAL, pre-existing and NOT introduced here: `new Error(null)`
+ * renders "Error" where the spec wants "Error: null" (step 3 exempts only
+ * `undefined`). The original `ref.is_null` guard conflated the two; this keeps
+ * that behaviour rather than silently widening scope. Verified present on the
+ * base commit too.
+ */
+function emitNullOrUndefinedMessageTest(ctx: CodegenContext, msgTmp: number): Instr[] {
+  const anyIdx = ctx.anyValueTypeIdx;
+  if (!(undefinedSingletonActive(ctx) && anyIdx >= 0)) {
+    return [{ op: "local.get", index: msgTmp }, { op: "ref.is_null" }];
+  }
+  return [
+    { op: "local.get", index: msgTmp },
+    { op: "ref.is_null" },
+    // Re-convert rather than tee into a scratch anyref local: two extra instrs,
+    // but no added local slot in every Error-constructing function.
+    { op: "local.get", index: msgTmp },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: msgTmp },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyIdx },
+        // field 0 = tag; tag 1 = Undefined (see `ensureAnyValueType`).
+        { op: "struct.get", typeIdx: anyIdx, fieldIdx: 0 },
+        { op: "i32.const", value: 1 },
+        { op: "i32.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    { op: "i32.or" },
+  ];
+}
 
 /**
  * (#4035) True when `expr` is STATICALLY the `undefined` value — the bare
@@ -329,25 +388,20 @@ export function tryCompileBuiltinGlobalNew(
         const anyToStrIdx = ensureAnyToStringHelper(ctx);
         if (anyToStrIdx >= 0) {
           const msgTmp = allocTempLocal(fctx, { kind: "externref" });
-          fctx.body.push(
-            { op: "local.set", index: msgTmp },
-            { op: "local.get", index: msgTmp },
-            { op: "ref.is_null" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: { kind: "externref" } },
-              // undefined / null argument → keep null (renders name alone).
-              then: [{ op: "ref.null.extern" }],
-              // ToString(message): externref → anyref → __any_to_string
-              // (ref $AnyString) → externref for the ctor's $message field.
-              else: [
-                { op: "local.get", index: msgTmp },
-                { op: "any.convert_extern" },
-                { op: "call", funcIdx: anyToStrIdx },
-                { op: "extern.convert_any" },
-              ],
-            },
-          );
+          fctx.body.push({ op: "local.set", index: msgTmp }, ...emitNullOrUndefinedMessageTest(ctx, msgTmp), {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            // undefined / null argument → keep null (renders name alone).
+            then: [{ op: "ref.null.extern" }],
+            // ToString(message): externref → anyref → __any_to_string
+            // (ref $AnyString) → externref for the ctor's $message field.
+            else: [
+              { op: "local.get", index: msgTmp },
+              { op: "any.convert_extern" },
+              { op: "call", funcIdx: anyToStrIdx },
+              { op: "extern.convert_any" },
+            ],
+          });
           releaseTempLocal(fctx, msgTmp);
         }
       }

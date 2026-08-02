@@ -45,8 +45,97 @@ import { addFuncType } from "./registry/types.js";
 
 /** Reserved name for the host-mode guarded charCodeAt helper. */
 export const JSSTR_CHARCODEAT_FN = "__jsstr_charCodeAt";
+/** Reserved name for the host-mode spec-compatible substring helper. */
+export const JSSTR_SUBSTRING_FN = "__jsstr_substring";
 /** Reserved name for the native-mode guarded charCodeAt helper. */
 export const NATIVE_CHARCODEAT_FN = "__str_charCodeAt";
+
+/**
+ * Ensure a host-string substring helper backed by the engine's
+ * `wasm:js-string.substring` builtin.
+ *
+ * The builtin is deliberately lower-level than `String.prototype.substring`:
+ * its indices must already be in range and ordered. Keep the JavaScript
+ * semantics in Wasm (clamp both indices to `[0, length]`, then swap when
+ * `start > end`) and reserve the actual slicing operation for the engine
+ * builtin. This avoids an `env.string_substring` Wasm-to-JavaScript host call
+ * in every hot-loop iteration while preserving the observable contract.
+ */
+export function ensureHostSubstringGuarded(ctx: CodegenContext): number | null {
+  const existing = ctx.funcMap.get(JSSTR_SUBSTRING_FN);
+  if (existing !== undefined) return existing;
+
+  const substringIdx = ctx.jsStringImports.get("substring");
+  const lengthIdx = ctx.jsStringImports.get("length");
+  if (substringIdx === undefined || lengthIdx === undefined) return null;
+
+  const sigIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }, { kind: "i32" }], [{ kind: "externref" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+
+  const S = 0;
+  const START = 1;
+  const END = 2;
+  const LEN = 3;
+  const clampParam = (index: number): Instr[] => [
+    { op: "local.get", index },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index },
+      ],
+    },
+    { op: "local.get", index },
+    { op: "local.get", index: LEN },
+    { op: "i32.gt_s" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: LEN },
+        { op: "local.set", index },
+      ],
+    },
+  ];
+
+  const callSubstring = (start: number, end: number): Instr[] => [
+    { op: "local.get", index: S },
+    { op: "local.get", index: start },
+    { op: "local.get", index: end },
+    { op: "call", funcIdx: substringIdx },
+  ];
+
+  const body: Instr[] = [
+    { op: "local.get", index: S },
+    { op: "call", funcIdx: lengthIdx },
+    { op: "local.set", index: LEN },
+    ...clampParam(START),
+    ...clampParam(END),
+    { op: "local.get", index: START },
+    { op: "local.get", index: END },
+    { op: "i32.gt_s" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: callSubstring(END, START),
+      else: callSubstring(START, END),
+    },
+  ];
+
+  const fn: WasmFunction = {
+    name: JSSTR_SUBSTRING_FN,
+    typeIdx: sigIdx,
+    locals: [{ name: "$len", type: { kind: "i32" } }],
+    body,
+    exported: false,
+  };
+  pushDefinedFunc(ctx, funcIdx, fn);
+  ctx.funcMap.set(JSSTR_SUBSTRING_FN, funcIdx);
+  return funcIdx;
+}
 
 /**
  * Ensure the host-mode helper exists; returns its funcIdx, or `null` when the
