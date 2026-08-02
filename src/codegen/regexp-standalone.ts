@@ -807,6 +807,53 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
 }
 
 /**
+ * (#4089) Compile `expr` and leave a native `$AnyString` on the stack, applying
+ * the SPEC's ToString — i.e. an object argument gets its own `toString()`
+ * called, per §7.1.17.
+ *
+ * This is the conversion `emitRegexSearchCall` has always done for a `.test`/
+ * `.exec` SUBJECT (#3724). The dynamic `new RegExp(pattern, flags)` path did
+ * something different: it compiled the argument with a native-string
+ * expectation and then `coerceType`d it. For a string that is the same thing;
+ * for an OBJECT it is not a conversion at all, and the emitted cast dereferenced
+ * a null at runtime:
+ *
+ *     new RegExp("abc{1}", { toString() { return ""; } })
+ *       → RuntimeError: dereferencing a null pointer in __module_init()
+ *
+ * which kills the module during top-level evaluation, so the whole file's
+ * assertions are lost. Two call sites needed the identical conversion and only
+ * one had it — the recurring shape of #4080 — so this is the single owner and
+ * both sites now call it.
+ *
+ * Returns false when the argument fails to compile (caller bails).
+ */
+function emitArgAsNativeString(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  argExpr: ts.Expression,
+  strType: ValType,
+): boolean {
+  const emitted = compileExpression(ctx, fctx, argExpr, { kind: "externref" });
+  if (emitted === null) return false;
+  if (emitted.kind !== "externref") {
+    coerceType(ctx, fctx, emitted, { kind: "externref" }, "string", compileStringLiteral);
+  }
+  const toStringIdx = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (toStringIdx === undefined) {
+    // No runtime ToString available — fall back to the previous direct coercion
+    // rather than emitting nothing.
+    coerceType(ctx, fctx, { kind: "externref" }, strType, "string", compileStringLiteral);
+    return true;
+  }
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_toString") ?? toStringIdx });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+  return true;
+}
+
+/**
  * Emit the runtime constructor used for genuinely dynamic standalone patterns.
  *
  * The first runtime slice deliberately compiles the shape Acorn executes for
@@ -1727,11 +1774,8 @@ export function compileStandaloneRegExpConstructor(
     const strType = nativeStringType(ctx);
     const patternLocal = allocLocal(fctx, `__re_dyn_pattern_${fctx.locals.length}`, strType);
     if (pattern === null) {
-      const emitted = compileExpression(ctx, fctx, patternArg!, strType);
-      if (emitted === null) return null;
-      if (emitted.kind !== "ref" || emitted.typeIdx !== ctx.anyStrTypeIdx) {
-        coerceType(ctx, fctx, emitted, strType, "string", compileStringLiteral);
-      }
+      // (#4089) §22.2.3.1 step 5/7: ToString, not a cast.
+      if (!emitArgAsNativeString(ctx, fctx, patternArg!, strType)) return null;
     } else {
       for (const instr of nativeStringLiteralInstrs(ctx, pattern ?? "")) fctx.body.push(instr);
     }
@@ -1739,11 +1783,7 @@ export function compileStandaloneRegExpConstructor(
 
     const flagsLocal = allocLocal(fctx, `__re_dyn_flags_${fctx.locals.length}`, strType);
     if (flags === null) {
-      const emitted = compileExpression(ctx, fctx, flagsArg!, strType);
-      if (emitted === null) return null;
-      if (emitted.kind !== "ref" || emitted.typeIdx !== ctx.anyStrTypeIdx) {
-        coerceType(ctx, fctx, emitted, strType, "string", compileStringLiteral);
-      }
+      if (!emitArgAsNativeString(ctx, fctx, flagsArg!, strType)) return null;
     } else {
       for (const instr of nativeStringLiteralInstrs(ctx, flags ?? "")) fctx.body.push(instr);
     }
