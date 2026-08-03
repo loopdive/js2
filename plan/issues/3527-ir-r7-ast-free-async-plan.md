@@ -140,7 +140,7 @@ therefore reports all four functions in
 
 Production supplies the missing options during prepared-component discovery,
 so the old four-label result was neither one coherent migration population nor
-compile-once evidence. #4118 now reconciles the preliminary labels with exact
+compile-once evidence. #4124 now reconciles the preliminary labels with exact
 source-qualified production terminal outcomes: all five playground async free
 functions are prepared/compile-once, the gate records
 `async-function: 4 -> 0`, and the bounded host ledger records 37/37 IR bodies

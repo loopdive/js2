@@ -1,5 +1,5 @@
 ---
-id: 4118
+id: 4124
 title: "IR final async terminal migration: sequential loop and main"
 status: in-review
 created: 2026-08-03
@@ -44,11 +44,11 @@ files:
   - tests/ir/issue-1373b-async-plan.test.ts
   - tests/issue-3520-fallback-gate-identity.test.ts
   - tests/issue-2710-late-bind.test.ts
-  - tests/issue-4118-ir-final-async.test.ts
+  - tests/issue-4124-ir-final-async.test.ts
   - plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
-  - plan/issues/4118-ir-final-async-terminal-migration.md
+  - plan/issues/4124-ir-final-async-terminal-migration.md
 ---
-# #4118 — IR final async terminal migration: sequential loop and main
+# #4124 — IR final async terminal migration: sequential loop and main
 
 ## Problem
 
@@ -316,7 +316,7 @@ Main needs no loop-style spill updates beyond the initial definitions.
 
 ## Validation plan
 
-- Add `tests/issue-4118-ir-final-async.test.ts` for both owners: exact
+- Add `tests/issue-4124-ir-final-async.test.ts` for both owners: exact
   ownership, graph structure, live spills, runtime traces, empty input,
   rejection, WAT shape, stable late-import targets, and fail-closed controls.
 - Keep #4110 and #4106 focused suites green so the wider graph does not regress
@@ -365,7 +365,7 @@ The exact unit list and counts are updated from production telemetry in every
 retirement PR. A family is checked only when its direct bodies are unreachable
 and deleted with parity evidence; IR emission alone is insufficient.
 
-- [x] **Final async terminal owners (#4118):** remove two legacy bodies and
+- [x] **Final async terminal owners (#4124):** remove two legacy bodies and
       reach 37/37 terminal IR, 30 legacy bodies, zero Unsupported, zero
       Invariant.
 - [ ] **Classes and methods:** prepare constructors, instance/static/object
@@ -389,7 +389,7 @@ and deleted with parity evidence; IR emission alone is insufficient.
 
 ## Integration order
 
-#4110 lands and is verified first. #4118 then lands as the only overlapping
+#4110 lands and is verified first. #4124 then lands as the only overlapping
 production IR PR. The remaining-body families follow serially in checklist
 order unless telemetry proves a safer dependency order. Every family PR
 updates this Markdown record (or a linked child record), the exact body census,

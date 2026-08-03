@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-/** #4118 — final async terminal owners: sequential loop and exported main. */
+/** #4124 — final async terminal owners: sequential loop and exported main. */
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -60,7 +60,7 @@ function compilePlayground(): Promise<CompileResult> {
 
 let sequentialCompilation: Promise<CompileResult> | undefined;
 function compileSequential(): Promise<CompileResult> {
-  sequentialCompilation ??= compileTracked(EXACT_SEQUENTIAL_SOURCE, "issue-4118-sequential-runtime.ts");
+  sequentialCompilation ??= compileTracked(EXACT_SEQUENTIAL_SOURCE, "issue-4124-sequential-runtime.ts");
   return sequentialCompilation;
 }
 
@@ -239,7 +239,7 @@ function callsToMatching(wat: string, body: string, pattern: RegExp, detail: str
   return callCount(body, indices);
 }
 
-describe("#4118 prepared fetchAllSequential", () => {
+describe("#4124 prepared fetchAllSequential", () => {
   it("runs each iteration only after the prior fulfillment and resolves the native numeric total", async () => {
     const result = await compileSequential();
     expectSuccess(result);
@@ -323,7 +323,7 @@ describe("#4118 prepared fetchAllSequential", () => {
     };
     env.Promise_then2 = (promise, onFulfilled, onRejected) => {
       if (preparedPromises.has(promise) && ++sequentialReactions === 2) {
-        return then2(Promise.reject(4118), onFulfilled, onRejected);
+        return then2(Promise.reject(4124), onFulfilled, onRejected);
       }
       return then2(promise, onFulfilled, onRejected);
     };
@@ -343,15 +343,15 @@ describe("#4118 prepared fetchAllSequential", () => {
     await expectPending(promise);
     jobs[0]!.fire();
     await waitUntil(() => jobs.length === 2, "the second sequential request");
-    await expect(settled(promise)).rejects.toBe(4118);
-    await waitUntil(() => events.includes("reject:4118"), "the sequential rejection observer");
-    expect(events).toEqual(["start:3", "fire:3", "start:1", "reject:4118"]);
+    await expect(settled(promise)).rejects.toBe(4124);
+    await waitUntil(() => events.includes("reject:4124"), "the sequential rejection observer");
+    expect(events).toEqual(["start:3", "fire:3", "start:1", "reject:4124"]);
     expect(jobs).toHaveLength(2);
     expect(settlement.counts()).toEqual({ resolves: 0, rejects: 1 });
   });
 });
 
-describe("#4118 prepared async main", () => {
+describe("#4124 prepared async main", () => {
   it("preserves the complete timer/callee/log trace and fulfills Promise<void> with undefined", async () => {
     const result = await compilePlayground();
     expectSuccess(result);
@@ -487,7 +487,7 @@ describe("#4118 prepared async main", () => {
       return promise;
     };
     env.Promise_then2 = (promise, onFulfilled, onRejected) =>
-      then2(promise === pending[1] ? Promise.reject(4118) : promise, onFulfilled, onRejected);
+      then2(promise === pending[1] ? Promise.reject(4124) : promise, onFulfilled, onRejected);
     const settlement = trackOuterSettlement(env);
     const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
     imports.setExports?.(instance.exports as Record<string, Function>);
@@ -498,9 +498,9 @@ describe("#4118 prepared async main", () => {
       (reason) => trace.push(`reject:${String(reason)}`),
     );
 
-    await expect(settled(promise)).rejects.toBe(4118);
-    await waitUntil(() => trace.includes("reject:4118"), "main's rejection observer");
-    expect(trace).toEqual(["log:async/await demo", "clock:1000", "sequential:start:1", "reject:4118"]);
+    await expect(settled(promise)).rejects.toBe(4124);
+    await waitUntil(() => trace.includes("reject:4124"), "main's rejection observer");
+    expect(trace).toEqual(["log:async/await demo", "clock:1000", "sequential:start:1", "reject:4124"]);
     expect(jobs).toHaveLength(1);
     expect(clockValues).toEqual([1150, 2000, 2030]);
     expect(settlement.counts()).toEqual({ resolves: 0, rejects: 1 });
@@ -539,7 +539,7 @@ describe("#4118 prepared async main", () => {
       return promise;
     };
     env.Promise_then2 = (promise, onFulfilled, onRejected) =>
-      then2(promise === parallelOuter ? Promise.reject(4118) : promise, onFulfilled, onRejected);
+      then2(promise === parallelOuter ? Promise.reject(4124) : promise, onFulfilled, onRejected);
     const settlement = trackOuterSettlement(env);
     const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
     imports.setExports?.(instance.exports as Record<string, Function>);
@@ -558,8 +558,8 @@ describe("#4118 prepared async main", () => {
         index === 4 ? "main's parallel fan-out" : `main's sequential request ${index + 2}`,
       );
     }
-    await expect(settled(promise)).rejects.toBe(4118);
-    await waitUntil(() => trace.includes("reject:4118"), "main's second-await rejection observer");
+    await expect(settled(promise)).rejects.toBe(4124);
+    await waitUntil(() => trace.includes("reject:4124"), "main's second-await rejection observer");
     expect(trace.filter((event) => event.startsWith("parallel:fire:"))).toEqual([]);
     expect(trace.slice(-6)).toEqual([
       "parallel:start:1",
@@ -567,7 +567,7 @@ describe("#4118 prepared async main", () => {
       "parallel:start:3",
       "parallel:start:4",
       "parallel:start:5",
-      "reject:4118",
+      "reject:4124",
     ]);
     expect(trace).not.toContain("clock:2030");
     expect(trace).not.toContain("log:parallel  sum = 150 (took ~30ms)");
@@ -578,7 +578,7 @@ describe("#4118 prepared async main", () => {
 
   it("records the two legacy defects as an explicit non-parity control", async () => {
     const direct = await compile(PLAYGROUND_SOURCE, {
-      fileName: "issue-4118-direct-control.ts",
+      fileName: "issue-4124-direct-control.ts",
       target: "gc",
       experimentalIR: false,
     });
@@ -601,7 +601,7 @@ describe("#4118 prepared async main", () => {
   });
 });
 
-describe("#4118 ownership and optimization parity", () => {
+describe("#4124 ownership and optimization parity", () => {
   it("IR-emits the complete async family and keeps the IR-only telemetry check non-vacuous", async () => {
     const result = await compilePlayground();
     expectSuccess(result);
@@ -643,7 +643,7 @@ describe("#4118 ownership and optimization parity", () => {
         "total = total + (await fetchUser(ids[i]));",
         "total = total + (await fetchUser(ids[i])) + 0;",
       ),
-      "issue-4118-async-family-shadow-positive-control.ts",
+      "issue-4124-async-family-shadow-positive-control.ts",
     );
     expectSuccess(nearMiss);
     const directAsync = outcome(nearMiss, "fetchAllSequential");
@@ -656,7 +656,7 @@ describe("#4118 ownership and optimization parity", () => {
 
     const changedLog = await compileTracked(
       PLAYGROUND_SOURCE.replace('" (took ~" + (t1 - t0).toString()', '" in ~" + (t1 - t0).toString()'),
-      "issue-4118-main-log-near-miss.ts",
+      "issue-4124-main-log-near-miss.ts",
     );
     expectSuccess(changedLog);
     expect(outcome(changedLog, "main")).toMatchObject({
@@ -667,14 +667,14 @@ describe("#4118 ownership and optimization parity", () => {
   });
 
   it("runs the IR-only async shadow with a direct-body poison and a firing control", () => {
-    const dir = mkdtempSync(join(tmpdir(), "issue-4118-shadow-"));
+    const dir = mkdtempSync(join(tmpdir(), "issue-4124-shadow-"));
     const probe = join(dir, "probe.mts");
     writeFileSync(
       probe,
       `import { compile } from ${JSON.stringify(join(REPO_ROOT, "src/index.ts"))};\n` +
         `const source = ${JSON.stringify(EXACT_SEQUENTIAL_SOURCE)};\n` +
-        `const exact = await compile(source, { fileName: "issue-4118-shadow-exact.ts", trackIrOutcomes: true });\n` +
-        `const near = await compile(source.replace("total = total + (await fetchUser(ids[i]));", "total = total + (await fetchUser(ids[i])) + 0;"), { fileName: "issue-4118-shadow-control.ts", trackIrOutcomes: true });\n` +
+        `const exact = await compile(source, { fileName: "issue-4124-shadow-exact.ts", trackIrOutcomes: true });\n` +
+        `const near = await compile(source.replace("total = total + (await fetchUser(ids[i]));", "total = total + (await fetchUser(ids[i])) + 0;"), { fileName: "issue-4124-shadow-control.ts", trackIrOutcomes: true });\n` +
         `process.stdout.write(JSON.stringify({ exact: exact.success, near: near.success, errors: near.errors.map(e => e.message) }));\n`,
     );
     const parsed = JSON.parse(
@@ -723,7 +723,7 @@ describe("#4118 ownership and optimization parity", () => {
   it("preserves main's fused logging, native timing, vector, and direct-callee shapes", async () => {
     const result = await compileTracked(
       `${PLAYGROUND_SOURCE}\nexport function lateDirect(value: any = "A"): boolean { return value === "A"; }`,
-      "issue-4118-main-late-import-shapes.ts",
+      "issue-4124-main-late-import-shapes.ts",
     );
     expectSuccess(result);
     expect(outcome(result, "main")).toMatchObject({

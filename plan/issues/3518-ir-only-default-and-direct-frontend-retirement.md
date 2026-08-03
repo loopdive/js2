@@ -66,7 +66,7 @@ The following measurements are independent and must not be conflated:
 | Runtime/builtin reachability                     |               **~47K fn-lines** | Behavior emission must gain IR-owned entry points                      | Those routines should be deleted with the front-end                         |
 | Bounded host terminal readiness                  | **37/37 IR; 30 legacy bodies** | Every measured terminal has an IR body and no typed blocker remains    | The remaining direct bodies or global runtime/linear paths are unreachable  |
 
-R0 is complete. After #4118, the bounded hybrid gate is green at 5/5 entries,
+R0 is complete. After #4124, the bounded hybrid gate is green at 5/5 entries,
 37 terminal units, 37 emitted IR bodies, 0 typed Unsupported outcomes, 0
 Invariants, and 30 legacy bodies. Strict IR-only is still red only because
 those 30 terminal units retain direct bodies.
@@ -89,7 +89,7 @@ Additional blockers:
   module initializers still emit legacy bodies.
 - The normal fallback gate now reconciles preliminary selector labels with
   source-qualified terminal outcomes. Its async-function bucket fell from four
-  to zero with #4118; this does not claim that async methods, closures,
+  to zero with #4124; this does not claim that async methods, closures,
   `for await`, async generators, or AST planner deletion are complete.
 
 ## Terms used by this program

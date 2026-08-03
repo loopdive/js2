@@ -36,7 +36,7 @@ loc-budget-allow:
 
 ## Update — playground free async family complete (2026-08-03)
 
-#4102, #4104, #4106, #4110, and #4118 now prepare the complete playground
+#4102, #4104, #4106, #4110, and #4124 now prepare the complete playground
 free-function chain `delay -> fetchUser -> {fetchAllSequential,
 fetchAllParallel} -> main`. The bounded host census is 37/37 IR bodies, 30
 legacy bodies, zero Unsupported, and zero Invariant outcomes. The reconciled
@@ -44,7 +44,7 @@ fallback gate retires its preliminary `async-function` count from four to
 zero, and an active direct-body poison shadow proves the migrated family does
 not execute the legacy async body compiler.
 
-#4118 generalizes the AST-free plan/frame consumer to five-state counted-loop
+#4124 generalizes the AST-free plan/frame consumer to five-state counted-loop
 and three-state/two-suspension graphs with typed spill updates, exact
 per-suspension restores, semantic clock/concat/number-format/log providers,
 and canonical Promise<void> settlement. Runtime and WAT parity cover both
@@ -53,7 +53,7 @@ rejection edges and every retained optimization.
 This does not close the broader async epic. Async methods, closures, function
 expressions/arrows, `for await`, async generators, `yield*`, standalone/WASI
 prepared consumers, and final deletion of AST planners/activation hooks remain
-owned by #3527 and the remaining-body checklist in #4118.
+owned by #3527 and the remaining-body checklist in #4124.
 
 ## Update — AST-free plan/Promise ABI foundation (2026-08-02)
 
