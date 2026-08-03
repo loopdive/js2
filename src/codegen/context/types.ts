@@ -2273,6 +2273,11 @@ export interface CodegenContext {
    * cannot desync a cached raw index.
    */
   nestedFnClosureArtifacts?: Map<string, { structTypeIdx: number; trampolineName: string }>;
+  /** (#4139) Closure struct type minted for a lifted arrow / function
+   *  expression, keyed by the AST node. The fnctor twin build reads it to
+   *  materialize the ctor's sibling captures from the closure value that
+   *  arrives as the standalone `__constructor_identity` param. */
+  closureStructByNode?: WeakMap<ts.Node, { structTypeIdx: number }>;
   /** Nested function capture info. */
   nestedFuncCaptures: Map<
     string,
