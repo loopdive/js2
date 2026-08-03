@@ -169,6 +169,7 @@ import {
 import { coercionInstrs, defaultValueInstrs } from "./type-coercion.js";
 import { tryEmitJsonParseElementAccess, tryEmitJsonParsePropertyAccess } from "./json-standalone.js";
 import { reserveMemberSetDispatch } from "./member-set-dispatch.js";
+import { alternateFieldArmRead } from "./alternate-field-arm.js";
 import { classMethodCandidatesForProp, reserveMemberGetDispatch } from "./member-get-dispatch.js";
 import { resolveReceiverStruct } from "./fnctor-escape-gate.js"; // (#2681/#2686 A3) pinned-struct read dispatch
 import { emitGuardedNativeStringElementGet } from "./string-element-read.js"; // (#3973) any-typed native-string element read
@@ -1314,13 +1315,9 @@ export function emitNullGuardedStructGet(
     const buildFallback = (srcLocal: number, altIdx: number): Instr[] => {
       if (altIdx < alternates.length) {
         const alt = alternates[altIdx]!;
-        const altCoerce = coercionInstrs(ctx, alt.fieldType, resultType, fctx);
-        const altRead: Instr[] = [
-          { op: "local.get", index: srcLocal },
-          { op: "ref.cast", typeIdx: alt.structTypeIdx },
-          { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.fieldIdx },
-          ...altCoerce,
-        ];
+        // null = this shape cannot produce `resultType`; skip the arm.
+        const altRead = alternateFieldArmRead(ctx, fctx, alt, resultType, srcLocal);
+        if (!altRead) return buildFallback(srcLocal, altIdx + 1);
         return [
           { op: "local.get", index: srcLocal },
           { op: "ref.test", typeIdx: alt.structTypeIdx },
@@ -1798,13 +1795,9 @@ export function emitExternrefToStructGet(
   const buildFallbackChain = (altIdx: number): Instr[] => {
     if (altIdx < alternates.length) {
       const alt = alternates[altIdx]!;
-      const altCoerce = coercionInstrs(ctx, alt.fieldType, resultType, fctx);
-      const altRead: Instr[] = [
-        { op: "local.get", index: tmpAny },
-        { op: "ref.cast", typeIdx: alt.structTypeIdx },
-        { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.fieldIdx },
-        ...altCoerce,
-      ];
+      // null = this shape cannot produce `resultType`; skip the arm.
+      const altRead = alternateFieldArmRead(ctx, fctx, alt, resultType, tmpAny);
+      if (!altRead) return buildFallbackChain(altIdx + 1);
       return [
         { op: "local.get", index: tmpAny },
         { op: "ref.test", typeIdx: alt.structTypeIdx },
