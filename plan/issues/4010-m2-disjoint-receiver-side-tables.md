@@ -477,3 +477,27 @@ surface this slice promised not to move.
 5. Class instances / Date / RegExp / Error remain **out of scope**: they have no
    bag, so `__carrier_bag_delete` answers `-1` for them and nothing changed.
    Their expando substrate is still greenfield (matrix rows 4-7).
+
+# S2 RESULT — landed (PR #4063, merged 73ee7169b, 2026-08-03)
+
+Root cause was NOT the sketch's companion-tombstone: `__obj_find` skips
+tombstoned entries, so tombstoning alone restores the fall-through to the bag
+(measured — the value survived). The real defect was one level up:
+**`__delete_property`'s non-`$Object` arm returned 1 (success) without deleting
+anything.** Fix: `src/codegen/carrier-bag-delete.ts` finds the receiver's bag
+and delegates to the existing `$Object` OrdinaryDelete; the vec arm also
+SHADOWS the bag (do not "simplify" that away). Tri-state result (`-1` not
+handled / `0` refused / `1` deleted) — collapsing `-1` into `1` IS the original
+defect.
+
+**Certifying numbers (merge_group on the merged state, 43,487 files):
+improvements=13, wasm-change regressions=0, net +13.** The
+`built-ins/**/{name,length}.js` −684 stratum untouched (the #2896 builtin-fn
+arm runs first). Full evidence table: PR #4063's comment thread.
+
+S3 inherits (see task): visibility widening now legal; the ~700-file stratum
+control mandatory pre-merge; NEW hazard — `verifyProperty` deletes-then-
+restores and a define on a FUNCTION still lands nowhere, so a harness delete of
+a function expando is irreversible where it was a no-op; S3 widens exactly the
+runway that reaches it. S2's partial local stratum data was measured against a
+superseded tree — not reusable; run the control fresh, both arms.
