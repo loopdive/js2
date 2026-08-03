@@ -78,7 +78,7 @@ Team setup/budget/spawn/comms: **`plan/method/team-setup.md`**. Agent defs: **`.
 - reference_merge_queue_park_triage_four_causes · reference_merge_group_gate_reads_a_moving_baseline · reference_baseline_promote_trap_gate_two_failure_modes · reference_verdict_logic_change_must_bump_oracle_version
 - reference_ci_status_feed_retired_use_required_checks · reference_ci_gate_change_scoped_not_wholetree_absolute
 - [two-checks-share-a-name](reference_two_checks_share_a_name_head1_watcher_settles_on_a_stub.md) — a check NAME is not an identifier; filter `skipping`, never `head -1`
-- [workflow-prs-never-autoenqueue](reference_workflow_touching_prs_never_autoenqueue.md) — **FALSIFIED**; ALWAYS check the queue before enqueuing
+- [workflow-prs-never-autoenqueue](reference_workflow_touching_prs_never_autoenqueue.md) — **RE-CONFIRMED LIVE 2026-08-02** (the earlier FALSIFIED marking is itself falsified): the App is refused on workflow-touching PRs (`refusing to allow a GitHub App to create or update workflow`); remedy = shepherd's one-shot PAT enqueue, or grant the App `workflows` permission (admin act)
 - reference_never_push_to_a_queued_pr_it_ejects_to_the_back · reference_autoenqueue_grace0_races_mergestate_recompute · reference_dropped_synchronize_only_cla_check_repush
 - reference_quality_failfast_masks_downstream_gates · reference_baseline_gates_need_postmerge_autorefresh · reference_ci_quality_format_uses_prettier_not_biome · feedback_trigger_deploy_pages · feedback_cla_check_rerun_after_merge_commit
 - reference_host_restore_triage_verify_first_measure · reference_error_analysis · reference_standalone_harvest_rootcausemap_mislabeled · project_wrapforhost_setexports_harness
