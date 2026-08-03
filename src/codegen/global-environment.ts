@@ -4,18 +4,20 @@
  * and deletes (#2726). Host/gc uses the current sandbox global; host-free
  * targets use the existing native `$Object` singleton.
  */
-import type { ValType } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import { ensureAnyHelpers } from "./any-helpers.js";
 import { emitNativeGlobalThisObject } from "./array-object-proto.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowReferenceError } from "./expressions/helpers.js";
-import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js";
 
 export function emitGlobalEnvironmentObject(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   if (ctx.standalone || ctx.wasi) {
@@ -53,6 +55,18 @@ export function ensureGlobalEnvironmentOperation(
   return idx;
 }
 
+/** Decode the provider's canonical primitive/reference carrier after reading
+ * from the shared runtime-eval realm object. Values seeded by the caller are
+ * not wrapped; the structural type test preserves them unchanged. */
+export function runtimeEvalSharedValueUnwrapInstrs(ctx: CodegenContext, fctx: FunctionContext): Instr[] {
+  ensureAnyHelpers(ctx);
+  return buildRuntimeEvalValueUnwrap(ctx, fctx.locals, fctx.params.length);
+}
+
+export function emitRuntimeEvalSharedValueUnwrap(ctx: CodegenContext, fctx: FunctionContext): void {
+  fctx.body.push(...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx));
+}
+
 /** Read a pre-scanned sloppy implicit global, throwing when it was deleted. */
 export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContext, name: string): ValType | null {
   if (!emitGlobalEnvironmentObject(ctx, fctx)) return null;
@@ -74,6 +88,65 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
   fctx.body.push({ op: "local.get", index: objectLocal });
   emitGlobalEnvironmentKey(ctx, fctx, name);
   fctx.body.push({ op: "call", funcIdx: getIdx });
+  return { kind: "externref" };
+}
+
+/** Read a name that runtime eval may have created on the realm global object.
+ * Unlike the statically scanned sloppy-implicit-global path, this uses
+ * HasProperty because a Global Environment Record delegates object-record
+ * lookup through the prototype chain. `missingAsUndefined` implements the
+ * special non-throwing lookup required by `typeof IdentifierName`. */
+export function emitRuntimeEvalGlobalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  missingAsUndefined: boolean,
+): ValType | null {
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) return null;
+  const objectLocal = allocLocal(fctx, `__runtime_eval_global_obj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: objectLocal });
+  const hasIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_has");
+  const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
+  if (hasIdx === undefined || getIdx === undefined) return null;
+
+  if (!missingAsUndefined) {
+    fctx.body.push({ op: "local.get", index: objectLocal });
+    emitGlobalEnvironmentKey(ctx, fctx, name);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_has") ?? hasIdx }, { op: "i32.eqz" });
+    const saved = pushBody(fctx);
+    emitThrowReferenceError(ctx, fctx, `${name} is not defined`);
+    const throwBody = fctx.body;
+    popBody(fctx, saved);
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwBody, else: [] });
+    fctx.body.push({ op: "local.get", index: objectLocal });
+    emitGlobalEnvironmentKey(ctx, fctx, name);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+    emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+    return { kind: "externref" };
+  }
+
+  const savedPresent = pushBody(fctx);
+  fctx.body.push({ op: "local.get", index: objectLocal });
+  emitGlobalEnvironmentKey(ctx, fctx, name);
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+  emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+  const presentBody = fctx.body;
+  popBody(fctx, savedPresent);
+
+  const savedMissing = pushBody(fctx);
+  emitUndefined(ctx, fctx);
+  const missingBody = fctx.body;
+  popBody(fctx, savedMissing);
+
+  fctx.body.push({ op: "local.get", index: objectLocal });
+  emitGlobalEnvironmentKey(ctx, fctx, name);
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_has") ?? hasIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: presentBody,
+    else: missingBody,
+  });
   return { kind: "externref" };
 }
 

@@ -43,8 +43,10 @@ export interface LocalsSnapshot {
    * `return calls` then read the stale slot N).
    */
   readonly mapEntries: ReadonlyArray<readonly [string, number]>;
-  /** `boxedCaptures` names present at snapshot time (to drop added ones). */
-  readonly boxedNames: ReadonlySet<string>;
+  /** Exact `boxedCaptures` metadata at snapshot time. A speculative promotion
+   * can replace an existing entry's cell type, so preserving names alone is
+   * insufficient even when the corresponding localMap entry is restored. */
+  readonly boxedEntries: ReadonlyArray<readonly [string, { refCellTypeIdx: number; valType: ValType }]> | null;
   /**
    * (#3032) Exact `boxedTdzFlags` / `tdzFlagLocals` entries at snapshot time
    * (`null` when the map was absent). The call-site TDZ-flag prepend
@@ -59,19 +61,29 @@ export interface LocalsSnapshot {
    */
   readonly tdzBoxEntries: ReadonlyArray<readonly [string, { refCellTypeIdx: number; localIdx: number }]> | null;
   readonly tdzFlagEntries: ReadonlyArray<readonly [string, number]> | null;
+  /** Stable direct-eval activation cells must roll back with their locals. */
+  readonly directEvalActivationEntries: ReadonlyArray<readonly [string, number]> | null;
+  /** Hidden direct-eval state-pool locals allocated by a speculative route. */
+  readonly directEvalStateCellLocals: ReadonlyArray<number> | null;
 }
 
 export function snapshotLocals(fctx: FunctionContext): LocalsSnapshot {
   return {
     localsLen: fctx.locals.length,
     mapEntries: Array.from(fctx.localMap.entries()),
-    boxedNames: fctx.boxedCaptures ? new Set(fctx.boxedCaptures.keys()) : EMPTY_SET,
+    boxedEntries: fctx.boxedCaptures
+      ? Array.from(fctx.boxedCaptures.entries(), ([name, entry]) => [name, { ...entry }] as const)
+      : null,
     tdzBoxEntries: fctx.boxedTdzFlags ? Array.from(fctx.boxedTdzFlags.entries()) : null,
     tdzFlagEntries: fctx.tdzFlagLocals ? Array.from(fctx.tdzFlagLocals.entries()) : null,
+    directEvalActivationEntries: fctx.directEvalActivationBindings
+      ? Array.from(fctx.directEvalActivationBindings.entries())
+      : null,
+    directEvalStateCellLocals: fctx.directEvalActivationStateCellLocals
+      ? Array.from(fctx.directEvalActivationStateCellLocals)
+      : null,
   };
 }
-
-const EMPTY_SET: ReadonlySet<string> = new Set<string>();
 
 /**
  * #1847 — undo allocations made since `snap`: truncate the locals vector and
@@ -99,12 +111,17 @@ export function restoreLocals(fctx: FunctionContext, snap: LocalsSnapshot): void
   for (const [name, idx] of snap.mapEntries) {
     fctx.localMap.set(name, idx);
   }
-  // Drop `boxedCaptures` entries the probe added — a stale box marking would
-  // make a post-rollback read of the variable dereference a ref-cell that no
-  // longer exists (its box local was truncated above).
-  if (fctx.boxedCaptures) {
-    for (const name of fctx.boxedCaptures.keys()) {
-      if (!snap.boxedNames.has(name)) fctx.boxedCaptures.delete(name);
+  // Restore the complete capture metadata. A probe may not only ADD a box; it
+  // may promote an existing narrow cell to the canonical eval cell while also
+  // re-pointing localMap. Restoring only the name set leaves metadata claiming
+  // the old raw local is a new cell, producing an illegal cast on the next read.
+  if (snap.boxedEntries === null) {
+    fctx.boxedCaptures = undefined;
+  } else {
+    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+    fctx.boxedCaptures.clear();
+    for (const [name, entry] of snap.boxedEntries) {
+      fctx.boxedCaptures.set(name, { ...entry });
     }
   }
   // (#3032) Restore `boxedTdzFlags` / `tdzFlagLocals` to their EXACT snapshot
@@ -131,6 +148,17 @@ export function restoreLocals(fctx: FunctionContext, snap: LocalsSnapshot): void
       for (const [name, idx] of snap.tdzFlagEntries) fctx.tdzFlagLocals.set(name, idx);
     }
   }
+  if (snap.directEvalActivationEntries === null) {
+    fctx.directEvalActivationBindings = undefined;
+  } else {
+    if (!fctx.directEvalActivationBindings) fctx.directEvalActivationBindings = new Map();
+    fctx.directEvalActivationBindings.clear();
+    for (const [name, idx] of snap.directEvalActivationEntries) {
+      fctx.directEvalActivationBindings.set(name, idx);
+    }
+  }
+  fctx.directEvalActivationStateCellLocals =
+    snap.directEvalStateCellLocals === null ? undefined : Array.from(snap.directEvalStateCellLocals);
   // Prune any temp-free-list entries that now point past the truncated vector.
   if (fctx.tempFreeList) {
     const maxValid = fctx.params.length + snap.localsLen;

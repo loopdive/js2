@@ -7,7 +7,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Encoder } from "../../src/interp/encoder.js";
 import { Op, OP_COUNT, OP_INFO } from "../../src/interp/opcodes.js";
-import { compileScript, createDynamicFunction, disassemble } from "../../src/interp/index.js";
+import { compileScript, createDynamicFunction, disassemble, executeIndirectEval } from "../../src/interp/index.js";
 import { loadAcorn, parse, runInterp } from "./harness.js";
 
 beforeAll(async () => {
@@ -50,6 +50,20 @@ describe("#2928 dynamic Function factory", () => {
     ) as () => unknown;
     expect(fn()).toBeUndefined();
   });
+
+  it("installs one callable realm Function identity for aliases and constructed functions", () => {
+    const globalObject: Record<string, unknown> = {};
+    const result = executeIndirectEval(
+      (source) => parse(source),
+      "var F = Function; var fn = F('a', 'return a + 1'); " +
+        "(typeof F === 'function' ? 1 : 0) + (fn(2) === 3 ? 2 : 0) + " +
+        "(fn.constructor === Function ? 4 : 0)",
+      globalObject,
+    );
+
+    expect(result).toBe(7);
+    expect(globalObject.Function).toBeDefined();
+  });
 });
 
 describe("#3101 encoder — packing + operand fields", () => {
@@ -83,7 +97,7 @@ describe("#3101 encoder — packing + operand fields", () => {
     const slot = enc.emitJump(Op.Jump);
     enc.emit0(Op.LdaUndef);
     const target = enc.here();
-    enc.patch(slot);
+    enc.patch(slot, enc.here());
     expect(enc.code[slot]).toBe(target);
   });
 });
@@ -120,6 +134,12 @@ describe("#3101 arithmetic + coercion (delegated to generic runtime ops)", () =>
   it("does string concatenation via +", () => expectValue("'foo' + 'bar'", "foobar"));
   it("mixes number/string coercion like JS +", () => expectValue("1 + '2'", "12"));
   it("computes modulo", () => expectValue("17 % 5", 2));
+  it("applies signed left/right shifts with JS coercion", () => {
+    expectValue("2 << 3", 16);
+    expectValue("16 >> 3", 2);
+    expectValue("-8 >> 2", -2);
+    expectValue("'2' << 3", 16);
+  });
   it("negates and ToNumber-coerces unary +", () => expectValue("-(3) + +'4'", 1));
   it("calls unshadowed Number through CallBuiltin", () => expectValue("Number('4') + Number()", 4));
   it("preserves a shadowed global-coercion binding", () =>
@@ -164,6 +184,11 @@ describe("#3101 comparison desugarings (>, >=, !=, !== via the minimal ISA)", ()
 });
 
 describe("#3101 control flow + completion values", () => {
+  it("predeclares strict script var, function, lexical, and class bindings", () =>
+    expectValue(
+      '"use strict"; var a=1; let b=2; const c=3; function f(){return 4;} class C { static value(){return 5;} } a+b+c+f()+C.value()',
+      15,
+    ));
   it("if/else takes the right branch", () => expectValue("if (2 > 1) 'yes'; else 'no'", "yes"));
   it("if with false test and no else completes undefined", () => expectValue("1; if (false) 2;", undefined));
   it("while accumulates", () => expectValue("var n=5, f=1; while(n>1){f*=n;n--;} f", 120));

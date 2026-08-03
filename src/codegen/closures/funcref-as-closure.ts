@@ -157,7 +157,10 @@ function emitMemoizedNestedFnClosure(
         fctx.body.push({ op: "ref.as_non_null" });
       }
     } else {
-      fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+      const capSourceIdx = fctx.liftedCaptureNames?.has(cap.name)
+        ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)
+        : cap.outerLocalIdx;
+      fctx.body.push({ op: "local.get", index: capSourceIdx });
     }
   }
   // #1205 Stage 3: after all value captures, push the boxed TDZ flag refs

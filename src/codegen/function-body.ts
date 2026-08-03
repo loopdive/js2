@@ -68,6 +68,12 @@ import {
   registerLinearU8Buffer,
 } from "./linear-uint8-signatures.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, emitLinearU8ArenaReset } from "./linear-uint8-arena.js";
+import {
+  collectDirectEvalActivationBindingNames,
+  collectDirectEvalBindingNames,
+  functionMayReachDirectEval,
+  reifyCurrentDirectEvalBindings,
+} from "./direct-eval-environment.js";
 
 /** Maximum number of instructions for a function body to be considered inlinable */
 export const INLINE_MAX_INSTRS = 10;
@@ -346,6 +352,14 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
     i32SpecializedArrays: i32SpecializedArrays.size > 0 ? i32SpecializedArrays : undefined,
   };
 
+  // A nested lexical descendant can direct-eval a name owned by this function,
+  // so mark the whole ancestor chain before any parameter/default/body lowering
+  // can capture those bindings through a narrower, non-canonical cell type.
+  if (functionMayReachDirectEval(decl, ctx.oracle)) {
+    fctx.directEvalBindingNames = collectDirectEvalBindingNames(decl);
+    fctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(decl);
+  }
+
   // Register params as locals
   for (let i = 0; i < params.length; i++) {
     fctx.localMap.set(params[i]!.name, i);
@@ -577,7 +591,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // We create a vec struct (same as Array) populated from all function parameters.
   // Use externref elements so that all parameter types (numbers, strings, objects)
   // are preserved — matching the closure version in closures.ts (#771).
-  if (decl.body && bodyUsesArguments(decl.body)) {
+  if (decl.body && (bodyUsesArguments(decl.body) || fctx.directEvalBindingNames !== undefined)) {
     // Ensure __box_number and __unbox_number are available for mapped arguments sync
     const hasNumericParam = params.some((p) => p.type.kind === "f64" || p.type.kind === "i32");
     if (hasNumericParam) {
@@ -684,6 +698,7 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       if (decl.body) {
         hoistVarDeclarations(ctx, fctx, decl.body.statements);
         hoistLetConstWithTdz(ctx, fctx, decl.body.statements);
+        reifyCurrentDirectEvalBindings(ctx, fctx);
         hoistFunctionDeclarations(ctx, fctx, decl.body.statements);
         for (const stmt of decl.body.statements) {
           compileStatement(ctx, fctx, stmt);
@@ -762,6 +777,10 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
       // Hoist `let`/`const` declarations with TDZ flags so nested functions can
       // capture them. The TDZ flag ensures ReferenceError if accessed before init.
       hoistLetConstWithTdz(ctx, fctx, bodyStatements);
+      // Promote the eval-visible entry environment before compiling hoisted
+      // functions. Their capture lowering then aliases these same canonical
+      // cells, as do interpreter reads/writes at a direct-eval call site.
+      reifyCurrentDirectEvalBindings(ctx, fctx);
       // Hoist function declarations: JS semantics require function declarations
       // to be available before their textual position in the enclosing scope.
       hoistFunctionDeclarations(ctx, fctx, bodyStatements);

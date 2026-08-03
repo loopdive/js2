@@ -779,7 +779,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   for (const entry of entries) {
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
-    const buildArgConversion = (argLocalIdx: number, paramType: ValType | undefined): Instr[] => {
+    const buildArgConversion = (argLocalIdx: number, formalIndex: number, paramType: ValType | undefined): Instr[] => {
       const ops: Instr[] = [{ op: "local.get", index: argLocalIdx }];
       if (paramType) {
         if (paramType.kind === "f64") {
@@ -801,7 +801,25 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           ops.push(...externToClosureParamRef(paramType));
         }
       }
-      return ops;
+      // The widened dispatcher receives a real JS `undefined` carrier in each
+      // padded externref slot. That value cannot be `ref.cast` to a nullable
+      // closed struct even though the callee's internal representation for an
+      // omitted optional object is exactly `ref.null $T`. Preserve dynamic
+      // coercion for supplied arguments (notably numeric undefined -> NaN),
+      // but materialize omission in the nullable reference domain before the
+      // cast. `__argc` still contains the raw call-site count at this point.
+      if (paramType?.kind !== "ref_null") return ops;
+      return [
+        { op: "global.get", index: argcGlobalIdx },
+        { op: "i32.const", value: formalIndex },
+        { op: "i32.gt_s" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: paramType },
+          then: ops,
+          else: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
+        },
+      ];
     };
 
     // User args occupy locals [2..arity+1]. Push only as many as the
@@ -810,7 +828,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     for (let i = 0; i < entry.closureArity; i++) {
       const paramType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      argInstrs.push(...buildArgConversion(i + 2, paramType));
+      argInstrs.push(...buildArgConversion(i + 2, i, paramType));
     }
 
     // (#2745) #820l argc/extras plumbing (clamped-to-formals convention; see
@@ -1518,7 +1536,8 @@ export function emitIsDataStructExport(ctx: CodegenContext): void {
 export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   if (!ctx.nativeStrings) return;
   const baseTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
-  if (baseTypeIdxs.length === 0) return;
+  const runtimeEvalCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
+  if (baseTypeIdxs.length === 0 && runtimeEvalCallbackTypeIdx === undefined) return;
 
   const fnByName = (name: string): WasmFunction | undefined =>
     ctx.mod.functions.find((f) => (f as { name?: string }).name === name) as WasmFunction | undefined;
@@ -1526,8 +1545,25 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // Chained `ref.test` arms over the anyref-converted param in local 0/1. Each
   // i32-predicate arm returns `matchValue` on hit. Builds from the ONE shared
   // closure-base-wrapper list (`closure-classifier.ts`).
-  const closureI32Arms = (anyLocalIdx: number, matchValue: number): Instr[] =>
-    buildClosureRefTestArms(ctx, anyLocalIdx, [{ op: "i32.const", value: matchValue }, { op: "return" }]);
+  const closureI32Arms = (anyLocalIdx: number, matchValue: number): Instr[] => {
+    const onMatch: Instr[] = [{ op: "i32.const", value: matchValue }, { op: "return" }];
+    const arms = buildClosureRefTestArms(ctx, anyLocalIdx, onMatch);
+    if (runtimeEvalCallbackTypeIdx !== undefined) {
+      // The provider wraps an interpreted callback in a uniquely branded,
+      // deliberately NON-closure carrier before crossing into caller AOT. It
+      // still has ECMAScript [[Call]], supplied by fillApplyClosure's exact
+      // type+brand guard, so Test262's `assert.throws` precondition must observe
+      // `typeof callback === "function"`. Keep this local to the typeof family:
+      // adding the marker to the shared closure-root classifier would send it
+      // through arity/property paths that assume closure field layout.
+      arms.push(
+        { op: "local.get", index: anyLocalIdx },
+        { op: "ref.test", typeIdx: runtimeEvalCallbackTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
+      );
+    }
+    return arms;
+  };
 
   // #3540: the single coercion engine owns compiled-closure stringification;
   // this finalizer supplies the now-complete closure classifier.
@@ -1594,11 +1630,26 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
         (inst, i) => (b[spliceAt + i] as { op?: string } | undefined)?.op === (inst as { op?: string }).op,
       );
     if (tailMatches) {
-      const fnArm = buildClosureRefTestArms(ctx, 1, [
-        ...stringConstantExternrefInstrs(ctx, "function"),
-        { op: "return" },
-      ]);
-      b.splice(spliceAt, 0, ...fnArm);
+      // Replace each predicate arm's `i32.const 1; return` body with the
+      // materialized native string result. Rebuild explicitly because the i32
+      // predicate and value-returning helper have different result types.
+      const valueArms: Instr[] = [];
+      const callableTypeIdxs = [
+        ...baseTypeIdxs,
+        ...(runtimeEvalCallbackTypeIdx === undefined ? [] : [runtimeEvalCallbackTypeIdx]),
+      ];
+      for (const typeIdx of callableTypeIdxs) {
+        valueArms.push(
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }],
+          },
+        );
+      }
+      b.splice(spliceAt, 0, ...valueArms);
     }
   }
 }

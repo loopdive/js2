@@ -154,6 +154,27 @@ describe("#2042 S4 — ValidateAndApplyPropertyDescriptor (redefinition rules)",
     ).toBe(7);
   });
 
+  it("ordinary assignment changes only the value and preserves descriptor attributes", async () => {
+    expect(
+      await runStandalone(`${MK}
+        export function test(): number {
+          const o: any = mk();
+          Object.defineProperty(o, "x", {
+            value: 1,
+            writable: true,
+            enumerable: true,
+            configurable: false,
+          });
+          o.x = 2;
+          const d: any = Object.getOwnPropertyDescriptor(o, "x");
+          return (d.value === 2 ? 1 : 0)
+            + (d.writable === true ? 2 : 0)
+            + (d.enumerable === true ? 4 : 0)
+            + (d.configurable === false ? 8 : 0);
+        }`),
+    ).toBe(15);
+  });
+
   it("a configurable property may be redefined even when currently non-writable", async () => {
     // configurable:true means ValidateAndApply permits any change, including a
     // value change on a non-writable property (§10.1.6.3 — the non-writable

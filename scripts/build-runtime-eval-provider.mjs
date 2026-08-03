@@ -58,6 +58,8 @@ function verifyProvider(binary) {
   const checks = [
     ["__runtime_eval_canary", 3],
     ["__runtime_function_canary", 3],
+    ["__runtime_direct_eval_canary", 84],
+    ["__runtime_apply_interpreted_canary", 3],
     ["__runtime_positive_corpus_canary", 30],
   ];
   for (const [name, expected] of checks) {
@@ -68,7 +70,12 @@ function verifyProvider(binary) {
   }
   // The linkable namespace itself must exist.
   const ns = instantiateRuntimeEvalNamespace(module);
-  for (const name of ["__runtime_new_function", "__runtime_indirect_eval"]) {
+  for (const name of [
+    "__runtime_new_function",
+    "__runtime_indirect_eval",
+    "__runtime_direct_eval",
+    "__runtime_apply_interpreted",
+  ]) {
     if (typeof ns[name] !== "function") throw new Error(`provider namespace export ${name} missing`);
   }
 }
@@ -187,8 +194,29 @@ async function buildFull(cacheDir, bundleHash) {
   );
 }
 
+function requireFullCache(cacheDir, bundleHash) {
+  const source = buildRuntimeEvalProviderSource();
+  const key = runtimeEvalProviderCacheKey(source, bundleHash);
+  const path = runtimeEvalProviderCachePath(cacheDir, key);
+  const cached = readCachedRuntimeEvalProvider(cacheDir, key);
+  if (!cached) {
+    throw new Error(
+      `required full provider cache entry is missing for key ${key} (bundle ${bundleHash}) at ${path}; ` +
+        `the shared CI artifact is absent or was built from a different compiler bundle`,
+    );
+  }
+  verifyProvider(cached);
+  console.log(
+    `[runtime-eval-provider] required cache HIT + canary verification — key ${key}, ${cached.length} bytes at ${path}`,
+  );
+}
+
 async function main() {
   const refusalOnly = process.argv.includes("--refusal-only");
+  const requireFull = process.argv.includes("--require-full-cache");
+  if (refusalOnly && requireFull) {
+    throw new Error("--refusal-only and --require-full-cache are mutually exclusive");
+  }
   const cacheDir = defaultRuntimeEvalProviderCacheDir();
   const bundleHash = computeCompilerBundleHash();
 
@@ -197,6 +225,10 @@ async function main() {
   // real interpreter is absent, and it costs seconds.
   await buildRefusal(cacheDir, bundleHash);
   if (refusalOnly) return;
+  if (requireFull) {
+    requireFullCache(cacheDir, bundleHash);
+    return;
+  }
   await buildFull(cacheDir, bundleHash);
 }
 

@@ -123,12 +123,24 @@ function catchParamCancels(node: ts.Node, name: string): boolean {
  * as the "declaring block" — reads inside it still resolve to the block-local
  * function — or `null` when `fd` is a plain scope-level declaration.
  */
-function annexBDeclaringRange(fd: ts.FunctionDeclaration): ts.Node | null {
+export function annexBDeclaringRange(fd: ts.FunctionDeclaration): ts.Node | null {
   const parent = fd.parent;
   if (!parent) return null;
   if (ts.isBlock(parent)) {
-    // The function body of the enclosing var scope is NOT a block-nested position.
-    if (isVarScopeBoundary(parent.parent)) return null;
+    // Only an ACTUAL function body is a scope-level declaration list. A user
+    // BlockStatement directly under a SourceFile is still a block-nested
+    // Annex-B position; treating SourceFile as the block's owner used to make
+    // eval("{ function f() {} }") look like a plain script declaration.
+    const owner = parent.parent;
+    if (
+      owner &&
+      !ts.isSourceFile(owner) &&
+      !ts.isModuleBlock(owner) &&
+      isVarScopeBoundary(owner) &&
+      (owner as ts.FunctionLikeDeclarationBase).body === parent
+    ) {
+      return null;
+    }
     return parent;
   }
   // `switch (x) { case 1: function f() {} }` — the whole CaseBlock is one
@@ -246,7 +258,16 @@ export function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | n
   // Must be directly inside a Block (not the function body itself, not a case
   // clause statement list, etc.). A direct function-body decl keeps its hoist.
   if (!ts.isBlock(block)) return null;
-  if (isVarScopeBoundary(block.parent)) return null; // block IS the fn body → direct decl
+  const owner = block.parent;
+  if (
+    owner &&
+    !ts.isSourceFile(owner) &&
+    !ts.isModuleBlock(owner) &&
+    isVarScopeBoundary(owner) &&
+    (owner as ts.FunctionLikeDeclarationBase).body === block
+  ) {
+    return null; // block IS the fn body → direct decl
+  }
 
   // (#3980) Annex B declining to create the web-compat var binding does NOT make
   // the name unbound when the enclosing var scope ALREADY binds it — a parameter

@@ -73,7 +73,12 @@ describe("#2928 E7 — refusal runtime-eval provider", () => {
       // same compiler under test, with nothing to import.
       expect(WebAssembly.Module.imports(refusalModule)).toEqual([]);
       expect(WebAssembly.Module.exports(refusalModule).map((e) => e.name)).toEqual(
-        expect.arrayContaining(["__runtime_new_function", "__runtime_indirect_eval"]),
+        expect.arrayContaining([
+          "__runtime_new_function",
+          "__runtime_indirect_eval",
+          "__runtime_direct_eval",
+          "__runtime_apply_interpreted",
+        ]),
       );
 
       // A file shaped like test262's built-ins/Function/S15.3.2.1_A1_T1.js: the
@@ -96,6 +101,7 @@ describe("#2928 E7 — refusal runtime-eval provider", () => {
       );
       const userModule = new WebAssembly.Module(userBinary);
       expect(WebAssembly.Module.imports(userModule)).toEqual([
+        { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_apply_interpreted", kind: "function" },
         { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_new_function", kind: "function" },
       ]);
 
@@ -107,6 +113,35 @@ describe("#2928 E7 — refusal runtime-eval provider", () => {
       });
       // The REAL value, not just "did not crash": ToString threw 7.
       expect((instance.exports as AnyExports).probe()).toBe(7);
+
+      // Merely making dynamic direct eval available turns every potentially
+      // replaceable script function into a live binding. Calling an untouched
+      // four-formal function with three arguments must still reach its original
+      // AOT closure through the runtime-eval callable adapter. This is the
+      // propertyHelper.js `verifyProperty(obj, name, desc, options)` shape used
+      // by the standalone Test262 lane.
+      const liveFunctionBinary = await compileStandalone(
+        `
+          interface Options { label?: boolean; restore?: boolean }
+          function verify(a: any, b: any, c: any, options?: Options) {
+            return arguments.length + (options && options.restore ? 10 : 0);
+          }
+          function dynamic(source: string) {
+            return eval(source);
+          }
+          export function probe(): number {
+            return verify(1, 2, 3) * 100 + verify(1, 2, 3, { restore: true });
+          }
+        `,
+        "runtime-eval-live-function.ts",
+      );
+      const liveFunctionModule = new WebAssembly.Module(liveFunctionBinary);
+      const liveFunctionInstance = new WebAssembly.Instance(liveFunctionModule, {
+        [RUNTIME_EVAL_IMPORT_MODULE]: instantiateRuntimeEvalNamespace(refusalModule),
+      });
+      // 3 actual arguments in the omitted case; 4 actual arguments plus the
+      // supplied object's visible `restore` property in the second case.
+      expect((liveFunctionInstance.exports as AnyExports).probe()).toBe(314);
 
       // And a call that DOES reach the provider still refuses — as a catchable
       // TypeError carrying the refusal message, never a silent value.

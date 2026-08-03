@@ -38,6 +38,18 @@ export function bodyReferencesOwnThis(node: ts.Node): boolean {
       cache.set(node, true);
       return true;
     }
+    // A direct eval may reference `this` in source that is unavailable to the
+    // outer TypeScript AST (including a runtime-built string). Treat the call
+    // as an own-this use so callable dispatch preserves an explicit receiver;
+    // the eval bridge separately performs sloppy null/undefined substitution.
+    if (ts.isCallExpression(current)) {
+      let callee: ts.Expression = current.expression;
+      while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+      if (ts.isIdentifier(callee) && callee.text === "eval") {
+        cache.set(node, true);
+        return true;
+      }
+    }
     // Non-arrow function-like / class scopes rebind `this` — don't descend.
     if (
       ts.isFunctionDeclaration(current) ||

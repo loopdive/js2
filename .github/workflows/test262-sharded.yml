@@ -523,6 +523,60 @@ jobs:
             echo "MISS: ${ART_NAME} not found (direct push, expired artifact, or doc-only group) — running the full matrix (fail-safe)."
           fi
 
+  # #2928 E7 / #4013 — compile the real Acorn+interpreter provider ONCE for
+  # every authoritative standalone run, canary-verify it, and distribute the
+  # resulting zero-import Wasm module to all standalone shards. Building it in
+  # each matrix cell costs minutes and several GB; sharing one content-keyed
+  # artifact keeps the interpreter-backed lane affordable and deterministic.
+  runtime-eval-provider:
+    name: build standalone runtime-eval provider
+    needs: [changes, mg-artifact-probe]
+    if: |
+      always() &&
+      (
+        (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
+        ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      # A host-only merge_group still needs this job to succeed so its shard
+      # matrix is not cascade-skipped through `needs`. Every expensive step is
+      # therefore gated, while the no-op job itself reports success.
+      - name: Checkout
+        if: needs.changes.outputs.run_standalone != 'false'
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        if: needs.changes.outputs.run_standalone != 'false'
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        if: needs.changes.outputs.run_standalone != 'false'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and verify full runtime-eval provider (#2928)
+        if: needs.changes.outputs.run_standalone != 'false'
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: |
+          pnpm run build:compiler-bundle
+          node scripts/build-runtime-eval-provider.mjs
+
+      - name: Upload full runtime-eval provider
+        if: needs.changes.outputs.run_standalone != 'false'
+        uses: actions/upload-artifact@v6
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache/runtime-eval-provider-*.wasm
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
   test262-shard:
     # Heavy 57-shard test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR:
@@ -547,7 +601,7 @@ jobs:
     # scripts/gen-test262-mg-matrix.mjs. This job keeps
     # its ORIGINAL 57-shard x 2-target matrix, UNCHANGED, for push (baseline
     # update) and workflow_dispatch (manual reruns).
-    needs: [changes, mg-artifact-probe]
+    needs: [changes, mg-artifact-probe, runtime-eval-provider]
     # #3448 — the push arm is now AND-ed with a MISS on the merge_group
     # baseline-artifact probe: on a HIT the merge_group already produced the
     # merged JSONLs for this exact SHA, so this 114-job matrix is SKIPPED and
@@ -670,6 +724,9 @@ jobs:
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target.name }}-chunk${{ matrix.chunk }}
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
+      # The shared provider artifact makes the full interpreter tier the
+      # authoritative CI standalone lane. Host cells leave the flag empty.
+      TEST262_FULL_RUNTIME_EVAL: ${{ matrix.target.test262_target == 'standalone' && '1' || '' }}
       # #1954 — empty (= run everything) unless the PR body opts into a scope.
       # Applied in runTest262Chunk BEFORE source read/compile, so out-of-scope
       # tests cost nothing. Only ever non-empty on pull_request events.
@@ -704,20 +761,20 @@ jobs:
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
-      # (#2928 E7) Standalone only: build the REFUSAL runtime-eval provider.
-      # `js2wasm:runtime-eval` is a MODULE-LEVEL import, so with no namespace
-      # supplied a standalone file that merely mentions dynamic `new Function`
-      # / indirect eval cannot instantiate and loses every assertion it has —
-      # 361 files in the published standalone baseline die that way, most of
-      # them never reaching the dynamic call. The refusal provider is a
-      # js2wasm-compiled, zero-import core-Wasm module with the same envelope
-      # ABI and NO capability: files run, and only the dynamic-code call itself
-      # throws the #2960 Tier-3 TypeError. `--refusal-only` skips the real
-      # Acorn+interpreter provider, which takes MINUTES to compile and is not
-      # affordable per shard; this one takes seconds.
-      - name: Prebuild refusal runtime-eval provider (#2928)
+      - name: Download full runtime-eval provider (#2928)
         if: matrix.target.test262_target == 'standalone'
-        run: node scripts/build-runtime-eval-provider.mjs --refusal-only
+        uses: actions/download-artifact@v7
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache
+
+      # Build the cheap refusal fallback and fail loudly unless the downloaded
+      # full provider matches this cell's compiler-bundle content key. This
+      # prevents a missing/stale artifact from silently changing the measured
+      # capability tier or recompiling Acorn independently in every shard.
+      - name: Verify shared runtime-eval provider cache (#2928)
+        if: matrix.target.test262_target == 'standalone'
+        run: node scripts/build-runtime-eval-provider.mjs --require-full-cache
 
       - name: Run shard
         run: |
@@ -802,8 +859,19 @@ jobs:
     # pure function of (chunkIndex, totalChunks), so this is behaviorally
     # equivalent to the static tests/test262-chunkN.test.ts files, just
     # parameterized by env vars instead of baked into a filename.
-    needs: [changes]
-    if: github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true'
+    needs: [changes, runtime-eval-provider]
+    # `runtime-eval-provider` runs under `always()` because its own
+    # `mg-artifact-probe` ancestor is intentionally skipped on merge_group.
+    # Without an explicit `always()` here, GitHub propagates that skipped
+    # ancestor through the otherwise-successful provider job and silently
+    # skips this entire matrix. Pin both direct dependencies to success so a
+    # real provider/detection failure still blocks the required aggregate.
+    if: |
+      always() &&
+      github.event_name == 'merge_group' &&
+      needs.changes.result == 'success' &&
+      needs.runtime-eval-provider.result == 'success' &&
+      needs.changes.outputs.run_shards == 'true'
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
     # Same 25-min timeout as `test262-shard`. The per-target counts
@@ -829,6 +897,7 @@ jobs:
       RUN_TIMESTAMP: ${{ github.run_id }}-${{ matrix.target_name }}-mgchunk${{ matrix.chunk_label }}
       TEST262_TARGET: ${{ matrix.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}
+      TEST262_FULL_RUNTIME_EVAL: ${{ matrix.test262_target == 'standalone' && '1' || '' }}
       TEST262_CHUNK_INDEX: ${{ matrix.chunk_index }}
       TEST262_CHUNK_TOTAL: ${{ matrix.chunk_total }}
       # #1954 — always empty on merge_group (scope directives are
@@ -857,13 +926,16 @@ jobs:
           ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
-      # (#2928 E7) Same refusal-provider prebuild as `test262-shard` — see the
-      # comment there. merge_group re-validation must see the same standalone
-      # linking behaviour the PR-level and push lanes see, or the two lanes
-      # would disagree by exactly these 361 files.
-      - name: Prebuild refusal runtime-eval provider (#2928)
+      - name: Download full runtime-eval provider (#2928)
         if: matrix.test262_target == 'standalone'
-        run: node scripts/build-runtime-eval-provider.mjs --refusal-only
+        uses: actions/download-artifact@v7
+        with:
+          name: runtime-eval-provider-${{ github.run_id }}
+          path: .test262-cache
+
+      - name: Verify shared runtime-eval provider cache (#2928)
+        if: matrix.test262_target == 'standalone'
+        run: node scripts/build-runtime-eval-provider.mjs --require-full-cache
 
       - name: Run shard
         run: |

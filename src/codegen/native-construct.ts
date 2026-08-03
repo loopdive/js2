@@ -66,6 +66,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const DRIVER_PREFIX = "__native_construct_";
@@ -134,6 +135,10 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     const methodCallIdx = ctx.funcMap.get(`__call_fn_method_${arity}`);
     const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
     const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+    const runtimeCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
+    const applyClosureIdx = ctx.funcMap.get("__apply_closure");
+    const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+    const objVecPushIdx = ctx.funcMap.get("__objvec_push");
     const protoKeyInstrs = ctx.nativeConstructProtoKey.get(arity);
     if (
       externGetIdx === undefined ||
@@ -150,6 +155,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     const protoLocal = arity + 2;
     const selfLocal = arity + 3;
     const resultLocal = arity + 4;
+    const argsVecLocal = arity + 5;
 
     const body: Instr[] = [
       // proto = suppliedProto ?? callee.prototype. The `__extern_get` arm reads
@@ -172,15 +178,78 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       { op: "local.get", index: protoLocal },
       { op: "call", funcIdx: objectCreateIdx },
       { op: "local.set", index: selfLocal },
+    ];
 
-      // result = callee.[[Call]](self, args) — the dispatcher installs `self`
-      // into `__current_this` for the duration, so a `this.x = …` body writes
-      // to the fresh instance.
+    // result = callee.[[Call]](self, args). Ordinary caller-owned closures keep
+    // the proven receiver-aware dispatcher. A provider-owned runtime Function
+    // marker cannot enter that module-local classifier, so an exact type+brand
+    // arm packs the already-evaluated args and invokes `__apply_closure`.
+    const ordinaryCall: Instr[] = [
       { op: "local.get", index: selfLocal },
       { op: "local.get", index: 0 },
     ];
-    for (let arg = 0; arg < arity; arg++) body.push({ op: "local.get", index: arg + 2 });
-    body.push({ op: "call", funcIdx: methodCallIdx }, { op: "local.set", index: resultLocal });
+    for (let arg = 0; arg < arity; arg++) ordinaryCall.push({ op: "local.get", index: arg + 2 });
+    ordinaryCall.push({ op: "call", funcIdx: methodCallIdx });
+
+    const canApplyRuntimeMarker =
+      runtimeCallbackTypeIdx !== undefined &&
+      applyClosureIdx !== undefined &&
+      objVecNewIdx !== undefined &&
+      objVecPushIdx !== undefined;
+    if (canApplyRuntimeMarker) {
+      const markerBrandsMatch: Instr[] = [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: runtimeCallbackTypeIdx },
+        { op: "struct.get", typeIdx: runtimeCallbackTypeIdx, fieldIdx: 1 },
+        { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A },
+        { op: "i32.eq" },
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: runtimeCallbackTypeIdx },
+        { op: "struct.get", typeIdx: runtimeCallbackTypeIdx, fieldIdx: 2 },
+        { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B },
+        { op: "i32.eq" },
+        { op: "i32.and" },
+      ];
+      const markerCall: Instr[] = [
+        { op: "call", funcIdx: objVecNewIdx },
+        { op: "local.set", index: argsVecLocal },
+      ];
+      for (let arg = 0; arg < arity; arg++) {
+        markerCall.push(
+          { op: "local.get", index: argsVecLocal },
+          { op: "local.get", index: arg + 2 },
+          { op: "call", funcIdx: objVecPushIdx },
+        );
+      }
+      markerCall.push(
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: selfLocal },
+        { op: "local.get", index: argsVecLocal },
+        { op: "call", funcIdx: applyClosureIdx },
+      );
+      body.push(
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: runtimeCallbackTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: markerBrandsMatch,
+          else: [{ op: "i32.const", value: 0 }],
+        },
+        {
+          op: "if",
+          blockType: { kind: "val", type: EXTERNREF },
+          then: markerCall,
+          else: ordinaryCall,
+        },
+      );
+    } else {
+      body.push(...ordinaryCall);
+    }
+    body.push({ op: "local.set", index: resultLocal });
 
     // §10.2.2 step 13: `return result` only when the body returned an Object;
     // any other completion value yields the fresh instance.
@@ -227,6 +296,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       { name: "__ctor_proto", type: EXTERNREF },
       { name: "__ctor_self", type: EXTERNREF },
       { name: "__ctor_result", type: EXTERNREF },
+      ...(canApplyRuntimeMarker ? [{ name: "__ctor_args", type: EXTERNREF }] : []),
     ];
     driver.body = body;
   }
