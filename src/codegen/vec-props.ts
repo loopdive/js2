@@ -52,6 +52,7 @@ import {
   buildClosurePropSetMissArm,
 } from "./closure-props.js";
 import { buildTransferredCharAtMethodArm } from "./char-at-transfer.js";
+import { buildBuiltinFnSetRefusalArm } from "./carrier-bag-visibility.js"; // (#4010 S3) the -684 fix, at its source
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -96,13 +97,34 @@ export function buildVecOrClosurePropGetMissArm(ctx: CodegenContext, getMiss: ()
   ];
 }
 
-/** `__extern_set`'s non-object receiver arm: vec carrier → side-table write. */
+/**
+ * `__extern_set`'s non-object receiver arm: vec carrier → side-table write.
+ *
+ * (#4010 S3) Headed by the BUILTIN-FN REFUSAL, which is the fix for the -684.
+ * `name` / `length` on a builtin function value are `writable: false`, so
+ * §10.1.9 OrdinarySet over them is a no-op — but before this the write fell
+ * through to the #3468 closure bag and sat there invisibly, because the #2896
+ * read arm shadowed it. `propertyHelper.isWritable` performs exactly that write
+ * (`obj[name] = "unlikelyValue"`) BEFORE `isConfigurable` does
+ * `delete obj[name]; return !hasOwnProperty(obj, name)` — so a bag-aware
+ * `hasOwnProperty` answers `true` and ~700 files whose descriptor is
+ * `configurable: true` fail. That dormant pollution, not the query widening, is
+ * what cost #4055 v1 **-684** host-free passes. `__builtinfn_get_meta` is
+ * non-null exactly while the metadata property is live, so after
+ * `delete fn.name` the refusal stops applying and an assignment lands — also
+ * what the spec says. See carrier-bag-visibility.ts.
+ */
 export function buildVecOrClosurePropSetMissArm(ctx: CodegenContext): Instr[] {
+  // The refusal heads the WHOLE arm, before the vec branch: it is a no-op for a
+  // vec receiver (`__builtinfn_get_meta` answers null), and putting it first
+  // states the §10.1.9 precedence rather than relying on that coincidence.
+  const refusal = buildBuiltinFnSetRefusalArm(ctx);
   const closureArm = buildClosurePropSetMissArm(ctx);
   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
   const vecSetIdx = ctx.funcMap.get(VEC_PROP_SET);
-  if (isVecIdx === undefined || vecSetIdx === undefined) return closureArm;
+  if (isVecIdx === undefined || vecSetIdx === undefined) return [...refusal, ...closureArm];
   return [
+    ...refusal,
     { op: "local.get", index: 0 }, // obj
     { op: "call", funcIdx: isVecIdx },
     {
