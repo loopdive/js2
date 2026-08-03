@@ -43,8 +43,8 @@ function refusalModule(): Promise<WebAssembly.Module> {
   return refusalModulePromise;
 }
 
-async function runStandalone(src: string): Promise<unknown> {
-  const r = await compile(src, { target: "standalone" });
+async function runStandalone(src: string, inferModuleStrictArguments = true): Promise<unknown> {
+  const r = await compile(src, { target: "standalone", inferModuleStrictArguments });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   expect(WebAssembly.validate(r.binary), "module must be valid Wasm").toBe(true);
   const module = new WebAssembly.Module(r.binary);
@@ -154,6 +154,76 @@ describe("#1102 — new Function const-binding widening", () => {
 });
 
 describe("#1102 — soundness guards (folds that MUST NOT happen)", () => {
+  it("routes a literal Annex B cancellation through the runtime provider", async () => {
+    const r = await compile(
+      `export function test(): number {
+        let f: any = 3;
+        eval("{ function f() { return 2; } }");
+        return typeof f === "number" ? f : -1;
+      }`,
+      { target: "standalone", inferModuleStrictArguments: false },
+    );
+    expect(r.success, JSON.stringify(r.errors)).toBe(true);
+    expect(WebAssembly.Module.imports(new WebAssembly.Module(r.binary))).toEqual([
+      { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_apply_interpreted", kind: "function" },
+      { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_direct_eval", kind: "function" },
+    ]);
+  });
+
+  it("literal sloppy eval rejects a var crossing an intervening block lexical", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        try {
+          { let x = 1; { eval("var x;"); } }
+          return 0;
+        } catch (error) {
+          return error instanceof SyntaxError ? 1 : 2;
+        }
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("literal eval in an ordinary default parameter rejects its arguments binding", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        function f(p: any = eval("var arguments")): void {}
+        try { f(); return 0; }
+        catch (error) { return error instanceof SyntaxError ? 1 : 2; }
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("literal eval in an arrow default parameter rejects an explicit arguments parameter", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        const f = (p: any = eval("var arguments = 1"), arguments?: any): void => {};
+        try { f(); return 0; }
+        catch (error) { return error instanceof SyntaxError ? 1 : 2; }
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("arrow default-parameter eval may create arguments when no binding exists", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        const f = (p: any = eval("var arguments = 7")): number => arguments as number;
+        return f();
+      }`,
+        false,
+      ),
+    ).toBe(7);
+  });
+
   it("let binding does not fold (reassignable) → dynamic path throws catchably", async () => {
     expect(
       await runStandalone(

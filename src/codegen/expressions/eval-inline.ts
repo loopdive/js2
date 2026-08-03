@@ -45,6 +45,7 @@ import {
 } from "./runtime-eval-provider.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
+import { currentDirectEvalLexicalBindingNames } from "../direct-eval-environment.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
@@ -351,6 +352,134 @@ function evalNeedsGetterCallbackBridge(root: ts.Node): boolean {
   return found;
 }
 
+function addFoldedEvalBindingNames(name: ts.BindingName, names: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    names.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    addFoldedEvalBindingNames(element.name, names);
+  }
+}
+
+interface FoldedEvalDeclarationNames {
+  varNames: ReadonlySet<string>;
+  blockFunctionNames: ReadonlySet<string>;
+}
+
+/** Collect ordinary VarDeclaredNames separately from sloppy Annex-B block
+ * functions. The former collide with intervening lexical records; the latter
+ * use B.3.3's cancellation rule and must fall back instead of throwing. */
+function foldedEvalDeclarationNames(sourceFile: ts.SourceFile): FoldedEvalDeclarationNames {
+  const varNames = new Set<string>();
+  const blockFunctionNames = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node)) {
+      if (node.name) {
+        (ts.isSourceFile(node.parent) ? varNames : blockFunctionNames).add(node.name.text);
+      }
+      return;
+    }
+    if (
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node) ||
+      ts.isConstructorDeclaration(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node)
+    ) {
+      return;
+    }
+    if (ts.isVariableDeclaration(node)) {
+      const list = node.parent;
+      if (ts.isVariableDeclarationList(list) && (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+        addFoldedEvalBindingNames(node.name, varNames);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return { varNames, blockFunctionNames };
+}
+
+function foldedEvalLowerLexicalCollision(varNames: ReadonlySet<string>, fctx: FunctionContext): string | undefined {
+  const lexicalNames = currentDirectEvalLexicalBindingNames(fctx);
+  if (lexicalNames.size === 0) return undefined;
+  for (const name of varNames) {
+    if (lexicalNames.has(name)) return name;
+  }
+  return undefined;
+}
+
+type EvalParameterOwner =
+  | ts.FunctionDeclaration
+  | ts.FunctionExpression
+  | ts.ArrowFunction
+  | ts.MethodDeclaration
+  | ts.GetAccessorDeclaration
+  | ts.SetAccessorDeclaration
+  | ts.ConstructorDeclaration;
+
+function isEvalParameterOwner(node: ts.Node): node is EvalParameterOwner {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  );
+}
+
+/** Resolve only a direct eval executing as part of a parameter initializer.
+ * A nested function boundary ends the search: `p = () => eval(...)` executes
+ * in that arrow later, not while the outer parameter environment is active. */
+function directEvalParameterOwner(expr: ts.CallExpression): EvalParameterOwner | undefined {
+  let current: ts.Node = expr;
+  for (;;) {
+    const parent = current.parent;
+    if (!parent) return undefined;
+    if (ts.isParameter(parent) && parent.initializer !== undefined) {
+      return isEvalParameterOwner(parent.parent) ? parent.parent : undefined;
+    }
+    if (isEvalParameterOwner(parent)) return undefined;
+    current = parent;
+  }
+}
+
+function foldedEvalParameterCollision(expr: ts.CallExpression, varNames: ReadonlySet<string>): string | undefined {
+  const owner = directEvalParameterOwner(expr);
+  if (!owner) return undefined;
+  const parameterNames = new Set<string>();
+  for (const parameter of owner.parameters) addFoldedEvalBindingNames(parameter.name, parameterNames);
+  // Ordinary functions create their own parameter-environment `arguments`
+  // binding even when no parameter has that name. Arrows inherit instead, so
+  // the no-pre-existing-binding Test262 cases may create eval `arguments`.
+  if (!ts.isArrowFunction(owner)) parameterNames.add("arguments");
+  for (const name of varNames) {
+    if (parameterNames.has(name)) return name;
+  }
+  return undefined;
+}
+
+function foldedEvalHasScopedDeclaration(sourceFile: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return found;
+}
+
 /**
  * Try to inline `eval("<constant>")` at compile time.
  *
@@ -425,6 +554,39 @@ export function tryStaticEvalInline(
     emitThrowJsError(ctx, fctx, "SyntaxError", earlyError);
     return { kind: "externref" };
   }
+
+  const declarationNames = foldedEvalDeclarationNames(sf);
+  const varNames = declarationNames.varNames;
+
+  // A constant direct eval normally splices into the caller and bypasses the
+  // runtime EnvRec walk. Reconstruct the one caller-dependent early error that
+  // cannot be learned from the foreign Script alone: a sloppy eval var/function
+  // declaration may not cross a same-named intervening lexical record on the
+  // way to the caller's VariableEnvironment (§EvalDeclarationInstantiation).
+  if (!evalIsStrict) {
+    const collision = foldedEvalParameterCollision(expr, varNames) ?? foldedEvalLowerLexicalCollision(varNames, fctx);
+    if (collision !== undefined) {
+      emitThrowJsError(ctx, fctx, "SyntaxError", `Identifier '${collision}' has already been declared`);
+      return { kind: "externref" };
+    }
+    // Annex B block functions do not throw when the synthetic outer var would
+    // cross a caller lexical binding; B.3.3 cancels that outer binding. The
+    // ordinary foreign-AST lowering cannot see the caller record, so let the
+    // provider perform the cancellation instead of emitting a false error or
+    // overwriting the lexical cell.
+    if (foldedEvalLowerLexicalCollision(declarationNames.blockFunctionNames, fctx) !== undefined) return undefined;
+  }
+
+  // Strict eval declarations require a private VariableEnvironment and lexical
+  // record. The foreign-AST splice intentionally shares the caller's localMap,
+  // so route explicitly strict eval/caller bodies to the bytecode provider
+  // instead of leaking a strict var/let into the caller. Preserve the existing
+  // module-only splice behavior: exported TypeScript entry points have
+  // historically used eval-created vars as caller locals (#1102 AC2), while
+  // the test262 script lane disables synthetic module strictness and therefore
+  // still exercises the spec isolation path for explicit strict code.
+  const explicitlyStrictEval = bodyIsStrict || isStrictContext(expr, false);
+  if (explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
 
   // A direct nested `eval(...)` can recurse through this same constant-fold
   // path. An eval Identifier used as a VALUE cannot: foreign AST identifiers

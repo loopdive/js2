@@ -81,8 +81,12 @@ async function main() {
 
       export function linkedDirectSloppyVarMutation(): number {
         let x = 40;
-        const result: any = eval(dynamic("var x = 1; x"));
-        return (result as number) + x;
+        try {
+          eval(dynamic("var x = 1; x"));
+          return x === 40 ? 0 : 3;
+        } catch (error) {
+          return error && error.name === "SyntaxError" ? 1 : 2;
+        }
       }
 
       export function linkedDirectVarPersistence(): number {
@@ -189,6 +193,15 @@ async function main() {
         }
       }
 
+      export function linkedDirectLowerLexicalCollision(): number {
+        try {
+          { let x = 1; { eval(dynamic("var x;")); } }
+          return 0;
+        } catch (error) {
+          return error && error.name === "SyntaxError" ? 1 : 2;
+        }
+      }
+
       export function linkedDirectNestedLexicalShadow(): number {
         return eval(dynamic("let y = 1; { let y = 2; y; } y")) as number;
       }
@@ -242,6 +255,12 @@ async function main() {
 
       export function linkedDirectBlockFunctionOuterLexicalConflict(): number {
         return eval(dynamic("{ let f = 3; { function f() { return 2; } } f; }")) as number;
+      }
+
+      export function linkedLiteralBlockFunctionLowerLexicalCancellation(): number {
+        let f: any = 3;
+        eval("{ function f() { return 2; } }");
+        return typeof f === "number" ? f : -1;
       }
 
       export function linkedDirectBlockFunctionSkippedInit(): number {
@@ -669,6 +688,7 @@ async function main() {
           ["linkedDirectStrictCallerVarIsolation", userInstance.exports.linkedDirectStrictCallerVarIsolation],
           ["linkedDirectLexicalIsolation", userInstance.exports.linkedDirectLexicalIsolation],
           ["linkedDirectLexicalTdz", userInstance.exports.linkedDirectLexicalTdz],
+          ["linkedDirectLowerLexicalCollision", userInstance.exports.linkedDirectLowerLexicalCollision],
           ["linkedDirectNestedLexicalShadow", userInstance.exports.linkedDirectNestedLexicalShadow],
           ["linkedDirectBlockClosureCapture", userInstance.exports.linkedDirectBlockClosureCapture],
           ["linkedDirectNestedLexicalTdz", userInstance.exports.linkedDirectNestedLexicalTdz],
@@ -684,6 +704,10 @@ async function main() {
           [
             "linkedDirectBlockFunctionOuterLexicalConflict",
             userInstance.exports.linkedDirectBlockFunctionOuterLexicalConflict,
+          ],
+          [
+            "linkedLiteralBlockFunctionLowerLexicalCancellation",
+            userInstance.exports.linkedLiteralBlockFunctionLowerLexicalCancellation,
           ],
           ["linkedDirectBlockFunctionSkippedInit", userInstance.exports.linkedDirectBlockFunctionSkippedInit],
           ["linkedDirectSloppyIfFunction", userInstance.exports.linkedDirectSloppyIfFunction],

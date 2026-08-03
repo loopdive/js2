@@ -99,12 +99,13 @@ export function collectDirectEvalBindingNames(decl: ts.FunctionLikeDeclaration):
   return names;
 }
 
-/** Collect bindings whose lifetime is the whole current activation.
+/** Collect bindings that belong to the current VariableEnvironment.
  *
  * This is intentionally narrower than `collectDirectEvalBindingNames`: nested
- * block/catch lexicals are call-site environment entries, while parameters,
- * the function body's top-level declarations, and recursively nested `var`
- * declarations belong to the persistent function activation. */
+ * block/catch lexicals and the function body's top-level `let`/`const`/class
+ * declarations are call-site LexicalEnvironment entries. Parameters,
+ * `arguments`, function declarations, and every recursively nested `var`
+ * declaration belong to the persistent VariableEnvironment. */
 export function collectDirectEvalActivationBindingNames(decl: ts.FunctionLikeDeclaration): Set<string> {
   const names = new Set<string>();
   if (!ts.isArrowFunction(decl)) names.add("arguments");
@@ -113,8 +114,10 @@ export function collectDirectEvalActivationBindingNames(decl: ts.FunctionLikeDec
 
   for (const statement of decl.body.statements) {
     if (ts.isVariableStatement(statement)) {
-      for (const declaration of statement.declarationList.declarations) addBindingName(declaration.name, names);
-    } else if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+      if ((statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) {
+        for (const declaration of statement.declarationList.declarations) addBindingName(declaration.name, names);
+      }
+    } else if (ts.isFunctionDeclaration(statement)) {
       if (statement.name) names.add(statement.name.text);
     }
   }
@@ -229,6 +232,24 @@ export interface DirectEvalBindingLayers {
   lexical: DirectEvalBinding[];
   /** Canonical cells captured from outer function activations. */
   outer: DirectEvalBinding[];
+}
+
+/** Return the lexical bindings visible at the current direct-eval call site
+ * without emitting reification code. A binding owned by the current function
+ * is lexical when its live local differs from the persistent activation cell;
+ * outer captures are a separate environment layer and do not participate in
+ * EvalDeclarationInstantiation's LexicalEnvironment→VariableEnvironment walk. */
+export function currentDirectEvalLexicalBindingNames(fctx: FunctionContext): ReadonlySet<string> {
+  const result = new Set<string>();
+  const names = fctx.directEvalBindingNames;
+  if (!names) return result;
+  for (const name of names) {
+    if (fctx.directEvalOuterBindingNames?.has(name)) continue;
+    const currentLocal = fctx.localMap.get(name);
+    if (currentLocal === undefined) continue;
+    if (fctx.directEvalActivationBindings?.get(name) !== currentLocal) result.add(name);
+  }
+  return result;
 }
 
 /** Snapshot the cells visible at one direct-eval call site, after promoting any

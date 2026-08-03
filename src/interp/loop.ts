@@ -1332,9 +1332,23 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
     case BUILTIN_RESTORE_ENV:
       frame.envRec = regs[base] as EnvRec | null;
       return undefined;
-    case BUILTIN_ASSIGN_OUTER_NAME:
-      envAssign(frame.envRec === null ? null : frame.envRec.parent, regs[base + 1], regs[base], false);
+    case BUILTIN_ASSIGN_OUTER_NAME: {
+      // B.3.3's synthetic assignment targets the VariableEnvironment binding
+      // created during declaration instantiation. If an intervening lexical
+      // binding cancelled that synthetic var, the assignment is a no-op; an
+      // ordinary environment-chain write would incorrectly overwrite the
+      // caller's same-named let/const cell.
+      const variableEnv = variableEnvironmentFor(frame.envRec);
+      if (variableEnv !== null) {
+        const cell = ownEnvCell(variableEnv, regs[base + 1]);
+        if (cell !== null) {
+          cell.value = regs[base];
+        } else if (variableEnv.kind !== ENV_DECLARATIVE && regs[base + 1] in variableEnv.backing) {
+          variableEnv.backing[regs[base + 1]] = regs[base];
+        }
+      }
       return regs[base];
+    }
     case BUILTIN_DEFINE_CLASS_METHOD: {
       const classConstructor = regs[base];
       const target = isTruthy(regs[base + 4]) ? classConstructor : regs[base + 1];

@@ -113,6 +113,8 @@ class FunctionEmitter {
   private strictMode = false;
   /** True when PerformEval already created the script's environment bindings. */
   private readonly scriptBindingsPredeclared: boolean;
+  /** Caller lexical names that cancel sloppy B.3.3 synthetic outer vars. */
+  private readonly annexBCancelledNames: JSValue;
 
   constructor(
     params: Node[],
@@ -122,6 +124,7 @@ class FunctionEmitter {
     isExpressionBody: boolean,
     forceStrict: boolean,
     scriptBindingsPredeclared: boolean,
+    annexBCancelledNames: JSValue,
   ) {
     // Use explicit fields instead of TypeScript parameter properties: the E2
     // self-compiler materialises declared class fields as WasmGC struct fields,
@@ -133,6 +136,7 @@ class FunctionEmitter {
     this.isExpressionBody = isExpressionBody; // arrow with expression body
     this.strictMode = forceStrict;
     this.scriptBindingsPredeclared = scriptBindingsPredeclared;
+    this.annexBCancelledNames = annexBCancelledNames;
   }
 
   // ── register allocation ────────────────────────────────────────────────────
@@ -277,6 +281,9 @@ class FunctionEmitter {
         }
         for (const outerName of lexicalAncestors) {
           if (outerName === s.id.name) conflict = true;
+        }
+        for (let i = 0; i < this.annexBCancelledNames.length; i += 1) {
+          if (this.annexBCancelledNames[i] === s.id.name) conflict = true;
         }
         if (!conflict) this.collectHoistPattern(s.id, false);
       }
@@ -480,6 +487,11 @@ class FunctionEmitter {
                 outerLexicalConflict = true;
                 break;
               }
+            }
+          }
+          if (!outerLexicalConflict) {
+            for (let i = 0; i < this.annexBCancelledNames.length; i += 1) {
+              if (this.annexBCancelledNames[i] === inner.id.name) outerLexicalConflict = true;
             }
           }
           if (!this.strictMode && !outerLexicalConflict) annexBFunctionNames.push(inner.id.name);
@@ -898,6 +910,11 @@ class FunctionEmitter {
             outerLexicalConflict = true;
             break;
           }
+        }
+      }
+      if (!outerLexicalConflict) {
+        for (let i = 0; i < this.annexBCancelledNames.length; i += 1) {
+          if (this.annexBCancelledNames[i] === fn.id.name) outerLexicalConflict = true;
         }
       }
       if (!this.strictMode && !outerLexicalConflict) annexBFunctionNames.push(fn.id.name);
@@ -1833,7 +1850,7 @@ class FunctionEmitter {
 
   /** Emit one strict class constructor/method closure. */
   private emitClassClosure(params: Node[], body: Node, name: string, classConstructor: boolean): void {
-    const child = new FunctionEmitter(params, body, name, false, false, true, false);
+    const child = new FunctionEmitter(params, body, name, false, false, true, false, []);
     const meta = child.emit();
     if (classConstructor) meta.flags = meta.flags | FLAG_CLASS_CONSTRUCTOR;
     const m = this.mark();
@@ -1909,7 +1926,7 @@ class FunctionEmitter {
     const isArrow = node.type === "ArrowFunctionExpression";
     const isExprBody = isArrow && node.body.type !== "BlockStatement";
     const nm = node.id && node.id.name ? node.id.name : "";
-    const child = new FunctionEmitter(node.params, node.body, nm, false, isExprBody, false, false);
+    const child = new FunctionEmitter(node.params, node.body, nm, false, isExprBody, false, false, []);
     const meta = child.emit();
     const m = this.mark();
     this.enc.emitConst(Op.LdaConst, this.enc.internConst(meta));
@@ -1921,9 +1938,23 @@ class FunctionEmitter {
 }
 
 /** Emit a top-level Script/eval body (completion-value semantics) → FuncMeta. */
-export function emitProgram(ast: Node, forceStrict = false, scriptBindingsPredeclared = false): FuncMeta {
+export function emitProgram(
+  ast: Node,
+  forceStrict = false,
+  scriptBindingsPredeclared = false,
+  annexBCancelledNames: JSValue = [],
+): FuncMeta {
   if (ast.type !== "Program") throw new UnsupportedNodeError(`top-level ${ast.type}`, ast.type);
-  const emitter = new FunctionEmitter([], ast, "", true, false, forceStrict, scriptBindingsPredeclared);
+  const emitter = new FunctionEmitter(
+    [],
+    ast,
+    "",
+    true,
+    false,
+    forceStrict,
+    scriptBindingsPredeclared,
+    annexBCancelledNames,
+  );
   return emitter.emit();
 }
 
@@ -1946,6 +1977,6 @@ export function emitFunction(node: Node): FuncMeta {
   const isArrow = node.type === "ArrowFunctionExpression";
   const isExpressionBody = isArrow && node.body.type !== "BlockStatement";
   const name = node.id && node.id.name ? node.id.name : "";
-  const emitter = new FunctionEmitter(node.params, node.body, name, false, isExpressionBody, false, false);
+  const emitter = new FunctionEmitter(node.params, node.body, name, false, isExpressionBody, false, false, []);
   return emitter.emit();
 }

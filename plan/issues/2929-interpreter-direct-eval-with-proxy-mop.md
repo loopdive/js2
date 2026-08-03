@@ -20,9 +20,13 @@ related: [1355, 2865]
 loc-budget-allow:
   - src/codegen/closures.ts
   - src/codegen/context/types.ts
+  - src/codegen/direct-eval-environment.ts
+  - src/codegen/expressions/eval-inline.ts
   - src/codegen/statements/nested-declarations.ts
+  - src/interp/eval-environment.ts
 func-budget-allow:
   - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/expressions/eval-inline.ts::tryStaticEvalInline
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
 ---
@@ -288,13 +292,55 @@ prevents Annex-B synthetic outer vars from crossing `for (let …)` lexical
 bindings. The affected Test262 files moved 18/18 from fail to pass over the
 immediately preceding 455-pass run, with no regressions.
 
+### EvalDeclarationInstantiation collision slice
+
+The next slice now implements the non-strict
+`LexicalEnvironment`→`VariableEnvironment` preflight before creating any eval
+binding. It checks the complete ordinary `var`/function name set atomically,
+skips object environment records, applies Annex-B cancellation to eligible
+block functions, and fails closed if the supplied environment chain is
+malformed. The AOT capture boundary now classifies
+function-body `let`/`const`/class bindings as lexical rather than as var
+activation entries, so the production Acorn route sees the same intervening
+record as the interpreter unit seam. Cancelled B.3.3 assignments are omitted
+from emitted bytecode, preserving both the caller lexical cell and the Script's
+empty-completion behavior; the assignment builtin also refuses to fall through
+to an unrelated same-named lexical binding.
+
+The literal direct-eval fast path normally remains provider-free, so
+`tryStaticEvalInline` separately
+reconstructs the caller-dependent collision rules. It recognizes lower lexical
+bindings and parameter-initializer environments, including ordinary functions'
+implicit `arguments` binding, while preserving the permitted arrow case with no
+pre-existing `arguments` binding. Explicit strict eval declarations route to
+the provider because the foreign-AST splice cannot supply their private
+environment.
+
+The maintained honest standalone cohort selected by
+`declare-arguments|var-env-lower-lex` contains exactly 198 official Test262
+files. Restricting the pre-slice full-interpreter run `20260803-015311` to those
+same paths gives 52 pass / 102 fail / 44 compile errors. Candidate run
+`20260803-034357` gives **153 pass / 1 fail / 44 compile errors**: exactly
+**101 fail→pass**, 52 pass→pass, 44 compile-error→compile-error, zero
+pass→fail, and no missing rows. The full zero-import Acorn package canary and
+167 focused interpreter/environment/static-eval/Annex-B/provider tests also
+pass.
+
+The sole runtime residual is
+`arrow-fn-body-cntns-arguments-func-decl-arrow-func-declare-arguments-assign-incl-def-param-arrow-arguments.js`.
+Eval correctly creates the parameter-environment `arguments = "param"`, but a
+closure created in the parameter list resolves to the later function-body
+`function arguments(){}` binding. That is the remaining separate-parameter-
+environment closure-resolution seam. The 44 unchanged compile errors are the
+already-recorded method/generator invalid-Wasm and host-import failures, not
+regressions from declaration instantiation.
+
 ### Next-agent order
 
-1. Implement the remaining EvalDeclarationInstantiation walk from the current
-   lexical environment down to the variable environment. The top standard
-   failure cluster is 89 expected `SyntaxError`s around `var arguments` and
-   lower lexical collisions; distinguish runtime-provider semantics from the
-   compiler's literal `tryStaticEvalInline` path when measuring it.
+1. Preserve the separate parameter environment for closures created by arrow
+   default initializers, starting with the one remaining 198-file cohort
+   failure above; do not alias its eval-created `arguments` cell to the later
+   function-body declaration.
 2. Finish Annex-B block-function initialization and update semantics. The
    largest residual clusters are missing function-valued outer updates,
    skipped-declaration initialization, and existing-global descriptor cases.

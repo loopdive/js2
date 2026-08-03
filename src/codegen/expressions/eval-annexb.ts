@@ -1,21 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../../ts-api.js";
 
-export function hasScriptScopeAnnexBFunction(sf: ts.SourceFile): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isFunctionDeclaration(node)) {
-      if (node.parent && !ts.isSourceFile(node.parent)) found = true;
-      // Do not cross into a nested function's declaration-instantiation scope.
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sf, visit);
-  return found;
-}
-
 /**
  * Return whether sloppy Annex B declarations in a foreign eval Script can use
  * the ordinary-source B.3.3 lowering without needing EvalDeclarationInstantiation

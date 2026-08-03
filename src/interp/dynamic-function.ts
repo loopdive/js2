@@ -28,7 +28,7 @@ import {
   type RuntimeDirectEvalHook,
   type RuntimeFunctionHook,
 } from "./loop.js";
-import { ENV_DECLARATIVE, EnvRec, type EvalBindingCell, type FuncMeta, type JSValue } from "./types.js";
+import { ENV_DECLARATIVE, ENV_OBJECT, EnvRec, type EvalBindingCell, type FuncMeta, type JSValue } from "./types.js";
 
 /** Host-free Acorn entry shape. `source` uses the compiler's native string
  * carrier; both `options` and the result use the shared open-$Object carrier. */
@@ -82,7 +82,18 @@ function executeInterpretedDirectEval(
   const vars = variableEnv === null ? globalEnv : variableEnv;
   registerRuntimeEvalCallerIntrinsic(lex);
   const env = prepareEvalEnvironment(ast, lex, vars, strictEval);
-  return interpEnter(emitProgram(ast, strictEval, true), env, thisArg, []);
+  const annexBCancelledNames: JSValue[] = [];
+  if (!strictEval) {
+    let current: EnvRec | null = lex;
+    for (;;) {
+      if (current === vars || current === null) break;
+      if (current.kind !== ENV_OBJECT && current.names !== undefined && current.names !== null) {
+        for (let i = 0; i < current.names.length; i += 1) annexBCancelledNames.push(current.names[i]);
+      }
+      current = current.parent;
+    }
+  }
+  return interpEnter(emitProgram(ast, strictEval, true, annexBCancelledNames), env, thisArg, []);
 }
 
 /** Ensure the global object carries the provider-owned realm `%eval%` value.
@@ -233,7 +244,7 @@ export function executeDirectEval(
   const ast = parseDirectEvalScript(parse, source, callerStrict);
   const strictEval = callerStrict || programIsStrict(ast);
   if (!strictEval) {
-    preparePersistentEvalBindings(ast, createdVarNames, createdVarSlots, activationNames);
+    preparePersistentEvalBindings(ast, createdVarNames, createdVarSlots, activationNames, lexicalNames);
   }
   const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
   registerVariableEnvironment(globalEnv, globalEnv);
@@ -250,5 +261,5 @@ export function executeDirectEval(
   // inside eval does not alter the caller's already-established binding.
   let evalThis = thisArg;
   if (!callerStrict && (evalThis === undefined || evalThis === null)) evalThis = globalObject;
-  return interpEnter(emitProgram(ast, strictEval, true), env, evalThis, []);
+  return interpEnter(emitProgram(ast, strictEval, true, lexicalNames), env, evalThis, []);
 }

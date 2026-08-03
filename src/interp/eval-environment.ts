@@ -252,12 +252,34 @@ export function preparePersistentEvalBindings(
   names: JSValue[],
   slots: Regs,
   existingNames: JSValue,
+  lexicalNames?: JSValue,
 ): void {
   const plan = collectEvalDeclarations(program);
+
+  // The raw vectors must be grown before they are stored in an EnvRec, but a
+  // failed declaration instantiation must not leave a partial persistent
+  // binding behind. Preflight every ordinary var name against the caller's
+  // intervening lexical layer before allocating the first cell.
+  if (lexicalNames !== undefined && lexicalNames !== null) {
+    for (const name of plan.varNames) {
+      for (let i = 0; i < lexicalNames.length; i += 1) {
+        if (lexicalNames[i] === name) throw new SyntaxError(`Identifier '${name}' has already been declared`);
+      }
+    }
+  }
+
   const persistentNames: string[] = [];
   for (const name of plan.varNames) appendUnique(persistentNames, name);
   for (const name of plan.blockFunctionNames) {
-    if (!planHasLexicalName(plan, name)) appendUnique(persistentNames, name);
+    let blocked = planHasLexicalName(plan, name);
+    if (!blocked && lexicalNames !== undefined && lexicalNames !== null) {
+      for (let i = 0; i < lexicalNames.length; i += 1) {
+        if (lexicalNames[i] === name) blocked = true;
+      }
+    }
+    // Annex B's synthetic outer var is cancelled, rather than rejected, when
+    // an intervening declarative environment already binds the name.
+    if (!blocked) appendUnique(persistentNames, name);
   }
   for (const name of persistentNames) {
     let exists = false;
@@ -359,6 +381,50 @@ export function createObjectEnvironment(parent: EnvRec | null, value: JSValue): 
 function environmentHasOwnBinding(env: EnvRec, name: string): boolean {
   if ((env.kind === ENV_DECLARATIVE || env.kind === ENV_GLOBAL) && declarativeHasOwnBinding(env, name)) return true;
   return env.kind !== ENV_DECLARATIVE && name in env.backing;
+}
+
+function interveningNonObjectEnvironmentHasBinding(lexicalEnv: EnvRec, variableEnv: EnvRec, name: string): boolean {
+  let current: EnvRec | null = lexicalEnv;
+  for (;;) {
+    if (current === variableEnv) return false;
+    if (current === null) throw new SyntaxError("eval VariableEnvironment is not on the lexical environment chain");
+    if (current.kind !== ENV_OBJECT && environmentHasOwnBinding(current, name)) return true;
+    current = current.parent;
+  }
+}
+
+/**
+ * Perform EvalDeclarationInstantiation's non-strict var-environment walk.
+ *
+ * A direct eval can begin in a lexical environment above the caller's
+ * VariableEnvironment (parameter-expression, block, catch, or another eval
+ * lexical record). Before creating any var-scoped binding, every intervening
+ * non-object record must reject a same-named binding. Object Environment
+ * Records are deliberately skipped: a `with` object's properties are not
+ * declarative-name collisions for this step.
+ *
+ * Keep this as a preflight over the complete name set so a later collision
+ * cannot leak an earlier var/function binding into the caller.
+ */
+function validateNonStrictEvalVarNames(plan: EvalDeclarationPlan, lexicalEnv: EnvRec, variableEnv: EnvRec): void {
+  if (lexicalEnv === variableEnv) return;
+
+  let current: EnvRec | null = lexicalEnv;
+  for (;;) {
+    if (current === variableEnv) return;
+    // The spec asserts that VariableEnvironment is on this outer chain. A
+    // malformed provider chain must fail closed instead of creating bindings
+    // in an unrelated record.
+    if (current === null) throw new SyntaxError("eval VariableEnvironment is not on the lexical environment chain");
+    if (current.kind !== ENV_OBJECT) {
+      for (const name of plan.varNames) {
+        if (environmentHasOwnBinding(current, name)) {
+          throw new SyntaxError(`Identifier '${name}' has already been declared`);
+        }
+      }
+    }
+    current = current.parent;
+  }
 }
 
 function ensureVarBinding(env: EnvRec, name: string, existingVarEnv?: EnvRec): void {
@@ -489,13 +555,16 @@ export function prepareEvalEnvironment(
     executionEnv = varEnv;
     registerVariableEnvironment(varEnv, varEnv);
   } else {
+    validateNonStrictEvalVarNames(plan, lexicalEnv, varEnv);
     if (varEnv.kind === ENV_GLOBAL) {
       prepareGlobalDeclarations(plan, varEnv);
     } else {
       for (const name of plan.varNames) ensureVarBinding(varEnv, name, existingVarEnv);
     }
     for (const name of plan.blockFunctionNames) {
-      if (!planHasLexicalName(plan, name)) ensureVarBinding(varEnv, name, existingVarEnv);
+      if (!planHasLexicalName(plan, name) && !interveningNonObjectEnvironmentHasBinding(lexicalEnv, varEnv, name)) {
+        ensureVarBinding(varEnv, name, existingVarEnv);
+      }
     }
   }
 

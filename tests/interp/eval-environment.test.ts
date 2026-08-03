@@ -3,8 +3,16 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { executeDirectEval, executeIndirectEval, type DynamicParser } from "../../src/interp/dynamic-function.js";
-import { collectEvalDeclarations } from "../../src/interp/eval-environment.js";
 import {
+  collectEvalDeclarations,
+  createObjectEnvironment,
+  prepareEvalEnvironment,
+  preparePersistentEvalBindings,
+} from "../../src/interp/eval-environment.js";
+import {
+  ENV_DECLARATIVE,
+  ENV_GLOBAL,
+  EnvRec,
   RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY,
   type EvalBindingCell,
   type JSValue,
@@ -37,6 +45,87 @@ function direct(source: string, cell: EvalBindingCell, callerStrict = false, glo
 }
 
 describe("#2929 eval declaration environments", () => {
+  it("rejects sloppy eval var/function collisions in lower lexical records atomically", () => {
+    const globalObject: JSValue = {};
+    const globalEnv = new EnvRec(ENV_GLOBAL, null, [], [], globalObject);
+    const varNames: JSValue[] = [];
+    const varSlots: JSValue[] = [];
+    const variableEnv = new EnvRec(ENV_DECLARATIVE, globalEnv, varNames, varSlots, undefined);
+    const blockedCell: EvalBindingCell = { value: 7 };
+    const lexicalEnv = new EnvRec(ENV_DECLARATIVE, variableEnv, ["blocked"], [blockedCell], undefined);
+
+    expect(() => prepareEvalEnvironment(parse("var fresh; var blocked"), lexicalEnv, variableEnv, false)).toThrow(
+      SyntaxError,
+    );
+    expect(varNames).toEqual([]);
+    expect(varSlots).toEqual([]);
+    expect(blockedCell.value).toBe(7);
+
+    expect(() =>
+      prepareEvalEnvironment(parse("function blocked() {}; var fresh"), lexicalEnv, variableEnv, false),
+    ).toThrow(SyntaxError);
+    expect(varNames).toEqual([]);
+
+    expect(() => prepareEvalEnvironment(parse("if (true) { var blocked; }"), lexicalEnv, variableEnv, false)).toThrow(
+      SyntaxError,
+    );
+    expect(varNames).toEqual([]);
+  });
+
+  it("skips object environment records during the sloppy eval var collision walk", () => {
+    const globalObject: JSValue = {};
+    const globalEnv = new EnvRec(ENV_GLOBAL, null, [], [], globalObject);
+    const varNames: JSValue[] = [];
+    const varSlots: JSValue[] = [];
+    const variableEnv = new EnvRec(ENV_DECLARATIVE, globalEnv, varNames, varSlots, undefined);
+    const withEnv = createObjectEnvironment(variableEnv, { visible: 1 });
+
+    prepareEvalEnvironment(parse("var visible"), withEnv, variableEnv, false);
+    expect(varNames).toEqual(["visible"]);
+    expect((varSlots[0] as EvalBindingCell).value).toBeUndefined();
+  });
+
+  it("cancels Annex B outer vars at intervening lexical bindings without throwing", () => {
+    const globalObject: JSValue = {};
+    const globalEnv = new EnvRec(ENV_GLOBAL, null, [], [], globalObject);
+    const varNames: JSValue[] = [];
+    const varSlots: JSValue[] = [];
+    const variableEnv = new EnvRec(ENV_DECLARATIVE, globalEnv, varNames, varSlots, undefined);
+    const lexicalEnv = new EnvRec(ENV_DECLARATIVE, variableEnv, ["blocked"], [{ value: 7 }], undefined);
+
+    expect(() =>
+      prepareEvalEnvironment(parse("{ function blocked() {} }"), lexicalEnv, variableEnv, false),
+    ).not.toThrow();
+    expect(varNames).toEqual([]);
+    expect(varSlots).toEqual([]);
+  });
+
+  it("preflights persistent eval bindings atomically and cancels blocked Annex B vars", () => {
+    const names: JSValue[] = [];
+    const slots: JSValue[] = [];
+
+    expect(() => preparePersistentEvalBindings(parse("var fresh; var blocked"), names, slots, [], ["blocked"])).toThrow(
+      SyntaxError,
+    );
+    expect(names).toEqual([]);
+    expect(slots).toEqual([]);
+
+    preparePersistentEvalBindings(parse("{ function blocked() {} }"), names, slots, [], ["blocked"]);
+    expect(names).toEqual([]);
+    expect(slots).toEqual([]);
+  });
+
+  it("does not execute a cancelled Annex B outer assignment or change completion", () => {
+    const lexicalCell: EvalBindingCell = { value: 7 };
+    const run = (source: string): JSValue =>
+      executeDirectEval(parser, source, {}, undefined, [], [], [], [], ["blocked"], [lexicalCell], [], [], false, []);
+
+    expect(run("{ function blocked() {} }")).toBeUndefined();
+    expect(lexicalCell.value).toBe(7);
+    expect(run("1; { function blocked() {} }")).toBe(1);
+    expect(lexicalCell.value).toBe(7);
+  });
+
   it("separates top-level eval lexicals from nested block declarations", () => {
     const ast = parse("let top; { let nested; function blockFn() {} var lifted; }") as any;
     const plan = collectEvalDeclarations(ast);
