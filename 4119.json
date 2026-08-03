@@ -2,9 +2,10 @@
   "id": "4119",
   "assignee": "ttraenkler/dev-4120-typeof",
   "requested_by": "ttraenkler/dev-4120-typeof",
-  "status": "in-progress",
+  "status": "released",
   "branch": "issue-4119-array-proto-ladder",
   "claimed_at": "2026-08-03T19:04:29Z",
-  "updated_at": "2026-08-03T19:04:29Z",
-  "write_id": "60858-u2vkqnmx"
+  "updated_at": "2026-08-03T19:36:19Z",
+  "write_id": "51371-lg5900fm",
+  "released_at": "2026-08-03T19:36:19Z"
 }
