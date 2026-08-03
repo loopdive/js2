@@ -860,7 +860,18 @@ jobs:
     # equivalent to the static tests/test262-chunkN.test.ts files, just
     # parameterized by env vars instead of baked into a filename.
     needs: [changes, runtime-eval-provider]
-    if: github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true'
+    # `runtime-eval-provider` runs under `always()` because its own
+    # `mg-artifact-probe` ancestor is intentionally skipped on merge_group.
+    # Without an explicit `always()` here, GitHub propagates that skipped
+    # ancestor through the otherwise-successful provider job and silently
+    # skips this entire matrix. Pin both direct dependencies to success so a
+    # real provider/detection failure still blocks the required aggregate.
+    if: |
+      always() &&
+      github.event_name == 'merge_group' &&
+      needs.changes.result == 'success' &&
+      needs.runtime-eval-provider.result == 'success' &&
+      needs.changes.outputs.run_shards == 'true'
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
     # Same 25-min timeout as `test262-shard`. The per-target counts
