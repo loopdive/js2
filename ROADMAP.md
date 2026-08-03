@@ -16,7 +16,7 @@ Across 69 development sprints and **2,700+ merged pull requests**, js2wasm has g
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 30,974 / 43,488 (71.2 %)
+**test262 conformance**: 30,971 / 43,491 (71.2 %)
 
 <!-- AUTO:conformance-end -->
 
