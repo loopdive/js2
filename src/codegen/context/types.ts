@@ -291,6 +291,14 @@ export interface ClosureInfo {
   hasCaptures?: boolean;
   /** True when the source closure has a `...rest` parameter. */
   hasRestParam?: boolean;
+  /**
+   * True when a source closure observes the call-site arity protocol through
+   * its own `arguments`, a rest parameter, or a parameter default. Undefined
+   * is conservative for synthetic/dynamic wrappers whose source is unknown.
+   */
+  needsCallSiteArity?: boolean;
+  /** Small, capture-free numeric closure body eligible for HOF call-site inlining. */
+  inlineBody?: Instr[];
 }
 
 /** Metadata for a generator lowered to an in-module WasmGC state machine (#680). */
@@ -755,6 +763,20 @@ export interface FunctionContext {
    * Populated when a for-loop condition guarantees indexVar < arrayVar.length.
    */
   safeIndexedArrays?: Set<string>;
+  /**
+   * Exact `arr.push(value)` calls whose immediately preceding empty literal was
+   * preallocated from the same canonical counted-loop proof. Capacity and
+   * receiver-null checks are redundant only at these AST nodes.
+   */
+  presizedArrayPushCalls?: Map<ts.CallExpression, number>;
+  /**
+   * Const `split()` results proven to be observed only through `.length`.
+   * The declaration stores the uniform field count as i32 instead of
+   * materializing a transient string array; property access resolves by symbol.
+   */
+  derivedStringArrayLengthLocals?: Map<ts.Symbol, number>;
+  /** Scalar descriptors for const substring results with no identity escape. */
+  derivedSubstringReads?: Map<ts.Symbol, { dataLocal: number; offLocal: number; lenLocal: number; minLen: number }>;
   /**
    * #2682: per-loop proofs for the canonical string-read hot loop
    * `for (let i = 0; i < recv.length; i++) … recv.charCodeAt(i) …`.

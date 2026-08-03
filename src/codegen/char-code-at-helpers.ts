@@ -214,12 +214,25 @@ export function ensureNativeCharCodeAtHelper(ctx: CodegenContext): number | null
   const IDX = 1; // i32 index
   const FLAT = 2; // (ref null $NativeString) flattened receiver
 
-  // Mirrors the legacy native inline arm (string-ops.ts `charCodeAt`):
-  //   flat = __str_flatten(s)
+  // Mirrors the legacy native inline arm (string-ops.ts `charCodeAt`), while
+  // avoiding a helper call for the overwhelmingly common already-flat value:
+  //   flat = s is FlatString ? s : __str_flatten(s)
   //   (idx < 0) | (idx >= flat.len) ? NaN : f64(flat.data[flat.off + idx])
   const body: Instr[] = [
     { op: "local.get", index: S },
-    { op: "call", funcIdx: flattenIdx },
+    { op: "ref.test", typeIdx: strTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: strTypeIdx } },
+      then: [
+        { op: "local.get", index: S },
+        { op: "ref.cast", typeIdx: strTypeIdx },
+      ],
+      else: [
+        { op: "local.get", index: S },
+        { op: "call", funcIdx: flattenIdx },
+      ],
+    },
     { op: "local.set", index: FLAT },
     { op: "local.get", index: IDX },
     { op: "i32.const", value: 0 },

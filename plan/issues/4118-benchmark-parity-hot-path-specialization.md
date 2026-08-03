@@ -1,0 +1,86 @@
+---
+id: 4118
+title: "Close benchmark parity gaps with proof-driven string, array, and numeric-loop specialization"
+status: in-progress
+sprint: current
+created: 2026-08-03
+updated: 2026-08-03
+assignee: ttraenkler/Codex
+priority: high
+horizon: s
+feasibility: hard
+reasoning_effort: high
+task_type: performance
+area: compiler
+goal: performance-parity
+loc-budget-allow:
+  - src/codegen/statements/variables.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/closures.ts
+  - src/codegen/statements/loops.ts
+  - src/ir/select.ts
+  - src/ir/integration.ts
+  - src/codegen/context/types.ts
+  - src/codegen/literals.ts
+  - src/ir/from-ast.ts
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/string-ops.ts::compileNativeStringMethodCall
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/literals.ts::compileArrayLiteral
+  - src/ir/select.ts::isPhase1Expr
+  - src/codegen/statements/loops.ts::compileForStatement
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+oracle-ratchet-allow:
+  - src/codegen/analysis/static-numeric-range.ts
+  - src/codegen/analysis/static-string-values.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/string-ops.ts
+---
+
+# Benchmark parity hot-path specialization
+
+The landing-page benchmark inventory still contains warm lanes substantially
+slower than Node/V8. The largest measured gaps are repeated string transforms,
+identity-array searches, recursive numeric kernels, and affine matrix loops.
+
+This issue tracks conservative compiler optimizations that require a complete
+static proof. Every specialization must preserve a runtime path when mutation,
+Unicode behavior, callback shape, or range evidence makes the proof incomplete.
+
+The LOC/function allowances cover the dispatch integration for the first
+checkpoint. The reusable proofs and range emitters live in dedicated analysis
+modules; the listed driver growth is the narrow wiring that consumes those
+proofs at the existing lowering sites.
+
+The oracle allowance records direct checker reads used by the conservative
+symbol-identity, mutation, and static-range proofs. They are read-only evidence
+queries at established codegen boundaries; moving them behind the oracle is
+tracked as part of the follow-up consolidation rather than obscuring this
+performance checkpoint with a checker-layer migration.
+
+## Checkpoint acceptance criteria
+
+1. Static derived string results avoid allocation only when all possible source
+   values agree, with mutated and non-uniform inputs retaining runtime helpers.
+2. Canonical identity-array `indexOf` and exact-equality `find` avoid scans only
+   while construction and use analysis proves the array unchanged.
+3. Capture-free numeric callbacks omit closure and call-site arity overhead.
+4. Counted push loops reserve exact capacity and promoted i32 counters remain
+   semantically identical across compilation lanes.
+5. Candidate benchmarks are measured against the exact `origin/main` commit,
+   in fresh processes, with the Node baseline and all Wasm lanes reported.
+
+## Follow-up
+
+- Move the remaining dispatcher-local proof consumers into subsystem modules
+  while preserving the benchmark wins.
+- Close host-string and affine-matrix gaps that remain after this checkpoint.
+- Re-run the entire landing-page inventory on main after merge.

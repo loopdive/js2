@@ -26,6 +26,25 @@ async function run(src: string): Promise<any> {
 }
 
 describe("#820l — arguments object retains extra positional args from spec-arity callbacks", () => {
+  it("does not allocate callback extras for a simple arrow that cannot observe them", async () => {
+    const result = await compile(
+      `
+        export function run(): number {
+          const values: number[] = [];
+          for (let i = 0; i < 10; i++) values.push(i);
+          return values.map((value: number): number => value * 2).length;
+        }
+      `,
+      { fileName: "test.ts", optimize: 4, emitWat: true, emitWatOnlyFunctions: ["run"] },
+    );
+    expect(result.success).toBe(true);
+    const body = result.wat?.slice(result.wat.indexOf("(func $run"), result.wat.indexOf('(export "run"'));
+    expect(body).not.toContain("array.new_fixed");
+
+    const { instance } = await WebAssembly.instantiate(result.binary, (result as any).importObject);
+    expect((instance.exports.run as () => number)()).toBe(10);
+  });
+
   it("forEach callback with 1 formal sees arguments.length === 3", async () => {
     const e: any = await run(`
       export function test(): number {
