@@ -11,7 +11,7 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import type { JsTag } from "../../checker/oracle.js";
 import type { ValType } from "../../ir/types.js";
-import { annexBDeclaringRange, enclosingVarScope } from "../annexb-cancel.js";
+import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 
@@ -34,47 +34,21 @@ function carrierDomain(tag: JsTag): string {
   return tag;
 }
 
-/**
- * Annex B assigns a block-level function object into an existing var binding
- * when control reaches the declaration. That assignment is implicit in the
- * source AST, so the ordinary binary-assignment scan below cannot see it.
- */
-function hasAnnexBFunctionAssignment(decl: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(decl.name)) return false;
-  const name = decl.name.text;
-  const scope = containingScope(decl);
-  let found = false;
-
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (
-      ts.isFunctionDeclaration(node) &&
-      node.name?.text === name &&
-      annexBDeclaringRange(node) !== null &&
-      enclosingVarScope(node) === scope
-    ) {
-      found = true;
-      return;
-    }
-    // Inspect a nested FunctionDeclaration's declaration site above, but do
-    // not search its body: declarations there belong to another var scope.
-    if (node !== scope && ts.isFunctionLike(node)) return;
-    forEachChild(node, visit);
-  };
-
-  forEachChild(scope, visit);
-  return found;
-}
-
 export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
   if (!ts.isIdentifier(decl.name)) return false;
-  if (hasAnnexBFunctionAssignment(decl)) return true;
   if (!decl.initializer) return false;
 
   const initialTag = ctx.oracle.staticJsTypeOf(decl.initializer);
   if (initialTag === "mixed") return false;
   const initialDomain = carrierDomain(initialTag);
   const scope = containingScope(decl);
+  // (#4131) An Annex B B.3.3 block/`if`/`case`-nested `function F` in this same
+  // var scope is a HIDDEN cross-domain assignment to `F`: B.3.3.1 step 3.f writes
+  // the function object into the existing var binding when the declaration is
+  // evaluated. No `F = …` BinaryExpression exists for the walk below to see, so
+  // without this the slot keeps the initializer's narrow representation
+  // (`var f = 123` → f64) and the write-back is unrepresentable.
+  if (initialDomain !== "function" && annexBExistingVarUpdateNames(scope).has(decl.name.text)) return true;
   let mixed = false;
 
   // (#4122) `"mixed"` is the oracle's answer for UNRESOLVABLE, not for "proven
