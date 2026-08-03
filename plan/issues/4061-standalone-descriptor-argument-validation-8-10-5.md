@@ -1,7 +1,8 @@
 ---
 id: 4061
 title: "Descriptor-ARGUMENT validation in Object.create/defineProperties (§8.10.5) + §8.12.9 step 1 redefine-over-inherited — 31 files"
-status: in-progress
+status: done
+completed: 2026-08-03
 assignee: ttraenkler/dev-4061-descriptor-args
 sprint: current
 created: 2026-08-02
@@ -126,6 +127,70 @@ Fix, narrowest site:
    `{get: undefined}` at the wasm boundary, #2106 — the same reason
    `Object.defineProperty`/`defineProperties` already throw eagerly, #3116).
    Emitted per key inside the loop, so earlier keys still apply first.
+
+### It was also a SILENT WRONG ANSWER, not only a missing throw
+
+Found while writing this issue's own negative test. The expansion reads
+`get`/`set` **only** to set the ACCESSOR flag bit and then calls
+`__defineProperty_value` with a NULL value — it never compiles the accessor
+function. So it could model no accessor descriptor at all, well-formed or not.
+Measured on `14eaf9f87`, standalone:
+
+```
+Object.create({}, {p: {get: function () { return 9; }}}).p    ->  0     ← wrong, silent
+Object.create({}, {p: {get: g}}).p                            ->  0     ← identifier getter, same
+Object.defineProperty(o, "p", {get: function () { return 9; }}); o.p   ->  9   ← control
+```
+
+A conformance gain bought with a silent wrong answer is negative value, so the
+fix rejects **every** accessor-bearing descriptor from the static expansion
+(`descriptorHasAccessorField`), not merely the malformed ones — which is what
+descriptor-shape.ts' own invariant already required: a `true` answer is a
+PROMISE the expansion can fully model the descriptor. Nothing is lost by
+rerouting; the dynamic applier was verified directly against a runtime
+descriptor variable — non-callable `get`/`set` (3 shapes) and data+accessor
+conflicts (2 shapes) all throw there, a legal accessor does not.
+
+The old test shape ("`assert.throws` did not fire") could not have caught this;
+the tests here assert the getter **runs** (returns 9 / 5).
+
+## Measured result
+
+Kill-switch receipt — base arm `14eaf9f87` (upstream/main), fix arm
+`750ca9e46` (this branch, both commits). Standalone lane, `runTest262File`,
+run in batches with each non-pass re-checked.
+
+| Set | Base | Fix |
+| --- | ---: | ---: |
+| §8.10.5 arm (this issue's scope) | 0 / 17 | **16 / 17** |
+| §8.12.9 arm (split out to #4143) | 0 / 14 | 0 / 14 — untouched by design |
+| `accessed !== true`, 3 families | 0 / 42 | 0 / 42 — see below |
+
+### The one file NOT fixed, on the record
+
+`built-ins/Object/defineProperties/property-description-must-be-an-object-not-symbol.js`
+— `Object.defineProperties({}, {a: Symbol()})`. A different entry point (the
+plural native, not `Object.create`) and a **symbol** descriptor, which
+`isStaticallyNonObjectDescExpr` does not classify: `Symbol()` is a
+CallExpression, so it routes to the dynamic `__defineProperties`, which does not
+apply §6.2.5.6 step 1 (`Type(Obj) is not Object → TypeError`) to a symbol. The
+fix belongs inside that native's ToPropertyDescriptor entry — the same native
+#4047 had just reworked — so it is deliberately not reached from here.
+Claimable as a one-file follow-up; it is a named residual, not an unknown.
+
+### Non-flip finding: the 42-row `accessed !== true` bucket is a different defect
+
+Measured 0/42 both arms. These are §8.10.5 **step 3.a** — reading the
+`enumerable` field off a descriptor that is not a plain object literal
+(`descObj = new ConstructFun()` with `enumerable` INHERITED from its prototype;
+an Array with `arrObj.enumerable = true`), then asserting the defined property
+shows up in `for…in`. Those descriptors already routed to the dynamic applier
+before this fix, so the fix cannot move them: the defect is in the applier's
+descriptor-FIELD READ, not in which path is chosen. `hasField` there goes
+through `__desc_has_own` (#4055), an OWN-property check, so an *inherited*
+`enumerable` is invisible to it — while ToPropertyDescriptor specifies
+[[Get]], which is proto-inclusive. Same store-visibility family as #4143 /
+#4098, not descriptor-argument validation.
 
 # Descriptor-ARGUMENT validation in Object.create/defineProperties (§8.10.5) + §8.12.9 step 1 redefine-over-inherited — 31 files
 
