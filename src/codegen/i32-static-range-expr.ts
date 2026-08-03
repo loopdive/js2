@@ -3,6 +3,7 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { getLocalType } from "./context/locals.js";
 import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { withSpeculativeCompile } from "./context/speculative.js";
 
 /** Emit a range-proven integer expression without f64 conversions/helpers. */
 export function tryEmitStaticI32Expression(
@@ -12,10 +13,14 @@ export function tryEmitStaticI32Expression(
 ): boolean {
   const range = staticIntegerRange(ctx, expression);
   if (!range || range.min < -0x80000000 || range.max > 0x7fffffff) return false;
-  const bodyStart = fctx.body.length;
-  if (emitStaticI32Expression(ctx, fctx, expression)) return true;
-  fctx.body.length = bodyStart;
-  return false;
+  // #1919: the sub-expression walk emits as it goes and can bail out half-way
+  // (a nested operand that is not statically lowerable). Undo that partial
+  // emission transactionally — a bare `fctx.body.length` truncation would leak
+  // the locals / late imports / diagnostics the aborted walk allocated.
+  return withSpeculativeCompile(ctx, fctx, () => {
+    const emitted = emitStaticI32Expression(ctx, fctx, expression);
+    return { commit: emitted, value: emitted };
+  });
 }
 
 function emitStaticI32Expression(ctx: CodegenContext, fctx: FunctionContext, expression: ts.Expression): boolean {
