@@ -56,6 +56,7 @@
  * the spec requires, and what the static path only reached by accident.
  */
 import { ts } from "../ts-api.js";
+import { unwrapTransparentExpression } from "./object-descriptor-analysis.js";
 
 /**
  * Is this descriptor expression statically a non-object primitive
@@ -76,7 +77,13 @@ import { ts } from "../ts-api.js";
  * header), so a non-object descriptor that reaches it is silently swallowed.
  */
 export function isStaticallyNonObjectDescExpr(descArg: ts.Expression): boolean {
-  while (ts.isParenthesizedExpression(descArg)) descArg = descArg.expression;
+  // Unwrap `as`/`!`/`satisfies`/parens, not parens alone: in TypeScript source
+  // a spec-violating descriptor can only be SPELLED through a cast — the lib
+  // types `Properties` as `PropertyDescriptorMap`, so a bare `{prop: null}` is
+  // a type error before codegen ever sees it. `null as any` is still `null` at
+  // runtime and must classify identically. (Type assertions are erased, so this
+  // cannot change behaviour for any expression that was already classified.)
+  descArg = unwrapTransparentExpression(descArg);
   if (
     ts.isNumericLiteral(descArg) ||
     ts.isStringLiteral(descArg) ||
@@ -112,8 +119,8 @@ export function literalNullAccessorField(descExpr: ts.Expression): "Getter" | "S
   let found: "Getter" | "Setter" | undefined;
   for (const dp of descExpr.properties) {
     if (!ts.isPropertyAssignment(dp) || !ts.isIdentifier(dp.name)) continue;
-    let init: ts.Expression = dp.initializer;
-    while (ts.isParenthesizedExpression(init)) init = init.expression;
+    // `as any` etc. as well as parens — see `isStaticallyNonObjectDescExpr`.
+    const init = unwrapTransparentExpression(dp.initializer);
     if (init.kind !== ts.SyntaxKind.NullKeyword) continue;
     if (dp.name.text === "get") return "Getter";
     if (dp.name.text === "set" && found === undefined) found = "Setter";

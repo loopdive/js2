@@ -27,6 +27,16 @@
  * Every case here is asserted in BOTH lanes: the JS-host lane and
  * `--target standalone`. The population that motivated the issue is
  * standalone-lane test262, but the defective expansion is lane-independent.
+ *
+ * NOTE on the `as any` casts. A spec-violating descriptor cannot be SPELLED in
+ * TypeScript without one — `Object.create`'s lib signature types `Properties`
+ * as `PropertyDescriptorMap`, so a bare `{prop: null}` is a type error long
+ * before codegen sees it, and these sources are compiled by the real front end.
+ * Type assertions are erased, so `null as any` reaches codegen as exactly the
+ * `null` the equivalent test262 JS produces — which is why the classifiers in
+ * `descriptor-shape.ts` unwrap transparent expressions rather than parens
+ * alone. The untyped-JS spelling is covered by the test262 measurement recorded
+ * in the issue (16/17), not by this file.
  */
 
 import { describe, expect, it } from "vitest";
@@ -77,39 +87,39 @@ describe("#4061 — Object.create descriptor-argument validation (§6.2.5.6)", (
       // §6.2.5.6 step 1 — the descriptor is not an Object.
       // test262: built-ins/Object/create/15.2.3.5-4-42.js
       it("throws TypeError when a descriptor is null", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: null });`), standalone)).toBe(1);
+        expect(await run(throwsProbe(`Object.create({}, { prop: null as any });`), standalone)).toBe(1);
       });
 
       it("throws TypeError when a descriptor is a primitive number", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: 5 });`), standalone)).toBe(1);
+        expect(await run(throwsProbe(`Object.create({}, { prop: 5 as any });`), standalone)).toBe(1);
       });
 
       it("throws TypeError when a descriptor is a primitive string", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: "s" });`), standalone)).toBe(1);
+        expect(await run(throwsProbe(`Object.create({}, { prop: "s" as any });`), standalone)).toBe(1);
       });
 
       // §6.2.5.6 step 7.b — `get` is present, not undefined, and not callable.
       // test262: built-ins/Object/create/15.2.3.5-4-258.js … -262.js
       it("throws TypeError for get: null", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: { get: null } });`), standalone)).toBe(1);
+        expect(await run(throwsProbe(`Object.create({}, { prop: { get: null as any } });`), standalone)).toBe(1);
       });
 
       it("throws TypeError for a boolean get", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: { get: true } });`), standalone)).toBe(1);
+        expect(await run(throwsProbe(`Object.create({}, { prop: { get: true as any } });`), standalone)).toBe(1);
       });
 
       it("throws TypeError for a numeric get", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: { get: 42 } });`), standalone)).toBe(1);
+        expect(await run(throwsProbe(`Object.create({}, { prop: { get: 42 as any } });`), standalone)).toBe(1);
       });
 
       // §6.2.5.6 step 8.b — same, for `set`.
       // test262: built-ins/Object/create/15.2.3.5-4-293.js … -300.js
       it("throws TypeError for set: null", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: { set: null } });`), standalone)).toBe(1);
+        expect(await run(throwsProbe(`Object.create({}, { prop: { set: null as any } });`), standalone)).toBe(1);
       });
 
       it("throws TypeError for a string set", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: { set: "x" } });`), standalone)).toBe(1);
+        expect(await run(throwsProbe(`Object.create({}, { prop: { set: "x" as any } });`), standalone)).toBe(1);
       });
 
       // An IDENTIFIER-valued, non-callable accessor. The old expansion accepted
@@ -193,7 +203,7 @@ export function test(): number { return o.a + o.b; }
 var o: any = {};
 var threw: number = 0;
 try {
-  o = Object.create({}, { good: { value: 3 }, bad: null });
+  o = Object.create({}, { good: { value: 3 }, bad: null as any });
 } catch (e) {
   threw = 1;
 }
