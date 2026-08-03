@@ -99,12 +99,7 @@ import { compileMathCall } from "./builtins.js";
 import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js";
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
-import {
-  descriptorHasAccessorField,
-  isStaticDescWellFormed,
-  isStaticallyNonObjectDescExpr,
-  literalNullAccessorField,
-} from "../descriptor-shape.js";
+import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { tryCompileEs5GetPrototypeOfEarly, tryCompileEs5GetPrototypeOfValue } from "./object-get-prototype-of.js";
@@ -2058,54 +2053,16 @@ export function compileBuiltinStaticCall(
       }
       fctx.body.push({ op: "call", funcIdx: hostIdx });
 
-      // If there's a second argument (property descriptors), expand at compile time.
-      // Only use static expansion when every descriptor value is an object literal AND
-      // every writable/enumerable/configurable flag inside each descriptor is
-      // statically ToBoolean-resolvable (per §6.2.6). Non-resolvable flags
-      // (`configurable: someVar`) need runtime ToBoolean — fall through to the
-      // non-fast-path so the runtime honors §7.1.2 instead of silently degrading
-      // to `false`.
-      //
-      // (#4061) …AND the descriptor carries no accessor field …AND
-      // `isStaticDescWellFormed` accepts it.
-      //
-      // This expansion reads `get`/`set` only to set the ACCESSOR flag bit and
-      // then calls `__defineProperty_value` with a NULL value — it never
-      // compiles the accessor function. So it can model no accessor descriptor
-      // at all, well-formed or not. Measured on `14eaf9f87`, standalone:
-      // `Object.create({}, {p: {get: () => 9}}).p` was **0**, while the same
-      // descriptor through `Object.defineProperty` gave **9**. That is the
-      // silent-wrong-answer failure mode descriptor-shape.ts' invariant exists
-      // to prevent, so every accessor descriptor leaves here.
-      //
-      // `isStaticDescWellFormed` (descriptor-shape.ts, #3991) is the gate
-      // `Object.defineProperties` already consults; `Object.create` had its own
-      // parallel expansion and never did, so §6.2.5.6 ToPropertyDescriptor
-      // violations were silently *defined* instead of thrown —
-      // `{prop: {get: fn, value: 1}}` set HAS_VALUE **and** ACCESSOR and did not
-      // throw. Routing to the dynamic applier below is the destination, not a
-      // fallback: it is the only path implementing ToPropertyDescriptor's
-      // conflict and callable checks at all (verified against it directly —
-      // non-callable `get`/`set` and data+accessor conflicts all throw there,
-      // and a legal accessor does not).
+      // Second argument (property descriptors): expand at compile time, but only
+      // for descriptors this expansion can FULLY model. The admission test and
+      // its reasoning are `mayStaticallyExpandCreateDescriptor` (#4061) —
+      // accessors (silently dropped here), §6.2.5.6 violations, unresolvable flags.
       if (
         expr.arguments.length >= 2 &&
         ts.isObjectLiteralExpression(expr.arguments[1]!) &&
-        (expr.arguments[1] as ts.ObjectLiteralExpression).properties.every((p) => {
-          if (!ts.isPropertyAssignment(p)) return true;
-          const init = (p as ts.PropertyAssignment).initializer;
-          if (!ts.isObjectLiteralExpression(init)) return false;
-          if (descriptorHasAccessorField(init)) return false;
-          if (!isStaticDescWellFormed(init)) return false;
-          for (const dp of init.properties) {
-            if (!ts.isPropertyAssignment(dp) || !ts.isIdentifier(dp.name)) continue;
-            const n = dp.name.text;
-            if (n === "writable" || n === "enumerable" || n === "configurable") {
-              if (staticToBoolean(dp.initializer) === undefined) return false;
-            }
-          }
-          return true;
-        })
+        (expr.arguments[1] as ts.ObjectLiteralExpression).properties.every(
+          (p) => !ts.isPropertyAssignment(p) || mayStaticallyExpandCreateDescriptor(p.initializer, staticToBoolean),
+        )
       ) {
         const descsLiteral = expr.arguments[1] as ts.ObjectLiteralExpression;
         // Save created object to local for repeated use
@@ -2247,37 +2204,14 @@ export function compileBuiltinStaticCall(
                 : undefined;
           if (propName === undefined) continue;
 
-          // (#4061) Two ToPropertyDescriptor violations the dynamic applier
-          // CANNOT report, emitted here at the exact point this key would be
-          // applied — so descriptors for earlier keys are still applied first,
-          // per §20.1.2.3.1's ordered loop.
-          //
-          //  - §6.2.5.6 step 1, a non-object descriptor. `__obj_define_from_desc`
-          //    deliberately treats null/undefined as a lenient empty-descriptor
-          //    NO-OP (see its header) on the stated assumption that "the call
-          //    site already throws for a statically-non-object literal". That was
-          //    true of `Object.defineProperty` and false of `Object.create`,
-          //    which is the whole bug: `Object.create({}, {prop: null})`
-          //    defined nothing and threw nothing.
-          //  - §6.2.5.6 steps 7.b / 8.b for a LITERAL `get: null` / `set: null`.
-          //    This cannot be delegated even in principle: a null struct field is
-          //    indistinguishable from an absent/undefined one at the wasm
-          //    boundary (#2106), and `{get: undefined}` is a *valid* accessor
-          //    descriptor — so the runtime cannot separate the TypeError from
-          //    the legal case. `Object.defineProperty` and
-          //    `Object.defineProperties` both already throw eagerly here (#3116);
-          //    this is the third and last entry point.
-          const nullAccessor = literalNullAccessorField(prop.initializer);
-          if (isStaticallyNonObjectDescExpr(prop.initializer) || nullAccessor !== undefined) {
+          // (#4061) The two ToPropertyDescriptor TypeErrors the dynamic applier
+          // structurally cannot report — see `staticDescriptorTypeError`. Emitted
+          // where THIS key applies, after its side effects, so earlier keys land first.
+          const descTypeError = staticDescriptorTypeError(prop.initializer);
+          if (descTypeError !== undefined) {
             const sideEffectType = compileExpression(ctx, fctx, prop.initializer);
             if (sideEffectType) fctx.body.push({ op: "drop" });
-            emitThrowTypeError(
-              ctx,
-              fctx,
-              nullAccessor !== undefined
-                ? `${nullAccessor} must be a function: null`
-                : "TypeError: Property description must be an object",
-            );
+            emitThrowTypeError(ctx, fctx, descTypeError);
             fctx.body.push({ op: "unreachable" });
             return { kind: "externref" };
           }
