@@ -59,7 +59,6 @@ function makePlan(): IrAsyncPlan {
     params: [
       { value: promise, type: EXTERN },
       { value: condition, type: I32 },
-      { value: accumulator, type: F64 },
     ],
     values: [
       { value: promise, type: EXTERN },
@@ -77,7 +76,7 @@ function makePlan(): IrAsyncPlan {
     states: [
       {
         id: entry,
-        body: [],
+        body: [{ kind: "const", value: { kind: "f64", value: 0 }, result: accumulator, resultType: F64 }],
         terminator: {
           kind: "suspend",
           awaited: promise,
@@ -99,6 +98,7 @@ function makePlan(): IrAsyncPlan {
             resultType: F64,
           },
         ],
+        updates: [{ target: accumulator, value: sum }],
         terminator: { kind: "branch", condition, ifTrue: suspendAgain, ifFalse: done },
       },
       {
@@ -212,6 +212,62 @@ describe("#1373b IrAsyncPlan contract", () => {
     expect(errorCodes(extra)).toContain("liveness-mismatch");
   });
 
+  it("verifies typed loop-carried spill updates and canonicalizes their order", () => {
+    const plan = makePlan();
+    expect(verifyIrAsyncPlan(plan)).toEqual([]);
+    expect(createIrAsyncPlan(plan).states[1]?.updates).toEqual([{ target: asValueId(2), value: asValueId(4) }]);
+
+    const unknownTarget = makePlan();
+    (unknownTarget.states[1] as { updates: unknown }).updates = [{ target: asValueId(0), value: asValueId(4) }];
+    expect(errorCodes(unknownTarget)).toContain("unknown-spill-update");
+
+    const duplicate = makePlan();
+    (duplicate.states[1] as { updates: unknown }).updates = [
+      { target: asValueId(2), value: asValueId(4) },
+      { target: asValueId(2), value: asValueId(4) },
+    ];
+    expect(errorCodes(duplicate)).toContain("duplicate-spill-update");
+
+    const wrongType = makePlan();
+    (wrongType.states[1] as { updates: unknown }).updates = [{ target: asValueId(1), value: asValueId(4) }];
+    expect(errorCodes(wrongType)).toContain("spill-update-type-mismatch");
+
+    const updatedParam = makePlan();
+    (updatedParam.states[1] as { updates: unknown }).updates = [{ target: asValueId(1), value: asValueId(1) }];
+    expect(errorCodes(updatedParam)).toContain("invalid-spill-update");
+
+    const crossDependent = makePlan();
+    crossDependent.values.push({ value: asValueId(7), type: F64 });
+    crossDependent.spills.push({ value: asValueId(7), type: F64, storage: "ssa" });
+    crossDependent.states[0]!.body.push({
+      kind: "const",
+      value: { kind: "f64", value: 1 },
+      result: asValueId(7),
+      resultType: F64,
+    });
+    (crossDependent.states[1] as { updates: unknown }).updates = [
+      { target: asValueId(2), value: asValueId(7) },
+      { target: asValueId(7), value: asValueId(2) },
+    ];
+    expect(errorCodes(crossDependent)).toContain("invalid-spill-update");
+  });
+
+  it("rejects ordinary control-flow edges into fulfilled and rejected resume states", () => {
+    const fulfilled = makePlan();
+    (fulfilled.states[2] as { terminator: unknown }).terminator = {
+      kind: "goto",
+      target: asAsyncStateId(1),
+    };
+    expect(errorCodes(fulfilled)).toContain("invalid-resume");
+
+    const rejected = makePlan();
+    (rejected.states[3] as { terminator: unknown }).terminator = {
+      kind: "goto",
+      target: asAsyncStateId(4),
+    };
+    expect(errorCodes(rejected)).toContain("invalid-resume");
+  });
+
   it("rejects callbacks, AST objects, raw Wasm, and concrete backend indices", () => {
     const plan = makePlan() as IrAsyncPlan & Record<string, unknown>;
     plan.emit = () => [];
@@ -251,33 +307,35 @@ describe("#1373b IrAsyncPlan contract", () => {
 });
 
 describe("#1042/#1373b async migration anti-vacuity", () => {
-  it("IR-emits fetchUser and fetchAllParallel while keeping the two remaining playground blockers typed", async () => {
+  it("IR-emits the complete playground async family with no IR-only blocker", async () => {
     const source = readFileSync(new URL("../../website/playground/examples/js/async.ts", import.meta.url), "utf8");
     const result = await compile(source, {
       fileName: "website/playground/examples/js/async.ts",
       trackIrOutcomes: true,
     });
     expect(result.success).toBe(true);
-    const blockers = (result.irOutcomes ?? []).filter((outcome) => outcome.kind !== "emitted");
-    expect(blockers).toHaveLength(2);
-    expect(blockers.map((outcome) => [outcome.displayName, outcome.kind, outcome.stage, outcome.code]).sort()).toEqual([
-      ["fetchAllSequential", "unsupported", "select", "async-function"],
-      ["main", "unsupported", "select", "async-function"],
-    ]);
-    expect(blockers.every((outcome) => outcome.legacyBodyEmitted && !outcome.irBodyEmitted)).toBe(true);
-    expect((result.irOutcomes ?? []).find((outcome) => outcome.displayName === "fetchUser")).toMatchObject({
-      kind: "emitted",
-      legacyBodyEmitted: false,
-      irBodyEmitted: true,
-      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    const family = ["delay", "fetchUser", "fetchAllSequential", "fetchAllParallel", "main"].map((name) =>
+      (result.irOutcomes ?? []).find((outcome) => outcome.displayName === name),
+    );
+    expect(family).toHaveLength(5);
+    expect(family.every((outcome) => outcome?.kind === "emitted")).toBe(true);
+    expect(
+      family.every(
+        (outcome) =>
+          outcome?.legacyBodyEmitted === false &&
+          outcome.irBodyEmitted === true &&
+          outcome.preparedComponentId?.startsWith("prepared-component:"),
+      ),
+    ).toBe(true);
+    expect(
+      evaluateIrOutcomePolicy(
+        family.filter((outcome) => outcome !== undefined),
+        "ir-only",
+      ),
+    ).toMatchObject({
+      ready: true,
+      blockers: [],
     });
-    expect((result.irOutcomes ?? []).find((outcome) => outcome.displayName === "fetchAllParallel")).toMatchObject({
-      kind: "emitted",
-      legacyBodyEmitted: false,
-      irBodyEmitted: true,
-      preparedComponentId: expect.stringMatching(/^prepared-component:/),
-    });
-    expect(evaluateIrOutcomePolicy(blockers, "ir-only").ready).toBe(false);
   });
 
   it("preserves the existing frame engine's real two-suspension execution", async () => {

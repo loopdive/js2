@@ -5695,6 +5695,22 @@ function throwMethodCallNotInSlice(methodName: string, recvType: IrType, funcNam
   );
 }
 
+function lowerPreparedAsyncDateNow(
+  expr: ts.CallExpression,
+  cx: LowerCtx,
+  methodName: string,
+  receiverIdentifier: ts.Identifier | undefined,
+): IrValueId | null {
+  const target = cx.resolver?.preparedAsyncDateNowTarget?.(expr) ?? null;
+  if (target === null) return null;
+  if (methodName !== "now" || receiverIdentifier?.text !== "Date" || expr.arguments.length !== 0) {
+    throw new Error(`ir/from-ast: prepared Date.now proof diverged in ${cx.funcName}`);
+  }
+  const result = cx.builder.emitCall(target, [], irVal({ kind: "f64" }));
+  if (result === null) throw new Error(`ir/from-ast: prepared Date.now returned void in ${cx.funcName}`);
+  return result;
+}
+
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
     throw new Error(`ir/from-ast: malformed method call in ${cx.funcName}`);
@@ -5703,6 +5719,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const receiverIdentifier = ts.isIdentifier(expr.expression.expression) ? expr.expression.expression : undefined;
   const receiverIsDirectModuleBinding =
     receiverIdentifier !== undefined && cx.resolver?.isDirectModuleBinding?.(receiverIdentifier) === true;
+
+  const preparedDateNow = lowerPreparedAsyncDateNow(expr, cx, methodName, receiverIdentifier);
+  if (preparedDateNow !== null) return preparedDateNow;
 
   // #3793 — Acorn's public wrappers call static properties on the retained
   // `Parser` function object. Load the exact existing module carrier and
@@ -5997,21 +6016,14 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       variant === "number" ? { kind: "f64" } : variant === "bool" ? { kind: "i32" } : { kind: "externref" };
     const argVal = lowerExpr(argExpr, cx, irVal(expected));
     const coerced = coerceToExpectedExtern(argVal, expected, cx, `arg of console.${methodName}`);
-    cx.builder.emitCall(irImportFuncRef("env", importName), [coerced], null);
+    const target = cx.resolver.preparedAsyncConsoleTarget?.(expr) ?? irImportFuncRef("env", importName);
+    cx.builder.emitCall(target, [coerced], null);
     return null;
   }
 
-  // (#1371/#2856/#3526 M1) Exact-arity Math builtin. Every accepted method
-  // becomes a semantic intrinsic here; runtime/backend provider selection is
-  // deferred until final IR preparation, after all middle-end transforms.
-  // the shape BEFORE lowering the receiver, because `Math` is a host
-  // global with no IR type binding (lowerExpr on `Math` would throw
-  // "unknown identifier"). The selector's `isPhase1Expr` already
-  // rejected anything not in `IR_MATH_UNARY_WHITELIST` — but check
-  // again here as a hard guard so an unsupported method on `Math`
-  // produces the same clean "not in slice" error we use elsewhere
-  // (avoiding a confusing "unknown identifier 'Math'" from the
-  // receiver lower path below).
+  // Exact-arity Math builtins become semantic intrinsics before receiver
+  // lowering because the ambient `Math` global has no IR value binding.
+  // Recheck the selector proof here so divergence fails with a clear error.
   if (
     ts.isIdentifier(expr.expression.expression) &&
     expr.expression.expression.text === "Math" &&
@@ -6180,7 +6192,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     recvType.val.kind === "f64" &&
     cx.resolver?.hasHostNumberToString?.() === true
   ) {
-    const r = cx.builder.emitCall(irImportFuncRef("env", "number_toString"), [recv], { kind: "string" });
+    const target = cx.resolver.preparedAsyncNumberToStringTarget?.(expr) ?? irImportFuncRef("env", "number_toString");
+    const r = cx.builder.emitCall(target, [recv], { kind: "string" });
     if (r === null) {
       throw new Error(`ir/from-ast: number_toString produced no result in ${cx.funcName}`);
     }
@@ -9127,14 +9140,42 @@ function emitI32PureExpr(e: ts.Expression, cx: LowerCtx): IrValueId {
   return cx.builder.emitUnary("i32.trunc_sat_f64_s", f64Value, irVal({ kind: "i32" }));
 }
 
+function collectPreparedConcatOperands(expression: ts.Expression, out: ts.Expression[]): void {
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    collectPreparedConcatOperands(expression.left, out);
+    collectPreparedConcatOperands(expression.right, out);
+    return;
+  }
+  out.push(expression);
+}
+
+function lowerPreparedAsyncConcat(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId | null {
+  const target = cx.resolver?.preparedAsyncConcatFiveTarget?.(expr) ?? null;
+  if (target === null) return null;
+  const operands: ts.Expression[] = [];
+  collectPreparedConcatOperands(expr, operands);
+  if (operands.length !== 5) {
+    throw new Error(`ir/from-ast: prepared five-part concat has ${operands.length} operands in ${cx.funcName}`);
+  }
+  const values = operands.map((operand) => {
+    const value = lowerExpr(operand, cx, { kind: "string" });
+    if (cx.builder.typeOf(value).kind !== "string") {
+      throw new Error(`ir/from-ast: prepared concat operand is not a string in ${cx.funcName}`);
+    }
+    return value;
+  });
+  const result = cx.builder.emitCall(target, values, { kind: "string" });
+  if (result === null) throw new Error(`ir/from-ast: prepared five-part concat returned void in ${cx.funcName}`);
+  return result;
+}
+
 function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrValueId {
   const op = expr.operatorToken.kind;
+  const preparedConcat = lowerPreparedAsyncConcat(expr, cx);
+  if (preparedConcat !== null) return preparedConcat;
 
-  // `??` nullish coalescing — IR-native short-circuit over a reference-
-  // shaped lhs (`lhs ?? rhs`). Handled before the slice-11 early-throw
-  // because, unlike `%` / `**` / `in` / `instanceof`, it has a lowering
-  // when both arms are the same reference type. `lowerNullish` throws
-  // clean fallback for non-reference / mismatched-type operands.
+  // IR-native nullish short-circuit for matching reference-shaped arms;
+  // lowerNullish rejects non-reference or mismatched operands.
   if (op === ts.SyntaxKind.QuestionQuestionToken) {
     return lowerNullish(expr, cx, hint);
   }

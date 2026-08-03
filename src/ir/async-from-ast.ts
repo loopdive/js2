@@ -14,6 +14,11 @@ export interface PreparedAsyncPromiseAllPlan {
 export interface PreparedAsyncFromAstResolver {
   readonly preparedAsyncPromiseVectorLocal?: (declaration: ts.VariableDeclaration) => boolean;
   readonly preparedAsyncPromiseAllPlan?: (call: ts.CallExpression) => PreparedAsyncPromiseAllPlan | null;
+  readonly preparedAsyncThenableResultType?: (call: ts.CallExpression) => IrType | undefined;
+  readonly preparedAsyncDateNowTarget?: (call: ts.CallExpression) => IrFuncRef | null;
+  readonly preparedAsyncNumberToStringTarget?: (call: ts.CallExpression) => IrFuncRef | null;
+  readonly preparedAsyncConsoleTarget?: (call: ts.CallExpression) => IrFuncRef | null;
+  readonly preparedAsyncConcatFiveTarget?: (expression: ts.Expression) => IrFuncRef | null;
 }
 
 /** Resume type for an awaited prepared combinator, if the exact call is owned. */
@@ -21,7 +26,11 @@ export function preparedAsyncAwaitResultType(
   expression: ts.Expression,
   resolver: PreparedAsyncFromAstResolver | undefined,
 ): IrType | undefined {
-  return ts.isCallExpression(expression) ? resolver?.preparedAsyncPromiseAllPlan?.(expression)?.resultType : undefined;
+  if (!ts.isCallExpression(expression)) return undefined;
+  return (
+    resolver?.preparedAsyncPromiseAllPlan?.(expression)?.resultType ??
+    resolver?.preparedAsyncThenableResultType?.(expression)
+  );
 }
 
 /** Lower the exact prepared Promise.all provider boundary or decline it. */
