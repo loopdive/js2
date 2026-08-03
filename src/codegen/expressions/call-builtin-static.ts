@@ -100,6 +100,7 @@ import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
 import {
+  descriptorHasAccessorField,
   isStaticDescWellFormed,
   isStaticallyNonObjectDescExpr,
   literalNullAccessorField,
@@ -2065,17 +2066,28 @@ export function compileBuiltinStaticCall(
       // non-fast-path so the runtime honors §7.1.2 instead of silently degrading
       // to `false`.
       //
-      // (#4061) …AND `isStaticDescWellFormed` accepts it. That gate
-      // (descriptor-shape.ts, #3991) is what `Object.defineProperties` already
-      // consults; `Object.create` had its own parallel expansion and never did,
-      // so every §6.2.5.6 ToPropertyDescriptor violation the gate exists to
-      // catch was silently *defined* here instead of throwing:
-      // `{prop: {get: null}}` set `flags |= ACCESSOR` and then called
-      // `__defineProperty_value` with a null value; `{prop: {get: fn, value: 1}}`
-      // set both HAS_VALUE and ACCESSOR. Neither threw. Routing them to the
-      // dynamic applier below is the destination, not a fallback — it is the
-      // only path that implements ToPropertyDescriptor's conflict and
-      // callable checks at all.
+      // (#4061) …AND the descriptor carries no accessor field …AND
+      // `isStaticDescWellFormed` accepts it.
+      //
+      // This expansion reads `get`/`set` only to set the ACCESSOR flag bit and
+      // then calls `__defineProperty_value` with a NULL value — it never
+      // compiles the accessor function. So it can model no accessor descriptor
+      // at all, well-formed or not. Measured on `14eaf9f87`, standalone:
+      // `Object.create({}, {p: {get: () => 9}}).p` was **0**, while the same
+      // descriptor through `Object.defineProperty` gave **9**. That is the
+      // silent-wrong-answer failure mode descriptor-shape.ts' invariant exists
+      // to prevent, so every accessor descriptor leaves here.
+      //
+      // `isStaticDescWellFormed` (descriptor-shape.ts, #3991) is the gate
+      // `Object.defineProperties` already consults; `Object.create` had its own
+      // parallel expansion and never did, so §6.2.5.6 ToPropertyDescriptor
+      // violations were silently *defined* instead of thrown —
+      // `{prop: {get: fn, value: 1}}` set HAS_VALUE **and** ACCESSOR and did not
+      // throw. Routing to the dynamic applier below is the destination, not a
+      // fallback: it is the only path implementing ToPropertyDescriptor's
+      // conflict and callable checks at all (verified against it directly —
+      // non-callable `get`/`set` and data+accessor conflicts all throw there,
+      // and a legal accessor does not).
       if (
         expr.arguments.length >= 2 &&
         ts.isObjectLiteralExpression(expr.arguments[1]!) &&
@@ -2083,6 +2095,7 @@ export function compileBuiltinStaticCall(
           if (!ts.isPropertyAssignment(p)) return true;
           const init = (p as ts.PropertyAssignment).initializer;
           if (!ts.isObjectLiteralExpression(init)) return false;
+          if (descriptorHasAccessorField(init)) return false;
           if (!isStaticDescWellFormed(init)) return false;
           for (const dp of init.properties) {
             if (!ts.isPropertyAssignment(dp) || !ts.isIdentifier(dp.name)) continue;

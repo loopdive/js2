@@ -112,6 +112,17 @@ describe("#4061 — Object.create descriptor-argument validation (§6.2.5.6)", (
         expect(await run(throwsProbe(`Object.create({}, { prop: { set: "x" } });`), standalone)).toBe(1);
       });
 
+      // An IDENTIFIER-valued, non-callable accessor. The old expansion accepted
+      // any identifier-like get/set as "statically classifiable" and never
+      // checked callability at all.
+      // test262: built-ins/Object/create/15.2.3.5-4-297.js, -300.js
+      it("throws TypeError for an identifier-valued non-callable set", async () => {
+        const src = throwsProbe(`
+var notCallable: any = {};
+Object.create({}, { prop: { set: notCallable } });`);
+        expect(await run(src, standalone)).toBe(1);
+      });
+
       // §6.2.5.6 step 9.a — data and accessor fields are mutually exclusive.
       // test262: built-ins/Object/create/15.2.3.5-4-301.js … -304.js
       it("throws TypeError when get and value are both present", async () => {
@@ -140,12 +151,35 @@ export function test(): number { return o.prop; }
         expect(await run(src, standalone)).toBe(7);
       });
 
-      it("does NOT throw for a well-formed accessor descriptor", async () => {
+      // Not merely "does not throw" — the getter must actually RUN. Before
+      // #4061 this returned 0: the expansion set the ACCESSOR flag and called
+      // `__defineProperty_value` with a null value, never compiling the getter.
+      // A silent wrong answer, and the reason every accessor now leaves the
+      // static path.
+      it("honours a well-formed accessor descriptor (the getter runs)", async () => {
         const src = `
 var o: any = Object.create({}, { prop: { get: function() { return 9; } } });
 export function test(): number { return o.prop; }
 `;
         expect(await run(src, standalone)).toBe(9);
+      });
+
+      it("honours an identifier-valued getter", async () => {
+        const src = `
+var g: any = function() { return 5; };
+var o: any = Object.create({}, { prop: { get: g } });
+export function test(): number { return o.prop; }
+`;
+        expect(await run(src, standalone)).toBe(5);
+      });
+
+      // The data path must be untouched by the accessor reroute.
+      it("still honours a plain data descriptor on the static path", async () => {
+        const src = `
+var o: any = Object.create({}, { a: { value: 1 }, b: { value: 2, enumerable: true } });
+export function test(): number { return o.a + o.b; }
+`;
+        expect(await run(src, standalone)).toBe(3);
       });
 
       it("does NOT throw for get: undefined (a valid accessor descriptor)", async () => {

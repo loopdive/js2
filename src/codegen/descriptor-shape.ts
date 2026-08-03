@@ -122,6 +122,38 @@ export function literalNullAccessorField(descExpr: ts.Expression): "Getter" | "S
 }
 
 /**
+ * Does this object-literal descriptor carry a `get` or `set` field at all —
+ * well-formed or not, property-assignment or method shorthand?
+ *
+ * (#4061) `Object.create`'s static expansion (call-builtin-static.ts) reads
+ * `get`/`set` only to set the ACCESSOR flag bit and then calls
+ * `__defineProperty_value` with a NULL value — it never compiles the accessor
+ * function. So it cannot model ANY accessor descriptor, not merely a malformed
+ * one. Measured on `14eaf9f87`, standalone:
+ *
+ * ```js
+ * Object.create({}, {p: {get: function () { return 9; }}}).p   // → 0
+ * Object.defineProperty(o, "p", {get: function () { return 9; }}), o.p  // → 9
+ * ```
+ *
+ * Per this module's central invariant — a `true` answer is a PROMISE that the
+ * static expansion can fully model the descriptor — every accessor descriptor
+ * must therefore leave that expansion, well-formed or not. Nothing is lost:
+ * the dynamic applier handles the legal case correctly and is the only path
+ * that throws for the illegal ones.
+ */
+export function descriptorHasAccessorField(descExpr: ts.Expression): boolean {
+  if (!ts.isObjectLiteralExpression(descExpr)) return false;
+  return descExpr.properties.some((p) => {
+    if (!p.name || !ts.isIdentifier(p.name)) return false;
+    if (!ts.isPropertyAssignment(p) && !ts.isMethodDeclaration(p) && !ts.isShorthandPropertyAssignment(p)) {
+      return false;
+    }
+    return p.name.text === "get" || p.name.text === "set";
+  });
+}
+
+/**
  * May the static expansion own this descriptor expression?
  *
  * Returns `false` — meaning "route the whole call to the dynamic runtime" — for
