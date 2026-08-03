@@ -10,10 +10,10 @@ horizon: l
 feasibility: hard
 reasoning_effort: high
 task_type: performance
-area: codegen
+area: ir, codegen
 language_feature: value-representation
-goal: performance
-related: [684, 3683, 3754, 3765, 4118, 2773, 1624]
+goal: ir-full-coverage
+related: [684, 1167c, 1168, 2855, 3683, 3754, 3765, 4118, 4122, 2773, 1624]
 origin: "measured on upstream/main d369562d7, 2026-08-03, investigating the residual 10x vs node on real npm packages"
 ---
 
@@ -169,40 +169,100 @@ The round-trip is real but it goes **through a local slot**
 an adjacency property. Pattern-matching cannot see it; the slot's declared type
 is what forces both halves.
 
-## Proposal — assign representations over a carrier graph
+## Proposal — this belongs in the IR, as a pass
 
-Replace the per-carrier wiring with one representation-assignment pass:
+The right home is **not** a fifth AST-side consumer. It is an IR pass, and the
+IR already has every piece except the pass itself:
 
-1. **Nodes** = every value carrier: locals, parameters, returns, struct fields,
-   array elements, and call arguments.
-2. **Edges** = the assignments/flows between them (a def, an argument bind, a
-   return, a field write). This is the union of what the four existing
-   consumers already compute separately.
-3. **Solve** for a consistent unboxed assignment: a carrier is `f64` when every
-   carrier that flows into it is `f64` and every literal def is numeric —
-   a least fixpoint, so cycles carry no evidence and stay boxed (the same
-   groundedness argument #3765 needed).
-4. **Box only at the frontier** — the edges that cross into genuinely dynamic
-   territory (an exported entry point's parameter, a host/dispatch boundary, a
-   carrier with a non-numeric def).
+| piece                              | where it already is                                |
+| ---------------------------------- | -------------------------------------------------- |
+| a boxed/unboxed type vocabulary    | `IrType { kind: "union" }` (#1168)                  |
+| `box` / `unbox` / `tag.test`       | first-class IR instructions (#1168)                 |
+| type propagation over the graph    | `src/ir/propagate.ts`                               |
+| a validated tagged-union registry  | `src/ir/passes/tagged-unions.ts` (#1167c Pass 2)    |
+| a pass pipeline to slot into       | `src/ir/integration.ts` — `constantFold`, `deadCode`, `inlineSmall`, `monomorphize` |
 
-The key difference from today is that the verdict is **not per-carrier-kind**,
-so a numeric value flowing local → argument → parameter → return → field stays
-unboxed for the whole chain instead of being re-boxed at each hop that has no
-bespoke pass yet.
+`tagged-unions.ts` states the split explicitly: the **producers** of union-typed
+values (from-ast / propagation) and the **consumers** (`box`/`unbox` lowering)
+"sit on either side of this pass". What is missing between them is the
+propagation that decides a carrier can be `f64` rather than boxed. That is
+exactly this issue.
 
-### Gate on the emitted slot, not the declared type
+So the shape is:
 
-Whatever shape the pass takes, the admission gate must key on **the
-representation codegen is about to emit**, not on the checker's declared type.
-That single change is what makes the `let i = 0; i = s.indexOf(…)` case visible
-at all, and it is independent of the rest of the proposal — it may be worth
-landing first as its own slice.
+1. Extend `propagate.ts` with a numeric lattice over the IR value graph —
+   `⊥ → f64 → boxed`, joined at merge points.
+2. A carrier is `f64` when every value flowing into it is `f64`. This is a
+   **least** fixpoint, so a cycle carries no evidence and stays boxed unless
+   grounded — the argument #3765 needed, and #4122 then had to extend with a
+   self-reference rule for the accumulator shape.
+3. The existing `box`/`unbox` consumers then simply emit nothing where the
+   lattice says `f64`. **No new lowering code** — the deletion falls out of the
+   type, which is the whole reason to do it here.
+4. Box only at the frontier: exported entry-point parameters, host/dispatch
+   boundaries, and carriers with a genuinely non-numeric definition.
+
+Why this is the right level rather than a nicer version of the AST passes:
+
+- **"Carrier" stops being a category you enumerate.** Field, return, local,
+  parameter, argument and array element are all just edges in one graph. The
+  relocate-to-the-next-unfixed-carrier failure mode cannot happen, because
+  there is no per-kind wiring to be missing.
+- **It is the documented direction.** `plan/log/ir-adoption.md`'s north star
+  (goal `ir-full-coverage`, elevated 2026-07-02) is that all AST kinds route
+  through the IR and the direct path is *deprecation-tracked, not a peer*.
+  Passes like this are what the IR is for; adding a fifth AST consumer adds to
+  the pile the ratchet (#2855) exists to shrink.
+- **The duplication disappears.** `isString` exists twice on the AST side —
+  once in `makeProver`, once in `collectStringProperties`. When #3765 added
+  `Array.prototype.join` the wrong copy was fixed first and the measurement
+  came back zero. Syntactic analyses with no shared value graph invite exactly
+  that.
+
+### The blocking caveat — do not skip this
+
+An IR pass only applies to functions the IR **claims**. Today a selector
+rejection or an IR-build throw demotes the function to direct codegen through
+the warning channel (`src/codegen/index.ts`, the two demote sites), and
+`ir-adoption.md` still lists many kinds as `mixed` / `direct-only`.
+
+So moving this analysis into the IR **now** would silently stop applying
+wherever the IR bails — no wrong answers, but a perf cliff invisible to every
+gate. That is precisely the failure #3765 hit from the other direction: a
+kill-switch differential of zero that meant "the lever never engaged", not
+"the lever is worthless".
+
+Therefore:
+
+- The AST-side fixes (#3683, #3754, #3765, #4122) **stay** until the IR owns
+  the relevant node kinds. They are not made redundant by this issue.
+- Any implementation must report **IR-claimed vs demoted coverage** for the
+  benchmark set alongside its speedup, so a headline number cannot hide a
+  shrinking denominator.
+- Sequence behind enough of #2855 that the accumulator and string-scanning
+  shapes in `benchMethod` / `parseCookie` are IR-claimed. Check first; if they
+  are not, that ratchet work is the actual prerequisite and this issue is
+  blocked on it rather than ready.
+
+### One slice worth landing first, on either side
+
+The admission gate must key on **the representation codegen is about to emit**,
+not on the checker's declared type. `let i = 0` is declared `number` while its
+slot is `externref`, so the pass that exists to reconcile them never sees it.
+That is a small, independent fix, it is what makes case 2/3 in the table above
+visible at all, and it is worth doing regardless of where the analysis
+eventually lives.
 
 ## Acceptance criteria
 
+- [ ] A pre-flight report of **which benchmark functions the IR currently
+      claims** vs demotes. If `benchMethod` / `parseCookie` are demoted, this
+      issue is blocked on #2855 rather than ready, and that finding closes the
+      slice on its own.
 - [ ] `let i = 0; i = s.indexOf(";") + 1;` in a loop emits an `f64` local with
       **zero** `__box_number` / `__unbox_number` in the loop body.
+- [ ] IR-claimed coverage reported alongside every speedup, so a headline number
+      cannot hide a shrinking denominator.
 - [ ] The standalone `cookie` runtime-dynamic lane improves measurably against
       node, measured same-container interleaved behind a kill switch, with the
       checksum unchanged.

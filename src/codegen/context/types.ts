@@ -2013,6 +2013,9 @@ export interface CodegenContext {
    * the generic `__any_add` with a tag-dispatch unbox after it.
    */
   numericFunctionNames?: ReadonlySet<string>;
+  /** (#4122) Grounded "every definition of this slot is numeric" verdict from
+   *  `analyzeNumericPropertyNames`; absent in the host lane / when disabled. */
+  numericLocalVerdict?: (node: ts.Node, name: string) => boolean;
   /**
    * #3673: property names the SOURCE defines as a function-valued member
    * (`collectUserMethodNames`). Consulted by
