@@ -5,8 +5,11 @@ import { emitPreparedAsyncFrameStateMachine, type AsyncFrameInfo, type HostAsync
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ERROR_FIELD, MODE_FIELD, PARAM_FIELD_OFFSET, SENT_FIELD, sanitizeTypeName } from "./frame-core.js";
 import type { AsyncHostCapabilityId } from "../ir/async-runtime-providers.js";
-import type { IrFuncRef, IrFunction } from "../ir/nodes.js";
+import { irTypeBindingKey } from "../ir/abi-bindings.js";
+import { asVal, type IrFuncRef, type IrFunction, type IrInstr, type IrType } from "../ir/nodes.js";
 import type { FieldDef, ValType, WasmFunction } from "../ir/types.js";
+import { coerceType } from "./shared.js";
+import { definedFuncAt } from "./func-space.js";
 
 export interface PreparedIrAsyncFrameResolver {
   resolveFunc(ref: IrFuncRef): number;
@@ -38,7 +41,18 @@ function preparedHostImports(fn: IrFunction, resolver: PreparedIrAsyncFrameResol
   };
 }
 
-function exactSingleAwaitCall(fn: IrFunction) {
+type IrCall = Extract<IrInstr, { readonly kind: "call" }>;
+
+interface ExactSingleAwaitCalls {
+  readonly entry: IrCall;
+  readonly continuation: {
+    readonly call: IrCall;
+    readonly paramType: IrType;
+    readonly resultType: IrType;
+  } | null;
+}
+
+function exactSingleAwaitCalls(fn: IrFunction): ExactSingleAwaitCalls {
   const plan = fn.asyncPlan;
   const runtime = fn.asyncRuntime;
   if (
@@ -66,15 +80,42 @@ function exactSingleAwaitCall(fn: IrFunction) {
     semanticEntry.terminator.rejected.kind !== "reject" ||
     semanticEntry.terminator.resume.state !== continuation.id ||
     continuation.resume?.source !== "fulfilled" ||
-    continuation.body.length !== 0 ||
     continuation.terminator.kind !== "resolve" ||
-    continuation.terminator.value !== continuation.resume.value ||
     entry.body[0].args.length !== fn.params.length ||
     entry.body[0].args.some((value, index) => value !== fn.params[index]!.value)
   ) {
     throw new Error(`IR async function ${fn.name} has a malformed single-await plan`);
   }
-  return entry.body[0];
+  const continuationCall =
+    continuation.body.length === 1 && continuation.body[0]?.kind === "call" ? continuation.body[0] : null;
+  const identityContinuation =
+    continuation.body.length === 0 && continuation.terminator.value === continuation.resume.value;
+  const calledContinuation =
+    continuationCall !== null &&
+    continuationCall.args.length === 1 &&
+    continuationCall.args[0] === continuation.resume.value &&
+    continuationCall.result !== null &&
+    continuationCall.resultType !== null &&
+    continuation.terminator.value === continuationCall.result;
+  if (!identityContinuation && !calledContinuation) {
+    throw new Error(`IR async function ${fn.name} has a malformed single-await continuation`);
+  }
+  let preparedContinuation: ExactSingleAwaitCalls["continuation"] = null;
+  if (continuationCall) {
+    const resultType = continuationCall.resultType;
+    if (resultType === null) {
+      throw new Error(`IR async function ${fn.name} has an untyped prepared continuation call`);
+    }
+    preparedContinuation = {
+      call: continuationCall,
+      paramType: continuation.resume.type,
+      resultType,
+    };
+  }
+  return {
+    entry: entry.body[0],
+    continuation: preparedContinuation,
+  };
 }
 
 function buildFrameInfo(
@@ -119,7 +160,76 @@ function buildFrameInfo(
   };
 }
 
-function preparedCfg(fn: IrFunction, helperFuncIdx: number): AsyncCfgPlan {
+interface PreparedContinuation {
+  readonly funcIdx: number;
+  readonly paramType: ValType;
+  readonly resultType: ValType;
+  readonly fromExternFuncIdx: number | null;
+}
+
+function sameValType(left: ValType, right: ValType): boolean {
+  if (left.kind !== right.kind) return false;
+  if ((left.kind === "ref" || left.kind === "ref_null") && (right.kind === "ref" || right.kind === "ref_null")) {
+    return left.typeIdx === right.typeIdx;
+  }
+  return true;
+}
+
+function preparedAsyncValueType(ctx: CodegenContext, fn: IrFunction, type: IrType): ValType {
+  const scalar = asVal(type);
+  if (scalar && scalar.kind !== "ref" && scalar.kind !== "ref_null") return scalar;
+  if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
+  if (type.kind !== "vec") {
+    throw new Error(`IR async function ${fn.name} has unsupported continuation type ${type.kind}`);
+  }
+  const attachment = fn.asyncRuntime?.typeLayouts?.find((entry) => entry.logicalType === type);
+  const session = ctx.programAbiSession;
+  if (!attachment || !session) {
+    throw new Error(`IR async function ${fn.name} has no exact prepared layout for its continuation vector`);
+  }
+  return {
+    kind: type.nullable ? "ref_null" : "ref",
+    typeIdx: session.resolveCurrentIndex(
+      attachment.layout.carrierType.binding.bindingId,
+      "type",
+      irTypeBindingKey(attachment.layout.carrierType.binding),
+    ),
+  };
+}
+
+function preparedAsyncFromExternFuncIdx(
+  ctx: CodegenContext,
+  fn: IrFunction,
+  type: IrType,
+  paramType: ValType,
+  resolver: PreparedIrAsyncFrameResolver,
+): number | null {
+  if (type.kind !== "vec") return null;
+  const attachment = fn.asyncRuntime?.typeLayouts?.find((entry) => entry.logicalType === type);
+  if (!attachment?.fromExtern) throw new Error(`IR async function ${fn.name} has no sealed vector materializer`);
+  const funcIdx = resolver.resolveFunc(attachment.fromExtern);
+  const target = definedFuncAt(ctx, funcIdx);
+  const signature = target ? ctx.mod.types[target.typeIdx] : undefined;
+  if (
+    !target ||
+    !signature ||
+    signature.kind !== "func" ||
+    signature.params.length !== 1 ||
+    signature.params[0]?.kind !== "externref" ||
+    signature.results.length !== 1 ||
+    !sameValType(signature.results[0]!, paramType)
+  ) {
+    throw new Error(`IR async function ${fn.name} has a malformed sealed vector materializer ABI`);
+  }
+  return funcIdx;
+}
+
+function preparedCfg(
+  fn: IrFunction,
+  helperFuncIdx: number,
+  continuation: PreparedContinuation | null,
+  info: AsyncFrameInfo,
+): AsyncCfgPlan {
   return {
     handlers: [],
     states: [
@@ -148,6 +258,25 @@ function preparedCfg(fn: IrFunction, helperFuncIdx: number): AsyncCfgPlan {
         id: 1,
         resumeFrom: { binding: null, handler: 0 },
         lead: [],
+        ...(continuation
+          ? {
+              emit: (ctx: CodegenContext, fctx: FunctionContext): void => {
+                const frameLocal = fctx.localMap.get("__frame");
+                if (frameLocal === undefined) throw new Error(`IR async frame ${fn.name} lost its frame parameter`);
+                fctx.body.push({ op: "local.get", index: frameLocal });
+                fctx.body.push({ op: "local.get", index: frameLocal });
+                fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: SENT_FIELD });
+                if (continuation.fromExternFuncIdx === null) {
+                  coerceType(ctx, fctx, { kind: "externref" }, continuation.paramType);
+                } else {
+                  fctx.body.push({ op: "call", funcIdx: continuation.fromExternFuncIdx });
+                }
+                fctx.body.push({ op: "call", funcIdx: continuation.funcIdx });
+                coerceType(ctx, fctx, continuation.resultType, { kind: "externref" });
+                fctx.body.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: SENT_FIELD });
+              },
+            }
+          : {}),
         terminator: { kind: "settleSent" },
       },
     ],
@@ -171,8 +300,8 @@ export function lowerPreparedIrAsyncFunction(
   ) {
     throw new Error(`IR async function ${fn.name} does not match its Promise-returning allocated ABI`);
   }
-  const helper = exactSingleAwaitCall(fn);
-  const helperFuncIdx = resolver.resolveFunc(helper.target);
+  const calls = exactSingleAwaitCalls(fn);
+  const helperFuncIdx = resolver.resolveFunc(calls.entry.target);
   const params = fn.params.map((param, index) => ({
     name: param.name ?? `p${index}`,
     type: signature.params[index]!,
@@ -191,10 +320,37 @@ export function lowerPreparedIrAsyncFunction(
     savedBodies: [],
   };
   const info = buildFrameInfo(ctx, fn, params, preparedHostImports(fn, resolver));
+  const continuation = calls.continuation
+    ? (() => {
+        const funcIdx = resolver.resolveFunc(calls.continuation.call.target);
+        const target = definedFuncAt(ctx, funcIdx);
+        const targetType = target ? ctx.mod.types[target.typeIdx] : undefined;
+        if (
+          !target ||
+          !targetType ||
+          targetType.kind !== "func" ||
+          targetType.params.length !== 1 ||
+          targetType.results.length !== 1
+        ) {
+          throw new Error(`IR async function ${fn.name} has a malformed prepared continuation callable ABI`);
+        }
+        const paramType = preparedAsyncValueType(ctx, fn, calls.continuation.paramType);
+        const resultType = preparedAsyncValueType(ctx, fn, calls.continuation.resultType);
+        if (!sameValType(targetType.params[0]!, paramType) || !sameValType(targetType.results[0]!, resultType)) {
+          throw new Error(`IR async function ${fn.name} continuation layout disagrees with its callable ABI`);
+        }
+        return {
+          funcIdx,
+          paramType,
+          resultType,
+          fromExternFuncIdx: preparedAsyncFromExternFuncIdx(ctx, fn, calls.continuation.paramType, paramType, resolver),
+        };
+      })()
+    : null;
   const previous = ctx.currentFunc;
   ctx.currentFunc = fctx;
   try {
-    emitPreparedAsyncFrameStateMachine(ctx, fctx, info, preparedCfg(fn, helperFuncIdx));
+    emitPreparedAsyncFrameStateMachine(ctx, fctx, info, preparedCfg(fn, helperFuncIdx, continuation, info));
   } finally {
     ctx.currentFunc = previous;
   }

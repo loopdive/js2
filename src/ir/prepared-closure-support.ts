@@ -2,7 +2,7 @@
 
 import { getFuncRefWrapperRootTypeIdx } from "../codegen/closures/funcref-wrapper-types.js";
 import type { CodegenContext } from "../codegen/context/types.js";
-import { definedFuncHandleOf } from "../codegen/func-space.js";
+import { mintDefinedFunc, pushDefinedFunc } from "../codegen/func-space.js";
 import type {
   ProgramAbiClosureSupportLayout,
   ProgramAbiClosureSupportLayoutRequest,
@@ -28,9 +28,19 @@ export interface PreparedClosureRegistry {
   resolveSubtype(signature: IrClosureSignature, captureFieldTypes: readonly IrType[]): IrClosureLowering | null;
 }
 
-export function lowerPreparedClosureSupportType(type: IrType): ValType {
+export function lowerPreparedClosureSupportType(ctx: CodegenContext, type: IrType): ValType {
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
+  if (type.kind === "vec" && type.layout && ctx.programAbiSession) {
+    return {
+      kind: type.nullable ? "ref_null" : "ref",
+      typeIdx: ctx.programAbiSession.resolveCurrentIndex(
+        type.layout.carrierType.binding.bindingId,
+        "type",
+        irTypeBindingKey(type.layout.carrierType.binding),
+      ),
+    };
+  }
   throw new Error(`closure support type ${type.kind} requires the complete IR resolver`);
 }
 
@@ -40,7 +50,7 @@ export function prepareDerivedCallableTypeIdx(
   fn: IrFunction,
 ): number {
   const lower = (type: IrType): ValType => {
-    if (type.kind !== "closure") return lowerPreparedClosureSupportType(type);
+    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type);
     if (!registry.resolveBase(type.signature)) {
       throw new Error("prepared callable signature cannot allocate its closure type");
     }
@@ -91,15 +101,8 @@ export function allocatePreparedDerivedCallableSlots(
       body: [],
       exported: entry.fn.exported,
     };
-    ctx.mod.functions.push(func);
-    const funcIdx = definedFuncHandleOf(ctx, func);
-    if (funcIdx === undefined) {
-      throw new IrInvariantError(
-        "missing-function-slot",
-        "resolve",
-        `prepared derived artifact ${entry.artifactUnitId} / ${entry.name} has no allocator slot`,
-      );
-    }
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, func);
     ctx.irUnitFuncMap.set(entry.artifactUnitId, func);
     slots.push({
       artifactUnitId: entry.artifactUnitId,
