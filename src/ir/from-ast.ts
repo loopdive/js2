@@ -513,6 +513,8 @@ export interface IrFromAstResolver {
     indexArgRep: "f64" | "i32";
     padOmitted: "host" | "native-slice-len" | "native-substring" | "charcode-zero";
   } | null;
+  /** Native substring locals are cheaper through legacy's direct flat read. */
+  preferLegacyFlatSubstringCharCodeAt?(receiver: ts.Expression): boolean;
   /**
    * (#2856) Resolve an extern-class member through the legacy inheritance
    * chain (`ctx.externClasses` + `ctx.externClassParent` — e.g. `appendChild`
@@ -6529,6 +6531,10 @@ function lowerStringMethodCall(
     ? STRING_METHOD_TABLE[methodName]
     : undefined;
   if (!sig) return null;
+
+  if (methodName === "charCodeAt" && cx.resolver?.preferLegacyFlatSubstringCharCodeAt?.(receiverExpr) === true) {
+    return null;
+  }
 
   if (args.length < sig.requiredArgs || args.length > sig.hostArgs.length) {
     throw new Error(

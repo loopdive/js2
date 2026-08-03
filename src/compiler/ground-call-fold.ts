@@ -4,9 +4,9 @@
  *
  * This is deliberately an interpreter for a small, explicitly pure JavaScript
  * subset — it never executes user source with eval/Function/vm. The fold fires
- * only for a zero-parameter exported function whose sole statement returns a
- * call over ground literals, whose complete local call graph is available in
- * the same source file, and whose reachable functions pass the purity gate.
+ * only for a call over ground literals inside an exported function, whose
+ * complete local call graph is available in the same source file, and whose
+ * reachable functions pass the purity gate.
  *
  * Replacements are exactly the same byte length as the original expression
  * (JSON literal + spaces). Source offsets therefore remain stable and the
@@ -1202,29 +1202,73 @@ export function foldGroundExportCalls(
   const replacements: { start: number; end: number; text: string }[] = [];
   for (const name of exportedNames) {
     const candidate = functions.get(name);
-    if (
-      !candidate?.body ||
-      candidate.parameters.length !== 0 ||
-      candidate.body.statements.length !== 1 ||
-      !ts.isReturnStatement(candidate.body.statements[0]) ||
-      !candidate.body.statements[0].expression ||
-      !ts.isCallExpression(unwrap(candidate.body.statements[0].expression))
-    ) {
-      continue;
-    }
-    const reachable = reachableFunctions(candidate, functions);
-    if ([...exportedNames].some((exported) => !reachable.has(exported))) continue;
-    if ([...reachable].some((reachableName) => !locallyPure(functions.get(reachableName)!, functions))) continue;
+    if (!candidate?.body) continue;
 
-    const state: EvalState = { functions, emptyConstructors: new Set(), calls: 0, steps: 0 };
-    const value = evaluateFunction(candidate, [], state);
-    if (value === UNSUPPORTED) continue;
-    const expression = candidate.body.statements[0].expression;
-    const start = expression.getStart(sourceFile);
-    const end = expression.getEnd();
-    const literal = primitiveLiteral(value);
-    if (literal === null || literal.length > end - start) continue;
-    replacements.push({ start, end, text: literal.padEnd(end - start, " ") });
+    const ownerReachable = reachableFunctions(candidate, functions);
+    if ([...exportedNames].some((exported) => !ownerReachable.has(exported))) continue;
+
+    // A local binding with the same spelling as a top-level function makes
+    // identifier resolution scope-dependent. Reject that spelling throughout
+    // the exported function rather than attempting a partial scope resolver.
+    const shadowed = new Set<string>();
+    const collectBindings = (node: ts.Node): void => {
+      if (node !== candidate && ts.isFunctionLike(node)) return;
+      const binding =
+        ts.isVariableDeclaration(node) ||
+        ts.isParameter(node) ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isClassDeclaration(node)
+          ? node.name
+          : undefined;
+      if (binding && ts.isIdentifier(binding) && functions.has(binding.text)) shadowed.add(binding.text);
+      ts.forEachChild(node, collectBindings);
+    };
+    collectBindings(candidate);
+
+    const tryFold = (node: ts.Node): boolean => {
+      if (!ts.isExpression(node)) return false;
+
+      const roots = new Set<ts.FunctionDeclaration>();
+      const collectCalls = (child: ts.Node): void => {
+        if (ts.isCallExpression(child)) {
+          const callee = unwrap(child.expression);
+          if (ts.isIdentifier(callee) && !shadowed.has(callee.text)) {
+            const target = functions.get(callee.text);
+            if (target && target !== candidate) roots.add(target);
+          }
+        }
+        ts.forEachChild(child, collectCalls);
+      };
+      collectCalls(node);
+      if (roots.size === 0) return false;
+
+      for (const root of roots) {
+        const reachable = reachableFunctions(root, functions);
+        if ([...reachable].some((reachableName) => !locallyPure(functions.get(reachableName)!, functions))) {
+          return false;
+        }
+      }
+
+      const state: EvalState = { functions, emptyConstructors: new Set(), calls: 0, steps: 0 };
+      const value = evaluateExpression(node, new Map(), state);
+      if (value === UNSUPPORTED) return false;
+      const literal = primitiveLiteral(value);
+      if (literal === null) return false;
+      const start = node.getStart(sourceFile);
+      const end = node.getEnd();
+      if (literal.length > end - start) return false;
+      replacements.push({ start, end, text: literal.padEnd(end - start, " ") });
+      return true;
+    };
+
+    const visitExpressions = (node: ts.Node): void => {
+      if (node !== candidate.body && ts.isFunctionLike(node)) return;
+      // Prefer the widest provable expression so downstream codegen sees the
+      // most precise scalar, then fall back to a nested ground call.
+      if (tryFold(node)) return;
+      ts.forEachChild(node, visitExpressions);
+    };
+    visitExpressions(candidate.body);
   }
 
   if (replacements.length === 0) return { source, folded: 0 };

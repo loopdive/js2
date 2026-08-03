@@ -32,10 +32,424 @@ import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration } from "./nested-declarations.js";
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
-import { ensureNativeStringHelpers } from "../native-strings.js";
+import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
 import { tryEmitLinearU8New } from "../linear-uint8-codegen.js";
 import { bindingHasMixedAssignmentCarrier } from "../analysis/mixed-assignment-carrier.js";
+import { staticConstStringValues } from "../analysis/static-string-values.js";
+import { staticIntegerRange } from "../analysis/static-numeric-range.js";
+import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
+
+function tryCompileUniformSplitLengthBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+  decl: ts.VariableDeclaration,
+): boolean {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || !(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
+  const call = decl.initializer;
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "split") return false;
+  if (call.arguments.length !== 1 || !ts.isStringLiteralLike(call.arguments[0]!)) return false;
+
+  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!symbol) return false;
+  let onlyLengthReads = true;
+  const scope = (() => {
+    let node: ts.Node = decl;
+    while (node.parent && !ts.isFunctionLike(node.parent) && !ts.isSourceFile(node.parent)) node = node.parent;
+    return node.parent ?? node;
+  })();
+  const visit = (node: ts.Node): void => {
+    if (!onlyLengthReads) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+      if (node === decl.name) return;
+      const parent = node.parent;
+      if (!ts.isPropertyAccessExpression(parent) || parent.expression !== node || parent.name.text !== "length") {
+        onlyLengthReads = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  if (!onlyLengthReads) return false;
+
+  const receiver = call.expression.expression;
+  const values = staticConstStringValues(ctx, receiver);
+  if (!values) return false;
+  const separator = call.arguments[0]!.text;
+  const lengths = new Set(values.map((value) => value.split(separator).length));
+  if (lengths.size !== 1) return false;
+  const length = lengths.values().next().value;
+  if (length === undefined) return false;
+
+  // Preserve receiver evaluation and its null/OOB trap. The literal separator
+  // has no side effects, and no array identity/contents can be observed by the
+  // proof above, so the scalar is a semantics-preserving replacement.
+  const receiverType = compileExpression(ctx, fctx, receiver);
+  if (receiverType?.kind === "externref") {
+    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+  }
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "i32.const", value: length });
+  const localIdx = allocLocal(fctx, `__split_length_${decl.name.text}_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.set", index: localIdx });
+  (fctx.derivedStringArrayLengthLocals ??= new Map()).set(symbol, localIdx);
+  emitTdzInit(ctx, fctx, decl.name.text);
+  return true;
+}
+
+function tryCompileSingleUnitSplitLengthBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+  decl: ts.VariableDeclaration,
+): boolean {
+  if (
+    !ctx.nativeStrings ||
+    ctx.anyStrTypeIdx < 0 ||
+    ctx.nativeStrTypeIdx < 0 ||
+    ctx.nativeStrDataTypeIdx < 0 ||
+    !(stmt.declarationList.flags & ts.NodeFlags.Const)
+  ) {
+    return false;
+  }
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
+  const call = decl.initializer;
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "split") return false;
+  if (
+    call.arguments.length !== 1 ||
+    !ts.isStringLiteralLike(call.arguments[0]!) ||
+    call.arguments[0]!.text.length !== 1
+  ) {
+    return false;
+  }
+  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!symbol) return false;
+  let onlyLengthReads = true;
+  let scope: ts.Node = decl;
+  while (scope.parent && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
+  scope = scope.parent ?? scope;
+  const visit = (node: ts.Node): void => {
+    if (!onlyLengthReads) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+      if (node === decl.name) return;
+      const property = node.parent;
+      if (!ts.isPropertyAccessExpression(property) || property.expression !== node || property.name.text !== "length") {
+        onlyLengthReads = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  if (!onlyLengthReads) return false;
+
+  ensureNativeStringHelpers(ctx);
+  const flatLocal = allocLocal(fctx, `__split_count_flat_${fctx.locals.length}`, flatStringType(ctx));
+  const receiverType = compileExpression(ctx, fctx, call.expression.expression);
+  if (receiverType?.kind === "externref") {
+    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+  }
+  fctx.body.push({ op: "call", funcIdx: ctx.nativeStrHelpers.get("__str_flatten")! });
+  fctx.body.push({ op: "local.set", index: flatLocal });
+  const dataLocal = allocLocal(fctx, `__split_count_data_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.nativeStrDataTypeIdx,
+  });
+  const offLocal = allocLocal(fctx, `__split_count_off_${fctx.locals.length}`, { kind: "i32" });
+  const lenLocal = allocLocal(fctx, `__split_count_len_${fctx.locals.length}`, { kind: "i32" });
+  const indexLocal = allocLocal(fctx, `__split_count_i_${fctx.locals.length}`, { kind: "i32" });
+  const countLocal = allocLocal(fctx, `__split_count_${decl.name.text}_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 });
+  fctx.body.push({ op: "local.set", index: dataLocal });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.set", index: offLocal });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.set", index: lenLocal });
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: indexLocal });
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.set", index: countLocal });
+  fctx.body.push({
+    op: "block",
+    blockType: { kind: "empty" },
+    body: [
+      {
+        op: "loop",
+        blockType: { kind: "empty" },
+        body: [
+          { op: "local.get", index: indexLocal },
+          { op: "local.get", index: lenLocal },
+          { op: "i32.ge_s" },
+          { op: "br_if", depth: 1 },
+          { op: "local.get", index: dataLocal },
+          { op: "local.get", index: offLocal },
+          { op: "local.get", index: indexLocal },
+          { op: "i32.add" },
+          { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+          { op: "i32.const", value: call.arguments[0]!.text.charCodeAt(0) },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: countLocal },
+              { op: "i32.const", value: 1 },
+              { op: "i32.add" },
+              { op: "local.set", index: countLocal },
+            ],
+          },
+          { op: "local.get", index: indexLocal },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "local.set", index: indexLocal },
+          { op: "br", depth: 0 },
+        ],
+      },
+    ],
+  });
+  (fctx.derivedStringArrayLengthLocals ??= new Map()).set(symbol, countLocal);
+  emitTdzInit(ctx, fctx, decl.name.text);
+  return true;
+}
+
+function tryCompileDerivedSubstringBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+  decl: ts.VariableDeclaration,
+): boolean {
+  if (
+    !ctx.nativeStrings ||
+    ctx.nativeStrTypeIdx < 0 ||
+    ctx.nativeStrDataTypeIdx < 0 ||
+    !(stmt.declarationList.flags & ts.NodeFlags.Const)
+  ) {
+    return false;
+  }
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
+  const call = decl.initializer;
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "substring") return false;
+  if (call.arguments.length !== 2) return false;
+
+  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!symbol) return false;
+  let descriptorOnly = true;
+  const scope = (() => {
+    let node: ts.Node = decl;
+    while (node.parent && !ts.isFunctionLike(node.parent) && !ts.isSourceFile(node.parent)) node = node.parent;
+    return node.parent ?? node;
+  })();
+  const visit = (node: ts.Node): void => {
+    if (!descriptorOnly) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+      if (node === decl.name) return;
+      const property = node.parent;
+      if (!ts.isPropertyAccessExpression(property) || property.expression !== node) {
+        descriptorOnly = false;
+        return;
+      }
+      if (property.name.text === "length") {
+        // accepted
+      } else if (
+        property.name.text !== "charCodeAt" ||
+        !ts.isCallExpression(property.parent) ||
+        property.parent.expression !== property
+      ) {
+        descriptorOnly = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  if (!descriptorOnly) return false;
+
+  ensureNativeStringHelpers(ctx);
+  const flatLocal = allocLocal(fctx, `__substring_flat_${fctx.locals.length}`, flatStringType(ctx));
+  const receiver = call.expression.expression;
+  const receiverValues = staticConstStringValues(ctx, receiver);
+  const startRange = staticIntegerRange(ctx, call.arguments[0]!);
+  const endRange = staticIntegerRange(ctx, call.arguments[1]!);
+  const shortestReceiver = receiverValues ? Math.min(...receiverValues.map((value) => value.length)) : -1;
+  const orderedInBounds =
+    startRange !== undefined &&
+    endRange !== undefined &&
+    shortestReceiver >= 0 &&
+    startRange.min >= 0 &&
+    endRange.min >= 0 &&
+    startRange.max <= endRange.min &&
+    endRange.max <= shortestReceiver;
+  const receiverType = compileExpression(ctx, fctx, receiver);
+  if (receiverType?.kind === "externref") {
+    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+  }
+  if (receiverValues) {
+    fctx.body.push({ op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx });
+  } else {
+    fctx.body.push({ op: "call", funcIdx: ctx.nativeStrHelpers.get("__str_flatten")! });
+  }
+  fctx.body.push({ op: "local.set", index: flatLocal });
+
+  const sourceLenLocal = orderedInBounds
+    ? undefined
+    : allocLocal(fctx, `__substring_source_len_${fctx.locals.length}`, { kind: "i32" });
+  if (sourceLenLocal !== undefined) {
+    fctx.body.push({ op: "local.get", index: flatLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "local.set", index: sourceLenLocal });
+  }
+
+  const startLocal = allocLocal(fctx, `__substring_start_${fctx.locals.length}`, { kind: "i32" });
+  const endLocal = allocLocal(fctx, `__substring_end_${fctx.locals.length}`, { kind: "i32" });
+  const compileIndex = (arg: ts.Expression, local: number): void => {
+    if (!tryEmitStaticI32Expression(ctx, fctx, arg)) {
+      const type = compileExpression(ctx, fctx, arg, { kind: "i32" });
+      if (type && type.kind !== "i32") coerceType(ctx, fctx, type, { kind: "i32" });
+    }
+    fctx.body.push({ op: "local.set", index: local });
+  };
+  compileIndex(call.arguments[0]!, startLocal);
+  compileIndex(call.arguments[1]!, endLocal);
+
+  const clamp = (local: number): void => {
+    const sourceLength = sourceLenLocal!;
+    fctx.body.push({ op: "local.get", index: local });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.lt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: local },
+      ],
+    });
+    fctx.body.push({ op: "local.get", index: local });
+    fctx.body.push({ op: "local.get", index: sourceLength });
+    fctx.body.push({ op: "i32.gt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: sourceLength },
+        { op: "local.set", index: local },
+      ],
+    });
+  };
+  if (!orderedInBounds) {
+    clamp(startLocal);
+    clamp(endLocal);
+    const swapLocal = allocLocal(fctx, `__substring_swap_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: startLocal });
+    fctx.body.push({ op: "local.get", index: endLocal });
+    fctx.body.push({ op: "i32.gt_s" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: startLocal },
+        { op: "local.set", index: swapLocal },
+        { op: "local.get", index: endLocal },
+        { op: "local.set", index: startLocal },
+        { op: "local.get", index: swapLocal },
+        { op: "local.set", index: endLocal },
+      ],
+    });
+  }
+
+  const dataLocal = allocLocal(fctx, `__substring_data_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: ctx.nativeStrDataTypeIdx,
+  });
+  const offLocal = allocLocal(fctx, `__substring_off_${fctx.locals.length}`, { kind: "i32" });
+  const lenLocal = allocLocal(fctx, `__substring_len_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 });
+  fctx.body.push({ op: "local.set", index: dataLocal });
+  fctx.body.push({ op: "local.get", index: flatLocal });
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 });
+  fctx.body.push({ op: "local.get", index: startLocal });
+  fctx.body.push({ op: "i32.add" });
+  fctx.body.push({ op: "local.set", index: offLocal });
+  fctx.body.push({ op: "local.get", index: endLocal });
+  fctx.body.push({ op: "local.get", index: startLocal });
+  fctx.body.push({ op: "i32.sub" });
+  fctx.body.push({ op: "local.set", index: lenLocal });
+  const minLen = orderedInBounds ? endRange!.min - startRange!.max : 0;
+  (fctx.derivedSubstringReads ??= new Map()).set(symbol, { dataLocal, offLocal, lenLocal, minLen });
+  emitTdzInit(ctx, fctx, decl.name.text);
+  return true;
+}
+
+function tryCompileUniformIndexPresenceBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+  decl: ts.VariableDeclaration,
+): boolean {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || !(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
+  const call = decl.initializer;
+  if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "indexOf") return false;
+  if (call.arguments.length !== 1) return false;
+  const receivers = staticConstStringValues(ctx, call.expression.expression);
+  const searches = staticConstStringValues(ctx, call.arguments[0]!);
+  if (!receivers || !searches || new Set(searches).size !== 1) return false;
+  const search = searches[0]!;
+  const presence = new Set(receivers.map((receiver) => receiver.indexOf(search) >= 0));
+  if (presence.size !== 1) return false;
+
+  const symbol = ctx.checker.getSymbolAtLocation(decl.name);
+  if (!symbol) return false;
+  let signOnly = true;
+  let scope: ts.Node = decl;
+  while (scope.parent && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
+  scope = scope.parent ?? scope;
+  const visit = (node: ts.Node): void => {
+    if (!signOnly) return;
+    if (ts.isIdentifier(node) && ctx.checker.getSymbolAtLocation(node) === symbol) {
+      if (node === decl.name) return;
+      const comparison = node.parent;
+      if (
+        !ts.isBinaryExpression(comparison) ||
+        comparison.left !== node ||
+        comparison.operatorToken.kind !== ts.SyntaxKind.GreaterThanEqualsToken ||
+        !ts.isNumericLiteral(comparison.right) ||
+        Number(comparison.right.text) !== 0
+      ) {
+        signOnly = false;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(scope);
+  if (!signOnly) return false;
+
+  const receiverType = compileExpression(ctx, fctx, call.expression.expression);
+  if (receiverType?.kind === "externref") {
+    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+  }
+  fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "drop" });
+  const existing = fctx.localMap.get(decl.name.text);
+  const localIdx = existing ?? allocLocal(fctx, decl.name.text, { kind: "f64" });
+  const localType = getLocalType(fctx, localIdx) ?? { kind: "f64" as const };
+  fctx.body.push({
+    op: localType.kind === "i32" ? "i32.const" : "f64.const",
+    value: presence.values().next().value ? 0 : -1,
+  });
+  fctx.body.push({ op: "local.set", index: localIdx });
+  emitTdzInit(ctx, fctx, decl.name.text);
+  return true;
+}
 
 function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
@@ -731,6 +1145,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         }
       }
     }
+
+    if (tryCompileUniformSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
+    if (tryCompileSingleUnitSplitLengthBinding(ctx, fctx, stmt, decl)) continue;
+    if (tryCompileDerivedSubstringBinding(ctx, fctx, stmt, decl)) continue;
+    if (tryCompileUniformIndexPresenceBinding(ctx, fctx, stmt, decl)) continue;
 
     // #1210: string-builder rewrite for `let s = "";` followed by an
     // accumulating loop. Detected pre-pass populates `pendingStringBuilders`;

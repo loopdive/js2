@@ -3642,6 +3642,29 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
         padOmitted: (native ? "native-slice-len" : "host") as "native-slice-len" | "host",
       };
     },
+    preferLegacyFlatSubstringCharCodeAt(receiver: ts.Expression) {
+      if (!ctx.nativeStrings) return false;
+      let current = receiver;
+      while (
+        ts.isParenthesizedExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isNonNullExpression(current) ||
+        ts.isTypeAssertionExpression(current)
+      ) {
+        current = current.expression;
+      }
+      if (!ts.isIdentifier(current)) return false;
+      const symbol = ctx.checker.getSymbolAtLocation(current);
+      const declaration = symbol?.valueDeclaration;
+      if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+      const list = declaration.parent;
+      if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+      return (
+        ts.isCallExpression(declaration.initializer) &&
+        ts.isPropertyAccessExpression(declaration.initializer.expression) &&
+        declaration.initializer.expression.name.text === "substring"
+      );
+    },
     stringFromCharCodePlan() {
       return ctx.nativeStrings
         ? { funcName: "__str_fromCharCode", argumentRep: "i32" as const }

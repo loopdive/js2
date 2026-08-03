@@ -91,7 +91,10 @@ const CASES: ReadonlyArray<{ name: string; source: string; expected: number; lan
   {
     name: "mixed/fibonacci (published benchmark source)",
     source: benchmarkSource("mixed/fibonacci"),
-    expected: 8_320_400_000,
+    // #3898 keeps the accumulator inside the exact i32 range with `% FIB_MOD`.
+    // Keep this pinned to the published source's modulo result so source and
+    // cross-lane semantics cannot drift independently again.
+    expected: 320_399_944,
   },
   // The SECOND wrong published benchmark, found while re-measuring: `gc-native`
   // returned 704,982,704 where JS returns 4,999,950,000 — the same 2^31 wrap,

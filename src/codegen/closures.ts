@@ -2872,9 +2872,85 @@ export function compileArrowAsClosure(
   }
 
   // 8. Register closure info so call sites can emit call_ref — see registerClosureBindingInfo.
-  registerClosureBindingInfo(ctx, arrow, structTypeIdx, liftedFuncTypeIdx, closureReturnType, arrowParams);
+  registerClosureBindingInfo(
+    ctx,
+    arrow,
+    structTypeIdx,
+    liftedFuncTypeIdx,
+    closureReturnType,
+    arrowParams,
+    captureFreeNumericInlineBody(arrow, captures.length, liftedFctx, arrowParams.length),
+  );
 
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+const NUMERIC_CLOSURE_INLINE_OPS = new Set<string>([
+  "i32.const",
+  "i32.add",
+  "i32.sub",
+  "i32.mul",
+  "i32.div_s",
+  "i32.rem_s",
+  "i32.eq",
+  "i32.ne",
+  "i32.lt_s",
+  "i32.le_s",
+  "i32.gt_s",
+  "i32.ge_s",
+  "i32.eqz",
+  "f64.const",
+  "f64.add",
+  "f64.sub",
+  "f64.mul",
+  "f64.div",
+  "f64.rem",
+  "f64.eq",
+  "f64.ne",
+  "f64.lt",
+  "f64.le",
+  "f64.gt",
+  "f64.ge",
+  // Numeric helpers such as JS remainder lower to a direct Wasm function
+  // call. The surrounding body remains straight-line and is copied once at
+  // the original call site, so effects/traps and evaluation order are intact.
+  "call",
+]);
+const NUMERIC_CLOSURE_INLINE_MAX_INSTRS = 10;
+
+/**
+ * Extract the tiny expression-shaped numeric callbacks that array HOF loops
+ * can inline without materializing call-site state. The body must be
+ * capture-free, local-free, and consist only of parameter reads plus scalar
+ * arithmetic/comparisons. Anything scope-, heap-, trap-, or call-sensitive
+ * retains the ordinary closure call_ref path.
+ */
+function captureFreeNumericInlineBody(
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  captureCount: number,
+  liftedFctx: FunctionContext,
+  paramCount: number,
+): Instr[] | undefined {
+  if (
+    captureCount !== 0 ||
+    liftedFctx.locals.length !== 0 ||
+    arrow.parameters.some((param) => param.dotDotDotToken || param.initializer) ||
+    (ts.isBlock(arrow.body) && closureBodyUsesArguments(arrow.body))
+  ) {
+    return undefined;
+  }
+  const body = liftedFctx.body.filter((instr) => instr.op !== "nop");
+  if (body.at(-1)?.op === "return") body.pop();
+  if (body.length === 0 || body.length > NUMERIC_CLOSURE_INLINE_MAX_INSTRS) return undefined;
+  for (const instr of body) {
+    if (instr.op === "local.get") {
+      const index = (instr as { index: number }).index;
+      if (index < 1 || index > paramCount) return undefined;
+      continue;
+    }
+    if (!NUMERIC_CLOSURE_INLINE_OPS.has(instr.op)) return undefined;
+  }
+  return body.map((instr) => ({ ...instr }));
 }
 
 /** Compile an arrow function as a host callback via __make_callback.
