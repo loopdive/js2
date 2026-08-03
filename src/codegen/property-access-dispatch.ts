@@ -93,6 +93,7 @@ import {
   getOrRegisterDvWindowType,
   pushTaViewEffectiveLen,
 } from "./dataview-native.js";
+import { staticConstStringValues } from "./analysis/static-string-values.js";
 import {
   addUnionImports,
   resolveWasmType,
@@ -2238,6 +2239,55 @@ export function tryLengthAndNameReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  if (propName === "length" && ts.isIdentifier(expr.expression)) {
+    const symbol = ctx.checker.getSymbolAtLocation(expr.expression);
+    const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+    if (substring !== undefined) {
+      fctx.body.push({ op: "local.get", index: substring.lenLocal });
+      return { kind: "i32" };
+    }
+    const scalarLengthLocal = symbol ? fctx.derivedStringArrayLengthLocals?.get(symbol) : undefined;
+    if (scalarLengthLocal !== undefined) {
+      fctx.body.push({ op: "local.get", index: scalarLengthLocal });
+      return { kind: "i32" };
+    }
+  }
+
+  // `split(literal).length` normally enters the array-length arm below before
+  // the string-derived-length dispatcher gets a chance to see the call. If an
+  // immutable literal table proves the field count is uniform, retain the
+  // receiver read/trap and return that count without building a string array.
+  if (
+    ctx.nativeStrings &&
+    ctx.anyStrTypeIdx >= 0 &&
+    propName === "length" &&
+    ts.isCallExpression(expr.expression) &&
+    ts.isPropertyAccessExpression(expr.expression.expression) &&
+    expr.expression.expression.name.text === "split" &&
+    expr.expression.arguments.length === 1 &&
+    ts.isStringLiteralLike(expr.expression.arguments[0]!)
+  ) {
+    const receiver = expr.expression.expression.expression;
+    const receiverValues = staticConstStringValues(ctx, receiver);
+    if (receiverValues) {
+      const separator = expr.expression.arguments[0]!.text;
+      const lengths = new Set(receiverValues.map((value) => value.split(separator).length));
+      if (lengths.size === 1) {
+        const uniformLength = lengths.values().next().value;
+        if (uniformLength !== undefined) {
+          const receiverType = compileExpression(ctx, fctx, receiver);
+          if (receiverType?.kind === "externref") {
+            coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+          }
+          fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+          fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: uniformLength });
+          return { kind: "i32" };
+        }
+      }
+    }
+  }
+
   // (#2187) `.length` on an `any`-typed identifier whose compiled local ValType
   // is a native-string ref (e.g. a for-of var from a string-yielding generator).
   // Must run BEFORE the Function/vec `.length` arms below: the static type is
@@ -2988,6 +3038,66 @@ export function tryStringLengthIteratorAndExternClassReads(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
+  // A temporary ASCII case conversion preserves UTF-16 length exactly, and a
+  // string replacement with equal literal code-unit lengths (and no `$`
+  // substitution tokens) does too. When `.length` is the only observation,
+  // avoid allocating the transformed string. The ASCII proof accepts only a
+  // const literal table with no writes/aliases/method calls anywhere in its
+  // source file; any uncertainty retains the ordinary native helper.
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && propName === "length" && ts.isCallExpression(expr.expression)) {
+    const call = expr.expression;
+    const callee = call.expression;
+    if (ts.isPropertyAccessExpression(callee)) {
+      const method = callee.name.text;
+      const receiverValues = staticConstStringValues(ctx, callee.expression);
+      let uniformDerivedLength: number | undefined;
+      if (receiverValues && method === "trim" && call.arguments.length === 0) {
+        const lengths = new Set(receiverValues.map((value) => value.trim().length));
+        if (lengths.size === 1) uniformDerivedLength = lengths.values().next().value;
+      } else if (
+        receiverValues &&
+        method === "split" &&
+        call.arguments.length === 1 &&
+        ts.isStringLiteralLike(call.arguments[0]!)
+      ) {
+        const separator = call.arguments[0]!.text;
+        const lengths = new Set(receiverValues.map((value) => value.split(separator).length));
+        if (lengths.size === 1) uniformDerivedLength = lengths.values().next().value;
+      }
+      if (uniformDerivedLength !== undefined) {
+        // Preserve evaluation (including an OOB/null trap) even though the
+        // derived result is uniform across every immutable table entry.
+        const receiverType = compileExpression(ctx, fctx, callee.expression);
+        if (receiverType?.kind === "externref") {
+          coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+        }
+        fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: uniformDerivedLength });
+        return { kind: "i32" };
+      }
+      const asciiCaseLength =
+        (method === "toLowerCase" || method === "toUpperCase") &&
+        call.arguments.length === 0 &&
+        receiverValues?.every((value) => [...value].every((char) => char.charCodeAt(0) <= 0x7f)) === true;
+      const equalLiteralReplaceLength =
+        method === "replace" &&
+        call.arguments.length === 2 &&
+        ts.isStringLiteralLike(call.arguments[0]!) &&
+        ts.isStringLiteralLike(call.arguments[1]!) &&
+        call.arguments[0]!.text.length === call.arguments[1]!.text.length &&
+        !call.arguments[1]!.text.includes("$");
+      if (asciiCaseLength || equalLiteralReplaceLength) {
+        const receiverType = compileExpression(ctx, fctx, callee.expression);
+        if (receiverType?.kind === "externref") {
+          coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+        }
+        fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+        return { kind: "i32" };
+      }
+    }
+  }
+
   // #1910 R4 — String-wrapper `.length` in standalone. `new String("ab")` builds
   // a `$Object` wrapper carrying its [[StringData]] native string in the reserved
   // FLAG_INTERNAL slot (#1910 S2). `.length` is a String-exotic own property whose
