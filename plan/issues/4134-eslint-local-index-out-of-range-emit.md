@@ -16,7 +16,39 @@ goal: npm-library-support
 sprint: current
 required_by: [1282, 1400, 2693]
 es_edition: n/a
-related: [1282, 2043, 4030, 4045]
+related: [1282, 2043, 4030, 4133]
+# (#3102) This change-set grows ten god-files. The growth is intended and is
+# mostly ENV-GATED INSTRUMENTATION plus the fixes it was built to find:
+# the compile-phase profiler and the frame checker/reporters wired into
+# `index.ts`, the capture-resolution guard in `call-identifier.ts`, and the
+# nested-declaration scoping. Two new subsystem modules were split out already
+# (`compile-profile.ts`, `frame-trap.ts`); the remaining `index.ts` call sites
+# and reporters would be better extracted too, which is follow-up, not this PR.
+# (#3102/#3400) Same rationale as the LOC allowance below: these functions grew
+# to carry the frame checker/reporters, the compile-phase profiling calls, the
+# #4001 module-init mode, and the capture-resolution guard. Splitting them is
+# the right follow-up and is tracked, but doing it inside this change-set would
+# mix a large mechanical refactor into a set of behavioural fixes.
+func-budget-allow:
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/emit/binary.ts::encodeInstr
+  - src/emit/binary.ts::emitBinaryWithSourceMapUnguarded
+  - src/codegen/context/create-context.ts::createCodegenContext
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/closures.ts
+  - src/codegen/declarations.ts
+  - src/emit/binary.ts
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/context/types.ts
+  - src/compiler.ts
+  - src/ir/from-ast.ts
+  - src/codegen/expressions.ts
 ---
 
 # #4134 — `local index out of range — 65 (valid: [0, 8))` at emit
