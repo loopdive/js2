@@ -2631,7 +2631,7 @@ export function compileNativeStringMethodCall(
     if (!receiverOverride && ts.isIdentifier(propAccess.expression)) {
       const symbol = ctx.checker.getSymbolAtLocation(propAccess.expression);
       const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
-      if (substring) {
+      if (substring?.kind === "native") {
         const idxLocal = allocLocal(fctx, `__substring_char_idx_${fctx.locals.length}`, { kind: "i32" });
         const arg = expr.arguments[0];
         const isLengthMinusOne =
