@@ -1,7 +1,10 @@
 ---
 id: 4117
 title: "`claim-issue.mjs --allocate` reserves against the FORK's `issue-assignments` ref — two lanes get the same id and it reports `pr_scan=ok`"
-status: ready
+status: done
+completed: 2026-08-03
+assignee: ttraenkler/senior-4096-elision
+superseded_by: 4045
 sprint: current
 created: 2026-08-03
 updated: 2026-08-03
@@ -12,10 +15,31 @@ reasoning_effort: high
 task_type: bug
 area: tooling
 goal: dev-workflow
-related: [2531, 3880, 3598, 4096]
+related: [4045, 2531, 3880, 3598, 4096]
 ---
 
 # #4117 — the atomic allocator is atomic against the wrong ledger
+
+> **SUPERSEDED BY #4045**, which filed the same mechanism a day earlier with
+> three more incidents. Fixed there; this file is kept as the fourth incident
+> and for the one correction below that #4045 needs. Do not work this issue
+> separately — read #4045.
+>
+> **Controls live with the primary record**, in
+> `tests/issue-4045-one-assignment-ledger.test.ts` — including the two
+> properties this incident contributed: a reservation another lane made on
+> upstream must block a second `--allocate`, and a claim written directly to
+> upstream must be visible to `--check` (it answered `UNASSIGNED` here). They
+> are NOT duplicated under a `tests/issue-4117-*.ts` name: two test files for
+> one mechanism is how a fix gets half-reverted later, with the surviving file
+> still green.
+>
+> **The correction, and it matters:** #4045 records `--allocate` reporting
+> `pr_scan=ok` while an open PR had held the id for 40 minutes, and concludes
+> the open-PR scan is broken too. In THIS incident the scan was innocent — PR
+> #4055 was created 11 minutes AFTER the reservation, so a correct scan would
+> still have said `ok`. Two incidents that look identical, different causes.
+> Check the timestamps before blaming the scan.
 
 `--allocate` is documented (CLAUDE.md, #2531) to reserve the next id
 **atomically** against `origin/main` ∪ every open PR's added issue files ∪
