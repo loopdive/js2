@@ -15,8 +15,10 @@
  *   - statements/shared.ts         — utilities shared across all sub-modules
  */
 import { ts } from "../ts-api.js";
+import { annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
 import { emitCachedFuncClosureAccess } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
+import { getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
@@ -251,8 +253,40 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       // nothing else to emit at this textual position.
       return;
     }
+    // (#4131) B.3.3.1 step 3.f on an ALREADY-EXISTING var binding. The branch
+    // above covers the case where Annex B CREATES the web-compat binding; when
+    // the enclosing var scope already binds the name (`var f = 123` beside a
+    // block/`if`/`case`-nested `function f`), no binding is created but the
+    // existing one must still be UPDATED with the function object when the
+    // declaration is evaluated.
+    //
+    // Unlike the branch above this must NOT return early: the `if`/`case`
+    // declaration positions are not always pre-compiled by the hoist pre-pass, so
+    // swallowing the statement here drops the function definition outright (the
+    // name then reads as null — measured on the 5 `function-code/if-*` files).
+    // The store is therefore emitted AFTER whichever path defines the function.
+    const annexBVarUpdate = funcName !== undefined && annexBUpdatesExistingVarBinding(stmt);
+    const emitAnnexBVarUpdate = (): void => {
+      if (!annexBVarUpdate || funcName === undefined) return;
+      const varLocal = fctx.localMap.get(funcName);
+      const fnIdx = ctx.funcMap.get(funcName);
+      // The externref check is a hard precondition, not an optimisation: the
+      // carrier widening in `analysis/mixed-assignment-carrier.ts` is what makes
+      // the slot able to hold a closure at all. If it did not happen (a shape
+      // that analysis declines), storing here would emit invalid Wasm, so fall
+      // through to today's wrong-but-valid behaviour instead.
+      if (varLocal === undefined || fnIdx === undefined) return;
+      if (getLocalType(fctx, varLocal)?.kind !== "externref") return;
+      const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+      if (!closureType) return;
+      if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "local.set", index: varLocal });
+    };
     const hasReservedBodylessEntry = funcName ? (ctx.preRegisteredBodyless?.has(funcName) ?? false) : false;
-    if (funcName && ctx.funcMap.has(funcName) && !hasReservedBodylessEntry) return;
+    if (funcName && ctx.funcMap.has(funcName) && !hasReservedBodylessEntry) {
+      emitAnnexBVarUpdate();
+      return;
+    }
     // Re-attempt compilation even if hoisting failed — the failure may have been
     // due to const/let captures not yet in scope during the hoisting pre-pass.
     // Now that we're in statement order, those locals should be available.
@@ -264,6 +298,7 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     } else {
       compileNestedFunctionDeclaration(ctx, fctx, stmt);
     }
+    emitAnnexBVarUpdate();
     return;
   }
 

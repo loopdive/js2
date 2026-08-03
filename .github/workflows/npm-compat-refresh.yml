@@ -84,6 +84,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # (#4130) MUST run BEFORE the regeneration below. The staleness floor in
+      # the queue gate asks "how old is the artifact main is currently serving",
+      # and the only moment that question is answerable is before this job
+      # overwrites the file. Reading it afterwards yields the age of the
+      # measurement this job just took — always ~0 — so the floor could never
+      # fire and a permanently busy queue deferred the promotion forever. The
+      # workflow ran, reported success, and committed nothing for two days.
+      - name: Capture the COMMITTED artifact's age (before regenerating)
+        id: committed
+        shell: bash
+        run: |
+          set -euo pipefail
+          LAST_REFRESH="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
+          echo "last_refresh=${LAST_REFRESH}" >> "$GITHUB_OUTPUT"
+          echo "committed artifact generatedAt: ${LAST_REFRESH:-<unreadable>}"
+
       - name: Regenerate the npm-compat artifacts
         # No `--only`: a focused run never writes, because a partial file would
         # drop the other packages. Refreshing anything means regenerating all of
@@ -121,7 +137,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          LAST_REFRESH="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
+          # (#4130) From the step that ran BEFORE the regeneration — the age of
+          # what main is serving, not of the measurement just taken.
+          LAST_REFRESH="${{ steps.committed.outputs.last_refresh }}"
           # `|| RC=$?`, not a bare call then `RC=$?`: the default step shell is
           # `bash -e {0}`, so a bare non-zero exit aborts the step before the
           # next line runs and the DEFER path would look like a step failure.

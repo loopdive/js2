@@ -157,12 +157,15 @@ interface ProgramAbiClassLayoutObservation {
   readonly cell: ProgramAbiTypeCell;
 }
 
-/** True when a class layout has no type-index-bearing field or parent edge. */
-export function isEarlyStableScalarClassLayout(type: StructTypeDef): boolean {
-  return (
-    type.superTypeIdx === undefined &&
-    type.fields.every((field) => ["i32", "i64", "f32", "f64", "v128", "i8", "i16"].includes(field.type.kind))
-  );
+/** True when every index-bearing edge can participate in Program-ABI remapping. */
+export function isEarlyPreparableClassLayout(type: StructTypeDef): boolean {
+  // `-1` is the module IR's explicit "no supertype" sentinel for hierarchy
+  // roots; derived layouts carry a non-negative remappable index.
+  if (type.superTypeIdx !== undefined && (!Number.isInteger(type.superTypeIdx) || type.superTypeIdx < -1)) return false;
+  return type.fields.every((field) => {
+    if (field.type.kind !== "ref" && field.type.kind !== "ref_null") return true;
+    return Number.isInteger(field.type.typeIdx) && field.type.typeIdx >= 0;
+  });
 }
 
 function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
@@ -268,14 +271,14 @@ export class ProgramAbiTypeRegistry {
     return typeIdx < 0 ? undefined : Object.freeze({ typeIdx, type });
   }
 
-  /** Whether one collected class layout is stable before type-index compaction. */
-  canPrepareScalarClassLayout(classId: IrClassId): boolean {
+  /** Whether one collected class layout can be tracked through type-index compaction. */
+  canPrepareClassLayout(classId: IrClassId): boolean {
     const layout = this.layoutForClass(classId);
-    return layout !== undefined && isEarlyStableScalarClassLayout(layout.type);
+    return layout !== undefined && isEarlyPreparableClassLayout(layout.type);
   }
 
-  /** Publish one index-stable scalar class layout for an early prepared component. */
-  prepareScalarClassLayout(classId: IrClassId): void {
+  /** Publish one remappable class layout for an early prepared component. */
+  prepareClassLayout(classId: IrClassId): void {
     if (this.planned) {
       throw new ProgramAbiInvariantError(
         "planning-sealed",
@@ -286,16 +289,13 @@ export class ProgramAbiTypeRegistry {
     const observations = this.classes.get(classId) ?? [];
     const canonical = observations.filter((observation) => observation.cell.current !== null).at(-1);
     const current = canonical?.cell.current;
-    if (
-      !classRecord ||
-      !canonical ||
-      !current ||
-      current.kind !== "struct" ||
-      !isEarlyStableScalarClassLayout(current)
-    ) {
+    if (!classRecord || !canonical || !current || current.kind !== "struct" || !isEarlyPreparableClassLayout(current)) {
       throw new ProgramAbiInvariantError(
         "type-remap-mismatch",
-        `prepared class ${classId} has no retained index-stable scalar layout`,
+        `prepared class ${classId} has no retained remappable layout ` +
+          `(inventory=${classRecord ? "present" : "missing"}, observations=${observations.length}, ` +
+          `canonical=${canonical ? "present" : "missing"}, current=${current?.kind ?? "missing"}, ` +
+          `preparable=${current?.kind === "struct" ? isEarlyPreparableClassLayout(current) : false})`,
       );
     }
     this.planClass(classId, canonical.displayName, current, canonical.cell);
