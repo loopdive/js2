@@ -23,6 +23,7 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { ts } from "../ts-api.js";
+import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { supportsIrBackendTargetCapability, type IrBackendTargetCapability } from "./backend/legality.js";
 
@@ -3407,28 +3408,18 @@ function resolveRetainedFunctionMethod(
   return { receiverGlobal, funcName };
 }
 
-function sameExactValType(left: ValType, right: ValType): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === "ref" || left.kind === "ref_null") {
-    return right.kind === left.kind && left.typeIdx === right.typeIdx;
-  }
-  return true;
-}
-
 function resolveStaticNumericArrayGlobal(
   ctx: CodegenContext,
   plan: IrStaticNumericArrayPlan,
   expected: IrType,
 ): { readonly globalRef: IrGlobalRef; readonly type: IrType } {
-  const expectedVal = asVal(expected);
   if (
     plan.globalBindingId === undefined ||
     plan.storageOwnerUnitId === undefined ||
     plan.sourceId === undefined ||
     plan.declarationOrdinal === undefined ||
     !ts.isIdentifier(plan.declaration.name) ||
-    expectedVal === null ||
-    (expectedVal.kind !== "ref" && expectedVal.kind !== "ref_null")
+    !acceptsStaticNumericArrayParam(expected)
   ) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
@@ -3453,7 +3444,8 @@ function resolveStaticNumericArrayGlobal(
     const globalIdx = ctx.moduleGlobals.get(name);
     global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
   }
-  if (!global || global.name !== globalName || !sameExactValType(global.type, expectedVal)) {
+  const nameOf = (i: number) => ctx.typeIdxToStructName.get(i);
+  if (!global || global.name !== globalName || !staticNumericArrayGlobalMatches(global.type, expected, nameOf)) {
     throw new IrInvariantError(
       "abi-type-index-mismatch",
       "build",
@@ -3508,11 +3500,10 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       };
     },
     staticNumericArrayRead(expression: ts.Expression, expected: IrType) {
-      const expectedValue = asVal(expected);
       if (
         !supportsBackendCapability("legacy-numeric-array-global") ||
         !moduleBindingResolver ||
-        (expectedValue?.kind !== "ref" && expectedValue?.kind !== "ref_null")
+        !acceptsStaticNumericArrayParam(expected)
       ) {
         return null;
       }

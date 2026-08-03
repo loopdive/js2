@@ -71,6 +71,23 @@ describe("#4132 — the promotion commit must not run the pre-commit hook", () =
   it("keeps the [skip ci] marker that breaks the trigger loop", () => {
     expect(workflow.slice(at("- name: Promote"))).toContain("[skip ci]");
   });
+
+  // (#4140) The commit was fixed and the PUSH was not, so the promotion still
+  // failed — on husky's pre-push hook (the oracle ratchet) instead of
+  // pre-commit. Both hooks are live in this job; both must be opted out.
+  it("also pushes with --no-verify", () => {
+    expect(workflow.slice(at("- name: Promote"))).toMatch(/git push[^\n]*--no-verify/);
+  });
+
+  it("does not replay a push failure that replaying cannot fix", () => {
+    // Replaying only helps when main moved under us. For any other failure the
+    // replay fails identically five times and buries the real error under a
+    // MISLEADING "main advanced mid-promotion" message — which is exactly how a
+    // rejected pre-push hook stayed hidden for a full cycle.
+    const promote = workflow.slice(at("- name: Promote"));
+    expect(promote).toMatch(/non-fast-forward\|fetch first/);
+    expect(promote).toContain("replaying cannot fix");
+  });
 });
 
 describe("#4130 — the gate's own decision function", () => {
