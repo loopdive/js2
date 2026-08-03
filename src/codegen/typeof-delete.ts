@@ -5,6 +5,7 @@
  */
 import { ts } from "../ts-api.js";
 import { chainRootIsGrowable } from "./property-access.js";
+import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -1732,13 +1733,9 @@ export function compileTypeofComparison(
         if (annexB) {
           const actual = annexB;
           if (actual.kind !== "externref") return null;
-          addUnionImports(ctx);
-          const eqIdx = ctx.funcMap.get("__host_eq");
-          if (eqIdx === undefined) return null;
-          compileStringLiteral(ctx, fctx, stringLiteral);
-          fctx.body.push({ op: "call", funcIdx: eqIdx });
-          if (isNeq) fctx.body.push({ op: "i32.eqz" });
-          return { kind: "i32" };
+          const literalType = compileStringLiteral(ctx, fctx, stringLiteral);
+          if (!literalType) return null;
+          return emitHostEqualityFromStack(ctx, fctx, actual, literalType, true, isNeq);
         }
         if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
           addUnionImports(ctx);

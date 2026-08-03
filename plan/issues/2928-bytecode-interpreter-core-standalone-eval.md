@@ -20,12 +20,17 @@ depends_on: [2927] # 2853 done (sprint 71) — removed 2026-07-17, see plan/log/
 related: [1715, 1713, 2864, 2865, 2960, 3017, 2929]
 oracle-ratchet-allow:
   - src/codegen/expressions/eval-inline.ts
-# See "Coercion-sites allowance" below for the justification. In short: the two
-# `__is_truthy` sites read field 0 of the provider's `[ok, value]` ABI envelope
-# — a protocol discriminator the runtime-eval provider writes itself — not a
-# §7.1.2 ToBoolean on a JS value flowing from user code.
+# See "Coercion-sites allowance" below for the justification. The
+# `__is_truthy` sites read field 0 of the provider's `[ok, value]` ABI envelope,
+# and the guarded `__unbox_number` sites copy a bridge carrier's already-proven
+# numeric payload. These are protocol decoding operations, not ToBoolean or
+# ToNumber on user values.
 coercion-sites-allow:
   - src/codegen/expressions/eval-inline.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/runtime-eval-provider.ts
+  - src/codegen/object-runtime.ts
+  - src/codegen/runtime-eval-boundary.ts
 loc-budget-allow:
   - src/codegen/index.ts
   - src/codegen/expressions/calls.ts
