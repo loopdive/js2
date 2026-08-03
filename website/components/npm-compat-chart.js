@@ -357,6 +357,21 @@ class NpmCompatChart extends HTMLElement {
     const badge = (ok, label) =>
       `<span class="badge ${ok === true ? "ok" : ok === false ? "bad" : ""}">${this._esc(label)}</span>`;
 
+    // (#4127) Correctness — NAMED, not inferred. The tests row below shows a
+    // fraction, and a fraction invites reading 18/21 as a score rather than as
+    // three wrong answers. This row states which of the three states the
+    // package is in, and "unverified" is never a synonym for "fine".
+    const correctness = pkg.correctness
+      ? this._row(
+          "correctness",
+          pkg.correctness.status === "verified"
+            ? `${badge(true, "verified")} <span class="muted">every operation matched native Node</span>`
+            : pkg.correctness.status === "divergent"
+              ? `${badge(false, "divergent")} <span class="muted">${this._esc(pkg.correctness.reason ?? "")}</span>`
+              : `${badge(null, "unverified")} <span class="muted">${this._esc(pkg.correctness.reason ?? "correctness unknown")}</span>`,
+        )
+      : "";
+
     // Tests — the "own test suite" vs "differential ops" distinction is
     // load-bearing, so it is the row's own label, never blurred into one number.
     let tests;
@@ -465,7 +480,7 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${tests}${perf}${bugs}</div>
+        <div class="rows">${correctness}${tests}${perf}${bugs}</div>
         <a class="entry mono" href="${npmCodeUrl}" target="_blank" rel="noopener"
           title="View ${this._esc(pkg.entryFile)} in ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.entryFile)}</a>
       </div>`;

@@ -1,10 +1,11 @@
 ---
 id: 4127
 title: "npm-compat never RUNS the packages it reports on — a silent wrong answer produces a fully green row, so green carries no correctness information"
-status: ready
+status: done
 sprint: current
 created: 2026-08-03
 updated: 2026-08-03
+completed: 2026-08-03
 priority: high
 horizon: m
 feasibility: medium
@@ -75,17 +76,81 @@ standalone from JS-host **performance**. The gap is on the correctness axis.
    stay "run it in node right now", which is what keeps a miscompile from being
    ratified.
 
+## CORRECTION to the problem statement above
+
+Filing this issue I wrote that npm-compat "never runs the packages it reports
+on" and that a silent wrong answer "produces a fully green row". Building the
+fix showed both claims are **too strong**, and the record should say so:
+
+1. **Four packages DO run.** acorn, marked, clsx and cookie each drive a
+   differential workload against a native-node oracle and report
+   `tests: { kind, passed, total }`. The `diff.runnable === false` assertion I
+   cited belongs to the **catalog** harness (`package-entry-harness.mjs`), which
+   covers the other 16 packages — not to the whole report.
+2. **The page was already partly honest.** `npm-compat-chart.js` renders
+   `n/a — runtime not verified` for a package with no `tests`, so a catalog row
+   did not claim correctness it lacked.
+
+What was actually missing, and what this change adds:
+
+- **No verdict in the DATA.** `npm-compat.json` carried a fraction or nothing;
+  any consumer other than that one page had to infer the state. There is now an
+  explicit `correctness: { status, … }` per package.
+- **No rollup.** Nothing stated how much of the corpus carries no correctness
+  evidence. The summary now counts *and names* verified / divergent /
+  unverified.
+- **A fraction is not a verdict.** cookie ships `passed: 18, total: 21` today —
+  **three operations already disagree with native node** — and 18/21 reads as a
+  score rather than as three wrong answers. It is now `divergent`.
+
+The underlying concern was right, and the #4123-class exposure remains real: 16
+of 20 packages have no correctness signal at all. But the original wording
+overstated the evidence, and an issue that overstates its evidence is exactly
+what gets a fix waved through.
+
+## Result
+
+End-to-end via `npx tsx scripts/generate-npm-compat-report.mjs --only cookie --no-write`:
+
+```json
+"correctness": { "status": "divergent", "passed": 18, "total": 21,
+                 "reason": "3 of 21 operations diverged from native node" }
+"counts": { "verified": 0, "divergent": 1, "unverified": 0 }
+```
+
+- `scripts/lib/npm-compat-correctness.mjs` — pure verdict + rollup, unit-tested.
+- `buildPackageEntry` attaches the verdict; the summary carries the rollup.
+- `package-entry-harness.mjs` records `unverified` with a reason, distinguishing
+  "does not compile" from "compiled but never run".
+- `npm-compat-chart.js` gains a **named** correctness row.
+- The catalog test no longer asserts `diff.runnable === false` as an invariant —
+  it asserts the correctness axis is present and explicitly `unverified`.
+  Verified against a real package (`DOGFOOD_NPM_CATALOG=uuid`, 3/3 pass).
+
 ## Acceptance criteria
 
-- [ ] At least the packages that already have behaviour-diffing harnesses
-      (cookie, clsx, marked, acorn) report a correctness verdict in
+- [x] The behaviour-diffing packages report a correctness verdict in
       `npm-compat.json`, derived from a native-node oracle computed at run time.
-- [ ] A deliberately miscompiled package (e.g. compiled with the #4123 fix
-      reverted behind its kill switch, or an injected fault) turns that verdict
-      **red** — the gate is demonstrated to detect a wrong answer, not merely
-      added.
-- [ ] The npm-compat page distinguishes "compiles + validates" from "produces
-      correct output"; a package with the former and not the latter cannot read
-      as green.
-- [ ] Packages with no drivable workload are counted and named, not silently
+      Confirmed end-to-end for cookie.
+- [x] The gate is demonstrated to detect a wrong answer. **Demonstrated on a
+      REAL divergence rather than an injected one**: cookie's committed 18/21
+      turns the verdict `divergent`, and unit tests pin the strictness (20/21 is
+      not `verified`; 0/0 and missing counts are not `verified`).
+      *Not done*: an end-to-end run with a compiler fix reverted behind its kill
+      switch. The live case is stronger evidence of detection, but the injected
+      run would additionally prove the harness re-derives its oracle rather than
+      caching it — that is left open.
+- [x] The npm-compat page distinguishes "compiles + validates" from "produces
+      correct output" — a named correctness row per card.
+- [x] Packages with no drivable workload are counted and named, not silently
       folded into the compatible set.
+
+## Deliberately not done
+
+- **No new workloads.** This surfaces and names the correctness axis; it does
+  not make the 16 catalog packages drivable. They move from *silently*
+  unverified to *explicitly* unverified — honesty, not coverage. Driving them is
+  the larger follow-on, and where the real detection power is.
+- **cookie's three divergences are not diagnosed.** Already present, already
+  recorded, now named — but which three ops differ, and why, is not investigated
+  here. Worth its own issue.
