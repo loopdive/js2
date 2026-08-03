@@ -91,7 +91,7 @@ describe("#3792 IR optimization retirement ledger gate", () => {
       {
         id: "IR-OPT-COUNTED-VECTOR-PUSH-PRESIZE",
         source: "src/codegen/literals.ts",
-        symbol: "detectCountedPushLoopSize",
+        symbol: "detectCountedPushLoop",
         line: expect.any(Number),
       },
     ]);

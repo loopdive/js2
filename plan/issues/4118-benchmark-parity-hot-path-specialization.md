@@ -25,6 +25,7 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/literals.ts
   - src/ir/from-ast.ts
+  - src/codegen/expressions/call-receiver-method.ts
 func-budget-allow:
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
   - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
@@ -34,6 +35,7 @@ func-budget-allow:
   - src/codegen/literals.ts::compileArrayLiteral
   - src/ir/select.ts::isPhase1Expr
   - src/codegen/statements/loops.ts::compileForStatement
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
 oracle-ratchet-allow:
   - src/codegen/analysis/static-numeric-range.ts
   - src/codegen/analysis/static-string-values.ts
