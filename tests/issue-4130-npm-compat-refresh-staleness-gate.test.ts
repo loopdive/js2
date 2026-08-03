@@ -56,6 +56,23 @@ describe("#4130 — the staleness floor measures the committed artifact", () => 
   });
 });
 
+describe("#4132 — the promotion commit must not run the pre-commit hook", () => {
+  it("commits with --no-verify", () => {
+    // This job installs dependencies, so husky's hook is live and runs
+    // `test:changed-root`, which needs a merge base with `origin/main`. The
+    // checkout is `fetch-depth: 1` with `persist-credentials: false` and the
+    // push remote is `deploykey`, so there is no `origin/main` and the hook
+    // aborts the commit. It stayed hidden until #4130 stopped the gate
+    // deferring on every run — the step had simply never executed.
+    const promote = workflow.slice(at("- name: Promote"));
+    expect(promote).toMatch(/git commit[^\n]*--no-verify/);
+  });
+
+  it("keeps the [skip ci] marker that breaks the trigger loop", () => {
+    expect(workflow.slice(at("- name: Promote"))).toContain("[skip ci]");
+  });
+});
+
 describe("#4130 — the gate's own decision function", () => {
   it("defers a busy queue only while the artifact is fresh, and proceeds once it is stale", async () => {
     const { decide } = await import("../scripts/main-push-queue-gate.mjs");
