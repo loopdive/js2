@@ -341,6 +341,7 @@ import {
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
 import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import { isStrictContext } from "../helpers/is-strict-function.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
@@ -3430,6 +3431,32 @@ function isGlobalEvalIdentifier(ident: ts.Identifier, checker: ts.TypeChecker): 
   return decls.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
+/** A sloppy direct eval whose call expression belongs directly to Script code
+ * has the same GlobalEnvironmentRecord as indirect eval. Use the global entry
+ * instead of manufacturing an empty AOT activation record; the latter would
+ * hide B.3.3 global properties in a provider-private declarative record. */
+function directEvalRunsAtScriptGlobal(call: ts.CallExpression, ctx: CodegenContext): boolean {
+  if (isStrictContext(call, ctx.inferModuleStrictArguments)) return false;
+  let node: ts.Node | undefined = call.parent;
+  while (node) {
+    if (ts.isSourceFile(node)) return true;
+    if (
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      ts.isBlock(node) ||
+      ts.isCaseClause(node) ||
+      ts.isDefaultClause(node) ||
+      ts.isCatchClause(node) ||
+      ts.isWithStatement(node)
+    ) {
+      return false;
+    }
+    node = node.parent;
+  }
+  return false;
+}
+
 /**
  * (#3145) True when `ident` refers to a GLOBAL builtin binding (declared only in
  * ambient .d.ts lib files) that is NOT shadowed by a local or captured variable
@@ -6461,9 +6488,11 @@ function compileCallExpression(
       // #2928/#2929 — direct eval adds live caller cells to indirect eval's global environment.
       const runtimeEval =
         evalKind === "direct"
-          ? ensureRuntimeEvalCallableCarrier(ctx, fctx)
-            ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
-            : undefined
+          ? directEvalRunsAtScriptGlobal(expr, ctx)
+            ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
+            : ensureRuntimeEvalCallableCarrier(ctx, fctx)
+              ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
+              : undefined
           : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
       if (runtimeEval !== undefined) return runtimeEval;
       // (#2960) WASI (until its linker grows the provider), or a standalone

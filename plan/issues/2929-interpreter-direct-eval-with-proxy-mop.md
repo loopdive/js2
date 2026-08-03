@@ -391,3 +391,74 @@ Do not reinterpret the 473/816 figure as the default CI baseline: it requires
 `TEST262_FULL_RUNTIME_EVAL=1`. The default refusal tier remains intentionally
 capability-free until the full provider is published as a reusable build
 artifact.
+
+## 2026-08-03 Annex-B eval binding lifecycle checkpoint
+
+Branch `codex/2929-annexb-init-update` is a suspended, resumable follow-on to
+the direct-eval collision slice. It does not close #2929.
+
+The checkpoint fixes four lifecycle boundaries exposed by the Test262
+`eval-code` Annex-B collision family:
+
+- A `BlockStatement` directly under a Script `SourceFile` is now classified as
+  a real block-nested Annex-B declaration site, rather than being mistaken for
+  a function body's declaration list.
+- Constant direct eval remains on the import-free AOT path for simple late-read
+  block functions, but routes to the interpreter when B.3.3 initialization or
+  update order depends on an eval `var`, a caller/global binding, an early
+  reference, or a source-level `if`/`switch` declaration.
+- Sloppy direct eval at Script global scope enters the provider through the
+  global-environment route. This avoids an empty synthetic activation record
+  hiding B.3.3 global object properties.
+- B.3.3's synthetic outer assignment first updates an eval-created variable,
+  then the exact pre-existing caller activation cell recorded by declaration
+  instantiation. It never walks into an unrelated outer capture or lexical
+  record.
+
+The frozen focused gate is green:
+
+- `pnpm run typecheck`
+- 57/57 tests across `tests/issue-2929-annexb-eval-lifecycle.test.ts` and
+  `tests/interp/eval-environment.test.ts`
+- 2/2 selected import-free `block-nested` / `if-nested` fast-path canaries in
+  `tests/issue-2923-eval-const-broaden.test.ts` (17 unrelated cases skipped)
+
+The new coverage proves fresh and existing global descriptors, later
+same-name block-function wins, exact caller activation updates, provider
+routing for pre-declaration/collision cases, and preservation of the simple
+zero-import `eval("{ function f() {} } ...")` fast path.
+
+### Publication and remaining gate
+
+PR #4013's merge-group Test262 gate rejected the preceding direct-eval
+checkpoint. On the content-current merge candidate it measured 48,346/48,346
+rows with 184 stable non-timeout regressions versus 105 improvements, a net
+-79 fine-gate delta, a 217-pass standalone-floor breach, and five new null
+dereferences in Annex-B existing-var-update files. CI, differential, and CLA
+were green; the Test262 result is a real landing blocker and must not be
+bypassed.
+
+This follow-on targets the common B.3.3 lifecycle cause, but the user-requested
+suspension happened before a fresh complete 101-file collision replay or full
+816-file eval-code A/B measurement. The next agent should therefore:
+
+1. Rebase or merge the current `origin/main`, build the full interpreter
+   provider, and run the exact 101-file collision slice before attempting to
+   land #4013 or this stacked PR. Require zero pass-to-fail transitions and no
+   standalone-floor breach.
+2. Re-run all five `existing-var-update` null-dereference files first. If any
+   remain, trace materialization of the explicit eight-slot interpreted
+   callable carrier; do not alter the shared closure/rec-group ABI merely to
+   fit this path.
+3. Finish same-name AOT/global block-function synchronization, especially the
+   direct and indirect `existing-block-fn-update` cases, and preserve existing
+   global property descriptors through block execution.
+4. Isolate the cross-module `verifyProperty` open-object-to-closed-struct
+   illegal cast at `__call_fn_method_4`; keep it separate from interpreter
+   declaration semantics and from the deferred E6 packaging/rec-group ABI.
+5. Only after the collision slice is clean, repeat the full interpreter-tier
+   `language/eval-code/` measurement and update the 473/816 handoff table with
+   an explicit provider tier and run IDs.
+
+Generated Test262 reports and `benchmarks/results/runs/index.json` are not part
+of this checkpoint.

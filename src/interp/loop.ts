@@ -81,6 +81,7 @@ import {
   createObjectEnvironment,
   createRuntimeEvalGlobalEnvironment,
   EVAL_TDZ,
+  setEvalVariableEnvironmentBinding,
   variableEnvironmentFor,
 } from "./eval-environment.js";
 import {
@@ -1340,12 +1341,7 @@ function callBuiltin(builtinId: number, regs: Regs, base: number, argc: number, 
       // caller's same-named let/const cell.
       const variableEnv = variableEnvironmentFor(frame.envRec);
       if (variableEnv !== null) {
-        const cell = ownEnvCell(variableEnv, regs[base + 1]);
-        if (cell !== null) {
-          cell.value = regs[base];
-        } else if (variableEnv.kind !== ENV_DECLARATIVE && regs[base + 1] in variableEnv.backing) {
-          variableEnv.backing[regs[base + 1]] = regs[base];
-        }
+        setEvalVariableEnvironmentBinding(variableEnv, regs[base + 1], regs[base]);
       }
       return regs[base];
     }
