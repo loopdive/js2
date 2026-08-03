@@ -74,4 +74,39 @@ describe("#2929 Annex-B eval binding lifecycle", () => {
       `),
     ).resolves.toBe(10);
   });
+
+  it("updates an existing var from a bare-if function declaration", async () => {
+    await expect(
+      runInline(`
+        export function run(): number {
+          var after: any;
+          (function () {
+            if (true) function f() { return 42; }
+            after = f;
+            var f = 123;
+          }());
+          return typeof after === "function" ? after() : -1;
+        }
+      `),
+    ).resolves.toBe(42);
+  });
+
+  it("keeps host literal indirect Annex-B eval on the established compile-away path", async () => {
+    const result = await compile(
+      `
+        var observed = 0;
+        (0, eval)("if (true) function f() { return 7; } observed = f();");
+        export function run(): number { return observed; }
+      `,
+      { inferModuleStrictArguments: false, skipSemanticDiagnostics: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(
+      WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).some((entry) => entry.name === "__extern_eval"),
+    ).toBe(false);
+    const imports = result.importObject as WebAssembly.Imports & { __setExports?: (exports: unknown) => void };
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.__setExports?.(instance.exports);
+    expect((instance.exports.run as () => number)()).toBe(7);
+  });
 });

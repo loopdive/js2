@@ -462,3 +462,20 @@ suspension happened before a fresh complete 101-file collision replay or full
 
 Generated Test262 reports and `benchmarks/results/runs/index.json` are not part
 of this checkpoint.
+
+### Merge-group repair checkpoint (2026-08-03)
+
+The suspended collision handoff above has now been executed against merge-group
+predecessor `ff5041e3` and repaired on PR #4013. The exact 38 locally
+reproducible predecessor-pass/candidate-fail Test262 paths are 38/38 passing.
+Across the complete 184-path stable non-timeout failure artifact, the repaired
+branch is 145 pass / 39 fail; all 39 remaining failures reproduce on the exact
+predecessor, leaving zero predecessor-pass/current-nonpass transitions.
+
+The repair keeps provider-only routing in standalone mode while restoring the
+established host literal compile-away boundary. It also closes the merge-group
+gaps in direct-eval activation shadowing, Annex-B existing-var updates, native
+async exception rejection, host callback argument-count isolation, and
+recursive tagged-template capture forwarding. The focused unit matrix is
+65/65 and typecheck passes. Generated Test262 reports and benchmark indexes
+remain excluded from the checkpoint.

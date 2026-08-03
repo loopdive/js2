@@ -105,4 +105,24 @@ describe("#2029 — tagged template + outer-local-capturing tag (standalone emit
     )) as any;
     expect(r.success).toBe(true);
   });
+
+  it("a recursive named tag threads its current capture cell", async () => {
+    const r = await compileStandalone(`
+      // @ts-nocheck
+      export function test(): number {
+        var finished = 0;
+        function tag(_strings: any, n: number): void {
+          if (n === 0) {
+            finished = 1;
+            return;
+          }
+          tag\`\${n - 1}\`;
+        }
+        tag(null, 3);
+        return finished;
+      }
+    `);
+    expect(r.success).toBe(true);
+    expect(r.errors.some((error: any) => /local index out of range/.test(error.message))).toBe(false);
+  });
 });

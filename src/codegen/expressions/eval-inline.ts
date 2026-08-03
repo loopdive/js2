@@ -45,7 +45,7 @@ import {
 } from "./runtime-eval-provider.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
-import { currentDirectEvalLexicalBindingNames } from "../direct-eval-environment.js";
+import { currentDirectEvalLexicalBindingNames, reifyCurrentDirectEvalBindings } from "../direct-eval-environment.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
@@ -581,6 +581,64 @@ function foldedEvalHasNonBlockAnnexBDeclaration(sourceFile: ts.SourceFile): bool
   return found;
 }
 
+interface FoldedDirectEvalOuterShadow {
+  name: string;
+  localIdx: number;
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined;
+  wasActivationName: boolean;
+  activationCell: number | undefined;
+}
+
+/** A sloppy direct eval may create a `var` binding in the current function's
+ * VariableEnvironment even when the same identifier currently resolves to an
+ * outer capture. The literal splice must establish that inner binding before
+ * hoisting the foreign declaration; otherwise compileVariableStatement sees a
+ * capture parameter, allocates a value local, but keeps the outer ref-cell
+ * metadata and consequently treats the new value local as a cell.
+ *
+ * Return enough state to undo the compile-time scope mutation if the foreign
+ * lowering later declines and the runtime provider must own the call. */
+function enterFoldedDirectEvalVarScope(
+  fctx: FunctionContext,
+  varNames: ReadonlySet<string>,
+): FoldedDirectEvalOuterShadow[] {
+  const shadows: FoldedDirectEvalOuterShadow[] = [];
+  for (const name of varNames) {
+    if (!fctx.directEvalOuterBindingNames?.has(name)) continue;
+    const localIdx = fctx.localMap.get(name);
+    if (localIdx === undefined) continue;
+    shadows.push({
+      name,
+      localIdx,
+      boxed: fctx.boxedCaptures?.get(name),
+      wasActivationName: fctx.directEvalActivationBindingNames?.has(name) ?? false,
+      activationCell: fctx.directEvalActivationBindings?.get(name),
+    });
+    fctx.localMap.delete(name);
+    fctx.boxedCaptures?.delete(name);
+    fctx.directEvalOuterBindingNames.delete(name);
+    (fctx.directEvalActivationBindingNames ??= new Set()).add(name);
+    fctx.directEvalActivationBindings?.delete(name);
+  }
+  return shadows;
+}
+
+function restoreFoldedDirectEvalVarScope(fctx: FunctionContext, shadows: readonly FoldedDirectEvalOuterShadow[]): void {
+  for (const shadow of shadows) {
+    fctx.localMap.set(shadow.name, shadow.localIdx);
+    if (shadow.boxed) (fctx.boxedCaptures ??= new Map()).set(shadow.name, shadow.boxed);
+    else fctx.boxedCaptures?.delete(shadow.name);
+    (fctx.directEvalOuterBindingNames ??= new Set()).add(shadow.name);
+    if (shadow.wasActivationName) (fctx.directEvalActivationBindingNames ??= new Set()).add(shadow.name);
+    else fctx.directEvalActivationBindingNames?.delete(shadow.name);
+    if (shadow.activationCell !== undefined) {
+      (fctx.directEvalActivationBindings ??= new Map()).set(shadow.name, shadow.activationCell);
+    } else {
+      fctx.directEvalActivationBindings?.delete(shadow.name);
+    }
+  }
+}
+
 /**
  * Try to inline `eval("<constant>")` at compile time.
  *
@@ -688,9 +746,9 @@ export function tryStaticEvalInline(
   // the test262 script lane disables synthetic module strictness and therefore
   // still exercises the spec isolation path for explicit strict code.
   const explicitlyStrictEval = bodyIsStrict || (directEval && isStrictContext(expr, false));
-  if (explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
+  if (ctx.standalone && explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
 
-  if (!explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
+  if (ctx.standalone && !explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
     const annexBNames = declarationNames.blockFunctionNames;
     const collidesWithCaller =
       setsIntersect(annexBNames, declarationNames.varNames) ||
@@ -713,7 +771,7 @@ export function tryStaticEvalInline(
   // both names compare equal only because both were null). Route those bodies
   // to the bytecode provider, where `%eval%` has a real realm-stable marker and
   // alias calls correctly become indirect eval.
-  if (containsEvalValueReference(sf)) return undefined;
+  if (ctx.standalone && containsEvalValueReference(sf)) return undefined;
 
   // Empty program — eval returns undefined.
   if (stmts.length === 0) {
@@ -782,10 +840,19 @@ export function tryStaticEvalInline(
   if (!directEval) return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
 
   const savedDirectEvalThisFallback = fctx.directEvalSloppyThisFallback;
+  const outerShadows = enterFoldedDirectEvalVarScope(fctx, declarationNames.varNames);
   fctx.directEvalSloppyThisFallback =
     savedDirectEvalThisFallback === true || !isStrictContext(expr, ctx.inferModuleStrictArguments);
   try {
-    return compileInlinedEvalStatements(ctx, fctx, stmts, false);
+    const result = compileInlinedEvalStatements(ctx, fctx, stmts, false);
+    if (result === undefined) {
+      restoreFoldedDirectEvalVarScope(fctx, outerShadows);
+    } else if (result !== null && outerShadows.length > 0) {
+      // Keep the eval-created activation binding visible to later AOT reads and
+      // to a subsequent standalone runtime-eval call in the same activation.
+      reifyCurrentDirectEvalBindings(ctx, fctx);
+    }
+    return result;
   } finally {
     fctx.directEvalSloppyThisFallback = savedDirectEvalThisFallback;
   }

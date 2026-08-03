@@ -123,7 +123,7 @@ function catchParamCancels(node: ts.Node, name: string): boolean {
  * as the "declaring block" — reads inside it still resolve to the block-local
  * function — or `null` when `fd` is a plain scope-level declaration.
  */
-function annexBDeclaringRange(fd: ts.FunctionDeclaration): ts.Node | null {
+export function annexBDeclaringRange(fd: ts.FunctionDeclaration): ts.Node | null {
   const parent = fd.parent;
   if (!parent) return null;
   if (ts.isBlock(parent)) {

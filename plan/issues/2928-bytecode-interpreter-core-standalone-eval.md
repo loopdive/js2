@@ -49,8 +49,10 @@ loc-budget-allow:
   - src/codegen/expressions.ts
   - src/codegen/declarations.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/string-ops.ts
   - src/interp/emitter.ts
   - src/codegen/expressions/eval-inline.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/index.ts::planIrOverlay
@@ -68,6 +70,7 @@ func-budget-allow:
   - src/codegen/expressions.ts::compileExpressionInner
   - src/codegen/expressions/assignment.ts::compileAssignment
   - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/string-ops.ts::compileTaggedTemplateExpression
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/declarations.ts::compileDeclarations
   - src/codegen/context/create-context.ts::createCodegenContext
