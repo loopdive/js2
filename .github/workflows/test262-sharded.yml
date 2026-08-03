@@ -2841,6 +2841,12 @@ jobs:
               git add -f website/public/benchmarks/results/test262-editions.json || true
             [ -f website/public/benchmarks/results/test262-category-editions.json ] && \
               git add -f website/public/benchmarks/results/test262-category-editions.json || true
+            # #2871 follow-up — per-file edition index for the non-passing tests. The
+            # report page's Error Patterns / Skipped Tests sections filter on
+            # it, so it must land in the same commit as the editions above or
+            # the slider filters against a stale test set.
+            [ -f website/public/benchmarks/results/test262-file-editions.json ] && \
+              git add -f website/public/benchmarks/results/test262-file-editions.json || true
             # #2910 — the reconciled, edition-sliced feature-row counts
             # (passCount/totalCount) that generate-editions.ts patched into
             # feature-examples.json in the "Regenerate edition buckets" step

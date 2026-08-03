@@ -696,6 +696,8 @@ jobs:
             public/benchmarks/results/test262-standalone-report.json \
             website/public/benchmarks/results/test262-editions.json \
             website/public/benchmarks/results/test262-category-editions.json
+          # #2871 follow-up — per-file edition index (Error Patterns / Skipped Tests filter).
+          git add -f website/public/benchmarks/results/test262-file-editions.json 2>/dev/null || true
           # #3381 — the #2097 standalone high-water mark (raised earlier). Tolerant
           # add: present on main, but never let a missing file abort the stage.
           git add -f benchmarks/results/test262-standalone-highwater.json 2>/dev/null || true
