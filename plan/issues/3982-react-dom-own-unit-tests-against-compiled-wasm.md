@@ -11,6 +11,7 @@ feasibility: medium
 reasoning_effort: high
 task_type: test
 area: dogfood
+es_edition: n/a
 language_feature: compiler-internals
 goal: dogfood
 related: [3958, 3977]
@@ -90,7 +91,8 @@ host can reproduce without React's private Jest module system.
 
 ## Suspended handoff (2026-08-03)
 
-GitHub tracking issue: [#4075](https://github.com/loopdive/js2/issues/4075).
+This file is the canonical tracking issue. Draft implementation and the
+reproducible suspended state are preserved in PR #4079.
 
 The initial parse blocker is fixed. React 19.2.6 plus the published ReactDOM
 shared/client production modules now compile to a valid Wasm module (about
