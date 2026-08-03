@@ -6032,6 +6032,34 @@ function isUnsupportedModuleGlobalObjectDelete(expr: ts.DeleteExpression): boole
   );
 }
 
+/**
+ * The shared IR currently widens affine multi-dimensional indices to f64 and
+ * re-truncates them in the innermost loop. Keep genuine three-deep numeric
+ * kernels on the legacy path, whose promoted-i32 induction variables and
+ * proven-in-bounds element accesses are substantially cheaper. This is a
+ * selector-owned capability decision so the lowerer never has to fail after
+ * the function has already been claimed.
+ */
+function isAffineThreeDeepElementAccess(expr: ts.ElementAccessExpression): boolean {
+  let enclosingForDepth = 0;
+  for (let parent: ts.Node | undefined = expr.parent; parent; parent = parent.parent) {
+    if (ts.isForStatement(parent)) enclosingForDepth++;
+    if (ts.isFunctionLike(parent)) break;
+  }
+  if (enclosingForDepth < 3) return false;
+
+  let indexHasMultiply = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AsteriskToken) {
+      indexHasMultiply = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  visit(expr.argumentExpression);
+  return indexHasMultiply;
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -6899,6 +6927,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isElementAccessExpression(expr)) {
     if (expressionIsModuleExternAccessChain(expr.expression)) {
       return shapeNo("expr-module-extern-element", expr);
+    }
+    if (isAffineThreeDeepElementAccess(expr)) {
+      return capabilityNo("array-method-unsupported", "expr-affine-3deep-vector-index", expr);
     }
     return (
       isPhase1Expr(expr.expression, scope, localClasses) && isPhase1Expr(expr.argumentExpression, scope, localClasses)
