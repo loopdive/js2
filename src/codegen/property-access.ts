@@ -76,6 +76,7 @@ import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { emitIsUndefF64 } from "./value-tags.js";
+import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import {
   ensureRegExpNativeProtoGlue,
   tryCompileStandaloneRegExpMatchResultRead,
@@ -4398,6 +4399,10 @@ function isArgumentsRootedExpression(fctx: FunctionContext, node: ts.Expression)
 }
 
 /** Inner element access logic — assumes objType is on the stack and non-null */
+function compileI32ElementIndex(ctx: CodegenContext, fctx: FunctionContext, expression: ts.Expression): void {
+  if (!tryEmitStaticI32Expression(ctx, fctx, expression)) compileExpression(ctx, fctx, expression, { kind: "i32" });
+}
+
 export function compileElementAccessBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -5221,11 +5226,10 @@ export function compileElementAccessBody(
     }
     // Unwrap: struct.get data field, then index into backing array
     fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // get data from vec
-    // #1179: hint i32 directly for the index. compileExpression will produce
-    // i32 cleanly for i32 locals / integer literals (no f64 round-trip), and
-    // the existing coerceType(f64→i32) path handles non-i32 results via
-    // trunc_sat — same as the legacy explicit cast below.
-    compileExpression(ctx, fctx, expr.argumentExpression, { kind: "i32" });
+    // Keep range-proven counted-loop index arithmetic in i32. Composite
+    // expressions such as `i * N + k` otherwise compile through f64 and then
+    // truncate back to i32 at every element read.
+    compileI32ElementIndex(ctx, fctx, expr.argumentExpression);
     const valueType: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
     if (isSafeBoundsEliminated(fctx, expr)) {
@@ -5343,10 +5347,9 @@ export function compileElementAccessBody(
   // (#2785) Type-aware box ValType for the F1 widen (null = defer) — matches the
   // vec-struct call site above.
   const f1BoxTypeArr = f1ElementBoxType(ctx, expr, typeDef.element);
-  // Compile index and convert to i32 (#1179: hint i32 directly to skip the
-  // f64.convert_i32_s + i32.trunc_sat_f64_s round-trip when the index is
-  // already an i32 local or integer literal).
-  compileExpression(ctx, fctx, expr.argumentExpression, { kind: "i32" });
+  // Compile range-proven index arithmetic directly in i32; retain the generic
+  // numeric conversion for every expression whose range is not proven.
+  compileI32ElementIndex(ctx, fctx, expr.argumentExpression);
   const valueType: ValType =
     typeDef.element.kind === "i8" || typeDef.element.kind === "i16" ? { kind: "i32" } : typeDef.element;
 
