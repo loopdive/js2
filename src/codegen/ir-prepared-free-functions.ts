@@ -119,6 +119,14 @@ export function selectPreparedClassMemberNames(
 ): ReadonlySet<string> {
   const selectedNames = new Set(selection.classMembers ?? []);
   const memberNames = new Set<string>();
+  const localCallEdgesBySource = new Map<ts.SourceFile, ReturnType<typeof collectLocalCallEdgesByIdentity>>();
+  const localCallEdges = (sourceFile: ts.SourceFile): ReturnType<typeof collectLocalCallEdgesByIdentity> => {
+    const cached = localCallEdgesBySource.get(sourceFile);
+    if (cached) return cached;
+    const collected = collectLocalCallEdgesByIdentity(sourceFile, identityPlan.identityContext);
+    localCallEdgesBySource.set(sourceFile, collected);
+    return collected;
+  };
   for (const claim of identityPlan.identitySelection.classMembers?.values() ?? []) {
     const terminal = identityPlan.identityContext.terminalByUnitId.get(claim.unitId);
     const declaration = identityPlan.identityContext.declarationByUnitId.get(claim.unitId);
@@ -137,9 +145,20 @@ export function selectPreparedClassMemberNames(
       terminal?.kind === "class-instance-method" ||
       terminal?.kind === "class-instance-getter" ||
       terminal?.kind === "class-instance-setter";
+    // Cross-owner class -> free-function components are the next serial R3
+    // family. Preparing only the member would make its direct call target
+    // remain legacy-owned and leave no exact AST-site call plan. Keep that
+    // complete structural edge on the established direct route for now.
+    const crossesFreeFunctionBoundary = [
+      ...(declaration ? (localCallEdges(declaration.getSourceFile()).callees.get(claim.unitId) ?? []) : []),
+    ].some((calleeUnitId) => {
+      const callee = identityPlan.identityContext.declarationByUnitId.get(calleeUnitId);
+      return callee !== undefined && ts.isFunctionDeclaration(callee) && ts.isSourceFile(callee.parent);
+    });
     if (
       selectedNames.has(claim.legacyMatchName) &&
       (terminal?.kind === "class-static-method" || (instanceBody && instanceOwnerIsPreparable)) &&
+      !crossesFreeFunctionBoundary &&
       declaration !== undefined &&
       (ts.isMethodDeclaration(declaration) ||
         ts.isGetAccessorDeclaration(declaration) ||

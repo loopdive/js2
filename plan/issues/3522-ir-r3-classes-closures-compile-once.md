@@ -298,12 +298,29 @@ worktree `/private/tmp/ts2wasm-3522-class-member-retirement`. Publication uses
 a ready PR; record its URL here before queueing. The dirty root checkout is not
 part of this work.
 
+Final-head validation before publication:
+
+- focused prepared routing and class retirement: **40/40 passed**;
+- IR allocation registry/provenance: **16/16 passed**;
+- typecheck, formatting, issue integrity, optimization retirement, fallback
+  shape diagnostics, oracle, LOC/function budgets, vacuity shapes, and
+  equivalence gates passed;
+- hybrid shadow: **37/37 IR, 24 legacy, 0 Unsupported, 0 Invariant**;
+- strict IR-only shadow: expected red on exactly 24 legacy bodies;
+- `check:linear-ir` has a pre-existing current-main ratchet failure
+  (`compiled 8 -> 6`, two `vec.set_length` and two string-builder demotions).
+  The identical result was reproduced in a clean detached `origin/main`
+  worktree at `f23ea5025e04ac`; this checkpoint does not refresh that unrelated
+  baseline.
+
 1. Retire `Animal_new` and `Dog_new` by making `_init` the sole source-body
    owner and `_new` an AST-free allocation wrapper; retain same-receiver
    `Animal_init` chaining and delete the obsolete direct constructor-body path.
 2. Retire closures and cross-owner calls as one family, then module
    initialization, then runtime/linear-memory helpers. Keep only one
-   overlapping production PR active.
+   overlapping production PR active. The class-member selector intentionally
+   leaves a member with a structural edge to a top-level free function direct
+   until that family can prepare both owners atomically.
 3. For each family, reduce the measured legacy count, pass hybrid plus strict
    shadow validation, add semantic/output-shape optimization parity, and delete
    the obsolete legacy implementation in the same PR when no consumers remain.
