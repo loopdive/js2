@@ -11,6 +11,7 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import type { JsTag } from "../../checker/oracle.js";
 import type { ValType } from "../../ir/types.js";
+import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 
@@ -40,6 +41,13 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   if (initialTag === "mixed") return false;
   const initialDomain = carrierDomain(initialTag);
   const scope = containingScope(decl);
+  // (#4131) An Annex B B.3.3 block/`if`/`case`-nested `function F` in this same
+  // var scope is a HIDDEN cross-domain assignment to `F`: B.3.3.1 step 3.f writes
+  // the function object into the existing var binding when the declaration is
+  // evaluated. No `F = …` BinaryExpression exists for the walk below to see, so
+  // without this the slot keeps the initializer's narrow representation
+  // (`var f = 123` → f64) and the write-back is unrepresentable.
+  if (initialDomain !== "function" && annexBExistingVarUpdateNames(scope).has(decl.name.text)) return true;
   let mixed = false;
 
   // (#4122) `"mixed"` is the oracle's answer for UNRESOLVABLE, not for "proven
