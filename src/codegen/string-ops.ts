@@ -1265,7 +1265,14 @@ export function compileTaggedTemplateExpression(
       const tdzFlaggedNested = nestedCaptures ? nestedCaptures.filter((c) => c.hasTdzFlag) : [];
       if (nestedCaptures) {
         for (const cap of nestedCaptures) {
-          fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+          // A recursive tagged-template call is emitted inside the lifted
+          // function, where `outerLocalIdx` belongs to the declaring fctx and
+          // is therefore out of range. Thread the lifted function's current
+          // capture parameter/cell instead. Calls from the declaring scope keep
+          // the established outer-slot path.
+          const captureLocalIdx =
+            fctx.name === tagName ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx) : cap.outerLocalIdx;
+          fctx.body.push({ op: "local.get", index: captureLocalIdx });
         }
         // #1205 Stage 3: after all value captures, push the boxed TDZ-flag refs.
         // Minimal replication of call-identifier.ts's cap-prepend (kept gated so

@@ -381,6 +381,26 @@ function lowerParamType(
       }
     }
   }
+  // Runtime eval publishes top-level script functions through an externref
+  // AOT-callable adapter. Structurally typed object parameters need the same
+  // representation-neutral carrier: an object literal arriving through that
+  // adapter is not nominally the declaration's WasmGC struct, even when it has
+  // the required fields. Keep compiler-owned reference families (native
+  // strings, vectors, promises, closures, and class instances) specialised;
+  // widening those unrelated references changed their ordinary in-module
+  // semantics merely because the source happened to mention eval.
+  const runtimeEvalParamStructName =
+    wasmType.kind === "ref" || wasmType.kind === "ref_null" ? ctx.typeIdxToStructName.get(wasmType.typeIdx) : undefined;
+  if (
+    ctx.runtimeEvalCallableBoundaryEnabled === true &&
+    ts.isSourceFile(stmt.parent) &&
+    ctx.topLevelFunctionNames.has(funcName) &&
+    runtimeEvalParamStructName !== undefined &&
+    ctx.structFields.has(runtimeEvalParamStructName) &&
+    !ctx.classTagMap.has(runtimeEvalParamStructName)
+  ) {
+    wasmType = { kind: "externref" };
+  }
   return wasmType;
 }
 

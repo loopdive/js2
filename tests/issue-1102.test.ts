@@ -58,6 +58,21 @@ async function runStandalone(src: string, inferModuleStrictArguments = true): Pr
   return (instance.exports as { test(): unknown }).test();
 }
 
+async function runHost(src: string): Promise<unknown> {
+  const result = await compile(src, {
+    fileName: "issue-1102-host-eval.ts",
+    skipSemanticDiagnostics: true,
+  });
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  expect(
+    WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).some((entry) => entry.name === "__extern_eval"),
+  ).toBe(false);
+  const imports = result.importObject as WebAssembly.Imports & { __setExports?: (exports: unknown) => void };
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  imports.__setExports?.(instance.exports);
+  return (instance.exports as { test(): unknown }).test();
+}
+
 describe("#1102 — acceptance criteria (standalone, Tier-0 AOT)", () => {
   it('AC1: eval("1 + 2") === 3', async () => {
     expect(await runStandalone(`export function test(): number { return eval("1 + 2"); }`)).toBe(3);
@@ -350,5 +365,37 @@ describe("#1102 — host mode: widened direct eval sees the caller scope", () =>
     const { instance } = await WebAssembly.instantiate(r.binary, io);
     io.__setExports?.(instance.exports);
     expect((instance.exports as { test(): number }).test()).toBe(9);
+  });
+
+  it("keeps an explicitly strict literal eval on the caller-scope splice", async () => {
+    expect(
+      await runHost(`
+        export function test(): number {
+          "use strict";
+          var y = 2;
+          var z = 3;
+          var result = 0;
+          eval("var x = y + z; result = x;");
+          return result;
+        }
+      `),
+    ).toBe(5);
+  });
+
+  it("creates a current-function var when eval shadows an outer capture", async () => {
+    expect(
+      await runHost(`
+        export function test(): number {
+          var outer = 0;
+          var observed = 0;
+          function inner(): void {
+            eval("var outer = 1");
+            observed = outer;
+          }
+          inner();
+          return observed * 10 + outer;
+        }
+      `),
+    ).toBe(10);
   });
 });

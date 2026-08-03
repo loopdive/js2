@@ -557,6 +557,12 @@ export interface FunctionContext {
   /** Map from variable name → ref cell info (for mutable closure captures) */
   boxedCaptures?: Map<string, { refCellTypeIdx: number; valType: ValType }>;
   /**
+   * Names this lifted nested function receives as leading capture parameters.
+   * A sibling-forwarding site must read these names through this function's
+   * localMap rather than reusing the declaring frame's outerLocalIdx.
+   */
+  liftedCaptureNames?: Set<string>;
+  /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
    * boxed-cell carrier; functions without this set remain byte-identical.

@@ -462,3 +462,90 @@ suspension happened before a fresh complete 101-file collision replay or full
 
 Generated Test262 reports and `benchmarks/results/runs/index.json` are not part
 of this checkpoint.
+
+### Merge-group repair checkpoint (2026-08-03)
+
+The suspended collision handoff above has now been executed against merge-group
+predecessor `ff5041e3` and repaired on PR #4013. The exact 38 locally
+reproducible predecessor-pass/candidate-fail Test262 paths are 38/38 passing.
+Across the complete 184-path stable non-timeout failure artifact, the repaired
+branch is 145 pass / 39 fail; all 39 remaining failures reproduce on the exact
+predecessor, leaving zero predecessor-pass/current-nonpass transitions.
+
+The repair keeps provider-only routing in standalone mode while restoring the
+established host literal compile-away boundary. It also closes the merge-group
+gaps in direct-eval activation shadowing, Annex-B existing-var updates, native
+async exception rejection, host callback argument-count isolation, and
+recursive tagged-template capture forwarding. The focused unit matrix is
+65/65 and typecheck passes. Generated Test262 reports and benchmark indexes
+remain excluded from the checkpoint.
+
+### Standalone merge-group follow-up (2026-08-03)
+
+The next merge-group candidate exposed a separate standalone boundary defect.
+Its 25,075 passes missed the 26,996 high-water floor by 1,921. A line-safe
+predecessor/candidate join split the pass losses into four concrete cohorts:
+
+- 1,877 illegal casts through `__call_fn_method_4` and 65 through
+  `__call_fn_method_2`, both reached from the runtime-eval AOT-callable adapter;
+- 100 deliberate refusal-provider `TypeError`s after semantically unsafe
+  literal-eval splices were declined (55 Annex B, 10 other primary strict-eval
+  cases, and 35 inherited-strict reruns); and
+- 29 in-process fixture-graph modules whose harness never attached the cached
+  `js2wasm:runtime-eval` provider namespace.
+
+The callable repair preserves the source-level argument count while turning
+omitted nullable reference formals into typed nulls before dispatch. It also
+makes reference-valued parameters representation-neutral for top-level script
+functions published through runtime eval, so a supplied object keeps its
+identity and properties instead of being cast to a nominal, unrelated WasmGC
+struct. Numeric/native scalar specialization and modules without the runtime-
+eval boundary remain unchanged.
+
+The Test262 fixture path now uses the same shared cached-provider selection as
+the fork worker and instantiates a fresh provider per fixture. A representative
+previously unlinkable module is 1/1 passing, a five-fixture sample has no
+missing-provider failures, the 24-file callable sample has zero illegal casts,
+the exact host regression replay remains 38/38, the focused callable/provider
+unit matrix is 28/28, and typecheck passes. The 100 refusal transfers remain
+intentional and are not hidden by weakening the semantic bails. Recovering the
+1,942 cast rows plus 29 fixture links projects 27,046 passes on the same merge-
+group population, 50 above its floor; the authoritative confirmation remains
+the next merge-group run.
+
+### Final #4013 collision checkpoint (2026-08-03)
+
+The authoritative replay replaces that projection. Merge-group run
+`30800239895` had 27,041 predecessor passes, 26,953 candidate passes, and a
+26,996 floor. Its exact 101 predecessor-pass/candidate-fail paths comprised 65
+primary records and 36 inherited-strict reruns. With the full provider selected
+through the real fork worker, the repaired branch now records **101 / 101
+passes**, with zero runtime failures, compile errors, or skips.
+
+The final repair has four bounded parts:
+
+- runtime-eval reference parameters widen only structurally typed object/
+  interface parameters; native strings, vectors, promises, closures, and class
+  instances keep their existing representations;
+- capturing sibling declarations are pre-registered before any sibling body is
+  compiled, and only explicit lifted captures are forwarded, so returned and
+  recursively referenced closures materialize the established callable carrier
+  without a null dereference;
+- full-provider CI uses one canary-verified uploaded cache artifact for every
+  standalone shard and fails loud when that artifact is absent, instead of
+  silently selecting the refusal tier in an authoritative comparison; and
+- append-only signed-shift opcodes close the two line-terminator direct-eval
+  rows that remained after the first 99/101 replay.
+
+The tagged-template TCO reproducer now reaches the same ordinary stack overflow
+as the merge-group predecessor rather than trapping on a null dereference. The
+focused Node/standalone/provider matrix is 81/81, the exact collision replay is
+101/101, the required full-provider cache canaries pass, and typecheck passes.
+No callable type, rec-group ABI, runtime-eval namespace, or result-envelope ABI
+was changed. Generated Test262 reports and cache artifacts remain outside the
+commit.
+
+The PR is ready for a fresh merge-group run. If it fails again, the next agent
+should diff the new candidate against its exact merge-group predecessor and
+work only newly introduced transitions; do not return authoritative standalone
+shards to the refusal provider or broaden the shared closure ABI.

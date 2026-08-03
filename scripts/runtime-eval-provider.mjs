@@ -595,6 +595,54 @@ export function readCachedRuntimeEvalProvider(cacheDir, key, pathOf = runtimeEva
   }
 }
 
+/**
+ * Select the cached provider tier for one Test262 process.
+ *
+ * Both the fork worker and the in-process fixture-graph lane must make the
+ * identical choice. Keeping cache keys, the opt-in full-provider switch, and
+ * the refusal fallback here prevents a fixture-only link path from silently
+ * drifting back to an unresolved `js2wasm:runtime-eval` import.
+ */
+export function selectCachedRuntimeEvalProvider() {
+  if (process.env.TEST262_DISABLE_RUNTIME_EVAL_PROVIDER === "1") {
+    return {
+      module: null,
+      message: "NONE (TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1) — eval-mentioning modules cannot link",
+    };
+  }
+  try {
+    const compilerHash = computeCompilerBundleHash();
+    const load = (source, pathOf) => {
+      const key = runtimeEvalProviderCacheKey(source, compilerHash);
+      const binary = readCachedRuntimeEvalProvider(defaultRuntimeEvalProviderCacheDir(), key, pathOf);
+      return { key, module: binary ? new WebAssembly.Module(binary) : null };
+    };
+    const full =
+      process.env.TEST262_FULL_RUNTIME_EVAL === "1"
+        ? load(buildRuntimeEvalProviderSource(), undefined)
+        : { key: "(not requested)", module: null };
+    if (full.module) {
+      return {
+        module: full.module,
+        message:
+          `INTERPRETER (key ${full.key}, TEST262_FULL_RUNTIME_EVAL=1) — authoritative CI-comparable ` +
+          `standalone tier (#2928 E7)`,
+      };
+    }
+    const refusal = load(buildRuntimeEvalRefusalProviderSource(), runtimeEvalRefusalCachePath);
+    return {
+      module: refusal.module,
+      message: refusal.module
+        ? `REFUSAL (key ${refusal.key}; interpreter ${full.key}) — fast local diagnostic only, NOT ` +
+          `CI-comparable: eval-mentioning modules instantiate and dynamic-code calls throw TypeError`
+        : `NONE — refusal provider missing (key ${refusal.key}); eval-mentioning standalone modules stay ` +
+          `unlinkable. Prebuild with: node scripts/build-runtime-eval-provider.mjs --refusal-only`,
+    };
+  } catch (err) {
+    return { module: null, message: `NONE — provider load failed: ${err?.message ?? err}` };
+  }
+}
+
 /** Atomically (tmp + rename) publish a provider binary into the cache. */
 export function writeCachedRuntimeEvalProvider(cacheDir, key, binary, pathOf = runtimeEvalProviderCachePath) {
   mkdirSync(cacheDir, { recursive: true });

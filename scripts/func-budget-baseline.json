@@ -145,7 +145,6 @@
     "src/codegen/statements/loops.ts::compileForStatement": 580,
     "src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration": 952,
     "src/codegen/statements/nested-declarations.ts::emitSetExtrasArgv": 336,
-    "src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations": 315,
     "src/codegen/statements/variables.ts::compileVariableStatement": 1080,
     "src/codegen/string-ops.ts::compileNativeStringMethodCall": 1125,
     "src/codegen/string-ops.ts::compileStringBinaryOp": 385,

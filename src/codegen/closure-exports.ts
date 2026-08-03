@@ -20,7 +20,7 @@ import {
   resolveClosureBaseWrapperTypeIdx,
 } from "./closures/transferred-native-proto.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
-import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "./any-helpers.js";
+import { ensureAnyToExternHelper, isAnyValue } from "./any-helpers.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
@@ -331,46 +331,6 @@ function externToClosureParamRef(paramType: ValType): Instr[] {
     ops.push({ op: "ref.cast_null", typeIdx: paramType.typeIdx });
   }
   return ops;
-}
-
-/**
- * Materialize an omitted dynamic-call argument in the callee's internal Wasm
- * representation. Static closure calls already pad this way; the generic
- * externref dispatcher must do the same after under-application widening.
- * `__argc` remains the raw/clamped call-site count, so defaults and
- * `arguments.length` can still distinguish omission from an explicit value.
- */
-function missingClosureParamInstrs(ctx: CodegenContext, paramType: ValType): Instr[] {
-  switch (paramType.kind) {
-    case "f64":
-      return [{ op: "f64.const", value: 0 }];
-    case "f32":
-      return [{ op: "f32.const", value: 0 }];
-    case "i32":
-    case "i8":
-    case "i16":
-      return [{ op: "i32.const", value: 0 }];
-    case "i64":
-      return [{ op: "i64.const", value: 0n }];
-    case "externref":
-    case "ref_extern":
-      return (undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]).map((instr) => ({ ...instr }));
-    case "ref_null":
-      return [{ op: "ref.null", typeIdx: paramType.typeIdx }];
-    case "ref":
-      // Keep the branch well-typed for the uncommon non-null internal ABI.
-      // This mirrors pushDefaultValue: a genuinely omitted non-null ref cannot
-      // be represented and therefore traps only if the callee actually uses
-      // that unsupported signature.
-      return [{ op: "ref.null", typeIdx: paramType.typeIdx }, { op: "ref.as_non_null" }];
-    case "eqref":
-    case "anyref":
-      return [{ op: "ref.null.eq" }];
-    case "funcref":
-      return [{ op: "ref.null.func" }];
-    default:
-      return [{ op: "i32.const", value: 0 }];
-  }
 }
 
 /**
@@ -820,28 +780,35 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
     const buildArgConversion = (argLocalIdx: number, formalIndex: number, paramType: ValType | undefined): Instr[] => {
-      const provided: Instr[] = [{ op: "local.get", index: argLocalIdx }];
+      const ops: Instr[] = [{ op: "local.get", index: argLocalIdx }];
       if (paramType) {
         if (paramType.kind === "f64") {
           const unboxIdx = ctx.funcMap.get("__unbox_number");
           if (unboxIdx !== undefined) {
-            provided.push({ op: "call", funcIdx: unboxIdx });
+            ops.push({ op: "call", funcIdx: unboxIdx });
           }
         } else if (paramType.kind === "i32") {
           const unboxIdx = ctx.funcMap.get("__unbox_number");
           if (unboxIdx !== undefined) {
-            provided.push({ op: "call", funcIdx: unboxIdx });
-            provided.push({ op: "i32.trunc_f64_s" });
+            ops.push({ op: "call", funcIdx: unboxIdx });
+            ops.push({ op: "i32.trunc_f64_s" });
           }
         } else if (needsExternToAnyForClosureParam(paramType)) {
           // See emitClosureCallExportN: a non-extern reference param (anyref /
           // WasmGC struct ref, e.g. a native-strings `string`) needs the host
           // externref lowered into the internal ref domain before `call_ref`.
           // Skipped in gc mode where string params are already externref.
-          provided.push(...externToClosureParamRef(paramType));
+          ops.push(...externToClosureParamRef(paramType));
         }
       }
-      if (!paramType) return provided;
+      // The widened dispatcher receives a real JS `undefined` carrier in each
+      // padded externref slot. That value cannot be `ref.cast` to a nullable
+      // closed struct even though the callee's internal representation for an
+      // omitted optional object is exactly `ref.null $T`. Preserve dynamic
+      // coercion for supplied arguments (notably numeric undefined -> NaN),
+      // but materialize omission in the nullable reference domain before the
+      // cast. `__argc` still contains the raw call-site count at this point.
+      if (paramType?.kind !== "ref_null") return ops;
       return [
         { op: "global.get", index: argcGlobalIdx },
         { op: "i32.const", value: formalIndex },
@@ -849,8 +816,8 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
         {
           op: "if",
           blockType: { kind: "val", type: paramType },
-          then: provided,
-          else: missingClosureParamInstrs(ctx, paramType),
+          then: ops,
+          else: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
         },
       ];
     };

@@ -49,8 +49,13 @@ loc-budget-allow:
   - src/codegen/expressions.ts
   - src/codegen/declarations.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/string-ops.ts
+  - scripts/runtime-eval-provider.mjs
+  - scripts/test262-worker.mjs
+  - tests/test262-shared.ts
   - src/interp/emitter.ts
   - src/codegen/expressions/eval-inline.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/index.ts::planIrOverlay
@@ -68,10 +73,14 @@ func-budget-allow:
   - src/codegen/expressions.ts::compileExpressionInner
   - src/codegen/expressions/assignment.ts::compileAssignment
   - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/string-ops.ts::compileTaggedTemplateExpression
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/declarations.ts::lowerParamType
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/index.ts::generateMultiModule
+  - scripts/runtime-eval-provider.mjs::selectCachedRuntimeEvalProvider
+  - tests/test262-shared.ts::runTest262Chunk
   - src/interp/loop.ts::run
 ---
 
@@ -914,3 +923,32 @@ generator compilations. Annex B is led by block-function initialization/update
 semantics. Those residuals stay assigned to #2929 and the corresponding AOT
 compiler issues; they do not invalidate the now-satisfied interpreter
 acceptance gate.
+
+## 2026-08-03 PR #4013 landing checkpoint
+
+The provider is now a shared CI artifact instead of a per-shard compile. A
+dedicated `runtime-eval-provider` job builds and canary-verifies the full
+Acorn+interpreter Wasm once, uploads the matching hidden cache entry, and every
+standalone Test262 shard downloads it and starts with
+`--require-full-cache`. Host-only merge groups retain a successful no-op job,
+so the new dependency cannot skip their shard matrix. The refusal provider
+remains available only as the explicitly non-comparable fast local diagnostic
+tier.
+
+The content-current provider cache entry is `ecbc2188bdc98bed`, 4,105,914
+bytes. It is zero-import and passes the parse/eval/new-Function canaries. This
+resolves the earlier per-shard provider-build blocker without changing the
+runtime-eval import namespace, result envelope, callable rec-group ABI, or
+ordered-initializer contract.
+
+PR #4013's merge-group failure yielded an exact 101-path
+predecessor-pass/candidate-fail collision set. Replaying that set through the
+authoritative full-provider fork-worker path now gives **101 pass / 0 fail / 0
+compile error / 0 skip**. The final two rows were line-terminator eval bodies
+using signed `<<` and `>>`; append-only `Shl`/`Shr` opcodes delegate their
+boxed operands to the same self-compiled runtime-op layer as arithmetic. The
+Node interpreter fixtures and the zero-import E2 self-compile canary are green.
+
+This is a landing/collision measurement, not a replacement for the 816-file
+MVP table above. Generated Test262 JSONL and cache artifacts are deliberately
+excluded from the source checkpoint.

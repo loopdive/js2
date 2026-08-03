@@ -98,10 +98,12 @@ export const Op = {
   DeleteProp: 40, //DeleteProp c    ; acc = delete acc[consts[c]]
   DeleteElem: 41, //DeleteElem r    ; acc = delete acc[regs[r]]
   DeleteName: 42, //DeleteName c    ; acc = delete <resolved consts[c]>
+  Shl: 43, //       Shl r           ; acc = regs[r] << acc
+  Shr: 44, //       Shr r           ; acc = regs[r] >> acc
 } as const;
 
 /** The number of distinct opcodes (0..OP_COUNT-1). */
-export const OP_COUNT = 43;
+export const OP_COUNT = 45;
 
 /** Private CallBuiltin ids used by #2929 lexical-environment mechanics. They
  * remain scalar exports instead of fields on the frozen `Builtin` object so
@@ -234,6 +236,8 @@ export const OP_INFO: OpInfo[] = [
   { name: "DeleteProp", form: OperandForm.ConstA }, // 40 (#2929)
   { name: "DeleteElem", form: OperandForm.RegA }, // 41 (#2929)
   { name: "DeleteName", form: OperandForm.ConstA }, // 42 (#2929)
+  { name: "Shl", form: OperandForm.RegA }, // 43 (#4013)
+  { name: "Shr", form: OperandForm.RegA }, // 44 (#4013)
 ];
 
 // ── Builtin ids (CallBuiltin operand `a`) ────────────────────────────────────

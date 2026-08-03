@@ -152,12 +152,12 @@ import {
   completePreparedIrIntegration,
   computePreparedInheritedIrFirstSkipUnitIds,
   finalizeR3PreparedOwnerPopulation,
-  prepareIrClassMethodBodies,
+  prepareIrClassMemberBodies,
   prepareIrFreeFunctionBodies,
   selectR2PreparedFreeFunctions,
   selectR3PreparedPromiseDelayFunctions,
-  selectPreparedClassMethodNames,
-  type PreparedIrClassMethodBodies,
+  selectPreparedClassMemberNames,
+  type PreparedIrClassMemberBodies,
   type PreparedIrFreeFunctionBodies,
 } from "./ir-prepared-free-functions.js";
 import type { FallbackCounts } from "./fallback-telemetry.js";
@@ -2332,7 +2332,10 @@ function planIrOverlay(
   // signatures but before the IR overlay is installed; mixing the two paths
   // would violate IR/legacy type-index parity. Keep the whole runtime-eval unit
   // on one backend until the typed IR owns this carrier explicitly.
-  if (sourceUsesRuntimeEvalBoundary(ast.sourceFile, ctx.oracle) || sourceProvidesRuntimeEvalBoundary(ast.sourceFile)) {
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    (sourceUsesRuntimeEvalBoundary(ast.sourceFile, ctx.oracle) || sourceProvidesRuntimeEvalBoundary(ast.sourceFile))
+  ) {
     const failure: IrPreparationFailure = {
       kind: "unsupported",
       code: "late-preparation-unsupported",
@@ -3147,7 +3150,8 @@ function isGlobalFunctionValueReference(node: ts.Node, oracle: TypeOracle): node
   const parent = node.parent;
   if (
     ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node) ||
-    (ts.isPropertyAccessExpression(parent) && parent.name === node)
+    ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      (parent.expression === node || (ts.isPropertyAccessExpression(parent) && parent.name === node)))
   ) {
     return false;
   }
@@ -3233,7 +3237,7 @@ function callUsesRuntimeEvalBoundary(node: ts.CallExpression | ts.NewExpression)
 interface IrFirstBodyRouting {
   readonly requestedSkipProjection?: ReturnType<typeof buildIrRequestedFunctionSkipProjection>;
   readonly preparedFreeFunctions?: PreparedIrFreeFunctionBodies;
-  readonly preparedClassMethods?: PreparedIrClassMethodBodies;
+  readonly preparedClassMembers?: PreparedIrClassMemberBodies;
   readonly preparedReport?: IrIntegrationReport;
   readonly preparedSelection?: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit">;
   readonly skipBodies?: ReadonlySet<string>;
@@ -3277,12 +3281,12 @@ function planIrFirstBodyRouting(
         overridesByUnitId: plan.overrideMapByUnitId,
       })
     : new Set<string>();
-  const preliminaryClassMethodNames = !hasLateFeaturePreparation
-    ? selectPreparedClassMethodNames(ctx, preliminarySelection, plan.identityPlan)
+  const preliminaryClassMemberNames = !hasLateFeaturePreparation
+    ? selectPreparedClassMemberNames(ctx, preliminarySelection, plan.identityPlan)
     : new Set<string>();
   // A class or module owner does not make an unrelated free-function component
   // direct-owned. Ordinary instance/static methods may enter the same sealed
-  // preparation transaction; constructors, accessors, and module init remain direct.
+  // preparation transaction; constructors and module init remain direct.
   // selectR2PreparedFreeFunctions closes candidates over exact local call
   // edges, so any callable edge that crosses into one of those owners removes
   // the complete affected free-function component before preparation.
@@ -3290,7 +3294,7 @@ function planIrFirstBodyRouting(
   const hasSuspendingAsyncComponent = plan.suspendingAsyncUnitIds.size > 0;
   const usePreparedRouting =
     preliminaryR2Names.size > 0 ||
-    preliminaryClassMethodNames.size > 0 ||
+    preliminaryClassMemberNames.size > 0 ||
     hasPromiseDelayComponent ||
     hasSuspendingAsyncComponent;
   let finalizedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit"> | undefined;
@@ -3323,16 +3327,16 @@ function planIrFirstBodyRouting(
       sourceFile,
       plan,
       selection: preparedSelection,
-      preliminaryClassMethodNames,
+      preliminaryClassMemberNames,
       preliminaryR2Names,
       promiseDelayNames,
       projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
     });
     preparedSelection = preparedPopulation.selection;
     finalizedSelection = preparedSelection;
-    const { classMethodNames: finalClassMethodNames, freeFunctionNames: preparedFreeFunctionNames } =
+    const { classMemberNames: finalClassMemberNames, freeFunctionNames: preparedFreeFunctionNames } =
       preparedPopulation;
-    if (preparedFreeFunctionNames.size === 0 && finalClassMethodNames.size === 0) {
+    if (preparedFreeFunctionNames.size === 0 && finalClassMemberNames.size === 0) {
       // Final-context Promise preparation may reject an occupied/mismatched
       // runtime ABI. Keep that owner on the established direct route.
     } else {
@@ -3350,17 +3354,17 @@ function planIrFirstBodyRouting(
         classShapes: plan.classShapes,
         loweringPlans: irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, freeFunctionSelection),
       });
-      const preparedClassMethods = prepareIrClassMethodBodies({
+      const preparedClassMembers = prepareIrClassMemberBodies({
         ctx,
         sourceFile,
-        selection: { classMembers: finalClassMethodNames },
+        selection: { classMembers: finalClassMemberNames },
         identityPlan: plan.identityPlan,
         overrideMap: plan.overrideMap,
         classShapes: plan.classShapes,
         projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
       });
-      const preparedReport = preparedClassMethods
-        ? mergeIrIntegrationReports(preparedFreeFunctions.report, preparedClassMethods.report)
+      const preparedReport = preparedClassMembers
+        ? mergeIrIntegrationReports(preparedFreeFunctions.report, preparedClassMembers.report)
         : preparedFreeFunctions.report;
       const requestedSkipUnitIds = computePreparedInheritedIrFirstSkipUnitIds(inheritedSkipInput);
       for (const entry of preparedFreeFunctions.requestedSkipProjection.entries) {
@@ -3373,7 +3377,7 @@ function planIrFirstBodyRouting(
       return {
         requestedSkipProjection,
         preparedFreeFunctions,
-        ...(preparedClassMethods ? { preparedClassMethods } : {}),
+        ...(preparedClassMembers ? { preparedClassMembers } : {}),
         preparedReport,
         preparedSelection,
         skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
@@ -3873,9 +3877,10 @@ export function generateModule(
     // `unreachable` placeholder are no longer ownership mechanisms for this
     // population.
     //
-    // Dependency-complete top-level ordinary methods now join this prepared
-    // route. Constructors, accessors, inherited methods, nested classes, and
-    // module init retain the post-direct overlay until their R3/R4 owners land.
+    // Dependency-complete top-level methods and accessors now join this
+    // prepared route, including inherited layouts. Constructors, nested
+    // classes, and module init retain the post-direct overlay until their
+    // R3/R4 owners land.
     // Both reports are joined before telemetry/auditing, so every terminal row
     // is reconciled once.
     // Selector-REJECTED functions are never claimed and still compile through
@@ -3892,7 +3897,7 @@ export function generateModule(
     let irPlan: IrOverlayPlan | null = null;
     let requestedSkipProjection: ReturnType<typeof buildIrRequestedFunctionSkipProjection> | undefined;
     let preparedFreeFunctions: PreparedIrFreeFunctionBodies | undefined;
-    let preparedClassMethods: PreparedIrClassMethodBodies | undefined;
+    let preparedClassMembers: PreparedIrClassMemberBodies | undefined;
     let preparedReport: IrIntegrationReport | undefined;
     let preparedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit"> | undefined;
     let irSkippedFunctionUnitIds: ReadonlySet<IrUnitId> = new Set();
@@ -3904,7 +3909,7 @@ export function generateModule(
       const routing = planIrFirstBodyRouting(ctx, ast.sourceFile, irPlan);
       requestedSkipProjection = routing.requestedSkipProjection;
       preparedFreeFunctions = routing.preparedFreeFunctions;
-      preparedClassMethods = routing.preparedClassMethods;
+      preparedClassMembers = routing.preparedClassMembers;
       preparedReport = routing.preparedReport;
       preparedSelection = routing.preparedSelection;
       irSkipBodies = routing.skipBodies;
@@ -3918,10 +3923,10 @@ export function generateModule(
       ast.sourceFile,
       irSkipBodies,
       irPreserveBodies,
-      preparedClassMethods
+      preparedClassMembers
         ? {
-            skipBodies: preparedClassMethods.skipBodies,
-            preserveSkippedBodies: preparedClassMethods.preserveBodies,
+            skipBodies: preparedClassMembers.skipBodies,
+            preserveSkippedBodies: preparedClassMembers.preserveBodies,
             skippedNames: actuallySkippedClassMembers,
           }
         : undefined,
@@ -3938,9 +3943,9 @@ export function generateModule(
       const correlated = correlateIrSkippedFunctionNames(skipProjection, actuallySkipped ?? []);
       irFirstSkipped = correlated.legacyNames;
       irSkippedFunctionUnitIds = correlated.unitIds;
-      if (preparedClassMethods) {
+      if (preparedClassMembers) {
         const correlatedClassMembers = correlateIrSkippedBodyNames(
-          preparedClassMethods.requestedSkipProjection,
+          preparedClassMembers.requestedSkipProjection,
           actuallySkippedClassMembers,
           "class member",
         );
@@ -3985,7 +3990,7 @@ export function generateModule(
         classShapes,
         ...(preparedReport ? { preparedReport } : {}),
         ...(preparedFreeFunctions ? { preparedLegacyNames: preparedFreeFunctions.completedBodies } : {}),
-        ...(preparedClassMethods ? { preparedClassMemberLegacyNames: preparedClassMethods.completedBodies } : {}),
+        ...(preparedClassMembers ? { preparedClassMemberLegacyNames: preparedClassMembers.completedBodies } : {}),
         projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
       });
       consumeIrOverlayReport(

@@ -6458,8 +6458,9 @@ function compileCallExpression(
   // a compile-time-constant string, parse it and splice the AST inline at the
   // call site.  This is the zero-runtime-cost path.  If the argument is not
   // a constant (or parsing fails), fall through to __extern_eval (#1006/#1164).
-  // Only direct eval may use the caller-scope splice. Indirect eval always
-  // routes through its realm-global runtime path, including literal sources.
+  // Direct eval may use the caller-scope splice. Indirect eval keeps the
+  // established literal-only compile-away surface; dynamic sources route
+  // through the realm-global runtime path.
   // In standalone/WASI mode the host import is unavailable and will trap at
   // instantiation time — callers that need eval must use a JS host.
   //
@@ -6483,7 +6484,7 @@ function compileCallExpression(
       // entire test set this targets.
       const rewritten = tryEvalAsRegExpPeephole(ctx, fctx, expr);
       if (rewritten !== undefined) return rewritten;
-      const inlined = evalKind === "direct" ? tryStaticEvalInline(ctx, fctx, expr, true) : undefined;
+      const inlined = tryStaticEvalInline(ctx, fctx, expr, evalKind === "direct");
       if (inlined !== undefined) return inlined;
       // #2928/#2929 — direct eval adds live caller cells to indirect eval's global environment.
       const runtimeEval =
