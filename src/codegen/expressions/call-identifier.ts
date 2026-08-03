@@ -1032,8 +1032,8 @@ export function compileIdentifierCall(
       isOutOfScopeNestedBinding = !visible;
     }
 
-    let isLocallyShadowed = isOutOfScopeNestedBinding;
-    if (!isLocallyShadowed && fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
+    let isLocallyShadowed = false;
+    if (fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
       const localCalleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
       const localCallSigs = localCalleeTsType?.getCallSignatures?.();
       if (localCallSigs && localCallSigs.length > 0) {
@@ -1059,6 +1059,20 @@ export function compileIdentifierCall(
     if (!closureInfo && !nestedBindingVisible) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
     }
+    // (#4133) An out-of-scope nested binding lets the closure/local paths above
+    // run FIRST — that is how the correctly-scoped callee is found (eslint's
+    // rule-tester reaching fast-deep-equal's `equal` rather than uri-js's
+    // factory-nested one). But if neither resolves it, fall through to the
+    // historical `funcMap` path rather than suppressing it.
+    //
+    // Suppressing unconditionally is what the first cut did, and it is unsound
+    // in the other direction: with nothing left to resolve, the call reaches
+    // the graceful `ref.null.extern` fallback below, so a call that used to
+    // reach SOME function now yields null and the next use traps. The
+    // merge_group caught exactly that — `null_deref` 156 -> 1357 across the
+    // Temporal suite. Reaching the wrong same-named function is a wrong answer;
+    // turning a resolvable call into an uncatchable trap is worse, and neither
+    // is a licence for the other, so this only ever PREFERS a better binding.
     if (closureInfo) {
       return compileClosureCall(ctx, fctx, expr, funcName, closureInfo);
     }
