@@ -320,33 +320,35 @@ The maintained honest standalone cohort selected by
 `declare-arguments|var-env-lower-lex` contains exactly 198 official Test262
 files. Restricting the pre-slice full-interpreter run `20260803-015311` to those
 same paths gives 52 pass / 102 fail / 44 compile errors. Candidate run
-`20260803-034357` gives **153 pass / 1 fail / 44 compile errors**: exactly
-**101 fail→pass**, 52 pass→pass, 44 compile-error→compile-error, zero
+`20260803-042954`, measured after reconciling the branch with current main,
+gives **154 pass / 0 fail / 44 compile errors**: exactly **102 fail→pass**,
+52 pass→pass, 44 compile-error→compile-error, zero
 pass→fail, and no missing rows. The full zero-import Acorn package canary and
-167 focused interpreter/environment/static-eval/Annex-B/provider tests also
-pass.
+the focused interpreter/environment/static-eval/Annex-B/provider tests also
+pass; the directly affected unit suites are 49/49 and the real Acorn package gate
+is 1/1.
 
-The sole runtime residual is
+The former sole runtime residual is now green:
 `arrow-fn-body-cntns-arguments-func-decl-arrow-func-declare-arguments-assign-incl-def-param-arrow-arguments.js`.
-Eval correctly creates the parameter-environment `arguments = "param"`, but a
-closure created in the parameter list resolves to the later function-body
-`function arguments(){}` binding. That is the remaining separate-parameter-
-environment closure-resolution seam. The 44 unchanged compile errors are the
-already-recorded method/generator invalid-Wasm and host-import failures, not
-regressions from declaration instantiation.
+Closure capture analysis recognizes a closure created directly
+inside a parameter initializer and prefers its live parameter-environment
+local over an eagerly registered same-named body function. Eval's
+parameter-environment `arguments = "param"` cell therefore remains visible to
+the default-parameter arrow while the later function-body
+`function arguments(){}` binding remains the body binding. The 44 unchanged
+compile errors are 36 method/generator invalid-Wasm cases and 8 generator host-
+import leaks, not regressions from declaration instantiation.
 
 ### Next-agent order
 
-1. Preserve the separate parameter environment for closures created by arrow
-   default initializers, starting with the one remaining 198-file cohort
-   failure above; do not alias its eval-created `arguments` cell to the later
-   function-body declaration.
+1. Close the 44 unchanged compile errors in the collision cohort: 36 invalid-
+   Wasm method/generator cases and 8 generator host-import leaks. Keep the
+   current 154 runtime passes as a no-regression floor.
 2. Finish Annex-B block-function initialization and update semantics. The
    largest residual clusters are missing function-valued outer updates,
    skipped-declaration initialization, and existing-global descriptor cases.
-3. Close mapped-arguments descriptor severing, `new.target`/`super`/method
-   context, and the 36 invalid-Wasm method/generator compile failures before
-   attempting the full differential checkbox.
+3. Close mapped-arguments descriptor severing and `new.target`/`super`/method
+   context before attempting the full differential checkbox.
 4. Continue the original issue scope with the object environment record for
    `with`, the jointly-owned #1355 MOP seam, and #2864 generator suspend/resume.
 
