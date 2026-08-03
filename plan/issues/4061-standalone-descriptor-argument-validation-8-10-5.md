@@ -1,10 +1,11 @@
 ---
 id: 4061
 title: "Descriptor-ARGUMENT validation in Object.create/defineProperties (§8.10.5) + §8.12.9 step 1 redefine-over-inherited — 31 files"
-status: ready
+status: in-progress
+assignee: ttraenkler/dev-4061-descriptor-args
 sprint: current
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-03
 priority: high
 horizon: s
 feasibility: medium
@@ -14,6 +15,118 @@ area: standalone
 language_feature: n/a
 goal: standalone-mode
 ---
+
+## Re-measurement 2026-08-03 (fresh baselines, upstream/main `14eaf9f87`)
+
+Baselines force-fetched immediately before measuring: host 48,368 entries,
+standalone 48,619 entries — both post-#4047.
+
+### Population, re-derived by SPEC STEP rather than by error signature
+
+Across `built-ins/Object/{create,defineProperties,defineProperty}` (2,083
+standalone entries, 1,392 pass) the signature "Expected a TypeError to be
+thrown but no exception was thrown at all" holds **64** rows. Reading every
+one of the 64 bodies' `description` field splits them cleanly:
+
+| Spec step | Files | Owner |
+| --- | ---: | --- |
+| §8.10.5 step 7.b — `get` present, not undefined, not callable | 5 | **#4061** |
+| §8.10.5 step 8.b — `set` present, not undefined, not callable | 6 | **#4061** |
+| §8.10.5 step 9.a — data + accessor fields both present | 4 | **#4061** |
+| §8.10.5 step 1 — descriptor is not an Object | 2 | **#4061** |
+| §8.12.9 step 1 — redefine over a non-configurable own property | 14 | **NOT #4061 — see below** |
+| §15.4.5.1 — Array `length` / array-index define | 33 | g-arraylen |
+
+31 + 33 = 64. The 31 reproduces the filed count **exactly**, but it is not the
+same 31 the issue describes: only **17** of it is descriptor-argument
+validation.
+
+### The §8.12.9 arm is a different defect — own-define shadowing a prototype
+
+The 14 §8.12.9-step-1 files are titled "…overrides an inherited …property",
+and that phrasing is load-bearing. Reduced against `14eaf9f87`, standalone:
+
+```ts
+var proto: any = {};
+Object.defineProperty(proto, "foo", { value: 12, configurable: true });
+var Ctor: any = function () {};
+Ctor.prototype = proto;
+var obj: any = new Ctor();
+Object.defineProperty(obj, "foo", { value: 11, configurable: false });
+// obj.foo === 12   obj.hasOwnProperty("foo") === false   proto.foo === 12
+```
+
+The FIRST define is a **silent no-op**: no own property is created, the read
+still resolves to the inherited value, and the prototype is not corrupted
+either — the define is simply lost. So the second define has no own
+non-configurable property to reject against, and the missing TypeError is a
+*symptom*. Control: with a plain `{}` receiver (no inherited `foo`) the same
+sequence throws correctly and `obj.foo === 11`.
+
+That is an own-property **store/visibility** defect — the unified own-property
+store's territory (S1′/S2/**S3 visibility**, #4010) — not descriptor-argument
+validation, and it must not be fixed from this issue. Split out; #4061 is
+scoped to the 17-file §8.10.5 arm.
+
+### Reconciliation of the stale-cited 43-row refusal — already done by #4047
+
+The refusal `Object.defineProperties unsupported descriptor shape in
+standalone mode (#1906)` was reconciled upstream on 2026-08-02 by
+`288742a1d` (#4047), before this issue was picked up. Its measurement over all
+952 `built-ins/Object/{defineProperties,create}` files found **zero** rows
+reaching either per-descriptor site; 100 % were refusals of the *receiver's*
+wasm representation, and the message named a descriptor problem only because
+of a mis-attributed 2026-07-13 harvest note.
+
+Fresh count today: **52** rows, every one carrying one of #4047's new
+site tags — 42 `[SITE-PROPS-BAG-NOT-AUTHORITATIVE]`, 10 `[SITE-O-NO-CARRIER]`.
+The bucket did not vanish and it did not shrink to 43→0; it is *larger* than at
+filing, which is the correct direction: #4047 kept the refusal loud for
+carrier-less receivers precisely because the applier's terminal arm is a
+lenient no-op, so letting them through would trade a loud refusal for a silent
+wrong answer. Neither residual tag is a descriptor-ARGUMENT problem;
+`SITE-PROPS-BAG-NOT-AUTHORITATIVE` is a store-visibility question and belongs
+with the same S3 work as the §8.12.9 arm above.
+
+**Verdict: nothing to remove and nothing to extend at the refusal site from
+this issue.** The stale citation is resolved; the residual is not ours.
+
+### Mechanism of the 17-file §8.10.5 arm
+
+`Object.create(proto, Properties)` has its **own** static descriptor expansion
+in `src/codegen/expressions/call-builtin-static.ts` (the `Object.create` block),
+entirely separate from `compileObjectDefineProperties`. Its fast-path gate
+admits any descriptor that is an object literal with statically ToBoolean-
+resolvable flags — and consults neither `isStaticDescWellFormed`
+(descriptor-shape.ts, #3991) nor the non-object-descriptor check that
+`Object.defineProperty` has had since #1460. So:
+
+- `{prop: {get: null}}` — admitted, `flags |= ACCESSOR`, then
+  `__defineProperty_value` called with a null value. No throw.
+- `{prop: {get: f, value: 1}}` — admitted with HAS_VALUE **and** ACCESSOR set.
+- `{prop: null}` — rejected by the fast-path gate, falls to the dynamic
+  applier `__obj_define_from_desc`, which deliberately treats a null/undefined
+  descriptor as a lenient empty-descriptor no-op. Its header states the
+  assumption behind that leniency: *"the call site already throws for a
+  statically-non-object literal"* — true of `Object.defineProperty`, false of
+  `Object.create`. Defines nothing, throws nothing.
+
+Fix, narrowest site:
+
+1. `descriptor-shape.ts` — export `isStaticallyNonObjectDescExpr` (moved from
+   `object-ops.ts`, where being module-private is why `Object.create` could not
+   use it) and `literalNullAccessorField`.
+2. `call-builtin-static.ts` — add `isStaticDescWellFormed` to the
+   `Object.create` fast-path gate, so ToPropertyDescriptor violations route to
+   the dynamic applier, which is the only path implementing the conflict and
+   callable checks at all.
+3. `call-builtin-static.ts` — in the dynamic-apply loop, emit the two throws
+   that applier structurally cannot: the non-object descriptor (it no-ops), and
+   a literal `get`/`set: null` (indistinguishable from the *legal*
+   `{get: undefined}` at the wasm boundary, #2106 — the same reason
+   `Object.defineProperty`/`defineProperties` already throw eagerly, #3116).
+   Emitted per key inside the loop, so earlier keys still apply first.
+
 # Descriptor-ARGUMENT validation in Object.create/defineProperties (§8.10.5) + §8.12.9 step 1 redefine-over-inherited — 31 files
 
 > Filed 2026-08-02 from a TaskList entry that had been carrying the full
