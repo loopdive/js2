@@ -3044,7 +3044,7 @@ export function tryStringLengthIteratorAndExternClassReads(
   // avoid allocating the transformed string. The ASCII proof accepts only a
   // const literal table with no writes/aliases/method calls anywhere in its
   // source file; any uncertainty retains the ordinary native helper.
-  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && propName === "length" && ts.isCallExpression(expr.expression)) {
+  if (propName === "length" && ts.isCallExpression(expr.expression)) {
     const call = expr.expression;
     const callee = call.expression;
     if (ts.isPropertyAccessExpression(callee)) {
@@ -3068,11 +3068,15 @@ export function tryStringLengthIteratorAndExternClassReads(
         // Preserve evaluation (including an OOB/null trap) even though the
         // derived result is uniform across every immutable table entry.
         const receiverType = compileExpression(ctx, fctx, callee.expression);
-        if (receiverType?.kind === "externref") {
-          coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+        if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+          if (receiverType?.kind === "externref") {
+            coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+          }
+          fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+          fctx.body.push({ op: "drop" });
+        } else if (receiverType) {
+          fctx.body.push({ op: "drop" });
         }
-        fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
-        fctx.body.push({ op: "drop" });
         fctx.body.push({ op: "i32.const", value: uniformDerivedLength });
         return { kind: "i32" };
       }
@@ -3087,12 +3091,17 @@ export function tryStringLengthIteratorAndExternClassReads(
         ts.isStringLiteralLike(call.arguments[1]!) &&
         call.arguments[0]!.text.length === call.arguments[1]!.text.length &&
         !call.arguments[1]!.text.includes("$");
-      if (asciiCaseLength || equalLiteralReplaceLength) {
+      const hostLengthIdx = ctx.jsStringImports.get("length");
+      if ((asciiCaseLength || equalLiteralReplaceLength) && (ctx.nativeStrings || hostLengthIdx !== undefined)) {
         const receiverType = compileExpression(ctx, fctx, callee.expression);
-        if (receiverType?.kind === "externref") {
-          coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+        if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+          if (receiverType?.kind === "externref") {
+            coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+          }
+          fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+        } else {
+          fctx.body.push({ op: "call", funcIdx: hostLengthIdx! });
         }
-        fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
         return { kind: "i32" };
       }
     }

@@ -46,7 +46,7 @@ function tryCompileUniformSplitLengthBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
-  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || !(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
+  if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
   if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
   const call = decl.initializer;
   if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "split") return false;
@@ -88,11 +88,15 @@ function tryCompileUniformSplitLengthBinding(
   // has no side effects, and no array identity/contents can be observed by the
   // proof above, so the scalar is a semantics-preserving replacement.
   const receiverType = compileExpression(ctx, fctx, receiver);
-  if (receiverType?.kind === "externref") {
-    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    if (receiverType?.kind === "externref") {
+      coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+    }
+    fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "drop" });
+  } else if (receiverType) {
+    fctx.body.push({ op: "drop" });
   }
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "drop" });
   fctx.body.push({ op: "i32.const", value: length });
   const localIdx = allocLocal(fctx, `__split_length_${decl.name.text}_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.set", index: localIdx });
@@ -225,14 +229,10 @@ function tryCompileDerivedSubstringBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
-  if (
-    !ctx.nativeStrings ||
-    ctx.nativeStrTypeIdx < 0 ||
-    ctx.nativeStrDataTypeIdx < 0 ||
-    !(stmt.declarationList.flags & ts.NodeFlags.Const)
-  ) {
+  if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) {
     return false;
   }
+  if (ctx.nativeStrings && (ctx.nativeStrTypeIdx < 0 || ctx.nativeStrDataTypeIdx < 0)) return false;
   if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
   const call = decl.initializer;
   if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "substring") return false;
@@ -271,8 +271,6 @@ function tryCompileDerivedSubstringBinding(
   visit(scope);
   if (!descriptorOnly) return false;
 
-  ensureNativeStringHelpers(ctx);
-  const flatLocal = allocLocal(fctx, `__substring_flat_${fctx.locals.length}`, flatStringType(ctx));
   const receiver = call.expression.expression;
   const receiverValues = staticConstStringValues(ctx, receiver);
   const startRange = staticIntegerRange(ctx, call.arguments[0]!);
@@ -286,6 +284,49 @@ function tryCompileDerivedSubstringBinding(
     endRange.min >= 0 &&
     startRange.max <= endRange.min &&
     endRange.max <= shortestReceiver;
+
+  const compileIndex = (arg: ts.Expression, local: number): void => {
+    if (!tryEmitStaticI32Expression(ctx, fctx, arg)) {
+      const type = compileExpression(ctx, fctx, arg, { kind: "i32" });
+      if (type && type.kind !== "i32") coerceType(ctx, fctx, type, { kind: "i32" });
+    }
+    fctx.body.push({ op: "local.set", index: local });
+  };
+  const startLocal = allocLocal(fctx, `__substring_start_${fctx.locals.length}`, { kind: "i32" });
+  const endLocal = allocLocal(fctx, `__substring_end_${fctx.locals.length}`, { kind: "i32" });
+
+  if (!ctx.nativeStrings) {
+    // A host string is opaque to Wasm, but a non-escaping, range-proven
+    // substring can still be represented as (receiver, offset, length). Its
+    // charCodeAt consumers use the wasm:js-string builtin against the original
+    // receiver at offset+index, avoiding substring allocation and length calls.
+    if (!orderedInBounds) return false;
+    const receiverLocal = allocLocal(fctx, `__substring_host_recv_${fctx.locals.length}`, { kind: "externref" });
+    const receiverType = compileExpression(ctx, fctx, receiver, { kind: "externref" });
+    if (receiverType && receiverType.kind !== "externref" && receiverType.kind !== "ref_extern") {
+      coerceType(ctx, fctx, receiverType, { kind: "externref" });
+    }
+    fctx.body.push({ op: "local.set", index: receiverLocal });
+    compileIndex(call.arguments[0]!, startLocal);
+    compileIndex(call.arguments[1]!, endLocal);
+    const lenLocal = allocLocal(fctx, `__substring_len_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: endLocal });
+    fctx.body.push({ op: "local.get", index: startLocal });
+    fctx.body.push({ op: "i32.sub" });
+    fctx.body.push({ op: "local.set", index: lenLocal });
+    (fctx.derivedSubstringReads ??= new Map()).set(symbol, {
+      kind: "host",
+      receiverLocal,
+      offLocal: startLocal,
+      lenLocal,
+      minLen: endRange!.min - startRange!.max,
+    });
+    emitTdzInit(ctx, fctx, decl.name.text);
+    return true;
+  }
+
+  ensureNativeStringHelpers(ctx);
+  const flatLocal = allocLocal(fctx, `__substring_flat_${fctx.locals.length}`, flatStringType(ctx));
   const receiverType = compileExpression(ctx, fctx, receiver);
   if (receiverType?.kind === "externref") {
     coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
@@ -306,15 +347,6 @@ function tryCompileDerivedSubstringBinding(
     fctx.body.push({ op: "local.set", index: sourceLenLocal });
   }
 
-  const startLocal = allocLocal(fctx, `__substring_start_${fctx.locals.length}`, { kind: "i32" });
-  const endLocal = allocLocal(fctx, `__substring_end_${fctx.locals.length}`, { kind: "i32" });
-  const compileIndex = (arg: ts.Expression, local: number): void => {
-    if (!tryEmitStaticI32Expression(ctx, fctx, arg)) {
-      const type = compileExpression(ctx, fctx, arg, { kind: "i32" });
-      if (type && type.kind !== "i32") coerceType(ctx, fctx, type, { kind: "i32" });
-    }
-    fctx.body.push({ op: "local.set", index: local });
-  };
   compileIndex(call.arguments[0]!, startLocal);
   compileIndex(call.arguments[1]!, endLocal);
 
@@ -383,7 +415,13 @@ function tryCompileDerivedSubstringBinding(
   fctx.body.push({ op: "i32.sub" });
   fctx.body.push({ op: "local.set", index: lenLocal });
   const minLen = orderedInBounds ? endRange!.min - startRange!.max : 0;
-  (fctx.derivedSubstringReads ??= new Map()).set(symbol, { dataLocal, offLocal, lenLocal, minLen });
+  (fctx.derivedSubstringReads ??= new Map()).set(symbol, {
+    kind: "native",
+    dataLocal,
+    offLocal,
+    lenLocal,
+    minLen,
+  });
   emitTdzInit(ctx, fctx, decl.name.text);
   return true;
 }
@@ -394,7 +432,7 @@ function tryCompileUniformIndexPresenceBinding(
   stmt: ts.VariableStatement,
   decl: ts.VariableDeclaration,
 ): boolean {
-  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || !(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
+  if (!(stmt.declarationList.flags & ts.NodeFlags.Const)) return false;
   if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isCallExpression(decl.initializer)) return false;
   const call = decl.initializer;
   if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "indexOf") return false;
@@ -434,11 +472,15 @@ function tryCompileUniformIndexPresenceBinding(
   if (!signOnly) return false;
 
   const receiverType = compileExpression(ctx, fctx, call.expression.expression);
-  if (receiverType?.kind === "externref") {
-    coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+    if (receiverType?.kind === "externref") {
+      coerceType(ctx, fctx, receiverType, { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx });
+    }
+    fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "drop" });
+  } else if (receiverType) {
+    fctx.body.push({ op: "drop" });
   }
-  fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "drop" });
   const existing = fctx.localMap.get(decl.name.text);
   const localIdx = existing ?? allocLocal(fctx, decl.name.text, { kind: "f64" });
   const localType = getLocalType(fctx, localIdx) ?? { kind: "f64" as const };

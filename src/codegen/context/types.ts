@@ -750,7 +750,11 @@ export interface FunctionContext {
    */
   derivedStringArrayLengthLocals?: Map<ts.Symbol, number>;
   /** Scalar descriptors for const substring results with no identity escape. */
-  derivedSubstringReads?: Map<ts.Symbol, { dataLocal: number; offLocal: number; lenLocal: number; minLen: number }>;
+  derivedSubstringReads?: Map<
+    ts.Symbol,
+    | { kind: "native"; dataLocal: number; offLocal: number; lenLocal: number; minLen: number }
+    | { kind: "host"; receiverLocal: number; offLocal: number; lenLocal: number; minLen: number }
+  >;
   /**
    * #2682: per-loop proofs for the canonical string-read hot loop
    * `for (let i = 0; i < recv.length; i++) … recv.charCodeAt(i) …`.

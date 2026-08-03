@@ -520,7 +520,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     indexArgRep: "f64" | "i32";
     padOmitted: "host" | "native-slice-len" | "native-substring" | "charcode-zero";
   } | null;
-  /** Native substring locals are cheaper through legacy's direct flat read. */
+  /** Non-escaping substring locals are cheaper through legacy's scalar descriptor read. */
   preferLegacyFlatSubstringCharCodeAt?(receiver: ts.Expression): boolean;
   /**
    * (#2856) Resolve an extern-class member through the legacy inheritance
@@ -6628,11 +6628,11 @@ function lowerStringMethodCall(
     if (expectedHost.kind === "f64") {
       // Index-style arg. Lower as f64, then truncate to i32 when the plan's
       // target signature takes i32 indices (the native helpers).
-      const f64Val = lowerExpr(args[i]!, cx, irVal({ kind: "f64" }));
+      const numeric = lowerExpr(args[i]!, cx, irVal({ kind: "f64" }));
       argVal =
         plan.indexArgRep === "i32"
-          ? cx.builder.emitUnary("i32.trunc_sat_f64_s", f64Val, irVal({ kind: "i32" }))
-          : f64Val;
+          ? cx.builder.emitUnary("i32.trunc_sat_f64_s", numeric, irVal({ kind: "i32" }))
+          : numeric;
     } else if (expectedHost.kind === "externref") {
       // The legacy host `string_indexOf` ABI carries its optional fromIndex
       // as a boxed externref even though the source argument is numeric.
