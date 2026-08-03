@@ -24,7 +24,7 @@ import {
   methodBodyRefsShadowedOuterLocal,
 } from "../closures.js";
 import { hasStaticModifier } from "../ast-modifiers.js"; // (#3132 S2) method-drive pre-pass gates
-import { bodyUsesArguments } from "../helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
 import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
 import {
@@ -1090,7 +1090,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       const methodExclusion =
         ts.isMethodDeclaration(node) &&
         (genBodyReferencesSuper(node.body) ||
-          bodyUsesArguments(node.body) ||
+          bodyNeedsArgumentsObject(node.body) ||
           (hasStaticModifier(node) && genBodyReferencesThis(node.body)) ||
           // Shadowed-outer-local shape: the capture promotion mis-binds the
           // method body vs sibling closures (pre-existing bug) — keep the

@@ -44,7 +44,7 @@ import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-i
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
@@ -3114,7 +3114,7 @@ export function compileObjectLiteralForStruct(
         // literal sharing the method name collides on the stem and keeps the
         // legacy buffer below.
         !genBodyReferencesSuper(prop.body) &&
-        !bodyUsesArguments(prop.body) &&
+        !bodyNeedsArgumentsObject(prop.body) &&
         isAsyncGenDriveCandidate(ctx, prop)
       ) {
         emitAsyncGenerator(ctx, methodFctx, prop);

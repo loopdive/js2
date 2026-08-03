@@ -237,6 +237,55 @@ describe("#1102 — soundness guards (folds that MUST NOT happen)", () => {
     ).toBe(11);
   });
 
+  it("reads an object-literal method after direct eval reifies the receiver binding", async () => {
+    expect(
+      await runStandalone(
+        `function invoke(fn: () => void): number {
+        try { fn(); }
+        catch { return 1; }
+        return 0;
+      }
+      export function test(): number {
+        const object = { method(value = eval("var arguments")): void {} };
+        return invoke(object.method);
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("keeps a generator function expression host-free when arguments is only a body binding", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        const generator = function* (value = eval("var arguments")): Generator<void> {
+          let arguments;
+        };
+        try { generator(); }
+        catch (error) { return error instanceof SyntaxError ? 1 : 2; }
+        return 0;
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
+  it("keeps an async generator method host-free when arguments is only a body binding", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number {
+        const object = { async *method(value = eval("var arguments")): AsyncGenerator<void> {
+          var arguments;
+        } };
+        try { object.method(); }
+        catch (error) { return error instanceof SyntaxError ? 1 : 2; }
+        return 0;
+      }`,
+        false,
+      ),
+    ).toBe(1);
+  });
+
   it("let binding does not fold (reassignable) → dynamic path throws catchably", async () => {
     expect(
       await runStandalone(
