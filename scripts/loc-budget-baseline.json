@@ -1,7 +1,7 @@
 {
-  "generated": "2026-08-02",
+  "generated": "2026-08-03",
   "threshold": 1500,
-  "totalCeiling": 532769,
+  "totalCeiling": 533915,
   "files": {
     "src/codegen-linear/index.ts": 5614,
     "src/codegen-linear/runtime.ts": 4306,
@@ -40,7 +40,7 @@
     "src/codegen/extern-declarations.ts": 1650,
     "src/codegen/fnctor-escape-gate.ts": 1709,
     "src/codegen/generators-native.ts": 4197,
-    "src/codegen/index.ts": 9105,
+    "src/codegen/index.ts": 9099,
     "src/codegen/iterator-native.ts": 3056,
     "src/codegen/json-codec-native.ts": 3657,
     "src/codegen/literals.ts": 4756,
@@ -73,13 +73,13 @@
     "src/compiler/early-errors/node-checks.ts": 1876,
     "src/emit/binary.ts": 2006,
     "src/ir/backend/porffor/assembler.ts": 1516,
-    "src/ir/builder.ts": 1875,
-    "src/ir/from-ast.ts": 10832,
-    "src/ir/integration.ts": 6525,
+    "src/ir/builder.ts": 1874,
+    "src/ir/from-ast.ts": 10802,
+    "src/ir/integration.ts": 6432,
     "src/ir/lower.ts": 4074,
     "src/ir/module-bindings.ts": 2183,
     "src/ir/nodes.ts": 3398,
-    "src/ir/select.ts": 7657,
+    "src/ir/select.ts": 7564,
     "src/ir/verify.ts": 1792,
     "src/runtime.ts": 16231
   }

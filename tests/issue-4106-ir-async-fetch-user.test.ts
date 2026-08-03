@@ -229,13 +229,9 @@ describe("#4106 IR single-await async producer", () => {
     );
     expect(abiMismatch.success, abiMismatch.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(WebAssembly.validate(abiMismatch.binary)).toBe(true);
-    expect(abiMismatch.irPostClaimErrors ?? []).toEqual([
-      expect.objectContaining({
-        func: "fetchFlag",
-        kind: "build",
-        message: expect.stringContaining("async-plan producer could not split"),
-      }),
-    ]);
+    // The final async fixed point rejects this ABI before the IR owner is
+    // claimed, so it stays on the direct route without a post-claim failure.
+    expect(abiMismatch.irPostClaimErrors ?? []).toEqual([]);
     expect(abiMismatch.irFirstSkipped ?? []).not.toContain("fetchFlag");
     expect((abiMismatch.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchFlag")).toMatchObject({
       legacyBodyEmitted: true,

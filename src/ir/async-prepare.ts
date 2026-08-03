@@ -8,8 +8,10 @@ import { createDerivedIrUnitId, type IrDerivedUnitProvenance } from "./identity.
 import {
   asBlockId,
   asValueId,
+  forEachInstrDeep,
   irTypeEquals,
   irVal,
+  mapNestedBuffers,
   type IrFunction,
   type IrInstr,
   type IrType,
@@ -70,13 +72,41 @@ function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
   return types;
 }
 
-function maxValueId(params: IrFunction["params"], instrs: readonly IrInstr[], returned: IrValueId): number {
-  let maximum = Number(returned);
-  for (const param of params) maximum = Math.max(maximum, Number(param.value));
+function usedSlotIndices(instrs: readonly IrInstr[]): ReadonlySet<number> {
+  const used = new Set<number>();
   for (const instr of instrs) {
-    if (instr.result !== null) maximum = Math.max(maximum, Number(instr.result));
+    forEachInstrDeep(instr, (nested) => {
+      if (nested.kind === "slot.read" || nested.kind === "slot.write") used.add(nested.slotIndex);
+    });
   }
-  return maximum;
+  return used;
+}
+
+function remapUsedSlots(
+  fn: IrFunction,
+  instrs: readonly IrInstr[],
+  used = usedSlotIndices(instrs),
+): { readonly instrs: readonly IrInstr[]; readonly slots?: IrFunction["slots"] } {
+  if (used.size === 0) return { instrs };
+  const oldIndices = [...used].sort((left, right) => left - right);
+  const remap = new Map(oldIndices.map((oldIndex, newIndex) => [oldIndex, newIndex] as const));
+  const slots = oldIndices.map((oldIndex, newIndex) => {
+    const slot = fn.slots?.[oldIndex];
+    if (!slot || slot.index !== oldIndex) {
+      throw new Error(`IR async function ${fn.name} lost slot ${oldIndex} while splitting its suspension`);
+    }
+    return { ...slot, index: newIndex };
+  });
+  const mapInstr = (instr: IrInstr): IrInstr => {
+    const nested = mapNestedBuffers(instr, (buffer) => buffer.map(mapInstr));
+    if (nested.kind !== "slot.read" && nested.kind !== "slot.write") return nested;
+    const slotIndex = remap.get(nested.slotIndex);
+    if (slotIndex === undefined) {
+      throw new Error(`IR async function ${fn.name} could not remap slot ${nested.slotIndex}`);
+    }
+    return { ...nested, slotIndex };
+  };
+  return { instrs: instrs.map(mapInstr), slots };
 }
 
 /**
@@ -115,7 +145,17 @@ export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwai
   const role = "ir-async-state" as const;
   const stateUnitId = createDerivedIrUnitId({ parentId: fn.unitId, role, ordinal: 0 });
   const stateName = `${fn.name}__ir_async_state_0`;
-  const prefix = block.instrs.slice(0, awaitIndex);
+  const prefixInstrs = block.instrs.slice(0, awaitIndex);
+  const suffixInstrs = block.instrs.slice(awaitIndex + 1);
+  const prefixSlots = usedSlotIndices(prefixInstrs);
+  const suffixSlots = usedSlotIndices(suffixInstrs);
+  if ([...prefixSlots].some((slotIndex) => suffixSlots.has(slotIndex))) {
+    // The first prepared frame contract has no spills. Independently reject a
+    // mutable local whose slot would otherwise be cloned into unrelated entry
+    // and continuation helpers and silently lose its pre-await value.
+    return null;
+  }
+  const prefix = remapUsedSlots(fn, prefixInstrs, prefixSlots);
   const entryFunction: IrFunction = {
     unitId: stateUnitId,
     name: stateName,
@@ -126,19 +166,20 @@ export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwai
         id: asBlockId(0),
         blockArgs: [],
         blockArgTypes: [],
-        instrs: prefix,
+        instrs: prefix.instrs,
         terminator: { kind: "return", values: [awaited.operand] },
       },
     ],
     exported: false,
-    valueCount: maxValueId(fn.params, prefix, awaited.operand) + 1,
+    valueCount: fn.valueCount,
+    ...(prefix.slots ? { slots: prefix.slots } : {}),
     funcKind: "regular",
   };
 
-  const suffix = block.instrs.slice(awaitIndex + 1);
+  const suffix = remapUsedSlots(fn, suffixInstrs, suffixSlots);
   const returned = block.terminator.values[0]!;
   const fulfillmentType = fn.resultTypes[0]!;
-  const carrierUnbox = suffix.length === 1 ? suffix[0] : undefined;
+  const carrierUnbox = suffix.instrs.length === 1 ? suffix.instrs[0] : undefined;
   const elidesNumericCarrierRoundTrip =
     carrierUnbox?.kind === "call" &&
     carrierUnbox.target.name === "__unbox_number" &&
@@ -151,7 +192,7 @@ export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwai
     carrierUnbox.resultType !== null &&
     irTypeEquals(carrierUnbox.resultType, fulfillmentType);
   const directIdentity =
-    suffix.length === 0 && returned === awaited.result && irTypeEquals(awaited.resultType, fulfillmentType);
+    suffix.instrs.length === 0 && returned === awaited.result && irTypeEquals(awaited.resultType, fulfillmentType);
   const identityContinuation = directIdentity || elidesNumericCarrierRoundTrip;
   // The frame carrier delivers an externref, but the canonical Promise ABI
   // already represents its fulfillment as T. Avoid the direct backend's
@@ -172,12 +213,13 @@ export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwai
             id: asBlockId(0),
             blockArgs: [],
             blockArgTypes: [],
-            instrs: suffix,
+            instrs: suffix.instrs,
             terminator: { kind: "return", values: [returned] },
           },
         ],
         exported: false,
-        valueCount: maxValueId([{ name: "__resumed", type: resumedType, value: awaited.result }], suffix, returned) + 1,
+        valueCount: fn.valueCount,
+        ...(suffix.slots ? { slots: suffix.slots } : {}),
         funcKind: "regular",
       }
     : null;
@@ -243,6 +285,16 @@ export function prepareSingleAwaitIrFunction(fn: IrFunction): PreparedSingleAwai
   return {
     main: {
       ...fn,
+      blocks: [
+        {
+          id: block.id,
+          blockArgs: [],
+          blockArgTypes: [],
+          instrs: [],
+          terminator: { kind: "unreachable" },
+        },
+      ],
+      slots: undefined,
       asyncPlan,
     },
     stateFunctions: continuationFunction ? [entryFunction, continuationFunction] : [entryFunction],

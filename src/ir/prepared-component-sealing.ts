@@ -81,6 +81,7 @@ function planBlockingCallableImports(
   catalog: ReadonlyMap<string, Import>,
 ): boolean {
   const selected = new Set<Import>();
+  const providers = ctx.programAbiCallableProviders;
   for (const component of report.components) {
     const unresolvedImports = new Map(
       component.externalCallables.flatMap((dependency) => {
@@ -89,19 +90,25 @@ function planBlockingCallableImports(
         return imported ? ([[dependency.structuralReferenceKey, imported]] as const) : [];
       }),
     );
-    if (
-      unresolvedImports.size === 0 ||
-      component.failures.length === 0 ||
-      !component.failures.every(
-        (failure) =>
+    const allFailuresArePlannableCallables =
+      component.failures.length > 0 &&
+      component.failures.every((failure) => {
+        const key = failure.structuralReferenceKey;
+        return (
           failure.code === "unplanned-abi-binding" &&
-          failure.structuralReferenceKey !== undefined &&
-          unresolvedImports.has(failure.structuralReferenceKey),
-      )
-    ) {
+          key !== undefined &&
+          (unresolvedImports.has(key) || providers?.importsForPreparedProviders(new Set([key])) !== undefined)
+        );
+      });
+    if (!allFailuresArePlannableCallables) {
       continue;
     }
     for (const imported of unresolvedImports.values()) selected.add(imported);
+    for (const failure of component.failures) {
+      const key = failure.structuralReferenceKey;
+      if (!key) continue;
+      for (const imported of providers?.importsForPreparedProviders(new Set([key])) ?? []) selected.add(imported);
+    }
   }
   if (selected.size === 0) return false;
   const registry = ctx.programAbiCallableImports;

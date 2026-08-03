@@ -2,6 +2,7 @@
 
 import { irTypeBindingKey } from "./abi-bindings.js";
 import {
+  forEachInstrDeep,
   type IrClosureSignature,
   type IrFunction,
   type IrInstr,
@@ -14,6 +15,8 @@ import {
 export interface IrVecLayoutAttachment {
   readonly function: IrFunction;
   readonly usesVec: boolean;
+  /** Backend-side evidence for logical vector types retained in IrAsyncPlan. */
+  readonly asyncPlanLayouts: ReadonlyMap<IrType, IrVecLayoutRef>;
 }
 
 function mapArray<T>(values: readonly T[], map: (value: T) => T): readonly T[] {
@@ -203,5 +206,83 @@ export function attachIrVecLayouts(
           blocks,
           ...(closureSubtype === undefined ? {} : { closureSubtype }),
         };
-  return Object.freeze({ function: mapped, usesVec });
+
+  // IrAsyncPlan stays canonical and target-neutral. Resolve every type site
+  // against the selected layout only to publish backend-side Program ABI
+  // evidence; never write the layout refs into the semantic plan or its hash.
+  const asyncPlanLayouts = new Map<IrType, IrVecLayoutRef>();
+  const seenAsyncTypes = new Set<IrType>();
+  const collectAsyncType = (type: IrType): void => {
+    if (seenAsyncTypes.has(type)) return;
+    seenAsyncTypes.add(type);
+    if (type.kind === "vec") {
+      const prepared = mapType(type);
+      if (prepared.kind !== "vec" || !prepared.layout) {
+        throw new Error("IR async vec type has no prepared backend layout evidence");
+      }
+      asyncPlanLayouts.set(type, prepared.layout);
+      collectAsyncType(type.elementType);
+      return;
+    }
+    switch (type.kind) {
+      case "object":
+        for (const field of type.shape.fields) collectAsyncType(field.type);
+        return;
+      case "closure":
+      case "callable":
+        for (const param of type.signature.params) collectAsyncType(param);
+        if (type.signature.returnType) collectAsyncType(type.signature.returnType);
+        return;
+      case "union":
+        for (const member of type.members) collectAsyncType(member);
+        return;
+      case "boxed":
+        collectAsyncType(type.inner);
+        return;
+      case "val":
+      case "string":
+      case "class":
+      case "extern":
+      case "dynamic":
+        return;
+    }
+  };
+  const collectAsyncInstr = (instr: IrInstr): void => {
+    forEachInstrDeep(instr, (nested) => {
+      if (nested.resultType) collectAsyncType(nested.resultType);
+      switch (nested.kind) {
+        case "const":
+          if (nested.value.kind === "null") collectAsyncType(nested.value.ty);
+          return;
+        case "box":
+          collectAsyncType(nested.toType);
+          return;
+        case "object.new":
+          for (const field of nested.shape.fields) collectAsyncType(field.type);
+          return;
+        case "closure.new":
+          for (const param of nested.signature.params) collectAsyncType(param);
+          if (nested.signature.returnType) collectAsyncType(nested.signature.returnType);
+          for (const capture of nested.captureFieldTypes) collectAsyncType(capture);
+          return;
+        case "vec.new_fixed":
+        case "forof.vec":
+          collectAsyncType(nested.elementType);
+          return;
+        default:
+          return;
+      }
+    });
+  };
+  if (fn.asyncPlan) {
+    if (fn.asyncPlan.abi.fulfillmentType) collectAsyncType(fn.asyncPlan.abi.fulfillmentType);
+    for (const value of fn.asyncPlan.params) collectAsyncType(value.type);
+    for (const value of fn.asyncPlan.values) collectAsyncType(value.type);
+    for (const spill of fn.asyncPlan.spills) collectAsyncType(spill.type);
+    for (const state of fn.asyncPlan.states) {
+      if (state.resume) collectAsyncType(state.resume.type);
+      for (const instr of state.body) collectAsyncInstr(instr);
+    }
+  }
+  return Object.freeze({ function: mapped, usesVec, asyncPlanLayouts });
 }

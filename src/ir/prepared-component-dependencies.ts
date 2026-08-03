@@ -13,6 +13,7 @@ import {
   type IrType,
   type IrTypeRef,
   type IrValueId,
+  type IrVecLayoutRef,
 } from "./nodes.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiIntent, ProgramAbiPlanEntry } from "./program-abi.js";
 
@@ -506,6 +507,88 @@ function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
   return types;
 }
 
+function reachableAsyncPlanVecTypes(fn: IrFunction): ReadonlySet<IrType> {
+  const vectors = new Set<IrType>();
+  const seen = new Set<IrType>();
+  const collectType = (type: IrType): void => {
+    if (seen.has(type)) return;
+    seen.add(type);
+    switch (type.kind) {
+      case "vec":
+        vectors.add(type);
+        collectType(type.elementType);
+        return;
+      case "object":
+        for (const field of type.shape.fields) collectType(field.type);
+        return;
+      case "closure":
+      case "callable":
+        for (const param of type.signature.params) collectType(param);
+        if (type.signature.returnType) collectType(type.signature.returnType);
+        return;
+      case "union":
+        for (const member of type.members) collectType(member);
+        return;
+      case "boxed":
+        collectType(type.inner);
+        return;
+      case "val":
+      case "string":
+      case "class":
+      case "extern":
+      case "dynamic":
+        return;
+    }
+  };
+  const collectInstr = (instr: IrInstr): void => {
+    forEachInstrDeep(instr, (nested) => {
+      if (nested.resultType) collectType(nested.resultType);
+      switch (nested.kind) {
+        case "const":
+          if (nested.value.kind === "null") collectType(nested.value.ty);
+          return;
+        case "box":
+          collectType(nested.toType);
+          return;
+        case "object.new":
+          for (const field of nested.shape.fields) collectType(field.type);
+          return;
+        case "closure.new":
+          for (const param of nested.signature.params) collectType(param);
+          if (nested.signature.returnType) collectType(nested.signature.returnType);
+          for (const capture of nested.captureFieldTypes) collectType(capture);
+          return;
+        case "vec.new_fixed":
+        case "forof.vec":
+          collectType(nested.elementType);
+          return;
+        default:
+          return;
+      }
+    });
+  };
+  const plan = fn.asyncPlan;
+  if (!plan) return vectors;
+  if (plan.abi.fulfillmentType) collectType(plan.abi.fulfillmentType);
+  for (const value of plan.params) collectType(value.type);
+  for (const value of plan.values) collectType(value.type);
+  for (const spill of plan.spills) collectType(spill.type);
+  for (const state of plan.states) {
+    if (state.resume) collectType(state.resume.type);
+    for (const instr of state.body) collectInstr(instr);
+  }
+  return vectors;
+}
+
+function samePreparedVecLayout(left: IrVecLayoutRef, right: IrVecLayoutRef): boolean {
+  return (
+    irTypeBindingKey(left.carrierType.binding) === irTypeBindingKey(right.carrierType.binding) &&
+    irTypeBindingKey(left.dataType.binding) === irTypeBindingKey(right.dataType.binding) &&
+    left.lengthFieldIndex === right.lengthFieldIndex &&
+    left.dataFieldIndex === right.dataFieldIndex
+  );
+}
+
 function implicitSupportRequirement(instr: IrInstr, hasPreparedClosureSupport = false): string | null {
   switch (instr.kind) {
     case "binary":
@@ -849,6 +932,68 @@ function collectFunctionEvidence(
   const classes = new Map<IrClassId, IrClassShape>();
   const seenTypes = new Set<IrType>();
   const seenImplicitTypes = new Set<IrType>();
+  const reachableAsyncVectors = reachableAsyncPlanVecTypes(fn);
+  const fulfilledAsyncVectors = new Set(
+    (fn.asyncPlan?.states ?? []).flatMap((state) =>
+      state.resume?.source === "fulfilled" && state.resume.type.kind === "vec" ? [state.resume.type] : [],
+    ),
+  );
+  const preparedAsyncLayouts = new Map<IrType, IrVecLayoutRef>();
+  for (const entry of fn.asyncRuntime?.typeLayouts ?? []) {
+    if (entry.logicalType.kind !== "vec") {
+      addFailure(evidence, {
+        code: "implicit-support-reference-unavailable",
+        ownerUnitId: terminalOwnerUnitId,
+        detail: `prepared async layout is attached to non-vector IR type ${entry.logicalType.kind}`,
+      });
+      continue;
+    }
+    if (!reachableAsyncVectors.has(entry.logicalType)) {
+      addFailure(evidence, {
+        code: "implicit-support-reference-unavailable",
+        ownerUnitId: terminalOwnerUnitId,
+        detail: "prepared async vec layout is dangling from the exact final async-plan type objects",
+      });
+      continue;
+    }
+    if (preparedAsyncLayouts.has(entry.logicalType)) {
+      addFailure(evidence, {
+        code: "implicit-support-reference-unavailable",
+        ownerUnitId: terminalOwnerUnitId,
+        detail: "prepared async vec type has duplicate backend layout sidecars",
+      });
+      continue;
+    }
+    if (entry.logicalType.layout && !samePreparedVecLayout(entry.logicalType.layout, entry.layout)) {
+      addFailure(evidence, {
+        code: "implicit-support-reference-unavailable",
+        ownerUnitId: terminalOwnerUnitId,
+        detail: "prepared async vec sidecar disagrees with the logical type's existing layout",
+      });
+      continue;
+    }
+    preparedAsyncLayouts.set(entry.logicalType, entry.layout);
+    const needsFromExtern = fulfilledAsyncVectors.has(entry.logicalType);
+    if (needsFromExtern !== (entry.fromExtern !== undefined)) {
+      addFailure(evidence, {
+        code: "implicit-support-reference-unavailable",
+        ownerUnitId: terminalOwnerUnitId,
+        detail: needsFromExtern
+          ? "prepared fulfilled async vec type has no exact extern materializer"
+          : "prepared async vec layout carries a materializer outside an exact fulfilled resume type",
+      });
+    } else if (entry.fromExtern) {
+      recordExternalCallable(evidence, entry.fromExtern, input.abi, ownership);
+    }
+  }
+  for (const type of reachableAsyncVectors) {
+    if (preparedAsyncLayouts.has(type)) continue;
+    addFailure(evidence, {
+      code: "implicit-support-reference-unavailable",
+      ownerUnitId: terminalOwnerUnitId,
+      detail: "prepared async vec type has no exact backend layout sidecar",
+    });
+  }
   const recordPreparedClosureRefs = (refs: readonly IrTypeRef[] | undefined, detail: string): boolean => {
     if (!refs || refs.length === 0) return false;
     for (const ref of refs) recordSupportTypeReference(evidence, ref, input.abi, ownership, detail);
@@ -856,6 +1001,47 @@ function collectFunctionEvidence(
   };
   const collectType = (type: IrType): void => {
     collectIrTypeClasses(type, classes, seenTypes);
+    const preparedAsyncLayout = preparedAsyncLayouts.get(type);
+    if (preparedAsyncLayout) {
+      if (type.kind !== "vec") {
+        addFailure(evidence, {
+          code: "implicit-support-reference-unavailable",
+          ownerUnitId: terminalOwnerUnitId,
+          detail: `prepared async layout is attached to non-vector IR type ${type.kind}`,
+        });
+        return;
+      }
+      if (
+        !Number.isSafeInteger(preparedAsyncLayout.lengthFieldIndex) ||
+        preparedAsyncLayout.lengthFieldIndex < 0 ||
+        !Number.isSafeInteger(preparedAsyncLayout.dataFieldIndex) ||
+        preparedAsyncLayout.dataFieldIndex < 0 ||
+        preparedAsyncLayout.lengthFieldIndex === preparedAsyncLayout.dataFieldIndex
+      ) {
+        addFailure(evidence, {
+          code: "implicit-support-reference-unavailable",
+          ownerUnitId: terminalOwnerUnitId,
+          detail: "prepared async vec type carries an invalid field layout",
+        });
+        return;
+      }
+      recordSupportTypeReference(
+        evidence,
+        preparedAsyncLayout.carrierType,
+        input.abi,
+        ownership,
+        "prepared async vec carrier must use a compiler-support Program ABI type ref",
+      );
+      recordSupportTypeReference(
+        evidence,
+        preparedAsyncLayout.dataType,
+        input.abi,
+        ownership,
+        "prepared async vec backing array must use a compiler-support Program ABI type ref",
+      );
+      collectType(type.elementType);
+      return;
+    }
     const preparedRefs = input.closureSupport?.typeRefs.get(type);
     if (
       (type.kind === "closure" || type.kind === "callable") &&
