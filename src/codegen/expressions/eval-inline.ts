@@ -494,6 +494,93 @@ function foldedIndirectEvalReadsCallerBinding(sourceFile: ts.SourceFile, fctx: F
   return false;
 }
 
+function setsIntersect(left: ReadonlySet<string>, right: ReadonlySet<string> | undefined): boolean {
+  if (!right || left.size === 0 || right.size === 0) return false;
+  for (const name of left) {
+    if (right.has(name)) return true;
+  }
+  return false;
+}
+
+function isFoldedEvalValueReference(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (!parent) return true;
+  if (
+    ((ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isBindingElement(parent)) &&
+      parent.name === id) ||
+    ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === id) ||
+    ((ts.isLabeledStatement(parent) || ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) &&
+      parent.label === id)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** A B.3.3 outer var is created and initialised before eval executes its first
+ * statement. The foreign-AST splice only creates its carrier during the normal
+ * declaration hoist, so a read/write before the block is a lifecycle boundary
+ * the bytecode provider must own. */
+function foldedEvalReadsAnnexBBindingBeforeDeclaration(sourceFile: ts.SourceFile, names: ReadonlySet<string>): boolean {
+  if (names.size === 0) return false;
+  const firstDeclaration = new Map<string, number>();
+  const collectDeclarations = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node)) {
+      const name = node.name?.text;
+      if (name && names.has(name) && !ts.isSourceFile(node.parent)) {
+        const at = node.getStart(sourceFile);
+        const previous = firstDeclaration.get(name);
+        if (previous === undefined || at < previous) firstDeclaration.set(name, at);
+      }
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) return;
+    ts.forEachChild(node, collectDeclarations);
+  };
+  ts.forEachChild(sourceFile, collectDeclarations);
+
+  let found = false;
+  const findEarlyReference = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      if (!ts.isFunctionDeclaration(node)) return;
+      // The declaration name/body cannot execute before its own declaration.
+      return;
+    }
+    if (ts.isIdentifier(node) && names.has(node.text) && isFoldedEvalValueReference(node)) {
+      const declarationAt = firstDeclaration.get(node.text);
+      if (declarationAt !== undefined && node.getStart(sourceFile) < declarationAt) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, findEarlyReference);
+  };
+  ts.forEachChild(sourceFile, findEarlyReference);
+  return found;
+}
+
+function foldedEvalHasNonBlockAnnexBDeclaration(sourceFile: ts.SourceFile): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isFunctionDeclaration(node)) {
+      if (node.name && !ts.isSourceFile(node.parent) && !ts.isBlock(node.parent)) found = true;
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return found;
+}
+
 /**
  * Try to inline `eval("<constant>")` at compile time.
  *
@@ -570,6 +657,7 @@ export function tryStaticEvalInline(
     emitThrowJsError(ctx, fctx, "SyntaxError", earlyError);
     return { kind: "externref" };
   }
+  const declarationNames = foldedEvalDeclarationNames(sf);
 
   // A constant direct eval normally splices into the caller and bypasses the
   // runtime EnvRec walk. Reconstruct the one caller-dependent early error that
@@ -577,7 +665,6 @@ export function tryStaticEvalInline(
   // declaration may not cross a same-named intervening lexical record on the
   // way to the caller's VariableEnvironment (§EvalDeclarationInstantiation).
   if (directEval && !evalIsStrict) {
-    const declarationNames = foldedEvalDeclarationNames(sf);
     const varNames = declarationNames.varNames;
     const collision = foldedEvalParameterCollision(expr, varNames) ?? foldedEvalLowerLexicalCollision(varNames, fctx);
     if (collision !== undefined) {
@@ -600,8 +687,24 @@ export function tryStaticEvalInline(
   // historically used eval-created vars as caller locals (#1102 AC2), while
   // the test262 script lane disables synthetic module strictness and therefore
   // still exercises the spec isolation path for explicit strict code.
-  const explicitlyStrictDirectEval = directEval && (bodyIsStrict || isStrictContext(expr, false));
-  if (explicitlyStrictDirectEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
+  const explicitlyStrictEval = bodyIsStrict || (directEval && isStrictContext(expr, false));
+  if (explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
+
+  if (!explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
+    const annexBNames = declarationNames.blockFunctionNames;
+    const collidesWithCaller =
+      setsIntersect(annexBNames, declarationNames.varNames) ||
+      setsIntersect(annexBNames, fctx.directEvalBindingNames) ||
+      setsIntersect(annexBNames, ctx.globalObjectVarBindings) ||
+      setsIntersect(annexBNames, ctx.topLevelFunctionNames);
+    const readsBeforeDeclaration = foldedEvalReadsAnnexBBindingBeforeDeclaration(sf, annexBNames);
+    // A source-root if/switch declaration needs a real GlobalEnvironmentRecord:
+    // the ordinary B.3.3 local-slot lowering only models BlockStatement sites.
+    // Keep function-local simple-if compile-away canaries intact; only the
+    // module initializer takes this global-provider arm.
+    const unsupportedGlobalShape = fctx.name === "__module_init" && foldedEvalHasNonBlockAnnexBDeclaration(sf);
+    if (collidesWithCaller || readsBeforeDeclaration || unsupportedGlobalShape) return undefined;
+  }
 
   // A direct nested `eval(...)` can recurse through this same constant-fold
   // path. An eval Identifier used as a VALUE cannot: foreign AST identifiers

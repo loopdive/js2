@@ -22,6 +22,11 @@ type Node = any;
  * environment constructor below propagates the association to its child.
  */
 const VARIABLE_ENVIRONMENTS: WeakMap<object, EnvRec> = new WeakMap();
+/** Direct eval keeps newly-created vars in a provider-owned persistent record,
+ * while pre-existing caller vars remain in the caller activation record. This
+ * side table records that second legitimate VariableEnvironment target for
+ * B.3.3's synthetic block-function assignment. */
+const EXISTING_VARIABLE_ENVIRONMENTS: WeakMap<object, EnvRec> = new WeakMap();
 
 /** Rehydrate the declarative half of a GlobalEnvironmentRecord from the
  * caller-owned canonical cells stored on the shared realm object. The carrier
@@ -335,6 +340,40 @@ function declarativeHasOwnBinding(env: EnvRec, name: string): boolean {
   return false;
 }
 
+function setOwnEnvironmentBinding(env: EnvRec, name: string, value: JSValue): boolean {
+  if (
+    (env.kind === ENV_DECLARATIVE || env.kind === ENV_GLOBAL) &&
+    env.names !== undefined &&
+    env.names !== null &&
+    env.slots !== null
+  ) {
+    const names = env.names as JSValue[];
+    const slots = env.slots as Regs;
+    for (let i = 0; i < names.length; i += 1) {
+      if (names[i] === name) {
+        (slots[i] as EvalBindingCell).value = value;
+        return true;
+      }
+    }
+  }
+  if (env.kind !== ENV_DECLARATIVE && name in env.backing) {
+    env.backing[name] = value;
+    return true;
+  }
+  return false;
+}
+
+/** Assign B.3.3's synthetic outer function value to the binding selected by
+ * EvalDeclarationInstantiation. Prefer an eval-created persistent var; when
+ * allocation was skipped because the caller activation already owns the name,
+ * update that exact caller cell. Never walk into captured-outer or lexical
+ * records, where the Annex-B binding may have been cancelled. */
+export function setEvalVariableEnvironmentBinding(env: EnvRec, name: string, value: JSValue): boolean {
+  if (setOwnEnvironmentBinding(env, name, value)) return true;
+  const existing = EXISTING_VARIABLE_ENVIRONMENTS.get(env as object);
+  return existing !== undefined && setOwnEnvironmentBinding(existing, name, value);
+}
+
 function addDeclarativeBinding(env: EnvRec, name: string, value: JSValue): void {
   const names = env.names as JSValue[];
   const slots = env.slots as Regs;
@@ -556,6 +595,9 @@ export function prepareEvalEnvironment(
     registerVariableEnvironment(varEnv, varEnv);
   } else {
     validateNonStrictEvalVarNames(plan, lexicalEnv, varEnv);
+    if (existingVarEnv !== undefined && existingVarEnv !== null) {
+      EXISTING_VARIABLE_ENVIRONMENTS.set(varEnv as object, existingVarEnv);
+    }
     if (varEnv.kind === ENV_GLOBAL) {
       prepareGlobalDeclarations(plan, varEnv);
     } else {

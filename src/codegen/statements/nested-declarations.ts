@@ -1470,7 +1470,16 @@ function annexBBlockNestedEligible(fnDecl: ts.FunctionDeclaration): ts.Block | n
   if (!name || !fnDecl.body) return null;
   const block = fnDecl.parent;
   if (!ts.isBlock(block)) return null;
-  if (isAnnexBScopeBoundary(block.parent)) return null; // direct fn body → not block-nested
+  const owner = block.parent;
+  if (
+    owner &&
+    !ts.isSourceFile(owner) &&
+    !ts.isModuleBlock(owner) &&
+    isAnnexBScopeBoundary(owner) &&
+    (owner as ts.FunctionLikeDeclarationBase).body === block
+  ) {
+    return null; // direct fn body → not block-nested
+  }
   if (annexBHoistCancels(fnDecl) !== null) return null; // cancelled → Phase 1, no outer binding
   if (!annexBNameObservedOutsideBlock(name, block)) return null; // (#2552) not observed → no binding
   if (annexBNameReassignedInBlock(name, block)) return null; // (#2552) mutable split → pre-Phase-2 path

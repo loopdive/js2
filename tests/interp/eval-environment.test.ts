@@ -426,6 +426,31 @@ describe("#2929 eval declaration environments", () => {
     expect(direct("if (false) { function f() {} } f", cell)).toBeUndefined();
   });
 
+  it("updates an existing direct-eval activation var from an Annex B block function", () => {
+    const globalObject: JSValue = {};
+    const fCell: EvalBindingCell = { value: 123 };
+    const completion = executeDirectEval(
+      parser,
+      '{ function f() { return "function declaration"; } } after = f; var f = 123;',
+      globalObject,
+      undefined,
+      [],
+      [],
+      ["f"],
+      [fCell],
+      [],
+      [],
+      [],
+      [],
+      false,
+      [],
+    );
+    expect(typeof completion).toBe("function");
+    expect(typeof globalObject.after).toBe("function");
+    expect(globalObject.after()).toBe("function declaration");
+    expect(fCell.value).toBe(123);
+  });
+
   it("executes Annex B single-statement function declarations in selected if arms", () => {
     const cell: EvalBindingCell = { value: 40 };
     expect(direct("if (true) function f() { return 2; } f()", cell)).toBe(2);
@@ -582,6 +607,56 @@ describe("#2929 eval declaration environments", () => {
       enumerable: true,
       configurable: true,
     });
+  });
+
+  it("initializes and publishes a fresh Annex B global block-function binding", () => {
+    const globalObject: JSValue = {};
+    expect(
+      executeIndirectEval(
+        parser,
+        "var before = f; f = 123; var changed = f; { function f() { return 9; } } " +
+          "before === undefined && changed === 123 && f() === 9",
+        globalObject,
+      ),
+    ).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(globalObject, "f")).toEqual({
+      value: globalObject.f,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  });
+
+  it("preserves an existing global descriptor until Annex B block execution", () => {
+    const globalObject: JSValue = {};
+    Object.defineProperty(globalObject, "f", {
+      value: "before",
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(
+      executeIndirectEval(
+        parser,
+        "var before = f; { function f() { return 'after'; } } before === 'before' && f() === 'after'",
+        globalObject,
+      ),
+    ).toBe(true);
+    const descriptor = Object.getOwnPropertyDescriptor(globalObject, "f")!;
+    expect(descriptor.writable).toBe(true);
+    expect(descriptor.enumerable).toBe(false);
+    expect(descriptor.configurable).toBe(true);
+  });
+
+  it("publishes the later same-name Annex B block function", () => {
+    const globalObject: JSValue = {};
+    expect(
+      executeIndirectEval(
+        parser,
+        "{ function f() { return 'first'; } } { function f() { return 'second'; } } f()",
+        globalObject,
+      ),
+    ).toBe("second");
   });
 
   it("updates an existing non-configurable global var without replacing its descriptor", () => {
