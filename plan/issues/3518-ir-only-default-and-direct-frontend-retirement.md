@@ -2,26 +2,25 @@
 id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
-sprint: current
 created: 2026-07-21
-updated: 2026-08-02
+updated: 2026-08-03
 priority: critical
-horizon: xl
-complexity: XL
 feasibility: hard
 reasoning_effort: max
 task_type: refactor
 area: ir, codegen, codegen-linear, compiler
 language_feature: compiler-internals
-es_edition: n/a
 goal: ir-full-coverage
+sprint: current
+depends_on: [3519]
+horizon: xl
+complexity: XL
+es_edition: n/a
 lane: ir-retirement
 model: gpt-5.6-sol
-depends_on: [3519]
 related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
 ---
-
 # #3518 — IR-only default and direct front-end retirement
 
 > **Tracking epic, not a single developer task.** The current compiler is a
@@ -53,7 +52,7 @@ through semantic IR intents rather than `compileExpression` /
 language fail with a stable source-located `Unsupported` diagnostic; they do
 not resurrect the direct path.
 
-## Current truth (audited 2026-08-02)
+## Current truth (audited 2026-08-03)
 
 The following measurements are independent and must not be conflated:
 
@@ -65,11 +64,12 @@ The following measurements are independent and must not be conflated:
 | Adoption matrix                                  |       **18 / 56 rows IR-owned** | Those syntax rows have an IR implementation in measured configurations | Their legacy handlers are unreachable in mixed functions or at module scope |
 | Front-end reachability                           | **59,676 legacy-only fn-lines** | Approximate final deletion opportunity                                 | Those lines are dormant today                                               |
 | Runtime/builtin reachability                     |               **~47K fn-lines** | Behavior emission must gain IR-owned entry points                      | Those routines should be deleted with the front-end                         |
+| Bounded host terminal readiness                  | **37/37 IR; 30 legacy bodies** | Every measured terminal has an IR body and no typed blocker remains    | The remaining direct bodies or global runtime/linear paths are unreachable  |
 
-R0 is complete. The bounded hybrid gate is green at 5/5 entries, 37 terminal
-units, 33 emitted IR bodies, 4 typed Unsupported outcomes, 0 Invariants, and 35
-legacy bodies. Strict IR-only is still red on the four Unsupported units and
-the 35 legacy bodies.
+R0 is complete. After #4118, the bounded hybrid gate is green at 5/5 entries,
+37 terminal units, 37 emitted IR bodies, 0 typed Unsupported outcomes, 0
+Invariants, and 30 legacy bodies. Strict IR-only is still red only because
+those 30 terminal units retain direct bodies.
 
 Additional blockers:
 
@@ -83,10 +83,14 @@ Additional blockers:
   class members, module init, and IR-first body skipping are incomplete.
 - The linear backend still has direct AST-reading paths and does not consume the
   same whole-program IR contract as WasmGC.
-- The R0 typed gate has replaced substring-matched build-error policy, but its
-  current strict failure is expected: async (2), call-graph closure (1), and
-  body shape (1) remain explicit Unsupported units. Static class-member
-  blockers are gone; 35 measured units still have a legacy body.
+- The R0 typed gate has replaced substring-matched build-error policy. Its
+  current strict failure is expected: the bounded lane has no Unsupported or
+  Invariant outcomes, but 20 free functions, eight class members, and two
+  module initializers still emit legacy bodies.
+- The normal fallback gate now reconciles preliminary selector labels with
+  source-qualified terminal outcomes. Its async-function bucket fell from four
+  to zero with #4118; this does not claim that async methods, closures,
+  `for await`, async generators, or AST planner deletion are complete.
 
 ## Terms used by this program
 

@@ -91,11 +91,23 @@ export interface IrAsyncResumeValue {
   readonly source: "fulfilled" | "rejected";
 }
 
+/**
+ * A typed assignment to a frame carrier performed after the state body and
+ * before its terminator. This is the backend-neutral phi/update boundary for
+ * loop-carried values: `value` remains ordinary SSA while `target` names the
+ * stable spill identity observed by successor states.
+ */
+export interface IrAsyncSpillUpdate {
+  readonly target: IrValueId;
+  readonly value: IrValueId;
+}
+
 export interface IrAsyncState {
   readonly id: IrAsyncStateId;
   /** At most one scheduler-delivered value is bound when this state begins. */
   readonly resume?: IrAsyncResumeValue;
   readonly body: readonly IrInstr[];
+  readonly updates?: readonly IrAsyncSpillUpdate[];
   readonly terminator: IrAsyncTerminator;
 }
 
@@ -205,6 +217,10 @@ export type IrAsyncPlanInvariantCode =
   | "duplicate-spill"
   | "missing-spill"
   | "unused-spill"
+  | "unknown-spill-update"
+  | "duplicate-spill-update"
+  | "spill-update-type-mismatch"
+  | "invalid-spill-update"
   | "duplicate-state"
   | "unknown-state"
   | "unreachable-state"
@@ -240,6 +256,7 @@ interface StateLiveness {
 
 interface StateEdge {
   readonly target: IrAsyncStateId;
+  readonly source: "control" | "fulfilled" | "rejected";
   /** Value materialized by this edge and therefore not spilled by its source. */
   readonly boundValue?: IrValueId;
 }
@@ -282,6 +299,14 @@ function terminatorUses(terminator: IrAsyncTerminator): readonly IrValueId[] {
   }
 }
 
+function stateUpdates(state: IrAsyncState): readonly IrAsyncSpillUpdate[] {
+  return state.updates ?? [];
+}
+
+function updateMap(state: IrAsyncState): ReadonlyMap<IrValueId, IrValueId> {
+  return new Map(stateUpdates(state).map((update) => [update.target, update.value] as const));
+}
+
 function stateEdges(
   state: IrAsyncState,
   handlers: ReadonlyMap<IrAsyncHandlerId, IrAsyncHandler>,
@@ -289,14 +314,19 @@ function stateEdges(
   const terminator = state.terminator;
   switch (terminator.kind) {
     case "goto":
-      return [{ target: terminator.target }];
+      return [{ target: terminator.target, source: "control" }];
     case "branch":
-      return [{ target: terminator.ifTrue }, { target: terminator.ifFalse }];
+      return [
+        { target: terminator.ifTrue, source: "control" },
+        { target: terminator.ifFalse, source: "control" },
+      ];
     case "suspend": {
-      const edges: StateEdge[] = [{ target: terminator.resume.state, boundValue: terminator.resume.value }];
+      const edges: StateEdge[] = [
+        { target: terminator.resume.state, source: "fulfilled", boundValue: terminator.resume.value },
+      ];
       if (terminator.rejected.kind === "handler") {
         const handler = handlers.get(terminator.rejected.handler);
-        if (handler) edges.push({ target: handler.entry });
+        if (handler) edges.push({ target: handler.entry, source: "rejected" });
       }
       return edges;
     }
@@ -322,8 +352,13 @@ function stateLiveness(state: IrAsyncState, isEntry: boolean, params: readonly I
       if (!defs.has(value)) usesBeforeDef.add(value);
     }
   }
+  const updatedTargets = new Set<IrValueId>();
+  for (const update of stateUpdates(state)) {
+    updatedTargets.add(update.target);
+    if (!defs.has(update.value)) usesBeforeDef.add(update.value);
+  }
   for (const value of terminatorUses(state.terminator)) {
-    if (!defs.has(value)) usesBeforeDef.add(value);
+    if (!defs.has(value) && !updatedTargets.has(value)) usesBeforeDef.add(value);
   }
   return { defs, usesBeforeDef };
 }
@@ -410,6 +445,98 @@ function addError(
   errors.push({ code, message, ...(state === undefined ? {} : { state }) });
 }
 
+type AsyncValueChecker = (value: IrValueId, owner: string, state?: IrAsyncStateId) => IrType | undefined;
+
+function verifyResumeIncomingEdges(
+  plan: IrAsyncPlan,
+  handlers: ReadonlyMap<IrAsyncHandlerId, IrAsyncHandler>,
+  errors: IrAsyncPlanVerifyError[],
+): void {
+  const incomingEdges = new Map<IrAsyncStateId, StateEdge[]>();
+  for (const source of plan.states) {
+    for (const edge of stateEdges(source, handlers)) {
+      const incoming = incomingEdges.get(edge.target) ?? [];
+      incoming.push(edge);
+      incomingEdges.set(edge.target, incoming);
+    }
+  }
+  for (const state of plan.states) {
+    if (!state.resume) continue;
+    for (const edge of incomingEdges.get(state.id) ?? []) {
+      const matchingSource = edge.source === state.resume.source;
+      const matchingValue = edge.source !== "fulfilled" || edge.boundValue === state.resume.value;
+      if (!matchingSource || !matchingValue) {
+        addError(
+          errors,
+          "invalid-resume",
+          `state ${state.id} resume binding is reachable from an incompatible ${edge.source} edge`,
+          state.id,
+        );
+      }
+    }
+  }
+}
+
+function verifySpillUpdates(
+  plan: IrAsyncPlan,
+  values: ReadonlyMap<IrValueId, IrType>,
+  spillByValue: ReadonlyMap<IrValueId, IrAsyncSpill>,
+  checkValue: AsyncValueChecker,
+  errors: IrAsyncPlanVerifyError[],
+): void {
+  const paramValues = new Set(plan.params.map((param) => param.value));
+  for (const state of plan.states) {
+    const updates = stateUpdates(state);
+    const allUpdatedTargets = new Set(updates.map((update) => update.target));
+    const updatedTargets = new Set<IrValueId>();
+    for (const update of updates) {
+      const targetType = values.get(update.target);
+      const sourceType = checkValue(update.value, `state ${state.id} spill update`, state.id);
+      if (!spillByValue.has(update.target)) {
+        addError(
+          errors,
+          "unknown-spill-update",
+          `state ${state.id} updates value ${update.target}, which is not a frame spill`,
+          state.id,
+        );
+      }
+      if (updatedTargets.has(update.target)) {
+        addError(
+          errors,
+          "duplicate-spill-update",
+          `state ${state.id} updates spill ${update.target} more than once`,
+          state.id,
+        );
+      }
+      updatedTargets.add(update.target);
+      if (paramValues.has(update.target)) {
+        addError(
+          errors,
+          "invalid-spill-update",
+          `state ${state.id} updates parameter spill ${update.target}; immutable parameter carriers cannot be phi targets`,
+          state.id,
+        );
+      }
+      if (allUpdatedTargets.has(update.value)) {
+        addError(
+          errors,
+          "invalid-spill-update",
+          `state ${state.id} update for spill ${update.target} depends on simultaneously updated spill ${update.value}`,
+          state.id,
+        );
+      }
+      if (targetType && sourceType && !irTypeEquals(targetType, sourceType)) {
+        addError(
+          errors,
+          "spill-update-type-mismatch",
+          `state ${state.id} update source ${update.value} does not match spill ${update.target}`,
+          state.id,
+        );
+      }
+    }
+  }
+}
+
 function verifyCanonicalPromiseAbi(plan: IrAsyncPlan, errors: IrAsyncPlanVerifyError[]): void {
   const abi = plan.abi;
   if (
@@ -429,6 +556,7 @@ function verifyCanonicalPromiseAbi(plan: IrAsyncPlan, errors: IrAsyncPlanVerifyE
 
 function requiredRuntimeIntents(plan: IrAsyncPlan): ReadonlySet<IrAsyncRuntimeIntent> {
   const required = new Set<IrAsyncRuntimeIntent>(["promise.capability.create"]);
+  if (plan.abi.fulfillmentType === null) required.add("value.undefined");
   for (const state of plan.states) {
     switch (state.terminator.kind) {
       case "suspend":
@@ -643,6 +771,8 @@ export function verifyIrAsyncPlan(plan: IrAsyncPlan): readonly IrAsyncPlanVerify
     }
   }
 
+  verifyResumeIncomingEdges(plan, handlers, errors);
+
   const spillByValue = new Map<IrValueId, IrAsyncSpill>();
   for (const spill of plan.spills) {
     if (spillByValue.has(spill.value))
@@ -653,6 +783,8 @@ export function verifyIrAsyncPlan(plan: IrAsyncPlan): readonly IrAsyncPlanVerify
       addError(errors, "value-type-mismatch", `spill ${spill.value} type does not match the value table`);
     }
   }
+
+  verifySpillUpdates(plan, values, spillByValue, checkValue, errors);
 
   const livenessByState = new Map<IrAsyncStateId, StateLiveness>();
   for (const state of plan.states) {
@@ -667,9 +799,11 @@ export function verifyIrAsyncPlan(plan: IrAsyncPlan): readonly IrAsyncPlanVerify
       const state = plan.states[index]!;
       const local = livenessByState.get(state.id)!;
       const liveOut = new Set<IrValueId>();
+      const updates = updateMap(state);
       for (const edge of stateEdges(state, handlers)) {
         for (const value of liveIn.get(edge.target) ?? []) {
-          if (value !== edge.boundValue) liveOut.add(value);
+          if (value === edge.boundValue) continue;
+          liveOut.add(updates.get(value) ?? value);
         }
       }
       const next = new Set(local.usesBeforeDef);
@@ -767,6 +901,13 @@ function canonicalPlanInput(plan: IrAsyncPlan): IrAsyncPlan {
     .sort((left, right) => compareNumber(left.id, right.id))
     .map((state) => ({
       ...state,
+      ...(state.updates
+        ? {
+            updates: [...state.updates].sort(
+              (left, right) => compareNumber(left.target, right.target) || compareNumber(left.value, right.value),
+            ),
+          }
+        : {}),
       ...(state.terminator.kind === "suspend"
         ? { terminator: { ...state.terminator, live: [...state.terminator.live].sort(compareNumber) } }
         : {}),

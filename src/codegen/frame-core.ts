@@ -19,6 +19,7 @@
  * drive layer (`$Promise` + microtask) builds on this stable core in PR2+.
  */
 import type { Instr, ValType } from "../ir/types.js";
+import { allocLocal } from "./context/locals.js";
 import type { FunctionContext } from "./context/types.js";
 
 // ── Frame ABI ──────────────────────────────────────────────────────────────
@@ -71,6 +72,8 @@ export interface FrameLayout {
   /** Field index where spilled locals start in the state struct. */
   spillFieldOffset: number;
 }
+
+export type FrameSpillCellMap = ReadonlyMap<number, { refCellTypeIdx: number; valType: ValType }>;
 
 export function sanitizeTypeName(name: string): string {
   return name.replace(/[^A-Za-z0-9_$]/g, "_");
@@ -133,19 +136,69 @@ export function setStateI32FromConst(layout: FrameLayout, selfLocal: number, fie
   ];
 }
 
+/** Allocate resume locals and optionally hydrate them from every spill field. */
+export function initializeSpillLocals(
+  layout: FrameLayout,
+  fctx: FunctionContext,
+  selfLocal: number,
+  restoreEagerly: boolean,
+  spillCells?: FrameSpillCellMap,
+): void {
+  if (spillCells) fctx.boxedCaptures = new Map(fctx.boxedCaptures ?? []);
+  for (let index = 0; index < layout.spillNames.length; index++) {
+    const name = layout.spillNames[index]!;
+    const local = allocLocal(fctx, name, layout.spillTypes[index]!);
+    if (restoreEagerly) {
+      fctx.body.push({ op: "local.get", index: selfLocal });
+      fctx.body.push({ op: "struct.get", typeIdx: layout.stateTypeIdx, fieldIdx: layout.spillFieldOffset + index });
+      fctx.body.push({ op: "local.set", index: local });
+    }
+    const cell = spillCells?.get(index);
+    if (cell) (fctx.boxedCaptures ??= new Map()).set(name, cell);
+  }
+}
+
 /**
  * Store each live spill local back into its state-struct field before a
  * suspension. Skips spills not currently bound in `fctx.localMap` (a spill whose
  * owning state has not declared it yet).
  */
-export function storeSpills(layout: FrameLayout, fctx: FunctionContext, selfLocal: number): Instr[] {
+export function storeSpills(
+  layout: FrameLayout,
+  fctx: FunctionContext,
+  selfLocal: number,
+  selectedNames?: readonly string[],
+): Instr[] {
   const body: Instr[] = [];
   for (let i = 0; i < layout.spillNames.length; i++) {
-    const localIdx = fctx.localMap.get(layout.spillNames[i]!);
+    const name = layout.spillNames[i]!;
+    if (selectedNames && !selectedNames.includes(name)) continue;
+    const localIdx = fctx.localMap.get(name);
     if (localIdx === undefined) continue;
     body.push({ op: "local.get", index: selfLocal });
     body.push({ op: "local.get", index: localIdx });
     body.push({ op: "struct.set", typeIdx: layout.stateTypeIdx, fieldIdx: layout.spillFieldOffset + i });
+  }
+  return body;
+}
+
+/** Restore an exact verified subset of spill fields into their resume locals. */
+export function restoreSpills(
+  layout: FrameLayout,
+  fctx: FunctionContext,
+  selfLocal: number,
+  selectedNames: readonly string[],
+): Instr[] {
+  const body: Instr[] = [];
+  for (const name of selectedNames) {
+    const spillIndex = layout.spillNames.indexOf(name);
+    const localIndex = fctx.localMap.get(name);
+    if (spillIndex < 0 || localIndex === undefined) {
+      throw new Error(`internal: async CFG restore names unknown spill ${name}`);
+    }
+    body.push({ op: "local.get", index: selfLocal });
+    body.push({ op: "struct.get", typeIdx: layout.stateTypeIdx, fieldIdx: layout.spillFieldOffset + spillIndex });
+    body.push({ op: "local.set", index: localIndex });
   }
   return body;
 }

@@ -438,15 +438,16 @@ function r3SuspendingAsyncSignatureMatchesAllocatedSlot(
   ctx: CodegenContext,
   unitId: IrUnitId,
   override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+  allowVoidFulfillment = false,
 ): boolean {
   const params = override.params.map((type) => r3SuspendingAsyncParamValType(ctx, type));
-  if (
-    params.some((type) => type === undefined) ||
-    override.returnType === null ||
-    asVal(override.returnType)?.kind !== "f64"
-  ) {
+  if (params.some((type) => type === undefined)) {
     return false;
   }
+  const fulfillmentMatches =
+    (override.returnType !== null && asVal(override.returnType)?.kind === "f64") ||
+    (allowVoidFulfillment && override.returnType === null);
+  if (!fulfillmentMatches) return false;
   const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
   const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
   return (
@@ -573,15 +574,15 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
           `R3 suspending async candidate ${unitId} / ${legacyName} has no exact claim/signature`,
         );
       }
+      const sourceShape = preparedIrAsyncSourceShape(input.ctx, claim.declaration);
       if (
         containsNestedExecutableSyntax(claim.declaration) ||
         functionValueTargets.has(unitId) ||
         containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
-        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override)
+        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override, sourceShape?.kind === "final-main")
       ) {
         continue;
       }
-      const sourceShape = preparedIrAsyncSourceShape(input.ctx, claim.declaration);
       if (!sourceShape || !preparedIrAsyncSourceCanSuspend(input.ctx, claim.declaration)) continue;
       const sourceCallees = callEdges.callees.get(unitId) ?? new Set<IrUnitId>();
       if ([...sourceCallees].some((calleeUnitId) => !preparedDependencyUnitIds.has(calleeUnitId))) continue;

@@ -1626,14 +1626,14 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
         }
         break;
       }
-      // String ops produce a known IrType kind; validate resultType when set.
       case "string.len":
       case "vec.len": {
         if (instr.result !== null && instr.resultType) {
           const got = asVal(instr.resultType)?.kind ?? null;
-          if (got !== null && got !== "f64") {
+          const want = instr.kind === "vec.len" && instr.integer === true ? "i32" : "f64";
+          if (got !== null && got !== want) {
             errors.push({
-              message: `${instr.kind} resultType must be f64 (length), got ${got}`,
+              message: `${instr.kind} resultType must be ${want} (length), got ${got}`,
               func: func.name,
               block: blockId,
             });

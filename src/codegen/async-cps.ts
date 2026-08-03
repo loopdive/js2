@@ -1,26 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// Async/await CPS (continuation-passing-style) lowering — module skeleton (#1042).
-//
-// This is the shared analysis + emission surface that both the AST path (#1042)
-// and the IR path (#1373b) call into to turn an `async function` body into a
-// generator-style state machine: split at each `await`, compile each segment as
-// a continuation, chain them via Promise.then.
-//
-// PR1 scope (this commit): the SURFACE only.
-//   - `analyzeAsyncBody` is real and pure — it walks the body, finds await
-//     points, and computes the live-local set carried across each await. No
-//     codegen side effects. This is what the tests exercise.
-//   - `emitAsyncStateMachine` is present but inert: the activation hook in
-//     function-body.ts is NOT wired in this PR, and the `asyncCpsActive` gate
-//     (see ASYNC_CPS_ENABLED) is hardcoded false, so the emit path is never
-//     reached. Emitted Wasm is byte-identical to before — same inert-first
-//     pattern as #1586 (alloc sites) and #1587 (ownership).
-//     (The `compileNestedAwait` / `emitAsyncStateMachineFromIr` stubs were
-//     removed as dead in #3090; #1373b re-adds the IR entry point when real.)
-//
-// The full lowering (segment emission, capture structs, Promise.then chaining)
-// lands in follow-up PRs. See plan/issues/backlog/1042-async-await-state-machine-lowering.md.
+// Shared async/await CPS analysis and state-machine contracts (#1042/#1373b).
 
 import type { TypeOracle } from "../checker/oracle.js";
 import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "./async-static.js";
@@ -882,6 +862,8 @@ export type AsyncCfgTerminator =
       readonly resumeState: number;
       /** Handler region the await executes in (0 = none). */
       readonly handler: number;
+      /** Optional exact subset of union-frame spills live at this suspension. */
+      readonly spillNames?: readonly string[];
     }
   | { readonly kind: "goto"; readonly target: number }
   | {
@@ -935,6 +917,13 @@ export type AsyncCfgTerminator =
 export interface AsyncCfgState {
   readonly id: number;
   readonly resumeFrom: AsyncResumePoint | null;
+  /**
+   * Optional exact subset of union-frame spill locals restored when this state
+   * is entered as an await continuation. Prepared IR plans provide this for
+   * every resume state; AST plans omit it and retain their historical eager
+   * union-frame restore behaviour.
+   */
+  readonly restoreSpillNames?: readonly string[];
   readonly lead: readonly AsyncCfgStmt[];
   readonly terminator: AsyncCfgTerminator;
   /**

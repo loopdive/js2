@@ -1,21 +1,21 @@
 ---
 id: 4118
 title: "IR final async terminal migration: sequential loop and main"
-status: in-progress
-sprint: current
+status: in-review
 created: 2026-08-03
 updated: 2026-08-03
 priority: critical
-horizon: m
 feasibility: hard
 reasoning_effort: high
 task_type: refactor
 area: ir, runtime, codegen
 language_feature: async, for-loop, multi-await
 goal: ir-full-coverage
-lane: ir-retirement-r7
+sprint: current
 parent: 3527
 depends_on: [4110]
+horizon: m
+lane: ir-retirement-r7
 related: [1042, 1373b, 2710, 2766, 2867, 2906, 2918, 3518, 3587, 3741, 4106, 4109, 4113]
 files:
   - src/ir/nodes.ts
@@ -37,15 +37,17 @@ files:
   - src/codegen/string-ops.ts
   - src/ir/integration.ts
   - scripts/check-ir-only.ts
+  - scripts/check-ir-fallbacks.ts
+  - scripts/ir-fallback-baseline.json
   - scripts/ir-only-baseline.json
   - plan/log/ir-optimization-retirement-ledger.md
   - tests/ir/issue-1373b-async-plan.test.ts
+  - tests/issue-3520-fallback-gate-identity.test.ts
   - tests/issue-2710-late-bind.test.ts
   - tests/issue-4118-ir-final-async.test.ts
   - plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md
   - plan/issues/4118-ir-final-async-terminal-migration.md
 ---
-
 # #4118 — IR final async terminal migration: sequential loop and main
 
 ## Problem
@@ -363,7 +365,7 @@ The exact unit list and counts are updated from production telemetry in every
 retirement PR. A family is checked only when its direct bodies are unreachable
 and deleted with parity evidence; IR emission alone is insufficient.
 
-- [ ] **Final async terminal owners (#4118):** remove two legacy bodies and
+- [x] **Final async terminal owners (#4118):** remove two legacy bodies and
       reach 37/37 terminal IR, 30 legacy bodies, zero Unsupported, zero
       Invariant.
 - [ ] **Classes and methods:** prepare constructors, instance/static/object
@@ -393,3 +395,34 @@ order unless telemetry proves a safer dependency order. Every family PR
 updates this Markdown record (or a linked child record), the exact body census,
 fallback census, optimization evidence, deleted implementation, and next
 resumable boundary. No GitHub Issues are used for sprint tracking.
+
+## Measured implementation outcome (pre-publication, 2026-08-03)
+
+- The bounded host lane is now 37/37 IR-emitted with 30 legacy bodies, zero
+  Unsupported, and zero Invariant outcomes. The remaining bodies are 20 free
+  functions, eight class members, and two module initializers.
+- `fetchAllSequential` and `main` both skip direct body emission and own their
+  complete prepared state families. The async-family shadow poisons direct
+  async body compilation; the unchanged migrated source remains green and the
+  deliberately direct near-miss proves the poison fires.
+- Fallback telemetry now reconciles preliminary selector labels with the
+  source-qualified terminal production outcome. The stale
+  `async-function: 4` bucket is retired to zero; the two unrelated
+  `string-builder-candidate` labels remain informational.
+- The generalized frame restores exact incoming live sets: main restores
+  `{ids, t0}` after its first await and only `{t2}` after its second. Plan
+  verification rejects ordinary edges into resume states, mutable parameter
+  update targets, and cross-dependent updates whose sequential application
+  would violate phi semantics.
+- Runtime and WAT parity covers strict sequential ordering, empty input, both
+  rejection boundaries, exact logs/timestamps, Promise<void> `undefined`,
+  typed spills, fixed vectors, unchecked proven reads, fused five-part concat,
+  specialized number formatting, and typed logging.
+- The earlier exact-two-state adapter scaffolding has no remaining named
+  implementation; #4106 and #4110 now consume the same generalized prepared
+  CFG/frame adapter. Shared AST async planners remain because methods,
+  closures, `for await`, async generators, and other hybrid owners still use
+  them.
+- Strict global IR-only remains red solely because the 30 measured bodies
+  above still emit legacy implementations. The next serial production family
+  is classes and methods.

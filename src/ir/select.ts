@@ -6420,8 +6420,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
-      // (#1371) Whitelist `Math.<unary>(arg)` for a small set of f64-mapped
-      // ops. The receiver `Math` is a host global, never in scope, so the
+      if (currentSelectionOptions?.preparedAsyncDateNowCall?.(expr) === true) return true;
+      // (#1371) Whitelist f64 Math ops; the ambient receiver is not in scope, so the
       // generic receiver check below would reject these. Recognise the shape
       // here and accept it; the lowerer in from-ast.ts emits a plain unary
       // f64 op for the call.

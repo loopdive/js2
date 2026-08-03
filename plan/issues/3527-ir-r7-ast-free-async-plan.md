@@ -2,24 +2,24 @@
 id: 3527
 title: "IR-only R7: AST-free async suspension plans and canonical Promise ABI"
 status: blocked
-sprint: Backlog
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-08-03
 priority: critical
-horizon: xl
-complexity: XL
 feasibility: hard
 reasoning_effort: max
 task_type: refactor
 area: ir, codegen, async, runtime
 language_feature: async-functions, async-generators, for-await
-es_edition: multi
 goal: ir-full-coverage
-lane: ir-retirement-r7
-model: gpt-5.6-sol
+sprint: Backlog
 parent: 3518
 depends_on: [3522, 3525, 3526]
 required_by: [3528]
+horizon: xl
+complexity: XL
+es_edition: multi
+lane: ir-retirement-r7
+model: gpt-5.6-sol
 related: [351, 1042, 1169f, 1326, 1373b, 2865, 2867, 2895, 2906, 2967, 3090, 3387, 3389, 3518]
 origin: "#3518 R7 — make the existing frame engine consume AST-free prepared suspension plans"
 files:
@@ -43,7 +43,6 @@ files:
   - src/codegen/expressions.ts
   - tests/issue-3527-ir-async-plan.test.ts
 ---
-
 # #3527 — IR-only R7: AST-free async suspension plans and canonical Promise ABI
 
 ## Objective
@@ -131,7 +130,7 @@ linear lowering to consume the same `IrAsyncPlan`.
   Promise carrier when one module contains a non-drivable async generator. A
   local Unsupported unit therefore changes unrelated representation.
 
-## Why the current four-unit async gate is false-green
+## Preliminary async-gate reconciliation
 
 `scripts/check-ir-fallbacks.ts:230-268` calls the bare selector without either
 `supportsAsyncIr` or the production `asyncEngineClaims` predicate. The selector
@@ -139,13 +138,18 @@ therefore reports all four functions in
 `website/playground/examples/js/async.ts` as
 `deferred.async-function=4`, regardless of their production routes.
 
-Production supplies the missing options at `src/codegen/index.ts:1905-1929`:
-two functions are host-drive candidates, one is later rejected by call-graph
-closure, and one by body shape. The gate's real-compile block at
-`scripts/check-ir-fallbacks.ts:295-310` does not reconcile production terminal
-outcomes and catches compile failures. Thus “four deferred” is neither one
-coherent migration population nor compile-once evidence. #3519's production
-unit ledger is the only authority for R7.
+Production supplies the missing options during prepared-component discovery,
+so the old four-label result was neither one coherent migration population nor
+compile-once evidence. #4118 now reconciles the preliminary labels with exact
+source-qualified production terminal outcomes: all five playground async free
+functions are prepared/compile-once, the gate records
+`async-function: 4 -> 0`, and the bounded host ledger records 37/37 IR bodies
+with no Unsupported outcome. The production unit ledger remains the authority.
+
+This completes only the free-function terminal family. Async methods,
+closures/function expressions/arrows, `for await`, async generators, `yield*`,
+standalone/WASI consumers, and deletion of the AST planners/activation census
+remain unchecked acceptance work below.
 
 ## `IrAsyncPlan` contract
 

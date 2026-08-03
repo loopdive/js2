@@ -18,6 +18,8 @@ export interface IrAsyncSelectionOptions {
   readonly preparedAsyncThenableCall?: (call: ts.CallExpression) => boolean;
   /** Exact awaited Promise.all call owned by a prepared continuation. */
   readonly preparedAsyncPromiseAllCall?: (call: ts.CallExpression) => boolean;
+  /** Exact ambient Date.now call owned by the final prepared main. */
+  readonly preparedAsyncDateNowCall?: (call: ts.CallExpression) => boolean;
 }
 
 /** Central async ownership gate shared by production selection and tests. */
