@@ -1,9 +1,10 @@
 ---
 id: 4124
 title: "IR final async terminal migration: sequential loop and main"
-status: in-review
+status: done
 created: 2026-08-03
 updated: 2026-08-03
+completed: 2026-08-03
 priority: critical
 feasibility: hard
 reasoning_effort: high
@@ -396,7 +397,7 @@ updates this Markdown record (or a linked child record), the exact body census,
 fallback census, optimization evidence, deleted implementation, and next
 resumable boundary. No GitHub Issues are used for sprint tracking.
 
-## Measured implementation outcome (pre-publication, 2026-08-03)
+## Measured implementation outcome (2026-08-03)
 
 - The bounded host lane is now 37/37 IR-emitted with 30 legacy bodies, zero
   Unsupported, and zero Invariant outcomes. The remaining bodies are 20 free
@@ -426,3 +427,35 @@ resumable boundary. No GitHub Issues are used for sprint tracking.
 - Strict global IR-only remains red solely because the 30 measured bodies
   above still emit legacy implementations. The next serial production family
   is classes and methods.
+
+## Landed checkpoint and suspended handover (2026-08-03)
+
+- Ready PR [#4065](https://github.com/loopdive/js2/pull/4065) merged through
+  the queue as `df21c88095aba80d9628cd3a03328bd62787610d`. Its immutable source
+  head was `04b4ddb57c6afe3e82859adbc21651dba4c2fd3a`.
+- All 28 source-head checks passed. The exact merge-group SHA then passed the
+  CI/equivalence suite, differential gate, and the full Test262 matrix: 66
+  JS-host shards plus 36 standalone shards, aggregation, and the final
+  regression comparison, with no failed job.
+- The checkpoint is **37/37 targeted terminal units IR-emitted**, **30 legacy
+  bodies**, **0 Unsupported**, and **0 Invariant**. The remaining bodies are
+  exactly 20 free functions, eight class members, and two module initializers.
+  Strict IR-only remains intentionally disabled until those bodies and their
+  consumers are retired.
+- Production migration work is suspended at this boundary. No classes/methods
+  implementation branch or production PR was started after #4065. The next
+  owner must resume serially with the unchecked **Classes and methods** family
+  above, keep only one overlapping production PR active, and delete each
+  obsolete direct implementation in the same PR that proves its IR replacement
+  and optimization parity.
+- Resume from a fresh isolated worktree based on the then-current
+  `origin/main`; do not work in or clean the dirty root checkout. The landed
+  source worktree `/private/tmp/ts2wasm-4118-ir-fetch-all-sequential` is clean
+  and retained only as checkpoint evidence. Re-run the fallback, shape,
+  hybrid-readiness, strict IR-only, optimization-retirement, issue-integrity,
+  and focused regression gates before changing the next family.
+- The first resumed implementation step is an exact census of the eight class
+  member bodies and their remaining direct consumers against #3522. Migrate
+  constructors/methods/accessors/field work in dependency order, preserve the
+  receiver/home-object/super/layout and direct-call optimizations with explicit
+  parity tests, and bank only freshly measured body/fallback reductions.
