@@ -1,7 +1,7 @@
 ---
 id: 4103
 title: "IR async runtime provider and host-capability schema"
-status: ready
+status: done
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02

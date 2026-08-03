@@ -28,6 +28,7 @@ import {
   type IrFuncRef,
   type IrInstr,
   type IrType,
+  type IrVecLayoutRef,
   type IrValueId,
 } from "./nodes.js";
 
@@ -181,6 +182,13 @@ export interface PreparedIrAsyncHostAdapter {
 export interface PreparedIrAsyncRuntime {
   readonly kind: "host-wasmgc";
   readonly adapters: readonly PreparedIrAsyncHostAdapter[];
+  /** Backend-only layouts keyed by the exact logical types in `asyncPlan`. */
+  readonly typeLayouts?: readonly {
+    readonly logicalType: IrType;
+    readonly layout: IrVecLayoutRef;
+    /** Present only for a host-fulfilled resume value that crosses representations. */
+    readonly fromExtern?: IrFuncRef;
+  }[];
   /** State bodies with post-freeze intrinsic provider attachments. */
   readonly states: readonly IrAsyncState[];
 }

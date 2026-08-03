@@ -151,6 +151,7 @@ import {
 import {
   completePreparedIrIntegration,
   computePreparedInheritedIrFirstSkipUnitIds,
+  finalizeR3PreparedOwnerPopulation,
   prepareIrClassMethodBodies,
   prepareIrFreeFunctionBodies,
   selectR2PreparedFreeFunctions,
@@ -3255,6 +3256,7 @@ function planIrFirstBodyRouting(
       ...[...plan.hostVoidCallbacks.values()].map((callback) => callback.ownerUnitId),
       ...plan.hostDateImportsByOwnerUnitId.keys(),
       ...[...plan.promiseDelays.constructions.values()].map((delay) => delay.ownerUnitId),
+      ...plan.suspendingAsyncUnitIds,
     ]),
     generatorsSkippable: !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports),
     fast: ctx.fast,
@@ -3285,8 +3287,12 @@ function planIrFirstBodyRouting(
   // edges, so any callable edge that crosses into one of those owners removes
   // the complete affected free-function component before preparation.
   const hasPromiseDelayComponent = plan.promiseDelays.constructions.size > 0;
+  const hasSuspendingAsyncComponent = plan.suspendingAsyncUnitIds.size > 0;
   const usePreparedRouting =
-    preliminaryR2Names.size > 0 || preliminaryClassMethodNames.size > 0 || hasPromiseDelayComponent;
+    preliminaryR2Names.size > 0 ||
+    preliminaryClassMethodNames.size > 0 ||
+    hasPromiseDelayComponent ||
+    hasSuspendingAsyncComponent;
   let finalizedSelection: Pick<IrSelection, "funcs" | "classMembers" | "moduleInit"> | undefined;
 
   if (usePreparedRouting) {
@@ -3294,21 +3300,13 @@ function planIrFirstBodyRouting(
     // the IR program is prepared. The exact Promise-delay route also settles
     // its late runtime imports here, before any direct body can bake funcIdxs.
     prepareModuleTdzGlobals(ctx, sourceFile);
-    const preparedSelection = finalizePreparedIrSelection(ctx, sourceFile, plan);
+    let preparedSelection = finalizePreparedIrSelection(ctx, sourceFile, plan);
     finalizedSelection = preparedSelection;
     if ([...preliminaryR2Names].some((legacyName) => !preparedSelection.funcs.has(legacyName))) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
         "R2 final-context preparation changed a preflight-certified free-function component",
-      );
-    }
-    const finalClassMethodNames = selectPreparedClassMethodNames(ctx, preparedSelection, plan.identityPlan);
-    if ([...preliminaryClassMethodNames].some((legacyName) => !finalClassMethodNames.has(legacyName))) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        "R3 final-context preparation changed a preflight-certified class-method component",
       );
     }
     const promiseDelayNames = selectR3PreparedPromiseDelayFunctions({
@@ -3320,8 +3318,21 @@ function planIrFirstBodyRouting(
       overridesByUnitId: plan.overrideMapByUnitId,
       promiseDelays: plan.promiseDelays,
     });
-    const preparedFreeFunctionNames = new Set([...preliminaryR2Names, ...promiseDelayNames]);
-    if (preparedFreeFunctionNames.size === 0 && preliminaryClassMethodNames.size === 0) {
+    const preparedPopulation = finalizeR3PreparedOwnerPopulation({
+      ctx,
+      sourceFile,
+      plan,
+      selection: preparedSelection,
+      preliminaryClassMethodNames,
+      preliminaryR2Names,
+      promiseDelayNames,
+      projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
+    });
+    preparedSelection = preparedPopulation.selection;
+    finalizedSelection = preparedSelection;
+    const { classMethodNames: finalClassMethodNames, freeFunctionNames: preparedFreeFunctionNames } =
+      preparedPopulation;
+    if (preparedFreeFunctionNames.size === 0 && finalClassMethodNames.size === 0) {
       // Final-context Promise preparation may reject an occupied/mismatched
       // runtime ABI. Keep that owner on the established direct route.
     } else {
@@ -3342,7 +3353,7 @@ function planIrFirstBodyRouting(
       const preparedClassMethods = prepareIrClassMethodBodies({
         ctx,
         sourceFile,
-        selection: { classMembers: preliminaryClassMethodNames },
+        selection: { classMembers: finalClassMethodNames },
         identityPlan: plan.identityPlan,
         overrideMap: plan.overrideMap,
         classShapes: plan.classShapes,

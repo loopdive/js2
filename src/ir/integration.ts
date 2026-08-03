@@ -86,7 +86,6 @@ import {
   planProgramAbiSupportCallableAlias,
   planProgramAbiSupportCallable,
   planProgramAbiGlobal,
-  planProgramAbiUnitCallable,
   PROGRAM_ABI_CALLABLE_ROLE,
   PROGRAM_ABI_GLOBAL_ROLE,
 } from "../codegen/program-abi-planning.js";
@@ -105,6 +104,7 @@ import {
 import type { CodegenContext, FunctionContext } from "../codegen/context/types.js";
 import { applyIrTailCalls } from "../codegen/ir-tail-call.js";
 import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
+import { preparedIrAsyncFromAstResolver } from "../codegen/async-ir-planning.js";
 import {
   getFuncRefWrapperRootTypeIdx,
   getOrCreateFuncRefWrapperTypes,
@@ -153,7 +153,6 @@ import {
 import {
   buildIrUnitInventory,
   indexIrTerminalDeclarations,
-  type IrBindingId,
   type IrClassId,
   type IrUnitInventory,
   type IrUnitId,
@@ -166,6 +165,15 @@ import {
   type IrPlanningIdentityContext,
 } from "./planning-identity.js";
 import { validateIrIntegrationPopulation } from "./integration-identity.js";
+import {
+  preparedUnitProgramAbiBinding,
+  resolvePreparedSupportCallable,
+  resolvePreparedUnitCallable,
+  settlePreparedDerivedCallable,
+  type PreparedIrUnitCallableSlot,
+} from "./prepared-callable-resolution.js";
+export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resolution.js";
+import { prepareIrVectorSupport } from "./prepared-vector-support.js";
 import {
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
@@ -196,6 +204,7 @@ import {
   forEachInstrDeep, // (#2949 slice 3) deep instr walk for preregisterDynamicSupport
   irVal,
   irTypeEquals,
+  mapNestedBuffers,
   type IrClassMemberKind,
   type IrClassShape,
   type IrClosureSignature,
@@ -234,7 +243,7 @@ import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtim
 import type { RuntimeProviderPlan } from "./runtime-manifest.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
-import { assertAllocProvenance } from "./verify-alloc.js";
+import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
 import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType, WasmFunction } from "./types.js";
 import {
   definedFuncAt,
@@ -269,7 +278,6 @@ import {
 import { sealDependencyCompletePreparedComponents } from "./prepared-component-sealing.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
-import { attachIrVecLayouts } from "./vec-layout.js";
 import { IR_VEC_ELEM_SET_PREFIX, IR_VEC_NEW_SIZED_PREFIX, parseIrVectorRuntimeElement } from "./vector-runtime.js";
 import {
   IR_STRING_CHAR_AT_FN,
@@ -326,7 +334,7 @@ function lowerIrEntryFunction(
   existing: WasmFunction,
 ): WasmFunction {
   return fn.asyncPlan
-    ? lowerPreparedIrAsyncFunction(ctx, fn, resolver, existing)
+    ? lowerPreparedIrAsyncFunction(ctx, fn, { resolveFunc: (ref) => resolver.resolveFunc(ref) }, existing)
     : lowerIrFunctionToWasm(fn, resolver).func;
 }
 
@@ -430,7 +438,7 @@ function prepareClosureTransaction(input: {
   readonly callableImports: ReadonlyMap<string, Import>;
   readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrInvariantError) => void;
 }): PreparedClosureTransaction {
-  let resolveValType: (type: IrType) => ValType = lowerPreparedClosureSupportType;
+  let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type);
   const registry = new ClosureStructRegistry(input.ctx, (type) => resolveValType(type));
   const closureSupport = prepareDependencyCompleteClosureSupport(input.ctx, input.entries, registry);
   const freshSlots = allocatePreparedDerivedCallableSlots(
@@ -486,6 +494,69 @@ function prepareBuiltFnRuntimeManifest(
   materializePreparedMathProviders(ctx, runtime);
   materializePreparedAsyncHostAdapters(ctx, runtime.functions);
   return { entries: preparedEntries, runtime };
+}
+
+/** Test-only negative control for the required #4113 final gate. */
+function injectFinalAllocProvenanceFailure(
+  fn: IrFunction,
+  compatibilityName: string,
+  artifactKind: "ordinary" | "synthetic" | "monomorphized",
+): IrFunction {
+  const selector = process.env.JS2WASM_TEST_INJECT_IR_FINAL_ALLOC_FAILURE;
+  if (selector === undefined || (selector !== "1" && selector !== compatibilityName && selector !== artifactKind)) {
+    return fn;
+  }
+
+  let removed = false;
+  const rewriteInstr = (instr: IrInstr): IrInstr => {
+    const withNested = mapNestedBuffers(instr, (buffer) => {
+      const rewritten = buffer.map(rewriteInstr);
+      return rewritten.some((candidate, index) => candidate !== buffer[index]) ? rewritten : buffer;
+    });
+    if (removed || withNested.alloc === undefined) return withNested;
+    const { alloc: _removedAlloc, ...withoutAlloc } = withNested;
+    removed = true;
+    return withoutAlloc as IrInstr;
+  };
+  const blocks = fn.blocks.map((block) => {
+    const instrs = block.instrs.map(rewriteInstr);
+    return instrs.some((instr, index) => instr !== block.instrs[index]) ? { ...block, instrs } : block;
+  });
+  if (!removed) {
+    throw new Error(
+      `final allocation-provenance injection for ${compatibilityName} requires one allocation instruction`,
+    );
+  }
+  return { ...fn, blocks };
+}
+
+/**
+ * Require final provenance after all IR attachments and before component
+ * sealing, publication, or lowering. The collection includes source,
+ * synthetic, async-state, and monomorphized artifacts.
+ */
+function verifyFinalAllocArtifacts(
+  entries: readonly BuiltFn[],
+  registry: AllocSiteRegistry,
+  cloneOrigins: ReadonlyMap<IrUnitId, IrUnitId>,
+  onFailure: (entry: BuiltFn, error: unknown) => void,
+): BuiltFn[] {
+  const verified: BuiltFn[] = [];
+  for (const entry of entries) {
+    try {
+      const artifactKind = cloneOrigins.has(entry.artifactUnitId)
+        ? "monomorphized"
+        : entry.synthesized
+          ? "synthetic"
+          : "ordinary";
+      const fn = injectFinalAllocProvenanceFailure(entry.fn, entry.name, artifactKind);
+      assertFinalAllocProvenance(fn, registry);
+      verified.push(fn === entry.fn ? entry : { ...entry, fn });
+    } catch (error) {
+      onFailure(entry, error);
+    }
+  }
+  return verified;
 }
 
 function fillSealedPreparedCallable(
@@ -905,7 +976,7 @@ export function compileIrPathFunctions(
           `direct-call plan at ${sourceFile.fileName}:${call.pos} disagrees with exact integration identity`,
         );
       }
-      preparedDirectCalls.set(call, plan);
+      if (!existing) preparedDirectCalls.set(call, plan);
     }
     return preparedDirectCalls;
   };
@@ -1885,7 +1956,6 @@ export function compileIrPathFunctions(
 
   // -------------------------------------------------------------------------
   // 2g. Ownership + access-semantics analysis (#1587) — gated, default OFF.
-  //
   // Runs on the final (post-mono/TU) IR shape, writing inferred ownership /
   // access annotations to the registry `ownership` namespace. The analysis is
   // purely an optimization aid: it does NOT mutate the IR and registry
@@ -1895,7 +1965,6 @@ export function compileIrPathFunctions(
   // is likewise gated and annotation-only). Behind `JS2WASM_IR_OWNERSHIP=1`
   // for the rollout period.
   // -------------------------------------------------------------------------
-  //
   // 2h. Escape analysis (#747) — gated, default OFF. When
   // `JS2WASM_IR_ESCAPE=1`, classifies each allocation
   // (local/returned/stored/captured/opaque) on top of the ownership result and
@@ -1917,10 +1986,7 @@ export function compileIrPathFunctions(
   }
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
-
-  // Every late-registration boundary is part of IR preparation. Unknown
-  // throws are invariants and must fan out to the active source owners rather
-  // than escaping or being silently demoted.
+  // Late registrations are preparation; unknown throws fan out to active owners.
   const runGlobalPreparation = (action: () => void): boolean => {
     try {
       action();
@@ -1932,7 +1998,6 @@ export function compileIrPathFunctions(
   };
   let preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined;
   if (!runGlobalPreparation(() => (healthyForLower = prepareStrings(ctx, healthyForLower)))) return finishReport();
-  if (!runGlobalPreparation(() => (healthyForLower = prepareVectors(ctx, healthyForLower)))) return finishReport();
   if (
     !runGlobalPreparation(() => {
       const prepared = prepareBuiltFnRuntimeManifest(ctx, sourceFile.fileName, healthyForLower);
@@ -1942,6 +2007,12 @@ export function compileIrPathFunctions(
   ) {
     return finishReport();
   }
+  if (!runGlobalPreparation(() => (healthyForLower = prepareVectors(ctx, healthyForLower)))) return finishReport();
+  healthyForLower = verifyFinalAllocArtifacts(healthyForLower, allocRegistry, monoResult.cloneOrigins, (entry, error) =>
+    markOwnerFailure(terminalOwnerOf(entry), entry.artifactUnitId, entry.name, error, "verify"),
+  );
+  healthyForLower = retainHealthyOwners(healthyForLower);
+  if (healthyForLower.length === 0) return finishReport();
   if (!runGlobalPreparation(() => preregisterHostDateSnapshotSupport(ctx, healthyForLower))) {
     return finishReport();
   }
@@ -2205,7 +2276,7 @@ export function compileIrPathFunctions(
   // the fragile one. Resolution goes through `nativeStrHelperHandle`
   // (src/codegen/func-space.ts), which prefers the stable handle and keeps the
   // scan only as a fallback for helpers not yet on stable minting.
-  const unitCallableSlots = new Map<IrUnitId, IrUnitCallableSlot>();
+  const unitCallableSlots = new Map<IrUnitId, PreparedIrUnitCallableSlot>();
   const bindUnitCallableSlot = (ref: IrFuncRef, funcIdx: number, physicalName: string): void => {
     if (ref.binding.kind !== "unit") {
       throw new IrInvariantError(
@@ -2243,19 +2314,7 @@ export function compileIrPathFunctions(
       );
     }
     ctx.irUnitFuncMap.set(ref.binding.unitId, defined);
-    let programAbiBindingId: IrBindingId | undefined;
-    const derived = ctx.programAbiSession?.registeredDerivedUnit(ref.binding.unitId);
-    if (ctx.programAbiSession?.hasKnownUnit(ref.binding.unitId) && !derived) {
-      const signature = ctx.mod.types[defined.typeIdx];
-      if (!signature || signature.kind !== "func") {
-        throw new IrInvariantError(
-          "abi-type-index-mismatch",
-          "resolve",
-          `ir/integration: exact unit ${ref.binding.unitId} / ${ref.name} has non-function type ${defined.typeIdx}`,
-        );
-      }
-      programAbiBindingId = planProgramAbiUnitCallable(ctx, { ref, signature, func: defined });
-    }
+    const programAbiBindingId = preparedUnitProgramAbiBinding(ctx, ref, defined);
     unitCallableSlots.set(ref.binding.unitId, {
       funcIdx,
       physicalName,
@@ -2469,48 +2528,6 @@ export function compileIrPathFunctions(
       ctx.programAbiSession!.replaceDefinedFunctionLocator(bindingId, previous, replacement);
     }
     return replacement;
-  };
-  const planSettledDerivedCallable = (
-    entry: BuiltFn,
-    replacement: NonNullable<ReturnType<typeof definedFuncAt>>,
-  ): void => {
-    if (!entry.derivedUnit || !ctx.programAbiSession) return;
-    const slot = unitCallableSlots.get(entry.artifactUnitId);
-    if (!slot || slot.programAbiBindingId) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        `ir/integration: derived unit ${entry.artifactUnitId} has no unique unsettled callable slot`,
-      );
-    }
-    const signature = ctx.mod.types[replacement.typeIdx];
-    if (!signature || signature.kind !== "func") {
-      throw new IrInvariantError(
-        "abi-type-index-mismatch",
-        "patch",
-        `ir/integration: derived unit ${entry.artifactUnitId} has non-function type ${replacement.typeIdx}`,
-      );
-    }
-    if (!ctx.programAbiSession.registeredDerivedUnit(entry.artifactUnitId)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        `ir/integration: derived unit ${entry.artifactUnitId} was not registered before callable ordering`,
-      );
-    }
-    const bindingId = planProgramAbiUnitCallable(ctx, {
-      ref: irUnitFuncRef(entry.fn),
-      signature,
-      func: replacement,
-    });
-    if (!bindingId) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        `ir/integration: derived unit ${entry.artifactUnitId} was not accepted by Program ABI planning`,
-      );
-    }
-    slot.programAbiBindingId = bindingId;
   };
   const pendingPatches: PendingPatch[] = [];
   // (#3551) Exact artifact identities withdrawn by the typeIdx-parity guard
@@ -2736,7 +2753,7 @@ export function compileIrPathFunctions(
       patch.existing,
       replacement,
     );
-    planSettledDerivedCallable(patch.entry, installed);
+    settlePreparedDerivedCallable(ctx, patch.entry, installed, unitCallableSlots.get(patch.entry.artifactUnitId));
     compiled.push(patch.entry.name);
     compiledArtifactEvidence.push({
       artifactUnitId: patch.entry.artifactUnitId,
@@ -3173,15 +3190,6 @@ interface DeferredClassResolver {
 }
 
 /** Exact binding of one structural source unit to its settled Wasm slot. */
-interface IrUnitCallableSlot {
-  readonly funcIdx: number;
-  readonly physicalName: string;
-  /** Temporary adapter labels admitted for this exact unit and slot only. */
-  readonly compatibilityNames: Set<string>;
-  /** Set once the unit has a settled signature and Program ABI plan. */
-  programAbiBindingId?: IrBindingId;
-}
-
 /**
  * Slice 6 part 4 refactor (#1185): build the from-ast subset of the
  * IR resolver eagerly (before Phase 1 IR build). Only the methods
@@ -3471,6 +3479,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       capability,
     );
   return {
+    ...preparedIrAsyncFromAstResolver(ctx),
     retainedFunctionMethodPlan(call: ts.CallExpression) {
       if (
         !supportsBackendCapability("standalone-native-regexp-test-carrier") ||
@@ -3516,8 +3525,7 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
     },
     // (#2955 slice 5) No raw `nativeStrings()` here anymore — from-ast's
     // interface no longer carries the mode discriminator; every mode
-    // decision flows through the named capability/rep/strategy queries
-    // below.
+    // decision flows through the named capability/rep/strategy queries.
     // (#2955 slice 2) The WHOLE string-prototype-method mode decision table,
     // relocated here from from-ast's `lowerStringMethodCall` so the front-end
     // reads no `nativeStrings` at that site. Byte-inert by construction: the
@@ -3991,7 +3999,7 @@ function makeResolver(
   closureResolver: DeferredClosureResolver,
   refCellResolver: DeferredRefCellResolver,
   classResolver: DeferredClassResolver,
-  unitCallableSlots: ReadonlyMap<IrUnitId, IrUnitCallableSlot>,
+  unitCallableSlots: ReadonlyMap<IrUnitId, PreparedIrUnitCallableSlot>,
   importedCallableCatalog: ReadonlyMap<string, Import>,
   runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
 ): IrLowerResolver {
@@ -4008,29 +4016,10 @@ function makeResolver(
         );
       }
       if (ref.binding.kind === "unit") {
-        const slot = unitCallableSlots.get(ref.binding.unitId);
-        if (!slot || !slot.compatibilityNames.has(ref.name)) {
-          throw new IrInvariantError(
-            "unknown-function-ref",
-            "lower",
-            `ir/integration: unknown exact function ref ${ref.binding.unitId} / ${JSON.stringify(ref.name)}`,
-          );
-        }
-        if (ctx.programAbiSession && slot.programAbiBindingId) {
-          return ctx.programAbiSession.resolveCurrentIndex(
-            slot.programAbiBindingId,
-            "function",
-            irCallableBindingKey(ref.binding),
-          );
-        }
-        return slot.funcIdx;
+        return resolvePreparedUnitCallable(ctx, ref, unitCallableSlots);
       }
       if (ref.binding.kind === "support" && ctx.programAbiSession?.hasPlan(ref.binding.bindingId)) {
-        return ctx.programAbiSession.resolveCurrentIndex(
-          ref.binding.bindingId,
-          "function",
-          irCallableBindingKey(ref.binding),
-        );
+        return resolvePreparedSupportCallable(ctx, ref);
       }
       if (ref.binding.kind === "import" && ctx.programAbiSession) {
         const structuralReferenceKey = irCallableBindingKey(ref.binding);
@@ -4709,31 +4698,13 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   return prepared;
 }
 
-/** Attach exact Program-ABI vector layouts after logical IR construction. */
 function prepareVectors(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
-  const registry = ctx.programAbiTypes;
-  if (!registry) return fns;
-  const layouts = new Map<string, import("./nodes.js").IrVecLayoutRef>();
-  const prepared = fns.map((entry) => {
-    const attachment = attachIrVecLayouts(entry.fn, (type) => {
-      const logicalKey = irTypeKey({ kind: "vec", elementType: type.elementType, nullable: false });
-      const cached = layouts.get(logicalKey);
-      if (cached) return cached;
-      const elementValType = asVal(type.elementType);
-      if (!elementValType || (elementValType.kind !== "f64" && elementValType.kind !== "i32")) {
-        throw new Error(`ir/integration: prepared vec element ${irTypeKey(type.elementType)} is not yet supported`);
-      }
-      const vec = resolveVecForElementImpl(ctx, elementValType);
-      if (!vec) {
-        throw new Error(`ir/integration: no physical vector layout for ${logicalKey}`);
-      }
-      const layout = registry.prepareVectorLayout(logicalKey, vec.vecStructTypeIdx, vec.arrayTypeIdx);
-      layouts.set(logicalKey, layout);
-      return layout;
-    });
-    return attachment.function === entry.fn ? entry : { ...entry, fn: attachment.function };
+  return prepareIrVectorSupport({
+    ctx,
+    entries: fns,
+    resolveVecForElement: (element) => resolveVecForElementImpl(ctx, element),
+    typeKey: irTypeKey,
   });
-  return prepared;
 }
 
 function instrUsesStrings(instr: IrInstr): boolean {

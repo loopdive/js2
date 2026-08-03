@@ -5,12 +5,12 @@
     "single-host": {
       "entryFloor": 5,
       "terminalUnitFloor": 37,
-      "emittedFloor": 34,
-      "irBodyEmittedFloor": 34,
-      "legacyBodyEmittedCeiling": 34,
-      "unsupportedCeiling": 3,
+      "emittedFloor": 35,
+      "irBodyEmittedFloor": 35,
+      "legacyBodyEmittedCeiling": 32,
+      "unsupportedCeiling": 2,
       "unsupportedByCode": {
-        "select/async-function": 3
+        "select/async-function": 2
       },
       "invariantCeiling": 0
     }

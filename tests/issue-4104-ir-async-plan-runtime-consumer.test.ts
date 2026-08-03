@@ -115,6 +115,30 @@ function irFunction(unit: IrTerminalUnitRecord, withIntrinsic = false): IrFuncti
   };
 }
 
+function withDiscardedAwaitBlock(fn: IrFunction): IrFunction {
+  const promise = fn.params[0]!.value;
+  return {
+    ...fn,
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "await",
+            operand: promise,
+            result: asValueId(9),
+            resultType: F64,
+          },
+        ],
+        terminator: { kind: "return", values: [promise] },
+      },
+    ],
+    valueCount: 10,
+  };
+}
+
 function prepare(fn: IrFunction) {
   const prepared = prepareIrRuntimeManifest({
     functions: [fn],
@@ -196,6 +220,51 @@ describe("#4104 IR async plan runtime consumer", () => {
     expect(report.components[0]?.externalCallables.every((dependency) => dependency.programAbiBindingId !== null)).toBe(
       true,
     );
+  });
+
+  it("scans semantic async states instead of the discarded pre-transform await block", () => {
+    const { inventory, unit } = fixture("-discarded-block");
+    const module = createEmptyModule();
+    const session = new ProgramAbiSession(inventory, module);
+    const ctx = createCodegenContext(module, {} as ts.TypeChecker, undefined, session);
+    const prepared = prepare(withDiscardedAwaitBlock(irFunction(unit)));
+
+    materializePreparedAsyncHostAdapters(ctx, prepared.functions);
+    planProgramAbiCallableImports(ctx);
+    const report = derivePreparedComponentDependencies({
+      module: { functions: prepared.functions },
+      terminalUnitIds: new Set([unit.id]),
+      inventory,
+      abi: {
+        get: (id) => session.getDraft(id),
+        bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),
+      },
+    });
+    expect(report.components[0]).toMatchObject({ status: "complete", failures: [] });
+    expect(report.components[0]?.externalCallables).toHaveLength(ASYNC_HOST_ADAPTERS.length);
+
+    const ordinary = {
+      ...prepared.functions[0]!,
+      funcKind: "regular" as const,
+      asyncPlan: undefined,
+      asyncRuntime: undefined,
+    };
+    const control = derivePreparedComponentDependencies({
+      module: { functions: [ordinary] },
+      terminalUnitIds: new Set([unit.id]),
+      inventory,
+      abi: {
+        get: (id) => session.getDraft(id),
+        bindingIdsForStructuralReference: (key) => session.bindingIdsForStructuralReference(key),
+      },
+    });
+    expect(control.components[0]?.status).toBe("blocked");
+    expect(control.components[0]?.failures).toEqual([
+      expect.objectContaining({
+        code: "implicit-support-reference-unavailable",
+        detail: expect.stringContaining("await resolves async runtime support"),
+      }),
+    ]);
   });
 
   it("fails closed on owner drift and unavailable target policies", () => {
