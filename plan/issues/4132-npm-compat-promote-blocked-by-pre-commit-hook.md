@@ -68,12 +68,21 @@ has to opt out of the hook explicitly.
 suite over generated JSON artifacts would be meaningless even if it could
 resolve a base.
 
+## Permanent repro
+
+`tests/issue-4130-npm-compat-refresh-staleness-gate.test.ts` — the guard lives
+alongside #4130's rather than in a file of its own, because the two failures are
+the same mechanism observed one step apart (the gate stops deferring, so the
+promote step finally runs, and then fails). Splitting them would let one be
+edited without the other being re-read. The `#4132` describe block asserts
+`--no-verify` on the promote commit and that `[skip ci]` survives.
+
 ## Acceptance criteria
 
 - [x] The promote step commits without invoking the pre-commit hook.
 - [x] A structural regression test asserting `--no-verify` on the promote
       commit, and that the `[skip ci]` marker survives (it is what breaks the
-      trigger loop).
+      trigger loop) — `tests/issue-4130-npm-compat-refresh-staleness-gate.test.ts`.
 - [x] The test is demonstrated to FAIL against the unfixed workflow.
 
 ## Not yet verified
