@@ -245,7 +245,18 @@ jobs:
               exit 0
             fi
 
-            git commit -q -m "chore(ci): refresh npm-compat artifacts [skip ci]"
+            # (#4132) --no-verify: this job installs dependencies, so husky's
+          # pre-commit hook is live, and it runs `test:changed-root`, which needs
+          # a merge base with `origin/main`. The checkout is `fetch-depth: 1`
+          # with `persist-credentials: false` and the push remote is `deploykey`,
+          # so `origin/main` does not exist and the hook aborts the commit:
+          #   "changed-root-tests: cannot resolve a merge base with origin/main"
+          # The sibling `benchmark-refresh` is immune only structurally — its
+          # promote job is separate and never runs `pnpm install`, so no hook is
+          # installed. This workflow is deliberately a SINGLE job, so it has to
+          # opt out explicitly. Running the changed-root suite over generated
+          # JSON artifacts would be meaningless anyway.
+          git commit -q --no-verify -m "chore(ci): refresh npm-compat artifacts [skip ci]"
             if git push deploykey HEAD:main; then
               echo "Published npm-compat artifacts measured at ${SOURCE_SHA}."
               exit 0
