@@ -46,7 +46,7 @@ import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object
 import { COLLECTION_KIND, ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
 import { ensureDisposableStackNew } from "../disposable-runtime.js";
 import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
-import { ensureObjectRuntime } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime
+import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
 import { ensureSetHelpers } from "../set-runtime.js";
 import { ensureWeakCollectionHelpers } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefNew } from "../weakref-runtime.js";
@@ -66,6 +66,7 @@ import {
   emitDynamicNewFunctionHostEval,
   emitStandaloneDynamicFunctionStub,
   isGlobalFunctionIdentifier,
+  resolvesToGlobalFunctionAlias,
   tryStaticNewFunction,
 } from "./eval-inline.js";
 import {
@@ -2125,7 +2126,18 @@ function tryCompileNativeConstructFromValue(
   if (!ts.isIdentifier(calleeExpr)) return undefined;
   // A compiled fnctor for this binding means the typed-struct path owns it.
   if (ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
-  if (!resolvesToConstructableFunctionValue(ctx, calleeExpr)) return undefined;
+  const runtimeFunctionAlias =
+    ctx.runtimeEvalCallableBoundaryEnabled === true && resolvesToGlobalFunctionAlias(calleeExpr, ctx.oracle);
+  if (!runtimeFunctionAlias && !resolvesToConstructableFunctionValue(ctx, calleeExpr)) return undefined;
+
+  // A linked `%Function%` alias is a provider marker rather than a local
+  // closure struct. Reserve the argv builders + generic apply bridge used by
+  // the construct driver's exact marker arm; ordinary function values retain
+  // the existing method-dispatch lowering.
+  if (runtimeFunctionAlias) {
+    ensureObjVecBuilders(ctx);
+    reserveApplyClosure(ctx);
+  }
 
   // A non-flattenable spread has a RUNTIME argument count, so no fixed-arity
   // driver fits; decline rather than construct with the wrong argument list.

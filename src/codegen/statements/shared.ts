@@ -4,7 +4,7 @@
  * No dependencies on other statement sub-modules or on statements.ts itself.
  */
 import { ts } from "../../ts-api.js";
-import type { Instr } from "../../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
 import type { FunctionContext, NullGuardFact } from "../context/types.js";
 
 /**
@@ -76,6 +76,7 @@ export interface BlockScopeSave {
   tdzFlags: Map<string, number> | null;
   constBindings: Map<string, boolean> | null;
   nullGuardAliases: Map<string, NullGuardFact | null> | null;
+  boxedCaptures: Map<string, { refCellTypeIdx: number; valType: ValType } | null> | null;
 }
 
 function collectBindingPatternNames(pattern: ts.BindingPattern, names: string[]): void {
@@ -133,6 +134,7 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
   let savedTdz: Map<string, number> | null = null;
   let savedConstBindings: Map<string, boolean> | null = null;
   let savedNullGuardAliases: Map<string, NullGuardFact | null> | null = null;
+  let savedBoxedCaptures: Map<string, { refCellTypeIdx: number; valType: ValType } | null> | null = null;
   for (const name of blockNames) {
     if (!savedConstBindings) savedConstBindings = new Map();
     savedConstBindings.set(name, fctx.constBindings?.has(name) ?? false);
@@ -140,6 +142,9 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
     if (!savedNullGuardAliases) savedNullGuardAliases = new Map();
     savedNullGuardAliases.set(name, fctx.nullGuardAliases?.get(name) ?? null);
     fctx.nullGuardAliases?.delete(name);
+    if (!savedBoxedCaptures) savedBoxedCaptures = new Map();
+    savedBoxedCaptures.set(name, fctx.boxedCaptures?.get(name) ?? null);
+    fctx.boxedCaptures?.delete(name);
 
     const existing = fctx.localMap.get(name);
     if (existing !== undefined) {
@@ -158,12 +163,13 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
       }
     }
   }
-  if (!savedLocals && !savedTdz && !savedConstBindings && !savedNullGuardAliases) return null;
+  if (!savedLocals && !savedTdz && !savedConstBindings && !savedNullGuardAliases && !savedBoxedCaptures) return null;
   return {
     locals: savedLocals,
     tdzFlags: savedTdz,
     constBindings: savedConstBindings,
     nullGuardAliases: savedNullGuardAliases,
+    boxedCaptures: savedBoxedCaptures,
   };
 }
 
@@ -196,6 +202,13 @@ export function restoreBlockScopedShadows(fctx: FunctionContext, saved: BlockSco
     for (const [name, alias] of saved.nullGuardAliases) {
       if (alias) fctx.nullGuardAliases.set(name, alias);
       else fctx.nullGuardAliases.delete(name);
+    }
+  }
+  if (saved.boxedCaptures) {
+    if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+    for (const [name, capture] of saved.boxedCaptures) {
+      if (capture) fctx.boxedCaptures.set(name, capture);
+      else fctx.boxedCaptures.delete(name);
     }
   }
 }

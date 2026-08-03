@@ -35,7 +35,8 @@ function carrierDomain(tag: JsTag): string {
 }
 
 export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(decl.name) || !decl.initializer) return false;
+  if (!ts.isIdentifier(decl.name)) return false;
+  if (!decl.initializer) return false;
 
   const initialTag = ctx.oracle.staticJsTypeOf(decl.initializer);
   if (initialTag === "mixed") return false;

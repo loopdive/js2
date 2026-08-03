@@ -1670,7 +1670,25 @@ function _wrapWasmClosure(
         const methodCallFn = exports![`__call_fn_method_${methodArity}`]!;
         const methodPadded = _denseOwnArgs(args, methodArity);
         const rawThis = this !== null && typeof this === "object" ? _unwrapForHost(this) : this;
-        const ret = methodCallFn(_isWasmStruct(rawThis) ? rawThis : this, closure, ...methodPadded);
+        const receiver = _isWasmStruct(rawThis) ? rawThis : this;
+        // The ordinary method dispatcher intentionally consumes a pre-seeded
+        // `__argc` when an in-Wasm dynamic caller widens an under-applied call.
+        // A known-arity HOST callback has no such protocol state of its own:
+        // calling the ordinary export directly lets it inherit the previous
+        // callback's count (for example getter argc=0 immediately followed by
+        // setter argc=1), so the setter's value is padded as `undefined`.
+        // Enter through the reserved argc wrapper, exactly like the unknown-
+        // arity bridge below, to make each host call self-contained and reset
+        // the protocol slot before returning. Seed the SELECTED dispatcher
+        // arity, not `args.length`: this known-arity path intentionally pads an
+        // under-applied callback with real JS `undefined` values, whose normal
+        // parameter coercion must still run inside the method dispatcher. The
+        // unknown-arity path below is the one that preserves raw args.length.
+        const argcCallFn = exports![`__\0js2_call_fn_method_argc_${methodArity}`];
+        const ret =
+          typeof argcCallFn === "function"
+            ? argcCallFn(methodArity, receiver, closure, ...methodPadded)
+            : methodCallFn(receiver, closure, ...methodPadded);
         return _wasmAccessorGetterReturnWrappers.has(wrapped)
           ? _maybeWrapAccessorGetterCallable(ret, callbackState)
           : ret;

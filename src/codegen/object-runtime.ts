@@ -113,6 +113,15 @@ import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // 
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 import { orderNamesByInsertion } from "./struct-field-exports.js";
+import {
+  buildRuntimeEvalValueWrap,
+  buildRuntimeEvalValueUnwrap,
+  ensureRuntimeEvalProviderActiveGlobal,
+  RUNTIME_EVAL_AOT_CALLABLE_BRAND_A,
+  RUNTIME_EVAL_AOT_CALLABLE_BRAND_B,
+  RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A,
+  RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B,
+} from "./runtime-eval-boundary.js";
 // (#3265) Proxy dispatch subsystem extracted to a sibling module (subtask of
 // #3182 god-file split). `ensureProxyRuntime` is still called by
 // `ensureObjectRuntime` (imported back here); `fillProxyDispatch` is re-exported
@@ -2373,8 +2382,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // ── __extern_set(externref obj, externref key, externref value) -> void ──
   //
   // Unwrap obj to $Object (no-op on non-object — matches host leniency), grow
-  // if the load factor is too high, then insert/update with default data-prop
-  // flags. Value is stored as anyref via any.convert_extern.
+  // if the load factor is too high, then insert/update. A fresh property gets
+  // the default data-property flags; an update preserves the existing
+  // descriptor flags, as OrdinarySet changes only [[Value]]. Value is stored
+  // as anyref via any.convert_extern.
   //
   // params: 0=obj 1=key 2=value
   // locals: 3=o(ref null $Object) 4=cap 5=load 6=any(anyref) 7=seq
@@ -2526,13 +2537,30 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       { op: "i32.const", value: 1 },
       { op: "i32.add" },
       { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 5 },
-      // __obj_insert(o, key, any.convert_extern(value), FLAG_DEFAULT, seq)
+      // __obj_insert(o, key, any.convert_extern(value), flags, seq)
+      //
+      // Ordinary assignment updates [[Value]] only. Reusing FLAG_DEFAULT here
+      // used to make every successful write configurable, enumerable, and
+      // writable, silently erasing attributes installed by defineProperty.
+      // `accEntry` is the own live entry probed above; null means this is a new
+      // property and therefore still receives FLAG_DEFAULT.
       { op: "local.get", index: 3 },
       { op: "ref.as_non_null" },
       { op: "local.get", index: 1 },
       { op: "local.get", index: 2 },
       { op: "any.convert_extern" },
-      { op: "i32.const", value: FLAG_DEFAULT },
+      { op: "local.get", index: 8 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: FLAG_DEFAULT }],
+        else: [
+          { op: "local.get", index: 8 },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+        ],
+      },
       { op: "local.get", index: 7 },
       { op: "call", funcIdx: objInsertIdx },
     ];
@@ -5377,9 +5405,11 @@ export function fillApplyClosure(ctx: CodegenContext): void {
 
   // (#2928) Cross-module AOT-callable carrier. The provider cannot enumerate
   // the caller module's private closure signatures, so the carrier holds a
-  // caller-owned trampoline that accepts the receiver and ORIGINAL args vector
-  // explicitly. That trampoline re-enters the caller's own __apply_closure,
-  // where the target's concrete shape is known.
+  // caller-owned trampoline that accepts the receiver plus argc and eight
+  // explicit values. A module-private $ObjVec cannot cross this boundary: the
+  // provider extracts with its own object runtime and the caller rebuilds its
+  // own vector before re-entering __apply_closure, where the target's concrete
+  // shape is known.
   const runtimeEvalCarrier = ctx.runtimeEvalAotCallableCarrier;
   if (runtimeEvalCarrier !== undefined) {
     body.unshift(
@@ -5390,18 +5420,148 @@ export function fillApplyClosure(ctx: CodegenContext): void {
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          // code(self, recv, args)
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.cast", typeIdx: runtimeEvalCarrier.structTypeIdx },
-          { op: "local.get", index: 1 },
-          { op: "local.get", index: 2 },
+          { op: "struct.get", typeIdx: runtimeEvalCarrier.structTypeIdx, fieldIdx: 3 },
+          { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_A },
+          { op: "i32.eq" },
           { op: "local.get", index: 0 },
           { op: "any.convert_extern" },
           { op: "ref.cast", typeIdx: runtimeEvalCarrier.structTypeIdx },
-          { op: "struct.get", typeIdx: runtimeEvalCarrier.structTypeIdx, fieldIdx: 0 },
-          { op: "call_ref", typeIdx: runtimeEvalCarrier.funcTypeIdx },
-          { op: "return" },
+          { op: "struct.get", typeIdx: runtimeEvalCarrier.structTypeIdx, fieldIdx: 4 },
+          { op: "i32.const", value: RUNTIME_EVAL_AOT_CALLABLE_BRAND_B },
+          { op: "i32.eq" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              // code(self, recv, argc, arg0, ..., arg7)
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: runtimeEvalCarrier.structTypeIdx },
+              { op: "local.get", index: 1 },
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: externLengthIdx },
+              { op: "i32.trunc_f64_s" },
+              ...ARG_OF(0),
+              ...ARG_OF(1),
+              ...ARG_OF(2),
+              ...ARG_OF(3),
+              ...ARG_OF(4),
+              ...ARG_OF(5),
+              ...ARG_OF(6),
+              ...ARG_OF(7),
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: runtimeEvalCarrier.structTypeIdx },
+              { op: "struct.get", typeIdx: runtimeEvalCarrier.structTypeIdx, fieldIdx: 0 },
+              { op: "call_ref", typeIdx: runtimeEvalCarrier.funcTypeIdx },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+
+  // (#2928) A provider-owned interpreted callback is wrapped in a uniquely
+  // branded canonical carrier before it enters caller AOT. Invoking the raw
+  // closure would leak the provider's private exception tag across modules;
+  // the explicit provider entry returns `[ok,value]`, which this module can
+  // rethrow through its own tag. The brand check avoids conflating ordinary
+  // same-arity user closures with interpreter callbacks.
+  const runtimeInterpTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
+  const runtimeInterpApplyIdx = ctx.funcMap.get("__runtime_apply_interpreted");
+  const truthyIdx = ctx.funcMap.get("__is_truthy");
+  const runtimeEvalPushGlobalsIdx = ctx.funcMap.get("__runtime_eval_push_globals");
+  const runtimeEvalPullGlobalsIdx = ctx.funcMap.get("__runtime_eval_pull_globals");
+  if (runtimeInterpTypeIdx !== undefined && runtimeInterpApplyIdx !== undefined && truthyIdx !== undefined) {
+    const runtimeEvalActiveGlobalIdx = ensureRuntimeEvalProviderActiveGlobal(ctx);
+    const callbackLocal = 3 + locals.length;
+    locals.push({ name: "runtimeEvalCallback", type: { kind: "ref_null", typeIdx: runtimeInterpTypeIdx } });
+    const envelopeLocal = 3 + locals.length;
+    locals.push({ name: "runtimeEvalEnvelope", type: { kind: "externref" } });
+    const activeBeforeLocal = 3 + locals.length;
+    locals.push({ name: "runtimeEvalActiveBefore", type: { kind: "i32" } });
+    const decodeRuntimeValue = buildRuntimeEvalValueUnwrap(ctx, locals, 3);
+    const decodedValueLocal = 3 + locals.length;
+    locals.push({ name: "runtimeEvalDecodedValue", type: { kind: "externref" } });
+    const wrapReceiver = buildRuntimeEvalValueWrap(ctx, locals, 3);
+    const wrappedArgs: Instr[][] = [];
+    for (let i = 0; i < 8; i += 1) wrappedArgs.push(buildRuntimeEvalValueWrap(ctx, locals, 3));
+    const applyArgs: Instr[] = [
+      { op: "local.get", index: callbackLocal },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: runtimeInterpTypeIdx, fieldIdx: 0 },
+      { op: "local.get", index: 1 },
+      ...wrapReceiver,
+      { op: "local.get", index: 2 },
+      { op: "call", funcIdx: externLengthIdx },
+    ];
+    for (let i = 0; i < 8; i++) applyArgs.push(...ARG_OF(i), ...wrappedArgs[i]!);
+    applyArgs.push({ op: "call", funcIdx: runtimeInterpApplyIdx });
+    const envelopeField = (index: 0 | 1): Instr[] => [
+      { op: "local.get", index: envelopeLocal },
+      { op: "f64.const", value: index },
+      { op: "call", funcIdx: externGetIdxArr },
+    ];
+    body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: runtimeInterpTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: runtimeInterpTypeIdx },
+          { op: "local.tee", index: callbackLocal },
+          { op: "struct.get", typeIdx: runtimeInterpTypeIdx, fieldIdx: 1 },
+          { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A },
+          { op: "i32.eq" },
+          { op: "local.get", index: callbackLocal },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: runtimeInterpTypeIdx, fieldIdx: 2 },
+          { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B },
+          { op: "i32.eq" },
+          { op: "i32.and" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "global.get", index: runtimeEvalActiveGlobalIdx },
+              { op: "local.set", index: activeBeforeLocal },
+              { op: "i32.const", value: 1 },
+              { op: "global.set", index: runtimeEvalActiveGlobalIdx },
+              ...(runtimeEvalPushGlobalsIdx === undefined
+                ? []
+                : [{ op: "call", funcIdx: runtimeEvalPushGlobalsIdx } satisfies Instr]),
+              ...applyArgs,
+              { op: "local.set", index: envelopeLocal },
+              ...(runtimeEvalPullGlobalsIdx === undefined
+                ? []
+                : [{ op: "call", funcIdx: runtimeEvalPullGlobalsIdx } satisfies Instr]),
+              { op: "local.get", index: activeBeforeLocal },
+              { op: "global.set", index: runtimeEvalActiveGlobalIdx },
+              ...envelopeField(1),
+              ...decodeRuntimeValue,
+              { op: "local.set", index: decodedValueLocal },
+              ...envelopeField(0),
+              { op: "call", funcIdx: truthyIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "local.get", index: decodedValueLocal }, { op: "return" }],
+                else: [
+                  { op: "local.get", index: decodedValueLocal },
+                  { op: "throw", tagIdx: ensureExnTag(ctx) },
+                ],
+              },
+            ],
+          },
         ],
       },
     );

@@ -280,7 +280,18 @@ export function emitToString(
       return native ? nativeStringType(ctx) : { kind: "externref" };
     }
     if (isStaticStringType(staticType)) {
-      // A real string externref — already concat-ready.
+      // A standalone dynamic call boxes its native string result as externref
+      // while crossing the generic callable bridge. Native-string consumers
+      // (notably the linked Function constructor) need the internal
+      // `$AnyString` again before concatenation or a later extern.convert_any.
+      // The value was produced in-module, so the externref wraps that native
+      // GC reference and the conversion/cast is exact. Keep the host-backed
+      // native-strings lane unchanged because its externref may be a JS string.
+      if (mode === "standalone") {
+        emitNativeStringRefFromExternref(ctx, fctx);
+        return nativeStringType(ctx);
+      }
+      // A real host string externref is already concat-ready.
       return { kind: "externref" };
     }
     // Dynamic externref (boxed string / any / $Object) → runtime ToString.

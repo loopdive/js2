@@ -149,6 +149,7 @@ export function createCodegenContext(
     dynMemberGetHelpersEmitted: false, // (#3053 U0) ensureDynMemberGet idempotence latch
     classThrowsOnEval: new Set(),
     topLevelFunctionNames: new Set(), // (#1983) for class-member funcMap key collision detection
+    topLevelFunctionDeclarations: new Map(),
     classMethodSet: new Set(),
     deferredClassBodies: new Set(),
     classAccessorSet: new Set(),
@@ -182,6 +183,7 @@ export function createCodegenContext(
     nativeGeneratorResultTypeIdx: -1,
     nativeGenerators: new Map(),
     moduleGlobals: new Map(),
+    globalLexicalBindings: new Set(),
     liveFuncBindingGlobals: new Set(),
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),

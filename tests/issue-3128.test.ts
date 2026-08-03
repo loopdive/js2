@@ -119,6 +119,27 @@ export function test(): number {
     expected: 1,
   },
   {
+    name: "IIFE var shadow leaves the captured outer binding intact",
+    src: `
+export function test(): number {
+  var x = 1;
+  var readOuter = function(): number { return x; };
+  (function(): void { var x = 5; if (x !== 5) throw new Error("bad inner binding"); })();
+  return readOuter() * 10 + x;
+}`,
+    expected: 11,
+  },
+  {
+    name: "IIFE parameter does not leak over a same-named outer binding",
+    src: `
+export function test(): number {
+  var x = 3;
+  (function(x: number): void { void x; })(5);
+  return x;
+}`,
+    expected: 3,
+  },
+  {
     // Write INSIDE the inlined IIFE stays visible outside (both directions).
     name: "write inside inlined IIFE visible to escaped closure and outer reads",
     src: `

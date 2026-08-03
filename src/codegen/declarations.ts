@@ -97,6 +97,7 @@ import {
 } from "./program-abi-source-callable-planning.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
+import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -379,6 +380,26 @@ function lowerParamType(
         wasmType = inferred;
       }
     }
+  }
+  // Runtime eval publishes top-level script functions through an externref
+  // AOT-callable adapter. Structurally typed object parameters need the same
+  // representation-neutral carrier: an object literal arriving through that
+  // adapter is not nominally the declaration's WasmGC struct, even when it has
+  // the required fields. Keep compiler-owned reference families (native
+  // strings, vectors, promises, closures, and class instances) specialised;
+  // widening those unrelated references changed their ordinary in-module
+  // semantics merely because the source happened to mention eval.
+  const runtimeEvalParamStructName =
+    wasmType.kind === "ref" || wasmType.kind === "ref_null" ? ctx.typeIdxToStructName.get(wasmType.typeIdx) : undefined;
+  if (
+    ctx.runtimeEvalCallableBoundaryEnabled === true &&
+    ts.isSourceFile(stmt.parent) &&
+    ctx.topLevelFunctionNames.has(funcName) &&
+    runtimeEvalParamStructName !== undefined &&
+    ctx.structFields.has(runtimeEvalParamStructName) &&
+    !ctx.classTagMap.has(runtimeEvalParamStructName)
+  ) {
+    wasmType = { kind: "externref" };
   }
   return wasmType;
 }
@@ -899,7 +920,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // keys (`${className}_${member}`) that would collide with it can relocate.
       // Only real `function` declarations participate — class names are tracked
       // separately and must NOT poison the collision set.
-      if (stmt.name) ctx.topLevelFunctionNames.add(name);
+      if (stmt.name) {
+        ctx.topLevelFunctionNames.add(name);
+        ctx.topLevelFunctionDeclarations.set(name, stmt);
+      }
       // #1463 — capture source text for Function.prototype.toString() so that
       // `someFn.toString()` returns the original declaration text instead of
       // the `function () { [native code] }` placeholder. Only top-level
@@ -2420,6 +2444,9 @@ export function compileDeclarations(
         }
         // Closure struct (internal ref) → externref for the externref global.
         initFctx.body.push({ op: "extern.convert_any" });
+        if (ctx.runtimeEvalGlobalFunctionBindings) {
+          emitRuntimeEvalAotCallableAdapter(ctx, initFctx);
+        }
         initFctx.body.push({ op: "global.set", index: liveGlobalIdx });
         seededGlobals.add(liveGlobalIdx);
       }

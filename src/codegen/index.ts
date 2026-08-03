@@ -11,7 +11,7 @@ import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./n
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js"; // (#3116)
 import { detectArrayReduceFusion } from "./array-reduce-fusion.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
-import type { TypeFact } from "../checker/oracle.js";
+import type { TypeFact, TypeOracle } from "../checker/oracle.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -183,7 +183,10 @@ import { bindingHasMixedAssignmentCarrier } from "./analysis/mixed-assignment-ca
 import { symbolBrand } from "./symbol-field-carrier.js";
 import { ensureDynReadHelpers, ensureDynMemberGet } from "./dyn-read.js"; // (#2580 M0) / (#3053 U0)
 import { collectClosureBaseWrapperTypeIdxs, buildClosureRefTestArms } from "./closure-classifier.js"; // (#2175 V2-S1)
-import { ensureRuntimeEvalAotCallableCarrierTypes } from "./runtime-eval-callable.js";
+import {
+  ensureRuntimeEvalAotCallableCarrierTypes,
+  fillRuntimeEvalCallablePropertyGetArm,
+} from "./runtime-eval-callable.js";
 import { ensureNativeIteratorRuntime, fillNativeIteratorLateArms } from "./iterator-native.js";
 import { emitResizableAbExports } from "./dataview-native.js"; // (#3058)
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
@@ -201,6 +204,7 @@ import { fillDisposableStackDisposeDriver } from "./disposable-runtime.js";
 import {
   collectGlobalObjectPropertyNames,
   recordSloppyImplicitGlobalNames,
+  recordScriptGlobalLexicalBindingNames,
   recordScriptVarBindingNames,
   sourceContainsClass,
   sourceContainsDelete,
@@ -2328,7 +2332,10 @@ function planIrOverlay(
   // signatures but before the IR overlay is installed; mixing the two paths
   // would violate IR/legacy type-index parity. Keep the whole runtime-eval unit
   // on one backend until the typed IR owns this carrier explicitly.
-  if (sourceUsesRuntimeEvalBoundary(ast.sourceFile) || sourceProvidesRuntimeEvalBoundary(ast.sourceFile)) {
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    (sourceUsesRuntimeEvalBoundary(ast.sourceFile, ctx.oracle) || sourceProvidesRuntimeEvalBoundary(ast.sourceFile))
+  ) {
     const failure: IrPreparationFailure = {
       kind: "unsupported",
       code: "late-preparation-unsupported",
@@ -3121,6 +3128,8 @@ function compileMultiIrOverlaySource(
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
   const vars = (ctx.globalObjectVarBindings ??= new Set());
   recordScriptVarBindingNames(vars, sourceFile);
+  const lexicals = (ctx.globalLexicalBindings ??= new Set());
+  recordScriptGlobalLexicalBindingNames(lexicals, sourceFile);
   const implicit = (ctx.sloppyImplicitGlobals ??= new Set());
   recordSloppyImplicitGlobalNames(implicit, sourceFile, ctx.oracle, ctx.inferModuleStrictArguments ?? true);
   // (#3956) A top-level `this.p = v` creates a global-object property that a
@@ -3128,8 +3137,30 @@ function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.Sourc
   for (const name of collectGlobalObjectPropertyNames(sourceFile, vars)) implicit.add(name);
 }
 
+function isGlobalEvalValueReference(node: ts.Node, oracle: TypeOracle): node is ts.Identifier {
+  if (!ts.isIdentifier(node) || node.text !== "eval") return false;
+  const declaration = oracle.valueDeclarationOf(node);
+  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+}
+
+function isGlobalFunctionValueReference(node: ts.Node, oracle: TypeOracle): node is ts.Identifier {
+  if (!ts.isIdentifier(node) || node.text !== "Function") return false;
+  // Direct call/new syntax has its own literal compile-away and dynamic
+  // provider routing. This predicate is for the first-class VALUE form.
+  const parent = node.parent;
+  if (
+    ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node) ||
+    ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      (parent.expression === node || (ts.isPropertyAccessExpression(parent) && parent.name === node)))
+  ) {
+    return false;
+  }
+  const declaration = oracle.valueDeclarationOf(node);
+  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+}
+
 /** Pre-scan the small syntax surface that enables the linked runtime-eval ABI. */
-function sourceUsesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
+function sourceUsesRuntimeEvalBoundary(sourceFile: ts.SourceFile, oracle: TypeOracle): boolean {
   // (#3437) `callUsesRuntimeEvalBoundary` can only answer true for a call whose
   // callee is the identifier `Function` or `eval` — so if neither name occurs
   // anywhere in the source text, no call can match and the full-file AST walk
@@ -3142,6 +3173,17 @@ function sourceUsesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
+    // `var indirect = eval` crosses the same provider boundary as an explicit
+    // `(0, eval)(source)` call, but its eventual CallExpression has an alias as
+    // callee. Recognize the global intrinsic at the value-read site.
+    if (isGlobalEvalValueReference(node, oracle)) {
+      found = true;
+      return;
+    }
+    if (isGlobalFunctionValueReference(node, oracle)) {
+      found = true;
+      return;
+    }
     if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && callUsesRuntimeEvalBoundary(node)) {
       found = true;
       return;
@@ -3154,9 +3196,16 @@ function sourceUsesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
 
 function sourceProvidesRuntimeEvalBoundary(sourceFile: ts.SourceFile): boolean {
   return sourceFile.statements.some(
-    (stmt) =>
-      ts.isFunctionDeclaration(stmt) &&
-      (stmt.name?.text === "__runtime_new_function" || stmt.name?.text === "__runtime_indirect_eval"),
+    (stmt) => ts.isFunctionDeclaration(stmt) && isRuntimeEvalBoundaryName(stmt.name?.text),
+  );
+}
+
+function isRuntimeEvalBoundaryName(name: string | undefined): boolean {
+  return (
+    name === "__runtime_new_function" ||
+    name === "__runtime_indirect_eval" ||
+    name === "__runtime_direct_eval" ||
+    name === "__runtime_apply_interpreted"
   );
 }
 
@@ -3170,9 +3219,8 @@ function callUsesRuntimeEvalBoundary(node: ts.CallExpression | ts.NewExpression)
   ) {
     expr = expr.expression;
   }
-  // Direct eval remains on #2929 (constant direct eval is compiled away;
-  // dynamic direct eval is refused), so it does not enable this linked ABI.
-  if (ts.isIdentifier(expr) && expr.text === "eval") return false;
+  // Direct eval now routes through #2929's linked caller-environment ABI.
+  if (ts.isIdentifier(expr) && expr.text === "eval") return true;
   if (ts.isIdentifier(expr) && expr.text === "Function") {
     // Literal-only Function construction is compiled away by #2924.
     return node.arguments?.some((arg) => !ts.isStringLiteralLike(arg)) ?? false;
@@ -3416,9 +3464,8 @@ export function generateModule(
   }
   if (
     (ctx.standalone || ctx.wasi) &&
-    (sourceUsesRuntimeEvalBoundary(ast.sourceFile) ||
-      ctx.topLevelFunctionNames.has("__runtime_new_function") ||
-      ctx.topLevelFunctionNames.has("__runtime_indirect_eval"))
+    (sourceUsesRuntimeEvalBoundary(ast.sourceFile, ctx.oracle) ||
+      [...ctx.topLevelFunctionNames].some(isRuntimeEvalBoundaryName))
   ) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
@@ -4420,6 +4467,12 @@ export function generateModule(
     // scanForDynamicProto prescan marked a class hierarchy — byte-identical
     // otherwise.
     fillDynamicProtoHelpers(ctx);
+
+    // A separately compiled runtime-eval provider can invoke caller-owned AOT
+    // functions through the canonical carrier and must also read their own
+    // properties (for example assert.throws). Install this after every other
+    // __extern_get fill so the carrier delegates directly to its owner module.
+    fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#2358 #10) Fill the reserved `__array_to_primitive_string` body now that
     // `__extern_length`/`__extern_get_idx` (filled just above) and the native
@@ -5845,7 +5898,36 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
  */
 function registerReassignedFunctionGlobals(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
   const reassigned = new Set<string>();
+  const dynamicSourceFragments: string[] = [];
+  let hasUnknownDynamicSource = false;
+  const runtimeEvalConsumer =
+    (ctx.standalone || ctx.wasi) &&
+    sourceFiles.some((sourceFile) => sourceUsesRuntimeEvalBoundary(sourceFile, ctx.oracle));
   const scan = (node: ts.Node): void => {
+    if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && callUsesRuntimeEvalBoundary(node)) {
+      let callee: ts.Expression = node.expression;
+      while (
+        ts.isParenthesizedExpression(callee) ||
+        ts.isAsExpression(callee) ||
+        ts.isNonNullExpression(callee) ||
+        ts.isTypeAssertionExpression(callee)
+      ) {
+        callee = callee.expression;
+      }
+      if (ts.isIdentifier(callee) && callee.text === "Function") {
+        // A literal-only Function constructor is lowered statically and never
+        // reaches this branch. Any linked constructor therefore has source the
+        // compiler cannot enumerate and may observe every global function.
+        hasUnknownDynamicSource = true;
+      } else {
+        const source = node.arguments?.[0];
+        if (source && ts.isStringLiteralLike(source)) {
+          dynamicSourceFragments.push(source.text);
+        } else if (source) {
+          hasUnknownDynamicSource = true;
+        }
+      }
+    }
     // Simple / compound assignment (`fn = …`, `fn += …`, …) whose LHS is a
     // bare identifier resolving to a function declaration.
     if (
@@ -5868,6 +5950,50 @@ function registerReassignedFunctionGlobals(ctx: CodegenContext, sourceFiles: rea
     ts.forEachChild(node, scan);
   };
   for (const sf of sourceFiles) scan(sf);
+  if (runtimeEvalConsumer) {
+    ctx.runtimeEvalGlobalFunctionBindings = true;
+    // A script `var` is a mutable JS binding, so runtime eval may replace its
+    // current value with a value whose representation differs from the
+    // initializer inferred by the AOT compiler (most notably an interpreted
+    // function). Keep eval-visible var storage representation-neutral. The
+    // declaration collector has allocated these globals, but no user body or
+    // module initializer has been compiled yet, so widening here becomes the
+    // authoritative type seen by every later read and write.
+    const evalVisibleGlobals = new Set<string>([
+      ...(ctx.globalObjectVarBindings ?? []),
+      ...(ctx.globalLexicalBindings ?? []),
+    ]);
+    for (const name of evalVisibleGlobals) {
+      const globalIdx = ctx.moduleGlobals.get(name);
+      if (globalIdx === undefined) continue;
+      const global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+      if (!global || global.type.kind === "externref") continue;
+      global.type = { kind: "externref" };
+      global.init = [{ op: "ref.null.extern" }];
+    }
+    const mentionedByDynamicSource = (name: string): boolean =>
+      dynamicSourceFragments.some((fragment) => {
+        let from = 0;
+        while (from <= fragment.length) {
+          const at = fragment.indexOf(name, from);
+          if (at < 0) return false;
+          const before = at === 0 ? "" : fragment[at - 1]!;
+          const afterAt = at + name.length;
+          const after = afterAt >= fragment.length ? "" : fragment[afterAt]!;
+          const ident = (ch: string): boolean => /[A-Za-z0-9_$]/.test(ch);
+          if (!ident(before) && !ident(after)) return true;
+          from = at + name.length;
+        }
+        return false;
+      });
+    for (const name of ctx.topLevelFunctionNames) {
+      const declaration = ctx.topLevelFunctionDeclarations.get(name);
+      const canBeReboundByEval = !ctx.sourceIsModule || !declaration || !hasExportModifier(declaration);
+      if (canBeReboundByEval && (hasUnknownDynamicSource || mentionedByDynamicSource(name))) {
+        reassigned.add(name);
+      }
+    }
+  }
   if (reassigned.size === 0) return;
 
   const set = (ctx.liveFuncBindingGlobals ??= new Set<string>());
@@ -6395,6 +6521,7 @@ export function generateMultiModule(
     // (#3673 round 9b) LAST __extern_get body fill: prepend the per-key
     // prototype-lookup cache hit arm ahead of the ladder arms unshifted above.
     unshiftExternGetProtoCacheArm(ctx);
+    fillRuntimeEvalCallablePropertyGetArm(ctx);
 
     // (#3495) `__extern_get_idx` is reserved while compiling standalone
     // numeric reads through an externref (for example `globalThis.logs[i]`).
