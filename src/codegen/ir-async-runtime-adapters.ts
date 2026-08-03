@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
-  ASYNC_HOST_ADAPTERS,
+  ALL_ASYNC_HOST_ADAPTERS,
   type AsyncHostAdapter,
   type AsyncHostAdapterValueType,
   type AsyncHostCapabilityId,
@@ -65,7 +65,7 @@ function findExactImport(ctx: CodegenContext, adapter: AsyncHostAdapter): Import
  */
 export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functions: readonly IrFunction[]): void {
   const requested = new Map<AsyncHostCapabilityId, AsyncHostAdapter>();
-  const catalogue = new Map(ASYNC_HOST_ADAPTERS.map((adapter) => [adapter.capability, adapter] as const));
+  const catalogue = new Map(ALL_ASYNC_HOST_ADAPTERS.map((adapter) => [adapter.capability, adapter] as const));
 
   for (const fn of functions) {
     if (!fn.asyncRuntime) continue;
@@ -83,7 +83,7 @@ export function materializePreparedAsyncHostAdapters(ctx: CodegenContext, functi
     }
   }
 
-  for (const adapter of ASYNC_HOST_ADAPTERS) {
+  for (const adapter of ALL_ASYNC_HOST_ADAPTERS) {
     if (!requested.has(adapter.capability)) continue;
     let imported = findExactImport(ctx, adapter);
     if (!imported) {

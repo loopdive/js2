@@ -2,7 +2,7 @@
 
 import { irImportFuncRef, irIntrinsicFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
 import { createIrAsyncPlan, type IrAsyncPlan, type PreparedIrAsyncRuntime } from "./async-plan.js";
-import { ASYNC_HOST_ADAPTERS, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
+import { ALL_ASYNC_HOST_ADAPTERS, type AsyncHostCapabilityId } from "./async-runtime-providers.js";
 import { intrinsicEffectEvidence, INTRINSIC_DEFINITIONS } from "./intrinsics.js";
 import {
   forEachInstrDeep,
@@ -227,7 +227,7 @@ export function prepareIrRuntimeManifest(input: {
     const runtime: PreparedIrAsyncRuntime = Object.freeze({
       kind: "host-wasmgc",
       adapters: Object.freeze(
-        ASYNC_HOST_ADAPTERS.filter((adapter) => capabilities.has(adapter.capability)).map((adapter) =>
+        ALL_ASYNC_HOST_ADAPTERS.filter((adapter) => capabilities.has(adapter.capability)).map((adapter) =>
           Object.freeze({
             capability: adapter.capability,
             target: irImportFuncRef(adapter.module, adapter.field, adapter.field),

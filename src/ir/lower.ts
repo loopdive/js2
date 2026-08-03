@@ -2192,10 +2192,8 @@ export function lowerIrFunctionBody<S, Slot>(
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.len (${func.name})`);
         emitValue(instr.vec, out);
         emitter.emitVecLen(vec, out);
-        // IR-level result is f64 (matches JS Number semantics) — promote.
-        // Route the coercion through the emitter so non-Wasm sinks do not
-        // need to accept a raw Wasm escape hatch.
-        emitter.emitUnary("f64.convert_i32_s", out);
+        // JS length is f64; certified internal counted loops retain the physical i32.
+        if (instr.integer !== true) emitter.emitUnary("f64.convert_i32_s", out);
         return;
       }
       case "vec.get": {

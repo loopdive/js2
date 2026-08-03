@@ -1432,6 +1432,15 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** Read a proven vector length without the JavaScript-number promotion. */
+  emitVecLenI32(vec: IrValueId): IrValueId {
+    const result = this.allocator.fresh();
+    const resultType: IrType = irVal({ kind: "i32" });
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "vec.len", vec, integer: true, result, resultType });
+    return result;
+  }
+
   /**
    * Index into a vec's data array. `indexI32` MUST be an i32-typed SSA value
    * (not f64). `elemType` is the element's IrType, and the result carries it.
