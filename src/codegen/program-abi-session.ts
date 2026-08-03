@@ -518,7 +518,7 @@ interface PreparedProgramAbiScopeRecord {
   readonly requestedBindingIds: ReadonlySet<IrBindingId>;
   readonly bindingIds: ReadonlySet<IrBindingId>;
   readonly bindingTerminalOwnerIds: ReadonlyMap<IrBindingId, IrUnitId | null>;
-  readonly drafts: ReadonlyMap<IrBindingId, ProgramAbiDraft>;
+  readonly drafts: Map<IrBindingId, ProgramAbiDraft>;
   readonly locators: ReadonlyMap<IrBindingId, PreparedProgramAbiLocatorSnapshot>;
   readonly structuralReferences: ReadonlyMap<IrBindingId, string>;
   readonly callableTypeContracts: Map<IrBindingId, ProgramAbiCallableTypeContract>;
@@ -1425,6 +1425,7 @@ export class ProgramAbiSession {
     for (const [id, contract] of remappedCallableContracts) this.callableTypeContracts.set(id, contract);
     this.globalTypeContracts.clear();
     for (const [id, contract] of remappedGlobalContracts) this.globalTypeContracts.set(id, contract);
+    const remappedTypeDrafts = new Map<IrBindingId, ProgramAbiDraft>();
     for (const scope of this.preparedScopes.values()) {
       for (const id of scope.callableTypeContracts.keys()) {
         const draft = this.drafts.get(id);
@@ -1444,7 +1445,14 @@ export class ProgramAbiSession {
       for (const id of scope.typeLayouts.keys()) {
         const locator = this.locators.get(id);
         if (locator?.kind === "type-cell" && locator.cell.current !== null) {
-          scope.typeLayouts.set(id, canonicalProgramAbiTypeDef(locator.cell.current));
+          const currentLayout = canonicalProgramAbiTypeDef(locator.cell.current);
+          scope.typeLayouts.set(id, currentLayout);
+          const draft = this.drafts.get(id);
+          if (draft?.intent.kind === "type") {
+            remappedTypeDrafts.set(id, { ...draft, intent: { ...draft.intent, shapeKey: currentLayout } });
+          } else if (draft?.intent.kind === "class") {
+            remappedTypeDrafts.set(id, { ...draft, intent: { ...draft.intent, layoutKey: currentLayout } });
+          }
         }
       }
       const remappedReachableLayouts = new Map<number, string>();
@@ -1463,6 +1471,12 @@ export class ProgramAbiSession {
         scope.reachableTypeLayouts.set(index, layoutValue);
       }
     }
+    for (const [id, draft] of remappedTypeDrafts) this.drafts.set(id, draft);
+    for (const scope of this.preparedScopes.values()) {
+      for (const [id, draft] of remappedTypeDrafts) {
+        if (scope.drafts.has(id)) scope.drafts.set(id, cloneDraft(draft));
+      }
+    }
   }
 
   /**
@@ -1473,7 +1487,8 @@ export class ProgramAbiSession {
    * `final: false -> true` changes at indices reported by
    * `markLeafStructsFinal`. Explicit support-type roots participate in the
    * same refresh because finality is a backend layout optimization applied
-   * after scope sealing; source class roots remain frozen.
+   * after scope sealing. Source class layouts use the same exact type cells,
+   * so a reported leaf-only transition is safe for them as well.
    */
   recordLeafTypeFinalization(finalizedTypeIndices: readonly number[]): void {
     this.assertLayoutMutable("record leaf type finalization");
@@ -1488,6 +1503,7 @@ export class ProgramAbiSession {
       }
     }
 
+    const refreshedDrafts = new Map<IrBindingId, ProgramAbiDraft>();
     const refreshed: Array<{
       readonly scope: PreparedProgramAbiScopeRecord;
       readonly typeLayouts: Map<IrBindingId, string>;
@@ -1508,7 +1524,7 @@ export class ProgramAbiSession {
         const draft = this.drafts.get(id);
         const index = this.module.types.indexOf(locator.cell.current);
         if (
-          draft?.intent.kind !== "type" ||
+          (draft?.intent.kind !== "type" && draft?.intent.kind !== "class") ||
           index < 0 ||
           !finalized.has(index) ||
           !isLeafFinalizationOnly(expectedLayout, currentLayout)
@@ -1519,6 +1535,18 @@ export class ProgramAbiSession {
           );
         }
         typeLayouts.set(id, currentLayout);
+        const refreshedDraft: ProgramAbiDraft =
+          draft.intent.kind === "type"
+            ? { ...draft, intent: { ...draft.intent, shapeKey: currentLayout } }
+            : { ...draft, intent: { ...draft.intent, layoutKey: currentLayout } };
+        const previousRefresh = refreshedDrafts.get(id);
+        if (previousRefresh && !draftsEqual(previousRefresh, refreshedDraft)) {
+          throw new ProgramAbiInvariantError(
+            "type-remap-mismatch",
+            `leaf finalization produced conflicting prepared draft refreshes for ${id}`,
+          );
+        }
+        refreshedDrafts.set(id, refreshedDraft);
       }
       const current = this.collectPreparedReachableTypeLayouts(
         this.module,
@@ -1547,7 +1575,11 @@ export class ProgramAbiSession {
       }
       refreshed.push({ scope, typeLayouts, reachableTypeLayouts: current });
     }
+    for (const [id, draft] of refreshedDrafts) this.drafts.set(id, draft);
     for (const { scope, typeLayouts, reachableTypeLayouts } of refreshed) {
+      for (const [id, draft] of refreshedDrafts) {
+        if (scope.drafts.has(id)) scope.drafts.set(id, cloneDraft(draft));
+      }
       scope.typeLayouts.clear();
       for (const [id, layout] of typeLayouts) scope.typeLayouts.set(id, layout);
       scope.reachableTypeLayouts.clear();
@@ -2022,7 +2054,7 @@ export class ProgramAbiSession {
       requestedBindingIds: readonlySet(requestedBindingIds),
       bindingIds: readonlySet(exactBindingIds),
       bindingTerminalOwnerIds: readonlyMap(bindingTerminalOwnerIds),
-      drafts: readonlyMap(drafts.map((draft) => [draft.id, cloneDraft(draft)] as const)),
+      drafts: new Map(drafts.map((draft) => [draft.id, cloneDraft(draft)] as const)),
       locators: readonlyMap(locatorSnapshots),
       structuralReferences: readonlyMap(structuralReferences),
       callableTypeContracts,
