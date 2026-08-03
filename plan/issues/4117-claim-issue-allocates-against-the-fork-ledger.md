@@ -25,6 +25,15 @@ related: [4045, 2531, 3880, 3598, 4096]
 > and for the one correction below that #4045 needs. Do not work this issue
 > separately — read #4045.
 >
+> **Controls live with the primary record**, in
+> `tests/issue-4045-one-assignment-ledger.test.ts` — including the two
+> properties this incident contributed: a reservation another lane made on
+> upstream must block a second `--allocate`, and a claim written directly to
+> upstream must be visible to `--check` (it answered `UNASSIGNED` here). They
+> are NOT duplicated under a `tests/issue-4117-*.ts` name: two test files for
+> one mechanism is how a fix gets half-reverted later, with the surviving file
+> still green.
+>
 > **The correction, and it matters:** #4045 records `--allocate` reporting
 > `pr_scan=ok` while an open PR had held the id for 40 minutes, and concludes
 > the open-PR scan is broken too. In THIS incident the scan was innocent — PR
