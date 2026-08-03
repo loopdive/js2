@@ -16,14 +16,13 @@
 // `emitExpr` leaves its value in `acc` and restores `regTop` (its scratch is
 // transient); `regCount` is the high-water mark, finalized at emit end.
 //
-// ── ISA desugarings (the 37-op set is deliberately minimal) ───────────────────
-// The ISA has Lt/Le/Eq/StrictEq but not `>`/`>=`/`!=`/`!==`, and no bitwise /
-// exponent / shift ops. The emitter desugars what it can and rejects the rest:
-//   a > b   → b < a        a >= b  → b <= a
+// ── ISA desugarings (the append-only opcode set is deliberately minimal) ─────────────
+// The ISA has dedicated relational/equality ops and only the signed shifts
+// needed by the runtime-eval acceptance slice. The emitter desugars what it can:
 //   a != b  → !(a == b)    a !== b → !(a === b)
 //   +x      → -( -x )      (double-negate = ToNumber)
 //   `a${x}` → "a" + x      (template → concat)
-// Bitwise/shift/`**`/`in`/`instanceof`, generators/async, destructuring,
+// Bitwise/unsigned-shift/`**`/`in`/`instanceof`, generators/async, destructuring,
 // spread, and regex literals are Phase-1 out-of-scope: the emitter
 // throws {@link UnsupportedNodeError} so the differential harness skips the body
 // and reports coverage (they are named follow-ups in the issue).
@@ -1663,6 +1662,10 @@ class FunctionEmitter {
         return Op.Div;
       case "%":
         return Op.Mod;
+      case "<<":
+        return Op.Shl;
+      case ">>":
+        return Op.Shr;
       case "==":
         return Op.Eq;
       case "===":
@@ -1676,7 +1679,7 @@ class FunctionEmitter {
       case ">=":
         return Op.Ge; // (#3356)
       default:
-        return -1; // bitwise / shift / ** / in / instanceof — Phase-1 out of scope
+        return -1; // bitwise / unsigned shift / ** / in / instanceof — Phase-1 out of scope
     }
   }
 

@@ -809,7 +809,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   // scripts/test262-worker.mjs. Mirror that worker's standalone
                   // module-first provider attachment so a fixture which merely
                   // mentions eval/new Function can still instantiate under the
-                  // default refusal tier. Every test gets a fresh provider
+                  // selected provider tier. Every test gets a fresh provider
                   // instance; interpreter globals never leak between fixtures.
                   const fixtureModule = new WebAssembly.Module(result.binary);
                   if (

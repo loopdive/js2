@@ -7,7 +7,7 @@
  * distribution plumbing so a drift (renamed export, broken strip, cache
  * key/path instability) fails fast without a multi-minute compile.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -70,5 +70,17 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("publishes one full provider artifact and requires it in every standalone CI shard", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/test262-sharded.yml"), "utf8");
+    expect(workflow).toContain("runtime-eval-provider:");
+    expect(workflow).toContain("node scripts/build-runtime-eval-provider.mjs\n");
+    expect(workflow).toContain("path: .test262-cache/runtime-eval-provider-*.wasm");
+    expect(workflow).toContain("uses: actions/upload-artifact@v6");
+    expect(workflow).toContain("uses: actions/download-artifact@v7");
+    expect(workflow).toContain("TEST262_FULL_RUNTIME_EVAL:");
+    expect(workflow.match(/--require-full-cache/g)).toHaveLength(2);
+    expect(workflow).not.toContain("Prebuild refusal runtime-eval provider (#2928)");
   });
 });

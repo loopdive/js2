@@ -625,17 +625,16 @@ export function selectCachedRuntimeEvalProvider() {
       return {
         module: full.module,
         message:
-          `INTERPRETER (key ${full.key}, TEST262_FULL_RUNTIME_EVAL=1) — results are NOT comparable with ` +
-          `the CI standalone lane, which links the refusal provider; label any figure from this run ` +
-          `as interpreter-linked (#2928 E7)`,
+          `INTERPRETER (key ${full.key}, TEST262_FULL_RUNTIME_EVAL=1) — authoritative CI-comparable ` +
+          `standalone tier (#2928 E7)`,
       };
     }
     const refusal = load(buildRuntimeEvalRefusalProviderSource(), runtimeEvalRefusalCachePath);
     return {
       module: refusal.module,
       message: refusal.module
-        ? `REFUSAL (key ${refusal.key}; interpreter ${full.key}) — CI-comparable: eval-mentioning modules ` +
-          `instantiate, dynamic-code calls throw TypeError`
+        ? `REFUSAL (key ${refusal.key}; interpreter ${full.key}) — fast local diagnostic only, NOT ` +
+          `CI-comparable: eval-mentioning modules instantiate and dynamic-code calls throw TypeError`
         : `NONE — refusal provider missing (key ${refusal.key}); eval-mentioning standalone modules stay ` +
           `unlinkable. Prebuild with: node scripts/build-runtime-eval-provider.mjs --refusal-only`,
     };

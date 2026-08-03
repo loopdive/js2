@@ -134,6 +134,12 @@ describe("#3101 arithmetic + coercion (delegated to generic runtime ops)", () =>
   it("does string concatenation via +", () => expectValue("'foo' + 'bar'", "foobar"));
   it("mixes number/string coercion like JS +", () => expectValue("1 + '2'", "12"));
   it("computes modulo", () => expectValue("17 % 5", 2));
+  it("applies signed left/right shifts with JS coercion", () => {
+    expectValue("2 << 3", 16);
+    expectValue("16 >> 3", 2);
+    expectValue("-8 >> 2", -2);
+    expectValue("'2' << 3", 16);
+  });
   it("negates and ToNumber-coerces unary +", () => expectValue("-(3) + +'4'", 1));
   it("calls unshadowed Number through CallBuiltin", () => expectValue("Number('4') + Number()", 4));
   it("preserves a shadowed global-coercion binding", () =>

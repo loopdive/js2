@@ -28,6 +28,7 @@ async function runStandalone(src: string): Promise<number> {
   const r = await compileStandalone(src);
   expect(r.success).toBe(true);
   // Standalone: empty import object must instantiate (no host env leak).
+  expect(WebAssembly.Module.imports(new WebAssembly.Module(r.binary))).toEqual([]);
   const { instance } = await WebAssembly.instantiate(r.binary, {});
   return (instance.exports.test as () => number)();
 }
@@ -124,5 +125,28 @@ describe("#2029 — tagged template + outer-local-capturing tag (standalone emit
     `);
     expect(r.success).toBe(true);
     expect(r.errors.some((error: any) => /local index out of range/.test(error.message))).toBe(false);
+  });
+
+  it("materializes a forward capturing sibling returned as a callable", async () => {
+    expect(
+      await runStandalone(`
+        // @ts-nocheck
+        export function test(): number {
+          var finished = 0;
+          function getF() {
+            return f;
+          }
+          function f(_strings, n) {
+            if (n === 0) {
+              finished = 1;
+              return;
+            }
+            return getF()(null, n - 1);
+          }
+          f(null, 4);
+          return finished;
+        }
+      `),
+    ).toBe(1);
   });
 });

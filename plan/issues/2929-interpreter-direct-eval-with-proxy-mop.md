@@ -512,3 +512,40 @@ intentional and are not hidden by weakening the semantic bails. Recovering the
 1,942 cast rows plus 29 fixture links projects 27,046 passes on the same merge-
 group population, 50 above its floor; the authoritative confirmation remains
 the next merge-group run.
+
+### Final #4013 collision checkpoint (2026-08-03)
+
+The authoritative replay replaces that projection. Merge-group run
+`30800239895` had 27,041 predecessor passes, 26,953 candidate passes, and a
+26,996 floor. Its exact 101 predecessor-pass/candidate-fail paths comprised 65
+primary records and 36 inherited-strict reruns. With the full provider selected
+through the real fork worker, the repaired branch now records **101 / 101
+passes**, with zero runtime failures, compile errors, or skips.
+
+The final repair has four bounded parts:
+
+- runtime-eval reference parameters widen only structurally typed object/
+  interface parameters; native strings, vectors, promises, closures, and class
+  instances keep their existing representations;
+- capturing sibling declarations are pre-registered before any sibling body is
+  compiled, and only explicit lifted captures are forwarded, so returned and
+  recursively referenced closures materialize the established callable carrier
+  without a null dereference;
+- full-provider CI uses one canary-verified uploaded cache artifact for every
+  standalone shard and fails loud when that artifact is absent, instead of
+  silently selecting the refusal tier in an authoritative comparison; and
+- append-only signed-shift opcodes close the two line-terminator direct-eval
+  rows that remained after the first 99/101 replay.
+
+The tagged-template TCO reproducer now reaches the same ordinary stack overflow
+as the merge-group predecessor rather than trapping on a null dereference. The
+focused Node/standalone/provider matrix is 81/81, the exact collision replay is
+101/101, the required full-provider cache canaries pass, and typecheck passes.
+No callable type, rec-group ABI, runtime-eval namespace, or result-envelope ABI
+was changed. Generated Test262 reports and cache artifacts remain outside the
+commit.
+
+The PR is ready for a fresh merge-group run. If it fails again, the next agent
+should diff the new candidate against its exact merge-group predecessor and
+work only newly introduced transitions; do not return authoritative standalone
+shards to the refusal provider or broaden the shared closure ABI.

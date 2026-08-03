@@ -88,14 +88,10 @@ let runtimeEvalProviderNoteShown = false;
  * the successful one.
  *
  * This is the root defect being fixed, stated generally: a harness that
- * SILENTLY selects a capability the published lane does not have invalidates
- * every cross-lane comparison made against it, and the results carry no trace
- * of the choice. Between E6 and E7 this worker linked the real interpreter
- * whenever it happened to be cached — no flag, no log line — while CI's cache
- * was always cold, so local and CI standalone numbers diverged by roughly the
- * interpreter's yield with nothing in either report saying so. The opt-in flag
- * removes the silence; this line removes the ambiguity. Provenance has to
- * travel WITH the number.
+ * SILENTLY selects a capability invalidates every cross-lane comparison made
+ * against it. CI now publishes the full provider once and sets the explicit
+ * flag in every standalone shard; local refusal-only runs remain a fast
+ * diagnostic tier. This line keeps that provenance attached to every number.
  */
 function announceRuntimeEvalTier(message) {
   if (runtimeEvalProviderNoteShown) return;

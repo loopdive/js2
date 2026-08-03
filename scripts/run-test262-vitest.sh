@@ -182,17 +182,14 @@ fi
 # cache hit exits in <1s, and the cache lives in the shared .test262-cache.
 #
 # TWO tiers (#2928 E7):
-#   default            — the REFUSAL provider only. Seconds to compile, no
-#                        parser, no interpreter, no capability. It exists so an
-#                        eval-mentioning module can INSTANTIATE at all; without
-#                        it the module-level `js2wasm:runtime-eval` import is
-#                        unresolvable and the file loses every assertion it has.
-#                        This is what CI builds per standalone shard, so it is
-#                        also the local default — local and CI must report the
-#                        same standalone number.
+#   default            — the REFUSAL provider only. This is the fast local
+#                        diagnostic tier: seconds to compile, no parser, no
+#                        interpreter, no capability. It keeps eval-mentioning
+#                        modules linkable, but its score is NOT CI-comparable.
 #   TEST262_FULL_RUNTIME_EVAL=1 — additionally build the real Acorn+interpreter
-#                        provider (MINUTES) and let the worker prefer it. This
-#                        is the interpreter measurement arm, not a default.
+#                        provider (MINUTES) and let the worker prefer it. CI
+#                        distributes one shared build to every standalone shard,
+#                        so this is the authoritative CI-comparable tier.
 if [ "$TEST262_TARGET" = "standalone" ]; then
   if [ "${TEST262_FULL_RUNTIME_EVAL:-}" = "1" ]; then
     echo "Prebuilding runtime-eval provider — refusal + FULL interpreter (#2928 E7)..."

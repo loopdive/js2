@@ -2010,13 +2010,17 @@ export function compileIdentifierCall(
           }
         } else {
           // (#1177: TDZ check moved above the mutable/non-mutable branch.
-          // Stage 1 localMap-first lookup reverted — see comment in mutable
-          // branch above.)
-          fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+          // Stage 1's blanket localMap-first lookup remains reverted. The one
+          // sound cross-frame case is a name explicitly recorded as THIS
+          // lifted function's leading capture parameter.)
+          const capSourceIdx = fctx.liftedCaptureNames?.has(cap.name)
+            ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)
+            : cap.outerLocalIdx;
+          fctx.body.push({ op: "local.get", index: capSourceIdx });
           // Coerce capture value to expected param type if they differ
           const expectedCapType = captureParamTypes?.[capIdx];
           if (expectedCapType) {
-            const actualType = getLocalType(fctx, cap.outerLocalIdx);
+            const actualType = getLocalType(fctx, capSourceIdx);
             if (actualType && !valTypesMatch(actualType, expectedCapType)) {
               coerceType(ctx, fctx, actualType, expectedCapType);
             }

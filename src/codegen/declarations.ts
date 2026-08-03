@@ -381,20 +381,23 @@ function lowerParamType(
       }
     }
   }
-  // Runtime eval publishes every top-level script function through the
-  // cross-module AOT-callable adapter. Its arguments are JavaScript values,
-  // so a nominal WasmGC reference parameter is not a sound ABI: an object
-  // literal from the caller is a different struct type even when it has the
-  // declared interface's fields, and `ref.cast` traps before the function can
-  // observe it. Keep numeric/native scalar specialisation, but carry reference
-  // values as externref at this dynamic boundary. This check intentionally
-  // follows implicit-any inference so that inference cannot reintroduce a
-  // nominal reference into the published signature.
+  // Runtime eval publishes top-level script functions through an externref
+  // AOT-callable adapter. Structurally typed object parameters need the same
+  // representation-neutral carrier: an object literal arriving through that
+  // adapter is not nominally the declaration's WasmGC struct, even when it has
+  // the required fields. Keep compiler-owned reference families (native
+  // strings, vectors, promises, closures, and class instances) specialised;
+  // widening those unrelated references changed their ordinary in-module
+  // semantics merely because the source happened to mention eval.
+  const runtimeEvalParamStructName =
+    wasmType.kind === "ref" || wasmType.kind === "ref_null" ? ctx.typeIdxToStructName.get(wasmType.typeIdx) : undefined;
   if (
     ctx.runtimeEvalCallableBoundaryEnabled === true &&
     ts.isSourceFile(stmt.parent) &&
     ctx.topLevelFunctionNames.has(funcName) &&
-    (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+    runtimeEvalParamStructName !== undefined &&
+    ctx.structFields.has(runtimeEvalParamStructName) &&
+    !ctx.classTagMap.has(runtimeEvalParamStructName)
   ) {
     wasmType = { kind: "externref" };
   }

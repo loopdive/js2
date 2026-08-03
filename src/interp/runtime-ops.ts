@@ -43,6 +43,12 @@ export function anyDiv(a: JSValue, b: JSValue): JSValue {
 export function anyMod(a: JSValue, b: JSValue): JSValue {
   return a % b;
 }
+export function anyShl(a: JSValue, b: JSValue): JSValue {
+  return a << b;
+}
+export function anyShr(a: JSValue, b: JSValue): JSValue {
+  return a >> b;
+}
 export function anyNeg(a: JSValue): JSValue {
   return -a;
 }

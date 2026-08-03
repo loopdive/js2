@@ -71,6 +71,8 @@ import {
   anyMul,
   anyNeg,
   anySet,
+  anyShl,
+  anyShr,
   anyStrictEq,
   anySub,
   anyTypeof,
@@ -964,6 +966,12 @@ function run(bottom: Frame): JSValue {
             break;
           case Op.Mod:
             acc = anyMod(regs[a], acc);
+            break;
+          case Op.Shl:
+            acc = anyShl(regs[a], acc);
+            break;
+          case Op.Shr:
+            acc = anyShr(regs[a], acc);
             break;
           case Op.Neg:
             acc = anyNeg(acc);
