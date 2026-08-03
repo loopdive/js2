@@ -235,5 +235,4 @@ export function test(): number { return o.prop; }
       expect(await run(src, true)).toBe(5);
     });
   });
-
 });
