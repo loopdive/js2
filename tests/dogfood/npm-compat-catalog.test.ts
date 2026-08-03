@@ -62,6 +62,15 @@ describe("npm compatibility package catalog", () => {
     );
     expect(typeof report.compile.success).toBe("boolean");
     expect(typeof report.validation.validates).toBe("boolean");
+    // (#4127) `diff.runnable === false` is a FACT about this harness (it
+    // compiles and validates, it never runs the package), not a property worth
+    // asserting on its own — asserting it was how "we never checked" stayed
+    // indistinguishable from "we checked and it was fine". What must hold is
+    // that the report says so on the record: the correctness axis is present
+    // and explicitly `unverified`, with a reason.
     expect(report.diff.runnable).toBe(false);
+    expect(report.correctness.status).toBe("unverified");
+    expect(report.correctness.reason).toEqual(expect.any(String));
+    expect(report.correctness.reason.length).toBeGreaterThan(0);
   });
 });

@@ -101,6 +101,18 @@ export function createPackageEntryHarness({
         runnable: false,
         skippedReason: blockedReason,
       },
+      // (#4127) This harness compiles and validates; it never RUNS the package,
+      // so it has no correctness evidence. Say so explicitly on the report
+      // rather than leaving the axis absent — an absent field reads as "fine",
+      // and a package that emits a valid module while computing the wrong
+      // answer is exactly what this axis exists to surface.
+      correctness: {
+        status: "unverified",
+        reason:
+          compileSuccess && validates
+            ? "no differential workload — compile/validation only; correctness is unknown"
+            : "package does not compile, so no workload could run",
+      },
       summary: {
         headline: !compileSuccess
           ? timedOut
