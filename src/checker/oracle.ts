@@ -148,6 +148,8 @@ export interface TypeOracle {
    * boundary without exposing the checker Symbol.
    */
   valueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
+  /** All declarations for an exact binding, without exposing its Symbol. */
+  declarationsOf(node: ts.Node): readonly ts.Declaration[];
   /**
    * Variable declaration for a plain identifier binding. Returning the AST
    * declaration (rather than the checker Symbol) keeps binding-identity
@@ -408,6 +410,14 @@ export class TsCheckerOracle implements TypeOracle {
       return sym?.valueDeclaration ?? sym?.declarations?.[0];
     } catch {
       return undefined;
+    }
+  }
+
+  declarationsOf(node: ts.Node): readonly ts.Declaration[] {
+    try {
+      return [...(this.checker.getSymbolAtLocation(node)?.declarations ?? [])];
+    } catch {
+      return [];
     }
   }
 

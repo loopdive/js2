@@ -182,6 +182,8 @@ function vectorLogicalOrdinal(logicalKey: string): number {
       return 0;
     case "vec<i32>":
       return 1;
+    case "vec<externref>":
+      return 2;
     default:
       throw new ProgramAbiInvariantError(
         "unknown-order-anchor",

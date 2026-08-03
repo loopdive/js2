@@ -109,6 +109,7 @@ import {
   inferEmptyArrayElementTypes,
 } from "./array-element-inference.js";
 import {
+  annotatedArrayElementValType,
   canonicalCountedPushPlanForLiteral,
   emitForwardingAwareLinearVecLen,
   emitSafeNarrowedI32VecGet,
@@ -119,6 +120,11 @@ import {
   planI32ArrayElements,
   tryLowerVecPush,
 } from "./array-element-lowering.js";
+import {
+  preparedAsyncAwaitResultType,
+  tryLowerPreparedAsyncPromiseAll,
+  type PreparedAsyncFromAstResolver,
+} from "./async-from-ast.js";
 import {
   assertNotDeferred,
   binaryOpCapability,
@@ -177,6 +183,7 @@ import {
   type IrValueId,
 } from "./nodes.js";
 import type { ValType } from "./types.js";
+import { coerceIrValueToExternref } from "./value-coercion.js";
 import { irVecElemSetSymbol, irVecNewSizedSymbol } from "./vector-runtime.js";
 
 interface ResolvedIrVecType {
@@ -295,7 +302,7 @@ export interface IrExternClassMeta {
  * `resolveClosure`. Those depend on registries that aren't populated
  * until Phase 3, so from-ast doesn't see them.
  */
-export interface IrFromAstResolver {
+export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /**
    * Resolve the canonical host ToPropertyDescriptor entry point for an
    * ambient `Object.defineProperty(target, key, descriptor)` call.
@@ -1686,7 +1693,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
         if (valTy?.kind === "f64" || valTy?.kind === "i32") {
           cx.builder.emitGenSetReturn(value);
         } else {
-          cx.builder.emitGenSetReturn(coerceYieldValueToExternref(value, cx));
+          cx.builder.emitGenSetReturn(coerceIrValueToExternref(cx.builder, value));
         }
       }
       const generatorObj = cx.builder.emitGenEpilogue();
@@ -2963,14 +2970,11 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // with a NumberKeyword element), so every claim reaches a hint here. A
     // resolver that can't register the vec throws → clean demote to legacy.
     if (annotated === undefined && d.type && ts.isArrayTypeNode(d.type)) {
-      if (d.type.elementType.kind !== ts.SyntaxKind.NumberKeyword) {
-        throw new Error(`ir/from-ast: array annotation on '${name}' must be number[] in ${cx.funcName}`);
-      }
       // (#3734) An ANNOTATED `const arr: number[] = []` reaches the vec type
       // through this arm, not through the inference arm below — so the i32
       // element narrowing has to be consulted here too, or the exact shape the
       // landing-page `array.ts` benchmark uses would never narrow.
-      const elementValType = emptyLiteralElementValType(d.initializer, cx);
+      const elementValType = annotatedArrayElementValType(d, cx);
       const vec = cx.resolver?.resolveVecForElement?.(elementValType);
       if (!vec) {
         throw new Error(
@@ -3477,7 +3481,7 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     const externShaped =
       (opVal !== undefined && opVal !== null && opVal.kind === "externref") || opType?.kind === "extern";
     if (!externShaped) return operand;
-    return cx.builder.emitAwait(operand);
+    return cx.builder.emitAwait(operand, preparedAsyncAwaitResultType(expr.expression, cx.resolver));
   }
   if (ts.isNumericLiteral(expr)) {
     return cx.builder.emitConst({ kind: "f64", value: Number(expr.text) }, irVal({ kind: "f64" }));
@@ -5071,6 +5075,15 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (expr.questionDotToken) {
     throw new Error(`ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
+  const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
+    expression: expr,
+    statementPosition,
+    resolver: cx.resolver,
+    builder: cx.builder,
+    functionName: cx.funcName,
+    lowerExpression: (expression, expected) => lowerExpr(expression, cx, expected),
+  });
+  if (preparedPromiseAll !== undefined) return preparedPromiseAll;
   // #3000-E: `super(args)` — a derived constructor chaining to its parent's
   // `_init`. Intercepted BEFORE the property-access / identifier dispatch below
   // because `super` is a keyword, not an identifier the receiver-lowering can
@@ -6884,7 +6897,7 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
     // `__gen_yield_star(externref, externref)` import sees the
     // right Wasm value type.
     const inner = lowerExpr(expr.expression, cx, irVal({ kind: "externref" }));
-    const innerExt = coerceYieldValueToExternref(inner, cx);
+    const innerExt = coerceIrValueToExternref(cx.builder, inner);
     cx.builder.emitGenYieldStar(innerExt);
     return;
   }
@@ -6922,51 +6935,8 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
   }
   // Reference-shaped yield — coerce to externref so the lowerer's
   // `__gen_push_ref(buf, externref)` arm sees the right Wasm type.
-  const valueExt = coerceYieldValueToExternref(value, cx);
+  const valueExt = coerceIrValueToExternref(cx.builder, value);
   cx.builder.emitGenPush(valueExt);
-}
-
-/**
- * Slice 7b helper: coerce a yielded SSA value to externref for the
- * `__gen_push_ref` / `__gen_yield_star` arms. Skips the coerce when
- * the value's underlying Wasm valtype is ALREADY externref —
- * emitting `extern.convert_any` on an already-externref operand is
- * actually a Wasm validation error (the op expects an `anyref`
- * subtype, and `externref` is NOT a subtype of `anyref`).
- *
- * Cases that skip the coerce:
- *   - `IrType.val` with `val.kind === "externref"` — directly externref.
- *   - `IrType.string` in HOST-strings mode — `resolveString()` returns
- *     externref for the host backend (the wasm:js-string imports take
- *     externref), so the value flowing through is already externref.
- *
- * Cases that DO coerce:
- *   - `IrType.string` in NATIVE-strings mode — value is `(ref $AnyString)`,
- *     a struct ref subtype of anyref, so `extern.convert_any` re-tags it.
- *   - `IrType.val` with `val.kind === "ref"` / `"ref_null"` —
- *     struct/array refs are anyref subtypes; coerce is valid.
- *   - `IrType.object` / `class` / `closure` — all backed by struct refs,
- *     anyref subtypes; coerce is valid.
- *
- * Reuses `coerce.to_externref` (#1182) so the generator path and the
- * iter-host for-of path share one IR primitive — the lowerer emits
- * `extern.convert_any` for both.
- */
-function coerceYieldValueToExternref(value: IrValueId, cx: LowerCtx): IrValueId {
-  const t = cx.builder.typeOf(value);
-  if (t.kind === "val" && t.val.kind === "externref") {
-    return value;
-  }
-  // #2955 — de-polymorph on string mode. A string operand IS externref in
-  // host-strings mode and `(ref $AnyString)` (an anyref subtype needing
-  // `extern.convert_any`) in native-strings mode. That per-mode decision no
-  // longer branches here in the front-end: emit the abstract
-  // `coerce.to_externref` unconditionally and let the lowerer resolve the
-  // mode (host → the convert is elided because the value is already
-  // externref; native → `extern.convert_any`). The lowered bytes stay
-  // byte-identical to the previous `!nativeStrings` guard in both modes,
-  // and the produced IR is now identical across string modes.
-  return cx.builder.emitCoerceToExternref(value);
 }
 
 /**
@@ -6988,7 +6958,7 @@ function coerceYieldValueToExternref(value: IrValueId, cx: LowerCtx): IrValueId 
  *
  *   - Declared result is `externref` and the value is reference-shaped
  *     (class / object / closure / vec ref / ref_null / native-string) →
- *     coerce via `coerceYieldValueToExternref` (`extern.convert_any`). This
+ *     coerce via `coerceIrValueToExternref` (`extern.convert_any`). This
  *     is a zero-cost re-tag valid for any anyref subtype, agnostic to the
  *     exact struct typeIdx (so type compaction cannot break it).
  *   - Declared result is `externref` but the value is a native scalar
@@ -7071,10 +7041,10 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
     );
   }
   // Reference-shaped (class / object / closure / vec ref / ref_null /
-  // native-string) → extern.convert_any. `coerceYieldValueToExternref` is a
+  // native-string) → extern.convert_any. `coerceIrValueToExternref` is a
   // no-op for host-strings (already externref) and re-tags all anyref
   // subtypes otherwise.
-  return coerceYieldValueToExternref(value, cx);
+  return coerceIrValueToExternref(cx.builder, value);
 }
 
 /**
@@ -10738,7 +10708,7 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   // Reference-shaped — coerce to externref. The helper is a no-op
   // when the value is already externref or `IrType.string` in host
   // mode (mirrors the slice-7b yield value coercion).
-  const valueExt = coerceYieldValueToExternref(value, cx);
+  const valueExt = coerceIrValueToExternref(cx.builder, value);
   cx.builder.emitThrow(valueExt);
 }
 

@@ -141,12 +141,33 @@ import { mkdtempSync, rmSync, existsSync, mkdirSync, renameSync } from "node:fs"
 import { tmpdir, hostname } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { openPrIssueIds, ISSUE_ID_RE } from "./lib/open-pr-issue-files.mjs";
-import { isHeldRecord } from "./lib/claim-record.mjs";
+import { isHeldRecord, TERMINAL_CLAIM_STATUSES } from "./lib/claim-record.mjs";
 
 const ASSIGN_REF = "issue-assignments";
-// The issue-assignments orphan ref lives on the FORK (origin) — keep REMOTE =
-// origin for ALL reservation-ref operations (ls-remote / fetch / push of claims).
-const REMOTE = process.env.CLAIM_ASSIGN_REMOTE || "origin";
+// (#4045/#4117) ONE BOOK, AND IT IS UPSTREAM'S.
+//
+// This used to be `process.env.CLAIM_ASSIGN_REMOTE || "origin"`, under a comment
+// asserting the ref "lives on the FORK (origin)". In agent worktrees `origin` IS
+// the fork, while CI's collision gate, the Codex lane and every upstream-rooted
+// checkout read UPSTREAM's ref. So the repo kept TWO disjoint reservation books
+// and the "atomic reservation" of #2531 was atomic against whichever one the
+// caller happened to be standing in.
+//
+// Measured cost of that (both incidents in the issue files):
+//   * 2026-07-28  #3715 reserved 3750/3751/3752 on the fork book; #3723 took
+//     3750/3751 via upstream and MERGED. #3715 renumbered twice.
+//   * 2026-08-02  the codex lane claimed 4113 on upstream's book at 21:10:58Z;
+//     `--allocate` handed 4113 to a second lane at 21:35:13Z and wrote it to the
+//     fork's book, exit 0, `pr_scan: "ok"`. Caught only by the #3598 CI gate.
+//
+// The picker mirrors `pickMainRemote()` below, which has resolved `main` to
+// upstream since #2177 for the *identical* reason — the assignments ref simply
+// never got the same treatment. `CLAIM_ASSIGN_REMOTE` still overrides (that is
+// what lets the tests point at a local bare repo, and it is the documented
+// workaround people already have in their shell history).
+//
+// Defined here for narrative, RESOLVED further down next to `resolveRemoteUrl`
+// — it calls `git()`, so it must not run before this module's consts exist.
 
 // --- bounded network timeouts (#3079, tightened #3880) ----------------------
 // `execFileSync` has no default timeout, so a single stuck `git` call under
@@ -369,21 +390,90 @@ function cgitOrDie(args, what, opts = {}) {
 // Resolve a remote NAME to a URL (the cache repo has no remotes configured).
 // A value that already looks like a URL or a filesystem path is used verbatim,
 // which is what lets tests point CLAIM_ASSIGN_REMOTE at a local bare repo.
-function resolveRemoteUrl(remote, forPush) {
-  if (
+function isUrlish(remote) {
+  return (
     /^[a-z][a-z0-9+.-]*:\/\//i.test(remote) ||
     remote.startsWith("git@") ||
     remote.startsWith("/") ||
     remote.startsWith(".")
-  ) {
+  );
+}
+function resolveRemoteUrl(remote, forPush) {
+  if (isUrlish(remote)) {
     return remote;
   }
   const r = git(["remote", "get-url", ...(forPush ? ["--push"] : []), remote]);
   if (r.ok && r.out) return r.out.split("\n")[0].trim();
   return remote;
 }
+// (#4045/#4117) Resolve the authoritative assignment remote — see the block
+// next to ASSIGN_REF for why this is upstream and what it cost when it was not.
+function pickAssignRemote() {
+  if (process.env.CLAIM_ASSIGN_REMOTE) return process.env.CLAIM_ASSIGN_REMOTE;
+  const r = git(["remote"]);
+  const remotes = r.ok ? r.out.split(/\s+/).filter(Boolean) : [];
+  return remotes.includes("upstream") ? "upstream" : "origin";
+}
+const REMOTE = pickAssignRemote();
 const ASSIGN_FETCH_URL = resolveRemoteUrl(REMOTE, false);
 const ASSIGN_PUSH_URL = resolveRemoteUrl(REMOTE, true);
+
+// --- LEGACY books (migration, #4045/#4117) ----------------------------------
+//
+// Flipping the default to upstream does not move the records already written to
+// the fork's book — on 2026-08-02 that book held live reservations (4113, 4116,
+// 4117) that upstream's did not. Orphaning them would re-create the very
+// collision this fixes, from the other side: `--allocate` would hand out an id
+// a fork-rooted lane still believes it holds.
+//
+// So every read is the UNION of the authoritative book and any legacy book, and
+// every write goes ONLY to the authoritative one. Records therefore migrate
+// forward naturally (the next write about an id lands upstream) and the legacy
+// book drains rather than being cut off. On a conflicting key the authoritative
+// book WINS — the same tie-break the #3598 collision gate applies, so the two
+// arbiters can never disagree.
+//
+// Read-only, and never a substitute: if the authoritative book is unreachable
+// the tool REFUSES (see tipShaOrDie). Falling back to the legacy book on an
+// upstream outage would silently restore the split brain at the worst moment.
+//
+// `CLAIM_ASSIGN_LEGACY_REMOTES` overrides the candidate list; set it to the
+// empty string to turn the union off once the legacy book is drained.
+function pickLegacyAssignBooks() {
+  const raw = process.env.CLAIM_ASSIGN_LEGACY_REMOTES;
+  if (raw === "") return [];
+  // An explicit CLAIM_ASSIGN_REMOTE means the caller has NAMED the book — a
+  // hermetic test pointing at a local bare repo, or someone deliberately
+  // targeting one ledger. Do not then go hunting for implicit legacy books:
+  // the override is total, and legacy books must be named explicitly too.
+  if (!raw && process.env.CLAIM_ASSIGN_REMOTE) return [];
+  const names = raw
+    ? raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : ["origin", "fork"];
+  const seen = new Set([ASSIGN_FETCH_URL]);
+  const books = [];
+  for (const name of names) {
+    if (name === REMOTE) continue;
+    const url = resolveRemoteUrl(name, false);
+    // `resolveRemoteUrl` echoes its input in TWO different cases, and they must
+    // not be conflated: the input already IS a URL/path (keep it — that is how
+    // the tests point at a local bare repo), or a bare remote NAME did not
+    // resolve because no such remote exists (drop it). Testing `url === name`
+    // alone silently dropped every explicitly-passed path, which made the
+    // unreadable-book refusal untestable and, worse, unreachable in exactly the
+    // configuration an operator would use to point at a specific book.
+    if (!url) continue;
+    if (url === name && !isUrlish(name)) continue;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    books.push({ name, url });
+  }
+  return books;
+}
+const LEGACY_BOOKS = pickLegacyAssignBooks();
 
 // Private per-invocation refs inside the cache repo. Two concurrent processes
 // therefore never update the same ref — the mirror-ref lock race of #3880
@@ -529,10 +619,12 @@ function parseTarget(raw) {
 // indistinguishable from an EMPTY one, so a network blip read as "nobody holds
 // this issue". Reads therefore return one of three states and callers must
 // handle `failed` explicitly — never by falling through to "unassigned".
-function remoteAssignState() {
+// `url` defaults to the AUTHORITATIVE book; the legacy-book reads below pass
+// their own. Everything else about the tri-state contract is unchanged.
+function remoteAssignState(url = ASSIGN_FETCH_URL) {
   let last = "";
   for (let attempt = 1; attempt <= NET_RETRIES; attempt++) {
-    const r = cgit(["ls-remote", ASSIGN_FETCH_URL, `refs/heads/${ASSIGN_REF}`], {
+    const r = cgit(["ls-remote", url, `refs/heads/${ASSIGN_REF}`], {
       timeout: NET_TIMEOUT_MS,
       killSignal: "SIGKILL",
     });
@@ -548,12 +640,15 @@ function remoteAssignState() {
 }
 
 // Fetch the assignment branch into one of THIS invocation's private refs.
-function fetchAssignInto(ref) {
+function fetchAssignInto(ref, url = ASSIGN_FETCH_URL) {
   let last = "";
   for (let attempt = 1; attempt <= NET_RETRIES; attempt++) {
     const r = cgit(
-      ["fetch", "--no-tags", "--no-write-fetch-head", "--quiet", ASSIGN_FETCH_URL, `+refs/heads/${ASSIGN_REF}:${ref}`],
-      { timeout: NET_TIMEOUT_MS, killSignal: "SIGKILL" },
+      ["fetch", "--no-tags", "--no-write-fetch-head", "--quiet", url, `+refs/heads/${ASSIGN_REF}:${ref}`],
+      {
+        timeout: NET_TIMEOUT_MS,
+        killSignal: "SIGKILL",
+      },
     );
     if (r.ok) {
       tempRefs.add(ref);
@@ -602,6 +697,66 @@ function readEntry(baseSha, id) {
   } catch {
     return null;
   }
+}
+
+// --- legacy-book reads (#4045/#4117) ----------------------------------------
+//
+// Resolved ONCE per invocation and memoised: every legacy book costs an
+// ls-remote plus a fetch, and `--allocate` reads the union on every contention
+// retry. `state` is the same tri-state as the authoritative read, and a `failed`
+// one is carried forward rather than smoothed away — see legacyReadDegraded().
+let _legacyTips = null;
+function legacyTips() {
+  if (_legacyTips) return _legacyTips;
+  _legacyTips = LEGACY_BOOKS.map((book, i) => {
+    const st = remoteAssignState(book.url);
+    if (st.state !== "present") return { ...book, state: st.state, sha: "", err: st.err || "" };
+    const ref = `refs/claim-legacy/${UNIQ}-${i}`;
+    const f = fetchAssignInto(ref, book.url);
+    if (!f.ok) return { ...book, state: "failed", sha: "", err: f.err };
+    const rp = cgit(["rev-parse", ref]);
+    if (!rp.ok) return { ...book, state: "failed", sha: "", err: why(rp) };
+    return { ...book, state: "present", sha: rp.out, err: "" };
+  });
+  return _legacyTips;
+}
+
+/**
+ * The legacy books we could NOT read. Non-empty means the id universe is
+ * incomplete — an id reserved only on an unreadable legacy book would be handed
+ * out again. Callers that are about to WRITE must refuse (see
+ * guardScanCoverage); callers that only report must say so.
+ */
+function legacyReadDegraded() {
+  return legacyTips().filter((t) => t.state === "failed");
+}
+
+/**
+ * Read `<key>.json` from the authoritative book, falling back to the legacy
+ * books IN ORDER. Returns the record plus WHICH book answered, because a claim
+ * assertion that does not name its ref is exactly the unusable evidence #4045
+ * measured (`--check 4076` answered UNASSIGNED and CLAIMED at the same instant,
+ * both exit 0, from two books).
+ *
+ * The authoritative book wins on a conflicting key — same tie-break as the
+ * #3598 gate — but a conflict is REPORTED (`shadowed`) rather than hidden: two
+ * books disagreeing about one id is the symptom that this whole change exists
+ * to remove, so it must be visible while the legacy book drains.
+ */
+function readEntryAnyBook(primarySha, key) {
+  const primary = readEntry(primarySha, key);
+  const shadowed = [];
+  for (const tip of legacyTips()) {
+    if (tip.state !== "present") continue;
+    const e = readEntry(tip.sha, key);
+    if (!e) continue;
+    if (primary) {
+      shadowed.push({ book: `${tip.name}/${ASSIGN_REF}`, entry: e });
+    } else {
+      return { entry: e, book: `${tip.name}/${ASSIGN_REF}`, legacy: true, shadowed };
+    }
+  }
+  return { entry: primary, book: `${REMOTE}/${ASSIGN_REF}`, legacy: false, shadowed };
 }
 
 // (#3880) Heldness lives in scripts/lib/claim-record.mjs — ONE definition,
@@ -794,6 +949,22 @@ function idsFromAssignRef(sha) {
   return out;
 }
 
+// (#4045/#4117) Ids reserved on a LEGACY book. Unioned into the id universe so
+// the flip to upstream cannot hand out an id a fork-rooted lane still holds —
+// which is the same collision, from the other direction. An unreadable legacy
+// book contributes nothing here ON PURPOSE: silently guessing "empty" is the
+// silent-empty this file already refuses everywhere else, so the gap is
+// surfaced by legacyReadDegraded() and refused at the write, not papered over
+// with a partial answer.
+function idsFromLegacyBooks() {
+  const out = new Set();
+  for (const tip of legacyTips()) {
+    if (tip.state !== "present") continue;
+    for (const id of idsFromAssignRef(tip.sha)) out.add(id);
+  }
+  return out;
+}
+
 function sleepMs(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -839,7 +1010,7 @@ function idsFromOpenPRs() {
 }
 
 function allUsedIds(sha, { scanPRs }) {
-  const all = new Set([...idsFromMain(), ...idsFromAssignRef(sha)]);
+  const all = new Set([...idsFromMain(), ...idsFromAssignRef(sha), ...idsFromLegacyBooks()]);
   let prScanComplete = true;
   if (scanPRs) {
     const pr = idsFromOpenPRs();
@@ -978,7 +1149,28 @@ function doList() {
   // id scan, --list has no filename-only fallback that would still be correct.
   const entries = readEntriesBatch(sha, files);
   if (!entries) die(6, `could not read assignment entries at ${sha.slice(0, 12)}`);
-  const rows = [...entries.values()].filter(isHeld);
+  // (#4045/#4117) Fold in any LEGACY book. Keyed by entry filename so the
+  // authoritative record wins on a conflict (the #3598 tie-break) while a claim
+  // that exists ONLY on the legacy book is still listed — otherwise --list
+  // under-reports live claims for exactly as long as the migration lasts, which
+  // is when accurate listing matters most.
+  const merged = new Map(entries);
+  for (const tip of legacyTips()) {
+    if (tip.state !== "present") continue;
+    const lf = entryFiles(tip.sha);
+    const le = readEntriesBatch(tip.sha, lf);
+    if (!le) continue;
+    for (const [file, entry] of le) {
+      if (!merged.has(file) && entry) merged.set(file, { ...entry, book: `${tip.name}/${ASSIGN_REF}` });
+    }
+  }
+  for (const b of legacyReadDegraded()) {
+    console.error(
+      `WARNING: legacy book ${b.name}/${ASSIGN_REF} is UNREADABLE (${b.err}) — ` +
+        "claims recorded only there are MISSING from this list.",
+    );
+  }
+  const rows = [...merged.values()].filter(isHeld);
   rows.sort((a, b) => Number(a.id) - Number(b.id) || String(a.slice || "").localeCompare(String(b.slice || "")));
 
   if (wantJson) {
@@ -1017,13 +1209,65 @@ function doList() {
 
 function doCheck(target) {
   const sha = tipShaOrDie(`report the status of ${target.label}`);
-  const e = readEntry(sha, target.key);
+  const found = readEntryAnyBook(sha, target.key);
+  const e = found.entry;
+
+  // (#4045/#4117) Report which book answered, and report the books we could
+  // NOT read. `--check 4076` once answered `UNASSIGNED` (exit 0) at the same
+  // instant another book said `CLAIMED by ttraenkler/H-errmodel` (exit 3) —
+  // same command, same id, opposite answers, neither naming its source. A claim
+  // assertion without its ref is unusable evidence, and worse, it manufactures
+  // confident wrong diagnoses (#4045 records one that was about to be filed
+  // against innocent code).
+  const blind = legacyReadDegraded();
+  const provenance = () => {
+    const parts = [`read ${found.book}`];
+    if (found.legacy) parts.push("LEGACY book — not yet migrated to the authoritative one");
+    for (const s of found.shadowed) {
+      parts.push(`also present on ${s.book} as ${s.entry.status || "?"}/${s.entry.assignee || "-"} (shadowed)`);
+    }
+    for (const b of blind) parts.push(`UNREADABLE: ${b.name}/${ASSIGN_REF} (${b.err})`);
+    return parts.join("; ");
+  };
+  for (const b of blind) {
+    console.error(
+      `WARNING: could not read the legacy book ${b.name}/${ASSIGN_REF} (${b.err}) — ` +
+        "this answer is based on the books that COULD be read, which is not the same as all of them.",
+    );
+  }
+  for (const s of found.shadowed) {
+    console.error(
+      `NOTE: ${target.label} also has a record on ${s.book} ` +
+        `(${s.entry.status || "?"} / ${s.entry.assignee || "-"}). The authoritative book wins; ` +
+        "the legacy record is stale and drains on the next write.",
+    );
+  }
+
   if (isHeld(e)) {
     console.log(`${target.label} is CLAIMED by ${e.assignee} (since ${e.claimed_at || "?"}).`);
-    refuse(3, `${target.label} is claimed by ${e.assignee}`, true);
+    refuse(3, `${target.label} is claimed by ${e.assignee} (${provenance()})`, true);
+  }
+  // A bare `--allocate` reservation has no assignee, so `isHeld` is false — and
+  // it is right that this is not a CLAIM (nobody is working on it). But
+  // printing "UNASSIGNED" for an id that IS reserved answers a question nobody
+  // asked: the id is taken, and the tool that WRITES `reserved` records could
+  // not see what it had just written. Distinguish the two states. Exit code is
+  // unchanged (0) — `3` means claimed, and callers depend on that.
+  if (e) {
+    const terminal = TERMINAL_CLAIM_STATUSES.has(e.status);
+    const who = e.assignee || e.requested_by || "?";
+    const when = e.updated_at || e.reserved_at || e.claimed_at || "?";
+    console.log(
+      terminal
+        ? `${target.label} has NO ACTIVE CLAIM, but the id is TAKEN (last status: ${e.status}, ${who}, ${when}).`
+        : `${target.label} is RESERVED — the id is TAKEN, nobody is working on it ` +
+            `(requested by ${e.requested_by || "?"}, ${when}, status=${e.status || "?"}).`,
+    );
+    ok(`${target.label} has no live claim; id is taken (status=${e.status || "?"}; ${provenance()})`);
+    process.exit(0);
   }
   console.log(`${target.label} is UNASSIGNED.`);
-  ok(`${target.label} is unassigned (verified against ${REMOTE}/${ASSIGN_REF})`);
+  ok(`${target.label} is unassigned (${provenance()})`);
   process.exit(0);
 }
 
@@ -1039,6 +1283,25 @@ function nowIso() {
 // (an id refused costs nothing; an id reserved and then abandoned is a
 // permanent hole in the sequence — two were burned that way on 2026-07-31).
 function guardScanCoverage({ scanPRs, degraded }) {
+  // (#4045/#4117) FIRST, and above the --allow-unscanned early return on
+  // purpose. A legacy book we could not read is the same class of defect as a
+  // degraded PR scan — the id universe is incomplete, so the id we hand out may
+  // already be reserved by a lane still rooted on that book — but it is a
+  // DIFFERENT blind spot and gets its own consent. Sharing one escape hatch
+  // would mean an operator who accepted "gh is offline" had silently also
+  // accepted "an entire reservation book is invisible", which is the
+  // collision this change exists to remove.
+  const blind = legacyReadDegraded();
+  if (blind.length && !flags.has("--allow-unmerged-books")) {
+    die(
+      6,
+      `cannot READ the legacy assignment book(s): ${blind.map((b) => `${b.name} (${b.err})`).join("; ")}\n` +
+        "Nothing was reserved. Records still live on a legacy book are part of the id universe until it drains, " +
+        "and an unreadable book is NOT an empty one — allocating past it re-creates the split-brain collision.\n" +
+        `Fix connectivity and re-run, set CLAIM_ASSIGN_LEGACY_REMOTES="" if the book is genuinely drained, or pass ` +
+        "--allow-unmerged-books to reserve anyway and accept the risk.",
+    );
+  }
   if (flags.has("--allow-unscanned")) return;
   if (!scanPRs) {
     die(
@@ -1206,7 +1469,11 @@ function writeMode(target, assignee, kind) {
   // twice this way).
   if (flags.has("--dry-run")) {
     const sha = tipShaOrDie(`preview ${kind} of ${label}`);
-    const existing = readEntry(sha, key);
+    // (#4045/#4117) Union of the authoritative and legacy books — a claim held
+    // only on a legacy book must still block, or the migration window becomes a
+    // duplicate-dispatch window.
+    const found = readEntryAnyBook(sha, key);
+    const existing = found.entry;
     const held = isHeld(existing);
     console.error(
       `(dry-run) would ${kind} ${label}${assignee ? ` -> ${assignee}` : ""}${branch ? ` (branch ${branch})` : ""}. ` +
@@ -1229,7 +1496,17 @@ function writeMode(target, assignee, kind) {
       );
     }
     const sha = tipShaOrDie(`${kind} ${label}`);
-    const existing = readEntry(sha, key);
+    // (#4045/#4117) See the dry-run branch: reads are the UNION of both books,
+    // writes always go to the authoritative one — which is what drains the
+    // legacy book instead of orphaning it.
+    const found = readEntryAnyBook(sha, key);
+    const existing = found.entry;
+    if (found.legacy) {
+      console.error(
+        `NOTE: ${label}'s existing record was read from the LEGACY book ${found.book}. ` +
+          `This ${kind} writes to ${REMOTE}/${ASSIGN_REF}, migrating it forward.`,
+      );
+    }
 
     if (kind === "claim") {
       if (isHeld(existing) && existing.assignee !== assignee && !flags.has("--force")) {

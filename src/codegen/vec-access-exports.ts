@@ -92,6 +92,30 @@ const VEC_HOST_BRIDGE_DEFINITIONS: readonly VecHostBridgeDefinition[] = Object.f
   }),
 ]);
 
+export type VecHostBridgeMaterializerElementKind = "f64" | "i32" | "externref";
+
+const VEC_HOST_BRIDGE_MATERIALIZER_ORDINALS: Readonly<Record<VecHostBridgeMaterializerElementKind, number>> = (() => {
+  for (const [index, definition] of VEC_HOST_BRIDGE_DEFINITIONS.entries()) {
+    if (definition.ordinal !== index) {
+      throw new Error(`vec host bridge ${definition.kind} has non-contiguous ordinal ${definition.ordinal}`);
+    }
+  }
+  const firstMaterializerOrdinal = VEC_HOST_BRIDGE_DEFINITIONS.length;
+  if (firstMaterializerOrdinal !== 6) {
+    throw new Error(`vec host bridge materializer ABI must start at ordinal 6, got ${firstMaterializerOrdinal}`);
+  }
+  return Object.freeze({
+    f64: firstMaterializerOrdinal,
+    i32: firstMaterializerOrdinal + 1,
+    externref: firstMaterializerOrdinal + 2,
+  });
+})();
+
+/** Program ABI derived ordinal for the host-to-vec materializer family. */
+export function vecHostBridgeMaterializerOrdinal(kind: VecHostBridgeMaterializerElementKind): number {
+  return VEC_HOST_BRIDGE_MATERIALIZER_ORDINALS[kind];
+}
+
 const vecHostBridgeAllocations = new WeakMap<CodegenContext, ReadonlyMap<VecHostBridgeKind, VecHostBridgeAllocation>>();
 
 function vecHostBridgeDefinition(kind: VecHostBridgeKind): VecHostBridgeDefinition {
