@@ -35,6 +35,7 @@ loc-budget-allow:
   - src/compiler.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/declarations.ts
+  - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/extern-declarations.ts
 func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations

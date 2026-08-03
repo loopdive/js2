@@ -60,6 +60,25 @@ function isRuntimePrimitiveSeed(type: ValType, tsType: ts.Type): boolean {
  * through an `any` parameter (ReactDOM's `queue.pending = update`).
  */
 export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  // Avoid an AST walk for files that cannot contain a direct property write.
+  // The scanner skips comments and strings, so this is a conservative lexical
+  // preflight: every `PropertyAccessExpression = ...` has the token sequence
+  // `. <property-name> =`, including keyword-named properties.
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, sourceFile.text);
+  let token = scanner.scan();
+  let hasPropertyAssignment = false;
+  while (token !== ts.SyntaxKind.EndOfFileToken) {
+    if (token === ts.SyntaxKind.DotToken) {
+      scanner.scan();
+      if (scanner.scan() === ts.SyntaxKind.EqualsToken) {
+        hasPropertyAssignment = true;
+        break;
+      }
+    }
+    token = scanner.scan();
+  }
+  if (!hasPropertyAssignment) return;
+
   const visit = (node: ts.Node): void => {
     if (
       ts.isBinaryExpression(node) &&
