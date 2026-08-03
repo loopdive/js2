@@ -33,7 +33,48 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { isHeldRecord } from "./lib/claim-record.mjs";
+// (#4045/#4117) READ THE CLAIM LEDGER THROUGH claim-issue.mjs, NOT a raw
+// `git show` of a remote-tracking ref.
+//
+// The old form named `origin/issue-assignments` directly, which is wrong twice
+// over. `origin` is the FORK in agent worktrees, so it read a DIFFERENT
+// reservation book from the one the Codex lane and CI's collision gate use —
+// the split brain of #4045. And a remote-tracking ref is only as fresh as the
+// last fetch, so even against the right book it could answer from an
+// arbitrarily stale snapshot. Both failure modes point the same way: the gate
+// that exists to prevent duplicate dispatch reports "unclaimed" for an issue
+// somebody is holding.
+//
+// Delegating to `claim-issue.mjs --list --json` leaves ONE reader of the ledger
+// (the choice budget-status.mjs already made), so book selection and freshness
+// are fixed in one place and cannot drift apart again.
+let _claimIndex;
+function claimIndex() {
+  if (_claimIndex) return _claimIndex;
+  const script = path.join(path.dirname(new URL(import.meta.url).pathname), "claim-issue.mjs");
+  const byKey = new Map();
+  try {
+    const out = execFileSync(process.execPath, [script, "--list", "--json"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 120_000,
+    });
+    for (const e of JSON.parse(out).held || []) {
+      byKey.set(String(e.slice ? `${e.id}-${e.slice}` : e.id), e);
+    }
+    _claimIndex = { state: "ok", byKey };
+  } catch (err) {
+    // A FAILED read is not an empty one — say so, rather than reporting every
+    // issue unclaimed, which is the silent-empty this whole family is about.
+    _claimIndex = { state: "unreadable", byKey, error: String((err && err.message) || err).slice(0, 200) };
+  }
+  return _claimIndex;
+}
+/** Live claim record for `key`, or null. `state` says whether the read worked. */
+function liveClaim(key) {
+  const idx = claimIndex();
+  return { state: idx.state, error: idx.error, entry: idx.byKey.get(String(key)) || null };
+}
 
 const ISSUES_DIR = "plan/issues";
 
@@ -124,28 +165,21 @@ if (prJson) {
 }
 
 // ── 3. Claim ref ──────────────────────────────────────────────────────────
-const claim = sh("git", ["show", `origin/issue-assignments:${id}.json`]);
-if (claim) {
-  try {
-    const c = JSON.parse(claim);
-    // (#3880) Heldness comes from the SHARED predicate. This site used to test
-    // `c.assignee` alone, ignoring `status` entirely — so every FINISHED claim
-    // (`done` from `--complete`, `released` from `--release`) still read as a
-    // live blocker. On the live ref that was 403 of 1,080 records, and it made
-    // real dispatch decisions wrong: #2046 read as claimed with three merged
-    // PRs behind it and an agent was dispatched onto it anyway.
-    if (isHeldRecord(c)) {
-      blockers.push(`#${id} is CLAIMED by ${c.assignee}${c.branch ? ` (branch ${c.branch})` : ""}`);
-    } else if (c.assignee) {
-      notes.push(`claim file exists but is ${c.status || "not held"} — unclaimed`);
-    } else {
-      notes.push(`claim file exists, assignee empty — unclaimed`);
-    }
-  } catch {
-    warnings.push("claim file present but unparseable");
-  }
-} else {
-  notes.push("no claim file — unclaimed");
+const claimRead = liveClaim(id);
+if (claimRead.state === "unreadable") {
+  // Deliberately a WARNING, not a silent "unclaimed": the caller must know the
+  // gate could not see, because "no record" and "could not look" are the two
+  // answers this family of bugs keeps conflating.
+  warnings.push(`could not read the claim ledger (${claimRead.error}) — an unreadable ref is NOT an unclaimed one`);
+}
+if (claimRead.entry) {
+  const c = claimRead.entry;
+  // (#3880) Heldness comes from the SHARED predicate; `--list` already applies
+  // it, so anything present here is a LIVE claim (a `done`/`released` record is
+  // filtered out upstream and correctly reads as unclaimed).
+  blockers.push(`#${id} is CLAIMED by ${c.assignee}${c.branch ? ` (branch ${c.branch})` : ""}`);
+} else if (claimRead.state === "ok") {
+  notes.push("no live claim on the ledger — unclaimed");
 }
 
 // ── 4. SUBJECT OVERLAP (the gap that let #3571 through) ───────────────────
@@ -221,20 +255,10 @@ if (localIssue) {
       // `status: ready` while being actively worked under a claim — checking
       // only its status would have produced a warning, not a stop.
       const otherId = (f.match(/^(\d+)/) || [])[1];
-      let claimedBy = "";
-      if (otherId) {
-        const oc = sh("git", ["show", `origin/issue-assignments:${otherId}.json`]);
-        if (oc) {
-          try {
-            // (#3880) Same shared predicate — a FINISHED claim on an
-            // overlapping issue is not an in-flight signal.
-            const oe = JSON.parse(oc);
-            claimedBy = isHeldRecord(oe) ? oe.assignee : "";
-          } catch {
-            /* unparseable — treat as unclaimed */
-          }
-        }
-      }
+      // (#4045/#4117) Same single ledger reader as the primary check above —
+      // `--list` has already applied the shared heldness predicate, so a
+      // FINISHED claim on an overlapping issue correctly reads as no signal.
+      const claimedBy = otherId ? (liveClaim(otherId).entry || {}).assignee || "" : "";
       const line = `${f} (status: ${status}${claimedBy ? `, CLAIMED by ${claimedBy}` : ""}) shares [${hits.join(", ")}]`;
       if (status === "in-progress" || claimedBy) {
         blockers.push(`ACTIVE idiom overlap — ${line}. READ IT before dispatching.`);
