@@ -23,6 +23,13 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
 /** Sources whose IR lowering hits a documented deferral. */
+// `marker` is matched against the demotion WARNING text. It tracks
+// `demoteToLegacy`'s own wording ("… not in slice 9"), which is the stable part
+// of the message across both the numeric and class arms — the leading
+// `throw <kind>` varies with the value type, and the outcome CODE
+// (`throw-value-unsupported`) is not carried in the user-visible string. The
+// assertion exists so a deferral cannot become SILENT: demoting without a
+// warning would hide an IR coverage gap from the #2855 ratchet.
 const deferrals: { name: string; source: string; marker: string }[] = [
   {
     // `lowerThrowStatement`'s numeric deferral: "Slice 9 defers — fall back to
@@ -31,7 +38,7 @@ const deferrals: { name: string; source: string; marker: string }[] = [
     // not compile at all.
     name: "throw of a numeric value",
     source: `export function f(): number { throw 42; }`,
-    marker: "throw of numeric type",
+    marker: "not in slice 9",
   },
   {
     // The same deferral reached through a conditional, so the function has a
@@ -41,7 +48,7 @@ const deferrals: { name: string; source: string; marker: string }[] = [
   if (n < 0) { throw -1; }
   return n;
 }`,
-    marker: "throw of numeric type",
+    marker: "not in slice 9",
   },
 ];
 
