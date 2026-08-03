@@ -42,13 +42,33 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   const scope = containingScope(decl);
   let mixed = false;
 
+  // (#4122) `"mixed"` is the oracle's answer for UNRESOLVABLE, not for "proven
+  // to cross domains". Treating the two alike makes absence of evidence count
+  // as evidence of mixing, which demoted every numeric accumulator fed by a
+  // dynamically-dispatched call — `var s = 0; s = s + p.inc();`, the most
+  // common shape in ordinary JS — to a boxed carrier, at ~3.5x on the `method`
+  // axis.
+  //
+  // So an unresolvable assignment gets a second question: does the
+  // whole-program fixpoint prove EVERY definition of this slot numeric? That
+  // verdict is grounded (a slot needs one definition numeric without assuming
+  // itself), self-reference-aware (the accumulator shape), and boolean-excluded,
+  // so a `true` here means the f64 carrier is the correct representation, not
+  // merely a cheaper guess. A resolved cross-domain assignment still demotes
+  // regardless — that is #3961's hazard and it is untouched.
+  const provenNumeric =
+    process.env.JS2WASM_MIXED_CARRIER_NUMERIC !== "0" &&
+    initialDomain === "number" &&
+    ctx.numericLocalVerdict?.(decl.name, decl.name.text) === true;
+
   const visit = (node: ts.Node): void => {
     if (mixed) return;
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       const target = stripParens(node.left);
       if (ts.isIdentifier(target) && target !== decl.name && ctx.oracle.variableDeclarationOf(target) === decl) {
         const assignedTag = ctx.oracle.staticJsTypeOf(node.right);
-        if (assignedTag === "mixed" || carrierDomain(assignedTag) !== initialDomain) {
+        const unresolvable = assignedTag === "mixed";
+        if (unresolvable ? !provenNumeric : carrierDomain(assignedTag) !== initialDomain) {
           mixed = true;
           return;
         }
