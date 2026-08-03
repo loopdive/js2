@@ -3,7 +3,7 @@ id: 2929
 title: "Interpreter direct eval + with + Proxy-MOP convergence"
 status: in_progress
 created: 2026-07-02
-updated: 2026-08-03
+updated: 2026-08-04
 priority: medium
 horizon: xl
 feasibility: hard
@@ -427,6 +427,11 @@ The new coverage proves fresh and existing global descriptors, later
 same-name block-function wins, exact caller activation updates, provider
 routing for pre-declaration/collision cases, and preservation of the simple
 zero-import `eval("{ function f() {} } ...")` fast path.
+
+PR #4077 publishes this 16-line lifecycle checkpoint. This issue update is
+intentionally part of that change-set so the existing `loc-budget-allow` for
+`src/codegen/expressions/eval-inline.ts` applies to the checkpoint itself,
+rather than being inferred from an unrelated historical issue edit.
 
 ### Publication and remaining gate
 
