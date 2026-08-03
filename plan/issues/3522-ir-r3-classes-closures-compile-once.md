@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-02
+updated: 2026-08-03
 priority: critical
 horizon: xl
 complexity: XL
@@ -48,6 +48,7 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/program-abi-session.ts
+  - src/ir/integration.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/declarations.ts::compileDeclarations
@@ -299,9 +300,30 @@ ready PR [#4081](https://github.com/loopdive/js2/pull/4081). The branch was
 rebased onto `origin/main` immediately before the final handover push and is
 not queued at suspension. The dirty root checkout is not part of this work.
 
+### PR #4081 equivalence repair (2026-08-03)
+
+The first PR run exposed four genuine branch regressions: the derived class
+without an explicit constructor and three inherited/private-field programs.
+Each passed alone on the detached `origin/main` control and failed alone on the
+published head. All four had the same failure: dependency discovery sealed the
+exact ancestor class-member unit, but Phase 3 ignored the `class.call` target
+already carried by IR and attempted to mint a child-name inherited adapter
+after that component was immutable.
+
+The Phase 3 class resolver now binds dependency-sealed class-operation unit
+targets into each lowering pass and uses those same targets for instance,
+`super`, and static calls. The inherited adapter remains only for compatibility
+IR without a structural target. Added GC/standalone coverage poisons both the
+ancestor and derived direct emitters,
+requires both class bodies to remain Prepared IR, validates the module, and
+checks the inherited runtime result. The four CI regression cases pass alone;
+the complete private-field equivalence file and focused #3000/#3520/#3521/#3522
+suites pass. This repair changes no terminal ownership or readiness counts:
+**37/37 IR-emitted, 24 legacy bodies, 0 Unsupported, 0 Invariant**.
+
 Final-head validation before publication:
 
-- focused prepared routing and class retirement: **40/40 passed**;
+- focused prepared routing and class retirement: **42/42 passed**;
 - IR allocation registry/provenance: **16/16 passed**;
 - typecheck, formatting, issue integrity, optimization retirement, fallback
   shape diagnostics, oracle, LOC/function budgets, vacuity shapes, and

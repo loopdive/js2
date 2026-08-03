@@ -202,7 +202,7 @@ export interface IrClassLowering {
   readonly structTypeIdx: number;
   fieldIdx(name: string): number;
   readonly constructorFunc: IrFuncRef;
-  memberFunc(kind: IrClassMemberKind, name: string): IrFuncRef;
+  memberFunc(kind: IrClassMemberKind, name: string, target?: IrFuncRef): IrFuncRef;
   /**
    * #3000-E: binding-aware reference to the constructor-init function
    * (`<className>_init` is its usual compatibility label) — signature

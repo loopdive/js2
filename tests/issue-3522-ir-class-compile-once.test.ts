@@ -211,6 +211,50 @@ describe("#3522 instance class-method compile-once ownership", () => {
   });
 
   it.each(["gc", "standalone"] as const)(
+    "keeps inherited class-call targets inside the sealed prepared component in the %s lane",
+    async (target) => {
+      const source = `
+        class Base {
+          value: number = 10;
+          getValue(): number { return this.value; }
+        }
+        class Child extends Base {
+          extra: number = 20;
+          sum(): number { return this.getValue() + this.extra; }
+        }
+        export function run(): number { return new Child().sum(); }
+      `;
+      const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+      let result: CompileResult;
+      try {
+        process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Base_getValue,Child_sum";
+        result = await compile(source, {
+          fileName: `ir-inherited-prepared-target-${target}.ts`,
+          experimentalIR: true,
+          trackIrOutcomes: true,
+          target,
+        });
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+        else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+      }
+
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      for (const name of ["Base_getValue", "Child_sum"]) {
+        expect(classMemberOutcome(result, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+      }
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      expect((await instantiate(result)).run!()).toBe(30);
+    },
+  );
+
+  it.each(["gc", "standalone"] as const)(
     "prepares a two-method %s class component once while an Unsupported sibling stays direct",
     async (target) => {
       const result = await compile(
