@@ -2336,6 +2336,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Heal poison-classified rows (#2099)
+        # (#4141) HEAL/SHARD SCOPE PARITY — load-bearing, do not drop.
+        # `heal-poison-rows.ts` re-runs each poison row through
+        # `runTest262File`, which applies `shouldSkip` → `classifyTestScope`.
+        # Without this env the healer's process disagrees with the shard
+        # process that produced the row: `built-ins/Temporal/**` classifies as
+        # a *proposal* and the re-run returns `status: "skip"` instead of the
+        # row's true verdict. That laundered ~1,229 real Temporal traps into
+        # baseline `skip` rows (all carrying `poison_healed: true` and
+        # `error: "Proposal excluded from default scope: proposal feature:
+        # Temporal"`), while the candidate JSONL — which is never healed —
+        # kept them as traps. The trap ratchet then charged the whole delta to
+        # whatever PR happened to be in the merge group (`null_deref
+        # 156 → 1360`), parking #4074 and #4088 on a phantom regression.
+        # The expression MIRRORS the `test262-shard` job's env (~L723) exactly
+        # rather than hardcoding "1", so an `include_proposals: false` dispatch
+        # heals under the same scope its shards ran under.
+        env:
+          TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
         run: |
           npx tsx scripts/heal-poison-rows.ts \
             --in  shard-artifacts/test262-results-merged.jsonl \
@@ -3173,6 +3191,14 @@ jobs:
 
       - name: Heal poison-classified rows (#2099 parity)
         if: steps.group.outputs.found == 'true'
+        # (#4141) Same heal/shard scope parity as `promote-baseline` — see the
+        # long comment there. This job is `push` + merge-queue-bot only, so it
+        # always corresponds to the shards' non-dispatch branch ("1"); it can
+        # never be an `include_proposals: false` dispatch. Without it the
+        # per-SHA cached base (the #3467 regression base every later PR diffs
+        # against) carries the same laundered Temporal `skip` rows.
+        env:
+          TEST262_INCLUDE_PROPOSALS: "1"
         run: |
           # Match promote-baseline: heal contamination-poison rows before the
           # base is persisted, so no phantom "Binary emit error" row is carried
