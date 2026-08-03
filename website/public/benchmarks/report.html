@@ -1723,6 +1723,10 @@
               entries = [...counts.entries()];
             }
           }
+          // Fell back to the report's aggregate counts (standalone ships no
+          // per-file JSONL) — say so rather than claiming an edition scope the
+          // numbers don't have.
+          const editionScoped = entries !== null;
           if (!entries) entries = Object.entries(data.skip_reasons || {});
           entries = entries.filter(([reason]) => !isProposalSkipReason(reason)).sort((a, b) => b[1] - a[1]);
           if (token !== skipRenderToken) return;
@@ -1734,9 +1738,11 @@
             el(
               "div",
               { className: "pct", style: { marginBottom: "0.75rem" } },
-              allowedEditions
+              editionScoped
                 ? "Non-proposal skip reasons in the selected edition range."
-                : "Non-proposal skip reasons in the official scope.",
+                : allowedEditions
+                  ? "Non-proposal skip reasons in the official scope (no per-test data for this view — not filtered by edition)."
+                  : "Non-proposal skip reasons in the official scope.",
             ),
           );
           const skipTable = el("table", { className: "cat-table" });
@@ -1966,7 +1972,13 @@
       ]);
 
       function renderStandaloneRootCauses(container, opts) {
-        const { view, allowedCategories = null, differentialOnly = false, setDifferential } = opts;
+        const {
+          view,
+          allowedCategories = null,
+          allowedEditions = null,
+          differentialOnly = false,
+          setDifferential,
+        } = opts;
         const rcMap = view.report.root_cause_map;
         if (!rcMap || !Array.isArray(rcMap.buckets)) {
           container.appendChild(el("div", { className: "no-data" }, "No standalone root-cause data available."));
@@ -1996,19 +2008,34 @@
           ),
         );
 
-        // Edition filter (#4): keep only buckets that touch an allowed category
-        // (sample_files are paths like "test/built-ins/...js" → derive the
-        // category prefix and test membership against allowedCategories).
+        // Edition filter. The standalone view ships no per-file JSONL, so the
+        // page cannot classify these failures itself — instead each bucket
+        // carries a `by_edition` breakdown baked in by build-test262-report.mjs
+        // (#2871 follow-up). When it's present, the bucket count is re-scoped
+        // to the selected edition range and empty buckets drop out. Older
+        // reports without it fall back to the coarse sample-file/category
+        // heuristic, which only ever hides whole buckets.
+        const editionBreakdown = rcMap.has_edition_breakdown === true;
         let buckets = rcMap.buckets.slice();
         if (differentialOnly) {
           buckets = buckets.filter((b) => HOST_DEPENDENT_BUCKET_IDS.has(b.id));
         }
-        if (allowedCategories) {
+        const scopedCount = (b) => {
+          if (!allowedEditions || !editionBreakdown) return b.count || 0;
+          let n = 0;
+          for (const [edition, count] of Object.entries(b.by_edition || {})) {
+            if (allowedEditions.has(edition)) n += count;
+          }
+          return n;
+        };
+        if (allowedEditions && editionBreakdown) {
+          buckets = buckets.filter((b) => scopedCount(b) > 0);
+        } else if (allowedCategories) {
           buckets = buckets.filter((b) => bucketTouchesCategories(b, allowedCategories));
         }
-        buckets.sort((a, b) => (b.count || 0) - (a.count || 0));
+        buckets.sort((a, b) => scopedCount(b) - scopedCount(a));
 
-        const totalShown = buckets.reduce((a, b) => a + (b.count || 0), 0);
+        const totalShown = buckets.reduce((a, b) => a + scopedCount(b), 0);
         container.appendChild(
           el(
             "div",
@@ -2016,7 +2043,15 @@
               className: "subtitle",
               style: { color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.75rem" },
             },
-            buckets.length + " root-cause buckets · " + totalShown.toLocaleString() + " failures",
+            buckets.length +
+              " root-cause buckets · " +
+              totalShown.toLocaleString() +
+              " failures" +
+              (allowedEditions
+                ? editionBreakdown
+                  ? " · filtered to the selected edition range"
+                  : " · edition filter unavailable for this report (showing all editions)"
+                : ""),
           ),
         );
 
@@ -2045,7 +2080,7 @@
                   flexShrink: "0",
                 },
               },
-              (b.count || 0).toLocaleString(),
+              scopedCount(b).toLocaleString(),
             ),
           );
           header.appendChild(

@@ -885,9 +885,8 @@ async function main() {
 
     if (record.scope_official === false || record.scope === "proposal") {
       const proposalBucket = buckets[-1] ?? (buckets[-1] = { pass: 0, fail: 0, ce: 0, skip: 0 });
-      const proposalKey = resolveStatusKey(record, hostFree);
-      proposalBucket[proposalKey]++;
-      if (proposalKey !== "pass") fileEditions[stripTestPrefix(file)] = EDITION_NAMES[-1];
+      proposalBucket[resolveStatusKey(record, hostFree)]++;
+      fileEditions[stripTestPrefix(file)] = EDITION_NAMES[-1];
       unclassified++;
       continue;
     }
@@ -912,12 +911,13 @@ async function main() {
     const bucket = buckets[edition] ?? (buckets[edition] = { pass: 0, fail: 0, ce: 0, skip: 0 });
     bucket[key]++;
 
-    // (#2871 follow-up) Index this file's edition when it did not pass, so the report's
-    // error-pattern / skipped-test lists can filter per test rather than per
-    // category.
-    if (key !== "pass") {
-      fileEditions[stripTestPrefix(file)] = EDITION_NAMES[edition] ?? `ES${edition}`;
-    }
+    // (#2871 follow-up) Index this file's edition so the report's error-pattern
+    // / skipped-test lists can filter per test rather than per category.
+    // EVERY test is indexed, not just the host lane's failures: the standalone
+    // root-cause map is scored against this same file (editions are a property
+    // of the test's frontmatter, not of the compile target), and a test that
+    // passes with a JS host but fails standalone must still resolve.
+    fileEditions[stripTestPrefix(file)] = EDITION_NAMES[edition] ?? `ES${edition}`;
 
     // (#2910) Slice this test into per-edition per-feature-tag buckets. Only
     // standard editions (year > 0) carry feature rows on the landing page;
@@ -1075,14 +1075,15 @@ async function main() {
     console.log(`Wrote ${Object.keys(categoryEditionOutput).length} category × edition buckets to: ${categoriesPath}`);
   }
 
-  // (#2871 follow-up) Per-file edition index for the non-passing tests. Shape:
+  // (#2871 follow-up) Per-file edition index. Shape:
   //   { "editions": ["ES5", "ES2015", …],
   //     "files": { "language/statements/for/x.js": 0, … } }
   // The edition label is stored as an index into `editions` purely to keep the
-  // file small (~15k entries). Consumed by the report page's Error Patterns and
+  // file small (~48k entries). Consumed by the report page's Error Patterns and
   // Skipped Tests sections so the edition slider filters per TEST, not per
   // category (a category-level filter is a near no-op: almost every category
-  // contains at least one ES5 test).
+  // contains at least one ES5 test), and by build-test262-report.mjs to give
+  // each standalone root-cause bucket a per-edition count breakdown.
   const fileEditionsPath = outputPath.replace(/test262-editions\.json$/, "test262-file-editions.json");
   if (fileEditionsPath !== outputPath) {
     const editionLabels: string[] = [];
