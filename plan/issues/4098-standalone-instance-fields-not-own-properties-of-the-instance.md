@@ -1,8 +1,8 @@
 ---
 id: 4098
 title: "standalone: class instance fields are invisible to getOwnPropertyDescriptor/Object.keys and survive delete — the unanimous blocker of #3976's residual (population 124, blocked on #4010)"
-status: blocked
-blocked_by: [4010]
+status: ready
+blocked_by: []
 sprint: current
 created: 2026-08-02
 updated: 2026-08-02
@@ -244,7 +244,37 @@ a **lie** the very next `delete` disproves. That converts a clean absence into a
 confident wrong answer — the same trade this project has already refused twice
 this session.
 
-**Recommended sequencing** — `blocked_by: [4010]`. Land the unified per-receiver
+## UNBLOCKED 2026-08-03 — #4010 is done, but read what it does and does NOT give you
+
+All three #4010 slices landed (S1′ #4058, S2 #4063, S3). Own-property truth for
+**array** and **function** receivers now has ONE owner — the per-receiver bag —
+that `hasOwnProperty` / `in` / gOPD / `Object.keys` / for-in /
+`getOwnPropertyNames` / `propertyIsEnumerable` all read, with real tombstones
+behind `delete`.
+
+**A class instance still has NO bag.** It is row 7 of #4010's matrix and
+`__carrier_bag_of` answers null for it, so nothing on this issue's 124-file
+population moved. What #4010 gives you is not the store — it is the **shape**:
+
+- `src/codegen/carrier-bag-visibility.ts` + `carrier-bag-delete.ts` are the
+  worked example of a per-receiver own-property store wired into every
+  reflective surface additively, including the tri-state "not handled" answer
+  that keeps a bag-blind receiver bit-for-bit unchanged.
+- The wiring points are already enumerated and additive, so a per-instance
+  store only has to teach `__carrier_bag_of` about instances (plus a `keys`
+  ordering decision) rather than re-open seven natives.
+- **Take the -684 lesson with you**: it was NOT the query widening. It was a
+  *dormant* bag pollution — `__extern_set` accepting a write the read path
+  refused — that only became visible once something queried the store. Before
+  widening any surface over a NEW store, ask what writes reach it that the read
+  path shadows.
+
+Also relevant: `Object.defineProperty` on a non-`$Object` receiver still lands
+nowhere for functions, and `verifyProperty` restores via `defineProperty` — so a
+per-instance store needs the define arm as well as the delete arm, or the
+harness's round trip is one-way.
+
+**Original recommended sequencing** — `blocked_by: [4010]`. Land the unified per-receiver
 own-property side table first; then (1)+(2)+(3) here become one coherent slice
 against a store that can actually represent a tombstone. Re-run the 124 then;
 expect the discount #3976 measured (populations are not flip ceilings).
