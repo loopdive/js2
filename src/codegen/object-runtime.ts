@@ -82,6 +82,7 @@ import { buildApplyClosureArityWidening, buildTransferredCharAtApplyArm } from "
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
+import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
@@ -2702,36 +2703,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // import parity).
   //
   // params: 0=obj(externref) 1=key(externref)
-  // locals: 2=any(anyref) 3=o(ref null $Object) 4=e(ref null $PropEntry)
+  // locals: 2=any(anyref) 3=o(ref null $Object) 4=e($PropEntry?) 5=cbd(i32)
   {
+    // (#4010 S2) The non-$Object head, owned by carrier-bag-delete.ts: the
+    // #2896 builtin-fn metadata arm FIRST (unchanged), then the #3468/#3537
+    // carrier-bag arm, then the historical `return 1` no-op success. See that
+    // module for why the bag consult is tri-state and strictly additive.
+    reserveCarrierBagDelete(ctx);
     const body: Instr[] = [
-      // (#2896) Builtin-fn metadata arm: `delete fn.name` / `delete fn.length`
-      // on a builtin function value marks the instance's deleted bit (the
-      // properties are configurable, §10.2.9) and reports success. Other
-      // receivers/keys fall through (the helper returns 0).
-      ...(bfnDeleteIdx !== undefined
-        ? ([
-            { op: "local.get", index: 0 },
-            { op: "local.get", index: 1 },
-            { op: "call", funcIdx: bfnDeleteIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
-            },
-          ] satisfies Instr[])
-        : []),
-      // any = any.convert_extern(obj) ; if !ref.test $Object → return 1 (no-op success)
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.tee", index: 2 },
-      { op: "ref.test", typeIdx: objectTypeIdx },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
-      },
+      ...buildNonObjectDeleteArms(ctx, { bfnDeleteIdx, objectTypeIdx, anyLocal: 2, resultLocal: 5 }),
       // o = cast<$Object>(any) ; e = __obj_find(o, key)
       { op: "local.get", index: 2 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -2816,6 +2796,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         { name: "any", type: { kind: "anyref" } },
         { name: "o", type: objRefNull },
         { name: "e", type: entryRefNull },
+        { name: "cbd", type: { kind: "i32" } }, // (#4010 S2) carrier-bag tri-state
       ],
       body,
     );

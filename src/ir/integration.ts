@@ -126,7 +126,7 @@ import {
   type LoweredFunctionResult,
   type ModuleBindingGlobal,
 } from "./from-ast.js";
-import { prepareSingleAwaitIrFunction } from "./async-prepare.js";
+import { prepareSuspendingIrFunction } from "./async-prepare.js";
 import {
   collectIrDirectCallLoweringPlans,
   type IrDirectCallLoweringPlan,
@@ -278,6 +278,12 @@ import {
 import { sealDependencyCompletePreparedComponents } from "./prepared-component-sealing.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
 import { attachIrStringSupport } from "./string-support.js";
+import {
+  IR_ASYNC_CLOCK_SNAPSHOT_FN,
+  IR_ASYNC_CONSOLE_LOG_STRING_FN,
+  IR_ASYNC_NUMBER_TO_STRING_FN,
+  IR_ASYNC_STRING_CONCAT_5_FN,
+} from "./async-semantic-runtime.js";
 import { IR_VEC_ELEM_SET_PREFIX, IR_VEC_NEW_SIZED_PREFIX, parseIrVectorRuntimeElement } from "./vector-runtime.js";
 import {
   IR_STRING_CHAR_AT_FN,
@@ -308,12 +314,12 @@ function prepareSuspendingAsyncLowering(
   suspendingOwners: ReadonlySet<IrUnitId> | undefined,
 ): LoweredFunctionResult {
   if (!suspendingOwners?.has(ownerUnitId)) return lowered;
-  const prepared = prepareSingleAwaitIrFunction(lowered.main);
+  const prepared = prepareSuspendingIrFunction(lowered.main);
   if (!prepared) {
     throw new IrUnsupportedError(
       "body-shape-rejected",
       "build",
-      `async-plan producer could not split the certified single-await body ${name}`,
+      `async-plan producer could not split the certified suspending body ${name}`,
     );
   }
   return {
@@ -3907,6 +3913,19 @@ function resolveAndObserveCallableProvider(
     index = preparedMathProviderIndex(ctx, provider.implementation.symbol);
   } else if (ref.binding.kind === "intrinsic" && symbol === FMOD_FN) {
     index = ensureFmod(ctx);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CLOCK_SNAPSHOT_FN) {
+    index = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_NUMBER_TO_STRING_FN) {
+    index = ensureLateImport(ctx, "number_toString", [{ kind: "f64" }], [{ kind: "externref" }]);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CONSOLE_LOG_STRING_FN) {
+    index = ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
+    index = ensureLateImport(
+      ctx,
+      "__concat_5",
+      Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
+      [{ kind: "externref" }],
+    );
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
     const element = parseIrVectorRuntimeElement(symbol, IR_VEC_ELEM_SET_PREFIX);
     index = element ? ensureVecElemSetForElement(ctx, element) : null;
@@ -4448,8 +4467,12 @@ function preregisterCallableProviders(
   }
   for (const entry of fns) {
     const owner = owners.get(entry.terminalOwnerUnitId)!;
-    for (const block of entry.fn.blocks) {
-      for (const root of block.instrs) {
+    const instructionBuffers = [
+      ...entry.fn.blocks.map((block) => block.instrs),
+      ...(entry.fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ];
+    for (const instrs of instructionBuffers) {
+      for (const root of instrs) {
         forEachInstrDeep(root, (instr) => {
           const ref = callableProviderRef(instr);
           if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
@@ -4464,6 +4487,8 @@ function preregisterCallableProviders(
       }
     }
   }
+  // Seal deferred import indices before prepared component bodies bake them.
+  flushLateImportShifts(ctx, null);
   return failures;
 }
 
