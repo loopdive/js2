@@ -51,11 +51,25 @@ reach this: same functions, but the captures resolve as module bindings.
 
 ## Direction (not prescribed)
 
-Either thread the transitive sibling captures into the fnctor twin's signature
-(the same leading-capture-params contract lifted declarations use), or refuse
-fnctor admission for constructors whose call graph reaches capturing siblings
-declared in an enclosing function frame — a decline is strictly better than
-emitting an invalid module.
+Thread the transitive sibling captures into the fnctor twin's signature (the
+same leading-capture-params contract lifted declarations use).
+
+**The decline alternative was tried on 2026-08-03 and does NOT work.** A
+post-compile audit (flag any capture-argument prepend that sources a foreign
+frame slot; abort the twin, `unreachable` body, no cache, fall through to the
+generic `new` path) produced strictly worse results on both probes:
+
+- a WORKING minimal fnctor-with-capturing-sibling case regressed 6 → 0: the
+  generic standalone `new` path over a function-expression constructor does
+  not deliver the fnctor semantics the working twin did;
+- acorn UMD then failed in a DIFFERT function (`__closure_0`:
+  `local.set[0] expected (ref null 7), found local.tee of type (ref null 6)`)
+  — the generic path has its own invalid-emission defect on this shape.
+
+So the fallback is not a safe landing zone; only capture threading fixes this.
+An adjacent silent-miscompile exists in the same family: a fnctor ctor calling
+a sibling that reads a captured `hasOwn`-style binding through `.call` returns
+wrong values (probe expected 20, got null) without any validation error.
 
 ## Acceptance
 

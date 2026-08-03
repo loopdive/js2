@@ -10,6 +10,10 @@ horizon: m
 created: 2026-08-03
 requested_by: ttraenkler/claude-bench
 related: [4088]
+loc-budget-allow:
+  - src/codegen/statements/loops.ts
+func-budget-allow:
+  - src/codegen/statements/loops.ts::compileForInStatement
 ---
 
 # #4138 — standalone: for…in over nested dynamic objects yields 1 of N children
@@ -50,6 +54,26 @@ node. Every other engine in the test262.fyi benchmark lane passes this
 checksum; js2's standalone lane is marked invalid on the one whole-program
 case. The walk shape (for…in + computed member read over heterogeneous
 objects) is ubiquitous in real traversal code, not benchmark-specific.
+
+## Progress
+
+**Narrow slice landed 2026-08-03** (with PR #4088's branch): a receiver typed
+`T | undefined` (the `Array.pop()` shape) hit the standalone static-unroll
+path with a UNION type, whose `getProperties()` is the common set — empty —
+so the loop silently enumerated nothing. The static shape is now read off
+`getNonNullableType()`; `tests/issue-4138-forin-nonnullable-receiver.test.ts`
+covers it. The repro above still returns 1, not 3: with heterogeneous
+pushes the union's common property set is `{type}` alone, so children are
+still never enumerated.
+
+## What remains (the actual body of this issue)
+
+1. A receiver that is POLYMORPHIC at runtime must not static-unroll one
+   shape — it needs runtime key enumeration.
+2. Runtime enumeration (`__object_keys_forin`) only sees `$Object` values;
+   closed WasmGC structs (object literals with stable shapes, fnctor
+   instances) are not enumerable through it. A generic walk needs either a
+   reflection path over closed structs or a rep change.
 
 ## Acceptance
 
