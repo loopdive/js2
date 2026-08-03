@@ -49,6 +49,10 @@ loc-budget-allow:
   - src/compiler.ts
   - src/ir/from-ast.ts
   - src/codegen/expressions.ts
+  # Added when the THIRD out-of-frame site was fixed: the closure-VALUE capture
+  # guard, and the fnctor-constructor frame-trap install that localised it.
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/closures/funcref-as-closure.ts
 ---
 
 # #4134 — `local index out of range — 65 (valid: [0, 8))` at emit
