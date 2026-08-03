@@ -874,3 +874,68 @@ body. It installs the accessor on the **FunctionContext**, not on `fctx.body` �
 `fctx.body` is reassigned during compilation, so a proxy on the array stops
 observing writes after the first swap. That is exactly the mistake that produced
 an earlier wrong conclusion on this issue ("introduced after body emission").
+
+## The out-of-frame GUARD cannot close the last two breaches (2026-08-03)
+
+Measured on the ESLint Tier 1a graph with the guard applied at all three sites
+(call-site prepend, nested-declaration scoping, closure-VALUE materialisation):
+
+```text
+[js2:frames] position 1290 '__fnctor_MurmurHash3_new' frame=15 worst local index=24
+[js2:frames] position 3508 'assertASTDidntChange'     frame=4  worst local index=51
+[js2:frames] 2 function(s) reference out-of-frame locals at end of codegen
+```
+
+**Identical to the run before the third-site guard was added.** The guard is a
+no-op for these two, and the reason is structural, not a bug in the guard:
+
+```ts
+capSourceIdx = <out of frame>
+  ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)   // <-- nothing to fall back TO
+  : cap.outerLocalIdx;
+```
+
+The guard can only *prefer a better slot when one exists*. In both survivors the
+capture is not present in the current frame in any form — `localMap` has no
+entry — so the fallback lands on the same invalid index. Substituting a slot is
+the wrong shape of fix for "the value is not here at all".
+
+### Why each one is unreachable
+
+- **`__fnctor_MurmurHash3_new`** — imurmurhash declares `MurmurHash3` inside an
+  IIFE that also holds the captured `cache`. The synthesized fnctor constructor
+  is compiled into its OWN small context, which never receives the IIFE's
+  captures.
+- **`assertASTDidntChange`** — eslint's rule-tester calls fast-deep-equal's
+  `equal`, but the bare name resolves to uri-js's factory-nested `equal`, whose
+  captures are IIFE-factory locals. Note this one is a REGRESSION of the #4133
+  narrowing: suppressing the out-of-scope binding removed it, but suppression
+  caused the `null_deref` explosion, so the suppression was narrowed back.
+
+### The actual fix, and why it is not attempted here
+
+The value has to be made *reachable*, not re-indexed. The mechanism already
+exists in this codebase for the analogous #2029 family-A case: promote the
+capture to a module global (`ctx.capturedGlobals` /
+`ctx.capturedBoxGlobals`) and read it with `global.get`, which
+`funcref-as-closure.ts` and `call-identifier.ts` both already do on that path.
+
+Extending that promotion to cover cross-frame-unreachable captures is a design
+change with real blast radius (it changes mutation semantics — a global is
+shared where a per-activation slot is not), and it interacts with the #4133
+suppression tension recorded below. It should be specced, not improvised at the
+end of a long session.
+
+### The #4133 tension, stated plainly
+
+These two pull in opposite directions and neither end is currently safe:
+
+| out-of-scope nested binding | consequence |
+| --- | --- |
+| suppress it | call falls to `ref.null.extern` → `null_deref` +1200 on Temporal |
+| let it through | wrong-frame capture index → out-of-frame, module fails to validate |
+
+A correct fix has to make the *right* callee reachable, which is the same
+promotion work. Until then the branch takes the "let it through" end, because an
+invalid module is a loud failure and a null-trap explosion is a conformance
+regression that also parks the merge queue.
