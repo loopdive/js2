@@ -623,6 +623,76 @@ is one line calling a composite builder, with the prose in the subsystem module.
 Final: `object-runtime.ts` −3, `vec-overlay.ts` −58,
 `object-runtime-descriptors.ts` −1 against baseline.
 
+## ⛔ THE MANDATORY STRATUM CONTROL — `built-ins/**/{name,length}.js`
+
+Run explicitly, before the PR went near the queue, per this issue's own
+non-negotiable S3 gate.
+
+**Population — complete, not sampled.** The glob is **1,240** files; **729** of
+them pass in the published CI standalone baseline. A file that already fails
+cannot regress, so the 729 are the **complete at-risk set** — the ~700-file
+population that cost #4055 v1 −684.
+
+| | files |
+| --- | ---: |
+| `built-ins/**/{name,length}.js` (whole glob) | 1,240 |
+| …passing in the CI standalone baseline ⇒ **at risk** | **729** |
+| rows measured in the post arm (floor check) | **729 / 729** |
+| pass | 724 |
+| compile **timeout** (60–74 s vs a 60 s limit) | 5 |
+| **regressions** | **0** |
+
+All five timeouts were re-run **SOLO**: **5/5 pass in 9–17 s**, against 60–74 s
+under three-shard contention at load 13–16. They are load artifacts of the
+instrument, not semantic failures — none carries an assertion signature, let
+alone *"descriptor should be configurable"*. **Net: 729/729, zero regressions in
+the −684 population.**
+
+**Be precise about the arms.** The base arm here is the **published CI
+standalone baseline** (generated 13:19Z the same day, from the commit this
+branch forked from), not a fresh local base sweep of all 729 — a local base arm
+would have cost another ~3 h of wall clock for files that provably did not move.
+What makes that sound: the post arm moved **nowhere**, so there was nothing to
+attribute; every post-arm non-pass got a fresh, same-instrument solo re-run; and
+the local instrument was calibrated against that same baseline at **16/16**
+pass/not-pass agreement before use. Where a genuine flip DID exist — the four
+gains below — a full two-arm, same-instrument comparison was run.
+
+## Payout — measured, with the funnel and its denominators
+
+| stage | files |
+| --- | ---: |
+| standalone baseline rows | 48,619 |
+| `status = fail` | 14,859 |
+| …own-property / descriptor error signature | 1,111 |
+| …unreadable source (floored) | **0** |
+| …static array/function-expando + reflection shape | **11** |
+
+Ran **121** files: the **complete** 11-file shape-candidate set ∪ a deterministic
+stride sample of 112 from the 1,111 bucket.
+
+**4 gains, 0 regressions.**
+
+| file | |
+| --- | --- |
+| `built-ins/Object/freeze/15.2.3.9-2-a-7.js` | shape candidate |
+| `built-ins/Object/freeze/15.2.3.9-2-a-9.js` | shape candidate |
+| `built-ins/Object/seal/object-seal-p-is-own-property-of-a-function-object-that-uses-object-s-get-own-property.js` | shape candidate |
+| `built-ins/Object/seal/object-seal-p-is-own-property-of-an-arguments-object-which-implements-its-own-get-own-property.js` | shape candidate |
+
+**Attribution by kill-switch REMOVAL**, not by narrative: all four re-run with
+the eight changed codegen files restored to their `609c995ce` contents (file
+copies — `git stash` is a single shared stack across every worktree of this repo
+and is never safe here) → **0/4 pass**. With S3 → **4/4**.
+
+**The informative number is the 0/110.** The random-stride sample of the broad
+own-property/descriptor bucket moved **not at all**, while the statically
+derived at-risk set moved **4/11**. That is the matrix speaking: the bucket is
+dominated by receivers that have **no bag** — class instances, Date, RegExp,
+Error — which is precisely #4098's population and precisely what S3 does not
+claim to fix. A low flip count here is the expected outcome for substrate work
+(#4084 precedent, and this issue's own S1′ note), not a shortfall.
+
 ## Instrument note — `runTest262File` cannot run this corpus unaided
 
 `runTest262File` does **not** supply the separately compiled
