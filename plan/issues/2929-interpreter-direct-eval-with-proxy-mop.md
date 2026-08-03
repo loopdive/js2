@@ -428,10 +428,11 @@ same-name block-function wins, exact caller activation updates, provider
 routing for pre-declaration/collision cases, and preservation of the simple
 zero-import `eval("{ function f() {} } ...")` fast path.
 
-PR #4077 publishes this 16-line lifecycle checkpoint. This issue update is
-intentionally part of that change-set so the existing `loc-budget-allow` for
-`src/codegen/expressions/eval-inline.ts` applies to the checkpoint itself,
-rather than being inferred from an unrelated historical issue edit.
+During PR #4077's 2026-08-04 main sync, its proposed 16-line classifier was
+found already present on `main` with the required `ctx.standalone` boundary.
+The stale unqualified duplicate made host literal indirect Annex-B eval import
+`__extern_eval`, so it was removed. No unique interpreter source delta remains
+in #4077; the corrected lifecycle checkpoint is already on `main`.
 
 ### Publication and remaining gate
 

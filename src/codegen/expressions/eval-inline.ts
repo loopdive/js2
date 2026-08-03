@@ -764,22 +764,6 @@ export function tryStaticEvalInline(
     if (collidesWithCaller || readsBeforeDeclaration || unsupportedGlobalShape) return undefined;
   }
 
-  if (!explicitlyStrictEval && declarationNames.blockFunctionNames.size > 0) {
-    const annexBNames = declarationNames.blockFunctionNames;
-    const collidesWithCaller =
-      setsIntersect(annexBNames, declarationNames.varNames) ||
-      setsIntersect(annexBNames, fctx.directEvalBindingNames) ||
-      setsIntersect(annexBNames, ctx.globalObjectVarBindings) ||
-      setsIntersect(annexBNames, ctx.topLevelFunctionNames);
-    const readsBeforeDeclaration = foldedEvalReadsAnnexBBindingBeforeDeclaration(sf, annexBNames);
-    // A source-root if/switch declaration needs a real GlobalEnvironmentRecord:
-    // the ordinary B.3.3 local-slot lowering only models BlockStatement sites.
-    // Keep function-local simple-if compile-away canaries intact; only the
-    // module initializer takes this global-provider arm.
-    const unsupportedGlobalShape = fctx.name === "__module_init" && foldedEvalHasNonBlockAnnexBDeclaration(sf);
-    if (collidesWithCaller || readsBeforeDeclaration || unsupportedGlobalShape) return undefined;
-  }
-
   // A direct nested `eval(...)` can recurse through this same constant-fold
   // path. An eval Identifier used as a VALUE cannot: foreign AST identifiers
   // have no checker binding, so the ordinary identifier emitter materializes
