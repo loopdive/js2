@@ -6073,6 +6073,26 @@ class ClassRegistry {
     return ref;
   }
 
+  /** Rebind a dependency-sealed symbolic member target into this lowering pass. */
+  private preparedMemberTarget(target?: IrFuncRef): IrFuncRef | null {
+    if (
+      target?.binding.kind !== "unit" ||
+      !this.ctx.programAbiSession?.hasPlan(irUnitCallableBindingId(target.binding.unitId))
+    ) {
+      return null;
+    }
+    const funcIdx = this.unitFuncIdx(target.binding.unitId, target.name);
+    if (funcIdx === undefined) {
+      throw new IrInvariantError(
+        "missing-function-slot",
+        "resolve",
+        `ir/integration: prepared class member ${target.binding.unitId} has no slot ${target.name}`,
+      );
+    }
+    this.bindUnitCallableSlot(target, funcIdx, target.name);
+    return target;
+  }
+
   /**
    * Publish one inherited class member as an explicit alias of the exact
    * ancestor source unit that owns its allocator slot.
@@ -6382,14 +6402,8 @@ class ClassRegistry {
       classLayout?.type.fields ?? (this.ctx.programAbiTypes ? undefined : this.ctx.structFields.get(shape.className));
     if (!layoutFields) return null;
 
-    // Build a name → wasm-field-index map directly from the exact allocator
-    // struct field list so the IR sees the same indices the legacy path uses
-    // for `struct.get` / `struct.set`. The `__tag` prefix (at index 0 for root
-    // classes) is included in layoutFields, so a
-    // user field "x" at IR position 0 corresponds to legacy field
-    // index 1 (or higher, depending on the parent chain). Slice 4
-    // doesn't claim functions referencing inherited classes, so
-    // layoutFields[0] is always `__tag`; user fields start at index 1.
+    // Derive field indices from the exact allocator layout. This includes the
+    // legacy `__tag` prefix and every inherited field before own source fields.
     const fieldIdxByName = new Map<string, number>();
     for (let i = 0; i < layoutFields.length; i++) {
       fieldIdxByName.set(layoutFields[i]!.name, i);
@@ -6454,7 +6468,9 @@ class ClassRegistry {
       constructorFunc,
       initFunc,
       instanceOfTags,
-      memberFunc: (memberKind: IrClassMemberKind, name: string): IrFuncRef => {
+      memberFunc: (memberKind: IrClassMemberKind, name: string, target?: IrFuncRef): IrFuncRef => {
+        const preparedTarget = this.preparedMemberTarget(target);
+        if (preparedTarget) return preparedTarget;
         const suffix = memberKind === "getter" ? `get_${name}` : memberKind === "setter" ? `set_${name}` : name;
         const legacyName = `${shape.className}_${suffix}`;
         const physicalName = classMemberFuncKey(ctx, legacyName);
