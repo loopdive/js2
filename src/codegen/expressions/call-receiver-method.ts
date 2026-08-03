@@ -43,6 +43,8 @@ import { resolveReceiverStruct } from "../fnctor-escape-gate.js";
 import { hostFnctorCallableFallbackImportName, reserveHostFnctorMethodDriver } from "../host-fnctor-method-driver.js";
 import { observeHostDynamicMethodCallArity } from "../dynamic-method-call-arity.js";
 import { effectiveLocalCarrier } from "../analysis/mixed-assignment-carrier.js";
+import { staticIntegerRange } from "../analysis/static-numeric-range.js";
+import { staticConstStringValues } from "../analysis/static-string-values.js";
 import {
   emitArrayBufferResize,
   emitArrayBufferSlice,
@@ -99,6 +101,7 @@ import {
   isStaticUndefinedArg,
 } from "../string-ops.js";
 import { tryCompileIndexOfHoistedUndefinedSearch } from "../string-indexof-undefined.js";
+import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { emitSymbolToString } from "../symbol-native.js";
 import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { ensureUint8ToBase64, ensureUint8ToHex } from "../uint8-codec.js";
@@ -409,6 +412,77 @@ function tryCompileLateFnctorPrototypeMethodCall(
   }
   fctx.body.push({ op: "call", funcIdx: dispatchIdx });
   return { kind: "externref" };
+}
+
+function tryCompileDerivedHostSubstringCharCodeAt(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  method: string,
+): ValType | null {
+  if (ctx.nativeStrings || method !== "charCodeAt" || !ts.isIdentifier(propAccess.expression)) return null;
+  const symbol = ctx.checker.getSymbolAtLocation(propAccess.expression);
+  const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+  const charCodeAtIdx = ctx.jsStringImports.get("charCodeAt");
+  if (substring?.kind !== "host" || charCodeAtIdx === undefined) return null;
+
+  const arg = expr.arguments[0];
+  const isLengthMinusOne =
+    arg !== undefined &&
+    ts.isBinaryExpression(arg) &&
+    arg.operatorToken.kind === ts.SyntaxKind.MinusToken &&
+    ts.isPropertyAccessExpression(arg.left) &&
+    arg.left.name.text === "length" &&
+    ts.isIdentifier(arg.left.expression) &&
+    ctx.checker.getSymbolAtLocation(arg.left.expression) === symbol &&
+    ts.isNumericLiteral(arg.right) &&
+    Number(arg.right.text) === 1;
+  const indexLocal = allocLocal(fctx, `__host_substring_char_idx_${fctx.locals.length}`, { kind: "i32" });
+  if (isLengthMinusOne) {
+    fctx.body.push({ op: "local.get", index: substring.lenLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.sub" });
+  } else if (arg && tryEmitStaticI32Expression(ctx, fctx, arg)) {
+    // already emitted as i32
+  } else if (arg) {
+    const argType = compileExpression(ctx, fctx, arg, { kind: "i32" });
+    if (argType && argType.kind !== "i32") coerceType(ctx, fctx, argType, { kind: "i32" });
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  }
+  fctx.body.push({ op: "local.set", index: indexLocal });
+
+  const range = arg ? staticIntegerRange(ctx, arg) : { min: 0, max: 0 };
+  const provenInBounds =
+    (range !== undefined && range.min >= 0 && range.max < substring.minLen) ||
+    (isLengthMinusOne && substring.minLen > 0);
+  const read: Instr[] = [
+    { op: "local.get", index: substring.receiverLocal },
+    { op: "local.get", index: substring.offLocal },
+    { op: "local.get", index: indexLocal },
+    { op: "i32.add" },
+    { op: "call", funcIdx: charCodeAtIdx },
+    { op: "f64.convert_i32_u" },
+  ];
+  if (provenInBounds) {
+    fctx.body.push(...read);
+  } else {
+    fctx.body.push({ op: "local.get", index: indexLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "i32.lt_s" });
+    fctx.body.push({ op: "local.get", index: indexLocal });
+    fctx.body.push({ op: "local.get", index: substring.lenLocal });
+    fctx.body.push({ op: "i32.ge_s" });
+    fctx.body.push({ op: "i32.or" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: [{ op: "f64.const", value: NaN }],
+      else: read,
+    });
+  }
+  return { kind: "f64" };
 }
 
 export function compileReceiverMethodCall(
@@ -2348,6 +2422,43 @@ export function compileReceiverMethodCall(
     receiverIsNativeStringValType(ctx, fctx, propAccess.expression)
   ) {
     const method = propAccess.name.text;
+
+    const derivedSubstringChar = tryCompileDerivedHostSubstringCharCodeAt(ctx, fctx, expr, propAccess, method);
+    if (derivedSubstringChar) return derivedSubstringChar;
+
+    // A host string call costs a Wasm→JS boundary crossing even when immutable
+    // literal-table analysis proves every possible result is identical. Keep
+    // evaluation order (and any receiver/argument trap), then materialize the
+    // uniform boolean directly in Wasm. Native strings retain their own helper
+    // folds below; this arm closes the equivalent host-call benchmark gap.
+    if (
+      !ctx.nativeStrings &&
+      (method === "includes" || method === "startsWith" || method === "endsWith") &&
+      expr.arguments.length === 1
+    ) {
+      const receiverValues = staticConstStringValues(ctx, propAccess.expression);
+      const searchValues = staticConstStringValues(ctx, expr.arguments[0]!);
+      if (receiverValues && searchValues && new Set(searchValues).size === 1) {
+        const search = searchValues[0]!;
+        const results = new Set(
+          receiverValues.map((value) =>
+            method === "includes"
+              ? value.includes(search)
+              : method === "startsWith"
+                ? value.startsWith(search)
+                : value.endsWith(search),
+          ),
+        );
+        if (results.size === 1) {
+          const recv = compileExpression(ctx, fctx, propAccess.expression);
+          if (recv) fctx.body.push({ op: "drop" });
+          const arg = compileExpression(ctx, fctx, expr.arguments[0]!);
+          if (arg) fctx.body.push({ op: "drop" });
+          fctx.body.push({ op: "i32.const", value: results.values().next().value ? 1 : 0 });
+          return { kind: "i32", boolean: true };
+        }
+      }
+    }
 
     // string.toString() and string.valueOf() — identity, just return the string itself.
     // (#1397) Skip the identity short-circuit when the receiver is a String

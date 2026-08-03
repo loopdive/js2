@@ -3587,7 +3587,6 @@ function makeFromAstResolver(ctx: CodegenContext, moduleBindingResolver?: IrModu
       };
     },
     preferLegacyFlatSubstringCharCodeAt(receiver: ts.Expression) {
-      if (!ctx.nativeStrings) return false;
       let current = receiver;
       while (
         ts.isParenthesizedExpression(current) ||

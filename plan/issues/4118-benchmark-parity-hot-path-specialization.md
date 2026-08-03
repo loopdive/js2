@@ -40,6 +40,7 @@ oracle-ratchet-allow:
   - src/codegen/analysis/static-numeric-range.ts
   - src/codegen/analysis/static-string-values.ts
   - src/codegen/array-methods.ts
+  - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/property-access-dispatch.ts
   - src/codegen/statements/variables.ts
   - src/codegen/string-ops.ts
@@ -78,9 +79,25 @@ performance checkpoint with a checker-layer migration.
 5. Candidate benchmarks are measured against the exact `origin/main` commit,
    in fresh processes, with the Node baseline and all Wasm lanes reported.
 
+## Host-derived string checkpoint
+
+The second checkpoint extends the same non-escape and immutable-table proofs to
+the JS-host representation. Uniform split lengths and derived transform results
+stay scalar, while a range-proven substring used only by `length` and
+`charCodeAt` is represented as `(receiver, offset, length)` rather than allocated.
+Unproven ranges, escaping identities, mutation, and non-uniform results retain
+the ordinary host-string calls.
+
+On the local Node v24.4.1 / macOS arm64 harness, the complete string suite keeps
+the loop-dependent workload valid and measures host split at 0.065 ms versus
+0.199 ms for Node, substring at 0.016 ms versus 0.052 ms, and the remaining
+derived transform rows between 1.5x and 6.8x faster than Node. Host `indexOf`
+and `includes` remain explicit follow-up work because the attempted periodic
+scalarization fell below the suite's plausibility floor and was not retained.
+
 ## Follow-up
 
 - Move the remaining dispatcher-local proof consumers into subsystem modules
   while preserving the benchmark wins.
-- Close host-string and affine-matrix gaps that remain after this checkpoint.
+- Close host-string search and affine-matrix gaps that remain after this checkpoint.
 - Re-run the entire landing-page inventory on main after merge.
