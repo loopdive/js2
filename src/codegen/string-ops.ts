@@ -1237,7 +1237,10 @@ export function compileTaggedTemplateExpression(
       const tdzFlaggedNested = nestedCaptures ? nestedCaptures.filter((c) => c.hasTdzFlag) : [];
       if (nestedCaptures) {
         for (const cap of nestedCaptures) {
-          const sourceLocalIdx = cap.ownerFctx === fctx ? cap.outerLocalIdx : fctx.localMap.get(cap.name);
+          const sourceLocalIdx =
+            cap.ownerFctx === fctx
+              ? cap.outerLocalIdx
+              : (fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name) ?? fctx.localMap.get(cap.name));
           if (sourceLocalIdx === undefined) {
             reportError(
               ctx,

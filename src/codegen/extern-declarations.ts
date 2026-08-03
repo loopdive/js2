@@ -1163,7 +1163,13 @@ export function collectDeclaredGlobals(ctx: CodegenContext, libFile: ts.SourceFi
       if (!referencedNames.has(name)) continue; // only register used globals
       if (ctx.declaredGlobals.has(name)) continue;
       const type = ctx.checker.getTypeAtLocation(decl);
-      if (!isExternalDeclaredClass(type, ctx.checker)) continue;
+      // `window` is declared by lib.dom as `Window & typeof globalThis`, so
+      // its intersection type has no single external-class symbol even though
+      // it is a real ambient host value. The same rule applies to the other
+      // browser-only ambient variables below. Register those by their proven
+      // lib declaration/name; otherwise a bare `window.event` read silently
+      // lowers to `ref.null` (ReactDOM's update-priority path).
+      if (!isExternalDeclaredClass(type, ctx.checker) && !DOM_ONLY_GLOBALS.has(name)) continue;
       // #2907 — under no-JS-host mode (standalone as well as
       // strictNoHostImports/wasi) there is no host to satisfy
       // `env.global_<Name>`. `TypeError`, `Error`, `RegExp`, `Reflect`, the

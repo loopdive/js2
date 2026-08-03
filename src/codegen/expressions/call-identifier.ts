@@ -1832,7 +1832,21 @@ export function compileIdentifierCall(
           }
           // "skip" — call site is after declaration, no check needed
         }
-        if (cap.mutable && cap.valType) {
+        const transitiveSourceLocalIdx =
+          cap.ownerFctx === fctx ? undefined : fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name);
+        if (transitiveSourceLocalIdx !== undefined) {
+          // The caller carries this exact outer binding in a hidden lifted
+          // parameter. Prefer its binding-owner slot over a same-named local
+          // declared by the caller itself (ReactDOM's two distinct `root`
+          // bindings). Mutable captures already arrive as their canonical
+          // ref-cell ABI, so no additional box is needed here.
+          fctx.body.push({ op: "local.get", index: transitiveSourceLocalIdx });
+          const actualType = getLocalType(fctx, transitiveSourceLocalIdx);
+          const expectedType = captureParamTypes?.[capIdx];
+          if (actualType && expectedType && !valTypesMatch(actualType, expectedType)) {
+            coerceType(ctx, fctx, actualType, expectedType);
+          }
+        } else if (cap.mutable && cap.valType) {
           // Mutable capture: wrap in a ref cell so writes propagate back
           const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
           // Check if this local is already boxed (from a previous call to the same or another closure)

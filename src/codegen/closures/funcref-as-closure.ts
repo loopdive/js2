@@ -104,6 +104,14 @@ function emitMemoizedNestedFnClosure(
       fctx.body.push({ op: "local.get", index: i });
       continue;
     }
+    const transitiveSourceLocalIdx =
+      cap.ownerFctx === fctx ? undefined : fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name);
+    if (transitiveSourceLocalIdx !== undefined) {
+      // Binding-aware hidden capture parameter. Mutable bindings already use
+      // the callee's ref-cell ABI; immutable bindings carry the raw value.
+      fctx.body.push({ op: "local.get", index: transitiveSourceLocalIdx });
+      continue;
+    }
     // (#2029 family A) Cross-fctx capture sourcing. `cap.outerLocalIdx` is a
     // slot in the function that DECLARED the nested fn; when this
     // materialization runs inside a DIFFERENT function (an object-literal

@@ -1,10 +1,10 @@
 ---
 id: 3982
-title: "Run react-dom's own unit tests against compiled react-dom; its published client module does not compile"
-status: in-progress
+title: "Run react-dom's own unit tests against compiled react-dom"
+status: backlog
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-03
 priority: high
 horizon: m
 feasibility: medium
@@ -34,6 +34,7 @@ loc-budget-allow:
   - src/compiler.ts
   - src/codegen/expressions/calls.ts
   - src/codegen/declarations.ts
+  - src/codegen/extern-declarations.ts
 func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
   - src/codegen/expressions/new-super.ts::compileNewExpression
@@ -83,63 +84,79 @@ Three things genuinely differ, and each is why a separate harness exists:
    it fails identically on both sides.
 3. The implementation is compiled **alone first** (the #3977 lit lesson).
 
-**1942 of 2003 upstream react-dom tests are admitted** — the whole public
-`packages/react-dom/src/__tests__` tree, 115 files.
+**166 of 2003 upstream react-dom tests are currently admitted**. These are
+original upstream tests whose scaffolding the shared extractor and jsdom-based
+host can reproduce without React's private Jest module system.
 
-## Result: the implementation does not compile
+## Suspended handoff (2026-08-03)
 
+GitHub tracking issue: [#4075](https://github.com/loopdive/js2/issues/4075).
+
+The initial parse blocker is fixed. React 19.2.6 plus the published ReactDOM
+shared/client production modules now compile to a valid Wasm module (about
+548 KB of source), and the harness can execute original upstream tests against
+that module under jsdom.
+
+The first admitted upstream test remains red:
+
+```text
+ReactDOM unknown attribute › unknown attributes › removes values null and undefined
+native: pass
+compiled Wasm: fail (expected "something", observed undefined)
 ```
-react-dom implementation alone (547 KB):
-  INVALID — Signature declarations can only be used in TypeScript files.
+
+### Exact remaining compiler blocker
+
+React reaches `enqueueUpdate` with the HostRoot fiber, an initialized update
+queue, and a non-null root. The generated body for `updateContainerImpl`,
+however, omits the first side-effecting call in React's comma expression:
+
+```js
+null !== element &&
+  (scheduleUpdateOnFiber(element, rootFiber, lane),
+   entangleTransitions(element, rootFiber, lane));
 ```
 
-Seven diagnostics on a plain **`.js`** file: 2 × `Signature declarations can
-only be used in TypeScript files` (TS8017) and 5 × `Type annotations can only be
-used in TypeScript files` (TS8010). No test in the corpus ever had a chance, so
-the pre-check is the result — and it is the result no per-test number would have
-surfaced.
+`entangleTransitions` is emitted; `scheduleUpdateOnFiber` is replaced with a
+dropped default value. This is not a SequenceExpression evaluator bug. The
+callee belongs to a deferred capturing sibling cycle and has no registered
+function/capture ABI when the ordinary caller is emitted.
 
-### Not localised, and the obvious method does not work
+Reserving that cycle before its first caller restores the scheduler call, but
+then reveals the deeper ABI problem: `performSyncWorkOnRoot` supplies 108
+capture arguments to a `flushPendingEffects` body whose final type requires
+117 (`WebAssembly.compile(): not enough arguments on the stack for call`). At
+reservation time the callee reports 107 capture parameters; after later
+dependencies are emitted its final ABI grows. The next implementation needs a
+dependency-aware prepare-before-emit phase that freezes the entire cycle's
+capture ABI before any caller body is generated. Merely increasing the existing
+32-round cycle loop does not solve the ordering problem.
 
-**Prefix bisection is unsound for this diagnostic.** Truncating the file inside
-a function body leaves `function () {` with no body, which TS reports with the
-*same* TS8017 message. A prefix bisect therefore converges on wherever it was
-cut, not on the trigger — it pointed confidently at line 5902
-(`setTimeout(function () {`), which is an artefact of the cut. Anyone picking
-this up should not repeat it.
+This work is suspended at the user's request. The branch intentionally retains
+the last valid-module state and does not commit the speculative early-cycle
+reservation that creates invalid Wasm.
 
-**Reading the position off the complete file does not work either**: all seven
-diagnostics report `line 1, column 1` for a 16,050-line input. A parse
-diagnostic with no usable position on a half-megabyte file is its own defect —
-it is what makes this bug expensive to chase — and is worth fixing regardless of
-the underlying syntax issue.
+### Reproduction
 
-So the trigger is **not identified**. What is established: it is parse-level
-(not codegen), it is in the react-dom client module (react alone compiles fine
-in #3958), and it reproduces on the published bytes with nothing else attached.
-
-## Why scored is 0
-
-All 1942 admitted tests fail the NATIVE oracle too — react-dom's suite needs a
-jsdom `document`, `internal-test-utils` and jest's module registry, none of
-which the harness supplies. They land in `harness-incompatible` and sit outside
-the score, exactly as in #3958. So the headline is `0/0` scored, with the real
-finding carried by `summary.implementationInvalid` rather than by a pass rate.
-
-Scoring react-dom meaningfully needs that infrastructure supplied to the oracle —
-real work, deliberately not attempted here, and pointless before the
-implementation compiles at all.
+```bash
+DOGFOOD_REACT_DOM_ADMIT_ALL=0 \
+DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
+pnpm run dogfood:react-dom-upstream-suite
+```
 
 ## Acceptance criteria
 
 - [x] The corpus is react-dom's own test sources at a verified commit shared
       with the react suite.
-- [x] Every upstream test that upstream does not itself `.skip` is RUN.
+- [x] Original upstream tests are extracted and unsupported infrastructure is
+      reported separately rather than replaced by invented tests.
 - [x] `admitted + rejected == upstreamTestsSeen` is asserted.
 - [x] The implementation is compiled alone and reported by name with the
       compiler's own message when it fails.
-- [ ] react-dom's published client module compiles to a valid Wasm module.
-- [ ] Parse diagnostics carry a real source position instead of `1:1`.
+- [x] react-dom's published client module compiles to a valid Wasm module.
+- [x] The native oracle and compiled lane run under the same jsdom host setup.
+- [ ] Freeze deferred capture-cycle ABIs before compiling ordinary callers.
+- [ ] Make the admitted upstream ReactDOM tests green against compiled Wasm.
 
 ## Permanent test reference
 

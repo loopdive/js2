@@ -527,6 +527,14 @@ export interface FunctionContext {
   /** All local names → index (params first, then locals) */
   localMap: Map<string, number>;
   /**
+   * Binding-aware slots for transitively threaded sibling captures. A lifted
+   * caller may declare its own local with the same text as a callee's outer
+   * capture; keying that hidden parameter through `localMap` would then select
+   * the caller-local binding. The owner frame disambiguates the two lexical
+   * bindings while retaining the existing name-based map for ordinary reads.
+   */
+  transitiveCaptureLocals?: Map<FunctionContext, Map<string, number>>;
+  /**
    * Function-scoped `var` bindings that are also bare `for...in` assignment
    * targets. Their slots must remain externref because the loop writes string
    * keys even when a later declaration initializer is numerically typed.

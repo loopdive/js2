@@ -19,7 +19,7 @@ import {
 import { addFunctionOwnLocals } from "../binding-info.js"; // (#2103) memoized own-locals oracle
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
-import { allocLocal } from "../context/locals.js";
+import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
 import {
   compileNativeGeneratorFunction,
@@ -362,6 +362,8 @@ export function compileNestedFunctionDeclaration(
   // A call to a capturing sibling needs the sibling's environment in this
   // lifted frame too. Thread those bindings transitively instead of baking the
   // sibling's owner-frame local indices into this function's body.
+  type NestedCapture = NonNullable<ReturnType<CodegenContext["nestedFuncCaptures"]["get"]>>[number];
+  const shadowedTransitiveCaptures: NestedCapture[] = [];
   const captureWorklist = [...referencedNames];
   const visitedCaptureFunctions = new Set<string>();
   while (captureWorklist.length > 0) {
@@ -371,7 +373,16 @@ export function compileNestedFunctionDeclaration(
     const transitiveCaptures = ctx.nestedFuncCaptures.get(referencedName);
     if (!transitiveCaptures) continue;
     for (const capture of transitiveCaptures) {
-      if (ownLocals.has(capture.name)) continue;
+      if (ownLocals.has(capture.name)) {
+        if (
+          !shadowedTransitiveCaptures.some(
+            (existing) => existing.name === capture.name && existing.ownerFctx === capture.ownerFctx,
+          )
+        ) {
+          shadowedTransitiveCaptures.push(capture);
+        }
+        continue;
+      }
       if (!referencedNames.has(capture.name)) {
         referencedNames.add(capture.name);
         captureWorklist.push(capture.name);
@@ -420,6 +431,11 @@ export function compileNestedFunctionDeclaration(
 
   const captures: {
     name: string;
+    /** Internal lifted-param name; differs when a caller-local shadows the
+     * transitively threaded outer binding with the same source name. */
+    paramName: string;
+    /** Lexical frame that owns the original binding. */
+    bindingOwnerFctx: FunctionContext;
     type: ValType;
     localIdx: number;
     mutable: boolean;
@@ -527,12 +543,40 @@ export function compileNestedFunctionDeclaration(
     const alreadyBoxed = !!outerBoxedEntry;
     captures.push({
       name,
+      paramName: name,
+      bindingOwnerFctx: fctx,
       type,
       localIdx,
       mutable: isMutable,
       hasTdzFlag,
       tdzFlagIdx,
       alreadyBoxed,
+      boxedValType: outerBoxedEntry?.valType,
+    });
+  }
+
+  // A sibling may capture an outer binding named `root` while this function
+  // has its own function-scoped `var root`. Both bindings must coexist in the
+  // lifted frame: the source local keeps the plain name, while the hidden
+  // transitive capture gets a unique parameter and binding-owner lookup.
+  for (const capture of shadowedTransitiveCaptures) {
+    const localIdx =
+      capture.ownerFctx === fctx
+        ? capture.outerLocalIdx
+        : fctx.transitiveCaptureLocals?.get(capture.ownerFctx)?.get(capture.name);
+    if (localIdx === undefined) continue;
+    const sourceType = getLocalType(fctx, localIdx) ?? capture.valType ?? { kind: "externref" as const };
+    const outerBoxedEntry = fctx.boxedCaptures?.get(capture.name);
+    captures.push({
+      name: capture.name,
+      paramName: `__transitive_${capture.name}_${captures.length}`,
+      bindingOwnerFctx: capture.ownerFctx,
+      type: sourceType,
+      localIdx,
+      mutable: capture.mutable ?? false,
+      hasTdzFlag: capture.hasTdzFlag ?? false,
+      tdzFlagIdx: capture.outerTdzFlagIdx,
+      alreadyBoxed: !!outerBoxedEntry,
       boxedValType: outerBoxedEntry?.valType,
     });
   }
@@ -877,7 +921,7 @@ export function compileNestedFunctionDeclaration(
         const t = valueCaptureParamTypes[i]!;
         if (c.mutable && (t.kind === "ref" || t.kind === "ref_null")) {
           return {
-            name: c.name,
+            name: c.paramName,
             boxed: {
               refCellTypeIdx: t.typeIdx,
               // #2623: an already-boxed outer slot IS the cell — deref to its
@@ -891,11 +935,11 @@ export function compileNestedFunctionDeclaration(
         const outerBoxed = fctx.boxedCaptures?.get(c.name);
         if (outerBoxed && (c.type.kind === "ref" || c.type.kind === "ref_null")) {
           return {
-            name: c.name,
+            name: c.paramName,
             boxed: { refCellTypeIdx: outerBoxed.refCellTypeIdx, valType: outerBoxed.valType },
           };
         }
-        return { name: c.name };
+        return { name: c.paramName };
       });
       // (#3032 W3) TDZ-flag boxes ride as ADDITIONAL leading synthetic params
       // AFTER the value captures — aligned with `allParamTypes`'s
@@ -921,7 +965,7 @@ export function compileNestedFunctionDeclaration(
     const liftedFctx: FunctionContext = {
       name: funcName,
       params: [
-        ...captures.map((c, i) => ({ name: c.name, type: valueCaptureParamTypes[i]! })),
+        ...captures.map((c, i) => ({ name: c.paramName, type: valueCaptureParamTypes[i]! })),
         // #1205 Stage 3: extra leading params for TDZ flag boxes.
         ...tdzFlaggedCaptures.map((c) => ({
           name: `__tdz_box_${c.name}`,
@@ -954,6 +998,15 @@ export function compileNestedFunctionDeclaration(
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
     }
+    for (let i = 0; i < captures.length; i++) {
+      const capture = captures[i]!;
+      let ownerLocals = liftedFctx.transitiveCaptureLocals?.get(capture.bindingOwnerFctx);
+      if (!ownerLocals) {
+        ownerLocals = new Map();
+        (liftedFctx.transitiveCaptureLocals ??= new Map()).set(capture.bindingOwnerFctx, ownerLocals);
+      }
+      ownerLocals.set(capture.name, i);
+    }
 
     // Register mutable captures as boxed so reads/writes use struct.get/set.
     // Also register non-mutable captures that are already boxed in the outer
@@ -968,7 +1021,7 @@ export function compileNestedFunctionDeclaration(
         if (cap.alreadyBoxed && (cap.type.kind === "ref" || cap.type.kind === "ref_null")) {
           const refCellTypeIdx = (cap.type as { typeIdx: number }).typeIdx;
           if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
-          liftedFctx.boxedCaptures.set(cap.name, {
+          liftedFctx.boxedCaptures.set(cap.paramName, {
             refCellTypeIdx,
             valType: cap.boxedValType ?? { kind: "f64" },
           });
@@ -976,12 +1029,12 @@ export function compileNestedFunctionDeclaration(
         }
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
         if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
-        liftedFctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
+        liftedFctx.boxedCaptures.set(cap.paramName, { refCellTypeIdx, valType: cap.type });
       } else {
         const outerBoxed = fctx.boxedCaptures?.get(cap.name);
         if (outerBoxed && (cap.type.kind === "ref" || cap.type.kind === "ref_null")) {
           if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
-          liftedFctx.boxedCaptures.set(cap.name, {
+          liftedFctx.boxedCaptures.set(cap.paramName, {
             refCellTypeIdx: outerBoxed.refCellTypeIdx,
             valType: outerBoxed.valType,
           });
@@ -1058,7 +1111,7 @@ export function compileNestedFunctionDeclaration(
       captures.map((c) => ({
         name: c.name,
         outerLocalIdx: c.localIdx,
-        ownerFctx: fctx,
+        ownerFctx: c.bindingOwnerFctx,
         mutable: c.mutable,
         // (#2623 / #2967 3a) A mutable capture whose outer slot is ALREADY the
         // canonical ref cell registers its INNER value type, NOT the cell
@@ -1687,6 +1740,24 @@ export function hoistFunctionDeclarations(
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) lastSiblingDeclForName.set(stmt.name.text, stmt);
   }
+  // A lexically-hoisted sibling declaration shadows an already-collected host
+  // import of the same name. Imports are collected before nested bodies compile,
+  // so keeping that funcMap entry makes the compile loop mistake the import for
+  // an already-emitted sibling. ReactDOM's local `dispatchEvent` then remained
+  // the host builtin at direct call sites and became `null` when used as a
+  // first-class `.bind` target. Keep wasm:js-string's deliberately separate
+  // name-shadow contract (#1072), but release ordinary imported-function names
+  // so the nested declaration can claim its lexical binding.
+  for (const funcName of lastSiblingDeclForName.keys()) {
+    const existingIdx = ctx.funcMap.get(funcName);
+    if (
+      existingIdx !== undefined &&
+      definedFuncAt(ctx, existingIdx) === undefined &&
+      ctx.jsStringImports.get(funcName) !== existingIdx
+    ) {
+      ctx.funcMap.delete(funcName);
+    }
+  }
   const isShadowedDuplicate = (stmt: ts.FunctionDeclaration): boolean =>
     lastSiblingDeclForName.get(stmt.name!.text) !== stmt;
   // A declaration that only references a capturing sibling is itself
@@ -1815,6 +1886,7 @@ export function hoistFunctionDeclarations(
           if (
             (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.CommaToken) ||
             ts.isConditionalExpression(parent) ||
+            ts.isExpressionStatement(parent) ||
             ts.isForStatement(parent) ||
             ts.isForInStatement(parent) ||
             ts.isForOfStatement(parent) ||
@@ -1833,8 +1905,39 @@ export function hoistFunctionDeclarations(
     unsafeForwardCalleesCache.set(caller, result);
     return result;
   };
+  const forwardValueCalleesCache = new WeakMap<ts.FunctionDeclaration, ts.FunctionDeclaration[]>();
+  const forwardValueCallees = (caller: ts.FunctionDeclaration): ts.FunctionDeclaration[] => {
+    const cached = forwardValueCalleesCache.get(caller);
+    if (cached) return cached;
+    const found = new Set<ts.FunctionDeclaration>();
+    const visit = (node: ts.Node): void => {
+      if (
+        node !== caller &&
+        (ts.isFunctionDeclaration(node) ||
+          ts.isFunctionExpression(node) ||
+          ts.isArrowFunction(node) ||
+          ts.isMethodDeclaration(node))
+      ) {
+        return;
+      }
+      if (ts.isIdentifier(node) && isAnnexBValueReference(node)) {
+        const callee = lastSiblingDeclForName.get(node.text);
+        const parent = node.parent;
+        const isDirectCall = (ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node;
+        if (callee && callee.getStart() > caller.getStart() && !isDirectCall) found.add(callee);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(caller.body!);
+    const result = [...found];
+    forwardValueCalleesCache.set(caller, result);
+    return result;
+  };
+  const hardRequiredCallees = (caller: ts.FunctionDeclaration): ts.FunctionDeclaration[] => [
+    ...new Set([...unsafeForwardCallees(caller), ...forwardValueCallees(caller)]),
+  ];
   const requiredCallees = (caller: ts.FunctionDeclaration): ts.FunctionDeclaration[] => {
-    const required = new Set<ts.FunctionDeclaration>(unsafeForwardCallees(caller));
+    const required = new Set<ts.FunctionDeclaration>([...hardRequiredCallees(caller)]);
     for (const dependency of siblingDependencies.get(caller.name!.text) ?? []) {
       const callee = lastSiblingDeclForName.get(dependency);
       if (!callee) continue;
@@ -1844,43 +1947,6 @@ export function hoistFunctionDeclarations(
     }
     return [...required];
   };
-  const hasLoopNestedForwardCall = (caller: ts.FunctionDeclaration, target: ts.FunctionDeclaration): boolean => {
-    let found = false;
-    const visit = (node: ts.Node): void => {
-      if (
-        found ||
-        (node !== caller &&
-          (ts.isFunctionDeclaration(node) ||
-            ts.isFunctionExpression(node) ||
-            ts.isArrowFunction(node) ||
-            ts.isMethodDeclaration(node)))
-      ) {
-        return;
-      }
-      if (
-        ts.isCallExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        lastSiblingDeclForName.get(node.expression.text) === target
-      ) {
-        for (let parent: ts.Node | undefined = node.parent; parent && parent !== caller.body; parent = parent.parent) {
-          if (
-            ts.isForStatement(parent) ||
-            ts.isForInStatement(parent) ||
-            ts.isForOfStatement(parent) ||
-            ts.isWhileStatement(parent) ||
-            ts.isDoStatement(parent)
-          ) {
-            found = true;
-            return;
-          }
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(caller.body!);
-    return found;
-  };
-
   // Keep callees at their natural source positions and defer only callers with
   // unsafe forward calls. Pulling a callee earlier can move it ahead of its own
   // ordinary dependencies; ReactDOM then lost performWorkOnRoot while fixing a
@@ -1907,32 +1973,39 @@ export function hoistFunctionDeclarations(
   };
   const reserveCapturingCycle = (): boolean => {
     const deferred = new Set(deferredDeclarations);
-    const directCallees = (declaration: ts.FunctionDeclaration): ts.FunctionDeclaration[] => {
-      const callees = new Set<ts.FunctionDeclaration>();
-      for (const dependency of siblingDependencies.get(declaration.name!.text) ?? []) {
-        const callee = lastSiblingDeclForName.get(dependency);
-        if (callee) callees.add(callee);
+    const dependencyPath = (
+      start: ts.FunctionDeclaration,
+      target: ts.FunctionDeclaration,
+    ): ts.FunctionDeclaration[] | undefined => {
+      const queue: ts.FunctionDeclaration[][] = [[start]];
+      const visited = new Set<ts.FunctionDeclaration>([start]);
+      while (queue.length > 0) {
+        const path = queue.shift()!;
+        const tail = path[path.length - 1]!;
+        if (tail === target) return path;
+        for (const dependency of requiredCallees(tail)) {
+          if (!deferred.has(dependency) || visited.has(dependency)) continue;
+          visited.add(dependency);
+          queue.push([...path, dependency]);
+        }
       }
-      return [...callees];
+      return undefined;
     };
 
-    // A direct mutual-recursion pair is the irreducible ordering case: the
-    // earlier function's loop/comma call needs the later target registered,
-    // while that later body calls back into the earlier function. Reserve this
-    // narrow pair rather than its whole transitive call-graph SCC; large package
-    // modules can have dozens of indirectly recursive siblings whose combined
-    // capture environment would be both unnecessary and enormous.
+    // A cycle containing an unsafe forward call or forward function value is
+    // the irreducible ordering case: every member needs another member's final
+    // capture ABI before its own body can compile. Reserve the shortest cycle
+    // containing that hard edge, rather than arbitrarily emitting the first
+    // deferred caller and permanently dropping its target. This stays narrower
+    // than reserving the entire call-graph SCC in large bundles such as ReactDOM.
     let cycle: ts.FunctionDeclaration[] | undefined;
     for (const caller of deferredDeclarations) {
-      for (const callee of unsafeForwardCallees(caller)) {
-        if (
-          deferred.has(callee) &&
-          directCallees(callee).includes(caller) &&
-          hasLoopNestedForwardCall(caller, callee)
-        ) {
-          cycle = [caller, callee];
-          break;
-        }
+      for (const callee of hardRequiredCallees(caller)) {
+        if (!deferred.has(callee)) continue;
+        const pathBack = dependencyPath(callee, caller);
+        if (!pathBack) continue;
+        cycle = [caller, ...pathBack.slice(0, -1)];
+        break;
       }
       if (cycle) break;
     }
@@ -1972,6 +2045,8 @@ export function hoistFunctionDeclarations(
     if (deferredDeclarations.length === 0) break;
     if (deferredDeclarations.length === before) {
       if (reserveCapturingCycle()) continue;
+      // Defensive fallback for an analysis-incomplete graph. All fully-known
+      // dependency cycles containing a hard edge are reserved above.
       const [cycleBreaker] = deferredDeclarations.splice(0, 1);
       hoistOrder.push(cycleBreaker!);
       emittedDeclarations.add(cycleBreaker!);

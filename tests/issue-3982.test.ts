@@ -117,6 +117,32 @@ describe("ReactDOM upstream-suite compiler blockers (#3982)", () => {
     expect((instance.exports.probe as () => number)()).toBe(7);
   });
 
+  it("preserves a module-exported object alias when replacing a nested field", async () => {
+    const result = await compile(
+      `
+        function sharedModule() {
+          function noop() { return 0; }
+          var Internals = { d: { f: noop } };
+          var exports = {
+            internals: Internals,
+            flush: function () { return Internals.d.f(); }
+          };
+          return exports;
+        }
+        var shared = sharedModule();
+        shared.internals.d = { f: function () { return 42; } };
+        export function probe() { return shared.flush(); }
+      `,
+      { fileName: "react-dom-shared-internals-alias.js", skipSemanticDiagnostics: true, experimentalIR: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as () => number)()).toBe(42);
+  });
+
   it("keeps module-init flag fixups on delete-aware writes cloned through finally", async () => {
     const result = await compile(
       `
@@ -588,6 +614,182 @@ describe("ReactDOM upstream-suite compiler blockers (#3982)", () => {
     expect((instance.exports.probe as () => number)()).toBe(42);
   });
 
+  it("preserves a bare forward sibling call after a returning conditional", async () => {
+    const result = await compile(
+      `
+        function clientModule() {
+          var committed = 0;
+          function commitWhenReady(suspend) {
+            if (suspend) {
+              if (suspend === 2) return;
+            }
+            commitRoot();
+          }
+          function commitRoot() {
+            committed = 42;
+          }
+          return {
+            commitWhenReady: commitWhenReady,
+            read: function () { return committed; }
+          };
+        }
+        var client = clientModule();
+        export function probe() {
+          client.commitWhenReady(0);
+          return client.read();
+        }
+      `,
+      { fileName: "react-dom-forward-commit.js", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as () => number)()).toBe(42);
+  });
+
+  it("preserves a forward sibling call in a conditional comma result", async () => {
+    const result = await compile(
+      `
+        function clientModule() {
+          var called = 0;
+          function flush(canFlush) {
+            return canFlush ? (flushAcrossRoots(), false) : true;
+          }
+          function flushAcrossRoots() {
+            called = 42;
+          }
+          return {
+            flush: flush,
+            read: function () { return called; }
+          };
+        }
+        var client = clientModule();
+        export function probe() {
+          client.flush(true);
+          return client.read();
+        }
+      `,
+      { fileName: "react-dom-forward-conditional-comma.js", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as () => number)()).toBe(42);
+  });
+
+  it("preserves forward conditional calls in terminating mutual recursion", async () => {
+    const result = await compile(
+      `
+        function clientModule() {
+          var calls = 0;
+          function flush(depth) {
+            return depth > 0 ? (flushAcrossRoots(depth - 1), false) : true;
+          }
+          function flushAcrossRoots(depth) {
+            calls += 1;
+            if (depth > 0) flush(depth);
+          }
+          return {
+            flush: flush,
+            read: function () { return calls; }
+          };
+        }
+        var client = clientModule();
+        export function probe() {
+          client.flush(2);
+          return client.read();
+        }
+      `,
+      { fileName: "react-dom-mutual-flush.js", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as () => number)()).toBe(2);
+  });
+
+  it("preserves a later capturing sibling selected as a bind target", async () => {
+    const result = await compile(
+      `
+        function clientModule() {
+          var called = 0;
+          function addListener(priority) {
+            switch (priority) {
+              case 1:
+                var listener = dispatchEvent;
+                break;
+              default:
+                listener = dispatchEvent;
+            }
+            var bound = listener.bind(null, 40);
+            bound(2);
+          }
+          function dispatchEvent(left, right) {
+            called = left + right;
+          }
+          return {
+            addListener: addListener,
+            read: function () { return called; }
+          };
+        }
+        var client = clientModule();
+        export function probe() {
+          client.addListener(1);
+          return client.read();
+        }
+      `,
+      { fileName: "react-dom-forward-bind.js", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as () => number)()).toBe(42);
+  });
+
+  it("threads a sibling capture past a same-named caller local", async () => {
+    const result = await compile(
+      `
+        function clientModule() {
+          var root = 40;
+          function updateOuterRoot() {
+            root += 2;
+            return root;
+          }
+          function caller(hasLocalRoot) {
+            if (hasLocalRoot) {
+              var root = 1;
+              root += 10;
+            }
+            return updateOuterRoot();
+          }
+          return {
+            caller: caller,
+            readOuterRoot: function () { return root; }
+          };
+        }
+        var client = clientModule();
+        export function probe() {
+          return client.caller(true) * 100 + client.readOuterRoot();
+        }
+      `,
+      { fileName: "react-dom-shadowed-transitive-capture.js", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as () => number)()).toBe(4242);
+  });
+
   it("preserves heterogeneous writes to an initially empty queue", async () => {
     const result = await compile(
       `
@@ -877,5 +1079,24 @@ describe("ReactDOM upstream-suite compiler blockers (#3982)", () => {
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
     imports.setInstance?.(instance);
     expect((instance.exports.probe as () => number)()).toBe(11);
+  });
+
+  it("resolves lib.dom's window intersection as an ambient host global", async () => {
+    const result = await compile(
+      `
+        export function probe() {
+          var event = window.event;
+          return event === undefined ? 32 : event.type.length;
+        }
+      `,
+      { fileName: "react-dom-update-priority.js", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    expect(result.imports.some((entry) => entry.module === "env" && entry.name === "global_window")).toBe(true);
+    const imports = buildImports(result.imports, { window: { event: undefined } }, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as () => number)()).toBe(32);
   });
 });
