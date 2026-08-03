@@ -2332,7 +2332,10 @@ function planIrOverlay(
   // signatures but before the IR overlay is installed; mixing the two paths
   // would violate IR/legacy type-index parity. Keep the whole runtime-eval unit
   // on one backend until the typed IR owns this carrier explicitly.
-  if (sourceUsesRuntimeEvalBoundary(ast.sourceFile, ctx.oracle) || sourceProvidesRuntimeEvalBoundary(ast.sourceFile)) {
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    (sourceUsesRuntimeEvalBoundary(ast.sourceFile, ctx.oracle) || sourceProvidesRuntimeEvalBoundary(ast.sourceFile))
+  ) {
     const failure: IrPreparationFailure = {
       kind: "unsupported",
       code: "late-preparation-unsupported",
@@ -3147,7 +3150,8 @@ function isGlobalFunctionValueReference(node: ts.Node, oracle: TypeOracle): node
   const parent = node.parent;
   if (
     ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === node) ||
-    (ts.isPropertyAccessExpression(parent) && parent.name === node)
+    ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      (parent.expression === node || (ts.isPropertyAccessExpression(parent) && parent.name === node)))
   ) {
     return false;
   }

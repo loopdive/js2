@@ -28,14 +28,14 @@ import { hoistLetConstWithTdz, hoistVarDeclarations } from "../index.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, compileStatement } from "../shared.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
-import { emitFuncRefAsClosure, getFuncSignature } from "../closures.js";
+import { collectReferencedIdentifiers, emitFuncRefAsClosure, getFuncSignature } from "../closures.js";
 import { compileAndEmitToString } from "../coercion-engine.js";
 import { compileStringLiteral } from "../string-ops.js";
 import { emitThrowJsError, noJsHost } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { foldedEvalEarlyError } from "./eval-early-errors.js";
-import { evalAnnexBDeclarationsInlineSupported } from "./eval-annexb.js";
+import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
 import {
   emitRuntimeEvalGlobalBindingSeed,
@@ -65,8 +65,8 @@ export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
  * SOUND: direct eval (the splice's caller-scope semantics are exactly
  * §19.2.1.1 direct-eval semantics) and the `Function` constructor (the
  * synthesized function is global-scoped regardless, §20.2.1.1). Indirect
- * eval never uses this splice: even a literal body must execute against the
- * eval realm's global environment, not the caller's lexical environment.
+ * eval keeps a literal-only splice and separately proves that it cannot read
+ * a caller-local binding before using that path.
  */
 export function resolveConstantString(expr: ts.Expression, checker?: ts.TypeChecker): string | null {
   return resolveConstantStringDepth(expr, checker, 0);
@@ -480,6 +480,20 @@ function foldedEvalHasScopedDeclaration(sourceFile: ts.SourceFile): boolean {
   return found;
 }
 
+/** The literal indirect-eval splice is sound at Script top level, where the
+ * current execution environment is already the realm global. Inside a
+ * function, reject the splice when the foreign Script names a local/capture:
+ * indirect eval must resolve that name globally, never from the caller frame. */
+function foldedIndirectEvalReadsCallerBinding(sourceFile: ts.SourceFile, fctx: FunctionContext): boolean {
+  if (fctx.name === "__module_init") return false;
+  const referencedNames = new Set<string>();
+  for (const stmt of sourceFile.statements) collectReferencedIdentifiers(stmt, referencedNames);
+  for (const name of referencedNames) {
+    if (fctx.localMap.has(name) || fctx.boxedCaptures?.has(name)) return true;
+  }
+  return false;
+}
+
 /**
  * Try to inline `eval("<constant>")` at compile time.
  *
@@ -500,17 +514,19 @@ export function tryStaticEvalInline(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   /**
-   * True for DIRECT eval call sites only. The splice executes in the current
-   * function and therefore cannot represent indirect eval's global-scope
-   * semantics, even when the source string itself is a literal.
+   * True for DIRECT eval call sites. Direct eval may widen the constant
+   * frontier through checker-resolved const bindings and observes caller
+   * strictness/bindings. Indirect eval keeps the historical literal-only
+   * compile-away surface; dynamic sources route through the global provider.
    */
   directEval = false,
 ): InnerResult | undefined {
-  if (!directEval || expr.arguments.length === 0) return undefined;
+  if (expr.arguments.length === 0) return undefined;
 
-  // Resolve literals first, then widen through sound direct-eval const bindings.
+  // Resolve literals first. Only direct eval may widen through const bindings:
+  // the splice cannot generally model indirect eval's global environment.
   let src = resolveConstantString(expr.arguments[0]!);
-  if (src === null) {
+  if (src === null && directEval) {
     src = resolveConstantString(expr.arguments[0]!, ctx.checker);
   }
   if (src === null) return undefined;
@@ -548,22 +564,21 @@ export function tryStaticEvalInline(
   // Unsupported AST kinds still take allNodesInlineSupported's existing
   // dynamic-eval fallback below.
   const bodyIsStrict = evalBodyHasUseStrictDirective(stmts);
-  const evalIsStrict = bodyIsStrict || isStrictContext(expr, ctx.inferModuleStrictArguments);
+  const evalIsStrict = bodyIsStrict || (directEval && isStrictContext(expr, ctx.inferModuleStrictArguments));
   const earlyError = foldedEvalEarlyError(sf, evalIsStrict);
   if (earlyError !== undefined) {
     emitThrowJsError(ctx, fctx, "SyntaxError", earlyError);
     return { kind: "externref" };
   }
 
-  const declarationNames = foldedEvalDeclarationNames(sf);
-  const varNames = declarationNames.varNames;
-
   // A constant direct eval normally splices into the caller and bypasses the
   // runtime EnvRec walk. Reconstruct the one caller-dependent early error that
   // cannot be learned from the foreign Script alone: a sloppy eval var/function
   // declaration may not cross a same-named intervening lexical record on the
   // way to the caller's VariableEnvironment (§EvalDeclarationInstantiation).
-  if (!evalIsStrict) {
+  if (directEval && !evalIsStrict) {
+    const declarationNames = foldedEvalDeclarationNames(sf);
+    const varNames = declarationNames.varNames;
     const collision = foldedEvalParameterCollision(expr, varNames) ?? foldedEvalLowerLexicalCollision(varNames, fctx);
     if (collision !== undefined) {
       emitThrowJsError(ctx, fctx, "SyntaxError", `Identifier '${collision}' has already been declared`);
@@ -585,8 +600,8 @@ export function tryStaticEvalInline(
   // historically used eval-created vars as caller locals (#1102 AC2), while
   // the test262 script lane disables synthetic module strictness and therefore
   // still exercises the spec isolation path for explicit strict code.
-  const explicitlyStrictEval = bodyIsStrict || isStrictContext(expr, false);
-  if (explicitlyStrictEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
+  const explicitlyStrictDirectEval = directEval && (bodyIsStrict || isStrictContext(expr, false));
+  if (explicitlyStrictDirectEval && foldedEvalHasScopedDeclaration(sf)) return undefined;
 
   // A direct nested `eval(...)` can recurse through this same constant-fold
   // path. An eval Identifier used as a VALUE cannot: foreign AST identifiers
@@ -624,6 +639,7 @@ export function tryStaticEvalInline(
   if (!evalAnnexBDeclarationsInlineSupported(sf) || !allNodesInlineSupported(sf, bodyIsStrict)) {
     return undefined;
   }
+  if (!directEval && foldedIndirectEvalReadsCallerBinding(sf, fctx)) return undefined;
 
   // (#3301) The foreign-node regex-literal arm defect (dynamic `.flags` read
   // returned undefined because `compileRegExpLiteral` registered `RegExp_new`
@@ -658,6 +674,9 @@ export function tryStaticEvalInline(
     const t = compileExpression(ctx, fctx, expr.arguments[ai]!);
     if (t !== null) fctx.body.push({ op: "drop" });
   }
+
+  const isolateIndirectBindings = !directEval && hasScriptScopeAnnexBFunction(sf);
+  if (!directEval) return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
 
   const savedDirectEvalThisFallback = fctx.directEvalSloppyThisFallback;
   fctx.directEvalSloppyThisFallback =

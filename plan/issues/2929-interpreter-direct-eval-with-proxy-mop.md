@@ -25,6 +25,7 @@ loc-budget-allow:
   - src/codegen/statements/nested-declarations.ts
   - src/interp/eval-environment.ts
 func-budget-allow:
+  - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   - src/codegen/closures.ts::compileLiftedClosureBody
   - src/codegen/expressions/eval-inline.ts::tryStaticEvalInline
   - src/codegen/function-body.ts::compileFunctionBody
