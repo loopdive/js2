@@ -95,6 +95,18 @@ derived transform rows between 1.5x and 6.8x faster than Node. Host `indexOf`
 and `includes` remain explicit follow-up work because the attempted periodic
 scalarization fell below the suite's plausibility floor and was not retained.
 
+## Static CSV split checkpoint
+
+Nested split arrays over immutable document tables retain one real outer split
+per document, while uniform inner splits observed only through `.length` are
+scalar-replaced. Both counted loops and receiver evaluation remain. Any alias,
+mutation, escaping array identity, non-uniform row width, or non-canonical index
+keeps both runtime split operations.
+
+On the local Node v24.4.1 / macOS arm64 mixed-suite harness, host CSV parsing
+improves from 3.115 ms to 0.261 ms and beats the same-run 0.317 ms Node baseline;
+GC-native measures 0.197 ms. The unchanged 5 ns plausibility floor passes.
+
 ## Follow-up
 
 - Move the remaining dispatcher-local proof consumers into subsystem modules

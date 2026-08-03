@@ -35,6 +35,23 @@ export function staticConstStringValues(
     }
     return values;
   }
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    expression.expression.name.text === "split" &&
+    expression.arguments.length === 1
+  ) {
+    const receivers = staticConstStringValues(ctx, expression.expression.expression, new Set(seen));
+    const separators = staticConstStringValues(ctx, expression.arguments[0]!, new Set(seen));
+    if (!receivers || !separators || new Set(separators).size !== 1) return undefined;
+    const separator = separators[0]!;
+    const values: string[] = [];
+    for (const receiver of receivers) {
+      values.push(...receiver.split(separator));
+      if (values.length > 10_000) return undefined;
+    }
+    return values;
+  }
   if (!ts.isIdentifier(expression)) return undefined;
   const symbol = ctx.checker.getSymbolAtLocation(expression);
   const declaration = symbol?.valueDeclaration;
