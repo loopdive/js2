@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
-import { isEarlyStableScalarClassLayout } from "../src/codegen/program-abi-type-planning.js";
+import { isEarlyPreparableClassLayout } from "../src/codegen/program-abi-type-planning.js";
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
@@ -13,18 +15,25 @@ function classMemberOutcome(result: CompileResult, name: string): IrObservedOutc
   return observed[0]!;
 }
 
-async function instantiate(result: CompileResult): Promise<Record<string, Function>> {
-  const imports = buildImports(result.imports, undefined, result.stringPool);
+async function instantiate(result: CompileResult, deps?: Record<string, unknown>): Promise<Record<string, Function>> {
+  const imports = buildImports(result.imports, deps, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   const exports = instance.exports as Record<string, Function>;
   imports.setExports?.(exports);
   return exports;
 }
 
+function watFunctionBody(wat: string, name: string): string {
+  const start = wat.indexOf(`  (func $${name}`);
+  expect(start, `missing $${name}`).toBeGreaterThanOrEqual(0);
+  const next = wat.indexOf("\n  (func $", start + 1);
+  return wat.slice(start, next < 0 ? wat.length : next);
+}
+
 describe("#3522 instance class-method compile-once ownership", () => {
-  it("admits only type-index-stable scalar class layouts before direct emission", () => {
+  it("admits scalar, reference-bearing, and inherited layouts through remappable Program ABI cells", () => {
     expect(
-      isEarlyStableScalarClassLayout({
+      isEarlyPreparableClassLayout({
         kind: "struct",
         name: "ScalarBox",
         fields: [
@@ -34,15 +43,171 @@ describe("#3522 instance class-method compile-once ownership", () => {
       }),
     ).toBe(true);
     expect(
-      isEarlyStableScalarClassLayout({
+      isEarlyPreparableClassLayout({
         kind: "struct",
         name: "StringBox",
+        superTypeIdx: 3,
         fields: [
           { name: "__tag", type: { kind: "i32" }, mutable: false },
           { name: "value", type: { kind: "ref_null", typeIdx: 7 }, mutable: true },
         ],
       }),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it.each(["gc", "standalone"] as const)(
+    "prepares the exact Animal/Dog method-accessor component once in the %s lane",
+    async (target) => {
+      const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
+      const result = await compile(source, {
+        fileName: "website/playground/examples/js/classes.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+        target,
+      });
+
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      const prepared = [
+        "Animal_get_name",
+        "Animal_set_name",
+        "Animal_get_age",
+        "Animal_speak",
+        "Dog_speak",
+        "Dog_get_breed",
+        "Animal_kingdom",
+        "Dog_kingdom",
+      ];
+      const componentIds = new Set<string>();
+      for (const name of prepared) {
+        const observed = classMemberOutcome(result, name);
+        expect(observed).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+        componentIds.add(observed.preparedComponentId!);
+      }
+      expect(componentIds.size).toBeGreaterThan(0);
+      for (const name of ["Animal_new", "Dog_new"]) {
+        expect(classMemberOutcome(result, name)).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: true,
+          irBodyEmitted: true,
+        });
+      }
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+    },
+  );
+
+  it("preserves the unchanged Animal/Dog runtime trace", async () => {
+    const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
+    const result = await compile(source, {
+      fileName: "website/playground/examples/js/classes.ts",
+      experimentalIR: true,
+      target: "gc",
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+
+    const observed: string[] = [];
+    const consoleCapture = {
+      log: (value: unknown): void => {
+        observed.push(String(value));
+      },
+    };
+    const exports = await instantiate(result, { console: consoleCapture });
+    exports.main!();
+    expect(observed).toEqual([
+      "name  = Rex",
+      "age   = 4",
+      "breed = Labrador",
+      "Rex makes a sound — woof!",
+      "renamed: Rex Jr.",
+      "rex instanceof Dog    = true",
+      "rex instanceof Animal = true",
+      "Animal.kingdom() = Animalia",
+      "Dog.kingdom()    = Animalia (canine)",
+    ]);
+  });
+
+  it("never enters the direct emitter for the prepared Animal/Dog members, with a direct positive control", async () => {
+    const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
+    const previous = process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY;
+    try {
+      process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = [
+        "Animal_get_name",
+        "Animal_set_name",
+        "Animal_get_age",
+        "Animal_speak",
+        "Dog_speak",
+        "Dog_get_breed",
+      ].join(",");
+      const prepared = await compile(source, {
+        fileName: "website/playground/examples/js/classes.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      });
+      expect(prepared.success, prepared.errors.map((error) => error.message).join("\n")).toBe(true);
+
+      process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = "Animal_new";
+      const direct = await compile(source, {
+        fileName: "website/playground/examples/js/classes.ts",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      });
+      expect(direct.success).toBe(false);
+      expect(
+        direct.errors.some((error) => error.message.includes("injected direct class-body poison: Animal_new")),
+      ).toBe(true);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_CLASS_BODY");
+      else process.env.JS2WASM_TEST_POISON_DIRECT_CLASS_BODY = previous;
+    }
+  });
+
+  it("preserves typed receivers, private struct fields, direct super dispatch, and string concat", async () => {
+    const source = readFileSync(new URL("../website/playground/examples/js/classes.ts", import.meta.url), "utf8");
+    const direct = await compile(source, {
+      fileName: "website/playground/examples/js/classes.ts",
+      experimentalIR: false,
+      emitWat: true,
+    });
+    const prepared = await compile(source, {
+      fileName: "website/playground/examples/js/classes.ts",
+      experimentalIR: true,
+      emitWat: true,
+    });
+    for (const result of [direct, prepared]) {
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    }
+
+    for (const wat of [direct.wat, prepared.wat]) {
+      for (const name of ["Animal_get_name", "Animal_get_age", "Animal_speak", "Dog_get_breed"]) {
+        expect(watFunctionBody(wat, name)).toContain("struct.get");
+      }
+      expect(watFunctionBody(wat, "Animal_set_name")).toContain("struct.set");
+    }
+    const directAnimalSpeak = watFunctionBody(direct.wat, "Animal_speak");
+    expect(directAnimalSpeak).toMatch(/ref\.test|ref\.cast/);
+
+    const directDogSpeak = watFunctionBody(direct.wat, "Dog_speak");
+    const preparedAnimalSpeak = watFunctionBody(prepared.wat, "Animal_speak");
+    const preparedDogSpeak = watFunctionBody(prepared.wat, "Dog_speak");
+    expect(preparedAnimalSpeak.match(/\bcall \d+/g) ?? []).toHaveLength(1);
+    expect(preparedDogSpeak.match(/\bcall \d+/g) ?? []).toHaveLength(2);
+    for (const body of [directDogSpeak, preparedDogSpeak]) {
+      expect(body.match(/ref\.cast/g) ?? []).toHaveLength(1);
+      expect(body).not.toMatch(/ref\.test|__extern_(?:get|set)|extern\.convert_any/);
+    }
+    for (const body of [
+      preparedAnimalSpeak,
+      watFunctionBody(prepared.wat, "Animal_get_name"),
+      watFunctionBody(prepared.wat, "Animal_set_name"),
+      watFunctionBody(prepared.wat, "Dog_get_breed"),
+    ]) {
+      expect(body).not.toMatch(/__extern_(?:get|set)|extern\.convert_any|ref\.(?:test|cast)/);
+    }
   });
 
   it.each(["gc", "standalone"] as const)(

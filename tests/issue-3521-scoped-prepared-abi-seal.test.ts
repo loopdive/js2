@@ -9,6 +9,7 @@ import {
 import { markLeafStructsFinal } from "../src/codegen/fixups.js";
 import {
   canonicalProgramAbiCallableTypeContract,
+  canonicalProgramAbiTypeDef,
   canonicalProgramAbiValType,
   type ProgramAbiCallableTypeContract,
 } from "../src/codegen/program-abi-signatures.js";
@@ -1099,6 +1100,31 @@ describe("#3521 scoped prepared-component ABI seal", () => {
     expectInvariant(() => unreported.session.recordLeafTypeFinalization([1]), "type-remap-mismatch");
   });
 
+  it("refreshes an explicit prepared class draft after reported leaf finalization", () => {
+    const f = fixture();
+    planCallable(f, f.firstUnitId, "body", "first");
+    const layouts = planPreparedLayouts(f);
+    if (layouts.classValue.kind !== "struct") throw new Error("invalid prepared class fixture");
+    layouts.classValue.superTypeIdx = -1;
+    layouts.classValue.final = false;
+    const scoped = sealFirst(f, [layouts.classId]);
+
+    const finalized = markLeafStructsFinal(f.module);
+    expect(finalized).toContain(f.module.types.indexOf(layouts.classValue));
+    f.session.recordLeafTypeFinalization(finalized);
+    f.session.ensurePlan({
+      ...classDraft(f, layouts.classId, `class|${layouts.classId}`),
+      intent: {
+        kind: "class",
+        classId: f.classId,
+        layoutKey: canonicalProgramAbiTypeDef(layouts.classValue),
+      },
+    });
+    expect(scoped.get(layouts.classId)?.intent).toEqual(
+      expect.objectContaining({ kind: "class", layoutKey: expect.stringContaining('"final":true') }),
+    );
+  });
+
   it("refreshes callable and global aliases that inherit canonical contracts during a valid reorder", () => {
     const f = fixture();
     const previousTypes: TypeDef[] = [
@@ -1471,6 +1497,14 @@ describe("#3521 scoped prepared-component ABI seal", () => {
     });
     f.module.types = nextTypes;
     func.typeIdx = 0;
+    f.session.ensurePlan({
+      ...classDraft(f, classId, classKey),
+      intent: {
+        kind: "class",
+        classId: f.classId,
+        layoutKey: canonicalProgramAbiTypeDef(nextTypes[1]!),
+      },
+    });
 
     const publication = f.session.publish(f.module);
     expect(nextTypes[2]).toMatchObject({ kind: "struct", superTypeIdx: -1 });
