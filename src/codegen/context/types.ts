@@ -749,6 +749,8 @@ export interface FunctionContext {
    * materializing a transient string array; property access resolves by symbol.
    */
   derivedStringArrayLengthLocals?: Map<ts.Symbol, number>;
+  /** Static split arrays whose identity and elements are observed only by proven nested length reads. */
+  derivedStaticSplitArrays?: Map<ts.Symbol, { length: number }>;
   /** Scalar descriptors for const substring results with no identity escape. */
   derivedSubstringReads?: Map<
     ts.Symbol,

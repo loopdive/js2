@@ -21,7 +21,11 @@ async function compileAndRun(
   return { value: (instance.exports.run as () => number)(), runWat, wat: result.wat ?? "" };
 }
 
-async function compileHostAndRun(source: string): Promise<{ value: number; runWat: string }> {
+async function compileHostAndRun(source: string): Promise<{
+  value: number;
+  runWat: string;
+  imports: Awaited<ReturnType<typeof compile>>["imports"];
+}> {
   const result = await compile(source, {
     fileName: "host-derived-length.ts",
     nativeStrings: false,
@@ -34,7 +38,7 @@ async function compileHostAndRun(source: string): Promise<{ value: number; runWa
   const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
   const wat = result.wat ?? "";
   const runWat = wat.slice(wat.indexOf("(func $run"), wat.indexOf('(export "run"'));
-  return { value: (instance.exports.run as () => number)(), runWat };
+  return { value: (instance.exports.run as () => number)(), runWat, imports: result.imports };
 }
 
 describe("native string derived-length fast paths", () => {
@@ -234,5 +238,55 @@ describe("native string derived-length fast paths", () => {
     expect(value).toBe(expected);
     expect(runWat).not.toContain("call $string_substring");
     expect(runWat).toContain("(loop");
+  });
+
+  it("retains the outer split while scalarizing nested length-only splits", async () => {
+    const { value, runWat, imports } = await compileHostAndRun(`
+      export function run(): number {
+        const documents: string[] = [
+          "name,age,city\\nAlice,30,Berlin\\nBob,25,Munich",
+          "name,age,city\\nBob,25,Munich\\nAlice,30,Berlin"
+        ];
+        let total = 0;
+        for (let documentIndex = 0; documentIndex < 2; documentIndex = documentIndex + 1) {
+          const lines = documents[documentIndex].split("\\n");
+          for (let lineIndex = 1; lineIndex < lines.length; lineIndex = lineIndex + 1) {
+            const columns = lines[lineIndex].split(",");
+            total = total + columns.length;
+          }
+        }
+        return total;
+      }
+    `);
+    expect(value).toBe(12);
+    const splitFuncIndex = imports
+      .filter((descriptor) => descriptor.kind === "func")
+      .findIndex((descriptor) => descriptor.module === "env" && descriptor.name === "string_split");
+    expect(splitFuncIndex).toBeGreaterThanOrEqual(0);
+    const splitCalls = runWat.match(new RegExp(`call ${splitFuncIndex}(?:\\s|$)`, "g")) ?? [];
+    expect(splitCalls).toHaveLength(1);
+    expect(runWat.match(/\(loop/g)).toHaveLength(2);
+  });
+
+  it("retains both runtime splits when nested row widths are non-uniform", async () => {
+    const { value, runWat, imports } = await compileHostAndRun(`
+      export function run(): number {
+        const documents: string[] = ["a,b\\nc"];
+        const lines = documents[0].split("\\n");
+        let total = 0;
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex = lineIndex + 1) {
+          const columns = lines[lineIndex].split(",");
+          total = total + columns.length;
+        }
+        return total;
+      }
+    `);
+    expect(value).toBe(3);
+    const splitFuncIndex = imports
+      .filter((descriptor) => descriptor.kind === "func")
+      .findIndex((descriptor) => descriptor.module === "env" && descriptor.name === "string_split");
+    expect(splitFuncIndex).toBeGreaterThanOrEqual(0);
+    const splitCalls = runWat.match(new RegExp(`call ${splitFuncIndex}(?:\\s|$)`, "g")) ?? [];
+    expect(splitCalls).toHaveLength(2);
   });
 });
