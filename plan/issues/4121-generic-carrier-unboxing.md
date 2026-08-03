@@ -113,6 +113,23 @@ Case 4 in the table above (`var i = s.indexOf(";")`, declared `any`, so it *is* 
 candidate) still fails, so there is at least a second, independent gap in
 proving a string receiver for an unannotated parameter. Both need pinning.
 
+### The demotion has since been pinned to one line — see #4122
+
+An independent bisect of the `method` axis landed on the mechanism behind the
+table above: `bindingHasMixedAssignmentCarrier`
+(`src/codegen/analysis/mixed-assignment-carrier.ts`, wired at
+`src/codegen/statements/variables.ts:150`) demotes a binding to `externref` when
+`oracle.staticJsTypeOf` of any assignment is `"mixed"` — which is the oracle's
+answer for **unresolvable**, not for **proven cross-domain**. Absence of
+evidence is read as evidence of mixing.
+
+#4122 covers that narrow fix (a measured 3.5x regression on the `method` axis).
+It is the immediate first slice of this issue and should land independently.
+This issue remains the general problem: even once `"mixed"` is read correctly,
+the verdict is still consulted **per carrier kind**, so a numeric value flowing
+local → argument → parameter → return → field is re-boxed at every hop that has
+no bespoke pass yet.
+
 ## The structural problem: one analysis, four bespoke consumers
 
 `analyzeNumericPropertyNames` computes one whole-program verdict. It has been
