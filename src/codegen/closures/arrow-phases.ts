@@ -58,6 +58,19 @@ export type ArrowClosureCapture = {
   hasTdzFlag: boolean;
 };
 
+/** A closure created directly while an enclosing function's parameter
+ * environment is being initialized cannot see declarations from that
+ * function's body VariableEnvironment yet. A same-named live local therefore
+ * wins over an eagerly registered body-function entry in `funcMap`. */
+function isDirectParameterInitializerClosure(node: ts.ArrowFunction | ts.FunctionExpression): boolean {
+  let child: ts.Node = node;
+  for (let parent = node.parent; parent; child = parent, parent = parent.parent) {
+    if (ts.isParameter(parent)) return parent.initializer === child;
+    if (ts.isFunctionLike(parent)) return false;
+  }
+  return false;
+}
+
 /**
  * Phase 1 of compileArrowAsClosure: capture analysis. Scans the arrow /
  * function-expression body (and its parameter default initializers) for free
@@ -82,6 +95,7 @@ export function planClosureCaptures(
   //    outer references — otherwise a closure with its own `var i;` would be
   //    treated as capturing the outer `i` (#995/#996).
   const ownLocals = arrowOwnLocals(arrow);
+  const createdInParameterEnvironment = isDirectParameterInitializerClosure(arrow);
 
   // (#2118) Self-recursive const/let arrow: `const f = (n) => ... f(n-1)`.
   // The closure references its own binding `f`. Without special handling the
@@ -315,7 +329,13 @@ export function planClosureCaptures(
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
     // must not block capture of a same-named outer local (e.g. the test262
     // `let length = "outer"` dstr template). Discriminate by index.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    if (
+      !createdInParameterEnvironment &&
+      ctx.funcMap.has(name) &&
+      ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)
+    ) {
+      continue;
+    }
     // Skip if the name is the arrow's own parameter (including destructuring bindings)
     if (isOwnParamName(arrow, name)) continue;
     // Skip if the name is a named function expression's own name (self-reference)

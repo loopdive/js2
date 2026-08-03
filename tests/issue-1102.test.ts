@@ -224,6 +224,19 @@ describe("#1102 — soundness guards (folds that MUST NOT happen)", () => {
     ).toBe(7);
   });
 
+  it("parameter-default closure keeps the eval-created arguments binding", async () => {
+    expect(
+      await runStandalone(
+        `const f = (p = eval("var arguments = 'param'"), q = () => arguments) => {
+        function arguments() { return "body"; }
+        return (typeof arguments === "function" ? 10 : 0) + (q() === "param" ? 1 : 0);
+      };
+      export function test(): number { return f(); }`,
+        false,
+      ),
+    ).toBe(11);
+  });
+
   it("let binding does not fold (reassignable) → dynamic path throws catchably", async () => {
     expect(
       await runStandalone(
