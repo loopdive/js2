@@ -566,6 +566,13 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
       } else if (globalType && !valTypesMatch(resultType, globalType)) {
         coerceType(ctx, fctx, resultType, globalType);
       }
+      const runtimeEvalAotFunctionWrite =
+        ctx.runtimeEvalGlobalFunctionBindings === true &&
+        ctx.liveFuncBindingGlobals?.has(name) === true &&
+        (ts.isFunctionExpression(expr.right) ||
+          ts.isArrowFunction(expr.right) ||
+          (ts.isIdentifier(expr.right) && ctx.funcMap.has(expr.right.text)));
+      if (runtimeEvalAotFunctionWrite) emitRuntimeEvalAotCallableAdapter(ctx, fctx);
       // Re-read index: RHS compilation may shift globals via addStringConstantGlobal
       const moduleIdxPost = ctx.moduleGlobals.get(name)!;
       fctx.body.push({ op: "global.set", index: moduleIdxPost });

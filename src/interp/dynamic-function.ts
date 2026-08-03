@@ -9,13 +9,112 @@
 // callable through the interpreter's existing closure seam.
 
 import { emitFunction, emitProgram } from "./emitter.js";
-import { prepareEvalEnvironment, preparePersistentEvalBindings, programIsStrict } from "./eval-environment.js";
-import { interpEnter, makeInterpClosure, type InterpCallable } from "./loop.js";
-import { ENV_DECLARATIVE, ENV_GLOBAL, EnvRec, type EvalBindingCell, type FuncMeta, type JSValue } from "./types.js";
+import {
+  createRuntimeEvalGlobalEnvironment,
+  prepareEvalEnvironment,
+  preparePersistentEvalBindings,
+  programIsStrict,
+  registerVariableEnvironment,
+} from "./eval-environment.js";
+import {
+  installRuntimeEvalRealm,
+  interpEnter,
+  makeInterpClosure,
+  makeRuntimeEvalIntrinsic,
+  makeRuntimeFunctionIntrinsic,
+  registerRuntimeEvalCallerIntrinsic,
+  runtimeEvalIntrinsic,
+  type InterpCallable,
+  type RuntimeDirectEvalHook,
+  type RuntimeFunctionHook,
+} from "./loop.js";
+import { ENV_DECLARATIVE, EnvRec, type EvalBindingCell, type FuncMeta, type JSValue } from "./types.js";
 
 /** Host-free Acorn entry shape. `source` uses the compiler's native string
  * carrier; both `options` and the result use the shared open-$Object carrier. */
 export type DynamicParser = (source: string, options: JSValue) => JSValue;
+
+/** Parse direct-eval source under the caller's strictness. Prefixing a strict
+ * directive asks Acorn to apply strict Script early errors; removing that
+ * synthetic statement afterwards preserves the source completion value. */
+function parseDirectEvalScript(parse: DynamicParser, source: string, callerStrict: boolean): JSValue {
+  const options: JSValue = {};
+  options.ecmaVersion = 2025;
+  options.sourceType = "script";
+  if (!callerStrict) return parse(source, options);
+
+  const ast = parse("'use strict';\n" + source, options);
+  const originalBody: JSValue[] = [];
+  const parsedBody: JSValue = ast.body;
+  let bodyStart = 0;
+  if (
+    parsedBody.length > 0 &&
+    parsedBody[0].type === "ExpressionStatement" &&
+    parsedBody[0].expression.type === "Literal" &&
+    parsedBody[0].expression.value === "use strict"
+  ) {
+    bodyStart = 1;
+  }
+  for (let i = bodyStart; i < parsedBody.length; i += 1) originalBody.push(parsedBody[i]);
+  ast.body = originalBody;
+  return ast;
+}
+
+/** Direct eval originating from bytecode already has a provider-local
+ * environment chain, so declarations can attach directly to its live
+ * VariableEnvironment without the cross-module caller-cell sidecar used by
+ * executeDirectEval. */
+function executeInterpretedDirectEval(
+  parse: DynamicParser,
+  source: JSValue,
+  globalObject: JSValue,
+  lexicalEnv: EnvRec | null,
+  variableEnv: EnvRec | null,
+  thisArg: JSValue,
+  callerStrict: boolean,
+): JSValue {
+  if (typeof source !== "string") return source;
+  const ast = parseDirectEvalScript(parse, source, callerStrict);
+  const strictEval = callerStrict || programIsStrict(ast);
+  const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(globalEnv, globalEnv);
+  const lex = lexicalEnv === null ? globalEnv : lexicalEnv;
+  const vars = variableEnv === null ? globalEnv : variableEnv;
+  registerRuntimeEvalCallerIntrinsic(lex);
+  const env = prepareEvalEnvironment(ast, lex, vars, strictEval);
+  return interpEnter(emitProgram(ast, strictEval, true), env, thisArg, []);
+}
+
+/** Ensure the global object carries the provider-owned realm `%eval%` value.
+ * Ordinary/aliased calls invoke indirect eval; the bytecode DirectEval builtin
+ * separately invokes the realm's direct hook after checking exact identity. */
+function ensureRuntimeEvalRealm(parse: DynamicParser, globalObject: JSValue): void {
+  if (runtimeEvalIntrinsic(globalObject) !== undefined) return;
+  const intrinsicEval = makeRuntimeEvalIntrinsic(globalObject);
+  const intrinsicFunction = makeRuntimeFunctionIntrinsic(globalObject);
+  // biome-ignore lint/complexity/useArrowFunction: The standalone self-compiler rejects this multiline typed arrow shape.
+  const directEval: RuntimeDirectEvalHook = function (
+    source: JSValue,
+    lexicalEnv: EnvRec | null,
+    variableEnv: EnvRec | null,
+    thisArg: JSValue,
+    callerStrict: boolean,
+  ): JSValue {
+    return executeInterpretedDirectEval(parse, source, globalObject, lexicalEnv, variableEnv, thisArg, callerStrict);
+  };
+  // biome-ignore lint/complexity/useArrowFunction: Keep the parser-injected runtime hook on the self-compiled function-expression path.
+  const dynamicFunction: RuntimeFunctionHook = function (args: JSValue[]): JSValue {
+    let paramString = "";
+    const paramCount = args.length > 0 ? args.length - 1 : 0;
+    for (let i = 0; i < paramCount; i += 1) {
+      if (i > 0) paramString += ",";
+      paramString += String(args[i]);
+    }
+    const bodyString = args.length === 0 ? "" : String(args[args.length - 1]);
+    return createDynamicFunction(parse, paramString, bodyString, globalObject);
+  };
+  installRuntimeEvalRealm(globalObject, intrinsicEval, directEval, intrinsicFunction, dynamicFunction);
+}
 
 /** Restore parallel provider-local names and caller-owned value cells from a
  * pool of alternating name/value cells. The provider never retains or grows a
@@ -73,8 +172,11 @@ export function createDynamicFunction(
   bodyString: string,
   globalObject: JSValue,
 ): InterpCallable {
+  ensureRuntimeEvalRealm(parse, globalObject);
   const meta = compileDynamicFunctionMeta(parse, paramString, bodyString);
-  const env = new EnvRec(ENV_GLOBAL, null, null, null, globalObject);
+  const env = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(env, env);
+  registerRuntimeEvalCallerIntrinsic(env);
   return makeInterpClosure(meta, env);
 }
 
@@ -87,11 +189,15 @@ export function createDynamicFunction(
 export function executeIndirectEval(parse: DynamicParser, source: JSValue, globalObject: JSValue): JSValue {
   if (typeof source !== "string") return source;
 
+  ensureRuntimeEvalRealm(parse, globalObject);
+
   const options: JSValue = {};
   options.ecmaVersion = 2025;
   options.sourceType = "script";
   const ast = parse(source, options);
-  const globalEnv = new EnvRec(ENV_GLOBAL, null, null, null, globalObject);
+  const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(globalEnv, globalEnv);
+  registerRuntimeEvalCallerIntrinsic(globalEnv);
   const strictEval = programIsStrict(ast);
   const env = prepareEvalEnvironment(ast, globalEnv, globalEnv, strictEval);
   return interpEnter(emitProgram(ast, strictEval, true), env, globalObject, []);
@@ -123,37 +229,26 @@ export function executeDirectEval(
 ): JSValue {
   if (typeof source !== "string") return source;
 
-  const options: JSValue = {};
-  options.ecmaVersion = 2025;
-  options.sourceType = "script";
-  let ast: JSValue;
-  if (callerStrict) {
-    ast = parse("'use strict';\n" + source, options);
-    const originalBody: JSValue[] = [];
-    const parsedBody: JSValue = ast.body;
-    let bodyStart = 0;
-    if (
-      parsedBody.length > 0 &&
-      parsedBody[0].type === "ExpressionStatement" &&
-      parsedBody[0].expression.type === "Literal" &&
-      parsedBody[0].expression.value === "use strict"
-    ) {
-      bodyStart = 1;
-    }
-    for (let i = bodyStart; i < parsedBody.length; i += 1) originalBody.push(parsedBody[i]);
-    ast.body = originalBody;
-  } else {
-    ast = parse(source, options);
-  }
+  ensureRuntimeEvalRealm(parse, globalObject);
+  const ast = parseDirectEvalScript(parse, source, callerStrict);
   const strictEval = callerStrict || programIsStrict(ast);
   if (!strictEval) {
     preparePersistentEvalBindings(ast, createdVarNames, createdVarSlots, activationNames);
   }
-  const globalEnv = new EnvRec(ENV_GLOBAL, null, null, null, globalObject);
+  const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(globalEnv, globalEnv);
   const outerEnv = new EnvRec(ENV_DECLARATIVE, globalEnv, outerNames, outerSlots, undefined);
   const activationEnv = new EnvRec(ENV_DECLARATIVE, outerEnv, activationNames, activationSlots, mappedParamNames);
   const createdVarEnv = new EnvRec(ENV_DECLARATIVE, activationEnv, createdVarNames, createdVarSlots, undefined);
   const lexicalEnv = new EnvRec(ENV_DECLARATIVE, createdVarEnv, lexicalNames, lexicalSlots, undefined);
+  registerRuntimeEvalCallerIntrinsic(lexicalEnv);
   const env = prepareEvalEnvironment(ast, lexicalEnv, createdVarEnv, strictEval, activationEnv);
-  return interpEnter(emitProgram(ast, strictEval, true), env, thisArg, []);
+  // Direct eval reuses the caller's ThisBinding. The AOT free-function ABI
+  // represents a bare sloppy call with an absent receiver; perform the
+  // ordinary sloppy-this substitution here before entering eval code. A
+  // strict caller keeps null/undefined unchanged, and source-level strictness
+  // inside eval does not alter the caller's already-established binding.
+  let evalThis = thisArg;
+  if (!callerStrict && (evalThis === undefined || evalThis === null)) evalThis = globalObject;
+  return interpEnter(emitProgram(ast, strictEval, true), env, evalThis, []);
 }

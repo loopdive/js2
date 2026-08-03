@@ -75,8 +75,38 @@ export const RUNTIME_EVAL_REFUSAL_MESSAGE =
  */
 const REFUSAL_PROVIDER_SOURCE = `
       function runtimeEvalResult(ok: boolean, value: any): any {
-        const result: any[] = [ok, value];
+        const result: any[] = [ok, __runtime_eval_wrap_result(value)];
         return result;
+      }
+
+      var refusalIntrinsicEval: any = undefined;
+      var refusalIntrinsicFunction: any = undefined;
+      function refusalEvalTarget(): any {
+        return undefined;
+      }
+      function refusalFunctionTarget(): any {
+        return undefined;
+      }
+
+      function refusalEvalValue(globalObject: any): any {
+        if (refusalIntrinsicFunction === undefined) {
+          refusalIntrinsicFunction = __runtime_eval_wrap_intrinsic_function_callback(
+            refusalFunctionTarget,
+            "Function",
+            1
+          );
+        }
+        if (refusalIntrinsicEval === undefined) {
+          refusalIntrinsicEval = __runtime_eval_wrap_intrinsic_callback(
+            refusalEvalTarget,
+            "eval",
+            1,
+            refusalIntrinsicFunction
+          );
+        }
+        if (!("eval" in globalObject)) globalObject.eval = refusalIntrinsicEval;
+        if (!("Function" in globalObject)) globalObject.Function = refusalIntrinsicFunction;
+        return globalObject.eval;
       }
 
       function refuse(): any {
@@ -98,6 +128,14 @@ const REFUSAL_PROVIDER_SOURCE = `
         source: any,
         globalObject: any
       ): any {
+        // Reading the first-class intrinsic is not itself dynamic code
+        // execution. Let a first-class eval alias materialize a callable marker;
+        // invoking it still reaches __runtime_apply_interpreted and refuses.
+        if (source === "eval") return runtimeEvalResult(true, refusalEvalValue(globalObject));
+        if (source === "Function") {
+          refusalEvalValue(globalObject);
+          return runtimeEvalResult(true, globalObject.Function);
+        }
         return refuse();
       }
 
@@ -114,6 +152,22 @@ const REFUSAL_PROVIDER_SOURCE = `
         outerSlots: any,
         callerStrict: boolean,
         mappedParamNames: any
+      ): any {
+        return refuse();
+      }
+
+      export function __runtime_apply_interpreted(
+        callable: any,
+        receiver: any,
+        argc: number,
+        a0: any,
+        a1: any,
+        a2: any,
+        a3: any,
+        a4: any,
+        a5: any,
+        a6: any,
+        a7: any
       ): any {
         return refuse();
       }
@@ -176,8 +230,28 @@ function stripModuleSyntax(source) {
 // evaluate "1 + 2" is refused before it is ever cached.
 const PROVIDER_EXPORT_WRAPPER = `
       function runtimeEvalResult(ok: boolean, value: any): any {
-        const result: any[] = [ok, value];
+        const result: any[] = [ok, __runtime_eval_wrap_result(exposeRuntimeEvalValue(value))];
         return result;
+      }
+
+      function exposeRuntimeEvalSlots(slots: any): void {
+        if (slots === undefined || slots === null) return;
+        for (let i = 0; i < slots.length; i += 1) {
+          const cell: any = slots[i];
+          if (cell !== undefined && cell !== null) {
+            cell.value = exposeRuntimeEvalSharedValue(cell.value);
+          }
+        }
+      }
+
+      function exposeRuntimeEvalCallerSlots(
+        activationSeedSlots: any,
+        lexicalSlots: any,
+        outerSlots: any
+      ): void {
+        exposeRuntimeEvalSlots(activationSeedSlots);
+        exposeRuntimeEvalSlots(lexicalSlots);
+        exposeRuntimeEvalSlots(outerSlots);
       }
 
       export function __runtime_new_function(
@@ -205,11 +279,13 @@ const PROVIDER_EXPORT_WRAPPER = `
         globalObject: any
       ): any {
         try {
-          return runtimeEvalResult(
-            true,
-            executeIndirectEval(parse, source, globalObject)
-          );
+          const value = executeIndirectEval(parse, source, globalObject);
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          return runtimeEvalResult(true, value);
         } catch (error) {
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
           return runtimeEvalResult(false, error);
         }
       }
@@ -236,7 +312,7 @@ const PROVIDER_EXPORT_WRAPPER = `
             parse,
             source,
             globalObject,
-            thisArg,
+            __runtime_eval_unwrap_result(thisArg),
             liveNames,
             liveSlots,
             activationSeedNames,
@@ -248,10 +324,52 @@ const PROVIDER_EXPORT_WRAPPER = `
             callerStrict,
             mappedParamNames
           );
+          exposeRuntimeEvalCallerSlots(activationSeedSlots, lexicalSlots, outerSlots);
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
           snapshotDirectEvalActivationState(activationState, liveNames);
           return runtimeEvalResult(true, evalResult);
         } catch (error) {
+          exposeRuntimeEvalCallerSlots(activationSeedSlots, lexicalSlots, outerSlots);
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
           snapshotDirectEvalActivationState(activationState, liveNames);
+          return runtimeEvalResult(false, error);
+        }
+      }
+
+      export function __runtime_apply_interpreted(
+        callable: any,
+        receiver: any,
+        argc: number,
+        a0: any,
+        a1: any,
+        a2: any,
+        a3: any,
+        a4: any,
+        a5: any,
+        a6: any,
+        a7: any
+      ): any {
+        const args: any[] = [];
+        if (argc > 0) args.push(__runtime_eval_unwrap_result(a0));
+        if (argc > 1) args.push(__runtime_eval_unwrap_result(a1));
+        if (argc > 2) args.push(__runtime_eval_unwrap_result(a2));
+        if (argc > 3) args.push(__runtime_eval_unwrap_result(a3));
+        if (argc > 4) args.push(__runtime_eval_unwrap_result(a4));
+        if (argc > 5) args.push(__runtime_eval_unwrap_result(a5));
+        if (argc > 6) args.push(__runtime_eval_unwrap_result(a6));
+        if (argc > 7) args.push(__runtime_eval_unwrap_result(a7));
+        try {
+          const value = applyRuntimeEvalCallable(
+            callable,
+            __runtime_eval_unwrap_result(receiver),
+            args
+          );
+          exposeRuntimeEvalCallableEnvironment(callable);
+          return runtimeEvalResult(true, value);
+        } catch (error) {
+          exposeRuntimeEvalCallableEnvironment(callable);
           return runtimeEvalResult(false, error);
         }
       }
@@ -291,6 +409,24 @@ const PROVIDER_EXPORT_WRAPPER = `
           []
         );
         return (result as number) + (cell.value as number);
+      }
+
+      export function __runtime_apply_interpreted_canary(): number {
+        const fn = createDynamicFunction(parse, "a,b", "return a + b", {});
+        const result: any = __runtime_apply_interpreted(
+          fn,
+          undefined,
+          2,
+          1,
+          2,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined
+        );
+        return result[0] ? __runtime_eval_unwrap_result(result[1]) as number : -1;
       }
 
       export function __runtime_positive_corpus_canary(): number {
@@ -487,5 +623,6 @@ export function instantiateRuntimeEvalNamespace(providerModule) {
     __runtime_new_function: instance.exports.__runtime_new_function,
     __runtime_indirect_eval: instance.exports.__runtime_indirect_eval,
     __runtime_direct_eval: instance.exports.__runtime_direct_eval,
+    __runtime_apply_interpreted: instance.exports.__runtime_apply_interpreted,
   };
 }

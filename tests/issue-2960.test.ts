@@ -75,7 +75,10 @@ describe("#2960/#2929 — standalone dynamic direct eval links the runtime provi
       target: "standalone",
     });
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    expect(importNames(r.binary)).toEqual([`${RUNTIME_EVAL_IMPORT_MODULE}::__runtime_direct_eval`]);
+    expect(importNames(r.binary)).toEqual([
+      `${RUNTIME_EVAL_IMPORT_MODULE}::__runtime_apply_interpreted`,
+      `${RUNTIME_EVAL_IMPORT_MODULE}::__runtime_direct_eval`,
+    ]);
     expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
   });
 
@@ -103,7 +106,10 @@ describe("#2928 — standalone dynamic indirect eval links the runtime provider"
       { target: "standalone" },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    expect(importNames(r.binary)).toEqual(["js2wasm:runtime-eval::__runtime_indirect_eval"]);
+    expect(importNames(r.binary)).toEqual([
+      "js2wasm:runtime-eval::__runtime_apply_interpreted",
+      "js2wasm:runtime-eval::__runtime_indirect_eval",
+    ]);
     expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
   });
 });
@@ -115,7 +121,10 @@ describe("#2960/#2928 — standalone dynamic new Function links the runtime prov
       { target: "standalone" },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    expect(importNames(r.binary)).toEqual(["js2wasm:runtime-eval::__runtime_new_function"]);
+    expect(importNames(r.binary)).toEqual([
+      "js2wasm:runtime-eval::__runtime_apply_interpreted",
+      "js2wasm:runtime-eval::__runtime_new_function",
+    ]);
     expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
   });
 
@@ -125,6 +134,9 @@ describe("#2960/#2928 — standalone dynamic new Function links the runtime prov
       { target: "standalone" },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    expect(importNames(r.binary)).toEqual(["js2wasm:runtime-eval::__runtime_new_function"]);
+    expect(importNames(r.binary)).toEqual([
+      "js2wasm:runtime-eval::__runtime_apply_interpreted",
+      "js2wasm:runtime-eval::__runtime_new_function",
+    ]);
   });
 });

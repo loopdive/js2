@@ -17,6 +17,7 @@
  * dynamic-eval path.
  */
 import { ts } from "../../ts-api.js";
+import type { TypeOracle } from "../../checker/oracle.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -34,9 +35,16 @@ import { emitThrowJsError, noJsHost } from "./helpers.js";
 import { reportError } from "../context/errors.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { foldedEvalEarlyError } from "./eval-early-errors.js";
-import { evalAnnexBDeclarationsInlineSupported, hasScriptScopeAnnexBFunction } from "./eval-annexb.js";
+import { evalAnnexBDeclarationsInlineSupported } from "./eval-annexb.js";
 import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
-import { emitRuntimeEvalResultUnwrap, RUNTIME_EVAL_IMPORT_MODULE } from "./runtime-eval-provider.js";
+import {
+  emitRuntimeEvalGlobalBindingSeed,
+  emitRuntimeEvalProviderActive,
+  emitRuntimeEvalResultUnwrap,
+  RUNTIME_EVAL_IMPORT_MODULE,
+} from "./runtime-eval-provider.js";
+import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
+import { ensureRuntimeEvalInterpretedCallbackType } from "../runtime-eval-boundary.js";
 export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
 
 /**
@@ -56,9 +64,8 @@ export { emitStandaloneDirectEvalRuntime } from "./runtime-eval-provider.js";
  * SOUND: direct eval (the splice's caller-scope semantics are exactly
  * §19.2.1.1 direct-eval semantics) and the `Function` constructor (the
  * synthesized function is global-scoped regardless, §20.2.1.1). Indirect
- * eval must NOT pass a checker — the splice runs in caller scope, which is
- * wrong for indirect eval's global-scope semantics that the dynamic host
- * shim implements correctly (routing rule 2, runtime-eval-interpreter §12).
+ * eval never uses this splice: even a literal body must execute against the
+ * eval realm's global environment, not the caller's lexical environment.
  */
 export function resolveConstantString(expr: ts.Expression, checker?: ts.TypeChecker): string | null {
   return resolveConstantStringDepth(expr, checker, 0);
@@ -364,37 +371,20 @@ export function tryStaticEvalInline(
   fctx: FunctionContext,
   expr: ts.CallExpression,
   /**
-   * (#1102) True for DIRECT eval call sites only. Direct eval may widen the
-   * constant frontier through `const` string bindings (the splice's
-   * caller-scope semantics ARE §19.2.1.1 direct-eval semantics). Indirect
-   * eval must not: the splice runs in caller scope, which diverges from
-   * indirect eval's global-scope semantics for scope-sensitive bodies that
-   * the dynamic host shim handles correctly — so its constant surface stays
-   * literal-only (the pre-#1102 status quo).
+   * True for DIRECT eval call sites only. The splice executes in the current
+   * function and therefore cannot represent indirect eval's global-scope
+   * semantics, even when the source string itself is a literal.
    */
-  allowConstBindings = false,
+  directEval = false,
 ): InnerResult | undefined {
-  if (expr.arguments.length === 0) return undefined;
+  if (!directEval || expr.arguments.length === 0) return undefined;
 
-  // Resolve WITHOUT the checker first so we know whether the constant was
-  // reachable pre-#1102 (`widened === false` → status-quo surface) or only
-  // through const-binding/template resolution (`widened === true` → newly
-  // reachable, held to a stricter bar below).
+  // Resolve literals first, then widen through sound direct-eval const bindings.
   let src = resolveConstantString(expr.arguments[0]!);
-  let widened = false;
-  if (src === null && allowConstBindings) {
+  if (src === null) {
     src = resolveConstantString(expr.arguments[0]!, ctx.checker);
-    widened = src !== null;
   }
   if (src === null) return undefined;
-
-  // Evaluate any additional arguments for side effects, then drop them.
-  // Per §19.2.1, eval only looks at its first argument, but extra args must
-  // still be evaluated (they could throw).
-  for (let ai = 1; ai < expr.arguments.length; ai++) {
-    const t = compileExpression(ctx, fctx, expr.arguments[ai]!);
-    if (t !== null) fctx.body.push({ op: "drop" });
-  }
 
   // Parse the eval source as a Script with parent pointers set so the
   // nested codegen paths (which walk upward via node.parent) work.
@@ -429,12 +419,21 @@ export function tryStaticEvalInline(
   // Unsupported AST kinds still take allNodesInlineSupported's existing
   // dynamic-eval fallback below.
   const bodyIsStrict = evalBodyHasUseStrictDirective(stmts);
-  const evalIsStrict = bodyIsStrict || (allowConstBindings && isStrictContext(expr, ctx.inferModuleStrictArguments));
+  const evalIsStrict = bodyIsStrict || isStrictContext(expr, ctx.inferModuleStrictArguments);
   const earlyError = foldedEvalEarlyError(sf, evalIsStrict);
   if (earlyError !== undefined) {
     emitThrowJsError(ctx, fctx, "SyntaxError", earlyError);
     return { kind: "externref" };
   }
+
+  // A direct nested `eval(...)` can recurse through this same constant-fold
+  // path. An eval Identifier used as a VALUE cannot: foreign AST identifiers
+  // have no checker binding, so the ordinary identifier emitter materializes
+  // the intrinsic as the standalone null placeholder (`var alias = eval` made
+  // both names compare equal only because both were null). Route those bodies
+  // to the bytecode provider, where `%eval%` has a real realm-stable marker and
+  // alias calls correctly become indirect eval.
+  if (containsEvalValueReference(sf)) return undefined;
 
   // Empty program — eval returns undefined.
   if (stmts.length === 0) {
@@ -488,13 +487,72 @@ export function tryStaticEvalInline(
     flushLateImportShifts(ctx, fctx);
   }
 
-  // Direct eval inherits caller bindings. Indirect eval instead runs in the
-  // global environment. The pre-#3633 literal surface already had a known
-  // caller-scope approximation; do not widen that approximation to the newly
-  // liftable Annex B bodies. Compile those bodies through an isolated binding
-  // view so caller locals cannot shadow compiled module/global bindings.
-  const isolateIndirectBindings = !allowConstBindings && hasScriptScopeAnnexBFunction(sf);
-  return compileInlinedEvalStatements(ctx, fctx, stmts, isolateIndirectBindings);
+  // Evaluate any additional arguments for side effects only after every
+  // compile-time eligibility check. A declined inline is recompiled by the
+  // runtime path; doing this earlier evaluated extras twice on a late bail.
+  // Per §19.2.1, eval ignores their values but their effects remain ordered
+  // before execution of the eval Script.
+  for (let ai = 1; ai < expr.arguments.length; ai++) {
+    const t = compileExpression(ctx, fctx, expr.arguments[ai]!);
+    if (t !== null) fctx.body.push({ op: "drop" });
+  }
+
+  const savedDirectEvalThisFallback = fctx.directEvalSloppyThisFallback;
+  fctx.directEvalSloppyThisFallback =
+    savedDirectEvalThisFallback === true || !isStrictContext(expr, ctx.inferModuleStrictArguments);
+  try {
+    return compileInlinedEvalStatements(ctx, fctx, stmts, false);
+  } finally {
+    fctx.directEvalSloppyThisFallback = savedDirectEvalThisFallback;
+  }
+}
+
+/** True when an eval Script observes `eval` as a first-class value rather than
+ * as the callee of a plain direct call. Property names and binding positions
+ * are excluded; comma/optional/aliased forms deliberately count as values. */
+function containsEvalValueReference(root: ts.Node): boolean {
+  let found = false;
+  const isReference = (id: ts.Identifier): boolean => {
+    const parent = id.parent;
+    if (!parent) return true;
+    if (ts.isVariableDeclaration(parent) && parent.name === id) return false;
+    if (ts.isParameter(parent) && parent.name === id) return false;
+    if (ts.isBindingElement(parent) && parent.name === id) return false;
+    if (
+      (ts.isFunctionDeclaration(parent) ||
+        ts.isFunctionExpression(parent) ||
+        ts.isMethodDeclaration(parent) ||
+        ts.isClassDeclaration(parent) ||
+        ts.isClassExpression(parent)) &&
+      parent.name === id
+    ) {
+      return false;
+    }
+    if ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === id) {
+      return false;
+    }
+    if (ts.isLabeledStatement(parent) && parent.label === id) return false;
+    if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === id) return false;
+    return true;
+  };
+  const isPlainDirectCallee = (id: ts.Identifier): boolean => {
+    let expression: ts.Expression = id;
+    while (ts.isParenthesizedExpression(expression.parent) && expression.parent.expression === expression) {
+      expression = expression.parent;
+    }
+    const parent = expression.parent;
+    return ts.isCallExpression(parent) && parent.expression === expression && parent.questionDotToken === undefined;
+  };
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === "eval" && isReference(node) && !isPlainDirectCallee(node)) {
+      found = true;
+      return;
+    }
+    node.forEachChild(visit);
+  };
+  visit(root);
+  return found;
 }
 
 function compileInlinedEvalStatements(
@@ -920,6 +978,48 @@ export function isGlobalFunctionIdentifier(ident: ts.Identifier, checker: ts.Typ
   return decls.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
+/**
+ * Follow a local variable-alias chain back to the realm's global `%Function%`
+ * intrinsic. This is deliberately syntax/provenance based: the runtime value is
+ * still loaded from the binding at the call/construct site, so a mutable alias
+ * is never replaced with a compile-time constant.
+ *
+ * The distinction matters for standalone runtime eval. `%Function%` crosses
+ * the provider boundary as a callable marker, not as one of this module's
+ * closure structs. A call through `var F = Function; F("a", body)` must
+ * therefore take the generic externref callable path; compiling its arguments
+ * against TypeScript's `FunctionConstructor` signature first can irreversibly
+ * cast a native string to an unrelated `$AnyValue` ref and turn it into null.
+ */
+export function resolvesToGlobalFunctionAlias(
+  ident: ts.Identifier,
+  oracle: TypeOracle,
+  seen: Set<ts.Declaration> = new Set(),
+): boolean {
+  if (ident.text !== "Function") {
+    const declaration = oracle.valueDeclarationOf(ident);
+    if (!declaration || seen.has(declaration)) return false;
+    seen.add(declaration);
+
+    if (!ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+
+    let initializer: ts.Expression = declaration.initializer;
+    while (
+      ts.isParenthesizedExpression(initializer) ||
+      ts.isAsExpression(initializer) ||
+      ts.isNonNullExpression(initializer) ||
+      ts.isSatisfiesExpression(initializer) ||
+      ts.isTypeAssertionExpression(initializer)
+    ) {
+      initializer = initializer.expression;
+    }
+    return ts.isIdentifier(initializer) && resolvesToGlobalFunctionAlias(initializer, oracle, seen);
+  }
+
+  const declaration = oracle.valueDeclarationOf(ident);
+  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+}
+
 /** Unwrap parens around an expression (local copy of the calls.ts idiom). */
 function unwrapParenExpr(e: ts.Expression): ts.Expression {
   let x = e;
@@ -1095,6 +1195,9 @@ export function emitStandaloneIndirectEvalRuntime(
     return { kind: "externref" };
   }
 
+  if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+
   const sourceType = compileExpression(ctx, fctx, args[0]!);
   if (sourceType && sourceType.kind !== "externref") {
     coerceType(ctx, fctx, sourceType, { kind: "externref" });
@@ -1117,11 +1220,34 @@ export function emitStandaloneIndirectEvalRuntime(
   flushLateImportShifts(ctx, fctx);
   if (evalIdx === undefined) {
     fctx.body.push({ op: "drop" }, { op: "ref.null.extern" });
+    emitRuntimeEvalProviderActive(ctx, fctx, false);
     return { kind: "externref" };
   }
   const liveIdx = ctx.funcMap.get("__runtime_indirect_eval") ?? evalIdx;
   fctx.body.push({ op: "call", funcIdx: liveIdx });
   return emitRuntimeEvalResultUnwrap(ctx, fctx);
+}
+
+/** Materialize the current realm's first-class `%eval%` value for standalone.
+ *
+ * The provider already owns the canonical intrinsic marker and installs it on
+ * the shared global object. Evaluating the tiny global Script `eval` through
+ * the existing indirect-eval entry returns that exact marker, so aliases are
+ * callable through `__runtime_apply_interpreted` and remain identity-equal to
+ * `globalThis.eval`. This deliberately reuses the published ABI instead of
+ * adding a second "get intrinsic" export.
+ */
+export function emitStandaloneIntrinsicEvalValue(ctx: CodegenContext, fctx: FunctionContext): ValType | undefined {
+  return emitStandaloneIndirectEvalRuntime(ctx, fctx, [ts.factory.createStringLiteral("eval")]);
+}
+
+/** Materialize the current realm's callable `%Function%` intrinsic through the
+ * same provider-owned global Script seam as `%eval%`. The returned canonical
+ * marker is identity-stable, so `fn.constructor === Function` compares the
+ * exact same reference while aliases still dispatch through the interpreted
+ * callback bridge. */
+export function emitStandaloneIntrinsicFunctionValue(ctx: CodegenContext, fctx: FunctionContext): ValType | undefined {
+  return emitStandaloneIndirectEvalRuntime(ctx, fctx, [ts.factory.createStringLiteral("Function")]);
 }
 
 /**
@@ -1138,6 +1264,7 @@ export function emitStandaloneDynamicFunctionRuntime(
   const repr = nativeStringRepr(ctx);
   if (repr === undefined) return undefined;
   if (!ensureRuntimeEvalCallableCarrier(ctx, fctx)) return undefined;
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
 
   const liveParts: Instr[][] = [];
   const compilePart = (arg: ts.Expression): Instr[] => {
@@ -1195,11 +1322,13 @@ export function emitStandaloneDynamicFunctionRuntime(
   for (const part of liveParts) ctx.liveBodies.delete(part);
   if (newFnIdx === undefined) {
     fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "ref.null.extern" });
+    emitRuntimeEvalProviderActive(ctx, fctx, false);
     return { kind: "externref" };
   }
   const liveIdx = ctx.funcMap.get("__runtime_new_function") ?? newFnIdx;
   fctx.body.push({ op: "call", funcIdx: liveIdx });
-  return emitRuntimeEvalResultUnwrap(ctx, fctx);
+  emitRuntimeEvalResultUnwrap(ctx, fctx);
+  return emitRuntimeEvalInterpretedCallableAdapter(ctx, fctx);
 }
 
 /**
@@ -1209,6 +1338,17 @@ export function emitStandaloneDynamicFunctionRuntime(
  * callable classifier treats the provider's returned closure as non-callable.
  */
 export function ensureRuntimeEvalCallableCarrier(ctx: CodegenContext, fctx: FunctionContext): boolean {
+  ensureRuntimeEvalInterpretedCallbackType(ctx);
+  const externref: ValType = { kind: "externref" };
+  const applyInterpretedIdx = ensureLateImport(
+    ctx,
+    "__runtime_apply_interpreted",
+    [externref, externref, { kind: "f64" }, ...new Array<ValType>(8).fill(externref)],
+    [externref],
+    RUNTIME_EVAL_IMPORT_MODULE,
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (applyInterpretedIdx === undefined) return false;
   if (ctx.runtimeEvalCallableSeeded) return true;
   const fnName = `__runtime_eval_callable_seed_${ctx.mod.functions.length}`;
   const synthSrc = `function ${fnName}(a0, a1, a2, a3, a4, a5, a6, a7) { ` + `return a0; }`;
@@ -1247,6 +1387,9 @@ export function ensureRuntimeEvalCallableCarrier(ctx: CodegenContext, fctx: Func
   if (funcIdx === undefined) return false;
   const closureRef = emitFuncRefAsClosure(ctx, fctx, fnName, funcIdx);
   if (!closureRef) return false;
+  if (closureRef.kind === "ref" || closureRef.kind === "ref_null") {
+    ctx.runtimeEvalCallableTypeIdx = closureRef.typeIdx;
+  }
   fctx.body.push({ op: "drop" });
   ctx.runtimeEvalCallableSeeded = true;
   return true;

@@ -3,7 +3,7 @@ id: 2929
 title: "Interpreter direct eval + with + Proxy-MOP convergence"
 status: in_progress
 created: 2026-07-02
-updated: 2026-08-02
+updated: 2026-08-03
 priority: medium
 horizon: xl
 feasibility: hard
@@ -249,3 +249,62 @@ coverage remains 130/347 and Annex B remains 77/469.
 
 This branch is a resumable MVP slice, not closure of #2929. Only the first
 acceptance checkbox is satisfied.
+
+## 2026-08-03 verified handoff
+
+The current checkpoint closes the runtime-routing and direct-capture MVP while
+leaving the broader `with`/Proxy/generator scope open. In addition to the
+previous caller-mutation gate, it now covers persistent sloppy-eval bindings,
+strict/private declaration environments, mapped arguments, nested block and
+loop lexical environments, bounded Annex-B block functions, classes, direct
+eval caller-`this`, and the cross-module interpreted-callable boundary. The
+deterministic linked-runtime probe now mirrors production by unwrapping
+arguments and receivers before `applyRuntimeEvalCallable` and exposing returned
+interpreted environments.
+
+The authoritative local interpreter-tier measurement is:
+
+| Scope / route | Pass | Total |
+| --- | ---: | ---: |
+| Standard direct eval | 108 | 286 |
+| Standard indirect eval | 60 | 61 |
+| Annex-B direct eval | 185 | 309 |
+| Annex-B indirect eval | 120 | 160 |
+| **Combined** | **473** | **816** |
+
+The same worktree with the refusal provider passes 158/816. Comparing the two
+JSONL result sets yields **315 interpreter-attributable fail→pass transitions**
+and **zero pass→fail regressions**. The full arm has no timeouts or skips; its
+44 compile errors are unchanged from the refusal arm. Run IDs are
+`20260803-015311` (full) and `20260803-020039` (refusal), both with
+`COMPILER_POOL_SIZE=2`, `TEST262_WORKERS=2`, and a 600-second per-test queue
+budget. Generated benchmark reports are intentionally not part of the source
+commit.
+
+Focused verification is 128/128 plus typecheck. The final regression repair in
+this checkpoint makes sloppy direct eval inherit the already-established
+caller `this` (including global substitution for a bare sloppy AOT call), and
+prevents Annex-B synthetic outer vars from crossing `for (let …)` lexical
+bindings. The affected Test262 files moved 18/18 from fail to pass over the
+immediately preceding 455-pass run, with no regressions.
+
+### Next-agent order
+
+1. Implement the remaining EvalDeclarationInstantiation walk from the current
+   lexical environment down to the variable environment. The top standard
+   failure cluster is 89 expected `SyntaxError`s around `var arguments` and
+   lower lexical collisions; distinguish runtime-provider semantics from the
+   compiler's literal `tryStaticEvalInline` path when measuring it.
+2. Finish Annex-B block-function initialization and update semantics. The
+   largest residual clusters are missing function-valued outer updates,
+   skipped-declaration initialization, and existing-global descriptor cases.
+3. Close mapped-arguments descriptor severing, `new.target`/`super`/method
+   context, and the 36 invalid-Wasm method/generator compile failures before
+   attempting the full differential checkbox.
+4. Continue the original issue scope with the object environment record for
+   `with`, the jointly-owned #1355 MOP seam, and #2864 generator suspend/resume.
+
+Do not reinterpret the 473/816 figure as the default CI baseline: it requires
+`TEST262_FULL_RUNTIME_EVAL=1`. The default refusal tier remains intentionally
+capability-free until the full provider is published as a reusable build
+artifact.

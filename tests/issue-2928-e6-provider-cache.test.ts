@@ -28,6 +28,7 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     expect(source).toContain("function __runtime_new_function(");
     expect(source).toContain("function __runtime_indirect_eval(");
     expect(source).toContain("function __runtime_direct_eval(");
+    expect(source).toContain("function __runtime_apply_interpreted(");
     // The interpreter entry points behind it.
     expect(source).toContain("function createDynamicFunction(");
     expect(source).toContain("function executeIndirectEval(");

@@ -73,7 +73,12 @@ describe("#2928 E7 — refusal runtime-eval provider", () => {
       // same compiler under test, with nothing to import.
       expect(WebAssembly.Module.imports(refusalModule)).toEqual([]);
       expect(WebAssembly.Module.exports(refusalModule).map((e) => e.name)).toEqual(
-        expect.arrayContaining(["__runtime_new_function", "__runtime_indirect_eval", "__runtime_direct_eval"]),
+        expect.arrayContaining([
+          "__runtime_new_function",
+          "__runtime_indirect_eval",
+          "__runtime_direct_eval",
+          "__runtime_apply_interpreted",
+        ]),
       );
 
       // A file shaped like test262's built-ins/Function/S15.3.2.1_A1_T1.js: the
@@ -96,6 +101,7 @@ describe("#2928 E7 — refusal runtime-eval provider", () => {
       );
       const userModule = new WebAssembly.Module(userBinary);
       expect(WebAssembly.Module.imports(userModule)).toEqual([
+        { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_apply_interpreted", kind: "function" },
         { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_new_function", kind: "function" },
       ]);
 

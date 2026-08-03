@@ -1153,7 +1153,14 @@ function compileExpressionInner(
       const savedBody = fctx.body;
       const thenBody: Instr[] = [];
       fctx.body = thenBody;
-      emitUndefined(ctx, fctx);
+      if (fctx.directEvalSloppyThisFallback) {
+        const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
+        if (globalType && globalType.kind !== "externref") {
+          coerceType(ctx, fctx, globalType, { kind: "externref" });
+        }
+      } else {
+        emitUndefined(ctx, fctx);
+      }
       fctx.body = savedBody;
       fctx.body.push({
         op: "if",
@@ -1163,6 +1170,9 @@ function compileExpressionInner(
       });
       releaseTempLocal(fctx, thisTmp);
       return { kind: "externref" };
+    }
+    if (fctx.directEvalSloppyThisFallback) {
+      return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
     }
     emitUndefined(ctx, fctx);
     return { kind: "externref" };

@@ -10,9 +10,9 @@
 //   - `const`-declared string bindings (`const s = "1 + 2"; eval(s)`),
 //   - template literals with all-constant substitutions,
 //   - TS assertion wrappers (`as` / `satisfies` / `<T>` / `!`),
-// for DIRECT eval and the `Function` constructor only. Indirect eval keeps
-// the literal-only surface (the splice runs in caller scope — wrong for
-// indirect semantics the dynamic shim implements correctly; routing rule 2).
+// for DIRECT eval and the `Function` constructor only. Indirect eval never
+// uses the caller-scope splice, including for literal input, because its realm-
+// global environment is observably distinct from the caller's lexical scope.
 //
 // Soundness: a fold must never erase a TDZ ReferenceError. Guards:
 //   1. textual precedence (kills backward refs + cycles),
@@ -76,6 +76,7 @@ describe("#1102 — acceptance criteria (standalone, Tier-0 AOT)", () => {
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
     expect(WebAssembly.Module.imports(new WebAssembly.Module(r.binary))).toEqual([
+      { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_apply_interpreted", kind: "function" },
       { module: RUNTIME_EVAL_IMPORT_MODULE, name: "__runtime_direct_eval", kind: "function" },
     ]);
     expect((r.errors ?? []).some((e) => (e as { severity?: string }).severity === "warning")).toBe(false);
@@ -177,8 +178,12 @@ describe("#1102 — soundness guards (folds that MUST NOT happen)", () => {
     ).toBe(-1);
   });
 
-  it("indirect eval with a LITERAL still folds (pre-#1102 surface unchanged)", async () => {
-    expect(await runStandalone(`export function test(): number { return (0, eval)("1 + 2"); }`)).toBe(3);
+  it("indirect eval with a literal does not use the caller-scope splice", async () => {
+    expect(
+      await runStandalone(
+        `export function test(): number { const local = 1; try { return (0, eval)("local + 2"); } catch { return -1; } }`,
+      ),
+    ).toBe(-1);
   });
 
   it("switch sibling-clause skip (shared scope, skipped init — TDZ) does not fold", async () => {

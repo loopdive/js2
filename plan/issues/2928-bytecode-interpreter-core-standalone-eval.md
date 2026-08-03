@@ -4,7 +4,7 @@ title: "Bytecode interpreter core + standalone new Function / indirect eval"
 status: in-progress
 assignee: ttraenkler/s78-sendev-eval
 created: 2026-07-02
-updated: 2026-08-01
+updated: 2026-08-03
 priority: medium
 horizon: xl
 feasibility: hard
@@ -32,12 +32,42 @@ loc-budget-allow:
   - src/codegen/object-runtime.ts
   - src/codegen/expressions/assignment.ts
   - src/codegen/context/types.ts
+  - src/codegen/expressions/call-tail-dispatch.ts
+  - src/codegen/closure-exports.ts
+  - src/codegen/typeof-delete.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/any-helpers.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions.ts
+  - src/codegen/declarations.ts
+  - src/codegen/statements/variables.ts
+  - src/interp/emitter.ts
+  - src/codegen/expressions/eval-inline.ts
 func-budget-allow:
   - src/codegen/expressions/calls.ts::compileCallExpression
   - src/codegen/index.ts::planIrOverlay
   - src/codegen/index.ts::generateModule
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
   - src/codegen/expressions/new-builtin-globals.ts::tryCompileBuiltinGlobalNew
+  - src/codegen/object-runtime.ts::fillApplyClosure
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/closure-exports.ts::emitClosureMethodCallExportN
+  - src/codegen/expressions.ts::compileExpressionInner
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/index.ts::generateMultiModule
+  - src/interp/loop.ts::run
 ---
 
 # #2928 — Bytecode interpreter core + standalone `new Function` / indirect eval
@@ -104,11 +134,11 @@ Global-scope evaluation only, deliberately excluding direct-eval scope capture
       boundary into a catching `try/catch`.
 - [x] An AOT function calls an interpreted function and vice versa with identical
       boxed-value identity (a `ref.eq` round-trip test).
-- [ ] ≥ 30 test262 eval-positive / Function-positive cases pass under the
-      standalone target. (Measured 2026-07-27 after E6 runner wiring: **11
-      attributable** official `eval-code` flips, 0 regressions — see the
-      "Official Test262 `eval-code` measurement" section for the named files
-      and the measured blockers for the rest.)
+- [x] ≥ 30 test262 eval-positive / Function-positive cases pass under the
+      standalone target. A same-worktree refusal/full-provider A/B run on
+      2026-08-03 measured **315 attributable fail→pass flips and zero
+      pass→fail regressions** across all 816 official `eval-code` files; see
+      "2026-08-03 MVP acceptance remeasurement" below.
 - [x] A no-eval module stays within 5% of the current size floor; an
       eval-enabled module documents one measured parser+interpreter size figure.
 - [x] Opcode-set ADR committed under `docs/adr/`.
@@ -828,3 +858,54 @@ unblocking the gate.
 Granted by the tech lead on 2026-07-26 (ruling recorded rather than parked on
 the absent author, to stop #3678 stalling indefinitely; a one-line frontmatter
 grant is cheap to reverse if the author disagrees).
+
+## 2026-08-03 MVP acceptance remeasurement
+
+The full interpreter tier was remeasured after the direct-eval environment,
+statement-coverage, callable-boundary, and global-bridge work on
+`codex/2929-direct-eval-capture`. Both arms used the same dirty worktree and
+compiler bundle, the same two compiler workers and two execution workers, and
+the complete 816-file official `language/eval-code/` scope. The only capability
+difference was the provider tier:
+
+```sh
+TEST262_PATH_FILTER=language/eval-code/ \
+TEST262_TARGET=standalone \
+COMPILER_POOL_SIZE=2 \
+TEST262_WORKERS=2 \
+TEST262_REPORTER=dot \
+TEST262_IT_TIMEOUT_MS=600000 \
+pnpm run test:262 -- --official-scope-only
+
+# Add only this for the full-interpreter arm:
+TEST262_FULL_RUNTIME_EVAL=1
+```
+
+| Arm | Run ID | Standard | Annex B | Pass | Runtime fail | Compile error | Timeout / skip |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Refusal provider | `20260803-020039` | 101 / 347 | 57 / 469 | **158 / 816** | 614 | 44 | 0 / 0 |
+| Full Acorn + interpreter provider | `20260803-015311` | 168 / 347 | 305 / 469 | **473 / 816** | 299 | 44 | 0 / 0 |
+
+The file-for-file comparison contains exactly **315 `fail → pass` transitions**
+(67 standard, 248 Annex B), **zero `pass → fail` transitions**, and no other
+status changes. Route coverage in the full arm is 108/286 standard direct,
+60/61 standard indirect, 185/309 Annex-B direct, and 120/160 Annex-B indirect.
+All 473 passes are host-free. This is a local interpreter-tier capability
+measurement, not the default refusal-tier CI baseline.
+
+The focused implementation gate is also green: 128 tests across interpreter
+fixtures, eval environments, real-Acorn linking, refusal/provider caching,
+runtime-link identity, and `new Function` routing; `pnpm run typecheck` passes.
+The linked-runtime test proves stored and immediate dynamic `new Function`, the
+`Function(...)` call form, indirect eval, direct caller-cell mutation, AOT ↔
+interpreted calls, boxed identity, and exception propagation through the real
+zero-import Acorn provider.
+
+The remaining 343 non-passes are follow-on conformance work, not an MVP routing
+blocker: 299 runtime failures and 44 AOT compile errors. The largest standard
+clusters are 89 missing EvalDeclarationInstantiation `SyntaxError`s in literal
+direct-eval/default-parameter shapes and 36 pre-existing invalid-Wasm method/
+generator compilations. Annex B is led by block-function initialization/update
+semantics. Those residuals stay assigned to #2929 and the corresponding AOT
+compiler issues; they do not invalidate the now-satisfied interpreter
+acceptance gate.

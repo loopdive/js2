@@ -92,12 +92,24 @@ export function anyGe(a: JSValue, b: JSValue): JSValue {
 // key comes from. Prototype chain / getters / Proxy semantics come free via JS's
 // own member access in Node, and via `__dyn_member_get` in js2wasm.
 export function anyGet(obj: JSValue, key: JSValue): JSValue {
+  // A computed string can cross the interpreter's externref register/cell
+  // plane as a native-string payload. The generic dynamic MOP does not recover
+  // that receiver before its `length` lookup; narrowing here selects the typed
+  // native-string accessor while leaving every other receiver/key unchanged.
+  if (typeof obj === "string" && key === "length") return obj.length;
   return obj[key];
 }
 /** Assign and return the assigned value (JS assignment-expression semantics). */
 export function anySet(obj: JSValue, key: JSValue, value: JSValue): JSValue {
   obj[key] = value;
   return value;
+}
+
+/** Ordinary property deletion without the caller's strict-mode post-check.
+ * Reflect returns the raw [[Delete]] Boolean, allowing the bytecode loop to
+ * return false for sloppy code or raise TypeError for strict code. */
+export function anyDelete(obj: JSValue, key: JSValue): boolean {
+  return Reflect.deleteProperty(obj, key);
 }
 
 // ── object / array literal builders (%ObjectLiteral% / %ArrayLiteral%) ────────
@@ -128,4 +140,32 @@ export function buildArrayLiteral(elems: JSValue[]): JSValue {
     i += 1;
   }
   return arr;
+}
+
+// ── bounded iteration carriers ──────────────────────────────────────────────
+/** Snapshot the enumerable own string keys used by the Phase-1 for-in path.
+ * Null/undefined produce no iterations, matching ForIn/OfHeadEvaluation. The
+ * full inherited-key/liveness algorithm remains a later MOP widening; eval's
+ * current object-literal corpus needs the ordered own-key subset. */
+export function buildForInKeys(value: JSValue): JSValue[] {
+  if (value === null || value === undefined) return [];
+  return Object.keys(value);
+}
+
+/** Materialize the bounded array/string iterable subset as a value vector.
+ * Unsupported iterator objects throw loudly instead of silently skipping the
+ * body. Arrays cover the eval/Annex-B gate; strings are included because the
+ * same index walk is host-free in the self-compiled provider. */
+export function buildForOfValues(value: JSValue): JSValue[] {
+  if (value === null || value === undefined) throw new TypeError("value is not iterable");
+  if (!Array.isArray(value) && typeof value !== "string") throw new TypeError("value is not iterable");
+  const values: JSValue[] = [];
+  let i = 0;
+  const length = value.length;
+  for (;;) {
+    if (i >= length) break;
+    values.push(value[i]);
+    i += 1;
+  }
+  return values;
 }

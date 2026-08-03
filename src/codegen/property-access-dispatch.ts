@@ -169,6 +169,7 @@ import {
 } from "./property-access.js";
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
+import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -1619,6 +1620,9 @@ export function tryGlobalThisAndProcessRead(
     addStringConstantGlobal(ctx, propName);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
     fctx.body.push({ op: "call", funcIdx: getIdx });
+    if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+      emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+    }
 
     // Coerce externref to expected type
     const accessType = ctx.checker.getTypeAtLocation(expr);
@@ -3396,6 +3400,7 @@ export function finalizeStructAndDynamicMemberGet(
               { op: "local.get", index: protoLocal },
               ...stringConstantExternrefInstrs(ctx, propName),
               { op: "call", funcIdx: getIdx },
+              ...(ctx.runtimeEvalGlobalFunctionBindings === true ? runtimeEvalSharedValueUnwrapInstrs(ctx, fctx) : []),
               ...((effectiveResult.kind === "f64" && unboxIdx !== undefined
                 ? [{ op: "call", funcIdx: unboxIdx }]
                 : effectiveResult.kind === "i32" && unboxIdx !== undefined
@@ -3432,6 +3437,9 @@ export function finalizeStructAndDynamicMemberGet(
           addStringConstantGlobal(ctx, propName);
           fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
           fctx.body.push({ op: "call", funcIdx: getIdx });
+          if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+            emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+          }
 
           // Unbox if the expected type is numeric
           const protoAccessType = ctx.checker.getTypeAtLocation(expr);
@@ -3677,6 +3685,9 @@ export function finalizeStructAndDynamicMemberGet(
           addStringConstantGlobal(ctx, propName);
           externGetFallback.push(...stringConstantExternrefInstrs(ctx, propName));
           externGetFallback.push({ op: "call", funcIdx: getIdx });
+          if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+            externGetFallback.push(...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx));
+          }
           if (resultWasm.kind === "f64" && unboxIdx !== undefined) {
             externGetFallback.push({ op: "call", funcIdx: unboxIdx });
           } else if (resultWasm.kind === "i32" && unboxIdx !== undefined) {
@@ -3706,6 +3717,9 @@ export function finalizeStructAndDynamicMemberGet(
                   { op: "local.get", index: tmpAnyExt },
                   { op: "extern.convert_any" },
                   { op: "call", funcIdx: getMemberIdx },
+                  ...(ctx.runtimeEvalGlobalFunctionBindings === true
+                    ? runtimeEvalSharedValueUnwrapInstrs(ctx, fctx)
+                    : []),
                   ...coercionInstrs(ctx, { kind: "externref" }, resultWasm, fctx),
                   { op: "local.set", index: resultLocal },
                 ]
@@ -3811,6 +3825,9 @@ export function finalizeStructAndDynamicMemberGet(
           if (getMemberIdx !== undefined) {
             fctx.body.push({ op: "local.get", index: objTmp });
             fctx.body.push({ op: "call", funcIdx: getMemberIdx });
+            if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+              emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+            }
             if (accessWasm.kind === "f64") {
               if (unboxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx });
               return { kind: "f64" };
@@ -3829,6 +3846,9 @@ export function finalizeStructAndDynamicMemberGet(
         addStringConstantGlobal(ctx, propName);
         compileStringLiteral(ctx, fctx, propName);
         fctx.body.push({ op: "call", funcIdx: getIdx });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         if (accessWasm.kind === "f64") {
           if (unboxIdx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx });
@@ -3988,6 +4008,9 @@ export function finalizeStructAndDynamicMemberGet(
         addStringConstantGlobal(ctx, propName);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx856 });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         if (accessWasm.kind === "f64") {
           if (unboxIdx856 !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx856 });
           return { kind: "f64" };

@@ -2,15 +2,31 @@
 /** Standalone runtime-eval provider ABI and direct-eval caller bridge. */
 import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
+import { ensureAnyHelpers } from "../any-helpers.js";
+import { emitCachedFuncClosureAccess } from "../closures.js";
+import { emitBuiltinNamespaceObject } from "../builtin-static-globals.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { currentDirectEvalBindings } from "../direct-eval-environment.js";
-import { emitGlobalEnvironmentObject } from "../global-environment.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  emitRuntimeEvalSharedValueUnwrap,
+  ensureGlobalEnvironmentOperation,
+} from "../global-environment.js";
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { ensureObjVecBuilders } from "../object-runtime.js";
-import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
-import { getOrRegisterRefCellType } from "../registry/types.js";
+import { emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
+import { addStringConstantGlobal, ensureExnTag, localGlobalIdx, nextModuleGlobalIdx } from "../registry/imports.js";
+import { addFuncType, getOrRegisterRefCellType } from "../registry/types.js";
+import {
+  emitRuntimeEvalAotCallableAdapter,
+  emitRuntimeEvalInterpretedCallableAdapterIfCallable,
+  refreshRuntimeEvalCallableTrampolines,
+} from "../runtime-eval-callable.js";
+import { buildRuntimeEvalValueUnwrap, ensureRuntimeEvalProviderActiveGlobal } from "../runtime-eval-boundary.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 
@@ -21,6 +37,341 @@ export const RUNTIME_EVAL_IMPORT_MODULE = "js2wasm:runtime-eval";
  * This is deliberately generous for the separate-module MVP; combined-module
  * packaging can replace it with a growable canonical carrier. */
 const DIRECT_EVAL_STATE_BINDING_CAPACITY = 64;
+const RUNTIME_EVAL_PUSH_GLOBALS = "__runtime_eval_push_globals";
+const RUNTIME_EVAL_PULL_GLOBALS = "__runtime_eval_pull_globals";
+/** Private global-object slot carrying `[name, EvalBindingCell, ...]`. The
+ * provider reads the structurally canonical cells into ENV_GLOBAL.names/slots;
+ * the slot itself is deliberately non-enumerable and non-configurable. */
+export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+const RUNTIME_EVAL_GLOBAL_LEXICAL_CELL_GLOBAL_PREFIX = "\0runtime-eval-global-lexical-cell:";
+const RUNTIME_EVAL_INTRINSIC_GLOBALS = [
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "EvalError",
+  "URIError",
+  "AggregateError",
+];
+
+function runtimeEvalGlobalBindingNames(ctx: CodegenContext): string[] {
+  const names: string[] = [];
+  const append = (name: string): void => {
+    if (!names.includes(name)) names.push(name);
+  };
+  for (const name of ctx.globalObjectVarBindings ?? []) append(name);
+  for (const name of ctx.topLevelFunctionNames) append(name);
+  for (const name of RUNTIME_EVAL_INTRINSIC_GLOBALS) append(name);
+  return names;
+}
+
+function runtimeEvalGlobalLexicalBindingNames(ctx: CodegenContext): string[] {
+  return [...(ctx.globalLexicalBindings ?? [])];
+}
+
+function runtimeEvalGlobalLexicalCellGlobalKey(name: string): string {
+  return RUNTIME_EVAL_GLOBAL_LEXICAL_CELL_GLOBAL_PREFIX + name;
+}
+
+function ensureRuntimeEvalGlobalLexicalCell(
+  ctx: CodegenContext,
+  name: string,
+): { globalIdx: number; refCellTypeIdx: number } {
+  const key = runtimeEvalGlobalLexicalCellGlobalKey(name);
+  const existing = ctx.moduleGlobals.get(key);
+  const refCellTypeIdx = getOrRegisterRefCellType(ctx, { kind: "externref" });
+  if (existing !== undefined) return { globalIdx: existing, refCellTypeIdx };
+  const globalIdx = nextModuleGlobalIdx(ctx);
+  ctx.mod.globals.push({
+    name: `__runtime_eval_global_lexical_cell_${ctx.mod.globals.length}`,
+    type: { kind: "ref_null", typeIdx: refCellTypeIdx },
+    mutable: true,
+    init: [{ op: "ref.null", typeIdx: refCellTypeIdx }],
+  });
+  // Keep the private entry in moduleGlobals so the established late imported-
+  // global fixup shifts it together with every source-level module global.
+  ctx.moduleGlobals.set(key, globalIdx);
+  return { globalIdx, refCellTypeIdx };
+}
+
+function runtimeEvalSyncFunctionContext(name: string): FunctionContext {
+  return {
+    name,
+    params: [],
+    locals: [],
+    localMap: new Map(),
+    returnType: null,
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+}
+
+function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
+  if (ctx.runtimeEvalGlobalSyncReserved) return;
+  const typeIdx = addFuncType(ctx, [], [], "$runtime_eval_global_sync_type");
+  for (const name of [RUNTIME_EVAL_PUSH_GLOBALS, RUNTIME_EVAL_PULL_GLOBALS]) {
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name,
+      typeIdx,
+      locals: [],
+      body: [],
+      exported: false,
+    });
+    ctx.funcMap.set(name, funcIdx);
+  }
+  ctx.runtimeEvalGlobalSyncReserved = true;
+  refreshRuntimeEvalCallableTrampolines(ctx);
+}
+
+function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: FunctionContext): void {
+  const names = runtimeEvalGlobalBindingNames(ctx);
+  const lexicalNames = runtimeEvalGlobalLexicalBindingNames(ctx);
+  if (names.length === 0 && lexicalNames.length === 0) return;
+  if (lexicalNames.length > 0) {
+    addStringConstantGlobal(ctx, RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY);
+    for (const name of lexicalNames) addStringConstantGlobal(ctx, name);
+    ensureObjVecBuilders(ctx);
+  }
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  const defineIdx = ensureLateImport(
+    ctx,
+    "__defineProperty_value",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (setIdx === undefined || emitGlobalEnvironmentObject(ctx, fctx) === null) return;
+  const globalLocal = allocLocal(fctx, `__runtime_eval_global_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: globalLocal });
+
+  if (lexicalNames.length > 0) {
+    const cellsLocal = allocLocal(fctx, `__runtime_eval_global_lexical_cells_${fctx.locals.length}`, {
+      kind: "externref",
+    });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new")! }, { op: "local.set", index: cellsLocal });
+    for (const name of lexicalNames) {
+      const { globalIdx: cellGlobalIdx, refCellTypeIdx } = ensureRuntimeEvalGlobalLexicalCell(ctx, name);
+      const valueLocal = allocLocal(fctx, `__runtime_eval_global_lexical_value_${name}_${fctx.locals.length}`, {
+        kind: "externref",
+      });
+      const sourceGlobalIdx = ctx.moduleGlobals.get(name);
+      if (sourceGlobalIdx === undefined) {
+        emitUndefined(ctx, fctx);
+      } else {
+        const sourceType = ctx.mod.globals[localGlobalIdx(ctx, sourceGlobalIdx)]?.type ?? { kind: "externref" };
+        fctx.body.push({ op: "global.get", index: sourceGlobalIdx });
+        if (sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, { kind: "externref" });
+      }
+      fctx.body.push(
+        { op: "local.set", index: valueLocal },
+        { op: "global.get", index: cellGlobalIdx },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: valueLocal },
+            { op: "struct.new", typeIdx: refCellTypeIdx },
+            { op: "global.set", index: cellGlobalIdx },
+          ],
+          else: [
+            { op: "global.get", index: cellGlobalIdx },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: valueLocal },
+            { op: "struct.set", typeIdx: refCellTypeIdx, fieldIdx: 0 },
+          ],
+        },
+        { op: "local.get", index: cellsLocal },
+        ...stringConstantExternrefInstrs(ctx, name),
+        { op: "call", funcIdx: ctx.funcMap.get("__objvec_push")! },
+        { op: "local.get", index: cellsLocal },
+        { op: "global.get", index: cellGlobalIdx },
+        { op: "ref.as_non_null" },
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: ctx.funcMap.get("__objvec_push")! },
+      );
+    }
+    fctx.body.push({ op: "local.get", index: globalLocal });
+    emitGlobalEnvironmentKey(ctx, fctx, RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY);
+    fctx.body.push(
+      { op: "local.get", index: cellsLocal },
+      // has-value + explicitly writable:true, enumerable:false,
+      // configurable:false. Later pushes may replace only the carrier value.
+      { op: "f64.const", value: 0xb9 },
+      { op: "call", funcIdx: ctx.funcMap.get("__defineProperty_value") ?? defineIdx! },
+      { op: "drop" },
+    );
+  }
+
+  for (const name of names) {
+    let valueType: ValType | null = null;
+    let needsAotAdapter = false;
+    if (ctx.topLevelFunctionNames.has(name)) {
+      const liveGlobalIdx = ctx.liveFuncBindingGlobals?.has(name) ? ctx.moduleGlobals.get(name) : undefined;
+      if (liveGlobalIdx !== undefined) {
+        fctx.body.push({ op: "global.get", index: liveGlobalIdx });
+        valueType = { kind: "externref" };
+      } else {
+        const declaration = ctx.topLevelFunctionDeclarations.get(name);
+        const funcIdx = ctx.funcMap.get(name);
+        if (declaration && funcIdx !== undefined) {
+          const isOrdinary =
+            declaration.asteriskToken === undefined &&
+            !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
+          valueType = emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, isOrdinary);
+          needsAotAdapter = true;
+        }
+      }
+    } else {
+      const globalIdx = ctx.moduleGlobals.get(name);
+      if (globalIdx !== undefined) {
+        fctx.body.push({ op: "global.get", index: globalIdx });
+        valueType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
+      } else if (RUNTIME_EVAL_INTRINSIC_GLOBALS.includes(name)) {
+        // Provider-originated native Error payloads cross as externrefs. Give
+        // this module the structurally canonical `$Error_struct` and register
+        // each ctor as an emitted family member even when AOT never constructs
+        // one itself. `fillExternGetErrorProps` uses that membership to add the
+        // dynamic `name`/`message`/`constructor` arms, so
+        // `assert.throws(Expected, callback)` observes the caller's canonical
+        // constructor identity after the exception-tag bridge rethrows here.
+        if (isWasiErrorName(name)) emitWasiErrorConstructor(ctx, name, 1);
+        // The runtime provider is a separate zero-import module, so its own
+        // lazily reified Error constructor carrier is not identity-equal to
+        // the caller realm's carrier. Seed the caller's canonical singleton
+        // onto the shared global object before eval/new Function enters the
+        // provider. First-class reads such as `assert.throws(ReferenceError,
+        // fn)` then preserve constructor identity across the module seam.
+        valueType = emitBuiltinNamespaceObject(ctx, fctx, name);
+      }
+    }
+    if (valueType === null) continue;
+    if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
+    if (needsAotAdapter) emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+    const valueLocal = allocLocal(fctx, `__runtime_eval_global_${name}_${fctx.locals.length}`, {
+      kind: "externref",
+    });
+    fctx.body.push({ op: "local.set", index: valueLocal }, { op: "local.get", index: globalLocal });
+    emitGlobalEnvironmentKey(ctx, fctx, name);
+    fctx.body.push({ op: "local.get", index: valueLocal });
+    const isScriptBinding = (ctx.globalObjectVarBindings?.has(name) ?? false) || ctx.topLevelFunctionNames.has(name);
+    const liveDefineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineIdx;
+    if (liveDefineIdx !== undefined) {
+      // ScriptDeclarationInstantiation creates top-level var/function bindings
+      // as writable+enumerable but non-configurable. Intrinsic constructors are
+      // writable+non-enumerable+configurable. The has-value bit updates the
+      // current value on later entries, while leaving the "specified" bits
+      // clear preserves any existing attributes.
+      // Script bindings also specify configurable:false. The compiler may have
+      // already mirrored the module global through an ordinary set before the
+      // first eval entry; making this transition explicit repairs that
+      // synthetic configurable property to the descriptor ScriptDeclaration-
+      // Instantiation created conceptually. Writable/enumerable stay
+      // unspecified on updates so user changes to those attributes survive.
+      const attributes = isScriptBinding ? 0x23 : 0x05;
+      fctx.body.push(
+        { op: "f64.const", value: 0x80 | attributes },
+        { op: "call", funcIdx: liveDefineIdx },
+        { op: "drop" },
+      );
+    } else {
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
+    }
+  }
+}
+
+function emitRuntimeEvalGlobalBindingPullBody(ctx: CodegenContext, fctx: FunctionContext): void {
+  const names = runtimeEvalGlobalBindingNames(ctx).filter((name) => ctx.moduleGlobals.has(name));
+  const lexicalNames = runtimeEvalGlobalLexicalBindingNames(ctx).filter((name) => ctx.moduleGlobals.has(name));
+  if (names.length === 0 && lexicalNames.length === 0) return;
+  for (const name of lexicalNames) {
+    const sourceGlobalIdx = ctx.moduleGlobals.get(name);
+    if (sourceGlobalIdx === undefined) continue;
+    const { globalIdx: cellGlobalIdx, refCellTypeIdx } = ensureRuntimeEvalGlobalLexicalCell(ctx, name);
+    const sourceType = ctx.mod.globals[localGlobalIdx(ctx, sourceGlobalIdx)]?.type ?? { kind: "externref" };
+    fctx.body.push(
+      { op: "global.get", index: cellGlobalIdx },
+      // Every runtime call executes the push helper first, which lazily
+      // materializes this persistent cell. A null here is therefore an ABI
+      // invariant violation and should trap rather than silently lose a write.
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: refCellTypeIdx, fieldIdx: 0 },
+    );
+    emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+    emitRuntimeEvalInterpretedCallableAdapterIfCallable(ctx, fctx);
+    if (sourceType.kind !== "externref") coerceType(ctx, fctx, { kind: "externref" }, sourceType);
+    fctx.body.push({ op: "global.set", index: sourceGlobalIdx });
+  }
+  if (names.length === 0) return;
+  const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
+  if (getIdx === undefined || emitGlobalEnvironmentObject(ctx, fctx) === null) return;
+  const globalLocal = allocLocal(fctx, `__runtime_eval_global_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: globalLocal });
+  for (const name of names) {
+    const globalIdx = ctx.moduleGlobals.get(name);
+    if (globalIdx === undefined) continue;
+    const globalType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
+    fctx.body.push({ op: "local.get", index: globalLocal });
+    emitGlobalEnvironmentKey(ctx, fctx, name);
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+    emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+    // Eval may assign an interpreted function to any existing script-global
+    // binding, including a `var` whose initial value was not callable. Adapt
+    // by the runtime carrier shape rather than by the declaration's static
+    // kind; ordinary values and caller-owned AOT carriers pass through
+    // byte-for-byte.
+    emitRuntimeEvalInterpretedCallableAdapterIfCallable(ctx, fctx);
+    if (globalType.kind !== "externref") coerceType(ctx, fctx, { kind: "externref" }, globalType);
+    fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(name) ?? globalIdx });
+  }
+}
+
+function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
+  reserveRuntimeEvalGlobalBindingSync(ctx);
+  if (ctx.runtimeEvalGlobalSyncFilled) return;
+  const pushFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PUSH_GLOBALS);
+  emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx);
+  const pullFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PULL_GLOBALS);
+  emitRuntimeEvalGlobalBindingPullBody(ctx, pullFctx);
+  const pushFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS)!);
+  const pullFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PULL_GLOBALS)!);
+  if (pushFn) {
+    pushFn.locals = pushFctx.locals;
+    pushFn.body = pushFctx.body;
+  }
+  if (pullFn) {
+    pullFn.locals = pullFctx.locals;
+    pullFn.body = pullFctx.body;
+  }
+  ctx.runtimeEvalGlobalSyncFilled = true;
+  refreshRuntimeEvalCallableTrampolines(ctx);
+}
+
+/** Materialize source-level script var/function bindings on the native realm
+ * object before interpreted global code runs. The AOT compiler normally keeps
+ * these values in Wasm locals/globals, while indirect eval and Function bodies
+ * correctly resolve them through GlobalEnvironmentRecord. Seeding the shared
+ * object closes the AOT→interpreter visibility half without exposing compiler
+ * helper globals or requiring a second provider-side callable ABI. */
+export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (!ctx.standalone) return;
+  ensureRuntimeEvalGlobalBindingSync(ctx);
+  const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
+  if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
+  emitRuntimeEvalProviderActive(ctx, fctx, true);
+}
+
+/** Mark whether carrier calls are executing across the provider boundary. */
+export function emitRuntimeEvalProviderActive(ctx: CodegenContext, fctx: FunctionContext, active: boolean): void {
+  const globalIdx = ensureRuntimeEvalProviderActiveGlobal(ctx);
+  fctx.body.push({ op: "i32.const", value: active ? 1 : 0 }, { op: "global.set", index: globalIdx });
+}
 
 /**
  * Unwrap the provider's `[ok, value]` result vector. A provider-side throw uses
@@ -34,6 +385,10 @@ const DIRECT_EVAL_STATE_BINDING_CAPACITY = 64;
 export function emitRuntimeEvalResultUnwrap(ctx: CodegenContext, fctx: FunctionContext): ValType {
   const envelopeLocal = allocLocal(fctx, `__runtime_eval_result_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: envelopeLocal });
+  ensureRuntimeEvalGlobalBindingSync(ctx);
+  const pullIdx = ctx.funcMap.get(RUNTIME_EVAL_PULL_GLOBALS);
+  if (pullIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pullIdx });
+  emitRuntimeEvalProviderActive(ctx, fctx, false);
 
   const externref: ValType = { kind: "externref" };
   const getIdx = ensureLateImport(ctx, "__extern_get_idx", [externref, { kind: "f64" }], [externref]);
@@ -46,20 +401,28 @@ export function emitRuntimeEvalResultUnwrap(ctx: CodegenContext, fctx: FunctionC
     return externref;
   }
 
+  // Primitive boxes belong to the module that created them. Decode the
+  // provider's canonical value before branching so BOTH successful values and
+  // thrown payloads cross as caller-local representations.
+  ensureAnyHelpers(ctx);
   const getField = (index: 0 | 1 | 2): Instr[] => [
     { op: "local.get", index: envelopeLocal },
     { op: "f64.const", value: index },
     { op: "call", funcIdx: liveGetIdx },
   ];
-  const value = getField(1);
-  const thrown = [...getField(1), { op: "throw", tagIdx: ensureExnTag(ctx) } satisfies Instr];
+  fctx.body.push(...getField(1), ...buildRuntimeEvalValueUnwrap(ctx, fctx.locals, fctx.params.length));
+  const decodedLocal = allocLocal(fctx, `__runtime_eval_decoded_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: decodedLocal });
 
   fctx.body.push(...getField(0), { op: "call", funcIdx: liveTruthyIdx });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: externref },
-    then: value,
-    else: thrown,
+    then: [{ op: "local.get", index: decodedLocal }],
+    else: [
+      { op: "local.get", index: decodedLocal },
+      { op: "throw", tagIdx: ensureExnTag(ctx) },
+    ],
   });
   return externref;
 }
@@ -83,6 +446,14 @@ export function emitStandaloneDirectEvalRuntime(
     return { kind: "externref" };
   }
 
+  const callerStrict = isStrictContext(call, ctx.inferModuleStrictArguments);
+  const externref: ValType = { kind: "externref" };
+  if (!callerStrict) {
+    ensureLateImport(ctx, "__extern_is_undefined", [externref], [{ kind: "i32" }]);
+    flushLateImportShifts(ctx, fctx);
+  }
+  emitRuntimeEvalGlobalBindingSeed(ctx, fctx);
+
   // Register the builders before emitting argument expressions: doing so can
   // mint functions, and keeping that mutation ahead of the call operands makes
   // late-index repair straightforward.
@@ -92,7 +463,6 @@ export function emitStandaloneDirectEvalRuntime(
     for (const binding of layer) addStringConstantGlobal(ctx, binding.name);
   }
 
-  const externref: ValType = { kind: "externref" };
   const sourceLocal = allocLocal(fctx, `__runtime_direct_eval_source_${fctx.locals.length}`, externref);
   const sourceType = compileExpression(ctx, fctx, args[0]!);
   if (sourceType === null) {
@@ -190,36 +560,98 @@ export function emitStandaloneDirectEvalRuntime(
   // Preserve the compiler's mapped-arguments decision at the interpreter
   // boundary. Each vector index corresponds to arguments[index] and carries
   // the canonical parameter binding name, or null when that index is
-  // unmapped. The provider can then mirror writes in execution order without
-  // inventing a cross-module GC class or copying parameter values.
+  // unmapped. Keep one vector local alive for the whole AOT activation: the
+  // interpreter nulls entries after delete/defineProperty, and later eval/AOT
+  // writes must observe that severed state instead of rebuilding the map.
   const mappedParamNamesLocal = allocLocal(
     fctx,
     `__runtime_direct_eval_mapped_param_names_${fctx.locals.length}`,
     externref,
   );
-  fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: mappedParamNamesLocal });
   const mappedArgsInfo = fctx.mappedArgsInfo;
   if (mappedArgsInfo) {
+    if (mappedArgsInfo.runtimeMappedNamesLocalIdx === undefined) {
+      mappedArgsInfo.runtimeMappedNamesLocalIdx = allocLocal(
+        fctx,
+        `__runtime_direct_eval_mapped_param_state_${fctx.locals.length}`,
+        externref,
+      );
+    }
+    const persistentMapLocal = mappedArgsInfo.runtimeMappedNamesLocalIdx;
+    const initializeMap: Instr[] = [
+      { op: "call", funcIdx: objVecNewIdx },
+      { op: "local.set", index: persistentMapLocal },
+    ];
     for (let i = 0; i < mappedArgsInfo.paramCount; i += 1) {
       const paramName = fctx.params[mappedArgsInfo.paramOffset + i]?.name;
-      const isMapped = paramName !== undefined && !mappedArgsInfo.unmappedIndices?.has(i);
-      fctx.body.push({ op: "local.get", index: mappedParamNamesLocal });
-      if (isMapped) {
-        fctx.body.push(...stringConstantExternrefInstrs(ctx, paramName));
-      } else {
-        fctx.body.push({ op: "ref.null.extern" });
+      let duplicateLater = false;
+      if (paramName !== undefined) {
+        for (let j = i + 1; j < mappedArgsInfo.paramCount; j += 1) {
+          if (fctx.params[mappedArgsInfo.paramOffset + j]?.name === paramName) {
+            duplicateLater = true;
+            break;
+          }
+        }
       }
-      fctx.body.push({ op: "call", funcIdx: objVecPushIdx });
+      const isMapped = paramName !== undefined && !duplicateLater && !mappedArgsInfo.unmappedIndices?.has(i);
+      initializeMap.push({ op: "local.get", index: persistentMapLocal });
+      if (isMapped) {
+        addStringConstantGlobal(ctx, paramName);
+        initializeMap.push(
+          { op: "local.get", index: mappedArgsInfo.argsLocalIdx },
+          { op: "struct.get", typeIdx: mappedArgsInfo.vecTypeIdx, fieldIdx: 0 },
+          { op: "i32.const", value: i },
+          { op: "i32.gt_s" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: externref },
+            then: stringConstantExternrefInstrs(ctx, paramName),
+            else: [{ op: "ref.null.extern" }],
+          },
+        );
+      } else {
+        initializeMap.push({ op: "ref.null.extern" });
+      }
+      initializeMap.push({ op: "call", funcIdx: objVecPushIdx });
     }
+    fctx.body.push(
+      { op: "local.get", index: persistentMapLocal },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: initializeMap, else: [] },
+      { op: "local.get", index: persistentMapLocal },
+      { op: "local.set", index: mappedParamNamesLocal },
+    );
+  } else {
+    fctx.body.push({ op: "call", funcIdx: objVecNewIdx }, { op: "local.set", index: mappedParamNamesLocal });
   }
 
   fctx.body.push({ op: "local.get", index: sourceLocal });
   if (emitGlobalEnvironmentObject(ctx, fctx) === null) fctx.body.push({ op: "ref.null.extern" });
+  const globalLocal = allocLocal(fctx, `__runtime_direct_eval_global_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.tee", index: globalLocal });
   const thisType = compileExpression(ctx, fctx, ts.factory.createThis());
   if (thisType === null) {
     emitUndefined(ctx, fctx);
   } else if (thisType.kind !== "externref") {
     coerceType(ctx, fctx, thisType, externref);
+  }
+  if (!callerStrict) {
+    const thisLocal = allocLocal(fctx, `__runtime_direct_eval_this_${fctx.locals.length}`, externref);
+    const liveIsUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+    fctx.body.push({ op: "local.set", index: thisLocal }, { op: "local.get", index: thisLocal }, { op: "ref.is_null" });
+    if (liveIsUndefinedIdx !== undefined) {
+      fctx.body.push(
+        { op: "local.get", index: thisLocal },
+        { op: "call", funcIdx: liveIsUndefinedIdx },
+        { op: "i32.or" },
+      );
+    }
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [{ op: "local.get", index: globalLocal }],
+      else: [{ op: "local.get", index: thisLocal }],
+    });
   }
   fctx.body.push(
     { op: "local.get", index: activationStatePoolLocal },
@@ -229,7 +661,7 @@ export function emitStandaloneDirectEvalRuntime(
     { op: "local.get", index: lexicalSlotsLocal },
     { op: "local.get", index: outerNamesLocal },
     { op: "local.get", index: outerSlotsLocal },
-    { op: "i32.const", value: isStrictContext(call, ctx.inferModuleStrictArguments) ? 1 : 0 },
+    { op: "i32.const", value: callerStrict ? 1 : 0 },
     { op: "local.get", index: mappedParamNamesLocal },
   );
 
@@ -270,6 +702,7 @@ export function emitStandaloneDirectEvalRuntime(
       { op: "drop" },
       { op: "ref.null.extern" },
     );
+    emitRuntimeEvalProviderActive(ctx, fctx, false);
     return externref;
   }
   const liveIdx = ctx.funcMap.get("__runtime_direct_eval") ?? evalIdx;

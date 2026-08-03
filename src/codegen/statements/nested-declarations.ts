@@ -35,6 +35,8 @@ import {
   destructureParamArray,
   destructureParamObject,
   extractConstantDefault,
+  hoistLetConstWithTdz,
+  hoistVarDeclarations,
   resolveWasmType,
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
@@ -60,6 +62,7 @@ import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
   functionMayReachDirectEval,
+  reifyCurrentDirectEvalBindings,
 } from "../direct-eval-environment.js";
 import { annexBHoistCancels } from "../annexb-cancel.js";
 
@@ -252,6 +255,19 @@ export function compileNestedFunctionDeclaration(
   if (!stmt.name || !stmt.body) return;
   const funcName = stmt.name.text;
   const foreignEvalDeclaration = isForeignEvalNode(stmt);
+
+  const prepareBodyBindings = (bodyFctx: FunctionContext): void => {
+    // Nested declarations use a dedicated lowering path instead of
+    // function-body.ts, but they still need the same FunctionDeclarationInstantiation
+    // prelude. In particular, a capturing nested function's own `var x` must
+    // shadow a same-named module global before its first statement compiles;
+    // otherwise compileVariableStatement falls through to global.set and an
+    // indirect eval observes the nested local as a realm-global mutation.
+    hoistVarDeclarations(ctx, bodyFctx, stmt.body!.statements);
+    hoistLetConstWithTdz(ctx, bodyFctx, stmt.body!.statements);
+    reifyCurrentDirectEvalBindings(ctx, bodyFctx);
+    hoistFunctionDeclarations(ctx, bodyFctx, stmt.body!.statements);
+  };
 
   // Determine parameter types and return type
   // Unannotated binding patterns containing a rest element are widened to
@@ -713,6 +729,8 @@ export function compileNestedFunctionDeclaration(
       if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
     }
 
+    prepareBodyBindings(liftedFctx);
+
     if (nativeGenInfo) {
       // (#2172) No-capture nested `function*` in standalone/WASI — emit the
       // Wasm-native generator factory (builds + returns the state struct), the
@@ -1138,6 +1156,8 @@ export function compileNestedFunctionDeclaration(
       // by decl node for aliased-`arguments` strict-delete resolution.
       if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
     }
+
+    prepareBodyBindings(liftedFctx);
 
     if (capturingNativeGen) {
       // (#3050) Capturing nested SYNC `function*` with a try-region body — emit

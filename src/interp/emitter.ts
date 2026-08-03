@@ -23,8 +23,8 @@
 //   a != b  → !(a == b)    a !== b → !(a === b)
 //   +x      → -( -x )      (double-negate = ToNumber)
 //   `a${x}` → "a" + x      (template → concat)
-// Bitwise/shift/`**`/`delete`/`in`/`instanceof`, for-in/for-of, generators/async,
-// destructuring, spread, and regex literals are Phase-1 out-of-scope: the emitter
+// Bitwise/shift/`**`/`in`/`instanceof`, generators/async, destructuring,
+// spread, and regex literals are Phase-1 out-of-scope: the emitter
 // throws {@link UnsupportedNodeError} so the differential harness skips the body
 // and reports coverage (they are named follow-ups in the issue).
 
@@ -32,8 +32,13 @@ import { Builtin, Encoder, type JumpSlot } from "./encoder.js";
 import { FLAG_CLASS_CONSTRUCTOR, FLAG_SCRIPT, FLAG_STRICT, type FuncMeta, type JSValue } from "./types.js";
 import {
   BUILTIN_ASSIGN_OUTER_NAME,
+  BUILTIN_DIRECT_EVAL,
   BUILTIN_DEFINE_CLASS_METHOD,
   BUILTIN_FINALIZE_CLASS,
+  BUILTIN_FOR_IN_KEYS,
+  BUILTIN_FOR_OF_VALUES,
+  BUILTIN_OBJECT_DEFINE_PROPERTY,
+  BUILTIN_PUSH_OBJECT_ENV,
   BUILTIN_PUSH_LEXICAL_ENV,
   BUILTIN_RESTORE_ENV,
   BUILTIN_SAVE_ENV,
@@ -65,7 +70,7 @@ interface LoopCtx {
 }
 
 /** Internal marker stored in the existing control-context stack for an active
- * lexical block. It cannot collide with an ECMAScript identifier label. */
+ * lexical or object environment. It cannot collide with an ECMAScript label. */
 const LEXICAL_SCOPE_LABEL = "\u0000lexical-env";
 
 /**
@@ -215,6 +220,7 @@ class FunctionEmitter {
       } else {
         // Function body: bind locals to registers, then initialise function decls.
         for (const name of this.hoistedVars) this.bind(name);
+        for (const name of this.hoistedLexicals) this.bind(name);
         for (const fn of this.hoistedFuncs) this.bind(fn.id.name);
         for (const fn of this.hoistedFuncs) {
           this.emitClosure(fn);
@@ -241,41 +247,111 @@ class FunctionEmitter {
    * declarations are installed by `emitBlock` instead of being flattened into
    * the eval/function environment. */
   private collectHoist(stmts: Node[]): void {
+    // Record every root binding first. Annex B eligibility for a nested block
+    // function depends on lexical declarations that may occur later in source.
     for (const s of stmts) {
       if (s.type === "VariableDeclaration") {
         for (const d of s.declarations) {
-          this.collectHoistPattern(d.id, this.isScript && s.kind !== "var");
+          this.collectHoistPattern(d.id, s.kind !== "var");
         }
       } else if (s.type === "FunctionDeclaration") {
         if (s.id) this.hoistedFuncs.push(s);
       } else if (s.type === "ClassDeclaration") {
-        if (s.id) this.collectHoistPattern(s.id, this.isScript);
-      } else {
-        this.collectNestedVarHoist(s);
+        if (s.id) this.collectHoistPattern(s.id, true);
+      }
+    }
+    for (const s of stmts) {
+      if (s.type !== "VariableDeclaration" && s.type !== "FunctionDeclaration" && s.type !== "ClassDeclaration") {
+        this.collectNestedVarHoist(s, []);
       }
     }
   }
-  private collectNestedVarHoist(s: Node): void {
+  private collectNestedVarHoist(s: Node, lexicalAncestors: string[]): void {
     if (s.type === "VariableDeclaration") {
       if (s.kind === "var") for (const d of s.declarations) this.collectHoistPattern(d.id, false);
-    } else if (s.type === "FunctionDeclaration" || s.type === "ClassDeclaration") {
+    } else if (s.type === "FunctionDeclaration") {
+      if (!this.strictMode && s.id) {
+        let conflict = false;
+        for (const rootName of this.hoistedLexicals) {
+          if (rootName === s.id.name) conflict = true;
+        }
+        for (const outerName of lexicalAncestors) {
+          if (outerName === s.id.name) conflict = true;
+        }
+        if (!conflict) this.collectHoistPattern(s.id, false);
+      }
+      return;
+    } else if (s.type === "ClassDeclaration") {
       return;
     } else if (s.type === "IfStatement") {
-      this.collectNestedVarHoist(s.consequent);
-      if (s.alternate) this.collectNestedVarHoist(s.alternate);
+      this.collectNestedVarHoist(s.consequent, lexicalAncestors);
+      if (s.alternate) this.collectNestedVarHoist(s.alternate, lexicalAncestors);
     } else if (s.type === "BlockStatement") {
-      for (const inner of s.body) this.collectNestedVarHoist(inner);
-    } else if (s.type === "WhileStatement" || s.type === "DoWhileStatement") {
-      this.collectNestedVarHoist(s.body);
+      const nestedLexicals: string[] = [];
+      for (const name of lexicalAncestors) nestedLexicals.push(name);
+      for (const inner of s.body) {
+        if (inner.type === "VariableDeclaration" && inner.kind !== "var") {
+          for (const declaration of inner.declarations) {
+            if (declaration.id.type === "Identifier") nestedLexicals.push(declaration.id.name);
+          }
+        } else if (inner.type === "ClassDeclaration" && inner.id) {
+          nestedLexicals.push(inner.id.name);
+        }
+      }
+      for (const inner of s.body) this.collectNestedVarHoist(inner, nestedLexicals);
+    } else if (s.type === "WhileStatement" || s.type === "DoWhileStatement" || s.type === "WithStatement") {
+      this.collectNestedVarHoist(s.body, lexicalAncestors);
     } else if (s.type === "ForStatement") {
-      if (s.init && s.init.type === "VariableDeclaration") this.collectNestedVarHoist(s.init);
-      this.collectNestedVarHoist(s.body);
+      const loopLexicals: string[] = [];
+      for (const name of lexicalAncestors) loopLexicals.push(name);
+      if (s.init && s.init.type === "VariableDeclaration") {
+        if (s.init.kind === "var") {
+          this.collectNestedVarHoist(s.init, lexicalAncestors);
+        } else {
+          for (const declaration of s.init.declarations) {
+            if (declaration.id.type === "Identifier") loopLexicals.push(declaration.id.name);
+          }
+        }
+      }
+      this.collectNestedVarHoist(s.body, loopLexicals);
+    } else if (s.type === "ForInStatement" || s.type === "ForOfStatement") {
+      const loopLexicals: string[] = [];
+      for (const name of lexicalAncestors) loopLexicals.push(name);
+      if (s.left.type === "VariableDeclaration") {
+        if (s.left.kind === "var") {
+          this.collectNestedVarHoist(s.left, lexicalAncestors);
+        } else {
+          for (const declaration of s.left.declarations) {
+            if (declaration.id.type === "Identifier") loopLexicals.push(declaration.id.name);
+          }
+        }
+      }
+      this.collectNestedVarHoist(s.body, loopLexicals);
+    } else if (s.type === "SwitchStatement") {
+      const switchLexicals: string[] = [];
+      for (const name of lexicalAncestors) switchLexicals.push(name);
+      for (const switchCase of s.cases) {
+        for (const consequent of switchCase.consequent) {
+          if (consequent.type === "VariableDeclaration" && consequent.kind !== "var") {
+            for (const declaration of consequent.declarations) {
+              if (declaration.id.type === "Identifier") switchLexicals.push(declaration.id.name);
+            }
+          } else if (consequent.type === "ClassDeclaration" && consequent.id) {
+            switchLexicals.push(consequent.id.name);
+          }
+        }
+      }
+      for (const switchCase of s.cases) {
+        for (const consequent of switchCase.consequent) {
+          this.collectNestedVarHoist(consequent, switchLexicals);
+        }
+      }
     } else if (s.type === "TryStatement") {
-      this.collectNestedVarHoist(s.block);
-      if (s.handler) this.collectNestedVarHoist(s.handler.body);
-      if (s.finalizer) this.collectNestedVarHoist(s.finalizer);
+      this.collectNestedVarHoist(s.block, lexicalAncestors);
+      if (s.handler) this.collectNestedVarHoist(s.handler.body, lexicalAncestors);
+      if (s.finalizer) this.collectNestedVarHoist(s.finalizer, lexicalAncestors);
     } else if (s.type === "LabeledStatement") {
-      this.collectNestedVarHoist(s.body);
+      this.collectNestedVarHoist(s.body, lexicalAncestors);
     }
   }
   private collectHoistPattern(id: Node, lexical: boolean): void {
@@ -337,6 +413,8 @@ class FunctionEmitter {
       }
     } else if (s.type === "BlockStatement") {
       this.emitBlock(s);
+    } else if (s.type === "WithStatement") {
+      this.emitWith(s);
     } else if (s.type === "IfStatement") {
       this.resetCompletion();
       this.emitIf(s);
@@ -349,6 +427,12 @@ class FunctionEmitter {
     } else if (s.type === "ForStatement") {
       this.resetCompletion();
       this.emitFor(s);
+    } else if (s.type === "ForInStatement" || s.type === "ForOfStatement") {
+      this.resetCompletion();
+      this.emitForInOf(s, null);
+    } else if (s.type === "SwitchStatement") {
+      this.resetCompletion();
+      this.emitSwitch(s);
     } else if (s.type === "ReturnStatement") {
       if (s.argument) this.emitExpr(s.argument);
       else this.enc.emit0(Op.LdaUndef);
@@ -429,29 +513,90 @@ class FunctionEmitter {
 
     for (const fn of functions) {
       this.emitClosure(fn);
-      const closureReg = this.allocReg();
-      this.enc.emitReg(Op.Star, closureReg);
-      this.enc.emitReg(Op.Ldar, closureReg);
       this.initializeName(fn.id.name);
-      let annexB = false;
-      for (const name of annexBFunctionNames) {
-        if (name === fn.id.name) {
-          annexB = true;
-          break;
-        }
-      }
-      if (annexB && this.isScript) {
-        const nameReg = this.allocReg();
-        this.enc.emitConst(Op.LdaConst, this.enc.internConst(fn.id.name));
-        this.enc.emitReg(Op.Star, nameReg);
-        this.enc.emitCallBuiltin(BUILTIN_ASSIGN_OUTER_NAME, closureReg, 2);
+    }
+    for (const inner of s.body) {
+      if (inner.type === "FunctionDeclaration") {
+        this.emitAnnexBFunctionAssignment(inner, annexBFunctionNames);
+      } else {
+        this.emitStatement(inner);
       }
     }
-    for (const inner of s.body) this.emitStatement(inner);
 
     this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, saveReg, 1);
     this.loopTop -= 1;
     this.release(blockMark);
+  }
+
+  /** Emit a sloppy `with` statement as one Object Environment Record link.
+   * The parser rejects `with` in strict code. Reusing the environment-scope
+   * control marker makes break/continue and catch unwinding restore the same
+   * saved parent as lexical blocks. */
+  private emitWith(s: Node): void {
+    const withMark = this.mark();
+    this.emitExpr(s.object);
+    const objectReg = this.allocReg();
+    this.enc.emitReg(Op.Star, objectReg);
+    const saveReg = this.allocReg();
+    this.enc.emitCallBuiltin(BUILTIN_PUSH_OBJECT_ENV, objectReg, 1);
+    this.enc.emitReg(Op.Star, saveReg);
+
+    const scopeCtx: LoopCtx = {
+      label: LEXICAL_SCOPE_LABEL,
+      breaks: [saveReg],
+      continues: [],
+      isLoop: false,
+    };
+    if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
+    else this.loops.push(scopeCtx);
+    this.loopTop += 1;
+
+    this.emitStatement(s.body);
+
+    this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, saveReg, 1);
+    this.loopTop -= 1;
+    this.release(withMark);
+  }
+
+  /** Execute B.3.3's synthetic outer assignment at the declaration's source
+   * position. The lexical function itself was initialized at scope entry; an
+   * unselected switch clause or an earlier abrupt completion must not publish
+   * it to the surrounding var environment. */
+  private emitAnnexBFunctionAssignment(fn: Node, annexBFunctionNames: string[]): void {
+    if (!fn.id) return;
+    let annexB = false;
+    for (const name of annexBFunctionNames) {
+      if (name === fn.id.name) {
+        annexB = true;
+        break;
+      }
+    }
+    if (!annexB) return;
+
+    const assignmentMark = this.mark();
+    this.emitLoadName(fn.id.name);
+    if (this.isScript) {
+      const closureReg = this.allocReg();
+      this.enc.emitReg(Op.Star, closureReg);
+      const nameReg = this.allocReg();
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(fn.id.name));
+      this.enc.emitReg(Op.Star, nameReg);
+      this.enc.emitCallBuiltin(BUILTIN_ASSIGN_OUTER_NAME, closureReg, 2);
+    } else {
+      // Function bodies keep their var environment in fixed registers. The
+      // active lexical binding has the same name, so bypass storeName and write
+      // the pre-hoisted outer register explicitly.
+      const outerReg = this.names.get(fn.id.name);
+      if (outerReg !== undefined) this.enc.emitReg(Op.Star, outerReg);
+    }
+    // Annex B models this as a synthetic assignment statement. Unlike the
+    // lexical FunctionDeclaration's empty completion, that assignment carries
+    // the closure value through UpdateEmpty (for example, eval of a selected
+    // switch-clause function returns the function object).
+    if (this.isScript && this.completionReg >= 0) {
+      this.enc.emitReg(Op.Star, this.completionReg);
+    }
+    this.release(assignmentMark);
   }
 
   private isActiveBlockLexical(name: string): boolean {
@@ -514,15 +659,29 @@ class FunctionEmitter {
   private emitIf(s: Node): void {
     this.emitExpr(s.test);
     const toElse = this.enc.emitJump(Op.JumpIfFalse);
-    this.emitStatement(s.consequent);
+    this.emitConditionalStatement(s.consequent);
     if (s.alternate) {
       const toEnd = this.enc.emitJump(Op.Jump);
       this.enc.patch(toElse, this.enc.here());
-      this.emitStatement(s.alternate);
+      this.emitConditionalStatement(s.alternate);
       this.enc.patch(toEnd, this.enc.here());
     } else {
       this.enc.patch(toElse, this.enc.here());
     }
+  }
+
+  /** Annex B accepts a FunctionDeclaration directly as an if arm in sloppy
+   * code. Its semantics are those of a one-item implicit block: a lexical
+   * function binding plus the conditional outer-var initialization. */
+  private emitConditionalStatement(statement: Node): void {
+    if (statement.type !== "FunctionDeclaration") {
+      this.emitStatement(statement);
+      return;
+    }
+    const block: Node = {};
+    block.type = "BlockStatement";
+    block.body = [statement];
+    this.emitBlock(block);
   }
 
   private emitWhile(s: Node): void {
@@ -550,6 +709,31 @@ class FunctionEmitter {
 
   private emitFor(s: Node): void {
     const outer = this.mark();
+    let lexicalSaveReg = -1;
+    if (s.init && s.init.type === "VariableDeclaration" && s.init.kind !== "var") {
+      const lexicalNames: string[] = [];
+      for (const declaration of s.init.declarations) {
+        if (declaration.id.type !== "Identifier") {
+          throw new UnsupportedNodeError(`for destructuring (${declaration.id.type})`, declaration.id.type);
+        }
+        lexicalNames.push(declaration.id.name);
+      }
+      const namesReg = this.allocReg();
+      lexicalSaveReg = this.allocReg();
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(lexicalNames));
+      this.enc.emitReg(Op.Star, namesReg);
+      this.enc.emitCallBuiltin(BUILTIN_PUSH_LEXICAL_ENV, namesReg, 1);
+      this.enc.emitReg(Op.Star, lexicalSaveReg);
+      const scopeCtx: LoopCtx = {
+        label: LEXICAL_SCOPE_LABEL,
+        breaks: [lexicalSaveReg],
+        continues: lexicalNames,
+        isLoop: false,
+      };
+      if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
+      else this.loops.push(scopeCtx);
+      this.loopTop += 1;
+    }
     if (s.init) {
       if (s.init.type === "VariableDeclaration") this.emitVarDecl(s.init);
       else this.emitExprStatementDiscard(s.init);
@@ -568,7 +752,221 @@ class FunctionEmitter {
     if (exit !== -1) this.enc.patch(exit, this.enc.here());
     this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
     this.popLoop(ctx, /*continueTarget*/ updatePc);
+    if (lexicalSaveReg >= 0) {
+      this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, lexicalSaveReg, 1);
+      this.loopTop -= 1;
+    }
     this.release(outer);
+  }
+
+  /** Emit the bounded Phase-1 subset of ForIn/OfBodyEvaluation. Enumeration is
+   * materialized once by a runtime helper, while the bytecode owns iteration,
+   * abrupt-control routing, and a fresh lexical binding environment per turn. */
+  private emitForInOf(s: Node, label: string | null): void {
+    if (s.type === "ForOfStatement" && s.await) {
+      throw new UnsupportedNodeError("for-await-of", "ForOfStatement");
+    }
+
+    const outer = this.mark();
+    this.emitExpr(s.right);
+    const sourceReg = this.allocReg();
+    this.enc.emitReg(Op.Star, sourceReg);
+    this.enc.emitCallBuiltin(s.type === "ForInStatement" ? BUILTIN_FOR_IN_KEYS : BUILTIN_FOR_OF_VALUES, sourceReg, 1);
+    const valuesReg = this.allocReg();
+    this.enc.emitReg(Op.Star, valuesReg);
+    this.enc.emit0(Op.LdaZero);
+    const indexReg = this.allocReg();
+    this.enc.emitReg(Op.Star, indexReg);
+
+    const ctx = this.pushLoop(label, true);
+    const top = this.enc.here();
+    this.enc.emitReg(Op.Ldar, valuesReg);
+    this.enc.emitConst(Op.GetProp, this.enc.internConst("length"));
+    this.enc.emitReg(Op.Lt, indexReg);
+    const exit = this.enc.emitJump(Op.JumpIfFalse);
+
+    this.enc.emitReg(Op.Ldar, valuesReg);
+    this.enc.emitReg(Op.GetElem, indexReg);
+    const valueReg = this.allocReg();
+    this.enc.emitReg(Op.Star, valueReg);
+
+    let lexicalSaveReg = -1;
+    if (s.left.type === "VariableDeclaration") {
+      if (s.left.declarations.length !== 1) {
+        throw new UnsupportedNodeError("for-in/of declaration list", s.left.type);
+      }
+      const declaration = s.left.declarations[0]!;
+      if (declaration.id.type !== "Identifier") {
+        throw new UnsupportedNodeError(`for-in/of destructuring (${declaration.id.type})`, declaration.id.type);
+      }
+      if (s.left.kind === "var") {
+        this.enc.emitReg(Op.Ldar, valueReg);
+        this.storeName(declaration.id.name);
+      } else {
+        const namesReg = this.allocReg();
+        lexicalSaveReg = this.allocReg();
+        this.enc.emitConst(Op.LdaConst, this.enc.internConst([declaration.id.name]));
+        this.enc.emitReg(Op.Star, namesReg);
+        this.enc.emitCallBuiltin(BUILTIN_PUSH_LEXICAL_ENV, namesReg, 1);
+        this.enc.emitReg(Op.Star, lexicalSaveReg);
+        const scopeCtx: LoopCtx = {
+          label: LEXICAL_SCOPE_LABEL,
+          breaks: [lexicalSaveReg],
+          continues: [declaration.id.name],
+          isLoop: false,
+        };
+        if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
+        else this.loops.push(scopeCtx);
+        this.loopTop += 1;
+        this.enc.emitReg(Op.Ldar, valueReg);
+        this.initializeName(declaration.id.name);
+      }
+    } else if (s.left.type === "Identifier") {
+      this.enc.emitReg(Op.Ldar, valueReg);
+      this.storeName(s.left.name);
+    } else {
+      throw new UnsupportedNodeError(`for-in/of target ${s.left.type}`, s.left.type);
+    }
+
+    this.emitStatement(s.body);
+    if (lexicalSaveReg >= 0) {
+      this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, lexicalSaveReg, 1);
+      this.loopTop -= 1;
+    }
+    const updatePc = this.enc.here();
+    this.enc.emitConst(Op.LdaConst, this.enc.internConst(1));
+    this.enc.emitReg(Op.Add, indexReg);
+    this.enc.emitReg(Op.Star, indexReg);
+    this.enc.emitJumpTo(Op.Jump, top);
+
+    this.enc.patch(exit, this.enc.here());
+    this.enc.patchTargetMarker(ctx.breaks[1]!, this.enc.here());
+    this.popLoop(ctx, updatePc);
+    this.release(outer);
+  }
+
+  /** Emit §14.12 SwitchStatement with one CaseBlock lexical environment.
+   * Case tests are evaluated in source order (skipping the default clause),
+   * the selected clause falls through naturally, and an unlabeled break exits
+   * this switch while continue continues to resolve to an enclosing loop. */
+  private emitSwitch(s: Node): void {
+    const switchMark = this.mark();
+    this.emitExpr(s.discriminant);
+    const discriminantReg = this.allocReg();
+    this.enc.emitReg(Op.Star, discriminantReg);
+
+    // The target is outside the CaseBlock environment. Register it before
+    // pushing that environment so abrupt breaks restore the correct outer env.
+    const switchCtx = this.pushLoop(null, false);
+
+    const lexicalNames: string[] = [];
+    const nonFunctionLexicalNames: string[] = [];
+    const functions: Node[] = [];
+    const annexBFunctionNames: string[] = [];
+    for (const switchCase of s.cases) {
+      for (const consequent of switchCase.consequent) {
+        if (consequent.type === "VariableDeclaration" && consequent.kind !== "var") {
+          for (const declaration of consequent.declarations) {
+            if (declaration.id.type !== "Identifier") {
+              throw new UnsupportedNodeError(`destructuring (${declaration.id.type})`, declaration.id.type);
+            }
+            lexicalNames.push(declaration.id.name);
+            nonFunctionLexicalNames.push(declaration.id.name);
+          }
+        } else if (consequent.type === "FunctionDeclaration" && consequent.id) {
+          lexicalNames.push(consequent.id.name);
+          functions.push(consequent);
+        } else if (consequent.type === "ClassDeclaration" && consequent.id) {
+          lexicalNames.push(consequent.id.name);
+          nonFunctionLexicalNames.push(consequent.id.name);
+        }
+      }
+    }
+    for (const fn of functions) {
+      let outerLexicalConflict = this.isActiveBlockLexical(fn.id.name);
+      if (!outerLexicalConflict) {
+        for (const rootLexical of this.hoistedLexicals) {
+          if (rootLexical === fn.id.name) {
+            outerLexicalConflict = true;
+            break;
+          }
+        }
+      }
+      if (!outerLexicalConflict) {
+        for (const lexicalName of nonFunctionLexicalNames) {
+          if (lexicalName === fn.id.name) {
+            outerLexicalConflict = true;
+            break;
+          }
+        }
+      }
+      if (!this.strictMode && !outerLexicalConflict) annexBFunctionNames.push(fn.id.name);
+    }
+
+    let lexicalSaveReg = -1;
+    if (lexicalNames.length > 0) {
+      const namesReg = this.allocReg();
+      lexicalSaveReg = this.allocReg();
+      this.enc.emitConst(Op.LdaConst, this.enc.internConst(lexicalNames));
+      this.enc.emitReg(Op.Star, namesReg);
+      this.enc.emitCallBuiltin(BUILTIN_PUSH_LEXICAL_ENV, namesReg, 1);
+      this.enc.emitReg(Op.Star, lexicalSaveReg);
+      const scopeCtx: LoopCtx = {
+        label: LEXICAL_SCOPE_LABEL,
+        breaks: [lexicalSaveReg],
+        continues: lexicalNames,
+        isLoop: false,
+      };
+      if (this.loopTop < this.loops.length) this.loops[this.loopTop] = scopeCtx;
+      else this.loops.push(scopeCtx);
+      this.loopTop += 1;
+
+      // BlockDeclarationInstantiation initializes every function before the
+      // first case expression is evaluated. B.3.3's OUTER assignment remains
+      // at the declaration's executed source position below.
+      for (const fn of functions) {
+        this.emitClosure(fn);
+        this.initializeName(fn.id.name);
+      }
+    }
+
+    const caseJumps: any[] = [];
+    let defaultIndex = -1;
+    for (let i = 0; i < s.cases.length; i += 1) {
+      const switchCase = s.cases[i]!;
+      if (switchCase.test === null) {
+        defaultIndex = i;
+        caseJumps.push(-1);
+      } else {
+        this.emitExpr(switchCase.test);
+        this.enc.emitReg(Op.StrictEq, discriminantReg);
+        caseJumps.push(this.enc.emitJump(Op.JumpIfTrue));
+      }
+    }
+    const noMatch = this.enc.emitJump(Op.Jump);
+
+    for (let i = 0; i < s.cases.length; i += 1) {
+      const switchCase = s.cases[i]!;
+      const caseJump = caseJumps[i];
+      if (caseJump >= 0) this.enc.patch(caseJump, this.enc.here());
+      if (i === defaultIndex) this.enc.patch(noMatch, this.enc.here());
+      for (const consequent of switchCase.consequent) {
+        if (consequent.type === "FunctionDeclaration") {
+          this.emitAnnexBFunctionAssignment(consequent, annexBFunctionNames);
+        } else {
+          this.emitStatement(consequent);
+        }
+      }
+    }
+    if (defaultIndex < 0) this.enc.patch(noMatch, this.enc.here());
+
+    if (lexicalSaveReg >= 0) {
+      this.enc.emitCallBuiltin(BUILTIN_RESTORE_ENV, lexicalSaveReg, 1);
+      this.loopTop -= 1;
+    }
+    this.enc.patchTargetMarker(switchCtx.breaks[1]!, this.enc.here());
+    this.popLoop(switchCtx, -1);
+    this.release(switchMark);
   }
 
   private emitExprStatementDiscard(expr: Node): void {
@@ -635,7 +1033,13 @@ class FunctionEmitter {
   private emitLabeled(s: Node): void {
     const label: string = s.label.name;
     const inner = s.body;
-    if (inner.type === "WhileStatement" || inner.type === "DoWhileStatement" || inner.type === "ForStatement") {
+    if (
+      inner.type === "WhileStatement" ||
+      inner.type === "DoWhileStatement" ||
+      inner.type === "ForStatement" ||
+      inner.type === "ForInStatement" ||
+      inner.type === "ForOfStatement"
+    ) {
       // Re-emit the loop with the label attached so labeled break/continue work.
       this.emitLabeledLoop(label, inner);
     } else {
@@ -649,7 +1053,9 @@ class FunctionEmitter {
 
   private emitLabeledLoop(label: string, s: Node): void {
     // Same shapes as emitWhile/DoWhile/For but with the label on the context.
-    if (s.type === "WhileStatement") {
+    if (s.type === "ForInStatement" || s.type === "ForOfStatement") {
+      this.emitForInOf(s, label);
+    } else if (s.type === "WhileStatement") {
       const ctx = this.pushLoop(label, true);
       const top = this.enc.here();
       this.emitExpr(s.test);
@@ -909,6 +1315,23 @@ class FunctionEmitter {
 
   private emitCall(node: Node): void {
     if (node.optional) throw new UnsupportedNodeError("optional call", "CallExpression");
+    // A direct-eval candidate is defined by syntax, then confirmed at runtime:
+    // after resolving the IdentifierReference, PerformEval is direct only when
+    // the resulting value is the current realm's intrinsic %eval%.  Passing the
+    // resolved callee in window[0] preserves Reference-before-arguments order
+    // and lets a local shadow, `with` binding, or reassigned global fall back to
+    // an ordinary call without a second environment lookup.
+    if (node.callee.type === "Identifier" && node.callee.name === "eval") {
+      const evalMark = this.mark();
+      const evalBase = this.regTop;
+      for (let i = 0; i <= node.arguments.length; i += 1) this.allocReg();
+      this.emitExpr(node.callee);
+      this.enc.emitReg(Op.Star, evalBase);
+      this.emitArgWindow(node.arguments, evalBase + 1);
+      this.enc.emitCallBuiltin(BUILTIN_DIRECT_EVAL, evalBase, node.arguments.length + 1);
+      this.release(evalMark);
+      return;
+    }
     // Resolve the small Phase-1 generic-builtin surface that has no property on
     // the sparse standalone global object. Keep this classification inline:
     // the current self-compiler can lose a newly-added late class-method call
@@ -933,6 +1356,17 @@ class FunctionEmitter {
       else if (mathName === "floor") directBuiltin = Builtin.MathFloor;
       else if (mathName === "ceil") directBuiltin = Builtin.MathCeil;
       else if (mathName === "round") directBuiltin = Builtin.MathRound;
+    } else if (
+      directCallee.type === "MemberExpression" &&
+      !directCallee.optional &&
+      !directCallee.computed &&
+      directCallee.object.type === "Identifier" &&
+      directCallee.object.name === "Object" &&
+      !this.isBoundName("Object") &&
+      directCallee.property.type === "Identifier" &&
+      directCallee.property.name === "defineProperty"
+    ) {
+      directBuiltin = BUILTIN_OBJECT_DEFINE_PROPERTY;
     }
     if (directBuiltin >= 0) {
       const builtinCallMark = this.mark();
@@ -1265,6 +1699,10 @@ class FunctionEmitter {
   private emitUnary(node: Node): void {
     const op: string = node.operator;
     const arg = node.argument;
+    if (op === "delete") {
+      this.emitDelete(arg);
+      return;
+    }
     if (op === "typeof" && arg.type === "Identifier") {
       // A missing numeric Map value is not a stable `undefined` discriminator
       // in the standalone compiler. Use the explicit fixed-register mirror;
@@ -1315,6 +1753,38 @@ class FunctionEmitter {
       return;
     }
     throw new UnsupportedNodeError(`unary operator '${op}'`, "UnaryExpression");
+  }
+
+  /** Emit DeleteExpression while preserving reference evaluation order. */
+  private emitDelete(arg: Node): void {
+    if (arg.type === "MemberExpression") {
+      if (arg.optional) throw new UnsupportedNodeError("optional delete", "UnaryExpression");
+      const m = this.mark();
+      if (arg.computed) {
+        this.emitExpr(arg.object);
+        const rObject = this.allocReg();
+        this.enc.emitReg(Op.Star, rObject);
+        this.emitExpr(arg.property);
+        const rKey = this.allocReg();
+        this.enc.emitReg(Op.Star, rKey);
+        this.enc.emitReg(Op.Ldar, rObject);
+        this.enc.emitReg(Op.DeleteElem, rKey);
+      } else {
+        this.emitExpr(arg.object);
+        this.enc.emitConst(Op.DeleteProp, this.enc.internConst(arg.property.name));
+      }
+      this.release(m);
+      return;
+    }
+    if (arg.type === "Identifier") {
+      if (this.isBoundName(arg.name)) this.enc.emit0(Op.LdaFalse);
+      else this.enc.emitConst(Op.DeleteName, this.enc.internConst(arg.name));
+      return;
+    }
+    // Deleting a non-reference evaluates its operand for side effects and
+    // succeeds without attempting a property operation.
+    this.emitExprStatementDiscard(arg);
+    this.enc.emit0(Op.LdaTrue);
   }
 
   private emitConditional(node: Node): void {

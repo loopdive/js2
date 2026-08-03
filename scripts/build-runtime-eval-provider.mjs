@@ -59,6 +59,7 @@ function verifyProvider(binary) {
     ["__runtime_eval_canary", 3],
     ["__runtime_function_canary", 3],
     ["__runtime_direct_eval_canary", 84],
+    ["__runtime_apply_interpreted_canary", 3],
     ["__runtime_positive_corpus_canary", 30],
   ];
   for (const [name, expected] of checks) {
@@ -69,7 +70,12 @@ function verifyProvider(binary) {
   }
   // The linkable namespace itself must exist.
   const ns = instantiateRuntimeEvalNamespace(module);
-  for (const name of ["__runtime_new_function", "__runtime_indirect_eval", "__runtime_direct_eval"]) {
+  for (const name of [
+    "__runtime_new_function",
+    "__runtime_indirect_eval",
+    "__runtime_direct_eval",
+    "__runtime_apply_interpreted",
+  ]) {
     if (typeof ns[name] !== "function") throw new Error(`provider namespace export ${name} missing`);
   }
 }

@@ -46,6 +46,8 @@ export const FLAG_SCRIPT = 8; //      E1 addition: this FuncMeta is a Script/eva
 //                                    completion value is returned (§ completion
 //                                    semantics) rather than dropped.
 export const FLAG_CLASS_CONSTRUCTOR = 16; // class constructors reject ordinary Call
+export const FLAG_RUNTIME_EVAL = 32; // provider-owned realm `%eval%` closure
+export const FLAG_RUNTIME_FUNCTION = 64; // provider-owned realm `%Function%` closure
 
 /**
  * `$FuncMeta` — the immutable metadata for one interpreted function (or the
@@ -92,6 +94,11 @@ export const ENV_DECLARATIVE = 0; // declarative record (name→slot map + slots
 export const ENV_OBJECT = 1; //      object record over an arbitrary $Object     — `with` (#2929)
 export const ENV_GLOBAL = 2; //      global record wrapping globalThis            — Phase 1
 
+/** Private shared-global slot carrying `[name, EvalBindingCell, ...]` for the
+ * declarative half of GlobalEnvironmentRecord. Keep byte-for-byte aligned
+ * with the caller-side codegen constant; this is data, not a function ABI. */
+export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+
 /**
  * One mutable boxed binding shared by AOT code and the interpreter.
  *
@@ -118,9 +125,9 @@ export class EnvRec {
   kind: number;
   /** `parent` — the lexical parent record (null at the root). */
   parent: EnvRec | null;
-  /** `names` — declarative: the name→slot map carrier; object/global: null. */
+  /** `names` — declarative/global-lexical: the name→slot map carrier. */
   names: JSValue;
-  /** `slots` — declarative: the mutable boxed slots; else null. */
+  /** `slots` — declarative/global-lexical: mutable boxed slots; else null. */
   slots: Regs | null;
   /** `backing` — object/global: the backing `$Object` (globalThis for global). */
   backing: JSValue;

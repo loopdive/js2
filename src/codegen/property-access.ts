@@ -174,6 +174,7 @@ import { emitGuardedNativeStringElementGet } from "./string-element-read.js"; //
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { S5C_STRUCT_ACCESSOR_CLOSURE } from "./struct-accessor-closure.js";
 import { tryCompileTemporalPropertyAccess } from "./temporal-native.js";
+import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import {
   BUILTIN_CTOR_ARITY,
   BUILTIN_CTOR_NAMES,
@@ -1743,6 +1744,9 @@ export function emitExternrefToStructGet(
       addStringConstantGlobal(ctx, propName);
       externGetFallback.push(...stringConstantExternrefInstrs(ctx, propName));
       externGetFallback.push({ op: "call", funcIdx: getIdx });
+      if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+        externGetFallback.push(...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx));
+      }
       // Coerce externref result to the expected result type
       if (resultType.kind === "f64") {
         const unboxIdx = ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
@@ -4731,6 +4735,9 @@ export function compileElementAccessBody(
           ],
         });
         fctx.body.push({ op: "local.get", index: resLocal });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         return { kind: "externref" };
       }
       // Defensive fallback — helpers unavailable. Read via the string-keyed
@@ -4739,6 +4746,9 @@ export function compileElementAccessBody(
       fctx.body.push({ op: "local.get", index: keyLocal });
       if (extGetIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: extGetIdx });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         return { kind: "externref" };
       }
       fctx.body.push({ op: "drop" });
@@ -4789,6 +4799,9 @@ export function compileElementAccessBody(
       flushLateImportShifts(ctx, fctx);
       if (getIdxFn !== undefined) {
         fctx.body.push({ op: "call", funcIdx: getIdxFn });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         return { kind: "externref" };
       }
       return null;
@@ -4804,6 +4817,9 @@ export function compileElementAccessBody(
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
+      if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+        emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+      }
       return { kind: "externref" };
     }
     return null;
@@ -4844,6 +4860,9 @@ export function compileElementAccessBody(
     flushLateImportShifts(ctx, fctx);
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
+      if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+        emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+      }
       return { kind: "externref" };
     }
     return null;
@@ -5127,6 +5146,9 @@ export function compileElementAccessBody(
         flushLateImportShifts(ctx, fctx);
         if (funcIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx });
+          if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+            emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+          }
           return { kind: "externref" };
         }
       }

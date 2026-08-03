@@ -21,6 +21,7 @@ import {
 } from "./property-access.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { emitRuntimeEvalSharedValueUnwrap } from "./global-environment.js";
 
 function isStructuralObjectContract(ctx: CodegenContext, objType: ts.Type, typeName?: string): boolean {
   if (typeName !== undefined && ctx.classSet.has(typeName)) return false;
@@ -82,6 +83,9 @@ function emitStructuralExternrefFieldGet(
   addStringConstantGlobal(ctx, propName);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
   fctx.body.push({ op: "call", funcIdx: getIdx });
+  if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+    emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+  }
   if (resultType.kind === "f64" && unboxIdx !== undefined) {
     fctx.body.push({ op: "call", funcIdx: unboxIdx });
   } else if (resultType.kind === "i32" && unboxIdx !== undefined) {

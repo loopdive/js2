@@ -55,6 +55,34 @@ function providerSource() {
         return ast;
       }
 
+      function makeEvalIdentifierAst(): any {
+        const identifier: any = {};
+        identifier.type = "Identifier";
+        identifier.name = "eval";
+        const statement: any = {};
+        statement.type = "ExpressionStatement";
+        statement.expression = identifier;
+        const ast: any = {};
+        ast.type = "Program";
+        ast.sourceType = "script";
+        ast.body = [statement];
+        return ast;
+      }
+
+      function makeFunctionIdentifierAst(): any {
+        const identifier: any = {};
+        identifier.type = "Identifier";
+        identifier.name = "Function";
+        const statement: any = {};
+        statement.type = "ExpressionStatement";
+        statement.expression = identifier;
+        const ast: any = {};
+        ast.type = "Program";
+        ast.sourceType = "script";
+        ast.body = [statement];
+        return ast;
+      }
+
       function makeReverseIdentityEvalAst(): any {
         const callee: any = {};
         callee.type = "Identifier";
@@ -279,6 +307,8 @@ function providerSource() {
         if (source === "function anonymous(\\n) {\\n\\"use strict\\"; return this\\n}") {
           return makeStrictThisFunctionAst();
         }
+        if (source === "eval") return makeEvalIdentifierAst();
+        if (source === "Function") return makeFunctionIdentifierAst();
         if (source === "answer + 2") return makeEvalAst();
         if (source === "x = x + 2; x") return makeDirectMutationEvalAst(2);
         if (source === "x = x + 1; x") return makeDirectMutationEvalAst(1);
@@ -295,7 +325,7 @@ function providerSource() {
       }
 
       function runtimeEvalResult(ok: boolean, value: any): any {
-        const result: any[] = [ok, value];
+        const result: any[] = [ok, __runtime_eval_wrap_result(exposeRuntimeEvalValue(value))];
         return result;
       }
 
@@ -352,7 +382,7 @@ function providerSource() {
             parse,
             source,
             globalObject,
-            thisArg,
+            __runtime_eval_unwrap_result(thisArg),
             liveNames,
             liveSlots,
             activationSeedNames,
@@ -368,6 +398,42 @@ function providerSource() {
           return runtimeEvalResult(true, evalResult);
         } catch (error) {
           snapshotDirectEvalActivationState(activationState, liveNames);
+          return runtimeEvalResult(false, error);
+        }
+      }
+
+      export function __runtime_apply_interpreted(
+        callable: any,
+        receiver: any,
+        argc: number,
+        a0: any,
+        a1: any,
+        a2: any,
+        a3: any,
+        a4: any,
+        a5: any,
+        a6: any,
+        a7: any
+      ): any {
+        const args: any[] = [];
+        if (argc > 0) args.push(__runtime_eval_unwrap_result(a0));
+        if (argc > 1) args.push(__runtime_eval_unwrap_result(a1));
+        if (argc > 2) args.push(__runtime_eval_unwrap_result(a2));
+        if (argc > 3) args.push(__runtime_eval_unwrap_result(a3));
+        if (argc > 4) args.push(__runtime_eval_unwrap_result(a4));
+        if (argc > 5) args.push(__runtime_eval_unwrap_result(a5));
+        if (argc > 6) args.push(__runtime_eval_unwrap_result(a6));
+        if (argc > 7) args.push(__runtime_eval_unwrap_result(a7));
+        try {
+          const value = applyRuntimeEvalCallable(
+            callable,
+            __runtime_eval_unwrap_result(receiver),
+            args
+          );
+          exposeRuntimeEvalCallableEnvironment(callable);
+          return runtimeEvalResult(true, value);
+        } catch (error) {
+          exposeRuntimeEvalCallableEnvironment(callable);
           return runtimeEvalResult(false, error);
         }
       }
@@ -497,6 +563,24 @@ const USER_SOURCE = `
     )(2, 3) as number;
   }
 
+  export function invokeFunctionAlias(): number {
+    const F: any = Function;
+    const fn: any = F(dynamic("a,b"), dynamic("return a + b"));
+    return (typeof F === "function" ? 1 : 0) +
+      (typeof fn === "function" ? 2 : 0) +
+      (fn(1, 2) === 3 ? 4 : 0) +
+      (fn.constructor === F ? 8 : 0) +
+      (F.constructor === F ? 16 : 0);
+  }
+
+  export function constructFunctionAlias(): number {
+    const F: any = Function;
+    const fn: any = new F(dynamic("a,b"), dynamic("return a + b"));
+    return (typeof fn === "function" ? 1 : 0) +
+      (fn(1, 2) === 3 ? 2 : 0) +
+      (fn.constructor === F ? 4 : 0);
+  }
+
   export function interpretedIdentity(): number {
     const fn: any = new Function(
       dynamic("x"),
@@ -531,6 +615,18 @@ const USER_SOURCE = `
   export function indirectEval(): number {
     globalThis.answer = 40;
     return (0, eval)(dynamic("answer + 2")) as number;
+  }
+
+  export function indirectEvalLiteralScope(): number {
+    globalThis.answer = 40;
+    const answer = 1;
+    return (0, eval)("answer + 2") as number;
+  }
+
+  export function indirectEvalAlias(): number {
+    globalThis.answer = 40;
+    const indirect: any = eval;
+    return indirect(dynamic("answer + 2")) as number;
   }
 
   export function indirectEvalNonString(): number {
@@ -635,6 +731,7 @@ async function main() {
       const runtimeInstance = new WebAssembly.Instance(runtimeModule, {});
       const userInstance = new WebAssembly.Instance(userModule, {
         "js2wasm:runtime-eval": {
+          __runtime_apply_interpreted: runtimeInstance.exports.__runtime_apply_interpreted,
           __runtime_new_function: runtimeInstance.exports.__runtime_new_function,
           __runtime_indirect_eval: runtimeInstance.exports.__runtime_indirect_eval,
           __runtime_direct_eval: runtimeInstance.exports.__runtime_direct_eval,
@@ -649,11 +746,15 @@ async function main() {
         ["invokeNewImmediate", userInstance.exports.invokeNewImmediate],
         ["invokeCall", userInstance.exports.invokeCall],
         ["invokeCallImmediate", userInstance.exports.invokeCallImmediate],
+        ["invokeFunctionAlias", userInstance.exports.invokeFunctionAlias],
+        ["constructFunctionAlias", userInstance.exports.constructFunctionAlias],
         ["interpretedIdentity", userInstance.exports.interpretedIdentity],
         ["sloppyThis", userInstance.exports.sloppyThis],
         ["strictThis", userInstance.exports.strictThis],
         ["aotIdentityRoundTrip", userInstance.exports.aotIdentityRoundTrip],
         ["indirectEval", userInstance.exports.indirectEval],
+        ["indirectEvalLiteralScope", userInstance.exports.indirectEvalLiteralScope],
+        ["indirectEvalAlias", userInstance.exports.indirectEvalAlias],
         ["indirectEvalNonString", userInstance.exports.indirectEvalNonString],
         ["directEvalMutation", userInstance.exports.directEvalMutation],
         ["directEvalNonString", userInstance.exports.directEvalNonString],

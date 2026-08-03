@@ -34,6 +34,11 @@ describe("#2928 — linked runtime Function provider", () => {
     expect(report.userImports).toEqual([
       {
         module: "js2wasm:runtime-eval",
+        name: "__runtime_apply_interpreted",
+        kind: "function",
+      },
+      {
+        module: "js2wasm:runtime-eval",
         name: "__runtime_new_function",
         kind: "function",
       },
@@ -58,11 +63,15 @@ describe("#2928 — linked runtime Function provider", () => {
       invokeNewImmediate: 3,
       invokeCall: 5,
       invokeCallImmediate: 5,
+      invokeFunctionAlias: 31,
+      constructFunctionAlias: 7,
       interpretedIdentity: 1,
       sloppyThis: 1,
       strictThis: 1,
       aotIdentityRoundTrip: 1,
       indirectEval: 42,
+      indirectEvalLiteralScope: 42,
+      indirectEvalAlias: 42,
       indirectEvalNonString: 42,
       directEvalMutation: 84,
       directEvalNonString: 42,

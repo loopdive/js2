@@ -7,7 +7,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Encoder } from "../../src/interp/encoder.js";
 import { Op, OP_COUNT, OP_INFO } from "../../src/interp/opcodes.js";
-import { compileScript, createDynamicFunction, disassemble } from "../../src/interp/index.js";
+import { compileScript, createDynamicFunction, disassemble, executeIndirectEval } from "../../src/interp/index.js";
 import { loadAcorn, parse, runInterp } from "./harness.js";
 
 beforeAll(async () => {
@@ -49,6 +49,20 @@ describe("#2928 dynamic Function factory", () => {
       globalObject,
     ) as () => unknown;
     expect(fn()).toBeUndefined();
+  });
+
+  it("installs one callable realm Function identity for aliases and constructed functions", () => {
+    const globalObject: Record<string, unknown> = {};
+    const result = executeIndirectEval(
+      (source) => parse(source),
+      "var F = Function; var fn = F('a', 'return a + 1'); " +
+        "(typeof F === 'function' ? 1 : 0) + (fn(2) === 3 ? 2 : 0) + " +
+        "(fn.constructor === Function ? 4 : 0)",
+      globalObject,
+    );
+
+    expect(result).toBe(7);
+    expect(globalObject.Function).toBeDefined();
   });
 });
 

@@ -729,6 +729,11 @@ export interface FunctionContext {
    * test262 failures in `function-code/10.4.3-1-*` and `Array/prototype/*`).
    */
   readsCurrentThis?: boolean;
+  /** While lowering a compile-time direct-eval Script, an otherwise absent
+   * receiver in a sloppy caller denotes the realm global object. This is
+   * scoped to the foreign eval AST so ordinary strict/direct-call `this`
+   * lowering keeps its existing behavior. */
+  directEvalSloppyThisFallback?: boolean;
   /** Set of variable names known to be non-null in the current scope (type narrowing) */
   narrowedNonNull?: Set<string>;
   /**
@@ -961,6 +966,11 @@ export interface FunctionContext {
     paramCount: number;
     paramOffset: number;
     paramTypes: ValType[];
+    /** Persistent per-activation name/null vector shared with runtime direct
+     * eval. The interpreter nulls an entry when delete/defineProperty severs
+     * that arguments-index mapping; later AOT sync sites consult the same
+     * vector instead of resurrecting the correspondence. */
+    runtimeMappedNamesLocalIdx?: number;
     /**
      * Argument indices whose param↔arguments mapping has been severed at
      * compile time (#1511). Per ECMA-262 §10.4.4.2, a `defineProperty` that
@@ -1464,6 +1474,9 @@ export interface CodegenContext {
    * `collectDeclarations` (runs before any class body compiles).
    */
   topLevelFunctionNames: Set<string>;
+  /** Source nodes for those names. Runtime-eval global seeding compiles the
+   * real identifier so callable metadata matches an ordinary AOT value read. */
+  topLevelFunctionDeclarations: Map<string, ts.FunctionDeclaration>;
   /** Map from "ClassName_methodName" → method info for local classes */
   classMethodSet: Set<string>;
   /** Classes inside function bodies whose body compilation is deferred */
@@ -1840,20 +1853,37 @@ export interface CodegenContext {
    * callable carrier used by the separately linked interpreter runtime.
    */
   runtimeEvalCallableSeeded?: boolean;
+  /** Exact eight-slot callable root registered by the runtime-eval seed. */
+  runtimeEvalCallableTypeIdx?: number;
+  /** Canonical branded carrier for an interpreted callback crossing modules. */
+  runtimeEvalInterpretedCallbackTypeIdx?: number;
+  runtimeEvalValueTypeIdx?: number;
   /**
    * #2928 — this unit consumes or provides the linked runtime-eval ABI.
    * Callable writes to its native global object use the cross-module carrier.
    */
   runtimeEvalCallableBoundaryEnabled?: boolean;
   /**
-   * #2928 — structurally canonical `(code,target)` carrier shared by caller
-   * and provider without changing the ordinary closure hierarchy.
+   * #2928 — structurally canonical `(call,get,target,brandA,brandB)` carrier
+   * shared by caller and provider without changing the ordinary closure
+   * hierarchy. Consumers must verify both brands after the structural test.
    */
   runtimeEvalAotCallableCarrier?: {
     structTypeIdx: number;
     funcTypeIdx: number;
+    propertyGetFuncTypeIdx: number;
     trampolineFuncIdx?: number;
+    propertyGetTrampolineFuncIdx?: number;
+    interpretedTrampolineFuncIdx?: number;
   };
+  /** Runtime-eval global-object push/pull helpers have been reserved/filled. */
+  runtimeEvalGlobalSyncReserved?: boolean;
+  runtimeEvalGlobalSyncFilled?: boolean;
+  /** Runtime guard: 1 only while execution is crossing the linked provider. */
+  runtimeEvalProviderActiveGlobalIdx?: number;
+  /** This unit consumes linked runtime eval and therefore needs mutable global
+   * function bindings, not immutable direct-call indices. */
+  runtimeEvalGlobalFunctionBindings?: boolean;
   /**
    * (#2640) When set, `compileArrowAsClosure` widens any callback parameter
    * whose resolved type is a typed WasmGC vec/array (`__vec_*`/`__arr_*`/
@@ -2165,6 +2195,10 @@ export interface CodegenContext {
   moduleGlobals: Map<string, number>;
   /** Script `var` names whose global-object properties are non-configurable. */
   globalObjectVarBindings?: Set<string>;
+  /** Script `let`/`const`/class names in the declarative half of the global
+   * environment. Runtime eval mirrors these through private canonical cells;
+   * they are never exposed as ordinary global-object properties. */
+  globalLexicalBindings?: Set<string>;
   /** Sloppy unresolvable assignment targets discovered before body compilation. */
   sloppyImplicitGlobals?: Set<string>;
   /**

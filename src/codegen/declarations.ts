@@ -96,6 +96,7 @@ import {
 } from "./program-abi-source-callable-planning.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
+import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -898,7 +899,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // keys (`${className}_${member}`) that would collide with it can relocate.
       // Only real `function` declarations participate — class names are tracked
       // separately and must NOT poison the collision set.
-      if (stmt.name) ctx.topLevelFunctionNames.add(name);
+      if (stmt.name) {
+        ctx.topLevelFunctionNames.add(name);
+        ctx.topLevelFunctionDeclarations.set(name, stmt);
+      }
       // #1463 — capture source text for Function.prototype.toString() so that
       // `someFn.toString()` returns the original declaration text instead of
       // the `function () { [native code] }` placeholder. Only top-level
@@ -2419,6 +2423,9 @@ export function compileDeclarations(
         }
         // Closure struct (internal ref) → externref for the externref global.
         initFctx.body.push({ op: "extern.convert_any" });
+        if (ctx.runtimeEvalGlobalFunctionBindings) {
+          emitRuntimeEvalAotCallableAdapter(ctx, initFctx);
+        }
         initFctx.body.push({ op: "global.set", index: liveGlobalIdx });
         seededGlobals.add(liveGlobalIdx);
       }
