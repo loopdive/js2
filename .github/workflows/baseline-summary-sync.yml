@@ -240,6 +240,10 @@ jobs:
               git add -f website/public/benchmarks/results/test262-editions.json || true
             [ -f website/public/benchmarks/results/test262-category-editions.json ] && \
               git add -f website/public/benchmarks/results/test262-category-editions.json || true
+            # #2871 follow-up — per-file edition index consumed by the report page's
+            # Error Patterns / Skipped Tests edition filter.
+            [ -f website/public/benchmarks/results/test262-file-editions.json ] && \
+              git add -f website/public/benchmarks/results/test262-file-editions.json || true
             # #2108 — coercion-site drift baseline, refreshed just above.
             git add -f scripts/coercion-sites-baseline.json 2>/dev/null || true
             # #3131 — LOC-budget baseline, refreshed just above (sole writer).
