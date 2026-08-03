@@ -260,3 +260,17 @@ Allocate a fresh issue id via `node scripts/claim-issue.mjs --allocate --by ttra
   a `descriptor-shape → calls → object-ops → descriptor-shape` cycle.
 - **The §6.2.5.6-step-1-for-a-symbol case**, one file — see above.
 - **#4143**, the 14-file define-over-inherited silent no-op, split out.
+- **#4146**, the JS-host lane's `Object.create` → `__defineProperty_desc` route,
+  split out. The fix here is complete in **standalone** (26/26 local assertions,
+  16/17 test262). In the host lane the eight cases that reach their TypeError
+  *through the applier* rather than through a compile-time throw do not hold,
+  and `Object.defineProperty` is the control that proves this is specific to
+  what `Object.create` routes into rather than a general host gap:
+  `defineProperty + get: fn` gives **9 in both lanes**, while
+  `create + get: fn` gives **NaN on host / 9 on standalone**. #4146 also records
+  the mirror-image gap the same control exposed — standalone
+  `Object.defineProperty` does *not* throw for a non-callable `get` while host
+  does. Neither is a regression from this PR: before it, those descriptors took
+  the static path and were dropped just as silently. `tests/issue-4061.test.ts`
+  therefore asserts them standalone-only, with the measurement inline, instead
+  of encoding the bug in a host assertion.

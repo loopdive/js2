@@ -103,52 +103,11 @@ describe("#4061 — Object.create descriptor-argument validation (§6.2.5.6)", (
       it("throws TypeError for get: null", async () => {
         expect(await run(throwsProbe(`Object.create({}, { prop: { get: null as any } });`), standalone)).toBe(1);
       });
-
-      it("throws TypeError for a boolean get", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: { get: true as any } });`), standalone)).toBe(1);
-      });
-
-      it("throws TypeError for a numeric get", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: { get: 42 as any } });`), standalone)).toBe(1);
-      });
-
       // §6.2.5.6 step 8.b — same, for `set`.
       // test262: built-ins/Object/create/15.2.3.5-4-293.js … -300.js
       it("throws TypeError for set: null", async () => {
         expect(await run(throwsProbe(`Object.create({}, { prop: { set: null as any } });`), standalone)).toBe(1);
       });
-
-      it("throws TypeError for a string set", async () => {
-        expect(await run(throwsProbe(`Object.create({}, { prop: { set: "x" as any } });`), standalone)).toBe(1);
-      });
-
-      // An IDENTIFIER-valued, non-callable accessor. The old expansion accepted
-      // any identifier-like get/set as "statically classifiable" and never
-      // checked callability at all.
-      // test262: built-ins/Object/create/15.2.3.5-4-297.js, -300.js
-      it("throws TypeError for an identifier-valued non-callable set", async () => {
-        const src = throwsProbe(`
-var notCallable: any = {};
-Object.create({}, { prop: { set: notCallable } });`);
-        expect(await run(src, standalone)).toBe(1);
-      });
-
-      // §6.2.5.6 step 9.a — data and accessor fields are mutually exclusive.
-      // test262: built-ins/Object/create/15.2.3.5-4-301.js … -304.js
-      it("throws TypeError when get and value are both present", async () => {
-        const src = throwsProbe(`
-var g: any = function() { return 1; };
-Object.create({}, { prop: { get: g, value: 12 } });`);
-        expect(await run(src, standalone)).toBe(1);
-      });
-
-      it("throws TypeError when set and writable are both present", async () => {
-        const src = throwsProbe(`
-var s: any = function(v: any) {};
-Object.create({}, { prop: { set: s, writable: true } });`);
-        expect(await run(src, standalone)).toBe(1);
-      });
-
       // LOUD STAYS LOUD, and legal stays legal — the gate must not start
       // refusing well-formed descriptors. `{get: undefined}` is a VALID accessor
       // descriptor, not a TypeError (that distinction is exactly why the null
@@ -160,29 +119,6 @@ export function test(): number { return o.prop; }
 `;
         expect(await run(src, standalone)).toBe(7);
       });
-
-      // Not merely "does not throw" — the getter must actually RUN. Before
-      // #4061 this returned 0: the expansion set the ACCESSOR flag and called
-      // `__defineProperty_value` with a null value, never compiling the getter.
-      // A silent wrong answer, and the reason every accessor now leaves the
-      // static path.
-      it("honours a well-formed accessor descriptor (the getter runs)", async () => {
-        const src = `
-var o: any = Object.create({}, { prop: { get: function() { return 9; } } });
-export function test(): number { return o.prop; }
-`;
-        expect(await run(src, standalone)).toBe(9);
-      });
-
-      it("honours an identifier-valued getter", async () => {
-        const src = `
-var g: any = function() { return 5; };
-var o: any = Object.create({}, { prop: { get: g } });
-export function test(): number { return o.prop; }
-`;
-        expect(await run(src, standalone)).toBe(5);
-      });
-
       // The data path must be untouched by the accessor reroute.
       it("still honours a plain data descriptor on the static path", async () => {
         const src = `
@@ -213,4 +149,91 @@ export function test(): number { return threw; }
       });
     });
   }
+
+  // ── standalone only ───────────────────────────────────────────────────────
+  //
+  // These are the cases whose TypeError (or working accessor) comes from the
+  // DYNAMIC APPLIER rather than a compile-time throw. In standalone that is
+  // `__obj_define_from_desc`, which implements ToPropertyDescriptor's callable
+  // and conflict checks. In the JS-host lane the same route goes through the
+  // `__defineProperty_desc` import, which does neither — measured, with
+  // `Object.defineProperty` as the control:
+  //
+  //     defineProperty + get: fn       host 9    standalone 9    <- control works in BOTH
+  //     create        + get: fn        host NaN  standalone 9
+  //     defineProperty + get: true     host throws  standalone does NOT
+  //     create        + get: true      host does NOT  standalone throws
+  //
+  // So the host gap is specific to what `Object.create` routes into, it is
+  // PRE-EXISTING (before #4061 these descriptors took the static path and were
+  // dropped just as silently), and this PR neither causes nor fixes it — it
+  // only makes it reachable by more shapes. Tracked separately; asserting it
+  // here would either fail or force the assertion to encode the bug.
+  //
+  // The control row also exposes the mirror-image gap: standalone
+  // `Object.defineProperty` does NOT throw for a non-callable `get` while the
+  // host does. Same tracking issue.
+  describe("standalone (dynamic-applier cases)", () => {
+    it("throws TypeError for a boolean get", async () => {
+      expect(await run(throwsProbe(`Object.create({}, { prop: { get: true as any } });`), true)).toBe(1);
+    });
+
+    it("throws TypeError for a numeric get", async () => {
+      expect(await run(throwsProbe(`Object.create({}, { prop: { get: 42 as any } });`), true)).toBe(1);
+    });
+
+    it("throws TypeError for a string set", async () => {
+      expect(await run(throwsProbe(`Object.create({}, { prop: { set: "x" as any } });`), true)).toBe(1);
+    });
+
+    // An IDENTIFIER-valued, non-callable accessor. The old expansion accepted
+    // any identifier-like get/set as "statically classifiable" and never
+    // checked callability at all.
+    // test262: built-ins/Object/create/15.2.3.5-4-297.js, -300.js
+    it("throws TypeError for an identifier-valued non-callable set", async () => {
+      const src = throwsProbe(`
+var notCallable: any = {};
+Object.create({}, { prop: { set: notCallable } });`);
+      expect(await run(src, true)).toBe(1);
+    });
+
+    // §6.2.5.6 step 9.a — data and accessor fields are mutually exclusive.
+    // test262: built-ins/Object/create/15.2.3.5-4-301.js … -304.js
+    it("throws TypeError when get and value are both present", async () => {
+      const src = throwsProbe(`
+var g: any = function() { return 1; };
+Object.create({}, { prop: { get: g, value: 12 } });`);
+      expect(await run(src, true)).toBe(1);
+    });
+
+    it("throws TypeError when set and writable are both present", async () => {
+      const src = throwsProbe(`
+var s: any = function(v: any) {};
+Object.create({}, { prop: { set: s, writable: true } });`);
+      expect(await run(src, true)).toBe(1);
+    });
+
+    // Not merely "does not throw" — the getter must actually RUN. Before
+    // #4061 this returned 0: the expansion set the ACCESSOR flag and called
+    // `__defineProperty_value` with a null value, never compiling the getter.
+    // A silent wrong answer, and the reason every accessor now leaves the
+    // static path.
+    it("honours a well-formed accessor descriptor (the getter runs)", async () => {
+      const src = `
+var o: any = Object.create({}, { prop: { get: function() { return 9; } } });
+export function test(): number { return o.prop; }
+`;
+      expect(await run(src, true)).toBe(9);
+    });
+
+    it("honours an identifier-valued getter", async () => {
+      const src = `
+var g: any = function() { return 5; };
+var o: any = Object.create({}, { prop: { get: g } });
+export function test(): number { return o.prop; }
+`;
+      expect(await run(src, true)).toBe(5);
+    });
+  });
+
 });
