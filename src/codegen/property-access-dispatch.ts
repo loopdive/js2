@@ -3306,12 +3306,22 @@ export function finalizeStructAndDynamicMemberGet(
           const fieldIdx = structFields ? structFields.findIndex((f) => f.name === propName) : -1;
           const structTypeIdx = ctx.structMap.get(typeName);
           if (!ctx.classSet.has(typeName) && structFields && fieldIdx >= 0 && structTypeIdx !== undefined) {
-            // Compile the object → struct ref on stack → struct.get the field.
+            // Direct eval may reify a typed object binding into an externref
+            // cell so the interpreter can observe and update it.  Preserve the
+            // object-literal method fast path, but recover the concrete struct
+            // before reading its closure field when that widening happened.
+            const fieldType = structFields[fieldIdx]!.type;
             const objResult = compileExpression(ctx, fctx, expr.expression);
             if (objResult) {
-              fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
-              const fType = structFields[fieldIdx]!.type;
-              return fType;
+              if (objResult.kind === "externref") {
+                emitExternrefToStructGet(ctx, fctx, fieldType, structTypeIdx, fieldIdx, propName, true);
+                if (fieldType.kind === "ref") {
+                  return { kind: "ref_null", typeIdx: fieldType.typeIdx };
+                }
+              } else {
+                fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+              }
+              return fieldType;
             }
           }
           // (#1394) For CLASS instances, return the SAME cached singleton

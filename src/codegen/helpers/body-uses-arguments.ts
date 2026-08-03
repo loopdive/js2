@@ -6,6 +6,7 @@ import { ts } from "../../ts-api.js";
  * TS program is discarded between compiles — no explicit reset needed.
  */
 const cache = new WeakMap<ts.Node, boolean>();
+const valueUseCache = new WeakMap<ts.Node, boolean>();
 
 /**
  * Check if a node tree references the `arguments` identifier.
@@ -38,5 +39,54 @@ export function bodyUsesArguments(node: ts.Node): boolean {
     });
   }
   cache.set(node, false);
+  return false;
+}
+
+/**
+ * Whether a body contains a value-position use of `arguments` that requires
+ * the function's implicit arguments object.
+ *
+ * Generator admission needs a narrower answer than {@link bodyUsesArguments}:
+ * a bare body binding such as `let arguments;` or `var arguments;` is relevant
+ * to EvalDeclarationInstantiation, but does not read or write the implicit
+ * arguments object. Treating the binding name itself as a value use needlessly
+ * routes otherwise native standalone generators through the host buffer.
+ *
+ * This remains deliberately conservative. Only declaration/binding names and
+ * non-computed property names are ignored; every executable reference,
+ * including assignment targets and shorthand properties, still counts.
+ */
+export function bodyNeedsArgumentsObject(node: ts.Node): boolean {
+  const cached = valueUseCache.get(node);
+  if (cached !== undefined) return cached;
+
+  const stack: ts.Node[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (ts.isIdentifier(current) && current.text === "arguments") {
+      const parent = current.parent;
+      const isBindingName =
+        (ts.isVariableDeclaration(parent) || ts.isBindingElement(parent) || ts.isParameter(parent)) &&
+        parent.name === current;
+      const isNonComputedPropertyName =
+        (ts.isPropertyAccessExpression(parent) && parent.name === current) ||
+        (ts.isPropertyAssignment(parent) && parent.name === current) ||
+        (ts.isMethodDeclaration(parent) && parent.name === current) ||
+        (ts.isPropertyDeclaration(parent) && parent.name === current) ||
+        (ts.isGetAccessorDeclaration(parent) && parent.name === current) ||
+        (ts.isSetAccessorDeclaration(parent) && parent.name === current);
+      if (!isBindingName && !isNonComputedPropertyName) {
+        valueUseCache.set(node, true);
+        return true;
+      }
+    }
+    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current)) {
+      continue;
+    }
+    current.forEachChild((child) => {
+      stack.push(child);
+    });
+  }
+  valueUseCache.set(node, false);
   return false;
 }

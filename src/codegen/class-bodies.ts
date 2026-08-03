@@ -34,7 +34,7 @@ import {
 } from "./destructuring-params.js";
 import { emitThrowReferenceError, getFuncParamTypes } from "./expressions/helpers.js";
 import { pushDefaultValue } from "./type-coercion.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import {
   compileNativeGeneratorFunction,
   isNativeGeneratorCandidate,
@@ -2452,7 +2452,7 @@ function compileClassBodiesInner(
         // stem-collision rules.
         !genBodyReferencesSuper(member.body) &&
         !(isStatic && genBodyReferencesThis(member.body)) &&
-        !bodyUsesArguments(member.body) &&
+        !bodyNeedsArgumentsObject(member.body) &&
         isAsyncGenDriveCandidate(ctx, member)
       ) {
         emitAsyncGenerator(ctx, fctx, member);

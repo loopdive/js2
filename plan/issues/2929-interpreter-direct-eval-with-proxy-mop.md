@@ -18,17 +18,31 @@ parent: 1584
 depends_on: [2928, 2925, 2864]
 related: [1355, 2865]
 loc-budget-allow:
+  - src/codegen/class-bodies.ts
   - src/codegen/closures.ts
   - src/codegen/context/types.ts
+  - src/codegen/declarations/import-collector.ts
   - src/codegen/direct-eval-environment.ts
   - src/codegen/expressions/eval-inline.ts
+  - src/codegen/generators-native.ts
+  - src/codegen/helpers/body-uses-arguments.ts
+  - src/codegen/literals.ts
+  - src/codegen/property-access-dispatch.ts
   - src/codegen/statements/nested-declarations.ts
   - src/interp/eval-environment.ts
+  - tests/issue-1102.test.ts
 func-budget-allow:
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
   - src/codegen/closures/arrow-phases.ts::planClosureCaptures
   - src/codegen/closures.ts::compileLiftedClosureBody
+  - src/codegen/declarations/import-collector.ts::unifiedVisitNode
   - src/codegen/expressions/eval-inline.ts::tryStaticEvalInline
   - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/generators-native.ts::isNativeGeneratorCandidate
+  - src/codegen/generators-native.ts::isNativeGeneratorExpressionShape
+  - src/codegen/helpers/body-uses-arguments.ts::bodyNeedsArgumentsObject
+  - src/codegen/literals.ts::compileObjectLiteralForStruct
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
   - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
 ---
 
@@ -336,21 +350,41 @@ inside a parameter initializer and prefers its live parameter-environment
 local over an eagerly registered same-named body function. Eval's
 parameter-environment `arguments = "param"` cell therefore remains visible to
 the default-parameter arrow while the later function-body
-`function arguments(){}` binding remains the body binding. The 44 unchanged
-compile errors are 36 method/generator invalid-Wasm cases and 8 generator host-
-import leaks, not regressions from declaration instantiation.
+`function arguments(){}` binding remains the body binding.
+
+The compile-error follow-on closes the remaining 44 files. Run
+`20260803-044922` first moved the cohort to **182 / 198**: method values read
+from direct-eval-reified object bindings now recover their concrete WasmGC
+struct from `externref` before reading the closure field. This eliminated all
+36 invalid-Wasm modules; 28 became passes and 8 exposed generator host imports
+that the earlier validation error had masked, leaving 16 generator-family
+compile errors and no runtime failures.
+
+Run `20260803-045435` is the final measured gate: **198 / 198 (100%)**, with
+zero runtime failures, compile errors, host-import leaks, timeouts, skips, or
+missing rows. Generator admission now distinguishes a bare body binding named
+`arguments` (`let arguments;` / `var arguments;`) from an executable use that
+requires the implicit arguments object. The 12 synchronous generator
+function-expression/method cases and 4 async-generator method cases therefore
+use the existing native standalone generator paths; their default-parameter
+direct eval still throws the required catchable `SyntaxError` at call time.
+
+Across the fixed path set, the pre-slice `20260803-015311` baseline's 52 passes
+remain passes, all 102 runtime failures and all 44 compile errors become passes,
+and there are zero pass-to-fail transitions. Focused direct-eval coverage is
+29/29 and the relevant native generator suites are 60/60 after excluding one
+unrelated mixed async-generator warning assertion that reproduces unchanged on
+the exact stacked baseline; typecheck passes. Generated Test262 reports remain
+outside the source commit.
 
 ### Next-agent order
 
-1. Close the 44 unchanged compile errors in the collision cohort: 36 invalid-
-   Wasm method/generator cases and 8 generator host-import leaks. Keep the
-   current 154 runtime passes as a no-regression floor.
-2. Finish Annex-B block-function initialization and update semantics. The
+1. Finish Annex-B block-function initialization and update semantics. The
    largest residual clusters are missing function-valued outer updates,
    skipped-declaration initialization, and existing-global descriptor cases.
-3. Close mapped-arguments descriptor severing and `new.target`/`super`/method
+2. Close mapped-arguments descriptor severing and `new.target`/`super`/method
    context before attempting the full differential checkbox.
-4. Continue the original issue scope with the object environment record for
+3. Continue the original issue scope with the object environment record for
    `with`, the jointly-owned #1355 MOP seam, and #2864 generator suspend/resume.
 
 Do not reinterpret the 473/816 figure as the default CI baseline: it requires
