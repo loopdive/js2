@@ -1,7 +1,9 @@
 ---
 id: 4120
 title: "`typeof <builtin method>` does not answer \"function\" — 119 standalone + 43 host tests die in the harness before testing anything (SILENT WRONG ANSWER)"
-status: ready
+status: done
+completed: 2026-08-03
+assignee: ttraenkler/dev-4120-typeof
 sprint: current
 created: 2026-08-03
 updated: 2026-08-03
@@ -177,6 +179,141 @@ issue must go through an indirection.**
 - [ ] The standalone `isConstructor invoked with a non-function value` bucket
       goes to 0 for implemented builtins; residual rows are re-attributed to
       "builtin not implemented" and counted separately.
-- [ ] Host-lane 43 is probed and triaged into implemented vs unimplemented
+- [x] Host-lane 43 is probed and triaged into implemented vs unimplemented
       before any host-side work; the unimplemented arm is closed as out of
-      scope here.
+      scope here. *(triage below; 12 unimplemented, 31 real — and a DIFFERENT
+      mechanism, so no host-side work was done here.)*
+
+## Population re-measure — 2026-08-03, baselines refreshed
+
+Re-harvested with `--force` (`loopdive/js2wasm-baselines` @ `2026-08-03 13:19`,
+= js2 main `609c995ce`; the overnight interpreter work had moved them):
+
+| lane | matching rows | non-pass official rows |
+| --- | ---: | ---: |
+| standalone | **118** (was 119) | 16,232 |
+| default (host) | **43** (unchanged) | 12,509 |
+
+Populations 43,505 official standalone / 43,488 official host.
+
+### Standalone 118 bucketed by CARRIER KIND
+
+The issue predicted the carrier representation differs by kind. It does — into
+three kinds, not two, and only ONE of them is what this fix addresses:
+
+| carrier kind | rows | what `typeof` answered (through a parameter) | why |
+| --- | ---: | --- | --- |
+| reified builtin **constructor** with a carrier | **16** | `"object"` | the carrier is a plain `$Object` (#3006/#2907) — **fixed here** |
+| top-level global with **no carrier at all** | 29 | `"object"` (i.e. `typeof null`) | the bare identifier lowers to `ref.null.extern` |
+| **prototype method** (`Array.prototype.map`, `%TypedArray%.prototype.*`) | 69 | `"undefined"` | the member READ itself does not resolve (#4119 / #3571) |
+| static method on `%TypedArray%` (`of` / `from`) | 2 | — | same shape as the row above |
+| local-harness instantiation failure (`Symbol`, `Proxy`) | 2 | — | not measurable in this harness (see below) |
+
+The control that pins the mechanism: **static builtin METHODS already answered
+`"function"`** — `Array.from`, `Object.keys`, `Math.max` all pass, because they
+reify through `ensureStandaloneBuiltinStaticMethodClosure`, whose value IS a
+closure-wrapper struct the typeof natives already `ref.test`. The constructor
+carrier is the row that has no such struct.
+
+## Fix — the narrowest site
+
+`$Object.flags` gains two internal-slot bits, `OBJ_FLAG_CALLABLE` (0x10) and
+`OBJ_FLAG_CONSTRUCTOR` (0x20), set on the reified-constructor carrier at
+materialization time (`pushBuiltinCtorOwnPropSeed`, which already declines for
+`Math`/`JSON`/`Reflect` — they have no spec ctor arity, and `typeof Math ===
+"object"` is the correct answer). One shared predicate arm reads them in
+`__typeof_function` / `__typeof_object` / `__typeof` and in
+`__reflect_is_constructor`.
+
+Why a flag and not a struct subtype: `$Object` is deliberately CLOSED — opening
+it for a subtype triggered WasmGC iso-recursive canonicalization and a
+wrong-arity `struct.new` (#1100/#2009). The flag leaves the carrier's
+representation, identity and own properties byte-for-byte unchanged, and every
+other `flags` reader masks only its own bit.
+
+**Two bits, not one, on purpose.** Every carrier branded today is both callable
+and constructible, so one bit would work *now* — but `isNaN`/`parseInt` are
+callable and NOT constructible, so a later callable-only brand sharing the bit
+would answer `isConstructor(isNaN) === true`: a loud `TypeError` refusal turned
+into a silent wrong answer, i.e. the same defect class this issue is about.
+
+## Flips — standalone, `runTest262File`, main `609c995ce` → `5dc3a76ea`
+
+| | before | after |
+| --- | ---: | ---: |
+| pass | **0 / 118** | **16 / 118** |
+| still `isConstructor invoked with a non-function value` | 118 | **100** |
+| local-harness instantiation failure | 0 | 2 |
+
+The 16 are exactly the branded set: `Set` `Map` `WeakMap` `WeakSet` `WeakRef`
+`RegExp` `Array` `Object` `Error` `DisposableStack` `FinalizationRegistry`
+`SuppressedError` + the six `NativeErrors/*`. The remaining 100 are the
+no-carrier (29) and prototype-method (69) kinds plus the 2 `%TypedArray%`
+statics — a different mechanism each, see residual below.
+
+### Regressions: 0 measured
+
+66-file control set drawn from currently-PASSING standalone baseline rows under
+`language/expressions/typeof/`, `Reflect/construct/`, `Object/{freeze,seal,
+isFrozen,isSealed,isExtensible,preventExtensions,getOwnPropertyDescriptor,
+defineProperty}/`, `JSON/`, `Set/`, `Map/`, `Math/` — the areas that touch the
+`flags` word, the typeof natives or `IsConstructor`.
+
+50 pass. The other 16 fail with ONE signature,
+`Import #0 "js2wasm:runtime-eval": module is not an object or function` — an
+instantiation-time missing import module in this LOCAL harness, not a
+regression. **Positive control:** the same 16 files, same lane (standalone),
+same harness, run against `upstream/main` `609c995ce` with `src/` reverted →
+**0/16, identical signature**. So the instrument, not the change. (The 2
+unmeasurable rows in the bucket table above are the same defect.)
+
+Verified separately: all three writers of `$Object.flags` are OR-only
+(`object-runtime-integrity.ts`, `json-codec-native.ts`, and this brand), so no
+path copies the word wholesale and the brand cannot leak to a clone.
+
+## Residual — what is NOT fixed, and why it is a separate mechanism
+
+- **29 top-level globals with no carrier at all** — `isNaN` `isFinite`
+  `parseInt` `parseFloat`, the four URI globals, `escape`/`unescape`,
+  `DataView` `ArrayBuffer` `String` `Number` `Boolean` `Date` `Promise`
+  `BigInt`, and the 12 `TypedArrayConstructors/*`. Their bare identifier read
+  lowers to `ref.null.extern` (verified in the disassembly), so there is no
+  object to brand. Fixing them means EXTENDING the carrier set
+  (`BUILTIN_CONSTRUCTOR_IDENTITY_NAMES` / `SUPPORTED_STATIC_PROPS`), which
+  flips those reads from falsy-null to a truthy object — a real blast radius
+  that needs its own full-lane measurement. Follow-up, not a widening of this
+  PR.
+- **69 prototype methods** — `typeof Array.prototype.map` answers
+  `"undefined"`: the member read itself does not resolve. This is the issue's
+  own "mode 1", and it belongs with #4119 / #3571, not here.
+
+## Host-arm triage (the 43) — VERDICT: do not treat as one mechanism
+
+Probed the named builtin's existence in the JS host itself (host mode delegates
+to it), then `typeof` through a parameter for a sample.
+
+**12 of 43 — builtin does not exist in the JS host either.** `typeof undefined
+!== "function"` is the CORRECT answer and the row fails for a legitimate
+missing-builtin reason. Out of scope for #4120:
+`ArrayBuffer.prototype.{sliceToImmutable,transferToImmutable}`,
+`Iterator.prototype.join`, `Map.prototype.{getOrInsert,getOrInsertComputed}`,
+`WeakMap.prototype.{getOrInsert,getOrInsertComputed}`, `Math.sumPrecise`,
+`Promise.{allKeyed,allSettledKeyed}`, `Error.prototype.stack` getter+setter.
+
+**31 of 43 — a real gap, but a DIFFERENT mechanism from the one fixed here.**
+Measured host-mode `typeof` through a parameter: `Set` and `Array` answer
+`"function"` (correct), while `AggregateError` `BigInt` `WeakRef` `escape`
+`eval` `parseInt` all answer `"object"`. So the host lane has its own
+bare-identifier value-read gap that this standalone-gated brand cannot touch —
+the honest scoped host bucket is 31, not 43, and it needs its own issue.
+
+No host-side change was made; the host emit is byte-identical (the brand is
+`ctx.standalone`-gated at `pushBuiltinCtorOwnPropSeed`).
+
+## Test Results
+
+`tests/issue-4120.test.ts` — 29/29 pass. Every `typeof` assertion goes through
+a one-parameter indirection; the in-place spelling is asserted only as a
+CONTROL that must keep working (it is constant-folded and never touches the
+carrier — the trap this issue recorded, and
+[[reference_constant_folded_probe_tests_the_static_path]]).

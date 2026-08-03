@@ -245,21 +245,35 @@ jobs:
               exit 0
             fi
 
-            # (#4132) --no-verify: this job installs dependencies, so husky's
-          # pre-commit hook is live, and it runs `test:changed-root`, which needs
-          # a merge base with `origin/main`. The checkout is `fetch-depth: 1`
-          # with `persist-credentials: false` and the push remote is `deploykey`,
-          # so `origin/main` does not exist and the hook aborts the commit:
-          #   "changed-root-tests: cannot resolve a merge base with origin/main"
-          # The sibling `benchmark-refresh` is immune only structurally — its
-          # promote job is separate and never runs `pnpm install`, so no hook is
-          # installed. This workflow is deliberately a SINGLE job, so it has to
-          # opt out explicitly. Running the changed-root suite over generated
-          # JSON artifacts would be meaningless anyway.
-          git commit -q --no-verify -m "chore(ci): refresh npm-compat artifacts [skip ci]"
-            if git push deploykey HEAD:main; then
+            # (#4132/#4140) --no-verify on BOTH the commit and the push. This job
+            # installs dependencies, so husky's hooks are live:
+            #   pre-commit runs `test:changed-root`, which needs a merge base with
+            #     `origin/main`;
+            #   pre-push  runs the oracle ratchet, which fails here too.
+            # The checkout is `fetch-depth: 1` with `persist-credentials: false`
+            # and the push remote is `deploykey`, so `origin/main` does not exist
+            # and neither hook can do its job. The sibling `benchmark-refresh` is
+            # immune only structurally — its promote job is separate and never
+            # runs `pnpm install`, so no hook is installed. This workflow is
+            # deliberately a SINGLE job and has to opt out explicitly. Running
+            # either check over generated JSON artifacts would be meaningless.
+            git commit -q --no-verify -m "chore(ci): refresh npm-compat artifacts [skip ci]"
+
+            # (#4140) Distinguish a genuine mid-promotion race from any other push
+            # failure. Replaying only helps when main moved under us; for
+            # anything else the replay is guaranteed to fail identically, and it
+            # buries the real error under five rounds of a MISLEADING message.
+            # That is exactly how a rejected pre-push hook read as "main advanced
+            # mid-promotion" for a full cycle.
+            push_err="$(mktemp)"
+            if git push --no-verify deploykey HEAD:main 2>"$push_err"; then
               echo "Published npm-compat artifacts measured at ${SOURCE_SHA}."
               exit 0
+            fi
+            cat "$push_err"
+            if ! grep -Eqi 'non-fast-forward|fetch first|behind its remote|stale info' "$push_err"; then
+              echo "::error::npm-compat push failed for a reason that replaying cannot fix (see above)."
+              exit 1
             fi
             echo "push rejected (main advanced mid-promotion); replaying onto the new head — attempt ${attempt}/5."
           done

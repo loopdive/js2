@@ -81,7 +81,13 @@ import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./r
 import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
-import { buildBagValueSeed, buildRealElementSeed, buildVecDeletePrologue } from "./vec-bag-seed.js";
+import {
+  buildBagGopdOrMiss,
+  buildBagValueSeed,
+  buildRealElementSeed,
+  buildVecDeletePrologue,
+  fillVecHasOwnHelpers,
+} from "./vec-bag-seed.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
@@ -615,70 +621,6 @@ export function reserveVecOverlayPrime(ctx: CodegenContext): number | undefined 
   });
   ctx.funcMap.set(PRIME_NAME, funcIdx);
   return funcIdx;
-}
-
-function fillVecHasOwnHelpers(ctx: CodegenContext, vecBaseIdx: number): void {
-  const vecGopdIdx = ctx.funcMap.get(GOPD_NAME);
-  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
-  if (vecGopdIdx === undefined || isUndefinedIdx === undefined) return;
-  // These predicates are independent natives, not wrappers around gOPD.
-  // Consult the overlay so implicit indices and companion properties are own.
-  for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
-    const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
-    if (!fn) continue;
-    fn.body.unshift(
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: vecBaseIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "local.get", index: 1 },
-          { op: "call", funcIdx: vecGopdIdx },
-          { op: "call", funcIdx: isUndefinedIdx },
-          { op: "i32.eqz" },
-          { op: "return" },
-        ],
-      },
-    );
-  }
-
-  const propertyIsEnumerableFn = ctx.mod.functions.find((candidate) => candidate.name === "__propertyIsEnumerable");
-  const externGetIdx = ctx.funcMap.get("__extern_get");
-  const unboxBooleanIdx = ctx.funcMap.get("__unbox_boolean");
-  if (propertyIsEnumerableFn && externGetIdx !== undefined && unboxBooleanIdx !== undefined) {
-    const descLocal = 2 + propertyIsEnumerableFn.locals.length;
-    propertyIsEnumerableFn.locals.push({ name: "__vec_desc", type: { kind: "externref" } });
-    propertyIsEnumerableFn.body.unshift(
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "ref.test", typeIdx: vecBaseIdx },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 0 },
-          { op: "local.get", index: 1 },
-          { op: "call", funcIdx: vecGopdIdx },
-          { op: "local.tee", index: descLocal },
-          { op: "call", funcIdx: isUndefinedIdx },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-          },
-          { op: "local.get", index: descLocal },
-          ...nativeStringLiteralInstrs(ctx, "enumerable"),
-          { op: "extern.convert_any" },
-          { op: "call", funcIdx: externGetIdx },
-          { op: "call", funcIdx: unboxBooleanIdx },
-          { op: "return" },
-        ],
-      },
-    );
-  }
 }
 
 /**
@@ -1383,7 +1325,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             { op: "return" },
           ],
         },
-        ...missExtern(),
+        ...buildBagGopdOrMiss(ctx, 6, missExtern()), // (#4010 S3) the #3537 bag, then the miss
       ];
     }
   }

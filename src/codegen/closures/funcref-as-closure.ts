@@ -10,6 +10,7 @@
  */
 
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import { captureSourceSlot } from "./capture-source-slot.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -157,9 +158,7 @@ function emitMemoizedNestedFnClosure(
         fctx.body.push({ op: "ref.as_non_null" });
       }
     } else {
-      const capSourceIdx = fctx.liftedCaptureNames?.has(cap.name)
-        ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)
-        : cap.outerLocalIdx;
+      const capSourceIdx = captureSourceSlot(fctx, cap);
       fctx.body.push({ op: "local.get", index: capSourceIdx });
     }
   }

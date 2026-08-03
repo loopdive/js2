@@ -201,3 +201,27 @@ reproducible outside the harness and was not chased here).
 
 Net honest effect on this population: +3 real passes, −2 passes that were never
 verifying anything.
+
+---
+
+## The user-declared-vs-builtin predicate this issue was blocked on DOES exist (2026-08-03, #4098 G1)
+
+`fillClosedStructOwnPropertyNamesArms`'s header records that re-sharing its arms
+with `__object_keys` was measured at **−5** and reverted (`Object.keys(new Date(0))`
+answered `["timestamp"]`, `Object.keys(/ab/)` answered 7 internal RegExp fields),
+and that a proper fix "needs a principled user-declared-vs-builtin struct
+predicate, which does not exist yet".
+
+**It exists: `ctx.classDeclarationMap`** (`codegen/context/types.ts`). It is
+written *only* by `collectClassDeclaration` (`class-bodies.ts:609`), keyed by
+class name — the same key space as `ctx.structFields` — so
+`ctx.classDeclarationMap.has(structName)` is true exactly for structs originating
+in a user-source `class` declaration or class expression. Builtin carriers (Date,
+RegExp, Error) are never registered there.
+
+That is a **structural** screen, not a name-shape heuristic — which is precisely
+the property #4086 records `startsWith("__")` as lacking. It removes the stated
+blocker for the deferred `Object.keys` re-share.
+
+Pointer only — no arm built here. Found while scoping #4098 (whose stage 4 needs
+the same screen); see that issue's G1 handoff for the measured context.

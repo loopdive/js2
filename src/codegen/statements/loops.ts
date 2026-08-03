@@ -3470,7 +3470,15 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // Fallback: static unrolling. Used in standalone for a closed-shape receiver
     // (WasmGC struct) — the static key set is exact — and as the historical
     // fallback when no enumeration primitive is available.
-    const exprType = ctx.checker.getTypeAtLocation(stmt.expression);
+    // (#4138) Strip null/undefined before reading the static shape: a receiver
+    // that flowed through `Array.pop()` / an optional access types as
+    // `T | undefined`, and a UNION's getProperties() is the COMMON property
+    // set — empty here — so the loop silently enumerated nothing (the runtime
+    // null case is already handled by the guards the loop emits). This is the
+    // narrow slice of #4138; a receiver that is genuinely POLYMORPHIC at
+    // runtime still unrolls one static shape, and closed structs remain
+    // non-enumerable through the dynamic runtime — both stay open in #4138.
+    const exprType = ctx.checker.getTypeAtLocation(stmt.expression).getNonNullableType();
     const props = exprType.getProperties();
     if (props.length === 0) return;
     for (const prop of props) {

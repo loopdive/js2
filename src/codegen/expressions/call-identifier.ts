@@ -9,6 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
+import { captureSourceSlot } from "../closures/capture-source-slot.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
@@ -2013,9 +2014,7 @@ export function compileIdentifierCall(
           // Stage 1's blanket localMap-first lookup remains reverted. The one
           // sound cross-frame case is a name explicitly recorded as THIS
           // lifted function's leading capture parameter.)
-          const capSourceIdx = fctx.liftedCaptureNames?.has(cap.name)
-            ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)
-            : cap.outerLocalIdx;
+          const capSourceIdx = captureSourceSlot(fctx, cap);
           fctx.body.push({ op: "local.get", index: capSourceIdx });
           // Coerce capture value to expected param type if they differ
           const expectedCapType = captureParamTypes?.[capIdx];
