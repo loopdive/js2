@@ -60,6 +60,29 @@ and note that an admin/PAT `CLEAN` really is a bypass artifact
 token still does not tell you the enqueuer's view. That part of the original
 note survives.
 
+## RE-CONFIRMED LIVE 2026-08-02 (#4046) — the FALSIFIED marking is itself falsified
+
+The App-token `enqueuePullRequest` was refused with the exact string
+`Pull request refusing to allow a GitHub App to create or update workflow
+'.github/workflows/baseline-summary-sync.yml'` — attribution clean, not
+correlational: same mutation, same PR, same instant, refused for the App,
+**accepted for the user PAT** (scope `workflow` present). The old entry
+attributed the effect to fork-head; the refusal string names the App and the
+file, so the mechanism is now unambiguous.
+
+**Scope of the restriction — measured end-to-end, and narrower than feared:**
+
+> **The App block applies to the ENQUEUE mutation only. Once enqueued (by
+> PAT), the merge queue MERGES workflow-touching PRs fine** — #4046 went
+> position 3 → merge_group green → merged 18:06:02Z with no further friction.
+
+So the shepherd's one-shot PAT enqueue is a **complete remedy** for this
+class, not a step that moves the block to merge time. Standing rule until an
+admin grants the App the `workflows` permission: every workflow-touching PR
+needs the shepherd's manual one-shot; `auto-enqueue` will refuse it and —
+because the run still concludes `success` — the refusal is visible only in
+the job log (via #4038's telemetry; before that, nothing printed at all).
+
 Related: [[reference_never_push_to_a_queued_pr_it_ejects_to_the_back]] ·
 [[reference_autoenqueue_grace0_races_mergestate_recompute]] ·
 [[reference_ci_status_feed_retired_use_required_checks]]

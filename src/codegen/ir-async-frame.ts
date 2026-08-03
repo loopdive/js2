@@ -6,10 +6,11 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ERROR_FIELD, MODE_FIELD, PARAM_FIELD_OFFSET, SENT_FIELD, sanitizeTypeName } from "./frame-core.js";
 import type { AsyncHostCapabilityId } from "../ir/async-runtime-providers.js";
 import { irTypeBindingKey } from "../ir/abi-bindings.js";
-import { asVal, type IrFuncRef, type IrFunction, type IrInstr, type IrType } from "../ir/nodes.js";
+import { asVal, type IrFuncRef, type IrFunction, type IrType } from "../ir/nodes.js";
 import type { FieldDef, ValType, WasmFunction } from "../ir/types.js";
 import { coerceType } from "./shared.js";
 import { definedFuncAt } from "./func-space.js";
+import { allocLocal } from "./context/locals.js";
 
 export interface PreparedIrAsyncFrameResolver {
   resolveFunc(ref: IrFuncRef): number;
@@ -38,84 +39,15 @@ function preparedHostImports(fn: IrFunction, resolver: PreparedIrAsyncFrameResol
     promiseResolveIdx: requireCapability("async.promise.resolve"),
     settleResolveIdx: requireCapability("async.promise.settle.fulfill"),
     settleRejectIdx: requireCapability("async.promise.settle.reject"),
+    ...(resolved.has("async.value.undefined") ? { undefinedIdx: requireCapability("async.value.undefined") } : {}),
   };
 }
 
-type IrCall = Extract<IrInstr, { readonly kind: "call" }>;
-
-interface ExactSingleAwaitCalls {
-  readonly entry: IrCall;
-  readonly continuation: {
-    readonly call: IrCall;
-    readonly paramType: IrType;
-    readonly resultType: IrType;
-  } | null;
-}
-
-function exactSingleAwaitCalls(fn: IrFunction): ExactSingleAwaitCalls {
-  const plan = fn.asyncPlan;
-  const runtime = fn.asyncRuntime;
-  if (
-    fn.funcKind !== "async" ||
-    !plan ||
-    !runtime ||
-    plan.states.length !== 2 ||
-    runtime.states.length !== 2 ||
-    plan.spills.length !== 0 ||
-    plan.handlers.length !== 0
-  ) {
-    throw new Error(`IR async function ${fn.name} is outside the prepared single-await frame slice`);
-  }
-  const semanticEntry = plan.states[0]!;
-  const entry = runtime.states[0]!;
-  const continuation = plan.states[1]!;
-  if (
-    semanticEntry.id !== plan.entry ||
-    entry.id !== semanticEntry.id ||
-    entry.body.length !== 1 ||
-    entry.body[0]?.kind !== "call" ||
-    semanticEntry.terminator.kind !== "suspend" ||
-    semanticEntry.terminator.awaited !== entry.body[0].result ||
-    semanticEntry.terminator.live.length !== 0 ||
-    semanticEntry.terminator.rejected.kind !== "reject" ||
-    semanticEntry.terminator.resume.state !== continuation.id ||
-    continuation.resume?.source !== "fulfilled" ||
-    continuation.terminator.kind !== "resolve" ||
-    entry.body[0].args.length !== fn.params.length ||
-    entry.body[0].args.some((value, index) => value !== fn.params[index]!.value)
-  ) {
-    throw new Error(`IR async function ${fn.name} has a malformed single-await plan`);
-  }
-  const continuationCall =
-    continuation.body.length === 1 && continuation.body[0]?.kind === "call" ? continuation.body[0] : null;
-  const identityContinuation =
-    continuation.body.length === 0 && continuation.terminator.value === continuation.resume.value;
-  const calledContinuation =
-    continuationCall !== null &&
-    continuationCall.args.length === 1 &&
-    continuationCall.args[0] === continuation.resume.value &&
-    continuationCall.result !== null &&
-    continuationCall.resultType !== null &&
-    continuation.terminator.value === continuationCall.result;
-  if (!identityContinuation && !calledContinuation) {
-    throw new Error(`IR async function ${fn.name} has a malformed single-await continuation`);
-  }
-  let preparedContinuation: ExactSingleAwaitCalls["continuation"] = null;
-  if (continuationCall) {
-    const resultType = continuationCall.resultType;
-    if (resultType === null) {
-      throw new Error(`IR async function ${fn.name} has an untyped prepared continuation call`);
-    }
-    preparedContinuation = {
-      call: continuationCall,
-      paramType: continuation.resume.type,
-      resultType,
-    };
-  }
-  return {
-    entry: entry.body[0],
-    continuation: preparedContinuation,
-  };
+interface PreparedIrAsyncFrameLayout {
+  readonly info: AsyncFrameInfo;
+  readonly valueNames: ReadonlyMap<number, string>;
+  readonly valueTypes: ReadonlyMap<number, IrType>;
+  readonly physicalSpillNames: ReadonlyMap<number, string>;
 }
 
 function buildFrameInfo(
@@ -123,7 +55,25 @@ function buildFrameInfo(
   fn: IrFunction,
   params: readonly { readonly name: string; readonly type: ValType }[],
   hostImports: HostAsyncImports,
-): AsyncFrameInfo {
+): PreparedIrAsyncFrameLayout {
+  const plan = fn.asyncPlan;
+  if (!plan) throw new Error(`IR async function ${fn.name} has no prepared plan`);
+  const valueTypes = new Map(plan.values.map((entry) => [Number(entry.value), entry.type] as const));
+  const valueNames = new Map<number, string>();
+  for (let index = 0; index < plan.params.length; index++) {
+    valueNames.set(Number(plan.params[index]!.value), params[index]!.name);
+  }
+  const paramValues = new Set(plan.params.map((param) => Number(param.value)));
+  const physicalSpillNames = new Map<number, string>();
+  const physicalSpills = plan.spills.filter((spill) => !paramValues.has(Number(spill.value)));
+  const spillNames = physicalSpills.map((spill) => `__ir_async_spill_${Number(spill.value)}`);
+  const spillTypes = physicalSpills.map((spill) => preparedAsyncValueType(ctx, fn, spill.type));
+  for (let index = 0; index < physicalSpills.length; index++) {
+    const value = Number(physicalSpills[index]!.value);
+    const name = spillNames[index]!;
+    valueNames.set(value, name);
+    physicalSpillNames.set(value, name);
+  }
   const functionName = `${fn.name}__ir`;
   const fields: FieldDef[] = [
     { name: "state", type: { kind: "i32" }, mutable: true },
@@ -132,6 +82,7 @@ function buildFrameInfo(
     { name: "abrupt", type: { kind: "externref" }, mutable: true },
     { name: "error", type: { kind: "externref" }, mutable: true },
     ...params.map((param) => ({ name: `param_${param.name}`, type: param.type, mutable: false })),
+    ...spillNames.map((name, index) => ({ name: `spill_${name}`, type: spillTypes[index]!, mutable: true })),
     { name: "result_promise", type: { kind: "externref" }, mutable: true },
   ];
   const stateName = `$AsyncFrame_${sanitizeTypeName(functionName)}`;
@@ -140,8 +91,9 @@ function buildFrameInfo(
   ctx.structMap.set(stateName, stateTypeIdx);
   ctx.typeIdxToStructName.set(stateTypeIdx, stateName);
   ctx.structFields.set(stateName, fields);
-  const resultPromiseFieldIdx = PARAM_FIELD_OFFSET + params.length;
-  return {
+  const spillFieldOffset = PARAM_FIELD_OFFSET + params.length;
+  const resultPromiseFieldIdx = spillFieldOffset + spillNames.length;
+  const info: AsyncFrameInfo = {
     functionName,
     stateTypeIdx,
     modeFieldIdx: MODE_FIELD,
@@ -150,21 +102,15 @@ function buildFrameInfo(
     paramNames: params.map((param) => param.name),
     paramTypes: params.map((param) => param.type),
     paramFieldOffset: PARAM_FIELD_OFFSET,
-    spillNames: [],
-    spillTypes: [],
-    spillFieldOffset: resultPromiseFieldIdx,
+    spillNames,
+    spillTypes,
+    spillFieldOffset,
     resultPromiseFieldIdx,
     promiseTypeIdx: -1,
     host: true,
     hostImports,
   };
-}
-
-interface PreparedContinuation {
-  readonly funcIdx: number;
-  readonly paramType: ValType;
-  readonly resultType: ValType;
-  readonly fromExternFuncIdx: number | null;
+  return { info, valueNames, valueTypes, physicalSpillNames };
 }
 
 function sameValType(left: ValType, right: ValType): boolean {
@@ -178,7 +124,9 @@ function sameValType(left: ValType, right: ValType): boolean {
 function preparedAsyncValueType(ctx: CodegenContext, fn: IrFunction, type: IrType): ValType {
   const scalar = asVal(type);
   if (scalar && scalar.kind !== "ref" && scalar.kind !== "ref_null") return scalar;
-  if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
+  if (type.kind === "extern" || type.kind === "callable" || type.kind === "string" || type.kind === "dynamic") {
+    return { kind: "externref" };
+  }
   if (type.kind !== "vec") {
     throw new Error(`IR async function ${fn.name} has unsupported continuation type ${type.kind}`);
   }
@@ -225,65 +173,173 @@ function preparedAsyncFromExternFuncIdx(
 }
 
 function preparedCfg(
+  ctx: CodegenContext,
   fn: IrFunction,
-  helperFuncIdx: number,
-  continuation: PreparedContinuation | null,
-  info: AsyncFrameInfo,
+  resolver: PreparedIrAsyncFrameResolver,
+  layout: PreparedIrAsyncFrameLayout,
 ): AsyncCfgPlan {
+  const plan = fn.asyncPlan;
+  const runtime = fn.asyncRuntime;
+  if (
+    fn.funcKind !== "async" ||
+    !plan ||
+    !runtime ||
+    plan.handlers.length !== 0 ||
+    runtime.states.length !== plan.states.length ||
+    plan.states.some((state, index) => state.id !== index || runtime.states[index]?.id !== state.id)
+  ) {
+    throw new Error(`IR async function ${fn.name} has a malformed prepared state graph`);
+  }
+  const typeOf = (value: number): IrType => {
+    const type = layout.valueTypes.get(value);
+    if (!type) throw new Error(`IR async frame ${fn.name} lost value ${value}`);
+    return type;
+  };
+  const nameOf = (value: number): string => layout.valueNames.get(value) ?? `__ir_async_value_${value}`;
+  const localOf = (fctx: FunctionContext, value: number): number => {
+    const name = nameOf(value);
+    const existing = fctx.localMap.get(name);
+    if (existing !== undefined) return existing;
+    return allocLocal(fctx, name, preparedAsyncValueType(ctx, fn, typeOf(value)));
+  };
+  const emitGet = (fctx: FunctionContext, value: number): ValType => {
+    const type = preparedAsyncValueType(ctx, fn, typeOf(value));
+    fctx.body.push({ op: "local.get", index: localOf(fctx, value) });
+    return type;
+  };
+  const emitStateBody = (stateIndex: number, fctx: FunctionContext): void => {
+    const semantic = plan.states[stateIndex]!;
+    const state = runtime.states[stateIndex]!;
+    for (const instr of state.body) {
+      switch (instr.kind) {
+        case "const": {
+          if (instr.result === null || instr.resultType === null) {
+            throw new Error(`IR async frame ${fn.name} has an untyped constant`);
+          }
+          if (instr.value.kind === "f64") fctx.body.push({ op: "f64.const", value: instr.value.value });
+          else if (instr.value.kind === "i32") fctx.body.push({ op: "i32.const", value: instr.value.value });
+          else if (instr.value.kind === "bool") fctx.body.push({ op: "i32.const", value: instr.value.value ? 1 : 0 });
+          else if (instr.value.kind === "null") fctx.body.push({ op: "ref.null.extern" });
+          else throw new Error(`IR async frame ${fn.name} cannot emit constant ${instr.value.kind}`);
+          fctx.body.push({ op: "local.set", index: localOf(fctx, Number(instr.result)) });
+          break;
+        }
+        case "call": {
+          for (const arg of instr.args) emitGet(fctx, Number(arg));
+          fctx.body.push({ op: "call", funcIdx: resolver.resolveFunc(instr.target) });
+          if (instr.result !== null) {
+            if (instr.resultType === null) throw new Error(`IR async frame ${fn.name} has an untyped call result`);
+            fctx.body.push({ op: "local.set", index: localOf(fctx, Number(instr.result)) });
+          }
+          break;
+        }
+        default:
+          throw new Error(`IR async frame ${fn.name} cannot emit state instruction ${instr.kind}`);
+      }
+    }
+    for (const update of semantic.updates ?? []) {
+      emitGet(fctx, Number(update.value));
+      fctx.body.push({ op: "local.set", index: localOf(fctx, Number(update.target)) });
+    }
+    if (semantic.terminator.kind === "resolve" && semantic.terminator.value !== undefined) {
+      const identityResume =
+        semantic.resume?.value === semantic.terminator.value && semantic.body.length === 0 && !semantic.updates?.length;
+      if (!identityResume) {
+        const frameLocal = fctx.localMap.get("__frame");
+        if (frameLocal === undefined) throw new Error(`IR async frame ${fn.name} lost its frame parameter`);
+        fctx.body.push({ op: "local.get", index: frameLocal });
+        const from = emitGet(fctx, Number(semantic.terminator.value));
+        coerceType(ctx, fctx, from, { kind: "externref" });
+        fctx.body.push({ op: "struct.set", typeIdx: layout.info.stateTypeIdx, fieldIdx: SENT_FIELD });
+      }
+    }
+  };
+  const emitResume = (stateIndex: number, fctx: FunctionContext): void => {
+    const state = plan.states[stateIndex]!;
+    if (!state.resume) return;
+    const identityResume =
+      state.terminator.kind === "resolve" &&
+      state.terminator.value === state.resume.value &&
+      state.body.length === 0 &&
+      !state.updates?.length;
+    if (identityResume) return;
+    const frameLocal = fctx.localMap.get("__frame");
+    if (frameLocal === undefined) throw new Error(`IR async frame ${fn.name} lost its frame parameter`);
+    fctx.body.push({ op: "local.get", index: frameLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: layout.info.stateTypeIdx, fieldIdx: SENT_FIELD });
+    const targetType = preparedAsyncValueType(ctx, fn, state.resume.type);
+    const fromExtern = preparedAsyncFromExternFuncIdx(ctx, fn, state.resume.type, targetType, resolver);
+    if (fromExtern === null) coerceType(ctx, fctx, { kind: "externref" }, targetType);
+    else fctx.body.push({ op: "call", funcIdx: fromExtern });
+    fctx.body.push({ op: "local.set", index: localOf(fctx, Number(state.resume.value)) });
+  };
+  const restoreSpillNames = new Map<number, Set<string>>();
+  for (const state of plan.states) {
+    if (state.terminator.kind !== "suspend") continue;
+    const target = Number(state.terminator.resume.state);
+    const names = restoreSpillNames.get(target) ?? new Set<string>();
+    for (const value of state.terminator.live) {
+      const name = layout.physicalSpillNames.get(Number(value));
+      if (name) names.add(name);
+    }
+    restoreSpillNames.set(target, names);
+  }
   return {
     handlers: [],
-    states: [
-      {
-        id: 0,
-        resumeFrom: null,
-        lead: [],
-        terminator: {
-          kind: "suspend",
-          resumeState: 1,
-          handler: 0,
-          awaited: {
-            emit: (_ctx, fctx) => {
-              for (const param of fn.params) {
-                const local = fctx.localMap.get(param.name ?? "");
-                if (local === undefined) throw new Error(`IR async frame lost parameter ${param.name ?? "<unnamed>"}`);
-                fctx.body.push({ op: "local.get", index: local });
-              }
-              fctx.body.push({ op: "call", funcIdx: helperFuncIdx });
-              return { kind: "externref" };
-            },
-          },
-        },
-      },
-      {
-        id: 1,
-        resumeFrom: { binding: null, handler: 0 },
-        lead: [],
-        ...(continuation
-          ? {
-              emit: (ctx: CodegenContext, fctx: FunctionContext): void => {
-                const frameLocal = fctx.localMap.get("__frame");
-                if (frameLocal === undefined) throw new Error(`IR async frame ${fn.name} lost its frame parameter`);
-                fctx.body.push({ op: "local.get", index: frameLocal });
-                fctx.body.push({ op: "local.get", index: frameLocal });
-                fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: SENT_FIELD });
-                if (continuation.fromExternFuncIdx === null) {
-                  coerceType(ctx, fctx, { kind: "externref" }, continuation.paramType);
-                } else {
-                  fctx.body.push({ op: "call", funcIdx: continuation.fromExternFuncIdx });
-                }
-                fctx.body.push({ op: "call", funcIdx: continuation.funcIdx });
-                coerceType(ctx, fctx, continuation.resultType, { kind: "externref" });
-                fctx.body.push({ op: "struct.set", typeIdx: info.stateTypeIdx, fieldIdx: SENT_FIELD });
+    states: plan.states.map((state, index) => {
+      const terminal = state.terminator;
+      const terminator = (() => {
+        switch (terminal.kind) {
+          case "suspend":
+            return {
+              kind: "suspend" as const,
+              resumeState: Number(terminal.resume.state),
+              handler: 0,
+              spillNames: terminal.live.flatMap((value) => {
+                const name = layout.physicalSpillNames.get(Number(value));
+                return name ? [name] : [];
+              }),
+              awaited: {
+                emit: (_ctx: CodegenContext, fctx: FunctionContext): ValType => emitGet(fctx, Number(terminal.awaited)),
               },
-            }
+            };
+          case "goto":
+            return { kind: "goto" as const, target: Number(terminal.target) };
+          case "branch":
+            return {
+              kind: "condGoto" as const,
+              cond: {
+                emit: (_ctx: CodegenContext, fctx: FunctionContext): ValType =>
+                  emitGet(fctx, Number(terminal.condition)),
+              },
+              whenTrue: Number(terminal.ifTrue),
+              whenFalse: Number(terminal.ifFalse),
+              handler: 0,
+            };
+          case "resolve":
+            return terminal.value === undefined
+              ? ({ kind: "settleUndefined" } as const)
+              : ({ kind: "settleSent" } as const);
+          default:
+            throw new Error(`IR async frame ${fn.name} cannot emit terminator ${terminal.kind}`);
+        }
+      })();
+      return {
+        id: index,
+        resumeFrom: state.resume ? { binding: null, handler: 0 } : null,
+        ...(state.resume ? { restoreSpillNames: [...(restoreSpillNames.get(index) ?? [])] } : {}),
+        lead: [],
+        ...(state.resume
+          ? { postDeliverEmit: (_ctx: CodegenContext, fctx: FunctionContext) => emitResume(index, fctx) }
           : {}),
-        terminator: { kind: "settleSent" },
-      },
-    ],
+        emit: (_ctx: CodegenContext, fctx: FunctionContext) => emitStateBody(index, fctx),
+        terminator,
+      };
+    }),
   };
 }
 
-/** Lower one prepared two-state async function through the shared frame engine. */
+/** Lower one verified prepared async graph through the shared N-state frame engine. */
 export function lowerPreparedIrAsyncFunction(
   ctx: CodegenContext,
   fn: IrFunction,
@@ -300,8 +356,6 @@ export function lowerPreparedIrAsyncFunction(
   ) {
     throw new Error(`IR async function ${fn.name} does not match its Promise-returning allocated ABI`);
   }
-  const calls = exactSingleAwaitCalls(fn);
-  const helperFuncIdx = resolver.resolveFunc(calls.entry.target);
   const params = fn.params.map((param, index) => ({
     name: param.name ?? `p${index}`,
     type: signature.params[index]!,
@@ -319,38 +373,11 @@ export function lowerPreparedIrAsyncFunction(
     labelMap: new Map(),
     savedBodies: [],
   };
-  const info = buildFrameInfo(ctx, fn, params, preparedHostImports(fn, resolver));
-  const continuation = calls.continuation
-    ? (() => {
-        const funcIdx = resolver.resolveFunc(calls.continuation.call.target);
-        const target = definedFuncAt(ctx, funcIdx);
-        const targetType = target ? ctx.mod.types[target.typeIdx] : undefined;
-        if (
-          !target ||
-          !targetType ||
-          targetType.kind !== "func" ||
-          targetType.params.length !== 1 ||
-          targetType.results.length !== 1
-        ) {
-          throw new Error(`IR async function ${fn.name} has a malformed prepared continuation callable ABI`);
-        }
-        const paramType = preparedAsyncValueType(ctx, fn, calls.continuation.paramType);
-        const resultType = preparedAsyncValueType(ctx, fn, calls.continuation.resultType);
-        if (!sameValType(targetType.params[0]!, paramType) || !sameValType(targetType.results[0]!, resultType)) {
-          throw new Error(`IR async function ${fn.name} continuation layout disagrees with its callable ABI`);
-        }
-        return {
-          funcIdx,
-          paramType,
-          resultType,
-          fromExternFuncIdx: preparedAsyncFromExternFuncIdx(ctx, fn, calls.continuation.paramType, paramType, resolver),
-        };
-      })()
-    : null;
+  const layout = buildFrameInfo(ctx, fn, params, preparedHostImports(fn, resolver));
   const previous = ctx.currentFunc;
   ctx.currentFunc = fctx;
   try {
-    emitPreparedAsyncFrameStateMachine(ctx, fctx, info, preparedCfg(fn, helperFuncIdx, continuation, info));
+    emitPreparedAsyncFrameStateMachine(ctx, fctx, layout.info, preparedCfg(ctx, fn, resolver, layout));
   } finally {
     ctx.currentFunc = previous;
   }

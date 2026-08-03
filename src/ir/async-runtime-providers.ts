@@ -19,9 +19,16 @@ export const ASYNC_RUNTIME_FEATURES = Object.freeze([
   "scheduler.enqueue",
 ] as const);
 
-export type AsyncRuntimeFeature = (typeof ASYNC_RUNTIME_FEATURES)[number];
+export const ASYNC_OPTIONAL_RUNTIME_FEATURES = Object.freeze(["value.undefined"] as const);
 
-const ASYNC_RUNTIME_FEATURE_SET: ReadonlySet<string> = new Set(ASYNC_RUNTIME_FEATURES);
+export type AsyncRuntimeFeature =
+  | (typeof ASYNC_RUNTIME_FEATURES)[number]
+  | (typeof ASYNC_OPTIONAL_RUNTIME_FEATURES)[number];
+
+const ASYNC_RUNTIME_FEATURE_SET: ReadonlySet<string> = new Set([
+  ...ASYNC_RUNTIME_FEATURES,
+  ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
+]);
 
 export function isAsyncRuntimeFeature(value: string): value is AsyncRuntimeFeature {
   return ASYNC_RUNTIME_FEATURE_SET.has(value);
@@ -34,6 +41,7 @@ export const ASYNC_HOST_CAPABILITY_IDS = Object.freeze([
   "async.promise.resolve",
   "async.promise.settle.fulfill",
   "async.promise.settle.reject",
+  "async.value.undefined",
 ] as const);
 
 export type AsyncHostCapabilityId = (typeof ASYNC_HOST_CAPABILITY_IDS)[number];
@@ -76,6 +84,15 @@ export const ASYNC_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze([
   adapter("async.promise.settle.reject", "Promise_settle_reject", ["externref", "externref"], ["externref"]),
 ]);
 
+export const ASYNC_OPTIONAL_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze([
+  adapter("async.value.undefined", "__get_undefined", [], ["externref"]),
+]);
+
+export const ALL_ASYNC_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze([
+  ...ASYNC_HOST_ADAPTERS,
+  ...ASYNC_OPTIONAL_HOST_ADAPTERS,
+]);
+
 function capabilities(...ids: readonly AsyncHostCapabilityId[]): readonly AsyncHostCapabilityId[] {
   return Object.freeze([...ids].sort());
 }
@@ -86,6 +103,7 @@ export const ASYNC_RUNTIME_PROVIDER_IDS = Object.freeze([
   "host.promise.resolve",
   "host.promise.settle.fulfill",
   "host.promise.settle.reject",
+  "host.value.undefined",
   "host.scheduler.drain",
   "host.scheduler.enqueue",
 ] as const);
@@ -130,6 +148,12 @@ export const ASYNC_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Obj
     "host.promise.capability.create",
     "promise.capability.create",
     capabilities("async.promise.capability.create"),
+    HOST_CAPABILITY_IMPLEMENTATION,
+  ),
+  provider(
+    "host.value.undefined",
+    "value.undefined",
+    capabilities("async.value.undefined"),
     HOST_CAPABILITY_IMPLEMENTATION,
   ),
   provider(

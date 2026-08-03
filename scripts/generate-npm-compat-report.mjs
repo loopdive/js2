@@ -37,6 +37,7 @@ import { runHarness as runAcornOfficialSuite } from "../tests/dogfood/acorn-offi
 import { runHarness as runMarked } from "../tests/dogfood/marked-harness.mjs";
 import { runHarness as runClsx } from "../tests/dogfood/clsx-harness.mjs";
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
+import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs";
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
@@ -1329,6 +1330,11 @@ async function buildPackageEntry({ name, version, issue, entryFile, shape, repor
     // as evidence the package compiles (#3977).
     ...(entryIsBarrel ? { entryIsBarrel: true } : {}),
     tests,
+    // (#4127) The correctness axis, kept separate from compile/validation so a
+    // package that compiles to a valid module but computes the WRONG ANSWER
+    // cannot read as green. `unverified` means nothing is known — it is never
+    // a synonym for "fine".
+    correctness: correctnessVerdict(tests, { compiles: report?.compile?.success !== false }),
     perf,
     knownBugs: knownBugsFor(name),
   };
@@ -1611,6 +1617,10 @@ packages.sort(
 
 const summary = {
   generatedAt: new Date().toISOString(),
+  // (#4127) How much of the corpus carries correctness evidence at all. The
+  // `unverified` list is named, not just counted, so the size of the blind spot
+  // is legible rather than implied.
+  correctness: correctnessRollup(packages),
   note: "Only packages with a committed, reproducible tests/dogfood harness are listed. Original upstream tests are preferred; when npm omits them, the card says so instead of substituting harness-authored tests.",
   popularity: {
     metric: "weekly npm downloads",

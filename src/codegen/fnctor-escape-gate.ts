@@ -388,16 +388,23 @@ function collectFnctorOwnFields(ctorSym: ts.Symbol): Set<string> {
  *
  * Conservative: an unrecognised use that COULD be a typed field read is treated
  * as `"typed"` (keep), never as `"dynamic"`.
+ *
+ * (#4123) `useNode` is the expression standing for the instance at this site.
+ * For a BOUND instance that is the identifier reading the binding; for an
+ * INLINE `new F()` it is the `NewExpression` itself (after unwrapping any
+ * paren/`as`/`!` layers). Both are ordinary expression nodes, and every rule
+ * below only inspects `useNode.parent` plus `useNode` as a checker *location* —
+ * so one ladder serves both and the two call sites cannot drift apart again.
  */
 function classifyUse(
   checker: ts.TypeChecker,
-  idNode: ts.Identifier,
+  useNode: ts.Expression,
   ownFields: ReadonlySet<string>,
 ): "typed" | "dynamic" | "neutral" {
-  const parent = idNode.parent;
+  const parent = useNode.parent;
 
   // `inst.<name>` — property access.
-  if (ts.isPropertyAccessExpression(parent) && parent.expression === idNode) {
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === useNode) {
     const name = parent.name.text;
     // `inst.method.call(...)` / `inst.method.apply(...)` reflective dispatch is
     // dynamic ONLY when `inst` is the receiver ARG, not the method holder; a bare
@@ -411,7 +418,7 @@ function classifyUse(
   }
 
   // `inst[expr]` — element access. Computed/indexed reads are dynamic.
-  if (ts.isElementAccessExpression(parent) && parent.expression === idNode) {
+  if (ts.isElementAccessExpression(parent) && parent.expression === useNode) {
     return "dynamic";
   }
 
@@ -422,7 +429,7 @@ function classifyUse(
   if (
     ts.isBinaryExpression(parent) &&
     parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    parent.right === idNode &&
+    parent.right === useNode &&
     (ts.isPropertyAccessExpression(parent.left) || ts.isElementAccessExpression(parent.left))
   ) {
     return "dynamic";
@@ -430,7 +437,7 @@ function classifyUse(
 
   // `someMethod.call(inst, …)` / `.apply(inst, …)` — `inst` is the receiver arg
   // of a reflective generic-method call → array-like dynamic use.
-  if (ts.isCallExpression(parent) && parent.arguments.length > 0 && parent.arguments[0] === idNode) {
+  if (ts.isCallExpression(parent) && parent.arguments.length > 0 && parent.arguments[0] === useNode) {
     const callee = parent.expression;
     if (ts.isPropertyAccessExpression(callee) && GENERIC_METHOD_CALL.has(callee.name.text)) {
       return "dynamic";
@@ -443,12 +450,12 @@ function classifyUse(
   // (the callee's own uses would be classified at that param's site in a fuller
   // interprocedural pass — out of scope for S1's conservative single-level view).
   if (ts.isCallExpression(parent)) {
-    const argIdx = parent.arguments.indexOf(idNode);
+    const argIdx = parent.arguments.indexOf(useNode);
     if (argIdx >= 0) {
       const sig = checker.getResolvedSignature(parent);
       const paramSym = sig?.parameters[argIdx];
       if (paramSym) {
-        const pType = checker.getTypeOfSymbolAtLocation(paramSym, idNode);
+        const pType = checker.getTypeOfSymbolAtLocation(paramSym, useNode);
         if (isAnyOrUnknown(pType)) return "dynamic";
       }
       return "neutral";
@@ -1306,37 +1313,27 @@ export function analyzeFnctorEscapeGate(checker: ts.TypeChecker, sourceFile: ts.
       // Inline `new F().X` — classify the single immediate consuming use,
       // unwrapping any `( … )` / `as` / `!` wrappers between the NewExpression
       // and its consumer (`(new Con()).x` has a ParenthesizedExpression parent).
+      //
+      // (#4123) This arm used to re-implement a SUBSET of {@link classifyUse}'s
+      // ladder and, in doing so, dropped its call-ARGUMENT rule: `f(new F())`
+      // passed to an `any`/`unknown` parameter was classified `keep-static`
+      // while the otherwise identical `var o = new F(); f(o)` was classified
+      // `dynamic` ⇒ `reconstruct`. That asymmetry is a silent MISCOMPILE, not a
+      // missed optimization: a `keep-static` instance is lowered to the bespoke
+      // `$__fnctor_<F>` struct, which carries own fields but NO `$proto` link,
+      // so the callee's dynamic `o.k()` (`__extern_method_call` → `__extern_get`
+      // own+prototype walk) finds nothing and yields `undefined` — the call
+      // returns `null`/`0` with no trap. Delegating to `classifyUse` restores
+      // the symmetry; its ladder is a strict superset of the one that was here.
       let inner: ts.Expression = newExpr;
       let parent = inner.parent;
       while (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent) || ts.isNonNullExpression(parent)) {
         inner = parent;
         parent = parent.parent;
       }
-      if (ts.isPropertyAccessExpression(parent) && parent.expression === inner) {
-        if (ownFields.has(parent.name.text)) sawTyped = true;
-        else sawDynamic = true;
-      } else if (ts.isElementAccessExpression(parent) && parent.expression === inner) {
-        sawDynamic = true;
-      } else if (
-        ts.isBinaryExpression(parent) &&
-        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        parent.right === inner &&
-        (ts.isPropertyAccessExpression(parent.left) || ts.isElementAccessExpression(parent.left))
-      ) {
-        // `return table[key] = new F()` is Acorn's keyword-token factory shape.
-        // The constructed value escapes through an open object table, so keep
-        // its carrier dynamic across both the assignment result and later read.
-        sawDynamic = true;
-      } else if (
-        ts.isCallExpression(parent) &&
-        parent.arguments.length > 0 &&
-        parent.arguments[0] === inner &&
-        ts.isPropertyAccessExpression(parent.expression) &&
-        GENERIC_METHOD_CALL.has(parent.expression.name.text)
-      ) {
-        // `some.call(new F(), …)` inline receiver.
-        sawDynamic = true;
-      }
+      const c = classifyUse(checker, inner, ownFields);
+      if (c === "typed") sawTyped = true;
+      else if (c === "dynamic") sawDynamic = true;
       // any other inline use → neither; stays keep-static.
     }
 

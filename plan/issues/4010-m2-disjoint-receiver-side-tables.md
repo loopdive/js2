@@ -1,10 +1,11 @@
 ---
 id: 4010
 title: "M2 — own properties on a non-$Object receiver live in TWO DISJOINT side tables that clobber each other; unify them"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-03
+assignee: ttraenkler/dev-4010-s2
 priority: high
 horizon: l
 feasibility: medium
@@ -345,3 +346,158 @@ never a redirection.
   construction**; `.tmp/delete-control.mts` is the precondition-gated version.
   S2 should promote the corrected control into a committed test rather than
   leave it in `.tmp/`.
+
+---
+
+# S2 — DONE. What landed, what it cost, and what S3 inherits
+
+Slice table:
+
+| slice | status | PR | what it changed |
+| --- | --- | --- | --- |
+| **S1′** clobber fix | done | #4058 | `defineProperty` stopped destroying the bag's value |
+| **S2** tombstones | **done** | this PR | `delete` is real on array + function own-property stores |
+| **S3** visibility | not started | — | `hasOwn`/`in`/gOPD/`keys` widening; **gated**, see below |
+
+## The mechanism, and the half the sketch did not predict
+
+The sketch's option (1) — "tombstone flag on the companion `$PropEntry`" — was
+**not** what the defect needed, and building it that way would have fixed
+nothing. The measured root cause is one level up:
+
+> `__delete_property`'s non-`$Object` arm **returned 1 (success) without
+> deleting anything.** `delete a.q` on an array reported `true` while `a.q`
+> stayed `12`. A loud claim of success covering a silent wrong answer.
+
+The values live in a per-receiver `$Object` **bag** (`vec-props.ts` #3537 for
+arrays, `closure-props.ts` #3468 for functions). Because a bag **is** an
+ordinary `$Object`, all of OrdinaryDelete already exists for it —
+`FLAG_TOMBSTONE`, the §10.1.10 configurability preflight, the count/tombstone
+bookkeeping. **No delete semantics were re-implemented.** The new native
+(`src/codegen/carrier-bag-delete.ts`) only finds the right bag and delegates,
+which is why a non-configurable entry still refuses correctly and why the
+refusal is byte-identical to the `$Object` control.
+
+**The half the sketch flagged as a "risk" turned out to be half the defect, and
+it needed its own fix.** The sketch said a companion-only tombstone *might*
+leave `__extern_get` answering from the bag. It does, always:
+
+```js
+a.q = 12;
+Object.defineProperty(a, "q", { writable: true });   // now in BOTH tables
+delete a.q;                                          // companion tombstoned
+a.q                                                  // => 12   (measured)
+```
+
+`__obj_find` **skips** tombstoned entries, so tombstoning the companion simply
+restores the fall-through to the bag. So the vec arm now **shadows the bag**
+after a successful companion delete. Confirmed by measurement, not by reading
+the sketch.
+
+## Why the result is tri-state, and why that is the whole safety argument
+
+`__carrier_bag_delete` returns **-1 not handled / 0 refused / 1 deleted**.
+Collapsing `-1` into `1` reproduces the original defect exactly — "I could not
+see anything" becoming indistinguishable from "there was nothing". Keeping them
+apart is also what makes the change **strictly additive**: the arm fires only
+for a key the bag *demonstrably holds*, so every receiver/key the old code
+answered for keeps its answer bit-for-bit.
+
+In particular the **#2896 builtin-fn arm still runs FIRST and returns**, so
+`delete fn.name` / `delete fn.length` never reach the new code. That is
+deliberate and load-bearing: `built-ins/**/{name,length}.js` is the ~700-file
+population that cost #4055 v1 **-684** host-free passes, and S2 does not touch
+it. A committed regression guard pins it.
+
+## Acceptance — the delete column, on TWO derivations each
+
+Every cell is precondition-gated (a failed precondition returns a distinct code
+so the case fails loudly instead of measuring nothing), and every compiled
+module is asserted to have **zero imports**.
+
+| cell | derivation | before | after |
+| --- | --- | --- | --- |
+| array named expando | value read | **STILL PRESENT** | genuinely absent |
+| array named expando | **bag's own record** — an attribute-only redefine re-seeds from the bag via S1′, never touching the read lane | bag still held `12` | bag empty |
+| array, key in BOTH tables | value read | **STILL PRESENT** | genuinely absent |
+| array, companion-only key | value read + gOPD | already correct | unchanged |
+| function expando | value read | **STILL PRESENT** | genuinely absent |
+| function expando | **closure bag's own record** — `__desc_has_own` via #4055's function-as-descriptor path, a different consumer entirely | bag still held `42` | bag empty |
+| `$Object` **CONTROL** | value read · hasOwn · non-configurable refusal | 3/3 correct | 3/3 correct |
+
+The delete's own return value is the reason one derivation was never enough:
+before S2 it already answered **`true`** on both arms while the value survived.
+
+Promoted into `tests/issue-4010.test.ts` (26 cases, incl. 3 SCOPE PINs and 2
+regression guards). `.tmp/matrix4010.mts`'s known-misleading delete column is
+superseded by it.
+
+## Byte-neutrality and blast radius
+
+- **gc/host mode: byte-identical** — same sha256 on a mixed probe module
+  exercising array/function/object deletes and for-in. Only standalone and wasi
+  binaries change (+166 / +133 bytes).
+- **No visibility surface moved.** `hasOwnProperty` / `__object_hasOwn` /
+  `__vec_gopd` / `Object.keys` reach is unchanged on both receivers, pinned by
+  the SCOPE PIN cases. S1′'s two pins are untouched; S2 adds three more.
+- `src/codegen/vec-overlay.ts` **shrank** (its `__delete_property` arm moved to
+  `vec-bag-seed.ts`, which now owns both directions of the seam); `object-runtime.ts`
+  shrank by 19 lines. No `loc-budget-allow` grant was needed or taken.
+
+## Found while measuring — NOT fixed here, and not caused here
+
+**`Reflect.deleteProperty` throws for every non-`$Object` receiver**, including
+plain success cases (`Reflect.deleteProperty(arr, "q")` on an ordinary expando).
+Verified **identical on base and after** — pre-existing, independent of S2. The
+`delete` operator is unaffected; only the `Reflect` spelling is. Worth a
+separate issue; deliberately out of S2's scope because fixing it would move a
+surface this slice promised not to move.
+
+## What S3 inherits
+
+1. **Deletability is now real, so visibility widening can pay out.** The -684
+   mechanism was `propertyHelper.js` getting a longer runway and then dying at
+   the `configurable` wall because `delete` did not work. That wall is gone for
+   array/function *named* keys.
+2. **The composition pattern to preserve** is still #4055 v2's: consult the
+   existing helper **first**, the bag **only on `false`** — additive, never a
+   redirection. `carrier-bag-delete.ts` follows it and is the shape to copy;
+   `__carrier_bag_delete`'s tri-state is the same idea for a non-boolean answer.
+3. **The gate is unchanged and non-negotiable**: run the entire
+   `built-ins/**/{name,length}.js` stratum (~700 files) explicitly, before the
+   PR goes near the queue.
+4. **Restore-after-delete is the new thing to check.** `verifyProperty` deletes
+   a property and then restores it with `Object.defineProperty`. On an **array**
+   that round-trips (the companion takes the redefine). On a **function** it does
+   **not**: `Object.defineProperty(fn, "p", …)` still lands nowhere (#4055's
+   finding), so a harness-driven delete of a function expando is now
+   irreversible where it used to be a silent no-op. S2's scoped sweep found no
+   file that hits this, but S3 widens exactly the visibility that gives
+   `propertyHelper` the runway to reach it — measure it explicitly.
+5. Class instances / Date / RegExp / Error remain **out of scope**: they have no
+   bag, so `__carrier_bag_delete` answers `-1` for them and nothing changed.
+   Their expando substrate is still greenfield (matrix rows 4-7).
+
+# S2 RESULT — landed (PR #4063, merged 73ee7169b, 2026-08-03)
+
+Root cause was NOT the sketch's companion-tombstone: `__obj_find` skips
+tombstoned entries, so tombstoning alone restores the fall-through to the bag
+(measured — the value survived). The real defect was one level up:
+**`__delete_property`'s non-`$Object` arm returned 1 (success) without deleting
+anything.** Fix: `src/codegen/carrier-bag-delete.ts` finds the receiver's bag
+and delegates to the existing `$Object` OrdinaryDelete; the vec arm also
+SHADOWS the bag (do not "simplify" that away). Tri-state result (`-1` not
+handled / `0` refused / `1` deleted) — collapsing `-1` into `1` IS the original
+defect.
+
+**Certifying numbers (merge_group on the merged state, 43,487 files):
+improvements=13, wasm-change regressions=0, net +13.** The
+`built-ins/**/{name,length}.js` −684 stratum untouched (the #2896 builtin-fn
+arm runs first). Full evidence table: PR #4063's comment thread.
+
+S3 inherits (see task): visibility widening now legal; the ~700-file stratum
+control mandatory pre-merge; NEW hazard — `verifyProperty` deletes-then-
+restores and a define on a FUNCTION still lands nowhere, so a harness delete of
+a function expando is irreversible where it was a no-op; S3 widens exactly the
+runway that reaches it. S2's partial local stratum data was measured against a
+superseded tree — not reusable; run the control fresh, both arms.

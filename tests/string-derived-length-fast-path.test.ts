@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
+import { buildImports, instantiateWasm } from "../src/runtime.js";
 
 async function compileAndRun(
   source: string,
@@ -18,6 +19,26 @@ async function compileAndRun(
   const { instance } = await WebAssembly.instantiate(result.binary, {});
   const runWat = result.wat?.slice(result.wat.indexOf("(func $run"), result.wat.indexOf('(export "run"')) ?? "";
   return { value: (instance.exports.run as () => number)(), runWat, wat: result.wat ?? "" };
+}
+
+async function compileHostAndRun(source: string): Promise<{
+  value: number;
+  runWat: string;
+  imports: Awaited<ReturnType<typeof compile>>["imports"];
+}> {
+  const result = await compile(source, {
+    fileName: "host-derived-length.ts",
+    nativeStrings: false,
+    optimize: 4,
+    emitWat: true,
+    emitWatOnlyFunctions: ["run"],
+  });
+  expect(result.success, result.success ? "" : result.errors.map((error) => error.message).join("; ")).toBe(true);
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+  const wat = result.wat ?? "";
+  const runWat = wat.slice(wat.indexOf("(func $run"), wat.indexOf('(export "run"'));
+  return { value: (instance.exports.run as () => number)(), runWat, imports: result.imports };
 }
 
 describe("native string derived-length fast paths", () => {
@@ -150,5 +171,122 @@ describe("native string derived-length fast paths", () => {
     const helperStart = wat.indexOf("(func $__str_charCodeAt");
     expect(helperStart).toBe(-1);
     expect(runWat).not.toContain("call ");
+  });
+
+  it("applies immutable derived-result proofs to host strings without crossing the JS boundary", async () => {
+    const { value, runWat } = await compileHostAndRun(`
+      export function run(): number {
+        const csv: string[] = ["a,b,c", "c,a,b"];
+        const words: string[] = ["Hello", "World"];
+        const phrases: string[] = ["a fox", "fox a"];
+        const padded: string[] = [" x ", "\tx\t"];
+        const tagged: string[] = ["hello-a-end", "hello-b-end"];
+        const searched: string[] = ["a needle", "needle b"];
+        let sum = 0;
+        for (let i = 0; i < 10; i = i + 1) {
+          const parts = csv[i % 2].split(",");
+          sum = sum + parts.length;
+          sum = sum + words[i % 2].toLowerCase().length;
+          sum = sum + words[i % 2].toUpperCase().length;
+          sum = sum + phrases[i % 2].replace("fox", "cat").length;
+          sum = sum + padded[i % 2].trim().length;
+          if (tagged[i % 2].startsWith("hello")) sum = sum + 1;
+          if (tagged[i % 2].endsWith("end")) sum = sum + 1;
+          const index = searched[i % 2].indexOf("needle");
+          if (index >= 0) sum = sum + 1;
+        }
+        return sum;
+      }
+    `);
+    expect(value).toBe(220);
+    for (const helper of [
+      "string_split",
+      "string_toLowerCase",
+      "string_toUpperCase",
+      "string_replace",
+      "string_trim",
+      "string_startsWith",
+      "string_endsWith",
+      "string_indexOf",
+    ]) {
+      expect(runWat).not.toContain(`call $${helper}`);
+    }
+  });
+
+  it("represents non-escaping host substrings as offset and length descriptors", async () => {
+    const { value, runWat } = await compileHostAndRun(`
+      export function run(): number {
+        const text = "abcdefghijklmnopqrstuvwxyz";
+        let hash = 0;
+        for (let i = 0; i < 10; i = i + 1) {
+          const part = text.substring(i % 5, 20 + (i % 6));
+          hash = hash + part.length;
+          hash = hash + part.charCodeAt(0);
+          hash = hash + part.charCodeAt(part.length - 1);
+        }
+        return hash;
+      }
+    `);
+    const text = "abcdefghijklmnopqrstuvwxyz";
+    let expected = 0;
+    for (let i = 0; i < 10; i++) {
+      const part = text.substring(i % 5, 20 + (i % 6));
+      expected += part.length;
+      expected += part.charCodeAt(0);
+      expected += part.charCodeAt(part.length - 1);
+    }
+    expect(value).toBe(expected);
+    expect(runWat).not.toContain("call $string_substring");
+    expect(runWat).toContain("(loop");
+  });
+
+  it("retains the outer split while scalarizing nested length-only splits", async () => {
+    const { value, runWat, imports } = await compileHostAndRun(`
+      export function run(): number {
+        const documents: string[] = [
+          "name,age,city\\nAlice,30,Berlin\\nBob,25,Munich",
+          "name,age,city\\nBob,25,Munich\\nAlice,30,Berlin"
+        ];
+        let total = 0;
+        for (let documentIndex = 0; documentIndex < 2; documentIndex = documentIndex + 1) {
+          const lines = documents[documentIndex].split("\\n");
+          for (let lineIndex = 1; lineIndex < lines.length; lineIndex = lineIndex + 1) {
+            const columns = lines[lineIndex].split(",");
+            total = total + columns.length;
+          }
+        }
+        return total;
+      }
+    `);
+    expect(value).toBe(12);
+    const splitFuncIndex = imports
+      .filter((descriptor) => descriptor.kind === "func")
+      .findIndex((descriptor) => descriptor.module === "env" && descriptor.name === "string_split");
+    expect(splitFuncIndex).toBeGreaterThanOrEqual(0);
+    const splitCalls = runWat.match(new RegExp(`call ${splitFuncIndex}(?:\\s|$)`, "g")) ?? [];
+    expect(splitCalls).toHaveLength(1);
+    expect(runWat.match(/\(loop/g)).toHaveLength(2);
+  });
+
+  it("retains both runtime splits when nested row widths are non-uniform", async () => {
+    const { value, runWat, imports } = await compileHostAndRun(`
+      export function run(): number {
+        const documents: string[] = ["a,b\\nc"];
+        const lines = documents[0].split("\\n");
+        let total = 0;
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex = lineIndex + 1) {
+          const columns = lines[lineIndex].split(",");
+          total = total + columns.length;
+        }
+        return total;
+      }
+    `);
+    expect(value).toBe(3);
+    const splitFuncIndex = imports
+      .filter((descriptor) => descriptor.kind === "func")
+      .findIndex((descriptor) => descriptor.module === "env" && descriptor.name === "string_split");
+    expect(splitFuncIndex).toBeGreaterThanOrEqual(0);
+    const splitCalls = runWat.match(new RegExp(`call ${splitFuncIndex}(?:\\s|$)`, "g")) ?? [];
+    expect(splitCalls).toHaveLength(2);
   });
 });

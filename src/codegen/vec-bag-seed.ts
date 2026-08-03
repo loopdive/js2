@@ -58,9 +58,30 @@
  * Reached only from `fillVecOverlayHelpers`, which returns early unless
  * `ctx.standalone`, so gc/host output is unchanged. Degrades to emitting nothing
  * when `vec-props.ts` reserved no helpers (a module with no expando writes).
+ *
+ * ## (#4010 S2) The DELETE side of the same seam
+ * `buildVecDeletePrologue` below is the vec arm of `__delete_property`, moved
+ * here from `vec-overlay.ts` so both directions of the seam — seeding a value IN
+ * and taking a property OUT — have one owner. Its S2 change is the mirror of the
+ * seed's: the companion is not the whole store, so
+ *
+ *  - when the companion has **no** entry for the key, the #3537 bag is consulted
+ *    before reporting the historical no-op success (this is the `STILL PRESENT`
+ *    cell of #4010's capability matrix, measured on both arms); and
+ *  - when the companion **did** hold the key and the delete succeeded, the bag is
+ *    **shadowed** as well. Without that step a tombstoned companion entry simply
+ *    makes `__obj_find` return null again and `__extern_get`'s named-key prologue
+ *    falls through to the bag, which still holds the value — measured, not
+ *    assumed: `a.q=12; Object.defineProperty(a,"q",{writable:true}); delete a.q`
+ *    left `a.q === 12` with a companion-only tombstone.
+ *
+ * Both steps go through `__carrier_bag_delete` (`carrier-bag-delete.ts`), whose
+ * tri-state result keeps them additive; see that module for why.
  */
-import type { Instr } from "../ir/types.js";
+import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { CARRIER_BAG_DELETE } from "./carrier-bag-delete.js";
+import { nativeStringLiteralInstrs } from "./native-strings.js";
 
 /** #3537 array expando bag reader (`vec-props.ts`). */
 const VEC_PROP_GET = "__vec_prop_get";
@@ -193,4 +214,198 @@ export function buildBagValueSeed(
       ],
     },
   ];
+}
+
+/** Everything `buildVecDeletePrologue` needs from `fillVecOverlayHelpers`. */
+export interface VecDeleteDeps {
+  objectTypeIdx: number;
+  propEntryTypeIdx: number;
+  vecBaseIdx: number;
+  vecGopdIdx: number;
+  toPropertyKeyIdx: number;
+  externIsUndefinedIdx: number;
+  externGetIdx: number;
+  unboxBoolIdx: number;
+  deletePropertyIdx: number;
+  dpValueIdx: number;
+  objFindIdx: number;
+  ensureIdx: number;
+  numericFlagGlobalIdx: number;
+  /** `FLAG_DELETED_INDEX | FLAG_COMPANION_VALUE` — owned by `vec-overlay.ts`. */
+  deletedIndexFlags: number;
+  /** Fresh undefined-sentinel instrs (never a shared array — #DCE double-remap). */
+  missExtern: () => Instr[];
+  /** `idxLocal = __obj_index_of_key(key)` — canonical array index, or -1. */
+  parseIndex: (keyLocal: number, idxLocal: number) => Instr[];
+}
+
+/**
+ * Splice the vec arm into `__delete_property` (append-locals, splice-front —
+ * the #2190/#3183 fill discipline). §13.5.1 / §10.1.10 on a vec receiver:
+ *
+ * ```
+ * key = ToPropertyKey(key);
+ * if (obj is a vec) {
+ *   d = __vec_gopd(obj, key);
+ *   if (d === undefined) {                     // the companion does not know it
+ *     rc = __carrier_bag_delete(obj, key);     // (#4010 S2) ...but the BAG may
+ *     if (rc >= 0) return rc;
+ *     return 1;                                //   absent everywhere ⇒ success
+ *   }
+ *   if (!d.configurable) return 0;
+ *   comp = ensure(obj);
+ *   if (!isArrayIndex(key)) {
+ *     rc = __delete_property(comp, key);
+ *     if (rc) __carrier_bag_delete(obj, key);  // (#4010 S2) shadow the BAG
+ *     return rc;
+ *   }
+ *   <index key: mark the element deleted via the companion — unchanged>
+ * }
+ * ```
+ *
+ * The index arm is byte-identical to the version this replaces: it defines
+ * `undefined` into the companion and marks the entry
+ * `FLAG_DELETED_INDEX | FLAG_COMPANION_VALUE` so the read prologues answer a
+ * hole. Deliberately NOT given the bag steps — an index key's storage is the vec
+ * element, and the bag never owns one (`__vec_prop_set` writes named keys). This
+ * is the same explicit split as the seed's accessor exclusion: decide the case,
+ * do not pattern-match the neighbouring arm.
+ */
+export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d: VecDeleteDeps): void {
+  const base = 2 + fn.locals.length;
+  const anyLocal = base;
+  const keyLocal = base + 1;
+  const descLocal = base + 2;
+  const compLocal = base + 3;
+  const entryLocal = base + 4;
+  const indexLocal = base + 5;
+  const rcLocal = base + 6;
+  fn.locals.push(
+    { name: "__vec_del_any", type: { kind: "anyref" } },
+    { name: "__vec_del_key", type: { kind: "externref" } },
+    { name: "__vec_del_desc", type: { kind: "externref" } },
+    { name: "__vec_del_comp", type: { kind: "ref_null", typeIdx: d.objectTypeIdx } },
+    { name: "__vec_del_entry", type: { kind: "ref_null", typeIdx: d.propEntryTypeIdx } },
+    { name: "__vec_del_index", type: { kind: "i32" } },
+    { name: "__vec_del_rc", type: { kind: "i32" } },
+  );
+
+  const cbdIdx = ctx.funcMap.get(CARRIER_BAG_DELETE);
+  /** `rc = __carrier_bag_delete(obj, key); if (rc >= 0) return rc;` */
+  const bagConsult: Instr[] =
+    cbdIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: keyLocal },
+          { op: "call", funcIdx: cbdIdx },
+          { op: "local.tee", index: rcLocal },
+          { op: "i32.const", value: 0 },
+          { op: "i32.ge_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: rcLocal }, { op: "return" }],
+          },
+        ];
+  /** Best-effort bag removal after the companion already agreed to the delete. */
+  const bagShadow: Instr[] =
+    cbdIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: keyLocal },
+          { op: "call", funcIdx: cbdIdx },
+          { op: "drop" },
+        ];
+
+  fn.body.unshift(
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: d.toPropertyKeyIdx },
+    { op: "local.set", index: keyLocal },
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: anyLocal },
+    { op: "ref.test", typeIdx: d.vecBaseIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: keyLocal },
+        { op: "call", funcIdx: d.vecGopdIdx },
+        { op: "local.tee", index: descLocal },
+        { op: "call", funcIdx: d.externIsUndefinedIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...bagConsult, { op: "i32.const", value: 1 }, { op: "return" }],
+        },
+        { op: "local.get", index: descLocal },
+        ...nativeStringLiteralInstrs(ctx, "configurable"),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: d.externGetIdx },
+        { op: "call", funcIdx: d.unboxBoolIdx },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+        },
+        { op: "local.get", index: anyLocal },
+        { op: "call", funcIdx: d.ensureIdx },
+        { op: "local.set", index: compLocal },
+        ...d.parseIndex(keyLocal, indexLocal),
+        { op: "local.get", index: indexLocal },
+        { op: "i32.const", value: 0 },
+        { op: "i32.lt_s" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: compLocal },
+            { op: "extern.convert_any" },
+            { op: "local.get", index: keyLocal },
+            { op: "call", funcIdx: d.deletePropertyIdx },
+            { op: "local.tee", index: rcLocal },
+            { op: "if", blockType: { kind: "empty" }, then: bagShadow },
+            { op: "local.get", index: rcLocal },
+            { op: "return" },
+          ],
+        },
+        { op: "i32.const", value: 1 },
+        { op: "global.set", index: d.numericFlagGlobalIdx },
+        { op: "local.get", index: compLocal },
+        { op: "extern.convert_any" },
+        { op: "local.get", index: keyLocal },
+        ...d.missExtern(),
+        { op: "f64.const", value: 0xbc },
+        { op: "call", funcIdx: d.dpValueIdx },
+        { op: "drop" },
+        { op: "local.get", index: compLocal },
+        { op: "ref.as_non_null" },
+        { op: "local.get", index: keyLocal },
+        { op: "call", funcIdx: d.objFindIdx },
+        { op: "local.tee", index: entryLocal },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: entryLocal },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: entryLocal },
+            { op: "ref.as_non_null" },
+            { op: "struct.get", typeIdx: d.propEntryTypeIdx, fieldIdx: 2 },
+            { op: "i32.const", value: d.deletedIndexFlags },
+            { op: "i32.or" },
+            { op: "struct.set", typeIdx: d.propEntryTypeIdx, fieldIdx: 2 },
+          ],
+        },
+        { op: "i32.const", value: 1 },
+        { op: "return" },
+      ],
+    },
+  );
 }
