@@ -241,3 +241,22 @@ WHY IT IS SEPARATE from the fixed/claimed work:
 
 Context: /workspace/plan/log/analysis-2026-08-01-descriptor-dedup-map.md
 Allocate a fresh issue id via `node scripts/claim-issue.mjs --allocate --by ttraenkler/&lt;agent&gt;`.
+
+## Follow-ups left open
+
+- **`src/codegen/expressions/call-builtin-static.ts` now sits EXACTLY at its LOC
+  ceiling (3683/3683) — there is zero headroom.** The next line added to that
+  driver fails the #3102/#3131 ratchet. The sanctioned move is **extraction** —
+  lift `Object.create`'s descriptor expansion (both the static-literal arm and
+  the dynamic-apply arm) into its own module, the way `array-length-define.ts`
+  (#3984) and `descriptor-shape.ts` (#3991) were lifted — **not** a
+  `loc-budget-allow:` grant. This PR declined the grant for that reason: the
+  +66 it needed was almost entirely rationale, and burying rationale in a
+  3.7k-line driver is the exact failure `descriptor-shape.ts`' own header
+  describes ("how its central claim went unexamined for so long"). It went into
+  that module instead, behind `mayStaticallyExpandCreateDescriptor` and
+  `staticDescriptorTypeError`. Note that `mayStaticallyExpandCreateDescriptor`
+  takes `staticToBoolean` as a PARAMETER on purpose — importing it would create
+  a `descriptor-shape → calls → object-ops → descriptor-shape` cycle.
+- **The §6.2.5.6-step-1-for-a-symbol case**, one file — see above.
+- **#4143**, the 14-file define-over-inherited silent no-op, split out.
