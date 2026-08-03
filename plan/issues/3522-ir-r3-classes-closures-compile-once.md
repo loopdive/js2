@@ -191,6 +191,97 @@ Reference-bearing class layouts, constructors, accessors, fields,
 derived/inherited classes, class expressions, nested class units, object
 methods, and closures remain for later R3 slices.
 
+## Bounded class-member retirement transaction (2026-08-03)
+
+The final-async checkpoint #4065 leaves the authoritative single-host lane at
+**37/37 IR-emitted**, **30 legacy bodies**, **0 Unsupported**, and **0
+Invariant**. Ten terminal units are class members. The two static bodies
+`Animal_kingdom` and `Dog_kingdom` are already Prepared and compile once; the
+remaining eight still compile direct before their IR overlay replaces the
+source slot:
+
+| Component | Source unit       | Kind                 | Required prepared dependencies                         |
+| --------- | ----------------- | -------------------- | ------------------------------------------------------ |
+| Animal    | `Animal_new`      | base constructor     | full string/private-field layout and constructor init  |
+| Animal    | `Animal_get_name` | instance getter      | receiver layout and native-string field carrier        |
+| Animal    | `Animal_set_name` | instance setter      | receiver layout and native-string field carrier        |
+| Animal    | `Animal_get_age`  | instance getter      | receiver layout and native `f64` field carrier         |
+| Animal    | `Animal_speak`    | instance method      | receiver layout, private read, fused string concat     |
+| Dog       | `Dog_new`         | derived constructor  | Dog layout, Animal init, `super(...)`, own field write |
+| Dog       | `Dog_speak`       | overriding method    | Dog receiver, direct `super.speak`, string concat      |
+| Dog       | `Dog_get_breed`   | instance getter      | Dog receiver and native-string field carrier           |
+
+This transaction retires all eight together as the only overlapping
+production IR PR. A partial method-only landing would leave constructor/init
+and inheritance ownership crossing the direct boundary, so the Animal and Dog
+class graph is one dependency-complete prepared component. Closure and
+cross-owner-call retirement follows in a later serial transaction.
+
+### Preparation and deletion contract
+
+1. Replace the scalar-only early class-layout gate with Program-ABI-owned
+   preparation of the complete reference-bearing Animal/Dog type graph. Every
+   class, string-carrier, parent, callable, and constructor-init binding is
+   tracked through allocator compaction by structural identity; no raw type or
+   function index becomes a planning identity.
+2. Lower each source constructor body once into a prepared constructor-init
+   unit that receives the existing instance and returns it. The public
+   constructor callable becomes an AST-free allocation-and-init support unit.
+   `Dog`'s prepared init calls the prepared `Animal` init on the same receiver;
+   no source constructor body is copied into both `_new` and `_init`.
+3. Extend requested-skip routing to constructors and instance accessors as
+   exact structural units. `compileClassBodies` may retain backend allocation,
+   layout, and runtime substrate, but it must not inspect or emit the skipped
+   source bodies. A positive-control poison seam must fire for a deliberately
+   direct class member and stay silent for all eight prepared bodies.
+4. Delete the obsolete scalar-layout-only preparation API and any method-only
+   skip branches made unreachable by the component-general route in the same
+   PR. Generic direct class emission remains only for measured Unsupported
+   consumers outside this transaction and is retired with their owning
+   families, not hidden behind the prepared component.
+5. Bank only a freshly measured reduction from **30 to 22 legacy bodies**.
+   The result must remain **37/37 IR-emitted**, **0 Unsupported**, and **0
+   Invariant**; all ten measured class-member terminals then have
+   `legacyBodyEmitted: false` and `irBodyEmitted: true`. Strict IR-only remains
+   red solely on the 20 free-function and two module-init bodies.
+
+### Optimization-parity contract
+
+- Preserve the exact receiver ABI: one non-null typed class receiver for
+  methods/accessors, no dynamic receiver box, no ambient-`this` frame, and no
+  redundant `ref.cast` on the Dog-to-Animal subtype edge.
+- Preserve private-field `struct.get`/`struct.set` lowering, native `f64` age,
+  and native-string field carriers. No `__extern_get`, `__extern_set`, dynamic
+  member ladder, or string box/unbox round trip may appear in the eight bodies.
+- Preserve one direct symbolic `Animal_speak` target from `Dog_speak`, the
+  existing class-tag/subtype layout, and same-receiver `Animal_init` chaining
+  from `Dog_init`. Constructor allocation, initialization, and every source
+  field write execute exactly once.
+- Preserve owned/native string concatenation and specialized string logging
+  behavior already selected by IR. Add WAT-shape assertions and runtime traces
+  that would fail if the migration merely produced valid Wasm with a slower
+  generic path.
+- Add explicit optimization-ledger rows for typed class receivers, private
+  field access, prepared constructor/init splitting, and direct super calls.
+  Each row names its direct owner, IR owner, runtime evidence, output-shape
+  evidence, and any remaining performance measurement before the direct
+  implementation can be deleted globally.
+
+### Required anti-vacuity evidence for this transaction
+
+- Pin the exact ten class-member telemetry rows and the exact eight-body
+  before/after delta; a summary count without names is insufficient.
+- Run the unchanged playground classes entry and assert constructor/accessor/
+  method behavior, field mutation, override/super ordering, `instanceof`, and
+  static results on both GC and standalone configurations.
+- Compare direct-control and prepared WAT shapes for typed receiver/field/super
+  operations, then activate the direct-body poison positive control.
+- Keep focused #3520/#3522 class identity, callable, remap, inheritance, funcMap
+  collision, and selector-preclaim suites green. Pass hybrid readiness,
+  expected strict IR-only failure solely on 22 named bodies, fallback/shape,
+  optimization-retirement, allocation provenance, typecheck, formatting,
+  cross-backend/equivalence, and full merge-group Test262 gates.
+
 ## Exhaustive source-unit census
 
 Before preparing any body, walk the source once in lexical/source order and
