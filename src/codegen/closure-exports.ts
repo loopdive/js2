@@ -779,7 +779,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   for (const entry of entries) {
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
-    const buildArgConversion = (argLocalIdx: number, paramType: ValType | undefined): Instr[] => {
+    const buildArgConversion = (argLocalIdx: number, formalIndex: number, paramType: ValType | undefined): Instr[] => {
       const ops: Instr[] = [{ op: "local.get", index: argLocalIdx }];
       if (paramType) {
         if (paramType.kind === "f64") {
@@ -801,7 +801,25 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           ops.push(...externToClosureParamRef(paramType));
         }
       }
-      return ops;
+      // The widened dispatcher receives a real JS `undefined` carrier in each
+      // padded externref slot. That value cannot be `ref.cast` to a nullable
+      // closed struct even though the callee's internal representation for an
+      // omitted optional object is exactly `ref.null $T`. Preserve dynamic
+      // coercion for supplied arguments (notably numeric undefined -> NaN),
+      // but materialize omission in the nullable reference domain before the
+      // cast. `__argc` still contains the raw call-site count at this point.
+      if (paramType?.kind !== "ref_null") return ops;
+      return [
+        { op: "global.get", index: argcGlobalIdx },
+        { op: "i32.const", value: formalIndex },
+        { op: "i32.gt_s" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: paramType },
+          then: ops,
+          else: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
+        },
+      ];
     };
 
     // User args occupy locals [2..arity+1]. Push only as many as the
@@ -810,7 +828,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     for (let i = 0; i < entry.closureArity; i++) {
       const paramType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      argInstrs.push(...buildArgConversion(i + 2, paramType));
+      argInstrs.push(...buildArgConversion(i + 2, i, paramType));
     }
 
     // (#2745) #820l argc/extras plumbing (clamped-to-formals convention; see

@@ -50,6 +50,9 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/statements/variables.ts
   - src/codegen/string-ops.ts
+  - scripts/runtime-eval-provider.mjs
+  - scripts/test262-worker.mjs
+  - tests/test262-shared.ts
   - src/interp/emitter.ts
   - src/codegen/expressions/eval-inline.ts
   - src/runtime.ts
@@ -73,8 +76,11 @@ func-budget-allow:
   - src/codegen/string-ops.ts::compileTaggedTemplateExpression
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/declarations.ts::lowerParamType
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/index.ts::generateMultiModule
+  - scripts/runtime-eval-provider.mjs::selectCachedRuntimeEvalProvider
+  - tests/test262-shared.ts::runTest262Chunk
   - src/interp/loop.ts::run
 ---
 

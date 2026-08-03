@@ -381,6 +381,23 @@ function lowerParamType(
       }
     }
   }
+  // Runtime eval publishes every top-level script function through the
+  // cross-module AOT-callable adapter. Its arguments are JavaScript values,
+  // so a nominal WasmGC reference parameter is not a sound ABI: an object
+  // literal from the caller is a different struct type even when it has the
+  // declared interface's fields, and `ref.cast` traps before the function can
+  // observe it. Keep numeric/native scalar specialisation, but carry reference
+  // values as externref at this dynamic boundary. This check intentionally
+  // follows implicit-any inference so that inference cannot reintroduce a
+  // nominal reference into the published signature.
+  if (
+    ctx.runtimeEvalCallableBoundaryEnabled === true &&
+    ts.isSourceFile(stmt.parent) &&
+    ctx.topLevelFunctionNames.has(funcName) &&
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null")
+  ) {
+    wasmType = { kind: "externref" };
+  }
   return wasmType;
 }
 

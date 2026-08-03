@@ -479,3 +479,36 @@ async exception rejection, host callback argument-count isolation, and
 recursive tagged-template capture forwarding. The focused unit matrix is
 65/65 and typecheck passes. Generated Test262 reports and benchmark indexes
 remain excluded from the checkpoint.
+
+### Standalone merge-group follow-up (2026-08-03)
+
+The next merge-group candidate exposed a separate standalone boundary defect.
+Its 25,075 passes missed the 26,996 high-water floor by 1,921. A line-safe
+predecessor/candidate join split the pass losses into four concrete cohorts:
+
+- 1,877 illegal casts through `__call_fn_method_4` and 65 through
+  `__call_fn_method_2`, both reached from the runtime-eval AOT-callable adapter;
+- 100 deliberate refusal-provider `TypeError`s after semantically unsafe
+  literal-eval splices were declined (55 Annex B, 10 other primary strict-eval
+  cases, and 35 inherited-strict reruns); and
+- 29 in-process fixture-graph modules whose harness never attached the cached
+  `js2wasm:runtime-eval` provider namespace.
+
+The callable repair preserves the source-level argument count while turning
+omitted nullable reference formals into typed nulls before dispatch. It also
+makes reference-valued parameters representation-neutral for top-level script
+functions published through runtime eval, so a supplied object keeps its
+identity and properties instead of being cast to a nominal, unrelated WasmGC
+struct. Numeric/native scalar specialization and modules without the runtime-
+eval boundary remain unchanged.
+
+The Test262 fixture path now uses the same shared cached-provider selection as
+the fork worker and instantiates a fresh provider per fixture. A representative
+previously unlinkable module is 1/1 passing, a five-fixture sample has no
+missing-provider failures, the 24-file callable sample has zero illegal casts,
+the exact host regression replay remains 38/38, the focused callable/provider
+unit matrix is 28/28, and typecheck passes. The 100 refusal transfers remain
+intentional and are not hidden by weakening the semantic bails. Recovering the
+1,942 cast rows plus 29 fixture links projects 27,046 passes on the same merge-
+group population, 50 above its floor; the authoritative confirmation remains
+the next merge-group run.
