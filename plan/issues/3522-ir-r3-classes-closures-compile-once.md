@@ -294,9 +294,10 @@ strict IR-only shadow remains red only because these exact bodies remain:
 - classes function: `main`.
 
 The production branch is `codex/3522-class-member-retirement` in the isolated
-worktree `/private/tmp/ts2wasm-3522-class-member-retirement`. Publication uses
-a ready PR; record its URL here before queueing. The dirty root checkout is not
-part of this work.
+worktree `/private/tmp/ts2wasm-3522-class-member-retirement`, published as
+ready PR [#4081](https://github.com/loopdive/js2/pull/4081). The branch was
+rebased onto `origin/main` immediately before the final handover push and is
+not queued at suspension. The dirty root checkout is not part of this work.
 
 Final-head validation before publication:
 
