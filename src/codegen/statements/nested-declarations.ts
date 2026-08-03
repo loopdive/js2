@@ -787,6 +787,7 @@ export function compileNestedFunctionDeclaration(
       };
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdxNC, reservedEntryNC);
       ctx.funcMap.set(funcName, reservedFuncIdxNC);
+      ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4045/#4075) see funcMapOwnerDecl
     }
 
     // Emit default-value initialization for parameters with initializers
@@ -1158,6 +1159,7 @@ export function compileNestedFunctionDeclaration(
     };
     pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reservedEntry);
     ctx.funcMap.set(funcName, reservedFuncIdx);
+    ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4045/#4075) see funcMapOwnerDecl
     ctx.nestedFuncCaptures.set(
       funcName,
       captures.map((c) => ({
@@ -1925,6 +1927,7 @@ export function hoistFunctionDeclarations(
       };
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reserved);
       ctx.funcMap.set(funcName, reservedFuncIdx);
+      ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4045/#4075) see funcMapOwnerDecl
       if (!ctx.preRegisteredBodyless) ctx.preRegisteredBodyless = new Set();
       ctx.preRegisteredBodyless.add(funcName);
     }

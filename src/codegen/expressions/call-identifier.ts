@@ -973,8 +973,55 @@ export function compileIdentifierCall(
     // Other shadow cases stay on the funcMap path — direct calls that don't
     // emit cap-prepend logic are already correct, even if a coincidental
     // local with the same name exists in the current scope.
-    let isLocallyShadowed = false;
-    if (fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
+    // (#4045/#4075) The same hazard, one scope out: `funcMap` is keyed by BARE
+    // name, so a NESTED function declaration's binding is visible to every
+    // later module. When an unrelated module calls its own `equal` — an import,
+    // a `require`d function value, its own top-level function — the funcMap
+    // path retargets it to that nested function AND prepends the nested
+    // function's captures, read from the declaring frame. On the ESLint graph
+    // that is how `assertASTDidntChange` (eslint's rule-tester, calling
+    // fast-deep-equal's `equal`) ended up carrying uri-js's UMD factory locals
+    // and emitting `local.get 51` into a 4-slot frame.
+    //
+    // A nested declaration is only in scope inside its enclosing body, so skip
+    // the funcMap path when the call site is not lexically inside it. Names
+    // owned by top-level declarations, imports and synthesized helpers have no
+    // owner record and are unaffected.
+    const nestedOwnerDecl = ctx.funcMapOwnerDecl.get(funcName);
+    let isOutOfScopeNestedBinding = false;
+    if (nestedOwnerDecl !== undefined) {
+      // The scope is the owner's enclosing FUNCTION, not its immediate parent.
+      // A declaration inside a nested block is hoisted to function scope
+      // (Annex B §B.3.3), so it is callable from anywhere in the enclosing
+      // function — including before and outside that block. Using the parent
+      // block here made `function hoisted from inside if-block` unresolvable
+      // (#165) and broke lodash's `_createWrap` (#1303/#1305).
+      let ownerScope: ts.Node = nestedOwnerDecl.parent;
+      while (
+        !ts.isSourceFile(ownerScope) &&
+        !ts.isFunctionDeclaration(ownerScope) &&
+        !ts.isFunctionExpression(ownerScope) &&
+        !ts.isArrowFunction(ownerScope) &&
+        !ts.isMethodDeclaration(ownerScope) &&
+        !ts.isConstructorDeclaration(ownerScope) &&
+        !ts.isGetAccessorDeclaration(ownerScope) &&
+        !ts.isSetAccessorDeclaration(ownerScope)
+      ) {
+        if (!ownerScope.parent) break;
+        ownerScope = ownerScope.parent;
+      }
+      let visible = false;
+      for (let n: ts.Node | undefined = expr; n !== undefined; n = n.parent) {
+        if (n === ownerScope) {
+          visible = true;
+          break;
+        }
+      }
+      isOutOfScopeNestedBinding = !visible;
+    }
+
+    let isLocallyShadowed = isOutOfScopeNestedBinding;
+    if (!isLocallyShadowed && fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
       const localCalleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
       const localCallSigs = localCalleeTsType?.getCallSignatures?.();
       if (localCallSigs && localCallSigs.length > 0) {
@@ -982,10 +1029,22 @@ export function compileIdentifierCall(
       }
     }
 
-    // Check if this is a closure call
-    let closureInfo = isLocallyShadowed ? undefined : ctx.closureMap.get(funcName);
+    // (#4045/#4075) `ctx.closureMap` is a THIRD bare-name namespace and it is
+    // consulted BEFORE `funcMap`. A visible nested declaration lexically
+    // shadows any outer closure or function-valued variable of the same name,
+    // so it must win here too — otherwise a nested `function equal()` calling
+    // itself from a sibling reached another module's `const equal = function
+    // equal(...)` instead, and the enclosing function silently returned 0.
+    // (#4045/#4075) `ctx.closureMap` is a THIRD bare-name namespace, consulted
+    // BEFORE `funcMap`. A visible nested declaration lexically shadows any
+    // outer closure or function-valued variable of the same name, so it must
+    // win here too — otherwise a nested `function equal()` called from a
+    // sibling reached another module's `const equal = function equal(...)` and
+    // the enclosing function silently returned 0.
+    const nestedBindingVisible = nestedOwnerDecl !== undefined && !isOutOfScopeNestedBinding;
+    let closureInfo = isLocallyShadowed || nestedBindingVisible ? undefined : ctx.closureMap.get(funcName);
 
-    if (!closureInfo) {
+    if (!closureInfo && !nestedBindingVisible) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
     }
     if (closureInfo) {
