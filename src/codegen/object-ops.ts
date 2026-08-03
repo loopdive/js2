@@ -45,6 +45,7 @@ import {
   maybeEmitVecLengthDefine,
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
+import { isStaticDescWellFormed } from "./descriptor-shape.js";
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -3230,64 +3231,11 @@ export function compileObjectDefineProperties(
     return resultType;
   }
 
-  // Static path: descriptors is an object literal — expand to individual defineProperty calls.
-  // Pre-check: if any inner descriptor is demonstrably malformed (primitive literal, or an
-  // object literal mixing data and accessor fields, or non-function get/set), abort the
-  // static path and fall through to the dynamic runtime so ToPropertyDescriptor (ECMA-262
-  // 10.1) throws TypeError uniformly.
-  const isStaticDescWellFormed = (descExpr: ts.Expression): boolean => {
-    // Primitive literals (string, number, boolean, null) as the descriptor are
-    // spec-violating — ToPropertyDescriptor throws TypeError. Delegate to the
-    // dynamic runtime so the TypeError fires uniformly. `undefined` is also
-    // spec-violating but we still let static expand handle it (callees know).
-    if (
-      ts.isStringLiteral(descExpr) ||
-      ts.isNoSubstitutionTemplateLiteral(descExpr) ||
-      ts.isNumericLiteral(descExpr) ||
-      descExpr.kind === ts.SyntaxKind.TrueKeyword ||
-      descExpr.kind === ts.SyntaxKind.FalseKeyword ||
-      descExpr.kind === ts.SyntaxKind.NullKeyword
-    ) {
-      return false;
-    }
-    if (!ts.isObjectLiteralExpression(descExpr)) {
-      // Identifier / call / property-access / etc — runtime-resolved but
-      // legitimately may be a valid object (as in `{property: Math}` or
-      // `{property: descObj}`). Expand statically; Object.defineProperty will
-      // handle validation at runtime via its own path.
-      return true;
-    }
-    let hasData = false;
-    let hasAccessor = false;
-    for (const dp of descExpr.properties) {
-      if (ts.isMethodDeclaration(dp) && dp.name && ts.isIdentifier(dp.name)) {
-        if (dp.name.text === "get" || dp.name.text === "set") hasAccessor = true;
-        continue;
-      }
-      if (!ts.isPropertyAssignment(dp) || !ts.isIdentifier(dp.name)) continue;
-      const k = dp.name.text;
-      if (k === "value" || k === "writable") hasData = true;
-      if (k === "get" || k === "set") {
-        hasAccessor = true;
-        const init = dp.initializer;
-        const isFn = ts.isFunctionExpression(init) || ts.isArrowFunction(init);
-        // (#3116) `get: null` / `set: null` are spec TypeErrors (ToPropertyDescriptor
-        // §10.1: present, not undefined, not callable → throw) and `get/set:
-        // undefined` is a VALID accessor descriptor (not a data property). The
-        // static expansion used to classify all three as "no accessor" and
-        // degrade the define to a plain value write, silently losing the throw /
-        // the accessor-ness (15.2.3.7-5-b-21x). Route them to the dynamic
-        // runtime, whose ToPropertyDescriptor handles both correctly.
-        if (init.kind === ts.SyntaxKind.NullKeyword) return false;
-        if (ts.isIdentifier(init) && init.text === "undefined") return false;
-        const isIdLike =
-          ts.isIdentifier(init) || ts.isPropertyAccessExpression(init) || ts.isElementAccessExpression(init);
-        if (!isFn && !isIdLike) return false;
-      }
-    }
-    if (hasData && hasAccessor) return false;
-    return true;
-  };
+  // Static path: descriptors is an object literal — expand to individual
+  // defineProperty calls. `isStaticDescWellFormed` (descriptor-shape.ts, #3991)
+  // decides whether the expansion may own each inner descriptor; anything it
+  // cannot fully model falls through to the dynamic `__defineProperties`, whose
+  // ToPropertyDescriptor (§6.2.5.6) is the only complete implementation.
   if (ts.isObjectLiteralExpression(descsArg)) {
     let allWellFormed = true;
     for (const prop of descsArg.properties) {

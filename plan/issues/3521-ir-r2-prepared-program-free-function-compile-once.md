@@ -4,7 +4,7 @@ title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-07-30
+updated: 2026-08-02
 priority: critical
 horizon: xl
 complexity: XL
@@ -26,14 +26,29 @@ files:
   - src/ir/program.ts
   - src/ir/prepare.ts
   - src/ir/integration.ts
+  - src/ir/abi-bindings.ts
+  - src/ir/nodes.ts
+  - src/ir/prepared-component-dependencies.ts
+  - src/ir/string-carrier.ts
+  - src/ir/string-support.ts
   - src/ir/select.ts
   - src/ir/from-ast.ts
   - src/ir/lower.ts
+  - src/ir/verify.ts
   - src/ir/backend/legality.ts
+  - src/ir/backend/string-contract.ts
+  - src/ir/backend/wasmgc-emitter.ts
+  - src/ir/backend/linear-emitter.ts
   - src/codegen/program-abi-session.ts
+  - src/codegen/program-abi-global-planning.ts
+  - src/codegen/program-abi-import-planning.ts
+  - src/codegen/program-abi-provider-planning.ts
+  - src/codegen/program-abi-type-planning.ts
+  - src/codegen/fixups.ts
   - src/codegen/ir-overlay-preparation.ts
   - src/codegen/ir-overlay-safety.ts
   - src/codegen/ir-prepared-free-functions.ts
+  - src/codegen/program-abi-export-planning.ts
   - src/codegen/module-global-registration.ts
   - src/codegen/context/types.ts
   - src/codegen/context/create-context.ts
@@ -42,11 +57,30 @@ files:
   - src/index.ts
   - src/compiler.ts
   - tests/issue-3521-prepared-ir-program.test.ts
+  - tests/issue-3521-prepared-component-dependencies.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
+  - tests/issue-3521-scoped-prepared-abi-seal.test.ts
+  - tests/issue-3520-program-abi-import-callable-planning.test.ts
+  - tests/issue-3520-callable-provider-abi.test.ts
+  - tests/issue-3765-numeric-locals.test.ts
 loc-budget-allow:
+  - src/codegen/context/types.ts
   - src/codegen/program-abi-session.ts
   - src/codegen/index.ts
+  - src/ir/backend/porffor/assembler.ts
+  - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/ir/lower.ts
+  - src/ir/nodes.ts
+  - src/ir/verify.ts
+func-budget-allow:
+  - src/codegen/index.ts::planIrOverlay
+  - src/codegen/index.ts::generateModule
+  - src/ir/backend/linear-integration.ts::makeLinearIrResolver
+  - src/ir/integration.ts::compileIrPathFunctions
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/integration.ts::makeResolver
+  - src/ir/lower.ts::lowerIrFunctionBody
 ---
 
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
@@ -378,37 +412,476 @@ emission from 37 to 16, but full equivalence exposed twelve final-ABI
 regressions because those functions still depended on direct-body discovery.
 That unsafe breadth was removed.
 
-The fail-closed routing slice now activates only when the complete selected
-population consists of one or more closed scalar/string top-level call
-components, with no selected class member/module init or pending ambient-call,
-callback, Date, Promise, fast-mode, async/generator, reference-shaped callable
-contract, allocated-slot signature mismatch, or unresolved cross-component
-dependency. Exact comparison against the already allocated source-callable
-slot prevents preparation from replacing an empty body with a different
-callable ABI; those components retain the established post-direct parity
-withdrawal and direct fallback. Programs outside that boundary retain the
-established post-direct overlay and compile-once allowlist.
+The fail-closed routing slice selects exact closed scalar/string top-level call
+components. An unrelated class member or module-init owner no longer blocks a
+closed free-function component; an exact call edge to or from a direct-owned
+unit removes the complete affected component before preparation. Pending
+ambient-call, callback, Date, Promise, fast-mode, async/generator,
+reference-shaped callable contracts, allocated-slot signature mismatches, and
+unresolved dependencies remain conservative boundaries. Exact comparison
+against the already allocated source-callable slot prevents preparation from
+replacing an empty body with a different callable ABI; those components retain
+the established post-direct parity withdrawal and direct fallback.
 A separate fast-mode guard prevents source `number` positions whose direct ABI
 grounds to i32 from being skipped against an early f64 IR signature, while
 retaining annotation-proven boolean compile-once owners.
 
-The committed single-host readiness lane contains class/module/async ownership
-and therefore deliberately remains at **37 legacy body emissions**, with the
-same 31/37 IR-emitted terminals, six typed Unsupported units, zero invariants,
-and READY hybrid policy. Anti-vacuity is instead carried by the focused
-string-method fixture, which moves one owner outside the old allowlist from
-compile-twice to IR-only emission. This deliberately smaller cutover preserves
-the existing final-ABI discovery behavior while later R2 work moves that
-discovery and post-pass symbolic dependency sealing into explicit preparation.
+The single-host readiness lane now records **35 legacy body emissions**, **33/37
+IR-emitted terminals**, four typed Unsupported units, zero invariants, and a
+READY hybrid policy. The two-unit legacy reduction comes from the first sealed
+static-method R3 continuation described in #3522; free-function anti-vacuity is
+carried by focused sealed-component fixtures. Strict IR-only remains NOT READY
+on the four unsupported async-related units and every remaining legacy body.
 
-The required 110-test matrix is 106 passing. All four failures reproduce
-unchanged on the exact parent: three stale end-to-end `inline-small` harness
-expectations/import setups and the #3214 imported-overload inventory-owner
-failure. No optimization test regressed under R2.
+The required 106-test matrix is 104 passing. Both failures reproduce unchanged
+on the exact parent: one stale end-to-end `inline-small` expectation and the
+#3214 imported-overload inventory-owner failure. No optimization test regressed
+under R2.
 
 Remaining R2 work before closing this issue is the full required gate matrix,
 explicit component/counter reconciliation evidence, and removal of the
 compatibility placeholder branch once #3522/#3523 no longer consume it.
+
+## Production dependency-complete component seal (2026-08-02)
+
+The next R2 slice now consumes post-pass component dependency evidence in the
+production prepared free-function route. For each dependency-complete scalar
+component, preparation:
+
+- registers every terminal source callable against its exact preallocated
+  `WasmFunction` object and structured signature;
+- registers any already-declared public export aliases of those exact objects;
+- derives the final local call component from optimized IR and resolves its
+  symbolic external/support dependencies through the planning session; and
+- seals the component scope before Wasm lowering starts.
+
+Lowering fills `locals` and `body` on the already sealed allocator object. It
+does not replace that object, allocate a second source slot, or rediscover the
+public export target. Successful terminal evidence carries a
+`preparedComponentId`, providing an observable distinction between this
+sealed route and the older transitional prepare/patch route. The new scalar
+call-component test proves two non-inlined functions share one sealed
+component, record `legacyBodyEmitted: false` and `irBodyEmitted: true`, and
+execute with the expected result.
+
+This is a bounded production adoption, not R2 completion. Components using
+string, dynamic, object, class-layout, or other still-implicit support remain
+on the established route because the current IR does not yet express every
+such dependency as a symbolic Program ABI intent. Components containing a
+pass-derived executable likewise remain unsealed until its callable slot can
+be reserved before lowering. No fallback category was widened and no legacy
+optimization was retired.
+
+Current validation on `origin/main` plus this slice:
+
+- focused component dependency, scoped ABI, and production routing tests:
+  **39/39 passing**;
+- TypeScript validation, IR fallback gate, optimization-retirement ledger,
+  adoption check, and hybrid IR-only readiness gate: passing;
+- the pre-push numeric-local parity gate: **17/17 passing** after replacing a
+  stale debug-WAT type-name/index coupling with direct f64/no-boxing body
+  evidence;
+- readiness denominator: **31/37 IR-emitted**, **6 typed Unsupported**, **0
+  invariants**; and
+- broad #3520/#3521 ABI matrix: **384/390 passing**. The same six failures
+  reproduce on an untouched `origin/main` worktree: four stale host-bridge
+  census totals, the nested source-callable reservation assertion, and the
+  linear inventory build-count assertion.
+
+The shortest remaining R2 path is to make runtime/layout dependencies
+symbolic during IR preparation, reserve derived callable objects before
+lowering, then consume the sealed component view in an explicit emission
+transaction with exact direct/IR counters. Only after that evidence is green
+can the free-function placeholder/patch compatibility branch be deleted.
+
+## Runtime/intrinsic provider preparation continuation (2026-08-02)
+
+Dependency-complete preparation now includes defined runtime and intrinsic
+callable providers instead of discovering them for the first time during Wasm
+lowering:
+
+- preparation walks every nested instruction in the final post-pass IR and
+  resolves each `runtime`/`intrinsic` call, lifted-closure target, and explicit
+  class callable target to its exact import or `WasmFunction` object;
+- provider-resolution failures are correlated to the exact terminal owner and
+  classified before dependency sealing, while the walk continues so the
+  successful provider-key denominator is complete;
+- an unresolved external-callable failure now carries its structural reference
+  key. A component is eligible for early provider planning only when those
+  exact provider keys are its complete blocker set;
+- the provider registry seals one stable, sorted observation denominator and
+  can plan the selected defined providers early. Final planning reuses those
+  identities and can still discard an unplanned import observed only by a
+  withdrawn candidate; and
+- dependency discovery reruns after provider planning, allowing the newly
+  complete component to seal before its Wasm body is lowered.
+
+The production anti-vacuity fixture combines `Math.sin` and `%`. Its body now
+records `legacyBodyEmitted: false`, `irBodyEmitted: true`, a non-empty
+`preparedComponentId`, and the expected runtime value. Registry coverage also
+proves that preparing `__fmod` neither retains a candidate-only import nor
+allows a new provider key to appear after the denominator is sealed.
+
+### Canonical import-backed provider preparation
+
+Import-backed providers now cross the same preparation boundary without
+letting the semantic provider take ownership from the canonical import:
+
+- ordinary compilations keep the existing dense final-import ordering;
+- the first prepared import seals the complete sorted pre-DCE import
+  population as a stable sparse denominator;
+- only exact imports required by otherwise complete components are planned at
+  that point. Dead siblings never become required ABI entries;
+- imports registered after the seal receive deterministic trailing ordinals,
+  so they cannot renumber or reuse a prepared identity; and
+- the runtime/intrinsic provider aliases the canonical import binding before
+  the component scope seals. Final planning reuses both identities and their
+  exact locator instead of double-owning the slot.
+
+The import-planner regression removes a pre-DCE sibling, adds a new import
+after the seal, and proves the required binding keeps its original identity
+and final index. The provider regression additionally proves a runtime
+provider aliases that canonical import while a candidate-only semantic import
+is discarded.
+
+Validation after this continuation:
+
+- focused provider/import-planning, dependency, scoped-ABI, and
+  production-routing tests: **75/75 passing**;
+- numeric-local optimization parity: **17/17 passing**;
+- typecheck, scoped Biome/Prettier, LOC/function budgets, fallback ratchet,
+  adoption, and hybrid IR-only readiness: passing;
+- readiness remains **31/37 IR-emitted**, **6 typed Unsupported**, and **0
+  invariants**; and
+- the broad #3520/#3521 matrix is **388/394 passing** with the same six
+  parent-reproduced failures: four stale host-bridge census totals, the nested
+  source-callable reservation assertion, and the linear inventory build-count
+  assertion. All four new provider/import tests pass.
+
+The next R2 dependencies are symbolic string/dynamic/object/layout support and
+pre-reserved pass-derived callable slots. The explicit emission transaction
+and removal of the remaining placeholder/patch branch follow those dependency
+families.
+
+## Symbolic string-carrier continuation (2026-08-02)
+
+The first string dependency now crosses the prepared-program boundary without
+exposing a backend storage type to JS inference:
+
+- inference and the optimization passes continue to use the backend-neutral
+  `IrType.string` kind;
+- final post-pass IR receives one canonical `carrierRef` throughout params,
+  results, block arguments, nested result types, closure signatures, object
+  shapes, ref cells, unions, and vector element metadata. Exact class-shape
+  identities remain untouched because their class binding owns the complete
+  physical layout;
+- the Program ABI maps that ref to slotless `externref` in the host-string
+  backend or to the exact remappable `$AnyString` type cell in the native
+  backend; and
+- dependency discovery accepts the string type only when that exact support
+  type plan exists. Transitional IR without the ref remains blocked.
+
+The production `value.charCodeAt(0)` fixture already carried an explicit
+intrinsic provider after the preceding slice. Its remaining implicit string
+parameter blocker is now removed: the body records `direct=0`, `IR=1`, gains a
+`preparedComponentId`, and still returns `65`. The host-string late-import
+fixture also seals both string-typed bodies before lowering and continues to
+execute correctly after a later direct owner adds an import.
+
+That host fixture exposed a compilation-wide scope invariant that was too
+strict for prepared programs: two independent components could not share one
+immutable import or support type. Prepared ABI bookkeeping now retains every
+scope using a binding. Dependencies with no terminal source owner may be
+shared, while terminal-owned callables, globals, classes, and support remain
+exclusive to their component. Mutation guards still reject late contract,
+locator, or alias changes; prepared type layouts advance only through the
+existing exact-remap transaction.
+
+Validation for this continuation:
+
+- focused import/provider planning, scoped ABI sealing, dependency derivation,
+  prepared-program, and production routing coverage: **76/76 passing**;
+- numeric-local optimization parity: **17/17 passing**;
+- the broad #3520/#3521 matrix: **389/395 passing**, with the same six
+  parent-reproduced failures already recorded above (four stale host-bridge
+  census totals, nested source-callable reservation, and the linear inventory
+  build-count assertion);
+- typecheck, scoped lint/formatting, LOC/function budgets, fallback ratchet,
+  optimization-retirement ledger, and adoption checks: passing; and
+- hybrid readiness: **31/37 IR-emitted**, **6 typed Unsupported**, **0
+  invariants**, READY. Strict IR-only remains NOT READY because all 37 lane
+  units still pass through legacy body emission and the same six unsupported
+  units remain.
+
+The remaining string work is instruction-level support: literals, concat,
+equality, length, character operations, and string iteration still name
+implicit backend globals/helpers in their IR instructions. Dynamic carriers,
+object/ref-cell/closure/union/vector layouts, pass-derived callable slots, and
+the explicit emission transaction remain subsequent R2/R6 dependencies.
+
+## Symbolic string literal/length continuation (2026-08-02)
+
+String literals and `.length` now carry their exact backend dependencies into
+the final post-pass IR without exposing those representations to JS inference:
+
+- host literals reference the exact immutable `string_constants` imported
+  global already owned by the Program ABI, while native literals reference the
+  existing interned `__strlit_` global and retain the selected UTF-8 or UTF-16
+  representation;
+- host length reads reference the exact `wasm:js-string.length` callable,
+  while native length reads reference field zero of the symbolic `$AnyString`
+  support type; and
+- dependency discovery records those global, callable, and type bindings
+  before the component scope seals. Lowering consumes the same refs through
+  the resolver instead of rediscovering numeric indices.
+
+The attachment pass runs only after inference and all middle-end transforms,
+so `IrType.string` remains backend-neutral. It is idempotent and rejects an
+attempt to replace an already attached provider with a different binding.
+Prepared native literal lowering continues to use the existing interning,
+hashing, and UTF-8 storage path rather than introducing a second literal
+representation.
+
+Native literal preparation also made the existing V8 leaf-struct finalization
+visible to sealed type graphs. `markLeafStructsFinal` now reports the exact
+types it changed, and `ProgramAbiSession` accepts that event only when every
+reported reachable change is precisely `final: false -> true`. Explicit
+prepared type/class roots, altered fields, changed reachability, and unreported
+mutations still fail closed. This preserves the legacy devirtualization
+optimization without weakening the prepared ABI seal.
+
+Production anti-vacuity covers both `gc` and `standalone` for
+`return "abc".length`: each function records `direct=0`, `IR=1`, and a
+non-empty `preparedComponentId`, validates as Wasm, and returns `3`.
+Dependency coverage separately proves that the carrier, literal storage, and
+length provider form the exact three-entry ABI dependency set.
+
+Validation for this continuation:
+
+- core Program ABI and #3521 preparation/routing coverage: **102/102
+  passing**;
+- numeric-local and focused host/native string coverage: **108/108 passing**,
+  including all ten `str_to_utf8` cases;
+- typecheck, lint, formatting, fallback ratchet, optimization-retirement
+  ledger, adoption check, LOC budget, and function budget: passing;
+- hybrid readiness remains **31/37 IR-emitted**, **6 typed Unsupported**, **0
+  invariants**, and READY; strict IR-only remains NOT READY because all 37 lane
+  units still pass through legacy body emission; and
+- the required completion command is **104/106 passing** with the same two
+  parent-recorded failures: the stale inline-small WAT assertion and the #3214
+  imported-overload inventory-owner failure. The separate imported-string
+  suite is **17/21 passing**; all four failures reproduce on the exact parent
+  commit.
+
+Cross-backend differential coverage is **29/29 passing**. The full equivalence
+gate reports **1,605 passing** and **38 failing** against a 36-entry baseline:
+six failures are outside that stale baseline, but all six reproduce on the
+exact parent commit in the function-variable, branch-hoisting, and function
+property `typeof` cases. No shared baseline file is changed by this slice.
+
+Remaining string dependencies are concat, equality, character operations,
+iteration, and oversized native literals that must materialize inline rather
+than through an interned global. Dynamic/object/ref-cell/closure/union/vector
+layouts, pass-derived callable reservation, and the isolated emission
+transaction remain after those instruction families. This slice unlocks more
+pre-lowering component seals but does not change the retirement-lane headline
+or make the legacy path removable yet.
+
+## Symbolic string callable continuation (2026-08-02)
+
+The remaining non-iteration string instructions now carry exact callable
+dependencies in final IR instead of rediscovering backend indices while the
+body is emitted:
+
+- immutable `string.concat`, owned-append `string.concat`, `string.eq`,
+  `string.char_at`, and `string.char_code_at` each receive a backend-neutral
+  intrinsic ref after inference and all middle-end passes;
+- host preparation binds those refs to the exact `wasm:js-string.concat`,
+  `wasm:js-string.equals`, `env.string_charAt`, and guarded host char-code
+  providers. A char-at-only component now registers and verifies the exact
+  import before provider planning rather than trusting the compatibility
+  function map;
+- native preparation binds the same intents to stable handles for
+  `__str_concat`, `__str_concat_owned`, `__str_equals`, `__str_charAt`, and
+  `__str_charCodeAt`; and
+- dependency discovery records all five semantic callable identities before
+  the prepared component scope seals. Reattachment is idempotent and rejects
+  binding drift.
+
+Owned append deliberately remains a distinct semantic intent even though the
+host backend aliases it to ordinary concat. This preserves the migrated legacy
+string-builder optimization on the native backend: production disassembly now
+proves the prepared IR body calls `__str_concat_owned`, and the existing growth
+boundary and string-hash runtime matrix remains green. The compatibility
+numeric-index branches remain only for unprepared callers; sealed production
+components lower through their exact provider refs.
+
+The focused Program ABI, prepared-program, scoped-seal, production-routing,
+string-contract, and owned-append matrix is **96/96 passing**. The expanded
+numeric-local and host/native string matrix is **238/238 passing**, including
+all ten `str_to_utf8` cases. Typecheck, lint, targeted formatting, fallback
+ratchet, optimization-retirement ledger, adoption check, LOC budget, and
+function budget pass. The fallback shape diagnostic reports **0 attributed
+body-shape rejections**.
+
+The required broad completion command remains **104/106 passing**, with the
+same inline-small tail-call assertion and imported-overload inventory-owner
+failure recorded by the parent slice. Cross-backend differential coverage is
+**29/29 passing**. The full equivalence gate again reports **1,605 passing**
+and **38 failing** against its 36-entry baseline: the same six function-value,
+branch-hoisting, and function-property `typeof` failures remain outside that
+stale baseline. The first local equivalence attempt lost its worker IPC channel
+before writing a report; an otherwise identical single-fork rerun with a 1.5
+GiB test heap completed and produced these counts.
+
+Hybrid readiness remains **31/37 IR-emitted**, **6 typed Unsupported**, **0
+invariants**, and READY. Strict IR-only remains NOT READY: **37/37** lane units
+still have a legacy body emitted, and the six unsupported units are two async
+functions, one call-graph closure, one async-body shape, and two static class
+members. This callable slice changes preparation coverage, not that bounded
+headline.
+
+At that point, the remaining string preparation blocker was oversized native
+literals that cannot use an interned global. Two string-builder
+optimizations also remain: the generic owned-append loop is IR-owned, but IR
+does not yet preallocate a backing array from the direct path's exact static
+trip-count proof, and constant-count literal append loops remain intentionally
+selector-deferred to the direct path's one `repeat(N)` plus one concat
+transform. Both optimizations must be migrated before their direct handlers can
+be retired. Dynamic carriers, object/ref-cell/closure/union/vector layouts,
+iterator/generator/exception/async providers, pass-derived callable slots, and
+the explicit emission transaction remain subsequent R2 dependencies.
+
+## Component-local emission transaction continuation (2026-08-02)
+
+Preparation is now component-local across mixed source ownership. A direct
+class or module owner no longer forces an unrelated, dependency-complete free
+function component through legacy emission. Exact local call edges still close
+policy boundaries: a free function called by module init or a direct class
+member stays on the post-direct route.
+
+The preparation probe also no longer publishes an unsealed early body as final
+ownership. Exact compiled-artifact evidence removes every unsealed terminal
+from the early report; derived artifacts are refused on that retrying route.
+Direct emission then runs, and the established late overlay produces the one
+terminal report consumed by the outcome audit. Sealed owners preserve their
+installed allocator object and skip direct emission. Deferred callers retain
+exact AST-site plans for already sealed callees without re-adding those callees
+to the emission population.
+
+Nested executable owners and top-level functions materialized as callable
+values stay off the retrying/sealed route. Their derived identities and cached
+trampoline/global bindings are still created by the direct pass; attempting
+them early either registered one derived unit twice or tried to mutate a sealed
+prepared scope. The selector now refuses both the materialized target and an
+owner that contains such a value reference, while an explicit invariant rejects
+any future unsealed attempt that unexpectedly produces a derived artifact.
+
+This continuation supplies the reusable transaction used by #3522's first
+static-method slice. Validation is **89/89 passing** across exact outcome and
+skip correlation, class/source/support callable ABI, prepared-component
+dependency, scoped-seal, free-function routing, and static-method runtime
+coverage. Typecheck, fallback ratchet, optimization-retirement ledger,
+adoption check, and hybrid readiness pass. The strict gate reports **33/37 IR
+emitted**, **4 Unsupported**, **0 Invariants**, and **35 legacy bodies**, so R2
+is not complete and no direct handler is retirement-ready yet.
+
+The four equivalence files that exposed #4014's six new regressions are now
+**28/28 passing**: function values stored in variables, a function-valued
+module object property, and branch-hoisted nested declarations all retain their
+working direct/late integration path. The complete **8/8 equivalence shard**
+gate reports zero new regressions; four committed baseline failures now pass,
+and the baseline remains unchanged.
+
+The next R2 work is to make the remaining dynamic/object/layout and
+pass-derived dependencies sealable, then replace the transitional probe/direct/
+late-overlay sequence with one isolated prepare/emit transaction and exact
+emission counters. The compatibility placeholder branch cannot be deleted
+until the remaining R3/R4 owners consume that transaction.
+
+## Native string-iteration provider continuation (2026-08-02)
+
+Native `forof.string` no longer discovers `__str_charAt_cp` by compatibility
+name during lowering. Final string preparation attaches the backend-neutral
+`__ir_string_iterator_char_at` callable intent; provider pre-registration
+binds that intent to the exact allocator object, and prepared-component
+discovery records the resulting Program ABI dependency before sealing.
+
+The semantic distinction from `string.char_at` remains explicit: ordinary
+`charAt` returns one UTF-16 code unit, while string iteration returns one full
+code point and advances by that element's one- or two-code-unit length. The
+lowerer retains its transitional semantic-provider default for standalone IR
+fixtures, but production preparation always supplies the exact symbolic ref;
+an absent provider still blocks component sealing.
+
+The new anti-vacuity route failed before the change with
+`legacyBodyEmitted: true`. It now compiles the supplementary-character fixture
+once through IR, reports a prepared component, emits no legacy body, validates
+as Wasm, and returns three code points for `"A💩B"`. Exact dependency coverage
+also proves both the string-carrier type and iterator callable are present in
+the sealed ABI component. The focused R2/string-for-of/contract matrix is
+**96/96 passing**; typecheck, lint, formatting, fallback, and the optimization
+retirement ledger pass. The ledger now records **15** decisions, **4** with
+complete IR ownership, and **0** retirement-ready.
+
+The bounded readiness corpus does not contain this source shape, so its
+headline is intentionally unchanged: hybrid is READY at **33/37 IR bodies**,
+**4 typed Unsupported**, **0 invariants**, and **35 legacy bodies**. Strict
+IR-only remains NOT READY on those exact four unsupported units and 35 legacy
+bodies; the production anti-vacuity fixture, rather than an unrelated corpus
+delta, proves this slice's compile-once effect.
+
+After this continuation, string preparation had one known residual: oversized
+native literals that could not use an interned global. Dynamic/object/layout,
+closure/ref-cell/vector, iterator/generator/exception/async, and pass-derived
+dependencies remained the larger R2/R6 continuation.
+
+## Oversized native-literal materializer continuation (2026-08-02)
+
+Oversized native literals now have a symbolic, dependency-closed route instead
+of falling back to direct body emission. Final preparation attaches one
+per-literal `__ir_string_literal_materialize:*` callable intent after inference
+and middle-end transforms. The callable-provider registry binds it to the exact
+allocator-owned helper, prepared-component discovery records that dependency,
+and lowering consumes the ref without consulting a compatibility name or
+backend index.
+
+The anti-vacuity test also exposed a pre-existing direct-backend defect: V8
+rejects `array.new_fixed` lengths above 10,000, so the former inline fallback
+produced a nominally successful but invalid Wasm module. The shared native
+literal materializer now keeps every common literal on the existing immutable
+interned-global path. An oversized literal is split into fixed-array-safe,
+interned chunks, and one cached zero-argument helper assembles those chunks as
+a native `ConsString` rope. Both direct and prepared IR bodies call the same
+helper; no oversized `array.new_fixed` remains.
+
+Production coverage exercises 10,001 code units in both ordinary and UTF-8
+storage lanes, with a surrogate pair deliberately straddling the 10,000-unit
+chunk boundary. Both direct and IR modules validate, return the exact JS
+code-unit length, and iterate the boundary pair as one code point. A separate
+10,004-byte/5,002-code-unit UTF-8 fixture proves byte-only overflow falls back
+to one interned i16 global rather than building a rope with unsupported UTF-8
+leaves. The prepared functions report `legacyBodyEmitted: false`,
+`irBodyEmitted: true`, and a non-empty component ID. WAT assertions require the
+cached materializer and 10,000-element chunks while rejecting every
+10,001–10,009 fixed allocation. Exact dependency coverage proves the string
+carrier and materializer callable are both present in the sealed component.
+
+The focused R2/string/contract matrix is **108/108 passing** across nine test
+files. Typecheck, lint, formatting, fallback, issue/adoption, LOC, and function
+budget gates pass. The optimization ledger now records **16** decisions,
+**5** with complete IR ownership, and **0** retirement-ready; the literal row
+deliberately retains its performance follow-up before direct-path deletion.
+Hybrid readiness remains READY at **33/37 IR bodies**, **4 typed Unsupported**,
+**0 invariants**, and **35 legacy bodies**. Strict IR-only remains NOT READY on
+those four units and the retained legacy-body population; this bounded corpus
+does not contain the oversized source shape.
+
+This closes the known instruction-level string preparation residual. String
+builder presizing and counted-literal append remain separate optimization
+migrations rather than component-sealing blockers. Dynamic/object/layout,
+closure/ref-cell/vector, iterator/generator/exception/async, and pass-derived
+dependencies remain the larger R2/R6 work.
 
 ## File ownership and locks
 
@@ -548,3 +1021,40 @@ publication.
 This is a prerequisite seam only. Prepared free-function ownership, terminal
 component outcomes, support-intent collection, and direct/IR emission
 accounting remain for the main R2 implementation.
+
+## 2026-08-02 symbolic vector-layout continuation
+
+Vector types in typed IR now carry only their logical element type and
+nullability. The WasmGC carrier struct and backing-array references are
+attached during final Program ABI preparation, after the backend and numeric
+element representation are known. Prepared-component dependency collection
+records both exact support-type roots and fails closed for a missing, invalid,
+or drifting layout. Vector helper identities are likewise logical; WasmGC,
+linear, and Porffor resolve them at their final lowering boundaries without
+embedding physical type indexes in IR provider names.
+
+The post-rebase equivalence shard also proved that logical vectors must use the
+same representation boundary for mutable locals and parameters. Slot planning
+now resolves string, dynamic, and vector storage through one helper, while
+identifier reads and assignments retain their logical IR types. #1196 covers
+both a reassigned local vector and a reassigned vector parameter, with the
+counted-loop bounds proof correctly withdrawn after reassignment.
+
+Anti-vacuity coverage now proves that the quicksort-plus-main vector component
+is prepared and emits with `direct=0, IR=1`. The original #1198 complex fixture
+is retained and still exposes its separate bitwise/runtime-support dependency;
+a smaller dense-fill fixture proves the vector preparation path independently.
+#1001 counted push, #2780 fixed literals, #2766 bounds-sensitive reads, and
+#3734 i32 elements cover the migrated vector optimizations. The focused core
+matrix passes 58/58, the optimization matrix passes 69/69, and #3501 passes
+9 tests with 2 optional native tests skipped. Typecheck, formatting, staged
+lint, the changed-root hook, and the optimization-ledger checker pass. The
+ledger contains 21 decisions: 10 are IR-owned and the i32-element row is the
+first retirement-ready vector decision; four performance-attribution rows
+remain open.
+
+This slice does not claim the whole six-function Algorithms fixture. Its
+remaining component blockers are source-global storage, TDZ, and module-init
+ownership in #3523, plus throw/exception, `extern.call`, box/unbox, undefined,
+numeric, string, and console support providers in #3526. Those are independent
+of vector layout and remain the next prepared-ownership work.

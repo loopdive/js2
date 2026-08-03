@@ -771,7 +771,7 @@ export function ensureFuncClosureSingleton(
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
 
-  // (#4045) The trampoline and cache were keyed by the BARE function name, so
+  // (#4133) The trampoline and cache were keyed by the BARE function name, so
   // two modules declaring the same top-level name shared one singleton. The
   // reuse path below validates the existing trampoline's SHAPE but never that it
   // targets the same function, so the second module's closure value silently

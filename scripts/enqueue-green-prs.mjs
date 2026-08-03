@@ -113,6 +113,227 @@ export const HOLD_LABELS = new Set([
 // the state that allowed red PRs to enter the merge queue.
 const ENQUEUEABLE = new Set(["CLEAN", "HAS_HOOKS"]);
 const PASSING_CHECK_STATES = new Set(["pass", "skipping"]);
+
+// ---------------------------------------------------------------------------
+// #4094 — `[skip ci]`-ONLY DIVERGENCE EXEMPTION (stakeholder decision 2026-08-02)
+//
+// The loop this breaks (measured in #4093): a merge lands, a `[skip ci]` baseline
+// commit follows (six in ~5.5h), every open PR goes BEHIND, ENQUEUEABLE excludes
+// BEHIND, and the PRs are un-enqueueable until the refresh cron (~0.7/hour actual)
+// catches up — often raced by the next baseline commit. A commit whose own message
+// declares "this changes nothing needing testing" currently disqualifies every PR
+// in flight.
+//
+// GitHub's ACCEPTED MARKER SET — verified 2026-08-02 against
+// docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs,
+// NOT from memory. Two properties of that source matter and are easy to get wrong:
+//   1. There are FIVE spellings, not one. This repo only ever emits `[skip ci]`,
+//      so a predicate matching only that spelling passes every local test and is
+//      still wrong in production the first time someone writes `[ci skip]`.
+//   2. The doc says the string suppresses `on: push`/`on: pull_request` when added
+//      "to the commit message" — anywhere in it, NOT first-line-only. Matching only
+//      the subject would silently miss a marker in the body.
+// ---------------------------------------------------------------------------
+export const SKIP_CI_MARKERS = Object.freeze(["[skip ci]", "[ci skip]", "[no ci]", "[skip actions]", "[actions skip]"]);
+
+/** True when a single commit message carries any GitHub skip-CI marker. */
+export function hasSkipCiMarker(message) {
+  if (typeof message !== "string" || message.length === 0) return false;
+  const m = message.toLowerCase();
+  return SKIP_CI_MARKERS.some((marker) => m.includes(marker));
+}
+
+/**
+ * #4094 — is a PR's divergence from main composed ONLY of `[skip ci]` commits?
+ *
+ * `messages` is the FULL commit message of every commit main is ahead by, from
+ * the server-side compare API (never local refs — see `divergenceCommitMessages`).
+ *
+ * FAILS CLOSED, deliberately, in two distinct ways that are easy to conflate:
+ *
+ *   - `null`/non-array  ⇒ we could not SEE the divergence. Not exempt. A detector
+ *     whose "cannot see" answer equals "nothing wrong" is unsound, and this one
+ *     gates entry to the merge queue.
+ *   - EMPTY array ⇒ ALSO not exempt. This is the silent-empty trap: "no commits
+ *     matched" is indistinguishable from "the fetch returned nothing", and a PR
+ *     that is genuinely BEHIND must be behind by at least one commit. So the
+ *     count is FLOORED at 1 rather than treated as a vacuous all-true.
+ *
+ * Only a non-empty set in which EVERY message carries a marker is exempt.
+ */
+export function isSkipCiOnlyDivergence(messages) {
+  if (!Array.isArray(messages)) return false;
+  if (messages.length === 0) return false; // vacuous-truth guard, see above
+  return messages.every((m) => hasSkipCiMarker(m));
+}
+
+// ---------------------------------------------------------------------------
+// #4094 (re-scoped 2026-08-02) — DERIVE ELIGIBILITY FROM REAL SIGNALS.
+//
+// The original scope was a `[skip ci]`-only exemption to the BEHIND exclusion.
+// Measurement killed that premise: `mergeStateStatus` does not track ancestry at
+// all. Observed live, same minute:
+//
+//     PR #4033  mergeStateStatus=CLEAN     4 commits behind main
+//     PR #4034  mergeStateStatus=UNSTABLE  0 commits behind main
+//
+// and the SAME PR (#4028) read BEHIND and UNSTABLE minutes apart with no push.
+// The repo ruleset has `strict_required_status_checks_policy: true`, so a behind
+// PR *should* report BEHIND — it doesn't, because the field is STALE: GitHub
+// serves the last value it computed, not current ancestry. So today's enqueue
+// outcome depends on when the sweep happens to look, which is a coin flip, not
+// a policy.
+//
+// Behind-ness is also NOT disqualifying in fact: PRs #4002 (1 behind) and #4033
+// (4 behind) were both sitting in the merge queue, put there by this very
+// workflow. The queue builds merge groups against main, exactly as this script's
+// own header asserts.
+//
+// So eligibility is derived from signals that mean what they say:
+//   - required checks   → the checks API, by the ruleset's own context names
+//   - conflicting-ness  → `mergeable` (MERGEABLE/CONFLICTING/UNKNOWN)
+//   - behind-ness       → the compare API, and it does NOT disqualify
+// and NEVER from `mergeStateStatus`.
+//
+// WHAT MUST SURVIVE THIS RE-SCOPE (#3878/#3904): the UNSTABLE exclusion existed
+// because a red NON-required check must not reach the queue — that state once
+// let red PRs in. Dropping the status string would silently drop that guard, so
+// it is re-expressed directly and more precisely: ZERO checks of ANY kind may
+// have a FAILURE conclusion, required or not. That is strictly stronger than
+// keying on UNSTABLE, which is only a lagging summary of the same fact.
+// ---------------------------------------------------------------------------
+
+// The six required contexts (docs/ci-policy.md §7). Read from the ruleset at
+// runtime by `requiredCheckNames`; this is the fallback when that read fails.
+export const REQUIRED_CHECK_FALLBACK = Object.freeze([
+  "cheap gate (main-ancestor + lint)",
+  "quality",
+  "merge shard reports",
+  "equivalence-gate",
+  "check for test262 regressions",
+  "cla-check",
+]);
+
+/** Live required-check contexts from the branch ruleset, falling back if unreadable. */
+export function requiredCheckNames(repo = REPO, runner = ghMaybe) {
+  const res = runner([
+    "api",
+    `repos/${repo}/rules/branches/main`,
+    "--jq",
+    '[.[]|select(.type=="required_status_checks")|.parameters.required_status_checks[].context]',
+  ]);
+  if (!res.ok) return { names: [...REQUIRED_CHECK_FALLBACK], source: "fallback" };
+  try {
+    const parsed = JSON.parse(String(res.stdout || ""));
+    if (Array.isArray(parsed) && parsed.length > 0) return { names: parsed, source: "ruleset" };
+  } catch {
+    /* fall through */
+  }
+  return { names: [...REQUIRED_CHECK_FALLBACK], source: "fallback" };
+}
+
+const PENDING_CHECK_STATES = new Set(["pending", "queued", "in_progress"]);
+
+/**
+ * #4094 — classify a PR's checks from real check rows (`{name, state}`).
+ *
+ * ⚠ A CHECK NAME IS NOT AN IDENTIFIER. Several names are published TWICE — the
+ * real job and `test262-pr-stub.yml`'s stub both publish `merge shard reports`
+ * and `check for test262 regressions`, and on PR #4002 one instance read `pass`
+ * while the other read `skipping`. Taking the first match (`head -1`) is how a
+ * watcher settles on the stub and calls a PR green that isn't. So EVERY instance
+ * of a required name is considered, and the name is satisfied only when ALL of
+ * its instances are pass/skipping.
+ *
+ * A `skipping` required check SATISFIES branch protection (a skipped job still
+ * publishes a check run and the ruleset accepts it), so it counts as green here.
+ */
+export function classifyChecks(rows, requiredNames) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { green: false, reason: "no-checks-visible", failures: [], pendingRequired: [], missingRequired: [] };
+  }
+  const required = new Set(requiredNames);
+  const failures = [];
+  const pendingRequired = [];
+  const seenRequired = new Set();
+  for (const row of rows) {
+    const name = String(row?.name ?? "").trim();
+    const state = String(row?.state ?? "").trim();
+    // Zero-FAILURE rule: applies to EVERY check, required or not (#3878/#3904).
+    if (!PASSING_CHECK_STATES.has(state) && !PENDING_CHECK_STATES.has(state)) {
+      failures.push(`${name}: ${state}`);
+      continue;
+    }
+    if (!required.has(name)) continue;
+    if (PENDING_CHECK_STATES.has(state)) pendingRequired.push(`${name}: ${state}`);
+    else seenRequired.add(name);
+  }
+  const missingRequired = [...required].filter((n) => !seenRequired.has(n));
+  if (failures.length > 0)
+    return { green: false, reason: `failing:${failures.length}`, failures, pendingRequired, missingRequired };
+  if (pendingRequired.length > 0)
+    return {
+      green: false,
+      reason: `pending-required:${pendingRequired.length}`,
+      failures,
+      pendingRequired,
+      missingRequired,
+    };
+  if (missingRequired.length > 0)
+    return {
+      green: false,
+      // (#4094) WORDING IS LOAD-BEARING — do not shorten this to "stranded" or
+      // imply a cause. Two very different mechanisms produce an absent required
+      // context, and they have OPPOSITE remedies:
+      //   - a dropped `synchronize` delivery — GitHub simply never dispatched the
+      //     `pull_request` workflows for this head. Signature: ONLY the
+      //     `pull_request_target` checks (`cla-check`, retarget) are present, and
+      //     the contexts DID run on an earlier head. Remedy: push any commit.
+      //   - a workflow-level `paths:` skip — no check run is ever created, on ANY
+      //     head, so the context stays "Expected" forever. Remedy: fix the path
+      //     filters (what `test262-pr-stub.yml` exists to prevent).
+      // Measured 2026-08-02 on #4028: it looked like the second and was the FIRST
+      // (its earlier heads ran `quality`), and a single retrigger commit cleared
+      // it. Naming the wrong one sends someone editing path filters to chase a
+      // GitHub delivery failure, so this reports the OBSERVATION and the
+      // discriminator, never a diagnosis.
+      reason: `required-not-reported:${missingRequired.length} [${missingRequired.slice(0, 3).join(", ")}] — no check run on THIS head; if they ran on an earlier head it is a dropped synchronize (push any commit), else check workflow path filters`,
+      failures,
+      pendingRequired,
+      missingRequired,
+    };
+  return { green: true, reason: "all-required-green", failures, pendingRequired, missingRequired };
+}
+
+/**
+ * #4094 — the eligibility decision, pure and exported so both controls are
+ * unit-testable with no `gh` call and no queue mutation.
+ *
+ * SCOPE (issue #4094 constraint 1, unchanged by the re-scope): this decides
+ * ELIGIBILITY ONLY. It updates/rebases no branch — the 2026-06-11 incident (17
+ * bot-updated BEHIND PRs stranded in `action_required`) was caused by
+ * *bot-updating branches*, a different mechanism; `ALLOW_UPDATE_BRANCH` is
+ * untouched. Drafts, hold labels and the author-trust gate are also unchanged
+ * and still applied by the caller.
+ *
+ * `mergeStateStatus` is deliberately NOT a parameter. It cannot be consulted
+ * even by accident.
+ */
+export function enqueueEligibility({ checks, requiredNames, isDraft, labels = [], mergeable } = {}) {
+  if (isDraft) return { eligible: false, reason: "draft" };
+  const lowered = labels.map((l) => String(l?.name ?? l ?? "").toLowerCase());
+  const held = lowered.find((l) => HOLD_LABELS.has(l));
+  if (held) return { eligible: false, reason: `hold-label:${held}` };
+  // Conflicting-ness from `mergeable`, never the status string. UNKNOWN means
+  // GitHub has not finished computing the merge — fail closed, retry next sweep.
+  if (mergeable === "CONFLICTING") return { eligible: false, reason: "conflicting" };
+  if (mergeable !== "MERGEABLE") return { eligible: false, reason: `mergeable:${mergeable || "missing"}` };
+  const verdict = classifyChecks(checks, requiredNames);
+  if (!verdict.green) return { eligible: false, reason: verdict.reason, checks: verdict };
+  // NOTE: behind-ness is deliberately absent. A PR behind main is eligible — the
+  // queue builds its merge group against main and re-validates there.
+  return { eligible: true, reason: "real-signals-green", checks: verdict };
+}
 // STALL SURFACING (#3584). How long a PR must sit BLOCKED with nothing failing
 // and nothing pending before we stop calling it "in flight" and start calling it
 // a suspected permanent stall. Deliberately generous: a false positive here
@@ -211,6 +432,83 @@ function graphql(query, vars = {}) {
   return JSON.parse(gh(args));
 }
 
+/**
+ * #4094 — the full commit messages of every commit `main` is ahead of `headOid` by,
+ * read from the SERVER-SIDE compare API (never local refs: this checkout's remote
+ * tracking refs are unreliable, and CI has no local main to compare against).
+ *
+ * ⚠ FIELD TRAP, measured 2026-08-02 on PR #4002. Called as `compare/<head>...main`,
+ * GitHub reports `{ahead_by: 1, behind_by: 16, commits: [<1 entry>]}`. The
+ * divergence we care about — what main has that the PR does not — is `ahead_by`
+ * and the `commits` ARRAY. `behind_by` is the opposite direction (commits the PR
+ * head has that main does not) and reading it as "how far behind the PR is" inverts
+ * the test: #4002 would have looked 16 commits divergent when it was exactly one
+ * `[skip ci]` baseline refresh. Issue #4094 phrases this as "every commit main is
+ * ahead by", which is correct — but only `commits`/`ahead_by` express it.
+ *
+ * Returns `{ ok, messages, reason }`. `ok:false` ⇒ caller must NOT exempt.
+ */
+/**
+ * #4094 — the AUTHORITATIVE head SHA, from the REST pull resource.
+ *
+ * ⚠ `gh pr view --json headRefOid` (and the GraphQL PR object generally) serves a
+ * CACHED SAMPLE. Measured 2026-08-02 on #4028: `headRefOid` returned `d07a989e`
+ * while the REST `.head.sha` was already `e24f4378` — one push stale.
+ *
+ * This is the worst failure shape available to this script, because it is
+ * SILENT and internally consistent: check runs fetched for a stale SHA are all
+ * genuinely real — complete, green, correctly reported — just for the wrong
+ * commit. Nothing anywhere looks anomalous, and the eligibility verdict is
+ * simply wrong. Three fields of this repo's PR view were found stale in one day
+ * (`mergeStateStatus`, local tracking refs, `headRefOid`), so the rule is: for
+ * anything load-bearing, read the specific REST resource.
+ */
+export function authoritativeHeadSha(prNumber, repo = REPO, runner = ghMaybe) {
+  const res = runner(["api", `repos/${repo}/pulls/${prNumber}`, "--jq", ".head.sha"]);
+  if (!res.ok) return { ok: false, sha: null, reason: "rest-head-unavailable" };
+  const sha = String(res.stdout || "").trim();
+  if (!/^[0-9a-f]{40}$/.test(sha)) return { ok: false, sha: null, reason: "rest-head-shape" };
+  return { ok: true, sha, reason: "rest" };
+}
+
+/**
+ * #4094 — reconcile the cached PR-view SHA against the authoritative REST one.
+ *
+ * FAILS CLOSED both ways. If REST is unreadable we do not fall back to the
+ * cached value (that would reinstate exactly the bug). If the two DISAGREE the
+ * head moved under the sweep, so every check verdict already computed is about
+ * the wrong commit — skip this PR and let the next sweep see a consistent world.
+ */
+export function reconcileHeadSha(viewSha, rest) {
+  if (!rest || rest.ok !== true) return { ok: false, sha: null, reason: rest?.reason || "rest-head-missing" };
+  if (viewSha && viewSha !== rest.sha) {
+    return {
+      ok: false,
+      sha: rest.sha,
+      reason: `head-sha-stale (view=${String(viewSha).slice(0, 9)} rest=${rest.sha.slice(0, 9)})`,
+    };
+  }
+  return { ok: true, sha: rest.sha, reason: "head-sha-agreed" };
+}
+
+export function divergenceCommitMessages(headOid, repo = REPO, runner = ghMaybe) {
+  if (!headOid) return { ok: false, messages: null, reason: "no-head-oid" };
+  // Reduce to a JSON ARRAY and parse it — do NOT split raw --jq output on newlines.
+  // Commit messages are multi-line, and a marker is valid ANYWHERE in the message
+  // (verified against GitHub's docs above), so line-splitting would tear a
+  // body-borne marker away from its own commit and silently mis-classify it.
+  const res = runner(["api", `repos/${repo}/compare/${headOid}...main`, "--jq", "[.commits[].commit.message]"]);
+  if (!res.ok) return { ok: false, messages: null, reason: "compare-api-failed" };
+  let messages;
+  try {
+    messages = JSON.parse(String(res.stdout || ""));
+  } catch {
+    return { ok: false, messages: null, reason: "compare-api-unparseable" };
+  }
+  if (!Array.isArray(messages)) return { ok: false, messages: null, reason: "compare-api-shape" };
+  return { ok: true, messages, reason: `commits:${messages.length}` };
+}
+
 // Merge-queue snapshot: PR numbers already queued + whether any head is forming.
 // `state` on a mergeQueueEntry is AWAITING_CHECKS while its merge group is being
 // built. `queued` lists EVERY entry (forming OR stable); the enqueue loop uses it
@@ -255,9 +553,14 @@ export function freshEnqueueGuard(initial, fresh) {
   if (labels.some((label) => HOLD_LABELS.has(label))) {
     return { ok: false, reason: "hold-label" };
   }
-  if (!ENQUEUEABLE.has(fresh.mergeStateStatus)) {
-    return { ok: false, reason: fresh.mergeStateStatus || "merge-state-missing" };
-  }
+  // (#4094) Was `!ENQUEUEABLE.has(fresh.mergeStateStatus)`. That re-read the same
+  // STALE field the sweep had already stopped trusting, so a PR could clear the
+  // real-signal gate and then be rejected here by a status GitHub had not
+  // recomputed — the freshness re-check turning into a second coin flip. The
+  // genuine freshness questions (head moved, base changed, draft, hold) are all
+  // above and unchanged; conflicting-ness is the only merge fact left, and it
+  // comes from `mergeable`.
+  if (fresh.mergeable === "CONFLICTING") return { ok: false, reason: "conflicting" };
   return { ok: true, reason: "exact-fresh-candidate" };
 }
 
@@ -338,7 +641,9 @@ function openPrs() {
       // author.login + headRepositoryOwner.login feed the #2550 fork-allowlist
       // layer of the author-trust gate (both fields ARE supported by gh 2.23's
       // `pr list --json`, unlike authorAssociation which needs GraphQL).
-      "number,mergeStateStatus,isDraft,labels,id,title,headRefName,headRefOid,baseRefName,author,headRepositoryOwner",
+      // (#4094) `mergeable` added: conflicting-ness now comes from this field,
+      // never from the stale `mergeStateStatus` summary.
+      "number,mergeStateStatus,mergeable,isDraft,labels,id,title,headRefName,headRefOid,baseRefName,author,headRepositoryOwner",
     ]),
   );
 }
@@ -352,7 +657,7 @@ function freshPrForEnqueue(number) {
       "--repo",
       REPO,
       "--json",
-      "number,mergeStateStatus,isDraft,labels,headRefName,headRefOid,baseRefName",
+      "number,mergeStateStatus,mergeable,isDraft,labels,headRefName,headRefOid,baseRefName",
     ]),
   );
 }
@@ -405,11 +710,16 @@ function visibleCheckState(prNumber) {
   const output = res.stdout.trim();
   if (!output) {
     const msg = (res.stderr || "no check output").split("\n")[0].slice(0, 120);
-    return { failed: [], pending: [], error: msg };
+    return { failed: [], pending: [], rows: [], error: msg };
   }
 
   const failed = [];
   const pending = [];
+  // (#4094) Every parsed row, kept so `classifyChecks` can verify the REQUIRED
+  // contexts are actually PRESENT. "nothing failed and nothing pending" is not
+  // the same statement as "the required checks ran" — a PR whose required jobs
+  // never reported at all satisfies the former and must still not be enqueued.
+  const rows = [];
   let parsed = 0;
   for (const line of output.split(/\r?\n/)) {
     if (!line.trim()) continue;
@@ -418,6 +728,7 @@ function visibleCheckState(prNumber) {
     parsed++;
     const name = cols[0].trim();
     const state = cols[1].trim();
+    rows.push({ name, state });
     if (PASSING_CHECK_STATES.has(state)) continue;
     const entry = `${name}: ${state}`;
     if (state === "pending" || state === "queued" || state === "in_progress") {
@@ -426,9 +737,9 @@ function visibleCheckState(prNumber) {
       failed.push(entry);
     }
   }
-  if (parsed === 0) return { failed: [], pending: [], error: "no parseable checks" };
+  if (parsed === 0) return { failed: [], pending: [], rows: [], error: "no parseable checks" };
 
-  return { failed, pending, error: null };
+  return { failed, pending, rows, error: null };
 }
 
 // CLA-CHECK SHA STRANDING (#1958a). When the merge queue or a drift-update adds
@@ -798,10 +1109,16 @@ function runSweep() {
   // pr list cannot return it). The enqueue loop fails closed: a PR missing from
   // this map, or whose association is not trusted, is never auto-enqueued.
   const authorAssoc = authorAssociations();
+  // (#4094) The required contexts, read from the branch ruleset itself so this
+  // never drifts from `docs/ci-policy.md` (`linear-tests` was documented as
+  // required for months and never was — #3934). Falls back to the static list.
+  const requiredInfo = requiredCheckNames();
+  const REQUIRED_NAMES = requiredInfo.names;
   const enqueued = [];
   const skipped = [];
   const updated = [];
   const stalled = []; // #3584 — BLOCKED, nothing red, nothing pending, sustained
+  const refusals = []; // #4094 — raw enqueue-mutation refusals, kept as telemetry
 
   // Auto-update BEHIND PRs: merge base branch in via GitHub API so they can
   // re-run CI and eventually become CLEAN. DIRTY PRs (merge conflicts) are
@@ -860,19 +1177,30 @@ function runSweep() {
       skipped.push([pr.number, "already-queued"]);
       continue;
     }
-    if (!ENQUEUEABLE.has(pr.mergeStateStatus)) {
-      // STALL SURFACING (#3584). Before emitting the same `skip (BLOCKED)` line
-      // this script has always emitted, work out whether this BLOCKED is the
-      // ordinary in-flight kind or the kind that never resolves. Scoped to
-      // BLOCKED *only*: BEHIND/DIRTY/UNKNOWN have their own recovery paths and
-      // must not pay these two extra API reads. Everything here is best-effort —
-      // it changes no enqueue decision, it only decides how loudly we log.
+    // (#4094) REAL-SIGNAL GATE. This used to be `!ENQUEUEABLE.has(mergeStateStatus)`.
+    // That field is a STALE SAMPLE, not current state — measured 2026-08-02, PR
+    // #4033 read CLEAN while 4 commits behind and #4034 read UNSTABLE while 0
+    // behind, and #4028 read BEHIND then UNSTABLE minutes apart with no push. So
+    // eligibility now comes from draft / hold labels / `mergeable`, and from the
+    // checks API below. Behind-ness deliberately does NOT disqualify: the queue
+    // builds merge groups against main (#4002, 1 behind, and #4033, 4 behind,
+    // were both queued and #4002 merged with a green merge_group re-validation).
+    const gate = enqueueEligibility({
+      checks: null, // checks are evaluated below, after the author-trust gate
+      requiredNames: REQUIRED_NAMES,
+      isDraft: pr.isDraft,
+      labels: pr.labels,
+      mergeable: pr.mergeable,
+    });
+    if (!gate.eligible && gate.reason !== "no-checks-visible") {
+      // STALL SURFACING (#3584) — unchanged in intent. Best-effort: it changes no
+      // enqueue decision, it only decides how loudly we log.
       const diag = blockedDiagnosis(pr, authorAssoc);
       if (diag.suspected) {
         const label = DRY ? { ok: true, why: "would-label" } : addStallLabel(pr.number);
         stalled.push([pr.number, `${diag.reason}; ${label.why}`]);
       }
-      skipped.push([pr.number, diag.annotated]); // BLOCKED/BEHIND/DIRTY/DRAFT/UNKNOWN
+      skipped.push([pr.number, `${gate.reason} (${diag.annotated})`]);
       continue;
     }
     // PARK-RACE GUARD (#2975). A PR that just FAILED merge_group re-validation is
@@ -926,6 +1254,27 @@ function runSweep() {
       skipped.push([pr.number, `pending-checks: ${checks.pending.slice(0, 5).join(", ")}`]);
       continue;
     }
+    // (#4094) The required contexts must be PRESENT, not merely non-failing. The
+    // two guards above answer "did anything fail or is anything pending"; neither
+    // notices a PR whose required jobs never reported at all. `classifyChecks`
+    // also handles the name collision: `merge shard reports` and `check for
+    // test262 regressions` are each published TWICE (real job + the #3934 stub),
+    // so a first-match read can settle on the stub.
+    //
+    // SHA STALENESS (measured 2026-08-02): `gh pr view --json headRefOid` can
+    // serve a SHA the push has already superseded — the authoritative read is
+    // `gh api repos/<repo>/pulls/<N> --jq .head.sha`. That matters here because a
+    // predicate keyed on "check runs for a SHA" produces a CONFIDENT WRONG
+    // verdict on a stale one: the runs it finds are all genuinely real, just for
+    // the wrong head. This path is fail-SAFE rather than fail-wrong only because
+    // the enqueue mutation pins `expectedHeadOid` — a stale SHA is refused by
+    // GitHub (captured as refusal telemetry) instead of enqueueing the wrong
+    // state, and `freshEnqueueGuard` independently rejects a moved head.
+    const required = classifyChecks(checks.rows, REQUIRED_NAMES);
+    if (!required.green) {
+      skipped.push([pr.number, `required-not-green: ${required.reason}`]);
+      continue;
+    }
     // GUARD 3 — grace window. Only enqueue a PR green-but-unqueued for > GRACE.
     // Too-fresh PRs are left for a later cycle so we never race a dev's own
     // GraphQL enqueue; this net only catches genuine strays.
@@ -970,6 +1319,17 @@ function runSweep() {
       skipped.push([pr.number, `fresh-guard:${exact.reason}`]);
       continue;
     }
+    // (#4094) Pin the AUTHORITATIVE head before anything keyed on a SHA. `fresh`
+    // came from `gh pr view`, whose `headRefOid` can be one push stale — and the
+    // check runs fetched for a stale SHA are all genuinely real, just for the
+    // wrong commit, so the verdict is wrong with no anomaly to notice. Fails
+    // closed: unreadable REST, or REST disagreeing with the view, both skip.
+    const headCheck = reconcileHeadSha(fresh.headRefOid, authoritativeHeadSha(pr.number));
+    if (!headCheck.ok) {
+      skipped.push([pr.number, `head-sha:${headCheck.reason}`]);
+      continue;
+    }
+    const headSha = headCheck.sha;
     const exactChecks = visibleCheckState(pr.number);
     if (exactChecks.error) {
       skipped.push([pr.number, `fresh-checks-unavailable: ${exactChecks.error}`]);
@@ -997,9 +1357,25 @@ function runSweep() {
             }
           }
         `,
-        enqueueMutationVariables(pr.id, fresh.headRefOid),
+        enqueueMutationVariables(pr.id, headSha),
       );
-      enqueued.push([pr.number, `enqueued (green ${ageMin}m)`]);
+      // (#4094) TELEMETRY, not a decision. Record how far behind main this PR was
+      // when it was accepted, and whether that divergence was skip-CI-only. This
+      // is the evidence base for the re-scope itself: it shows, per enqueue,
+      // whether admitting behind PRs is routine or exceptional. Best-effort — a
+      // failed compare read must never affect an enqueue that already succeeded.
+      let behindNote = "";
+      try {
+        const div = divergenceCommitMessages(headSha);
+        if (div.ok) {
+          const n = div.messages.length;
+          behindNote =
+            n === 0 ? ", up-to-date" : `, behind=${n}${isSkipCiOnlyDivergence(div.messages) ? " (skip-ci only)" : ""}`;
+        }
+      } catch {
+        /* telemetry only */
+      }
+      enqueued.push([pr.number, `enqueued (green ${ageMin}m${behindNote})`]);
       // #3584: a PR flagged on an earlier sweep and enqueued now was a false
       // positive (or was rescued); drop the label so it cannot rot and dilute
       // the signal. No-op when the label is absent.
@@ -1019,6 +1395,13 @@ function runSweep() {
         const r = DRY ? { ok: true, why: "would rerun cla-check" } : rerunClaCheck(pr.number, pr.headRefName);
         skipped.push([pr.number, `cla-check stale on head — ${r.why}; retry next sweep`]);
       } else {
+        // (#4094) MUTATION-REFUSAL TELEMETRY. The one question STEP 0 could not
+        // settle without mutating is whether GitHub ever refuses `enqueuePullRequest`
+        // for a PR that is behind main. Rather than manufacture that state, capture
+        // the RAW error here and degrade to skip: production answers it, and a
+        // refusal costs one sweep instead of a stranding. Recorded verbatim (not
+        // pattern-matched) so an unanticipated refusal reason is still legible.
+        refusals.push([pr.number, msg]);
         skipped.push([pr.number, `enqueue-failed: ${msg}`]);
       }
     }
@@ -1027,8 +1410,12 @@ function runSweep() {
   console.log(
     `enqueue-green-prs: ${prs.length} open, ${inQueue.size} already queued, grace=${GRACE_MINUTES}m${DRY ? " (DRY RUN)" : ""}`,
   );
+  console.log(`enqueue-green-prs: required checks (${requiredInfo.source}): ${REQUIRED_NAMES.join(", ")}`);
   for (const [n, why] of updated) console.log(`  ~ #${n} ${why}`);
   for (const [n, why] of enqueued) console.log(`  + #${n} ${why}`);
+  // (#4094) Surfaced separately from the generic skip lines so a mutation refusal
+  // is visible as its own class rather than buried among ordinary skips.
+  for (const [n, why] of refusals) console.log(`  ! #${n} ENQUEUE REFUSED (telemetry): ${why}`);
   for (const [n, why] of skipped) console.log(`  - #${n} skip (${why})`);
   // #3584 — the whole point of the classifier: a stall that used to be one more
   // indistinguishable `skip (BLOCKED)` line now gets its own block at the end of
@@ -1052,6 +1439,7 @@ function selfCheck() {
     headRefOid: "a".repeat(40),
     baseRefName: "stack/parent",
     mergeStateStatus: "CLEAN",
+    mergeable: "MERGEABLE",
     isDraft: false,
     labels: [],
   };
@@ -1076,9 +1464,20 @@ function selfCheck() {
     ok: false,
     reason: "head-changed-during-sweep",
   });
+  // (#4094) This assertion previously REQUIRED `mergeStateStatus: "BEHIND"` to be
+  // rejected. It is inverted deliberately, not relaxed: that field is a stale
+  // sample (PR #4033 read CLEAN while 4 commits behind; #4034 read UNSTABLE while
+  // 0 behind), and behind-ness genuinely does not block the queue — #4002 was
+  // enqueued 1 commit behind and merged with a green merge_group re-validation.
+  // A test pinning the old bail would have defended the defect.
   assert.deepEqual(freshEnqueueGuard(initial, { ...exactMain, mergeStateStatus: "BEHIND" }), {
+    ok: true,
+    reason: "exact-fresh-candidate",
+  });
+  // Conflicting-ness is the real blocker, and it comes from `mergeable`.
+  assert.deepEqual(freshEnqueueGuard(initial, { ...exactMain, mergeable: "CONFLICTING" }), {
     ok: false,
-    reason: "BEHIND",
+    reason: "conflicting",
   });
   assert.deepEqual(enqueueMutationVariables("PR_node_id", exactMain.headRefOid), {
     id: "PR_node_id",

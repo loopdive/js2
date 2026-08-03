@@ -1,12 +1,15 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   LEDGER_END,
   LEDGER_START,
+  SOURCE_INVENTORY_ANCHOR,
+  SOURCE_INVENTORY_MARKER,
   checkLedgerFile,
+  collectDirectOptimizationAnchors,
   validateLedgerText,
 } from "../scripts/check-ir-optimization-retirement.mjs";
 
@@ -39,12 +42,219 @@ ${rows.map((entry) => JSON.stringify(entry)).join("\n")}
 ${LEDGER_END}`;
 }
 
+function sourceInventoryLedger(...rows: unknown[]) {
+  return `${SOURCE_INVENTORY_MARKER}\n${ledger(...rows)}`;
+}
+
+function inventoryRow(id: string, symbol: string) {
+  return row({
+    id,
+    directOwner: {
+      source: "src/codegen/synthetic.ts",
+      symbol,
+      anchor: SOURCE_INVENTORY_ANCHOR,
+    },
+  });
+}
+
+function inventoryFixture(source: string, rows: unknown[], options: { marker?: boolean } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "js2-ir-source-inventory-"));
+  mkdirSync(join(dir, "src/codegen"), { recursive: true });
+  mkdirSync(join(dir, "src/ir"), { recursive: true });
+  mkdirSync(join(dir, "plan/log"), { recursive: true });
+  writeFileSync(join(dir, "src/codegen/synthetic.ts"), source);
+  writeFileSync(join(dir, "src/codegen/index.ts"), "export {};\n");
+  writeFileSync(join(dir, "src/ir/from-ast.ts"), "export {};\n");
+  const path = join(dir, "plan/log/ir-optimization-retirement-ledger.md");
+  writeFileSync(path, options.marker === false ? ledger(...rows) : sourceInventoryLedger(...rows));
+  return { dir, path };
+}
+
 describe("#3792 IR optimization retirement ledger gate", () => {
   it("accepts the committed ledger and reports a non-empty measured inventory", () => {
     const summary = checkLedgerFile("plan/log/ir-optimization-retirement-ledger.md");
-    expect(summary.rows).toBe(11);
-    expect(summary.complete).toBeGreaterThan(0);
-    expect(summary.retirementReady).toBe(0);
+    expect(summary.rows).toBe(22);
+    expect(summary.complete).toBe(11);
+    expect(summary.retirementReady).toBe(1);
+    expect(summary.sourceAnchors).toBe(2);
+    expect(summary.sourceInventoryVersion).toBe("v1");
+
+    const inventory = collectDirectOptimizationAnchors();
+    expect(inventory.errors).toEqual([]);
+    expect(inventory.anchors).toEqual([
+      {
+        id: "IR-OPT-DENSE-VECTOR-PRESIZE",
+        source: "src/codegen/literals.ts",
+        symbol: "detectCountedFillLoopBound",
+        line: expect.any(Number),
+      },
+      {
+        id: "IR-OPT-COUNTED-VECTOR-PUSH-PRESIZE",
+        source: "src/codegen/literals.ts",
+        symbol: "detectCountedPushLoop",
+        line: expect.any(Number),
+      },
+    ]);
+  });
+
+  it("rejects an annotated direct owner omitted from the ledger", () => {
+    const fixture = inventoryFixture(
+      `/** @irOptimizationOwner IR-OPT-TRACKED */
+function trackedOptimization() {}
+/** @irOptimizationOwner IR-OPT-OMITTED */
+function omittedOptimization() {}
+`,
+      [inventoryRow("IR-OPT-TRACKED", "trackedOptimization")],
+    );
+    try {
+      expect(() => checkLedgerFile(fixture.path, { repoRoot: fixture.dir })).toThrow(
+        "src/codegen/synthetic.ts::omittedOptimization references IR-OPT-OMITTED, which is omitted from the ledger",
+      );
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a dangling ledger anchor after its source annotation is removed", () => {
+    const fixture = inventoryFixture("function trackedOptimization() {}\n", [
+      inventoryRow("IR-OPT-TRACKED", "trackedOptimization"),
+    ]);
+    try {
+      expect(() => checkLedgerFile(fixture.path, { repoRoot: fixture.dir })).toThrow(
+        "IR-OPT-TRACKED ledger owner src/codegen/synthetic.ts::trackedOptimization has a dangling source-annotation-v1 claim",
+      );
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects mismatched and duplicate parsed source identities", () => {
+    const mismatch = inventoryFixture(
+      `/** @irOptimizationOwner IR-OPT-TRACKED */
+function actualOptimization() {}
+`,
+      [inventoryRow("IR-OPT-TRACKED", "renamedOptimization")],
+    );
+    try {
+      expect(() => checkLedgerFile(mismatch.path, { repoRoot: mismatch.dir })).toThrow(
+        "IR-OPT-TRACKED source identity mismatch: annotation is src/codegen/synthetic.ts::actualOptimization, ledger is src/codegen/synthetic.ts::renamedOptimization",
+      );
+    } finally {
+      rmSync(mismatch.dir, { recursive: true, force: true });
+    }
+
+    const duplicate = inventoryFixture(
+      `/**
+ * @irOptimizationOwner IR-OPT-FIRST
+ * @irOptimizationOwner IR-OPT-SECOND
+ */
+function sharedOptimization() {}
+`,
+      [inventoryRow("IR-OPT-FIRST", "sharedOptimization"), inventoryRow("IR-OPT-SECOND", "sharedOptimization")],
+    );
+    try {
+      expect(() => checkLedgerFile(duplicate.path, { repoRoot: duplicate.dir })).toThrow(
+        "duplicate source inventory identity src/codegen/synthetic.ts::sharedOptimization",
+      );
+    } finally {
+      rmSync(duplicate.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects duplicate source IDs and a zero-owner v1 denominator", () => {
+    const duplicate = inventoryFixture(
+      `/** @irOptimizationOwner IR-OPT-TRACKED */
+function firstOptimization() {}
+/** @irOptimizationOwner IR-OPT-TRACKED */
+function secondOptimization() {}
+`,
+      [inventoryRow("IR-OPT-TRACKED", "firstOptimization")],
+    );
+    try {
+      expect(() => checkLedgerFile(duplicate.path, { repoRoot: duplicate.dir })).toThrow(
+        "duplicate source inventory id IR-OPT-TRACKED",
+      );
+    } finally {
+      rmSync(duplicate.dir, { recursive: true, force: true });
+    }
+
+    const zero = inventoryFixture("export {};\n", [row()]);
+    try {
+      expect(() => checkLedgerFile(zero.path, { repoRoot: zero.dir })).toThrow(
+        "source inventory v1 denominator must contain at least one annotated direct-codegen owner",
+      );
+    } finally {
+      rmSync(zero.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects missing, duplicate, and unknown source-inventory markers", () => {
+    const missingMarker = inventoryFixture(
+      `/** @irOptimizationOwner IR-OPT-TRACKED */
+function trackedOptimization() {}
+`,
+      [inventoryRow("IR-OPT-TRACKED", "trackedOptimization")],
+      { marker: false },
+    );
+    try {
+      expect(() => checkLedgerFile(missingMarker.path, { repoRoot: missingMarker.dir })).toThrow(
+        `source inventory requires exactly one ${SOURCE_INVENTORY_MARKER} marker`,
+      );
+    } finally {
+      rmSync(missingMarker.dir, { recursive: true, force: true });
+    }
+
+    const duplicateMarker = inventoryFixture(
+      `/** @irOptimizationOwner IR-OPT-TRACKED */
+function trackedOptimization() {}
+`,
+      [inventoryRow("IR-OPT-TRACKED", "trackedOptimization")],
+    );
+    writeFileSync(
+      duplicateMarker.path,
+      `${SOURCE_INVENTORY_MARKER}\n${sourceInventoryLedger(inventoryRow("IR-OPT-TRACKED", "trackedOptimization"))}`,
+    );
+    try {
+      expect(() => checkLedgerFile(duplicateMarker.path, { repoRoot: duplicateMarker.dir })).toThrow(
+        "source inventory marker must appear exactly once with version v1",
+      );
+    } finally {
+      rmSync(duplicateMarker.dir, { recursive: true, force: true });
+    }
+
+    const unknownMarker = inventoryFixture(
+      `/** @irOptimizationOwner IR-OPT-TRACKED */
+function trackedOptimization() {}
+`,
+      [inventoryRow("IR-OPT-TRACKED", "trackedOptimization")],
+    );
+    writeFileSync(
+      unknownMarker.path,
+      `<!-- ir-optimization-source-inventory:v2 -->\n${ledger(inventoryRow("IR-OPT-TRACKED", "trackedOptimization"))}`,
+    );
+    try {
+      expect(() => checkLedgerFile(unknownMarker.path, { repoRoot: unknownMarker.dir })).toThrow(
+        "source inventory marker must appear exactly once with version v1",
+      );
+    } finally {
+      rmSync(unknownMarker.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed source annotations", () => {
+    const malformed = inventoryFixture(
+      `/** @irOptimizationOwner not-a-stable-id */
+function malformedOptimization() {}
+`,
+      [row()],
+    );
+    try {
+      expect(() => checkLedgerFile(malformed.path, { repoRoot: malformed.dir })).toThrow(
+        "@irOptimizationOwner must name exactly one IR-OPT-<STABLE-UPPERCASE-ID>",
+      );
+    } finally {
+      rmSync(malformed.dir, { recursive: true, force: true });
+    }
   });
 
   it("rejects malformed JSON rows", () => {
@@ -157,7 +367,7 @@ describe("#3792 IR optimization retirement ledger gate", () => {
       { encoding: "utf8" },
     );
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("11/11 rows are not ready");
+    expect(result.stderr).toContain("21/22 rows are not ready");
     expect(result.stderr).toContain("IR-OPT-NUMERIC-SWITCH-PROOF");
   });
 });

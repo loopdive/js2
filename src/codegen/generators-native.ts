@@ -52,7 +52,7 @@ import {
 } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { addUnionImports } from "./index.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
 import { resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
@@ -1623,7 +1623,7 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
     }
     if (param.questionToken || param.dotDotDotToken || (param.initializer && !noJsHostTarget(ctx))) return false;
   }
-  if (bodyUsesArguments(decl.body)) return false;
+  if (bodyNeedsArgumentsObject(decl.body)) return false;
   if (fnExprBodyReferencesThis(decl.body)) return false;
   if (decl.name && bodyReferencesOwnName(decl.body, decl.name.text)) return false;
   // (#3302) Outer-scope captures are ADMITTED in the standalone/wasi lane:
@@ -2174,7 +2174,7 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   if (
     ts.isMethodDeclaration(decl) &&
     decl.body &&
-    (bodyUsesArguments(decl.body) ||
+    (bodyNeedsArgumentsObject(decl.body) ||
       methodBodyUsesSuper(decl.body) ||
       // (#3032 W4) Outer-scope captures are ADMITTED for method generators in
       // the standalone/wasi lane: a class / object-literal method body never

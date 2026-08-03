@@ -75,8 +75,38 @@ export const RUNTIME_EVAL_REFUSAL_MESSAGE =
  */
 const REFUSAL_PROVIDER_SOURCE = `
       function runtimeEvalResult(ok: boolean, value: any): any {
-        const result: any[] = [ok, value];
+        const result: any[] = [ok, __runtime_eval_wrap_result(value)];
         return result;
+      }
+
+      var refusalIntrinsicEval: any = undefined;
+      var refusalIntrinsicFunction: any = undefined;
+      function refusalEvalTarget(): any {
+        return undefined;
+      }
+      function refusalFunctionTarget(): any {
+        return undefined;
+      }
+
+      function refusalEvalValue(globalObject: any): any {
+        if (refusalIntrinsicFunction === undefined) {
+          refusalIntrinsicFunction = __runtime_eval_wrap_intrinsic_function_callback(
+            refusalFunctionTarget,
+            "Function",
+            1
+          );
+        }
+        if (refusalIntrinsicEval === undefined) {
+          refusalIntrinsicEval = __runtime_eval_wrap_intrinsic_callback(
+            refusalEvalTarget,
+            "eval",
+            1,
+            refusalIntrinsicFunction
+          );
+        }
+        if (!("eval" in globalObject)) globalObject.eval = refusalIntrinsicEval;
+        if (!("Function" in globalObject)) globalObject.Function = refusalIntrinsicFunction;
+        return globalObject.eval;
       }
 
       function refuse(): any {
@@ -97,6 +127,47 @@ const REFUSAL_PROVIDER_SOURCE = `
       export function __runtime_indirect_eval(
         source: any,
         globalObject: any
+      ): any {
+        // Reading the first-class intrinsic is not itself dynamic code
+        // execution. Let a first-class eval alias materialize a callable marker;
+        // invoking it still reaches __runtime_apply_interpreted and refuses.
+        if (source === "eval") return runtimeEvalResult(true, refusalEvalValue(globalObject));
+        if (source === "Function") {
+          refusalEvalValue(globalObject);
+          return runtimeEvalResult(true, globalObject.Function);
+        }
+        return refuse();
+      }
+
+      export function __runtime_direct_eval(
+        source: any,
+        globalObject: any,
+        thisArg: any,
+        activationState: any,
+        activationSeedNames: any,
+        activationSeedSlots: any,
+        lexicalNames: any,
+        lexicalSlots: any,
+        outerNames: any,
+        outerSlots: any,
+        callerStrict: boolean,
+        mappedParamNames: any
+      ): any {
+        return refuse();
+      }
+
+      export function __runtime_apply_interpreted(
+        callable: any,
+        receiver: any,
+        argc: number,
+        a0: any,
+        a1: any,
+        a2: any,
+        a3: any,
+        a4: any,
+        a5: any,
+        a6: any,
+        a7: any
       ): any {
         return refuse();
       }
@@ -138,6 +209,7 @@ const INTERP_FILES = [
   "opcodes.ts",
   "encoder.ts",
   "runtime-ops.ts",
+  "eval-environment.ts",
   "emitter.ts",
   "loop.ts",
   "dynamic-function.ts",
@@ -158,8 +230,28 @@ function stripModuleSyntax(source) {
 // evaluate "1 + 2" is refused before it is ever cached.
 const PROVIDER_EXPORT_WRAPPER = `
       function runtimeEvalResult(ok: boolean, value: any): any {
-        const result: any[] = [ok, value];
+        const result: any[] = [ok, __runtime_eval_wrap_result(exposeRuntimeEvalValue(value))];
         return result;
+      }
+
+      function exposeRuntimeEvalSlots(slots: any): void {
+        if (slots === undefined || slots === null) return;
+        for (let i = 0; i < slots.length; i += 1) {
+          const cell: any = slots[i];
+          if (cell !== undefined && cell !== null) {
+            cell.value = exposeRuntimeEvalSharedValue(cell.value);
+          }
+        }
+      }
+
+      function exposeRuntimeEvalCallerSlots(
+        activationSeedSlots: any,
+        lexicalSlots: any,
+        outerSlots: any
+      ): void {
+        exposeRuntimeEvalSlots(activationSeedSlots);
+        exposeRuntimeEvalSlots(lexicalSlots);
+        exposeRuntimeEvalSlots(outerSlots);
       }
 
       export function __runtime_new_function(
@@ -187,11 +279,97 @@ const PROVIDER_EXPORT_WRAPPER = `
         globalObject: any
       ): any {
         try {
-          return runtimeEvalResult(
-            true,
-            executeIndirectEval(parse, source, globalObject)
-          );
+          const value = executeIndirectEval(parse, source, globalObject);
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          return runtimeEvalResult(true, value);
         } catch (error) {
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          return runtimeEvalResult(false, error);
+        }
+      }
+
+      export function __runtime_direct_eval(
+        source: any,
+        globalObject: any,
+        thisArg: any,
+        activationState: any,
+        activationSeedNames: any,
+        activationSeedSlots: any,
+        lexicalNames: any,
+        lexicalSlots: any,
+        outerNames: any,
+        outerSlots: any,
+        callerStrict: boolean,
+        mappedParamNames: any
+      ): any {
+        const liveNames: any[] = [];
+        const liveSlots: any[] = [];
+        try {
+          restoreDirectEvalActivationState(activationState, liveNames, liveSlots);
+          const evalResult = executeDirectEval(
+            parse,
+            source,
+            globalObject,
+            __runtime_eval_unwrap_result(thisArg),
+            liveNames,
+            liveSlots,
+            activationSeedNames,
+            activationSeedSlots,
+            lexicalNames,
+            lexicalSlots,
+            outerNames,
+            outerSlots,
+            callerStrict,
+            mappedParamNames
+          );
+          exposeRuntimeEvalCallerSlots(activationSeedSlots, lexicalSlots, outerSlots);
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          snapshotDirectEvalActivationState(activationState, liveNames);
+          return runtimeEvalResult(true, evalResult);
+        } catch (error) {
+          exposeRuntimeEvalCallerSlots(activationSeedSlots, lexicalSlots, outerSlots);
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          snapshotDirectEvalActivationState(activationState, liveNames);
+          return runtimeEvalResult(false, error);
+        }
+      }
+
+      export function __runtime_apply_interpreted(
+        callable: any,
+        receiver: any,
+        argc: number,
+        a0: any,
+        a1: any,
+        a2: any,
+        a3: any,
+        a4: any,
+        a5: any,
+        a6: any,
+        a7: any
+      ): any {
+        const args: any[] = [];
+        if (argc > 0) args.push(__runtime_eval_unwrap_result(a0));
+        if (argc > 1) args.push(__runtime_eval_unwrap_result(a1));
+        if (argc > 2) args.push(__runtime_eval_unwrap_result(a2));
+        if (argc > 3) args.push(__runtime_eval_unwrap_result(a3));
+        if (argc > 4) args.push(__runtime_eval_unwrap_result(a4));
+        if (argc > 5) args.push(__runtime_eval_unwrap_result(a5));
+        if (argc > 6) args.push(__runtime_eval_unwrap_result(a6));
+        if (argc > 7) args.push(__runtime_eval_unwrap_result(a7));
+        try {
+          const value = applyRuntimeEvalCallable(
+            callable,
+            __runtime_eval_unwrap_result(receiver),
+            args
+          );
+          exposeRuntimeEvalCallableEnvironment(callable);
+          return runtimeEvalResult(true, value);
+        } catch (error) {
+          exposeRuntimeEvalCallableEnvironment(callable);
           return runtimeEvalResult(false, error);
         }
       }
@@ -210,7 +388,77 @@ const PROVIDER_EXPORT_WRAPPER = `
         return fn(1, 2) as number;
       }
 
+      export function __runtime_direct_eval_canary(): number {
+        const names: any[] = ["x"];
+        const cell: EvalBindingCell = { value: 40 };
+        const slots: any[] = [cell];
+        const result = executeDirectEval(
+          parse,
+          "x = x + 2; x",
+          {},
+          undefined,
+          [],
+          [],
+          names,
+          slots,
+          [],
+          [],
+          [],
+          [],
+          false,
+          []
+        );
+        return (result as number) + (cell.value as number);
+      }
+
+      export function __runtime_apply_interpreted_canary(): number {
+        const fn = createDynamicFunction(parse, "a,b", "return a + b", {});
+        const result: any = __runtime_apply_interpreted(
+          fn,
+          undefined,
+          2,
+          1,
+          2,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined
+        );
+        return result[0] ? __runtime_eval_unwrap_result(result[1]) as number : -1;
+      }
+
       export function __runtime_positive_corpus_canary(): number {
+        const declarationPlan = collectEvalDeclarations(
+          parse("var declaredVar; let declaredLexical;", {
+            ecmaVersion: 2025,
+            sourceType: "script"
+          })
+        );
+        if (declarationPlan.varNames.length !== 1) return -2001;
+        if (declarationPlan.varNames[0] !== "declaredVar") return -2002;
+        if (declarationPlan.lexicalNames.length !== 1) return -2003;
+        if (declarationPlan.lexicalNames[0] !== "declaredLexical") return -2004;
+        const declarationAst = parse("'use strict'; var privateVar = 1; privateVar", {
+          ecmaVersion: 2025,
+          sourceType: "script"
+        });
+        const declarationGlobal: any = {};
+        const declarationGlobalEnv = new EnvRec(ENV_GLOBAL, null, null, null, declarationGlobal);
+        const declarationEnv = prepareEvalEnvironment(
+          declarationAst,
+          declarationGlobalEnv,
+          declarationGlobalEnv,
+          true
+        );
+        if (declarationEnv.kind !== ENV_DECLARATIVE) return -2005;
+        const declarationNames: any = declarationEnv.names;
+        if (declarationNames.length !== 1) return -2006;
+        if (declarationNames[0] !== "privateVar") return -2007;
+        const declarationSlots: any = declarationEnv.slots;
+        if (declarationSlots.length !== 1) return -2008;
+
         // Thirty Phase-1-positive bodies drawn from the Test262-shaped corpus
         // in differential.test.ts. Every case parses through the real Acorn
         // artifact and executes in the self-compiled interpreter.
@@ -347,6 +595,54 @@ export function readCachedRuntimeEvalProvider(cacheDir, key, pathOf = runtimeEva
   }
 }
 
+/**
+ * Select the cached provider tier for one Test262 process.
+ *
+ * Both the fork worker and the in-process fixture-graph lane must make the
+ * identical choice. Keeping cache keys, the opt-in full-provider switch, and
+ * the refusal fallback here prevents a fixture-only link path from silently
+ * drifting back to an unresolved `js2wasm:runtime-eval` import.
+ */
+export function selectCachedRuntimeEvalProvider() {
+  if (process.env.TEST262_DISABLE_RUNTIME_EVAL_PROVIDER === "1") {
+    return {
+      module: null,
+      message: "NONE (TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1) — eval-mentioning modules cannot link",
+    };
+  }
+  try {
+    const compilerHash = computeCompilerBundleHash();
+    const load = (source, pathOf) => {
+      const key = runtimeEvalProviderCacheKey(source, compilerHash);
+      const binary = readCachedRuntimeEvalProvider(defaultRuntimeEvalProviderCacheDir(), key, pathOf);
+      return { key, module: binary ? new WebAssembly.Module(binary) : null };
+    };
+    const full =
+      process.env.TEST262_FULL_RUNTIME_EVAL === "1"
+        ? load(buildRuntimeEvalProviderSource(), undefined)
+        : { key: "(not requested)", module: null };
+    if (full.module) {
+      return {
+        module: full.module,
+        message:
+          `INTERPRETER (key ${full.key}, TEST262_FULL_RUNTIME_EVAL=1) — authoritative CI-comparable ` +
+          `standalone tier (#2928 E7)`,
+      };
+    }
+    const refusal = load(buildRuntimeEvalRefusalProviderSource(), runtimeEvalRefusalCachePath);
+    return {
+      module: refusal.module,
+      message: refusal.module
+        ? `REFUSAL (key ${refusal.key}; interpreter ${full.key}) — fast local diagnostic only, NOT ` +
+          `CI-comparable: eval-mentioning modules instantiate and dynamic-code calls throw TypeError`
+        : `NONE — refusal provider missing (key ${refusal.key}); eval-mentioning standalone modules stay ` +
+          `unlinkable. Prebuild with: node scripts/build-runtime-eval-provider.mjs --refusal-only`,
+    };
+  } catch (err) {
+    return { module: null, message: `NONE — provider load failed: ${err?.message ?? err}` };
+  }
+}
+
 /** Atomically (tmp + rename) publish a provider binary into the cache. */
 export function writeCachedRuntimeEvalProvider(cacheDir, key, binary, pathOf = runtimeEvalProviderCachePath) {
   mkdirSync(cacheDir, { recursive: true });
@@ -374,5 +670,7 @@ export function instantiateRuntimeEvalNamespace(providerModule) {
   return {
     __runtime_new_function: instance.exports.__runtime_new_function,
     __runtime_indirect_eval: instance.exports.__runtime_indirect_eval,
+    __runtime_direct_eval: instance.exports.__runtime_direct_eval,
+    __runtime_apply_interpreted: instance.exports.__runtime_apply_interpreted,
   };
 }

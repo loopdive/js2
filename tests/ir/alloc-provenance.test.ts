@@ -16,6 +16,7 @@ import {
   AllocSiteRegistry,
   IrFunctionBuilder,
   assertAllocProvenance,
+  assertFinalAllocProvenance,
   asAllocSiteId,
   irVal,
   verifyAllocProvenance,
@@ -111,6 +112,33 @@ describe("#1586 — alloc provenance", () => {
           stage: "verify",
         });
       }
+    } finally {
+      if (original === undefined) Reflect.deleteProperty(process.env, "IR_VERIFY_ALLOC");
+      else process.env.IR_VERIFY_ALLOC = original;
+    }
+  });
+
+  it("keeps intermediate assertions optional while the final assertion is required", () => {
+    const original = process.env.IR_VERIFY_ALLOC;
+    Reflect.deleteProperty(process.env, "IR_VERIFY_ALLOC");
+    try {
+      const reg = new AllocSiteRegistry();
+      const b = new IrFunctionBuilder(identities.next("f"), [{ kind: "string" }], false, reg);
+      b.openBlock();
+      const s = b.emitStringConst("final");
+      b.terminate({ kind: "return", values: [s] });
+      const fn = b.finish();
+      const strInstr = fn.blocks[0]!.instrs.find((instr) => instr.kind === "string.const")!;
+      reg.retire(strInstr.alloc!);
+
+      expect(() => assertAllocProvenance(fn, reg)).not.toThrow();
+      expect(() => assertFinalAllocProvenance(fn, reg)).toThrowError(
+        expect.objectContaining({
+          name: "IrInvariantError",
+          code: "allocation-provenance-failure",
+          stage: "verify",
+        }),
+      );
     } finally {
       if (original === undefined) Reflect.deleteProperty(process.env, "IR_VERIFY_ALLOC");
       else process.env.IR_VERIFY_ALLOC = original;

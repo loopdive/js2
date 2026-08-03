@@ -18,7 +18,7 @@ import { compile } from "../src/index.js";
  */
 
 async function compileStandalone(src: string) {
-  const r = await compile(src, { fileName: "test.ts", target: "standalone" });
+  const r = await compile(src, { fileName: "test.ts", target: "standalone", hostBridge: "always" });
   expect(r.success, r.success ? undefined : r.errors?.[0]?.message).toBe(true);
   const mod = await WebAssembly.compile(r.binary);
   const imports = WebAssembly.Module.imports(mod);

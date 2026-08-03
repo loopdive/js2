@@ -5,6 +5,23 @@ const forkMaxOldSpaceSize = process.env.VITEST_FORK_MAX_OLD_SPACE_SIZE || "512";
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
+    // The dogfood upstream suites extract a real npm/git checkout under
+    // `tests/dogfood/.<name>-upstream-suite/` (#3958 React, #3977 lit). Those
+    // trees contain hundreds of the upstream project's OWN `*.test.ts` files,
+    // which `tests/**/*.test.ts` happily collects — vitest then tries to run
+    // them directly, against a browser harness they need and we do not provide,
+    // and 44 files fail for reasons that have nothing to do with the compiler.
+    // The suites are driven by their own `*-upstream-suite.test.ts` entry point;
+    // the extracted tree is INPUT DATA, never a test target. Only visible once a
+    // suite has run at least once in a given workspace, which is why it survived
+    // a clean CI run.
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "tests/dogfood/.*-upstream-suite/**",
+      "tests/dogfood/.*-implementation/**",
+      "tests/dogfood/.*-upstream-suite-impl/**",
+    ],
     pool: "forks",
     poolOptions: {
       forks: {

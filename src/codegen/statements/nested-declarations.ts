@@ -36,6 +36,8 @@ import {
   destructureParamArray,
   destructureParamObject,
   extractConstantDefault,
+  hoistLetConstWithTdz,
+  hoistVarDeclarations,
   resolveWasmType,
 } from "../index.js";
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
@@ -57,6 +59,13 @@ import {
 } from "../shared.js";
 import { definedFuncAt, mintDefinedFunc } from "../func-space.js"; // (#1916 S2 read chokepoint / S3b stable-regime minting)
 import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-callable-planning.js";
+import {
+  collectDirectEvalActivationBindingNames,
+  collectDirectEvalBindingNames,
+  functionMayReachDirectEval,
+  reifyCurrentDirectEvalBindings,
+} from "../direct-eval-environment.js";
+import { annexBHoistCancels } from "../annexb-cancel.js";
 
 /**
  * §15.7.1 ClassDefinitionEvaluation: the class name binding is added to the
@@ -65,7 +74,7 @@ import { pushProgramAbiNestedFunctionDeclaration } from "../program-abi-source-c
  * must throw ReferenceError (e.g. `class x extends x {}`). Returns true if the
  * extends heritage clause contains an identifier equal to the class name.
  */
-function extendsReferencesClassName(decl: ts.ClassDeclaration | ts.ClassExpression, className: string): boolean {
+function extendsOwnClass(ctx: CodegenContext, decl: ts.ClassDeclaration | ts.ClassExpression): boolean {
   if (!decl.heritageClauses) return false;
   for (const clause of decl.heritageClauses) {
     if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
@@ -73,7 +82,7 @@ function extendsReferencesClassName(decl: ts.ClassDeclaration | ts.ClassExpressi
       let found = false;
       const visit = (node: ts.Node): void => {
         if (found) return;
-        if (ts.isIdentifier(node) && node.text === className) {
+        if (ts.isIdentifier(node) && ctx.oracle.valueDeclarationOf(node) === decl) {
           found = true;
           return;
         }
@@ -104,7 +113,7 @@ export function compileNestedClassDeclaration(
   // evaluated. `class x extends x {}` must throw ReferenceError (#1594B). Only
   // a NAMED class can self-reference in its own heritage (`decl.name` present);
   // an anonymous class expression has no name to hit the TDZ.
-  if (decl.name && extendsReferencesClassName(decl, decl.name.text)) {
+  if (decl.name && extendsOwnClass(ctx, decl)) {
     emitThrowReferenceError(ctx, fctx, `Cannot access '${decl.name.text}' before initialization`);
     return;
   }
@@ -174,6 +183,8 @@ export function compileNestedClassDeclaration(
 
 interface CompileNestedFunctionOptions {
   reuseReservedEntry?: WasmFunction;
+  /** Register a capturing declaration's typed slot + capture metadata only. */
+  preRegisterOnly?: boolean;
 }
 
 /**
@@ -183,6 +194,100 @@ interface CompileNestedFunctionOptions {
  * once per enclosing scope.
  */
 const nestedFnMutatedNamesCache = new WeakMap<ts.Node, Set<string>>();
+
+/**
+ * Per-container transitive capture analysis for sibling function declarations.
+ * The result is syntactic so Phase 0 and body compilation make the same
+ * capture/no-capture decision regardless of which sibling compiles first.
+ */
+const siblingCaptureClosureCache = new WeakMap<ts.Node, Map<string, Set<string>>>();
+
+function siblingContainerOf(
+  stmt: ts.FunctionDeclaration,
+): { node: ts.Node; stmts: readonly ts.Statement[] } | undefined {
+  const parent = stmt.parent;
+  if (!parent) return undefined;
+  if (ts.isSourceFile(parent)) return { node: parent, stmts: parent.statements };
+  if (ts.isBlock(parent) || ts.isModuleBlock(parent)) return { node: parent, stmts: parent.statements };
+  return undefined;
+}
+
+/**
+ * Outer names a declaration must capture because it references another
+ * sibling that captures them. Nested declarations are lifted to module-level
+ * Wasm functions, so the forwarding sibling needs its own leading capture
+ * parameters; the declaring frame's local indices are not valid in it.
+ */
+function transitiveSiblingCaptures(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+): ReadonlySet<string> {
+  const container = siblingContainerOf(stmt);
+  if (!container || !stmt.name) return new Set();
+
+  let closure = siblingCaptureClosureCache.get(container.node);
+  if (!closure) {
+    // FunctionDeclarationInstantiation is last-wins for duplicate names.
+    const decls = new Map<string, ts.FunctionDeclaration>();
+    for (const sibling of container.stmts) {
+      if (ts.isFunctionDeclaration(sibling) && sibling.name && sibling.body) {
+        decls.set(sibling.name.text, sibling);
+      }
+    }
+
+    const ownLocalsByName = new Map<string, Set<string>>();
+    const referencedByName = new Map<string, Set<string>>();
+    closure = new Map<string, Set<string>>();
+
+    for (const [name, decl] of decls) {
+      const ownLocals = new Set<string>();
+      addFunctionOwnLocals(decl, ownLocals);
+      const referenced = new Set<string>();
+      for (const bodyStmt of decl.body!.statements) {
+        collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
+      }
+      ownLocalsByName.set(name, ownLocals);
+      referencedByName.set(name, referenced);
+
+      const directCaptures = new Set<string>();
+      for (const referencedName of referenced) {
+        if (referencedName === "this" || referencedName === "super") continue;
+        if (ownLocals.has(referencedName) || decls.has(referencedName)) continue;
+        if (
+          ctx.funcMap.has(referencedName) &&
+          ctx.funcMap.get(referencedName) !== ctx.jsStringImports.get(referencedName)
+        ) {
+          continue;
+        }
+        if (fctx.localMap.has(referencedName)) directCaptures.add(referencedName);
+      }
+      closure.set(name, directCaptures);
+    }
+
+    // Close direct captures over sibling-reference edges.
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const [name, referenced] of referencedByName) {
+        const into = closure.get(name)!;
+        const ownLocals = ownLocalsByName.get(name)!;
+        for (const siblingName of referenced) {
+          if (siblingName === name) continue;
+          const siblingCaptures = closure.get(siblingName);
+          if (!siblingCaptures) continue;
+          for (const captureName of siblingCaptures) {
+            if (ownLocals.has(captureName) || into.has(captureName)) continue;
+            into.add(captureName);
+            changed = true;
+          }
+        }
+      }
+    }
+    siblingCaptureClosureCache.set(container.node, closure);
+  }
+
+  return closure.get(stmt.name.text) ?? new Set();
+}
 
 /**
  * (#3038) Collect the outer-scope names that are written inside a nested
@@ -238,103 +343,6 @@ function collectNamesMutatedInNestedFunctions(enclosingBody: ts.Node): Set<strin
   return out;
 }
 
-/**
- * (#4075) Per-container cache of the transitive sibling-capture closure. Keyed
- * by the container node (function body / source file) that owns the sibling
- * set, so the Phase-0 reservation and the compile pass see the same verdict and
- * the O(siblings²) fixpoint runs once per container rather than once per
- * declaration — which matters on minified bundles with hundreds of siblings.
- */
-const siblingCaptureClosureCache = new WeakMap<ts.Node, Map<string, Set<string>>>();
-
-/**
- * The container whose statement list holds `stmt`'s sibling function
- * declarations: its enclosing function body, or the source file at top level.
- */
-function siblingContainerOf(
-  stmt: ts.FunctionDeclaration,
-): { node: ts.Node; stmts: readonly ts.Statement[] } | undefined {
-  const parent = stmt.parent;
-  if (!parent) return undefined;
-  if (ts.isSourceFile(parent)) return { node: parent, stmts: parent.statements };
-  if (ts.isBlock(parent) || ts.isModuleBlock(parent)) return { node: parent, stmts: parent.statements };
-  return undefined;
-}
-
-/**
- * Names `stmt` must capture BECAUSE it calls (or otherwise references) a
- * capturing sibling — the transitive closure of "captures an outer local" over
- * the "references a sibling declaration" edge.
- *
- * Purely syntactic: it reads the sibling declarations' own bodies and the
- * enclosing `fctx.localMap`, never `ctx.nestedFuncCaptures`, so it returns the
- * same answer before and after any sibling has been compiled.
- */
-function transitiveSiblingCaptures(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  stmt: ts.FunctionDeclaration,
-): ReadonlySet<string> {
-  const container = siblingContainerOf(stmt);
-  if (!container || !stmt.name) return new Set();
-
-  let closure = siblingCaptureClosureCache.get(container.node);
-  if (!closure) {
-    // Last-wins per name, mirroring the Phase-0 / compile-loop duplicate rule.
-    const decls = new Map<string, ts.FunctionDeclaration>();
-    for (const s of container.stmts) {
-      if (ts.isFunctionDeclaration(s) && s.name && s.body) decls.set(s.name.text, s);
-    }
-    const ownLocalsOf = new Map<string, Set<string>>();
-    const referencedBy = new Map<string, Set<string>>();
-    closure = new Map<string, Set<string>>();
-    for (const [name, decl] of decls) {
-      const own = new Set<string>();
-      addFunctionOwnLocals(decl, own);
-      const referenced = new Set<string>();
-      for (const s of decl.body!.statements) collectReferencedIdentifiers(s, referenced, own);
-      ownLocalsOf.set(name, own);
-      referencedBy.set(name, referenced);
-      // Direct captures: outer locals of the enclosing frame. Same filters as
-      // the Phase-0 check and the capture loop below.
-      const direct = new Set<string>();
-      for (const referencedName of referenced) {
-        if (referencedName === "this" || referencedName === "super") continue;
-        if (own.has(referencedName) || decls.has(referencedName)) continue;
-        if (
-          ctx.funcMap.has(referencedName) &&
-          ctx.funcMap.get(referencedName) !== ctx.jsStringImports.get(referencedName)
-        ) {
-          continue;
-        }
-        if (fctx.localMap.has(referencedName)) direct.add(referencedName);
-      }
-      closure.set(name, direct);
-    }
-    // Propagate along sibling references to fixpoint. A name shadowed by the
-    // caller's own locals is NOT propagated — the caller binds it itself.
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const [name, referenced] of referencedBy) {
-        const into = closure.get(name)!;
-        const own = ownLocalsOf.get(name)!;
-        for (const calleeName of referenced) {
-          if (calleeName === name) continue;
-          const calleeCaps = closure.get(calleeName);
-          if (!calleeCaps) continue;
-          for (const capName of calleeCaps) {
-            if (own.has(capName) || into.has(capName)) continue;
-            into.add(capName);
-            changed = true;
-          }
-        }
-      }
-    }
-    siblingCaptureClosureCache.set(container.node, closure);
-  }
-  return closure.get(stmt.name.text) ?? new Set();
-}
-
 export function compileNestedFunctionDeclaration(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -344,6 +352,19 @@ export function compileNestedFunctionDeclaration(
   if (!stmt.name || !stmt.body) return;
   const funcName = stmt.name.text;
   const foreignEvalDeclaration = isForeignEvalNode(stmt);
+
+  const prepareBodyBindings = (bodyFctx: FunctionContext): void => {
+    // Nested declarations use a dedicated lowering path instead of
+    // function-body.ts, but they still need the same FunctionDeclarationInstantiation
+    // prelude. In particular, a capturing nested function's own `var x` must
+    // shadow a same-named module global before its first statement compiles;
+    // otherwise compileVariableStatement falls through to global.set and an
+    // indirect eval observes the nested local as a realm-global mutation.
+    hoistVarDeclarations(ctx, bodyFctx, stmt.body!.statements);
+    hoistLetConstWithTdz(ctx, bodyFctx, stmt.body!.statements);
+    reifyCurrentDirectEvalBindings(ctx, bodyFctx);
+    hoistFunctionDeclarations(ctx, bodyFctx, stmt.body!.statements);
+  };
 
   // Determine parameter types and return type
   // Unannotated binding patterns containing a rest element are widened to
@@ -452,8 +473,22 @@ export function compileNestedFunctionDeclaration(
   for (const s of stmt.body.statements) {
     collectReferencedIdentifiers(s, referencedNames, ownLocals);
   }
+  // A lifted sibling that references a capturing sibling must receive the
+  // same outer values as leading parameters so it can call or materialize the
+  // sibling without reading local indices from a different Wasm frame.
+  for (const name of transitiveSiblingCaptures(ctx, fctx, stmt)) {
+    if (!ownLocals.has(name)) referencedNames.add(name);
+  }
+  const reachesDirectEval = functionMayReachDirectEval(stmt, ctx.oracle);
+  if (reachesDirectEval) {
+    // Runtime source can name any visible outer binding even though no such
+    // identifier appears in the static AST. Ancestors have already promoted
+    // their eval-visible bindings; force those cells into this lifted
+    // function's capture prefix so its direct-eval call can forward them.
+    for (const name of fctx.boxedCaptures?.keys() ?? []) referencedNames.add(name);
+  }
 
-  // (#4075) TRANSITIVE captures through sibling calls.
+  // (#4134) TRANSITIVE captures through sibling calls.
   //
   // A nested function that CALLS a capturing sibling has to supply that
   // sibling's captures at the call site (`nestedFuncCaptures` prepend in
@@ -696,27 +731,6 @@ export function compileNestedFunctionDeclaration(
     ctx.funcUsesArguments.add(funcName);
   }
 
-  if (captures.length > 0 && opts.reuseReservedEntry) {
-    opts.reuseReservedEntry.body = [];
-    appendDefaultReturn(
-      {
-        name: funcName,
-        params: [],
-        locals: [],
-        localMap: new Map(),
-        returnType,
-        body: opts.reuseReservedEntry.body,
-        blockDepth: 0,
-        breakStack: [],
-        continueStack: [],
-        labelMap: new Map(),
-        savedBodies: [],
-      },
-      returnType,
-    );
-    return;
-  }
-
   if (captures.length === 0) {
     // No captures — compile as a regular module-level function
     const funcTypeIdx = addFuncType(ctx, paramTypes, results, `${funcName}_type`);
@@ -744,11 +758,16 @@ export function compileNestedFunctionDeclaration(
       // read (#1702) falls back to `undefined` — behaviour-preserving.
       readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
     };
+    if (reachesDirectEval) {
+      liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
+      liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(stmt);
+    }
     installFrameTrap(liftedFctx, funcName);
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
     }
+    liftedFctx.liftedCaptureNames = new Set(captures.map((capture) => capture.name));
 
     const savedFunc = ctx.currentFunc;
     if (savedFunc) ctx.parentBodiesStack.push(savedFunc.body);
@@ -787,7 +806,7 @@ export function compileNestedFunctionDeclaration(
       };
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdxNC, reservedEntryNC);
       ctx.funcMap.set(funcName, reservedFuncIdxNC);
-      ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4045/#4075) see funcMapOwnerDecl
+      ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4133/#4134) see funcMapOwnerDecl
     }
 
     // Emit default-value initialization for parameters with initializers
@@ -814,7 +833,7 @@ export function compileNestedFunctionDeclaration(
     // (#2743) Unmapped when strict OR the parameter list is non-simple
     // (rest/default/destructuring) — §10.2.11 FunctionDeclarationInstantiation
     // step 22.a.
-    if (stmt.body && bodyUsesArguments(stmt.body)) {
+    if (stmt.body && (bodyUsesArguments(stmt.body) || reachesDirectEval)) {
       const unmapped =
         isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
       emitArgumentsObject(ctx, liftedFctx, paramTypes, 0, unmapped);
@@ -824,6 +843,8 @@ export function compileNestedFunctionDeclaration(
       // to this function's per-index `nonConfigurableIndices`.
       if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
     }
+
+    prepareBodyBindings(liftedFctx);
 
     if (nativeGenInfo) {
       // (#2172) No-capture nested `function*` in standalone/WASI — emit the
@@ -1059,12 +1080,21 @@ export function compileNestedFunctionDeclaration(
       // read (#1702) falls back to `undefined` — behaviour-preserving.
       readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
     };
+    if (reachesDirectEval) {
+      liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
+      liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(stmt);
+      liftedFctx.directEvalOuterBindingNames = new Set<string>();
+      for (const capture of captures) {
+        liftedFctx.directEvalBindingNames.add(capture.name);
+        liftedFctx.directEvalOuterBindingNames.add(capture.name);
+      }
+    }
     installFrameTrap(liftedFctx, funcName);
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
     }
-    // (#4075) Record which names arrived as leading capture params. Forwarding
+    // (#4134) Record which names arrived as leading capture params. Forwarding
     // call sites must read OUR param for these, not the declaring function's
     // slot number — see `liftedCaptureNames` in context/types.ts.
     liftedFctx.liftedCaptureNames = new Set(captures.map((c) => c.name));
@@ -1149,17 +1179,22 @@ export function compileNestedFunctionDeclaration(
     // across `addUnionImports` (which can grow `numImportFuncs` and so
     // shift the absolute funcIdx, but the array entry's identity is
     // preserved). funcMap auto-shifts during addUnionImports.
-    const reservedFuncIdx = mintDefinedFunc(ctx);
-    const reservedEntry: WasmFunction = {
-      name: funcName,
-      typeIdx: funcTypeIdx,
-      locals: [] as Array<{ name: string; type: ValType }>,
-      body: [],
-      exported: false,
-    };
-    pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reservedEntry);
-    ctx.funcMap.set(funcName, reservedFuncIdx);
-    ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4045/#4075) see funcMapOwnerDecl
+    const reservedEntry: WasmFunction =
+      opts.reuseReservedEntry ??
+      ({
+        name: funcName,
+        typeIdx: funcTypeIdx,
+        locals: [] as Array<{ name: string; type: ValType }>,
+        body: [],
+        exported: false,
+      } satisfies WasmFunction);
+    reservedEntry.typeIdx = funcTypeIdx;
+    if (!opts.reuseReservedEntry) {
+      const reservedFuncIdx = mintDefinedFunc(ctx);
+      pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reservedEntry);
+      ctx.funcMap.set(funcName, reservedFuncIdx);
+      ctx.funcMapOwnerDecl.set(funcName, stmt); // see funcMapOwnerDecl
+    }
     ctx.nestedFuncCaptures.set(
       funcName,
       captures.map((c) => ({
@@ -1184,6 +1219,15 @@ export function compileNestedFunctionDeclaration(
         outerTdzFlagIdx: c.tdzFlagIdx,
       })),
     );
+
+    if (opts.preRegisterOnly) {
+      if (!ctx.preRegisteredBodyless) ctx.preRegisteredBodyless = new Set();
+      ctx.preRegisteredBodyless.add(funcName);
+      if (savedFunc) ctx.funcStack.pop();
+      if (savedFunc) ctx.parentBodiesStack.pop();
+      ctx.currentFunc = savedFunc;
+      return;
+    }
 
     // (#2758) Pre-box any by-value capture that a sibling this function CALLS
     // mutably captures, BEFORE the parameter default-init / destructuring below
@@ -1239,7 +1283,7 @@ export function compileNestedFunctionDeclaration(
     // Set up `arguments` object if the function body references it.
     // (#2743) Unmapped when strict OR the parameter list is non-simple
     // (rest/default/destructuring) — §10.2.11 step 22.a.
-    if (stmt.body && bodyUsesArguments(stmt.body)) {
+    if (stmt.body && (bodyUsesArguments(stmt.body) || reachesDirectEval)) {
       const unmapped =
         isStrictFunction(stmt, ctx.inferModuleStrictArguments) || !isSimpleParameterList(stmt.parameters);
       emitArgumentsObject(ctx, liftedFctx, paramTypes, leadingParamCount, unmapped);
@@ -1247,6 +1291,8 @@ export function compileNestedFunctionDeclaration(
       // by decl node for aliased-`arguments` strict-delete resolution.
       if (liftedFctx.mappedArgsInfo) ctx.mappedArgsInfoByFunc.set(stmt, liftedFctx.mappedArgsInfo);
     }
+
+    prepareBodyBindings(liftedFctx);
 
     if (capturingNativeGen) {
       // (#3050) Capturing nested SYNC `function*` with a try-region body — emit
@@ -1374,68 +1420,6 @@ function isAnnexBScopeBoundary(node: ts.Node): boolean {
     ts.isSourceFile(node) ||
     ts.isModuleBlock(node)
   );
-}
-
-/** (#2200) Does a Block (or case clause / module body) lexically bind `name` via
- * a top-level `let`/`const`/class declaration? */
-function blockBindsLexically(stmts: ts.NodeArray<ts.Statement> | ts.Statement[], name: string): boolean {
-  for (const s of stmts) {
-    if (ts.isVariableStatement(s) && (s.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) {
-      for (const d of s.declarationList.declarations) {
-        if (ts.isIdentifier(d.name) && d.name.text === name) return true;
-      }
-    }
-    if (ts.isClassDeclaration(s) && s.name?.text === name) return true;
-  }
-  return false;
-}
-
-/**
- * (#2200, Annex B B.3.3) Decide whether a block-nested `function` declaration's
- * web-compat outer var-binding is *cancelled*. Returns the declaring `Block`
- * (so the caller can record its position range) when the function is block-nested
- * AND an intervening lexical (`let`/`const`/class) binding for the same name
- * exists between the block and the enclosing function/global scope, OR a
- * same-named parameter exists; otherwise `null` (not block-nested, or eligible
- * for the outer binding — left to the existing unconditional hoist).
- *
- * Per §B.3.3.1: the outer binding is created only when replacing the function
- * with `var F` would not produce an early error — i.e. no intervening lexical
- * `F` and `F` is not a parameter. Strict-mode functions get no Annex B outer
- * binding at all, but a *cancelled* binding behaves the same observable way for
- * case A (reading `F` outside the block throws), so strict mode is not gated
- * here.
- */
-function annexBHoistCancels(fnDecl: ts.FunctionDeclaration): ts.Block | null {
-  const name = fnDecl.name?.text;
-  if (!name || !fnDecl.body) return null;
-  const block = fnDecl.parent;
-  // Must be directly inside a Block (not the function body itself, not a case
-  // clause statement list, etc.). A direct function-body decl keeps its hoist.
-  if (!ts.isBlock(block)) return null;
-  if (isAnnexBScopeBoundary(block.parent)) return null; // block IS the fn body → direct decl
-
-  // The block that holds the function may itself carry a sibling lexical shadow.
-  if (blockBindsLexically(block.statements, name)) return block;
-
-  // Walk up from the holding block to the enclosing fn/global, checking each
-  // intervening Block for a lexical binding, and the enclosing function's params.
-  let node: ts.Node = block.parent;
-  while (node && !isAnnexBScopeBoundary(node)) {
-    if (ts.isBlock(node) && blockBindsLexically(node.statements, name)) return block;
-    if (ts.isCaseClause(node) || ts.isDefaultClause(node)) {
-      if (blockBindsLexically(node.statements, name)) return block;
-    }
-    node = node.parent;
-  }
-  // node is now the enclosing function/global boundary. If it is a function with
-  // a parameter named `name`, the Annex B hoist is also cancelled (§B.3.3 param
-  // exclusion).
-  if (node && !ts.isSourceFile(node) && !ts.isModuleBlock(node) && "parameters" in node) {
-    const params = (node as ts.FunctionLikeDeclarationBase).parameters;
-    if (params?.some((p) => ts.isIdentifier(p.name) && p.name.text === name)) return block;
-  }
-  return null;
 }
 
 /**
@@ -1621,7 +1605,16 @@ function annexBBlockNestedEligible(fnDecl: ts.FunctionDeclaration): ts.Block | n
   if (!name || !fnDecl.body) return null;
   const block = fnDecl.parent;
   if (!ts.isBlock(block)) return null;
-  if (isAnnexBScopeBoundary(block.parent)) return null; // direct fn body → not block-nested
+  const owner = block.parent;
+  if (
+    owner &&
+    !ts.isSourceFile(owner) &&
+    !ts.isModuleBlock(owner) &&
+    isAnnexBScopeBoundary(owner) &&
+    (owner as ts.FunctionLikeDeclarationBase).body === block
+  ) {
+    return null; // direct fn body → not block-nested
+  }
   if (annexBHoistCancels(fnDecl) !== null) return null; // cancelled → Phase 1, no outer binding
   if (!annexBNameObservedOutsideBlock(name, block)) return null; // (#2552) not observed → no binding
   if (annexBNameReassignedInBlock(name, block)) return null; // (#2552) mutable split → pre-Phase-2 path
@@ -1801,6 +1794,38 @@ function emitEagerNestedCallCaptureBoxes(
   }
 }
 
+/** Publish a capturing sibling's lifted signature before any sibling body is
+ * compiled. Returns true when the declaration must skip the capture-free
+ * reservation path (including generators, whose state machine registers it). */
+function preRegisterCapturingSibling(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  siblingFuncNames: ReadonlySet<string>,
+): boolean {
+  const ownLocals = new Set<string>();
+  addFunctionOwnLocals(stmt, ownLocals);
+  const referenced = new Set<string>();
+  for (const bodyStmt of stmt.body!.statements) collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
+
+  let capturesOuter = transitiveSiblingCaptures(ctx, fctx, stmt).size > 0;
+  for (const name of referenced) {
+    if (name === "this" || name === "super" || ownLocals.has(name) || siblingFuncNames.has(name)) continue;
+    // A user function in funcMap is not an outer capture. wasm:js-string
+    // builtins are excluded because a same-named outer local may shadow them.
+    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    if (fctx.localMap.has(name)) {
+      capturesOuter = true;
+      break;
+    }
+  }
+  if (!capturesOuter) return false;
+  if (stmt.asteriskToken === undefined) {
+    compileNestedFunctionDeclaration(ctx, fctx, stmt, { preRegisterOnly: true });
+  }
+  return true;
+}
+
 export function hoistFunctionDeclarations(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1813,9 +1838,9 @@ export function hoistFunctionDeclarations(
 ): void {
   const isTopLevelHoist = _eagerBoxFuncNames === undefined;
   const eagerBoxFuncNames = _eagerBoxFuncNames ?? new Set<string>();
-  // (#2068) Phase 0: reserve a correctly-typed bodyless funcMap slot for every
-  // direct-sibling function that captures NO outer local, BEFORE compiling any
-  // body. Without this a forward sibling reference
+  // (#2068/#4013) Phase 0: reserve a correctly-typed bodyless funcMap slot for
+  // every direct-sibling function BEFORE compiling any body. Without this a
+  // forward sibling reference
   // (`function a(){ return b(); } function b(){...}`) or mutual recursion
   // (`isEven`/`isOdd`) compiles `a`'s body while `b` is still unregistered, so
   // the call falls through to the `ref.null.extern` fallback (→ 0). The slot is
@@ -1823,9 +1848,10 @@ export function hoistFunctionDeclarations(
   // compiler below) so call sites resolve the result type correctly; the body /
   // locals are filled in by the compile loop via `reuseReservedEntry`.
   //
-  // Capture-free only: the has-captures branch lifts captures as leading params
-  // and must drive its own registration, so a plain reservation would mis-shape
-  // it. Mutual recursion among capturing functions is out of scope here.
+  // Capturing declarations additionally publish their leading-capture metadata
+  // in this phase. That makes mutual capturing siblings resolvable both as
+  // direct calls and as first-class values; their real bodies fill the reserved
+  // entries in the compile loop below.
   const siblingFuncNames = new Set<string>();
   for (const stmt of stmts) {
     if (ts.isFunctionDeclaration(stmt) && stmt.name && stmt.body) siblingFuncNames.add(stmt.name.text);
@@ -1854,33 +1880,7 @@ export function hoistFunctionDeclarations(
       if (ctx.funcMap.has(funcName)) continue;
       if (ctx.hoistFailedFuncs?.has(funcName)) continue;
 
-      // Capture check: a referenced name that is an outer local (and not an
-      // own-local, this/super, or a sibling function) makes this capturing.
-      const ownLocals = new Set<string>();
-      addFunctionOwnLocals(stmt, ownLocals); // (#2103) memoized own-locals
-      const referenced = new Set<string>();
-      for (const s of stmt.body.statements) collectReferencedIdentifiers(s, referenced, ownLocals);
-      let capturesOuter = false;
-      for (const name of referenced) {
-        if (name === "this" || name === "super") continue;
-        if (ownLocals.has(name)) continue;
-        if (siblingFuncNames.has(name)) continue;
-        // #2669: skip names bound to a *user* function — but NOT a wasm:js-string
-        // builtin import (concat/length/equals/substring/charCodeAt), which lives in
-        // funcMap yet must not block capture of a same-named outer local (the
-        // test262 `let length = "outer"` dstr template captured by a nested fn).
-        if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
-        if (fctx.localMap.has(name)) {
-          capturesOuter = true;
-          break;
-        }
-      }
-      // (#4075) A sibling that only CALLS a capturing sibling captures too —
-      // transitively. Phase 0 MUST agree with the compile pass here: reserving
-      // a capture-free slot for a function the compile pass then lifts with
-      // capture params leaves the slot empty and every call returns 0.
-      if (!capturesOuter && transitiveSiblingCaptures(ctx, fctx, stmt).size > 0) capturesOuter = true;
-      if (capturesOuter) continue;
+      if (preRegisterCapturingSibling(ctx, fctx, stmt, siblingFuncNames)) continue;
 
       // Compute the real signature (mirror the slice in
       // compileNestedFunctionDeclaration). Generators return externref; async
@@ -1927,7 +1927,7 @@ export function hoistFunctionDeclarations(
       };
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reserved);
       ctx.funcMap.set(funcName, reservedFuncIdx);
-      ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4045/#4075) see funcMapOwnerDecl
+      ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4133/#4134) see funcMapOwnerDecl
       if (!ctx.preRegisteredBodyless) ctx.preRegisteredBodyless = new Set();
       ctx.preRegisteredBodyless.add(funcName);
     }

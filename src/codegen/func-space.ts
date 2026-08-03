@@ -150,7 +150,7 @@ export function replaceDefinedFuncAt(ctx: CodegenContext, funcIdx: FuncHandle, f
 }
 
 /**
- * (#4075) `JS2WASM_TRACE_SLOT=<position>` reports every write to one defined
+ * (#4134) `JS2WASM_TRACE_SLOT=<position>` reports every write to one defined
  * function slot — the writer, the resulting frame size, and a stack — then keeps
  * going.
  *

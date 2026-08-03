@@ -140,6 +140,12 @@ import {
   emitClosureConstruction,
   registerClosureBindingInfo,
 } from "./closures/arrow-phases.js"; // (#3278) arrow/fn-expr closure phase helpers
+import {
+  collectDirectEvalActivationBindingNames,
+  collectDirectEvalBindingNames,
+  functionMayReachDirectEval,
+  reifyCurrentDirectEvalBindings,
+} from "./direct-eval-environment.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
 import {
   emitObjectMethodAsClosure,
@@ -2048,6 +2054,16 @@ export function compileLiftedClosureBody(
     // native struct → the #2681/#2686 throw).
     thisStructName: resolveLiftedMethodThisStruct(ctx, arrow),
   };
+  const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  if (reachesDirectEval) {
+    liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(arrow);
+    liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(arrow);
+    liftedFctx.directEvalOuterBindingNames = new Set<string>();
+    for (const capture of captures) {
+      liftedFctx.directEvalBindingNames.add(capture.name);
+      liftedFctx.directEvalOuterBindingNames.add(capture.name);
+    }
+  }
   initializeFunctionPoisonPillContext(ctx, liftedFctx, arrow);
 
   // (#1384) Track liftedFctx.body in liveBodies BEFORE any emission so
@@ -2261,7 +2277,7 @@ export function compileLiftedClosureBody(
 
   // Set up `arguments` object for function expressions (not arrow functions).
   // Arrow functions don't have their own `arguments` binding in JS.
-  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && closureBodyUsesArguments(body)) {
+  if (ts.isFunctionExpression(arrow) && ts.isBlock(body) && (closureBodyUsesArguments(body) || reachesDirectEval)) {
     // Ensure __box_number is available for boxing numeric params
     const hasNumericParam = arrowParams.some((pt) => pt.kind === "f64" || pt.kind === "i32");
     if (hasNumericParam) {
@@ -2320,6 +2336,7 @@ export function compileLiftedClosureBody(
   // accesses before the declaration site throw ReferenceError (#790).
   if (ts.isBlock(body)) {
     hoistLetConstWithTdz(ctx, liftedFctx, body.statements);
+    reifyCurrentDirectEvalBindings(ctx, liftedFctx);
   }
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
@@ -2610,7 +2627,7 @@ export function compileLiftedClosureBody(
   return { liftedFctx, closureReturnType, liftedFuncTypeIdx };
 }
 
-/** (#4075) Report a lifted closure whose body escapes its own local frame. */
+/** (#4134) Report a lifted closure whose body escapes its own local frame. */
 function reportClosureFrameBreach(
   ctx: CodegenContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
@@ -2728,7 +2745,14 @@ export function compileArrowAsClosure(
 
   // 2. Analyze captured variables (referenced/written free vars, outer-write +
   //    TDZ-flag boxing) and the self-recursive binding — see planClosureCaptures.
-  const { captures, selfBindingName } = planClosureCaptures(ctx, fctx, arrow, body);
+  const reachesDirectEval = functionMayReachDirectEval(arrow, ctx.oracle);
+  const { captures, selfBindingName } = planClosureCaptures(
+    ctx,
+    fctx,
+    arrow,
+    body,
+    reachesDirectEval ? fctx.boxedCaptures?.keys() : undefined,
+  );
 
   // 3. Create struct type: field 0 = funcref, fields 1..N = captured vars
   //    For mutable captures, the field type is a ref cell (struct { value: T })
@@ -2778,7 +2802,7 @@ export function compileArrowAsClosure(
   liftedFuncTypeIdx = generic.liftedFuncTypeIdx;
 
   const liftedFuncIdx = mintDefinedFunc(ctx);
-  // (#4075) `JS2WASM_CHECK_FRAMES=1` reports a lifted closure body that reads or
+  // (#4134) `JS2WASM_CHECK_FRAMES=1` reports a lifted closure body that reads or
   // writes a local its own frame never declares, AT THE MOMENT IT IS CREATED,
   // together with the offending source text. The end-of-codegen checker can only
   // say which function is broken; this says which ARROW produced it, which is
@@ -2945,9 +2969,85 @@ export function compileArrowAsClosure(
   }
 
   // 8. Register closure info so call sites can emit call_ref — see registerClosureBindingInfo.
-  registerClosureBindingInfo(ctx, arrow, structTypeIdx, liftedFuncTypeIdx, closureReturnType, arrowParams);
+  registerClosureBindingInfo(
+    ctx,
+    arrow,
+    structTypeIdx,
+    liftedFuncTypeIdx,
+    closureReturnType,
+    arrowParams,
+    captureFreeNumericInlineBody(arrow, captures.length, liftedFctx, arrowParams.length),
+  );
 
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+const NUMERIC_CLOSURE_INLINE_OPS = new Set<string>([
+  "i32.const",
+  "i32.add",
+  "i32.sub",
+  "i32.mul",
+  "i32.div_s",
+  "i32.rem_s",
+  "i32.eq",
+  "i32.ne",
+  "i32.lt_s",
+  "i32.le_s",
+  "i32.gt_s",
+  "i32.ge_s",
+  "i32.eqz",
+  "f64.const",
+  "f64.add",
+  "f64.sub",
+  "f64.mul",
+  "f64.div",
+  "f64.rem",
+  "f64.eq",
+  "f64.ne",
+  "f64.lt",
+  "f64.le",
+  "f64.gt",
+  "f64.ge",
+  // Numeric helpers such as JS remainder lower to a direct Wasm function
+  // call. The surrounding body remains straight-line and is copied once at
+  // the original call site, so effects/traps and evaluation order are intact.
+  "call",
+]);
+const NUMERIC_CLOSURE_INLINE_MAX_INSTRS = 10;
+
+/**
+ * Extract the tiny expression-shaped numeric callbacks that array HOF loops
+ * can inline without materializing call-site state. The body must be
+ * capture-free, local-free, and consist only of parameter reads plus scalar
+ * arithmetic/comparisons. Anything scope-, heap-, trap-, or call-sensitive
+ * retains the ordinary closure call_ref path.
+ */
+function captureFreeNumericInlineBody(
+  arrow: ts.ArrowFunction | ts.FunctionExpression,
+  captureCount: number,
+  liftedFctx: FunctionContext,
+  paramCount: number,
+): Instr[] | undefined {
+  if (
+    captureCount !== 0 ||
+    liftedFctx.locals.length !== 0 ||
+    arrow.parameters.some((param) => param.dotDotDotToken || param.initializer) ||
+    (ts.isBlock(arrow.body) && closureBodyUsesArguments(arrow.body))
+  ) {
+    return undefined;
+  }
+  const body = liftedFctx.body.filter((instr) => instr.op !== "nop");
+  if (body.at(-1)?.op === "return") body.pop();
+  if (body.length === 0 || body.length > NUMERIC_CLOSURE_INLINE_MAX_INSTRS) return undefined;
+  for (const instr of body) {
+    if (instr.op === "local.get") {
+      const index = (instr as { index: number }).index;
+      if (index < 1 || index > paramCount) return undefined;
+      continue;
+    }
+    if (!NUMERIC_CLOSURE_INLINE_OPS.has(instr.op)) return undefined;
+  }
+  return body.map((instr) => ({ ...instr }));
 }
 
 /** Compile an arrow function as a host callback via __make_callback.

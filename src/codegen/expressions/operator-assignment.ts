@@ -47,6 +47,11 @@ import {
   emitWebCompatCallAssignmentTarget,
   getFuncParamTypes,
 } from "./helpers.js";
+import {
+  emitAnyStrToExternrefSlot,
+  emitExternrefSlotToAnyStr,
+  slotNeedsExternrefBridge,
+} from "../native-string-slot-bridge.js";
 import { compileComputedMemberKeyAfterBaseGuard, emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { ensureLateImport, flushLateImportShifts, patchStructNewForAddedField } from "./late-imports.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
@@ -1312,25 +1317,13 @@ function compileNativeStringCompoundAssignment(
   const capturedIdx = ctx.capturedGlobals.get(name);
   const moduleIdx = ctx.moduleGlobals.get(name);
 
-  // Load current value. The store slot for a statically-`string` binding is a
+  // Load current value. A statically-`string` binding's slot is already a
   // native-string ref (`ref $AnyString`), which `__str_concat` accepts as-is.
-  // But an `any`/untyped binding routed here via `hasStringAssignment` (e.g. an
-  // unannotated param `msg` that is also assigned a string literal in some
-  // branch) has an EXTERNREF slot: a bare `local.get`/`global.get` leaves an
-  // externref where `__str_concat` expects `(ref null $AnyString)` →
-  // `call[0] expected (ref null $AnyString), found externref` CompileError, i.e.
-  // an INVALID module (#3472 — the RHS below is coerced, only the current-value
-  // load was not). Under no-JS-host (standalone / WASI) coerce the loaded
-  // externref to a native `ref $AnyString` via ToString (§7.1.17) — the same
-  // `__extern_toString` path `compileNativeConcatOperand` uses for a dynamic
-  // externref `+` operand — so a runtime number / undefined / object stringifies
-  // correctly instead of trapping an unconditional `ref.cast`. `__extern_toString`
-  // is a NATIVE defined function here (OBJECT_RUNTIME_HELPER_NAMES), so
-  // registering it adds no import and shifts no function index (`concatIdx` above
-  // stays valid). In JS-host `nativeStrings` mode `__extern_toString` is a host
-  // import (adding it mid-body would shift indices, #1175), so that path is left
-  // byte-identical and out of scope.
-  const noJsHost = ctx.standalone === true || ctx.wasi === true;
+  // An `any`/untyped binding routed here via `hasStringAssignment` — an
+  // unannotated param, or a `var` initialised with a String OBJECT wrapper —
+  // has an EXTERNREF slot, so the value must cross the externref bridge on the
+  // way IN and again on the way OUT. Both directions live together in
+  // native-string-slot-bridge.ts (#3472 inbound, #3989 outbound).
   let slotType: ValType | undefined;
   if (localIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: localIdx });
@@ -1348,15 +1341,9 @@ function compileNativeStringCompoundAssignment(
     fctx.body.push({ op: "ref.null", typeIdx: ctx.anyStrTypeIdx });
     return anyStrTypeNullable;
   }
-  if (noJsHost && slotType?.kind === "externref") {
-    const externToStr = ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
-    flushLateImportShifts(ctx, fctx);
-    if (externToStr !== undefined) {
-      fctx.body.push({ op: "call", funcIdx: externToStr });
-    }
-    // externref → ref $AnyString (mirrors emitNativeStringRefFromExternref).
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: ctx.anyStrTypeIdx });
+  const bridgeSlot = slotNeedsExternrefBridge(ctx, slotType);
+  if (bridgeSlot) {
+    emitExternrefSlotToAnyStr(ctx, fctx);
   }
 
   // Compile RHS
@@ -1402,6 +1389,12 @@ function compileNativeStringCompoundAssignment(
   // Call __str_concat — returns ref $AnyString
   fctx.body.push({ op: "call", funcIdx: concatIdx });
 
+  // (#3989) Store back across the SAME bridge the load used. Without this the
+  // `ref $AnyString` result lands in an externref slot and the module fails to
+  // validate, costing the whole file rather than the statement.
+  if (bridgeSlot) {
+    emitAnyStrToExternrefSlot(fctx);
+  }
   // Store back. Re-read indices since RHS compilation may have shifted them.
   if (localIdx !== undefined) {
     fctx.body.push({ op: "local.tee", index: localIdx });
@@ -1414,6 +1407,13 @@ function compileNativeStringCompoundAssignment(
     fctx.body.push({ op: "global.set", index: moduleIdxPost });
     fctx.body.push({ op: "global.get", index: moduleIdxPost });
   }
+
+  // The value left on the stack is whatever the SLOT holds — `local.tee` and the
+  // `global.set`/`global.get` pair both re-expose the slot type. Reporting
+  // `anyStrType` after storing into an externref slot would hand callers a type
+  // the stack does not carry, which is how a validation error migrates from this
+  // statement to whatever consumes `x += y` as a value.
+  if (bridgeSlot) return { kind: "externref" };
 
   return anyStrType;
 }

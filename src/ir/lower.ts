@@ -66,8 +66,10 @@ import {
   type IrFunction,
   type IrGlobalRef,
   type IrInstr,
+  type IrInstrIntrinsic,
   type IrLabelId,
   type IrObjectShape,
+  type IrStringLengthProvider,
   type IrType,
   type IrTypeRef,
   type IrValueId,
@@ -87,7 +89,8 @@ import {
   type IrEffects,
 } from "./effects.js";
 import { IrInvariantError } from "./outcomes.js";
-import { irImportFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import { IR_STRING_ITERATOR_CHAR_AT_FN, type IrStringConcatMode, type IrStringEncoding } from "./string-runtime.js";
 import type { BlockType, FuncTypeDef, Instr, LocalDef, ValType, WasmFunction } from "./types.js";
 export type {
   IrBoxedLowering,
@@ -246,28 +249,30 @@ export interface IrLowerResolver {
    * Emit the Wasm op sequence that materializes a string literal.
    *   - host strings → register a `string_constants.<value>` global import
    *                    and emit `[global.get]`.
-   *   - native       → inline `i32.const len`, `i32.const 0`, code-unit
-   *                    `i32.const`s, `array.new_fixed`, `struct.new`.
+   *   - native       → read prepared immutable storage or call an exact
+   *                    prepared oversized-literal materializer.
    */
   // #1588: `alloc` lets the resolver read the string.const encoding decision.
   // Optional — resolvers/callers that omit it get the i16 path (byte-identical).
-  emitStringConst?(value: string, alloc?: AllocSiteId): readonly Instr[];
+  emitStringConst?(
+    value: string,
+    alloc?: AllocSiteId,
+    storage?: IrGlobalRef,
+    materializer?: IrFuncRef,
+  ): readonly Instr[];
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
-  emitStringConcat?(alloc?: AllocSiteId, mode?: import("./string-runtime.js").IrStringConcatMode): readonly Instr[];
+  emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
-  emitStringEquals?(): readonly Instr[];
+  emitStringEquals?(provider?: IrFuncRef): readonly Instr[];
   /**
    * `[call length]` (host) or `[struct.get $AnyString $len]` (native).
    * Result is i32 — the `string.len` IR instr appends an
    * `f64.convert_i32_s` after this.
    */
-  emitStringLen?(inputEncoding?: import("./string-runtime.js").IrStringEncoding): readonly Instr[];
+  emitStringLen?(inputEncoding?: IrStringEncoding, provider?: IrStringLengthProvider): readonly Instr[];
   /** Typed character operations consume an already-normalized i32 index. */
-  emitStringCharAt?(
-    alloc?: AllocSiteId,
-    inputEncoding?: import("./string-runtime.js").IrStringEncoding,
-  ): readonly Instr[];
-  emitStringCharCodeAt?(inputEncoding?: import("./string-runtime.js").IrStringEncoding): readonly Instr[];
+  emitStringCharAt?(alloc?: AllocSiteId, inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
+  emitStringCharCodeAt?(inputEncoding?: IrStringEncoding, provider?: IrFuncRef): readonly Instr[];
   /**
    * Slice 9 (#1169h): resolve (and lazily register) the shared `__exn`
    * exception tag. The tag carries an `externref` payload — every
@@ -342,6 +347,26 @@ export interface IrLoweredBody<S, Slot> {
   readonly locals: readonly IrLoweredValue<Slot>[];
   readonly results: readonly (readonly Slot[])[];
   readonly exported: boolean;
+}
+
+function emitPreparedIntrinsic<S>(
+  instr: IrInstrIntrinsic,
+  out: S,
+  emitter: BackendEmitter<S>,
+  resolver: IrLowerResolver,
+  emitValue: (value: IrValueId, out: S) => void,
+  funcName: string,
+): void {
+  for (const arg of instr.args) emitValue(arg, out);
+  if (!instr.provider) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: semantic intrinsic ${instr.id} has no frozen provider (${funcName})`,
+    );
+  }
+  if (instr.provider.kind === "backend-op") emitter.emitUnary(instr.provider.opcode, out);
+  else emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
 }
 
 /**
@@ -1004,6 +1029,30 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   };
 
+  const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVecLowering | null => {
+    if (type.kind === "vec") {
+      const elementValType = lowerIrTypeToValType(type.elementType, resolver, func.name);
+      if (type.layout) {
+        return {
+          valueType: {
+            kind: type.nullable ? "ref_null" : "ref",
+            typeIdx: resolver.resolveType(type.layout.carrierType),
+          },
+          vecStructTypeIdx: resolver.resolveType(type.layout.carrierType),
+          lengthFieldIdx: type.layout.lengthFieldIndex,
+          dataFieldIdx: type.layout.dataFieldIndex,
+          arrayTypeIdx: resolver.resolveType(type.layout.dataType),
+          elementValType,
+        };
+      }
+      // Transitional IR fixtures may predate final Program-ABI preparation.
+      // Production prepared components fail closed on the missing layout.
+      return resolver.resolveVecForElement?.(elementValType, alloc) ?? null;
+    }
+    const valType = asVal(type);
+    return valType ? (resolver.resolveVec?.(valType) ?? null) : null;
+  };
+
   // #3733 — best-effort constant-value peek, same defensive shape as
   // `tryTypeOf`. Used by the `js.bitor`/`js.bitxor` zero-operand fast path
   // below to recognise the `x | 0` / `x ^ 0` ToInt32-coercion idiom without
@@ -1218,6 +1267,10 @@ export function lowerIrFunctionBody<S, Slot>(
         // primitive — byte-identical {op:"call"} on WasmGC, OP.CALL on bytecode.
         for (const a of instr.args) emitValue(a, out);
         emitter.emitCall(resolver.resolveFunc(instr.target), out);
+        return;
+      }
+      case "intrinsic": {
+        emitPreparedIntrinsic(instr, out, emitter, resolver, emitValue, func.name);
         return;
       }
       case "global.get":
@@ -1731,36 +1784,36 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "string.const": {
-        emitter.emitStringConst(instr.value, instr.alloc, out);
+        emitter.emitStringConst(instr.value, instr.alloc, out, instr.storage, instr.materializer);
         return;
       }
       case "string.concat": {
         emitValue(instr.lhs, out);
         emitValue(instr.rhs, out);
-        emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out);
+        emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out, instr.provider);
         return;
       }
       case "string.eq": {
         emitValue(instr.lhs, out);
         emitValue(instr.rhs, out);
-        emitter.emitStringEquals(instr.negate, out);
+        emitter.emitStringEquals(instr.negate, out, instr.provider);
         return;
       }
       case "string.len": {
         emitValue(instr.value, out);
-        emitter.emitStringLength(instr.inputEncoding, out);
+        emitter.emitStringLength(instr.inputEncoding, out, instr.provider);
         return;
       }
       case "string.char_at": {
         emitValue(instr.value, out);
         emitValue(instr.index, out);
-        emitter.emitStringCharAt(instr.alloc, instr.inputEncoding, out);
+        emitter.emitStringCharAt(instr.alloc, instr.inputEncoding, out, instr.provider);
         return;
       }
       case "string.char_code_at": {
         emitValue(instr.value, out);
         emitValue(instr.index, out);
-        emitter.emitStringCharCodeAt(instr.inputEncoding, out);
+        emitter.emitStringCharCodeAt(instr.inputEncoding, out, instr.provider);
         return;
       }
       case "object.new": {
@@ -2018,7 +2071,7 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const a of instr.args) emitValue(a, out);
         emitter.pushRaw(out, {
           op: "call",
-          funcIdx: resolver.resolveFunc(cl.memberFunc(instr.memberKind, instr.methodName)),
+          funcIdx: resolver.resolveFunc(cl.memberFunc(instr.memberKind, instr.methodName, instr.target)),
         });
         return;
       }
@@ -2054,7 +2107,7 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const a of instr.args) emitValue(a, out);
         emitter.pushRaw(out, {
           op: "call",
-          funcIdx: resolver.resolveFunc(cl.memberFunc("method", instr.methodName)),
+          funcIdx: resolver.resolveFunc(cl.memberFunc("method", instr.methodName, instr.target)),
         });
         return;
       }
@@ -2120,7 +2173,7 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const a of instr.args) emitValue(a, out);
         emitter.pushRaw(out, {
           op: "call",
-          funcIdx: resolver.resolveFunc(cl.memberFunc("static", instr.methodName)),
+          funcIdx: resolver.resolveFunc(cl.memberFunc("static", instr.methodName, instr.target)),
         });
         return;
       }
@@ -2135,22 +2188,16 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "vec.len": {
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: vec.len vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.len (${func.name})`);
         emitValue(instr.vec, out);
         emitter.emitVecLen(vec, out);
-        // IR-level result is f64 (matches JS Number semantics) — promote.
-        // Route the coercion through the emitter so non-Wasm sinks do not
-        // need to accept a raw Wasm escape hatch.
-        emitter.emitUnary("f64.convert_i32_s", out);
+        // JS length is f64; certified internal counted loops retain the physical i32.
+        if (instr.integer !== true) emitter.emitUnary("f64.convert_i32_s", out);
         return;
       }
       case "vec.get": {
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: vec.get vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.get (${func.name})`);
         // Stack: dataArray, index → element
         emitValue(instr.vec, out);
@@ -2160,9 +2207,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "vec.set": {
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: vec.set vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set (${func.name})`);
         emitValue(instr.vec, out);
         emitter.emitVecDataPtr(vec, out);
@@ -2172,9 +2217,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "vec.set_length": {
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: vec.set_length vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set_length (${func.name})`);
         emitValue(instr.vec, out);
         emitValue(instr.length, out);
@@ -2187,7 +2230,10 @@ export function lowerIrFunctionBody<S, Slot>(
         if (!elemVT) {
           throw new Error(`ir/lower: vec.new_fixed elementType must be a val IrType (${func.name})`);
         }
-        const vec = resolver.resolveVecForElement?.(elemVT, instr.alloc);
+        const vec = resolveVecType(
+          instr.resultType ?? { kind: "vec", elementType: instr.elementType, nullable: false },
+          instr.alloc,
+        );
         if (!vec) {
           throw new Error(`ir/lower: resolver cannot lower vec for vec.new_fixed (${func.name})`);
         }
@@ -2333,9 +2379,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // implement it inside emitInstrTree for code-organization parity
         // with the other instrs. The lowerer in `emitBlockBody` calls
         // `emitInstrTree` for void-producing instrs as a unit.
-        const vecT = asVal(typeOf(instr.vec));
-        if (!vecT) throw new Error(`ir/lower: forof.vec vec must be a val IrType (${func.name})`);
-        const vec = resolver.resolveVec?.(vecT);
+        const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for forof.vec (${func.name})`);
 
         // #1584 (a0-tail): this arm structurally embeds an `Instr[]` loop body
@@ -2851,7 +2895,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // iteration yields code points: a well-formed surrogate pair is ONE
         // 2-code-unit element. The cursor advances by the element's `len`
         // (1, or 2 for a pair) below instead of a fixed +1.
-        const charAtIdx = resolver.resolveFunc(irRuntimeFuncRef("__str_charAt_cp"));
+        const charAtIdx = resolver.resolveFunc(instr.provider ?? irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN));
         // The AnyString struct's `len` field is at index 0 (matches
         // `nativeStringType` in src/codegen/native-strings.ts).
         // We recover the typeIdx from the SSA value's IrType — must be
@@ -3408,6 +3452,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [];
     case "call":
       return instr.args;
+    case "intrinsic":
+      return instr.args;
     case "global.get":
       return [];
     case "global.set":
@@ -3704,6 +3750,18 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     }
     return sty;
   }
+  if (t.kind === "vec") {
+    const elementValType = lowerIrTypeToValType(t.elementType, resolver, funcName);
+    if (t.layout) {
+      return {
+        kind: t.nullable ? "ref_null" : "ref",
+        typeIdx: resolver.resolveType(t.layout.carrierType),
+      };
+    }
+    const vec = resolver.resolveVecForElement?.(elementValType);
+    if (!vec) throw new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
+    return vec.valueType ?? { kind: t.nullable ? "ref_null" : "ref", typeIdx: vec.vecStructTypeIdx };
+  }
   if (t.kind === "object") {
     // Object IrTypes always lower to a (ref $struct) — mutability of the
     // backing reference is decided by the caller (locals/params get a
@@ -3800,6 +3858,7 @@ function describeShape(shape: IrObjectShape): string {
 function describeIrTypeShallow(t: IrType): string {
   if (t.kind === "val") return t.val.kind;
   if (t.kind === "string") return "string";
+  if (t.kind === "vec") return `vec<${describeIrTypeShallow(t.elementType)}>${t.nullable ? "?" : ""}`;
   if (t.kind === "object") return `object{${describeShape(t.shape)}}`;
   if (t.kind === "closure") {
     const ps = t.signature.params.map(describeIrTypeShallow).join(",");

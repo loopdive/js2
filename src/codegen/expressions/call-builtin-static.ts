@@ -10,6 +10,7 @@
 // chain. Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
+import { ensureIntegrityPredicate } from "../object-integrity-carrier.js"; // (#4032)
 import { integrityVarKey, widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "../../ir/object-integrity.js";
@@ -88,7 +89,7 @@ import {
   emitArrayIsArrayExternrefPredicate,
   tryEnsureNativeProtoBrand,
 } from "../property-access.js";
-import { isGlobalRegExpIdentifier } from "../regexp-standalone.js";
+import { isGlobalRegExpIdentifier, isStaticallyUndefinedExpr } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { compileStringLiteral } from "../string-ops.js";
@@ -175,6 +176,85 @@ function emitBuiltinGetPrototypeOfFallback(
  * Reflect, Promise, JSON, Date, then receiver-type method dispatch). Moved
  * unchanged so the emitted Wasm is byte-identical.
  */
+/**
+ * (#4047) `Object.create(proto, undefined)` — §20.1.2.2 step 3 is CONDITIONAL:
+ * "If properties is **not undefined**, return ? ObjectDefineProperties(obj,
+ * properties)". So it defines nothing and is NOT a ToObject error. The generic
+ * two-argument arm handed `undefined` straight to `__defineProperties`, whose
+ * own §20.1.2.3.1 step 1 `ToObject(undefined)` correctly throws a TypeError.
+ * Two different spec steps, one of which does not apply here.
+ *
+ * Only the STATIC spelling is folded away (`undefined` / `void 0`). A
+ * runtime-valued `properties` that happens to hold `undefined` still reaches
+ * the helper and throws; folding that needs an is-undefined test at the
+ * externref boundary and is left to the receiver work in #4010.
+ *
+ * The created object is already on the stack. The properties argument is still
+ * compiled and dropped — `void sideEffect()` is a legal spelling of a
+ * statically-undefined expression.
+ */
+function emitObjectCreateWithUndefinedProperties(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propertiesArg: ts.Expression,
+): void {
+  const objLocal = allocLocal(fctx, `__ocreate_obj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: objLocal });
+  const propsType = compileExpression(ctx, fctx, propertiesArg);
+  if (propsType) fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "local.get", index: objLocal });
+}
+
+/**
+ * `Object.create(proto, properties)` where `properties` is not an object
+ * literal — delegate to `__defineProperties` (a defined native under
+ * standalone, the host import otherwise). The created object is on the stack.
+ *
+ * (#4047) Dispatches the statically-undefined spelling away first; see
+ * {@link emitObjectCreateWithUndefinedProperties} for why that is a different
+ * spec step and not merely an optimisation.
+ */
+function emitObjectCreateDynamicProperties(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propertiesArg: ts.Expression,
+): void {
+  if (isStaticallyUndefinedExpr(propertiesArg)) {
+    emitObjectCreateWithUndefinedProperties(ctx, fctx, propertiesArg);
+    return;
+  }
+  const objLocal = allocLocal(fctx, `__ocreate_obj_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: objLocal });
+
+  const dpIdx = ensureLateImport(
+    ctx,
+    "__defineProperties",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+
+  if (dpIdx === undefined) {
+    // No host import available — just return obj without descriptors.
+    fctx.body.push({ op: "local.get", index: objLocal });
+    return;
+  }
+  fctx.body.push({ op: "local.get", index: objLocal });
+  const descType = compileExpression(ctx, fctx, propertiesArg);
+  if (!descType) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (descType.kind !== "externref") {
+    // (#3394) Use coerceType, not a bare extern.convert_any: a PRIMITIVE
+    // descriptors arg (e.g. `Object.create(o, 5n)` — a bigint, which is a
+    // TypeError at runtime but must still COMPILE to valid Wasm) is i64/i32/f64
+    // on the stack, and extern.convert_any is illegal on a non-ref value
+    // ("extern.convert_any expected anyref, found i64"). coerceType routes
+    // i64-bigint → __box_bigint, i32/f64 → __box_*, ref → extern.convert_any.
+    coerceType(ctx, fctx, descType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "call", funcIdx: dpIdx });
+}
+
 export function compileBuiltinStaticCall(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1519,8 +1599,7 @@ export function compileBuiltinStaticCall(
       // fresh JS array and lose the WeakSet/descriptor identity) and delegate to
       // the runtime TestIntegrityLevel query.
       if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-      const importName = method === "isFrozen" ? "__object_isFrozen" : "__object_isSealed";
-      const hostIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }], [{ kind: "i32" }]);
+      const hostIdx = ensureIntegrityPredicate(ctx, arg0, method);
       flushLateImportShifts(ctx, fctx);
       if (hostIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -1563,7 +1642,7 @@ export function compileBuiltinStaticCall(
       // vec into a fresh JS array and lose identity) and delegate to the runtime
       // query.
       if (argType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
-      const hostIdx = ensureLateImport(ctx, "__object_isExtensible", [{ kind: "externref" }], [{ kind: "i32" }]);
+      const hostIdx = ensureIntegrityPredicate(ctx, arg0, "isExtensible");
       flushLateImportShifts(ctx, fctx);
       if (hostIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -2174,38 +2253,7 @@ export function compileBuiltinStaticCall(
         }
         fctx.body.push({ op: "local.get", index: objLocal });
       } else if (expr.arguments.length >= 2) {
-        // Non-literal second arg: use __defineProperties host import
-        const objLocal = allocLocal(fctx, `__ocreate_obj_${fctx.locals.length}`, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: objLocal });
-
-        const dpIdx = ensureLateImport(
-          ctx,
-          "__defineProperties",
-          [{ kind: "externref" }, { kind: "externref" }],
-          [{ kind: "externref" }],
-        );
-        flushLateImportShifts(ctx, fctx);
-
-        if (dpIdx !== undefined) {
-          fctx.body.push({ op: "local.get", index: objLocal });
-          const descType = compileExpression(ctx, fctx, expr.arguments[1]!);
-          if (!descType) {
-            fctx.body.push({ op: "ref.null.extern" });
-          } else if (descType.kind !== "externref") {
-            // (#3394) Use coerceType, not a bare extern.convert_any: a PRIMITIVE
-            // descriptors arg (e.g. `Object.create(o, 5n)` — a bigint, which is
-            // a TypeError at runtime but must still COMPILE to valid Wasm) is
-            // i64/i32/f64 on the stack, and extern.convert_any is illegal on a
-            // non-ref value ("extern.convert_any expected anyref, found i64").
-            // coerceType routes i64-bigint → __box_bigint, i32/f64 → __box_*,
-            // ref → extern.convert_any (mirrors the 1st-arg path above).
-            coerceType(ctx, fctx, descType, { kind: "externref" });
-          }
-          fctx.body.push({ op: "call", funcIdx: dpIdx });
-        } else {
-          // No host import available — just return obj without descriptors
-          fctx.body.push({ op: "local.get", index: objLocal });
-        }
+        emitObjectCreateDynamicProperties(ctx, fctx, expr.arguments[1]!);
       }
       return { kind: "externref" };
     }

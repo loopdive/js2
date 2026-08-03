@@ -305,6 +305,34 @@ export interface CompileOptions {
    *  `env` JS-host string imports. */
   target?: "gc" | "linear" | "wasi" | "standalone";
   /**
+   * (#4035) Host-bridge export policy — whether the module exposes the
+   * inspection/interop surface a **JavaScript** host uses to reach inside
+   * WasmGC values: `__vec_*`, `__sget_*`/`__sset_*`, `__call_fn*`,
+   * `__is_*`, `__struct_field_names`, `__exn_render_*`, `__stdout_*`, and
+   * the `js2_*_host_bridge` marker table/global.
+   *
+   * These are two different things wearing one name:
+   *
+   * - **js-host mode — a calling convention, not debug info.**
+   *   `src/runtime.ts` materializes arrays through `__vec_len`/`__vec_get`,
+   *   serves `.push` via `__vec_push`, and reads compiled-struct fields via
+   *   `__sget_<key>` (a plain `result[field]` on a WasmGC struct yields
+   *   `undefined`). Removing them breaks interop, so the default stays on.
+   * - **standalone/WASI — inspection.** The target is a JS-free host; a
+   *   deployed module needs its own exports plus `_start`. The real
+   *   consumers are harness-side: `__exn_render_*` (#2962) so test262 can
+   *   render a natively-thrown GC payload, `__stdout_*` (#3469) for the
+   *   host-free completion marker. Every production binary was paying for
+   *   them — and because exports are GC roots, `-O3` could strip none of it.
+   *
+   * `"auto"` (default) therefore resolves per target: `"always"` for js-host,
+   * `"off"` for standalone/WASI. A JS-side caller that DOES inspect a
+   * standalone module (the test262 runner, any tooling) must ask for
+   * `"always"` explicitly. Every consumer already guards each access with a
+   * `typeof exports.__x === "function"` check, so absence is safe.
+   */
+  hostBridge?: "auto" | "always" | "off";
+  /**
    * (#86) NOT a real option — declared `never` so `compile(src, { standalone:
    * true })` is a TypeScript excess-property error. The standalone codegen
    * regime is selected via `target: "standalone"`; a `standalone` boolean was

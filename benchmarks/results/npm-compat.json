@@ -23,7 +23,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 2952,
+        "durationMs": 2017,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -61,7 +61,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 26152,
+        "durationMs": 16373,
         "timedOut": false,
         "timeoutMs": 180000,
         "errorCount": 1,
@@ -99,7 +99,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 37534,
+        "durationMs": 21880,
         "errorCount": 0,
         "binaryBytes": 620820,
         "categories": {}
@@ -365,7 +365,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 580,
+        "durationMs": 351,
         "errorCount": 9,
         "binaryBytes": 19035,
         "categories": {
@@ -553,7 +553,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 44676,
+        "durationMs": 27101,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -591,7 +591,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 2663,
+        "durationMs": 1828,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -604,9 +604,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 39,
+        "passed": 55,
         "total": 55,
-        "passRatePct": 70.91,
+        "passRatePct": 100,
         "admitted": 272,
         "upstreamTestsSeen": 273,
         "harnessIncompatible": 209,
@@ -624,7 +624,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 14944,
+        "durationMs": 10349,
         "timedOut": false,
         "timeoutMs": 180000,
         "errorCount": 6,
@@ -678,7 +678,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 2807,
+        "durationMs": 2354,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -706,7 +706,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 4372,
+        "durationMs": 3107,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -740,7 +740,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120148,
+        "durationMs": 120140,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -773,7 +773,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120162,
+        "durationMs": 120124,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -806,7 +806,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 444,
+        "durationMs": 277,
         "errorCount": 0,
         "binaryBytes": 8191,
         "categories": {}
@@ -1013,6 +1013,39 @@
       "weeklyDownloads": 104930549
     },
     {
+      "name": "jsdom",
+      "version": "30.0.1",
+      "issue": null,
+      "entryFile": "lib/api.js",
+      "shape": "cjs-project",
+      "compile": {
+        "success": false,
+        "durationMs": 180053,
+        "timedOut": true,
+        "timeoutMs": 180000,
+        "errorCount": 0,
+        "binaryBytes": 0,
+        "categories": {
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 180000ms budget"
+          }
+        }
+      },
+      "validation": {
+        "validates": false,
+        "firstError": "compileProject exceeded the 180000ms budget"
+      },
+      "tests": {
+        "kind": "upstream-suite",
+        "status": "not-integrated",
+        "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "perf": null,
+      "knownBugs": [],
+      "weeklyDownloads": 89317829
+    },
+    {
       "name": "marked",
       "version": "18.0.2",
       "issue": 3716,
@@ -1020,7 +1053,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 1398,
+        "durationMs": 891,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -1079,7 +1112,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120191,
+        "durationMs": 120163,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1112,7 +1145,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 4000,
+        "durationMs": 2527,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1150,7 +1183,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 2743,
+        "durationMs": 1936,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1178,7 +1211,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 4172,
+        "durationMs": 2629,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1216,7 +1249,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 15281,
+        "durationMs": 9924,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1254,7 +1287,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180095,
+        "durationMs": 180050,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1287,7 +1320,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 9595,
+        "durationMs": 6497,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1315,7 +1348,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 50089,
+        "durationMs": 29105,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 152,
@@ -1801,12 +1834,12 @@
     {
       "name": "lit",
       "version": "3.3.3",
-      "issue": null,
+      "issue": 3977,
       "entryFile": "index.js",
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 2434,
+        "durationMs": 1824,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1817,10 +1850,17 @@
         "validates": true,
         "firstError": null
       },
+      "entryIsBarrel": true,
       "tests": {
         "kind": "upstream-suite",
-        "status": "not-integrated",
-        "reason": "not shipped in npm tarball; adapter pending"
+        "passed": 3,
+        "total": 16,
+        "passRatePct": 18.75,
+        "admitted": 583,
+        "upstreamTestsSeen": 587,
+        "harnessIncompatible": 563,
+        "implementationInvalidTests": 478,
+        "sourceIssue": 3977
       },
       "perf": null,
       "knownBugs": [],

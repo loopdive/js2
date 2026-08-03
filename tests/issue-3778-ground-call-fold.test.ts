@@ -124,6 +124,58 @@ describe("#3778 closed ground-call folding", () => {
     expect(foldGroundExportCalls(source).folded).toBe(0);
   });
 
+  it("folds a pure ground local call nested in a runtime-counted loop", async () => {
+    const source = `
+      function fib(n: number): number {
+        if (n <= 1) return n;
+        let a = 0;
+        let b = 1;
+        for (let i = 2; i <= n; i++) {
+          const next = a + b;
+          a = b;
+          b = next;
+        }
+        return b;
+      }
+      export function run(iterations: number): number {
+        let sum = 0;
+        for (let i = 0; i < iterations; i++) sum += fib(30);
+        return sum;
+      }
+    `;
+    const folded = foldGroundExportCalls(source);
+
+    expect(folded.folded).toBe(1);
+    expect(folded.source.length).toBe(source.length);
+    expect(folded.source).toMatch(/sum \+= 832040\s*;/);
+
+    const result = await compile(source, {
+      optimize: 4,
+      emitWat: true,
+      emitWatOnlyFunctions: ["run"],
+    });
+    expect(result.success).toBe(true);
+    const body = result.wat?.slice(result.wat.indexOf("(func $run"), result.wat.indexOf('(export "run"'));
+    expect(body).not.toContain("call $fib");
+    const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+    expect((instance.exports.run as (iterations: number) => number)(10)).toBe(8_320_400);
+  });
+
+  it("does not fold shadowed or effectful nested local calls", () => {
+    const shadowed = `
+      function value(): number { return 7; }
+      export function run(value: () => number): number { return value(); }
+    `;
+    const effectful = `
+      let calls = 0;
+      function value(): number { calls++; return 7; }
+      export function run(): number { return value(); }
+    `;
+
+    expect(foldGroundExportCalls(shadowed).folded).toBe(0);
+    expect(foldGroundExportCalls(effectful).folded).toBe(0);
+  });
+
   it("folds a pure linked-package call nested in a runtime-counted benchmark loop", () => {
     const files = clsxStandaloneFiles();
     const folded = foldGroundCallsInMultiFiles(files, "benchmark.mjs");

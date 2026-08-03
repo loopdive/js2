@@ -42,6 +42,7 @@ describe("#3535 standalone deferTopLevelInit renders top-level throws (#2860 F3)
       fileName: "test.js",
       skipSemanticDiagnostics: true,
       target: "standalone",
+      hostBridge: "always",
       deferTopLevelInit: true,
     });
     expect(result.success).toBe(true);
@@ -86,6 +87,7 @@ describe("#3535 standalone deferTopLevelInit renders top-level throws (#2860 F3)
       fileName: "test.js",
       skipSemanticDiagnostics: true,
       target: "standalone",
+      hostBridge: "always",
     });
     expect(result.success).toBe(true);
     const importObj = buildImports(result.imports, undefined, result.stringPool) as Record<string, unknown>;

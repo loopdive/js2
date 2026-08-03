@@ -16,7 +16,7 @@ export class PorfforTypeConverter implements TypeConverter<PorfforValueSlot> {
   readonly backend = "porffor" as const;
 
   convertType(type: IrType): readonly PorfforValueSlot[] {
-    if (type.kind === "object" || type.kind === "string") return ["ptr"];
+    if (type.kind === "object" || type.kind === "string" || type.kind === "vec") return ["ptr"];
     const value = asVal(type);
     if (!value) {
       throw new Error(`porffor backend does not support IR type '${type.kind}'`);

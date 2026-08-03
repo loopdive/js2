@@ -16,6 +16,11 @@ import { afterAll, beforeAll, describe, it } from "vitest";
 import { availableParallelism } from "os";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
 import { discoverFixtureGraph } from "../scripts/test262-fixture-graph.mjs";
+import {
+  RUNTIME_EVAL_IMPORT_MODULE,
+  instantiateRuntimeEvalNamespace,
+  selectCachedRuntimeEvalProvider,
+} from "../scripts/runtime-eval-provider.mjs";
 import { isPoisonCompileError } from "../scripts/test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { isRecordedVerdictSentinel } from "../scripts/verdict-once.mjs";
@@ -57,6 +62,15 @@ async function getBuildImports() {
     _buildImports = mod.buildImports;
   }
   return _buildImports;
+}
+
+let fixtureRuntimeEvalProviderModule: WebAssembly.Module | null | undefined;
+function getFixtureRuntimeEvalProviderModule(): WebAssembly.Module | null {
+  if (fixtureRuntimeEvalProviderModule !== undefined) return fixtureRuntimeEvalProviderModule;
+  const selection = selectCachedRuntimeEvalProvider();
+  console.error(`[test262-fixture] runtime-eval tier: ${selection.message}`);
+  fixtureRuntimeEvalProviderModule = selection.module;
+  return fixtureRuntimeEvalProviderModule;
 }
 
 function resolveFixtureGraph(source: string, testFilePath: string) {
@@ -791,7 +805,25 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   const importObj = buildImports(result.imports, { console: consoleProxy }, result.stringPool, {
                     globalSandbox: createTestSandbox(consoleProxy as unknown as Console),
                   });
-                  const { instance } = await WebAssembly.instantiate(result.binary, importObj as any);
+                  // The fixture-graph lane executes in this process instead of
+                  // scripts/test262-worker.mjs. Mirror that worker's standalone
+                  // module-first provider attachment so a fixture which merely
+                  // mentions eval/new Function can still instantiate under the
+                  // selected provider tier. Every test gets a fresh provider
+                  // instance; interpreter globals never leak between fixtures.
+                  const fixtureModule = new WebAssembly.Module(result.binary);
+                  if (
+                    TEST262_TARGET === "standalone" &&
+                    WebAssembly.Module.imports(fixtureModule).some(
+                      (entry) => entry.module === RUNTIME_EVAL_IMPORT_MODULE,
+                    )
+                  ) {
+                    const providerModule = getFixtureRuntimeEvalProviderModule();
+                    if (providerModule) {
+                      (importObj as any)[RUNTIME_EVAL_IMPORT_MODULE] = instantiateRuntimeEvalNamespace(providerModule);
+                    }
+                  }
+                  const instance = await WebAssembly.instantiate(fixtureModule, importObj as any);
                   fixtureInstance = instance;
                   (importObj as any).setInstance?.(instance);
                   // (#3049 C1) Deferred top-level init (host lane): run the

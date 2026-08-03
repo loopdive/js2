@@ -5,8 +5,33 @@ metadata:
   node_type: memory
   type: reference
   originSessionId: 417b718f-2c4e-4164-9782-006e2e33f7ff
-  modified: 2026-07-25T23:30:25.477Z
+  modified: 2026-08-01T08:42:59.011Z
 ---
+
+## Pre-running locally has a SHAPED gap: it catches change-shape gates, misses code-pattern gates
+
+**Measured 2026-08-01 (#3962).** An agent pre-ran `check:loc-budget`,
+`check:func-budget`, `check:oracle-ratchet` and its issue test file — all green
+— and `quality` still failed on **`check:speculative-rollback`**.
+
+The gap is not random, which makes it fixable:
+
+- **Change-shape gates** (budget, ratchet, dependency direction) measure *size
+  and direction of the diff*. These are what people habitually run locally, and
+  they reliably catch their own class.
+- **Code-pattern gates** inspect *the shape of the code itself*
+  (`check-speculative-rollback-sites.mjs`, and siblings). Nothing in the usual
+  local set looks at patterns, so this class is reliably missed.
+
+**Fix: add the pattern gates to your pre-push set — they are cheap.**
+`node scripts/check-speculative-rollback-sites.mjs` is **sub-second**.
+
+Note the failure it caught was real, not a formality: a raw
+`fctx.body.length = bodyLenBefore` — a **partial** rollback that leaves locals,
+late imports and errors behind. The gate offers an escape-hatch annotation
+(`// not-a-probe-rollback (#1919)`); using it would have silenced the alarm
+**and preserved the bug pattern**, leaving the tree worse than if the gate had
+never fired. Remove the pattern and record why none is needed; do not annotate.
 
 The `quality` CI job runs its gates as sequential steps under `bash -e`. A failure
 in an early step **aborts the whole job**, so every later step never executes.

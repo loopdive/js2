@@ -44,7 +44,7 @@ import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-i
 import { resolveStructName } from "./expressions/misc.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./expressions/proto-override.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
-import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
+import { bodyNeedsArgumentsObject, bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
 import { initializeFunctionPoisonPillContext } from "./function-poison-pill.js";
@@ -3114,7 +3114,7 @@ export function compileObjectLiteralForStruct(
         // literal sharing the method name collides on the stem and keeps the
         // legacy buffer below.
         !genBodyReferencesSuper(prop.body) &&
-        !bodyUsesArguments(prop.body) &&
+        !bodyNeedsArgumentsObject(prop.body) &&
         isAsyncGenDriveCandidate(ctx, prop)
       ) {
         emitAsyncGenerator(ctx, methodFctx, prop);
@@ -3273,84 +3273,103 @@ export function compileTupleLiteral(
  *   const arr: number[] = [];
  *   for (let i = 0; i < N; i++) arr.push(expr);
  *
- * Returns N (the trip count) if the pattern is statically provable, 0 otherwise.
- * This allows preallocating the backing WasmGC array to eliminate growth overhead.
+ * Returns the trip count and exact push call when the pattern is statically
+ * provable. This allows preallocating the backing WasmGC array and lets that
+ * one call omit its now-redundant capacity branch.
+ *
+ * @irOptimizationOwner IR-OPT-COUNTED-VECTOR-PUSH-PRESIZE
  */
-function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
+function detectCountedPushLoop(
+  expr: ts.ArrayLiteralExpression,
+): { tripCount: number; call: ts.CallExpression } | undefined {
   // Walk up: ArrayLiteralExpression → VariableDeclaration → VariableDeclarationList → VariableStatement → Block/SourceFile
   const varDecl = expr.parent;
-  if (!varDecl || !ts.isVariableDeclaration(varDecl) || !ts.isIdentifier(varDecl.name)) return 0;
+  if (!varDecl || !ts.isVariableDeclaration(varDecl) || !ts.isIdentifier(varDecl.name)) return undefined;
   const arrName = varDecl.name.text;
 
   const declList = varDecl.parent;
-  if (!declList || !ts.isVariableDeclarationList(declList)) return 0;
+  if (!declList || !ts.isVariableDeclarationList(declList)) return undefined;
   const varStmt = declList.parent;
-  if (!varStmt || !ts.isVariableStatement(varStmt)) return 0;
+  if (!varStmt || !ts.isVariableStatement(varStmt)) return undefined;
 
   const block = varStmt.parent;
-  if (!block) return 0;
+  if (!block) return undefined;
   let stmts: ts.NodeArray<ts.Statement>;
   if (ts.isBlock(block)) stmts = block.statements;
   else if (ts.isSourceFile(block)) stmts = block.statements;
-  else return 0;
+  else return undefined;
 
   // Find the variable statement's index and look at the next statement
   const idx = stmts.indexOf(varStmt);
-  if (idx < 0 || idx + 1 >= stmts.length) return 0;
+  if (idx < 0 || idx + 1 >= stmts.length) return undefined;
   const nextStmt = stmts[idx + 1]!;
-  if (!ts.isForStatement(nextStmt)) return 0;
+  if (!ts.isForStatement(nextStmt)) return undefined;
 
   // Check initializer: `let i = 0` or `var i = 0`
   const init = nextStmt.initializer;
-  if (!init || !ts.isVariableDeclarationList(init)) return 0;
-  if (init.declarations.length !== 1) return 0;
+  if (!init || !ts.isVariableDeclarationList(init)) return undefined;
+  if (init.declarations.length !== 1) return undefined;
   const loopDecl = init.declarations[0]!;
-  if (!ts.isIdentifier(loopDecl.name)) return 0;
+  if (!ts.isIdentifier(loopDecl.name)) return undefined;
   const loopVar = loopDecl.name.text;
   if (!loopDecl.initializer || !ts.isNumericLiteral(loopDecl.initializer) || loopDecl.initializer.text !== "0")
-    return 0;
+    return undefined;
 
   // Check condition: `i < N` where N is a numeric literal
   const cond = nextStmt.condition;
-  if (!cond || !ts.isBinaryExpression(cond)) return 0;
-  if (cond.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return 0;
-  if (!ts.isIdentifier(cond.left) || cond.left.text !== loopVar) return 0;
-  if (!ts.isNumericLiteral(cond.right)) return 0;
+  if (!cond || !ts.isBinaryExpression(cond)) return undefined;
+  if (cond.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return undefined;
+  if (!ts.isIdentifier(cond.left) || cond.left.text !== loopVar) return undefined;
+  if (!ts.isNumericLiteral(cond.right)) return undefined;
   const tripCount = Number(cond.right.text);
-  if (!Number.isFinite(tripCount) || tripCount <= 0 || tripCount > 1_000_000) return 0;
+  if (!Number.isFinite(tripCount) || tripCount <= 0 || tripCount > 1_000_000) return undefined;
 
   // Check incrementor: `i++` or `i += 1`
   const inc = nextStmt.incrementor;
-  if (!inc) return 0;
+  if (!inc) return undefined;
   if (ts.isPostfixUnaryExpression(inc)) {
-    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return 0;
-    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return 0;
+    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return undefined;
+    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return undefined;
   } else if (ts.isPrefixUnaryExpression(inc)) {
-    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return 0;
-    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return 0;
+    if (inc.operator !== ts.SyntaxKind.PlusPlusToken) return undefined;
+    if (!ts.isIdentifier(inc.operand) || inc.operand.text !== loopVar) return undefined;
+  } else if (
+    ts.isBinaryExpression(inc) &&
+    inc.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isIdentifier(inc.left) &&
+    inc.left.text === loopVar &&
+    ts.isBinaryExpression(inc.right) &&
+    inc.right.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+    ts.isIdentifier(inc.right.left) &&
+    inc.right.left.text === loopVar &&
+    ts.isNumericLiteral(inc.right.right) &&
+    Number(inc.right.right.text) === 1
+  ) {
+    // Canonical compiler-friendly spelling used by the benchmark corpus:
+    // `i = i + 1`.
   } else {
-    return 0;
+    return undefined;
   }
 
   // Check body: must contain only `arr.push(expr)` (as expression statement)
   const body = nextStmt.statement;
   let bodyStmt: ts.Statement;
   if (ts.isBlock(body)) {
-    if (body.statements.length !== 1) return 0;
+    if (body.statements.length !== 1) return undefined;
     bodyStmt = body.statements[0]!;
   } else {
     bodyStmt = body;
   }
-  if (!ts.isExpressionStatement(bodyStmt)) return 0;
+  if (!ts.isExpressionStatement(bodyStmt)) return undefined;
   const callExpr = bodyStmt.expression;
-  if (!ts.isCallExpression(callExpr)) return 0;
-  if (!ts.isPropertyAccessExpression(callExpr.expression)) return 0;
-  if (callExpr.expression.name.text !== "push") return 0;
-  if (!ts.isIdentifier(callExpr.expression.expression)) return 0;
-  if (callExpr.expression.expression.text !== arrName) return 0;
-  if (callExpr.arguments.length !== 1) return 0;
+  if (!ts.isCallExpression(callExpr)) return undefined;
+  if (!ts.isPropertyAccessExpression(callExpr.expression)) return undefined;
+  if (callExpr.expression.name.text !== "push") return undefined;
+  if (!ts.isIdentifier(callExpr.expression.expression)) return undefined;
+  if (callExpr.expression.expression.text !== arrName) return undefined;
+  if (callExpr.arguments.length !== 1) return undefined;
 
-  return tripCount;
+  return { tripCount, call: callExpr };
 }
 
 /**
@@ -3358,7 +3377,7 @@ function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
  *   const arr = [];
  *   for (let i = 0; i < N; i++) arr[i] = <pure expr involving i and outer locals>;
  *
- * This is the cousin of `detectCountedPushLoopSize` for `a[i] = …` instead of
+ * This is the cousin of `detectCountedPushLoop` for `a[i] = …` instead of
  * `a.push(…)`. The match unlocks pre-sizing the WasmGC backing array to N up
  * front, eliminating O(n²) grow-and-copy churn that the per-write
  * grow-on-demand path emits.
@@ -3383,9 +3402,11 @@ function detectCountedPushLoopSize(expr: ts.ArrayLiteralExpression): number {
  * - The loop body must not reference `arr` anywhere else (rules out `arr
  *   .length` reads, which would observe the pre-sized length immediately
  *   instead of the grow-as-you-go length).
+ *
+ * @irOptimizationOwner IR-OPT-DENSE-VECTOR-PRESIZE
  */
 function detectCountedFillLoopBound(expr: ts.ArrayLiteralExpression): ts.Expression | null {
-  // Same outer-walk as detectCountedPushLoopSize: literal must be the
+  // Same outer-walk as detectCountedPushLoop: literal must be the
   // initializer of a single variable declaration whose next sibling
   // statement is the for-loop.
   const varDecl = expr.parent;
@@ -3658,7 +3679,8 @@ export function compileArrayLiteral(
 
   if (expr.elements.length === 0) {
     // Detect counted push loop pattern and preallocate (#1001)
-    const prealloc = detectCountedPushLoopSize(expr);
+    const countedPush = detectCountedPushLoop(expr);
+    const prealloc = countedPush?.tripCount ?? 0;
     // Detect counted dense-fill loop pattern (#1198) — sister of the
     // push-loop matcher. When the array is followed by a
     // `for (let i = 0; i < N; i++) arr[i] = pureExpr` loop, we know the
@@ -3687,6 +3709,9 @@ export function compileArrayLiteral(
     if (arrTypeIdx < 0) {
       reportError(ctx, expr, "Empty array literal: invalid vec type");
       return null;
+    }
+    if (countedPush) {
+      (fctx.presizedArrayPushCalls ??= new Map()).set(countedPush.call, vecTypeIdx);
     }
 
     if (fillBoundExpr !== null) {

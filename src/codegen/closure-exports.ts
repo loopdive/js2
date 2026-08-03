@@ -15,12 +15,13 @@ import { addUnionImports } from "./registry/imports.js";
 import { buildClosureRefTestArms, collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js";
 import { CLOSURE_ARITY_FIELD_IDX, getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
 import {
-  buildTransferredSubstringCallInstrs,
-  collectTransferredSubstringReceivers,
+  buildTransferredNativeProtoCallInstrs,
+  collectTransferredNativeProtoReceivers,
   resolveClosureBaseWrapperTypeIdx,
 } from "./closures/transferred-native-proto.js";
 import { ensureArgcGlobal, ensureCurrentThisGlobal, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { ensureAnyToExternHelper, isAnyValue } from "./any-helpers.js";
+import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 export { buildTransferredCharAtApplyArm } from "./char-at-transfer.js";
@@ -332,22 +333,6 @@ function externToClosureParamRef(paramType: ValType): Instr[] {
   return ops;
 }
 
-/** Preserve the structural boolean brand when an i32 crosses the externref ABI. */
-function boxI32ClosureResult(
-  ctx: CodegenContext,
-  returnType: { kind: "i32"; boolean?: true },
-  boxNumberIdx: number | undefined,
-): Instr[] {
-  const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
-  if (returnType.boolean === true && boxBooleanIdx !== undefined) {
-    return [{ op: "call", funcIdx: boxBooleanIdx }];
-  }
-  if (boxNumberIdx !== undefined) {
-    return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx }];
-  }
-  return [{ op: "drop" }, { op: "ref.null.extern" }];
-}
-
 /**
  * Emit __call_fn_<arity> export (#1382): call an N-arg WasmGC closure from
  * JS. Takes (externref closure, externref arg0, ..., externref arg<arity-1>)
@@ -550,38 +535,9 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
       { op: "call_ref", typeIdx: entry.funcTypeIdx },
     ];
 
-    // Coerce result to externref.
-    if (entry.returnType) {
-      if ((ctx.standalone || ctx.wasi) && isAnyValue(entry.returnType, ctx)) {
-        const anyToExternIdx = ensureAnyToExternHelper(ctx);
-        if (anyToExternIdx !== undefined) {
-          callBody.push({ op: "call", funcIdx: anyToExternIdx });
-        } else {
-          callBody.push({ op: "extern.convert_any" });
-        }
-      } else if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
-        callBody.push({ op: "extern.convert_any" });
-      } else if (entry.returnType.kind === "f64") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "call", funcIdx: boxNumberIdx });
-        } else {
-          callBody.push({ op: "drop" });
-          callBody.push({ op: "ref.null.extern" });
-        }
-      } else if (entry.returnType.kind === "i32") {
-        callBody.push(...boxI32ClosureResult(ctx, entry.returnType, boxNumberIdx));
-      } else if (entry.returnType.kind === "i64") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "f64.convert_i64_s" });
-          callBody.push({ op: "call", funcIdx: boxNumberIdx });
-        } else {
-          callBody.push({ op: "drop" });
-          callBody.push({ op: "ref.null.extern" });
-        }
-      }
-    } else {
-      callBody.push({ op: "ref.null.extern" });
-    }
+    // (#4082) Coerce result to externref — one shared decision, see
+    // buildClosureResultBoxing.
+    callBody.push(...buildClosureResultBoxing(ctx, entry.returnType, boxNumberIdx));
 
     funcrefDispatch = [
       { op: "local.get", index: funcLocal },
@@ -742,7 +698,8 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     selfTypeIdx: number;
     closureArity: number;
   }[] = [];
-  const substringReceiverEntries = collectTransferredSubstringReceivers(ctx, arity);
+  // (#3992) Every native-proto METHOD closure of this arity — see the collector.
+  const nativeProtoReceiverEntries = collectTransferredNativeProtoReceivers(ctx, arity);
 
   for (const [typeIdx, info] of ctx.closureInfoByTypeIdx) {
     if (info.paramTypes.length > arity) continue;
@@ -767,7 +724,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
       });
     }
   }
-  if (entries.length === 0 && substringReceiverEntries.length === 0) return;
+  if (entries.length === 0 && nativeProtoReceiverEntries.length === 0) return;
 
   baseWrapperIdx = resolveClosureBaseWrapperTypeIdx(ctx, arity, baseWrapperIdx);
   if (baseWrapperIdx === undefined) return;
@@ -803,15 +760,16 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   body.push({ op: "local.get", index: 0 });
   body.push({ op: "global.set", index: currentThisGlobalIdx });
 
-  body.push(
-    ...buildTransferredSubstringCallInstrs(
-      substringReceiverEntries,
-      anyLocal,
-      resultSaveLocal,
-      prevThisLocal,
-      currentThisGlobalIdx,
-    ),
-  );
+  const npArgs = {
+    anyLocal,
+    resultSaveLocal,
+    prevThisLocal,
+    currentThisGlobalIdx,
+    // (#4082) The arm must lower its callee's real result to externref, exactly
+    // as the generic dispatch arms below do.
+    boxNumberIdx,
+  };
+  body.push(...buildTransferredNativeProtoCallInstrs(ctx, nativeProtoReceiverEntries, arity, npArgs));
 
   let funcrefDispatch: Instr[] = [{ op: "ref.null.extern" }];
   // (#3673 round 10) per-entry callBody capture for the arity-bucketed
@@ -821,7 +779,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
   for (const entry of entries) {
     const funcTypeDef = mod.types[entry.funcTypeIdx];
 
-    const buildArgConversion = (argLocalIdx: number, paramType: ValType | undefined): Instr[] => {
+    const buildArgConversion = (argLocalIdx: number, formalIndex: number, paramType: ValType | undefined): Instr[] => {
       const ops: Instr[] = [{ op: "local.get", index: argLocalIdx }];
       if (paramType) {
         if (paramType.kind === "f64") {
@@ -843,7 +801,25 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
           ops.push(...externToClosureParamRef(paramType));
         }
       }
-      return ops;
+      // The widened dispatcher receives a real JS `undefined` carrier in each
+      // padded externref slot. That value cannot be `ref.cast` to a nullable
+      // closed struct even though the callee's internal representation for an
+      // omitted optional object is exactly `ref.null $T`. Preserve dynamic
+      // coercion for supplied arguments (notably numeric undefined -> NaN),
+      // but materialize omission in the nullable reference domain before the
+      // cast. `__argc` still contains the raw call-site count at this point.
+      if (paramType?.kind !== "ref_null") return ops;
+      return [
+        { op: "global.get", index: argcGlobalIdx },
+        { op: "i32.const", value: formalIndex },
+        { op: "i32.gt_s" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: paramType },
+          then: ops,
+          else: [{ op: "ref.null", typeIdx: paramType.typeIdx }],
+        },
+      ];
     };
 
     // User args occupy locals [2..arity+1]. Push only as many as the
@@ -852,7 +828,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
     for (let i = 0; i < entry.closureArity; i++) {
       const paramType =
         funcTypeDef?.kind === "func" && funcTypeDef.params.length >= i + 2 ? funcTypeDef.params[i + 1] : undefined;
-      argInstrs.push(...buildArgConversion(i + 2, paramType));
+      argInstrs.push(...buildArgConversion(i + 2, i, paramType));
     }
 
     // (#2745) #820l argc/extras plumbing (clamped-to-formals convention; see
@@ -910,37 +886,8 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
       { op: "call_ref", typeIdx: entry.funcTypeIdx },
     ];
 
-    if (entry.returnType) {
-      if ((ctx.standalone || ctx.wasi) && isAnyValue(entry.returnType, ctx)) {
-        const anyToExternIdx = ensureAnyToExternHelper(ctx);
-        if (anyToExternIdx !== undefined) {
-          callBody.push({ op: "call", funcIdx: anyToExternIdx });
-        } else {
-          callBody.push({ op: "extern.convert_any" });
-        }
-      } else if (entry.returnType.kind === "ref" || entry.returnType.kind === "ref_null") {
-        callBody.push({ op: "extern.convert_any" });
-      } else if (entry.returnType.kind === "f64") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "call", funcIdx: boxNumberIdx });
-        } else {
-          callBody.push({ op: "drop" });
-          callBody.push({ op: "ref.null.extern" });
-        }
-      } else if (entry.returnType.kind === "i32") {
-        callBody.push(...boxI32ClosureResult(ctx, entry.returnType, boxNumberIdx));
-      } else if (entry.returnType.kind === "i64") {
-        if (boxNumberIdx !== undefined) {
-          callBody.push({ op: "f64.convert_i64_s" });
-          callBody.push({ op: "call", funcIdx: boxNumberIdx });
-        } else {
-          callBody.push({ op: "drop" });
-          callBody.push({ op: "ref.null.extern" });
-        }
-      }
-    } else {
-      callBody.push({ op: "ref.null.extern" });
-    }
+    // (#4082) One shared decision — see buildClosureResultBoxing.
+    callBody.push(...buildClosureResultBoxing(ctx, entry.returnType, boxNumberIdx));
 
     funcrefDispatch = [
       { op: "local.get", index: funcLocal },
@@ -1589,7 +1536,8 @@ export function emitIsDataStructExport(ctx: CodegenContext): void {
 export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   if (!ctx.nativeStrings) return;
   const baseTypeIdxs = collectClosureBaseWrapperTypeIdxs(ctx);
-  if (baseTypeIdxs.length === 0) return;
+  const runtimeEvalCallbackTypeIdx = ctx.runtimeEvalInterpretedCallbackTypeIdx;
+  if (baseTypeIdxs.length === 0 && runtimeEvalCallbackTypeIdx === undefined) return;
 
   const fnByName = (name: string): WasmFunction | undefined =>
     ctx.mod.functions.find((f) => (f as { name?: string }).name === name) as WasmFunction | undefined;
@@ -1597,8 +1545,25 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // Chained `ref.test` arms over the anyref-converted param in local 0/1. Each
   // i32-predicate arm returns `matchValue` on hit. Builds from the ONE shared
   // closure-base-wrapper list (`closure-classifier.ts`).
-  const closureI32Arms = (anyLocalIdx: number, matchValue: number): Instr[] =>
-    buildClosureRefTestArms(ctx, anyLocalIdx, [{ op: "i32.const", value: matchValue }, { op: "return" }]);
+  const closureI32Arms = (anyLocalIdx: number, matchValue: number): Instr[] => {
+    const onMatch: Instr[] = [{ op: "i32.const", value: matchValue }, { op: "return" }];
+    const arms = buildClosureRefTestArms(ctx, anyLocalIdx, onMatch);
+    if (runtimeEvalCallbackTypeIdx !== undefined) {
+      // The provider wraps an interpreted callback in a uniquely branded,
+      // deliberately NON-closure carrier before crossing into caller AOT. It
+      // still has ECMAScript [[Call]], supplied by fillApplyClosure's exact
+      // type+brand guard, so Test262's `assert.throws` precondition must observe
+      // `typeof callback === "function"`. Keep this local to the typeof family:
+      // adding the marker to the shared closure-root classifier would send it
+      // through arity/property paths that assume closure field layout.
+      arms.push(
+        { op: "local.get", index: anyLocalIdx },
+        { op: "ref.test", typeIdx: runtimeEvalCallbackTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
+      );
+    }
+    return arms;
+  };
 
   // #3540: the single coercion engine owns compiled-closure stringification;
   // this finalizer supplies the now-complete closure classifier.
@@ -1665,11 +1630,26 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
         (inst, i) => (b[spliceAt + i] as { op?: string } | undefined)?.op === (inst as { op?: string }).op,
       );
     if (tailMatches) {
-      const fnArm = buildClosureRefTestArms(ctx, 1, [
-        ...stringConstantExternrefInstrs(ctx, "function"),
-        { op: "return" },
-      ]);
-      b.splice(spliceAt, 0, ...fnArm);
+      // Replace each predicate arm's `i32.const 1; return` body with the
+      // materialized native string result. Rebuild explicitly because the i32
+      // predicate and value-returning helper have different result types.
+      const valueArms: Instr[] = [];
+      const callableTypeIdxs = [
+        ...baseTypeIdxs,
+        ...(runtimeEvalCallbackTypeIdx === undefined ? [] : [runtimeEvalCallbackTypeIdx]),
+      ];
+      for (const typeIdx of callableTypeIdxs) {
+        valueArms.push(
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }],
+          },
+        );
+      }
+      b.splice(spliceAt, 0, ...valueArms);
     }
   }
 }

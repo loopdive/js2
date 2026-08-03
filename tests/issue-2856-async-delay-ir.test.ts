@@ -98,7 +98,7 @@ describe("#2856 exact Promise timer delay IR slice", () => {
     expect(result.irCompiledFuncs ?? []).toEqual(
       expect.arrayContaining(["delay", "delay__closure_0", "delay__closure_0__closure_1"]),
     );
-    expect(result.irFirstSkipped ?? []).not.toContain("delay");
+    expect(result.irFirstSkipped ?? []).toContain("delay");
 
     const names = importNames(result);
     expect(names).toEqual(

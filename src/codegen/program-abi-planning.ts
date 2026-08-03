@@ -226,7 +226,12 @@ export function planProgramAbiUnitCallable(
   const unitId = plan.ref.binding.unitId;
   if (!session.hasKnownUnit(unitId)) return undefined;
   const derived = session.registeredDerivedUnit(unitId);
-  if (derived && derived.role !== "lifted-closure" && derived.role !== "monomorphization-clone") {
+  if (
+    derived &&
+    derived.role !== "lifted-closure" &&
+    derived.role !== "ir-async-state" &&
+    derived.role !== "monomorphization-clone"
+  ) {
     return undefined;
   }
   const bindingId = irUnitCallableBindingId(unitId);

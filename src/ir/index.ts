@@ -4,6 +4,7 @@ export * from "./outcomes.js";
 export * from "./identity.js";
 export * from "./planning-identity.js";
 export * from "./program-abi.js";
+export * from "./async-plan.js";
 export * from "./nodes.js";
 export * from "./callable-bindings.js";
 export * from "./abi-bindings.js";

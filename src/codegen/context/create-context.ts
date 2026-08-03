@@ -129,6 +129,13 @@ export function createCodegenContext(
     usesArrayHoles: false, // (#2001 S1) set by the scanForArrayHoles pre-scan
     arrayProtoIndexDirty: false, // (#2001 S2) set by scanForArrayHoles: Array.prototype index write ⇒ HOF hole-skip disabled
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
+    // (#4035) "auto" = the JS host needs the bridge as its calling convention,
+    // a JS-free host does not. Standalone/WASI callers that DO inspect the
+    // module (the test262 harness) pass hostBridge: "always".
+    emitHostBridge:
+      (options?.hostBridge ?? "auto") === "auto"
+        ? !(options?.standalone || options?.wasi)
+        : options?.hostBridge === "always",
     suppressVecUsageFlag: false, // (#2083) true only during the two prereg calls below
     holeTypeIdx: -1, // (#2001 S1) $Hole struct type; lazily registered
     holeGlobalIdx: undefined, // (#2001 S1) $__hole singleton global
@@ -142,6 +149,7 @@ export function createCodegenContext(
     dynMemberGetHelpersEmitted: false, // (#3053 U0) ensureDynMemberGet idempotence latch
     classThrowsOnEval: new Set(),
     topLevelFunctionNames: new Set(), // (#1983) for class-member funcMap key collision detection
+    topLevelFunctionDeclarations: new Map(),
     classMethodSet: new Set(),
     deferredClassBodies: new Set(),
     classAccessorSet: new Set(),
@@ -175,6 +183,7 @@ export function createCodegenContext(
     nativeGeneratorResultTypeIdx: -1,
     nativeGenerators: new Map(),
     moduleGlobals: new Map(),
+    globalLexicalBindings: new Set(),
     liveFuncBindingGlobals: new Set(),
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),
@@ -274,6 +283,7 @@ export function createCodegenContext(
     funcRefWrapperCache: new Map(),
     constructibleFuncRefWrapperCache: new Map(),
     constructibleClosureTypeIdxs: new Set(),
+    nativeConstructProtoKey: new Map(),
     pendingInitBody: null,
     inlinableFunctions: new Map(),
     symbolCounterGlobalIdx: -1,

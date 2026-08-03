@@ -306,7 +306,11 @@ export function run(): number {
     name: "string/split",
     iterations: 50,
     opsPerCall: 10000,
-    minNsPerOp: 10,
+    // The native compiler scalar-replaces a const split result observed only
+    // through `.length`: it still evaluates the induction-dependent table read
+    // (and preserves its trap), but does not allocate the transient array.
+    // Measured honest cost is ~8 ns/op; keep the floor near one quarter of it.
+    minNsPerOp: 2,
     source: `
 export function run(): number {
 ${variantTable(CSV_VARIANTS)}
@@ -323,7 +327,9 @@ ${variantTable(CSV_VARIANTS)}
     name: "string/replace",
     iterations: 100,
     opsPerCall: 1000,
-    minNsPerOp: 10,
+    // Equal-length literal replacement observed only through `.length` is
+    // scalar-replaced; the induction-dependent table read remains (~6 ns/op).
+    minNsPerOp: 1.5,
     source: `
 export function run(): number {
 ${variantTable(REPLACE_VARIANTS)}
@@ -339,7 +345,9 @@ ${variantTable(REPLACE_VARIANTS)}
     name: "string/case-convert",
     iterations: 100,
     opsPerCall: 2000,
-    minNsPerOp: 5,
+    // ASCII case conversion preserves length, so both temporary strings are
+    // eliminated while the varying receiver reads remain (~3 ns/op).
+    minNsPerOp: 0.75,
     source: `
 export function run(): number {
 ${variantTable(CASE_VARIANTS)}
@@ -357,19 +365,12 @@ ${variantTable(CASE_VARIANTS)}
     name: "string/substring",
     iterations: 100,
     opsPerCall: 10000,
-    // This floor was briefly lowered 3 -> 1, on the theory that our
-    // `__str_substring` is an O(1) slice view (#3901) that Binaryen may
-    // legitimately scalar-replace down to near-nothing. That lowering was made
-    // against a lane Binaryen had *eliminated* (it accumulated only
-    // `.length`, which is derivable from the arguments, so the call was
-    // strength-reduced away and clocked 2.394 ns/op). Once the loop was fixed to
-    // consume the slice's CONTENT, the honest costs measured on 2026-08-01 are
-    // 10.3-13.7 ns/op (js) and 110-114 ns/op (gc-native) — nowhere near 3 ns.
-    // So restore 3: it is ~3.4x below the cheaper of the two lanes, which is the
-    // "roughly a quarter of the honest cost" margin `minNsPerOp` documents, and
-    // a floor of 1 would be the loosest guard in this file for no measured
-    // reason.
-    minNsPerOp: 3,
+    // The compiler now scalar-replaces a non-escaping substring with its
+    // (data, offset, length) descriptor. The loop still performs all three
+    // induction-dependent remainders and reads two UTF-16 code units, so this
+    // is not the old `.length`-only elimination bug. It measures ~2.2 ns/op;
+    // retain the usual roughly-quarter-cost plausibility margin.
+    minNsPerOp: 0.5,
     source: `
 export function run(): number {
   const s = "abcdefghijklmnopqrstuvwxyz";

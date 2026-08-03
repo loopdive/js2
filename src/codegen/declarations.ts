@@ -26,7 +26,7 @@ import { classifyTopLevelExpressionStatement, createsGlobalObjectBinding } from 
 import { ensureWrapperTypes } from "./any-helpers.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
 import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "./async-frame.js";
-import { collectClassDeclaration, compileClassBodies } from "./class-bodies.js";
+import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import {
   collectBindingPatternNames,
   collectReferencedIdentifiers,
@@ -66,6 +66,7 @@ import {
   unwrapGeneratorYieldType,
 } from "./index.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js";
+import { prepareAsyncCallableAbi } from "./async-ir-planning.js";
 import { ensureNativeStringExternBridge, ensureNativeStringHelpers } from "./native-strings.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
@@ -96,6 +97,7 @@ import {
 } from "./program-abi-source-callable-planning.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { prepareModuleTdzGlobals, registerModuleGlobal } from "./module-global-registration.js";
+import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 
 // ── Extracted subsystems (#3268) — re-exported for external consumers ─────
 export {
@@ -380,6 +382,26 @@ function lowerParamType(
       }
     }
   }
+  // Runtime eval publishes top-level script functions through an externref
+  // AOT-callable adapter. Structurally typed object parameters need the same
+  // representation-neutral carrier: an object literal arriving through that
+  // adapter is not nominally the declaration's WasmGC struct, even when it has
+  // the required fields. Keep compiler-owned reference families (native
+  // strings, vectors, promises, closures, and class instances) specialised;
+  // widening those unrelated references changed their ordinary in-module
+  // semantics merely because the source happened to mention eval.
+  const runtimeEvalParamStructName =
+    wasmType.kind === "ref" || wasmType.kind === "ref_null" ? ctx.typeIdxToStructName.get(wasmType.typeIdx) : undefined;
+  if (
+    ctx.runtimeEvalCallableBoundaryEnabled === true &&
+    ts.isSourceFile(stmt.parent) &&
+    ctx.topLevelFunctionNames.has(funcName) &&
+    runtimeEvalParamStructName !== undefined &&
+    ctx.structFields.has(runtimeEvalParamStructName) &&
+    !ctx.classTagMap.has(runtimeEvalParamStructName)
+  ) {
+    wasmType = { kind: "externref" };
+  }
   return wasmType;
 }
 
@@ -549,7 +571,7 @@ function registerBodylessFunctionDeclaration(
     }
   }
 
-  params = expandLinearU8ParamTypes(ctx, stmt, params);
+  [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
 
   const optionalParams: OptionalParamInfo[] = [];
   for (let i = 0; i < stmt.parameters.length; i++) {
@@ -899,7 +921,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       // keys (`${className}_${member}`) that would collide with it can relocate.
       // Only real `function` declarations participate — class names are tracked
       // separately and must NOT poison the collision set.
-      if (stmt.name) ctx.topLevelFunctionNames.add(name);
+      if (stmt.name) {
+        ctx.topLevelFunctionNames.add(name);
+        ctx.topLevelFunctionDeclarations.set(name, stmt);
+      }
       // #1463 — capture source text for Function.prototype.toString() so that
       // `someFn.toString()` returns the original declaration text instead of
       // the `function () { [native code] }` placeholder. Only top-level
@@ -1016,7 +1041,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         }
       }
 
-      params = expandLinearU8ParamTypes(ctx, stmt, params);
+      [params, results] = prepareAsyncCallableAbi(ctx, stmt, expandLinearU8ParamTypes(ctx, stmt, params), results);
 
       const optionalParams: OptionalParamInfo[] = [];
       for (let i = 0; i < stmt.parameters.length; i++) {
@@ -1984,6 +2009,9 @@ export type ModuleInitMode = "full" | "discover" | "skip";
  * placeholder for a later IR overlay. R2 passes the exact same names through
  * `preserveSkippedBodies` after their IR bodies have already been prepared and
  * installed, so declaration compilation leaves those bodies untouched.
+ * `classBodyRouting` applies the same exact transaction to top-level ordinary
+ * class methods; constructors, accessors, nested declarations, and class
+ * expressions remain direct-owned.
  *
  * The funcIdx/typeIdx slot itself is untouched in both modes. Skipped
  * functions are deliberately NOT registered as direct-front-end inlinables:
@@ -1999,6 +2027,7 @@ export function compileDeclarations(
   sourceFile: ts.SourceFile,
   skipBodies?: ReadonlySet<string>,
   preserveSkippedBodies?: ReadonlySet<string>,
+  classBodyRouting?: ClassBodyCompileRouting,
   moduleInitMode: ModuleInitMode = "full",
 ): string[] | undefined {
   const skippedNames: string[] | undefined = skipBodies ? [] : undefined;
@@ -2007,7 +2036,7 @@ export function compileDeclarations(
   for (let i = 0; i < ctx.mod.functions.length; i++) {
     funcByName.set(ctx.mod.functions[i]!.name, i);
   }
-  // (#4045) That scan is last-wins by NAME, so when two modules each declare a
+  // (#4133) That scan is last-wins by NAME, so when two modules each declare a
   // top-level `function shared()` — two real, distinct slots — every body lands
   // in whichever slot happens to come last, leaving the other permanently empty
   // and every caller pointed at one body.
@@ -2208,7 +2237,13 @@ export function compileDeclarations(
           ctx.deferredClassBodies.add(stmt.name.text);
         } else {
           try {
-            compileClassBodies(ctx, stmt, funcByName);
+            compileClassBodies(
+              ctx,
+              stmt,
+              funcByName,
+              undefined,
+              stmt.parent === sourceFile ? classBodyRouting : undefined,
+            );
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             reportError(ctx, stmt, `Internal error compiling class '${stmt.name.text}': ${msg}`);
@@ -2456,6 +2491,9 @@ export function compileDeclarations(
         }
         // Closure struct (internal ref) → externref for the externref global.
         initFctx.body.push({ op: "extern.convert_any" });
+        if (ctx.runtimeEvalGlobalFunctionBindings) {
+          emitRuntimeEvalAotCallableAdapter(ctx, initFctx);
+        }
         initFctx.body.push({ op: "global.set", index: liveGlobalIdx });
         seededGlobals.add(liveGlobalIdx);
       }

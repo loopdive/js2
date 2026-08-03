@@ -514,7 +514,7 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     const funcRelativeEntries: { bodyOffset: number; instrOffset: number; sourcePos: SourcePos }[] = [];
 
     codeSectionBody.u32(mod.functions.length); // vector count
-    // (#4045) How many defined functions share each name. A local-index breach
+    // (#4133) How many defined functions share each name. A local-index breach
     // is usually a body installed against another function's frame, and a
     // duplicated name is the strongest single hint that that is what happened —
     // so report it AT the failure instead of leaving the reader to guess from
@@ -522,12 +522,12 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
     const definedNameCounts = new Map<string, number>();
     for (const f of mod.functions) definedNameCounts.set(f.name, (definedNameCounts.get(f.name) ?? 0) + 1);
 
-    // (#4075) `JS2WASM_EMIT_DUMP=1` writes one line per defined function
+    // (#4134) `JS2WASM_EMIT_DUMP=1` writes one line per defined function
     // (position, name, param+local frame size) to stderr before encoding. A
     // local-index breach is a mismatch between a body and its frame, so the
     // actionable question is "which function has a frame that index WOULD fit"
     // — answerable only against the whole table. Inert unless set.
-    // (#4075) Do two defined functions SHARE one body array? Bodies are assigned
+    // (#4134) Do two defined functions SHARE one body array? Bodies are assigned
     // by reference from a FunctionContext, and a shared array is a documented
     // hazard in this codebase ("`body: []` in FunctionContext (NOT
     // `body: func.body`) — shared references break savedBody/swap"). A body that
@@ -554,7 +554,7 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule): EmitResult {
 
     for (const [functionPosition, f] of mod.functions.entries()) {
       if (valCtx) {
-        // (#4030/#4045) Include the position and frame size. A bare name is not
+        // (#4030/#4133) Include the position and frame size. A bare name is not
         // enough to act on: the name can be synthesized or shared by several
         // declarations, and the whole point of a local-index breach is that the
         // body does not match the frame it was installed against.
@@ -1060,19 +1060,19 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.select);
       break;
     case "local.get":
-      // (#4075) name the opcode: a local breach needs the SITE, not just the frame.
+      // (#4134) name the opcode: a local breach needs the SITE, not just the frame.
       if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_get);
       enc.u32(instr.index);
       break;
     case "local.set":
-      // (#4075) name the opcode: a local breach needs the SITE, not just the frame.
+      // (#4134) name the opcode: a local breach needs the SITE, not just the frame.
       if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_set);
       enc.u32(instr.index);
       break;
     case "local.tee":
-      // (#4075) name the opcode: a local breach needs the SITE, not just the frame.
+      // (#4134) name the opcode: a local breach needs the SITE, not just the frame.
       if (valCtx && valCtx.maxLocals >= 0) vIdx(`local (${instr.op})`, instr.index, valCtx.maxLocals);
       enc.byte(OP.local_tee);
       enc.u32(instr.index);

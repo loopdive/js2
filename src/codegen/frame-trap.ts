@@ -1,5 +1,5 @@
 /**
- * Env-gated body-write trap (#4075).
+ * Env-gated body-write trap (#4134).
  *
  * `JS2WASM_FRAME_TRAP=<name>` makes the named function's `FunctionContext`
  * report — with a stack — the moment an instruction referencing a local

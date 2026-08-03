@@ -11,6 +11,11 @@ import {
   isOwnParamName,
 } from "../closures.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js"; // (#3486) fnctor ctor-closure singleton
+import {
+  provablyNonConstructableStatically,
+  resolvesToAmbientGlobal,
+  resolvesToNonConstructableValue,
+} from "./non-constructable.js"; // (#4017)
 import { popBody, pushBody } from "../context/bodies.js"; // (#3486) detached operand buffer
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
@@ -41,13 +46,14 @@ import { emitObjectCoercion } from "./calls-guards.js"; // (#3118) shared Object
 import { COLLECTION_KIND, ensureMapHelpers, coerceMapKeyToAnyref } from "../map-runtime.js";
 import { ensureDisposableStackNew } from "../disposable-runtime.js";
 import { emitSetNewTargetBeforeCall, ensureNewTargetGlobal } from "../new-target.js"; // (#2023)
-import { ensureObjectRuntime } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime
+import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js"; // (#1100) standalone Proxy native runtime; (#2928) Function-marker construct
 import { ensureSetHelpers } from "../set-runtime.js";
 import { ensureWeakCollectionHelpers } from "../weak-collections-runtime.js";
 import { tryCompileNativeWeakRefNew } from "../weakref-runtime.js";
 import { classMemberFuncKey } from "../class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import { compileObjectLiteralAsExternref, resolveComputedKeyExpression } from "../literals.js";
 import { stringConstantExternrefInstrs, ensureAnyToStringHelper } from "../native-strings.js";
+import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "../native-construct.js"; // (#3981)
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import {
   compileStandaloneRegExpConstructor,
@@ -60,6 +66,7 @@ import {
   emitDynamicNewFunctionHostEval,
   emitStandaloneDynamicFunctionStub,
   isGlobalFunctionIdentifier,
+  resolvesToGlobalFunctionAlias,
   tryStaticNewFunction,
 } from "./eval-inline.js";
 import {
@@ -91,7 +98,7 @@ import { localGlobalIdx } from "../registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { NEW_GLOBAL_FALLTHROUGH, tryCompileBuiltinGlobalNew } from "./new-builtin-globals.js"; // (#3281 slice 1) built-in global ctor dispatch
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
-import { emitFnctorProtoGet } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object
+import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
 import {
@@ -148,68 +155,59 @@ function evaluateCtorExtraArgument(ctx: CodegenContext, fctx: FunctionContext, a
 }
 
 /**
- * (#1732 S1) Decide whether a `new <id>` callee identifier resolves to a value
- * that is PROVABLY not a constructor — so the runtime `__construct` brand check
- * can be emitted without risk of intercepting a real constructor.
+ * (#4017) Emit the ECMA-262 `TypeError` for `new <value-with-no-[[Construct]]>`
+ * when non-constructability was decided at COMPILE time, so no runtime
+ * `IsConstructor` probe (and therefore no `__construct` host import) is needed.
  *
- * Returns true only when the identifier's (variable/parameter) declaration has
- * an initializer that is a known-non-constructable expression shape:
- *   - `<expr>.prototype.<method>` — builtin/user prototype methods never have
- *     [[Construct]] (§20.x / §10.2.2). This is the `S15.5.4.*_A7` pattern
- *     (`var f = String.prototype.indexOf; new f`).
- *   - `<expr>.bind(...)` / `.call(...)` / `.apply(...)` — bound functions are
- *     non-constructors unless the target is (and the result of `.call`/`.apply`
- *     is a plain value, never a constructor).
+ * This is what standalone/WASI lacked. The `resolvesToNonConstructableValue`
+ * guard was gated `!noJsHost` because its *vehicle* is the `__construct` host
+ * import; in standalone that discarded the vehicle AND the proof, and control
+ * fell through to the terminal `__new_<name>` lookup, found no import, and
+ * emitted a bare `ref.null.extern` — so `new (String.prototype.charAt)` quietly
+ * evaluated to null instead of throwing (test262 `S15.5.4.*_A7`, 10 files, all
+ * of which the host lane already passed).
  *
- * Deliberately conservative: any other initializer shape (function expression,
- * class reference, plain identifier, call to a factory, etc.) returns false so
- * those keep the existing static / unknown-ctor handling. User function
- * declarations are resolved earlier (2414-2469) and never reach the caller.
+ * `args` are compiled-and-dropped first: §13.3.5.1 EvaluateNew evaluates the
+ * MemberExpression and the ArgumentList BEFORE the IsConstructor check, so their
+ * side effects must still happen. Pass `[]` where the callee form takes none.
  */
-function resolvesToNonConstructableValue(ctx: CodegenContext, calleeExpr: ts.Expression): boolean {
-  if (!ts.isIdentifier(calleeExpr)) return false;
-  const sym = ctx.checker.getSymbolAtLocation(calleeExpr);
-  const decls = sym?.getDeclarations();
-  if (!decls || decls.length === 0) return false;
-
-  const isNonConstructableInit = (init: ts.Expression): boolean => {
-    // Unwrap as/paren/non-null wrappers.
-    let e: ts.Expression = init;
-    while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) {
-      e = ts.isParenthesizedExpression(e)
-        ? e.expression
-        : ts.isAsExpression(e)
-          ? e.expression
-          : (e as ts.NonNullExpression).expression;
-    }
-    // (#1528a) An arrow function is PROVABLY never a constructor — §15.3.4
-    // arrow functions have no [[Construct]] internal method, so `new (arrow)()`
-    // must throw TypeError (§7.3.15 Construct → §7.2.4 IsConstructor). Through a
-    // local of type `any` (`const f = () => 1; new f()`) no static guard sees
-    // the arrow, so control reaches the unknown-ctor path and wrongly does not
-    // throw; route it through the `__construct` brand check (which throws a real
-    // TypeError) just like the prototype-method / bound-function shapes below.
-    if (ts.isArrowFunction(e)) return true;
-    // `<...>.prototype.<method>` — a method pulled off a prototype.
-    if (ts.isPropertyAccessExpression(e)) {
-      const obj = e.expression;
-      if (ts.isPropertyAccessExpression(obj) && obj.name.text === "prototype") return true;
-    }
-    // `<...>.bind(...)` / `.call(...)` / `.apply(...)` result.
-    if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
-      const m = e.expression.name.text;
-      if (m === "bind" || m === "call" || m === "apply") return true;
-    }
-    return false;
-  };
-
-  for (const decl of decls) {
-    // `var/let/const f = <init>`
-    if (ts.isVariableDeclaration(decl) && decl.initializer) {
-      if (isNonConstructableInit(decl.initializer)) return true;
-    }
+function emitStaticNotAConstructorThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  args: readonly ts.Expression[],
+): ValType {
+  for (const arg of args) {
+    evaluateCtorExtraArgument(ctx, fctx, ts.isSpreadElement(arg) ? arg.expression : arg);
   }
-  return false;
+  emitThrowTypeError(ctx, fctx, "is not a constructor");
+  fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
+}
+
+/**
+ * Is `new <callee>` a construct on something reachable through `.prototype` that
+ * provably has no `[[Construct]]`? Two shapes, both throwing a real `TypeError`
+ * so test262 `assert.throws(TypeError, …)` catches it (#1528):
+ *
+ *   - `X.prototype.Y` — a prototype METHOD; never a constructor (§9.2.2).
+ *   - (#4017) `<AmbientIntrinsic>.prototype` — the prototype OBJECT itself, one
+ *     level shallower. `Object.prototype` is a plain object; `Function.prototype`
+ *     is a built-in function that deliberately has NO `[[Construct]]` (§20.2.3).
+ *     test262 `S15.2.4_A4`, `S15.3.4_A5` — both lanes failed these.
+ *
+ * `resolvesToAmbientGlobal` keeps a USER `function Foo(){}; new Foo.prototype`
+ * out of the second shape, since a user prototype can legitimately be assigned a
+ * constructor. Do NOT also exclude `ctx.classSet` / `ctx.externClasses`: the
+ * callee is the `.prototype` OBJECT, never the class itself, so a registered
+ * extern class is irrelevant — and `externClasses` DOES carry `Object`
+ * (extern-declarations.ts), which silently swallowed `new Object.prototype`,
+ * the very case this exists for.
+ */
+function isNewOnNonConstructablePrototype(ctx: CodegenContext, callee: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  const obj = callee.expression;
+  if (ts.isPropertyAccessExpression(obj) && obj.name.text === "prototype") return true;
+  return callee.name.text === "prototype" && ts.isIdentifier(obj) && resolvesToAmbientGlobal(ctx, obj);
 }
 
 /**
@@ -464,13 +462,10 @@ export function hostTaBufferArgSymName(ctx: CodegenContext, args: readonly ts.Ex
   return undefined;
 }
 
-export function resolvesToAmbientGlobal(ctx: CodegenContext, id: ts.Identifier): boolean {
-  const sym = ctx.checker.getSymbolAtLocation(id);
-  if (!sym) return true;
-  const decls = sym.declarations;
-  if (!decls || decls.length === 0) return true;
-  return decls.every((d) => d.getSourceFile().isDeclarationFile);
-}
+// (#4017) Moved to ./non-constructable.ts together with the rest of the
+// "does this callee have [[Construct]]?" analysis; re-exported here because
+// json-standalone.ts and new-builtin-globals.ts import it from this module.
+export { resolvesToAmbientGlobal } from "./non-constructable.js";
 
 /** Compile super.method(args) — resolve to ParentClass_method and call with this */
 /**
@@ -2102,6 +2097,106 @@ function getFuncResultType(ctx: CodegenContext, funcIdx: number): ValType | unde
 }
 
 /**
+ * (#3981) Standalone/WASI ordinary [[Construct]] for a first-class function
+ * VALUE — the host lane's `__construct_closure` bridge, lowered natively.
+ *
+ * Before this, a value-bound constructor matched no compiled class tag, every
+ * `ref.test` in the dynamic-`new` dispatch chain declined, and the arm fell
+ * through to `ref.null.extern`: `new C()` was silently **null**, with no trap
+ * and no diagnostic. That is the `cookie` package's `standalone · runtime
+ * dynamic` failure — `parseCookie` returns `new NullObject()` where
+ * `NullObject` is an IIFE-returned function expression, so every caller got
+ * null and the first property read threw "Cannot access property on null or
+ * undefined".
+ *
+ * Placement matters: this runs AFTER the class and function-declaration
+ * (fnctor) arms, so a compiled class or a `function F(){}` / `var F =
+ * function(){}` constructor keeps its existing typed-struct lowering
+ * byte-for-byte. Only a callee those arms declined reaches here.
+ *
+ * Returns `undefined` to decline (caller continues its normal dispatch).
+ */
+function tryCompileNativeConstructFromValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  calleeExpr: ts.Expression,
+  rawArgs: readonly ts.Expression[],
+): ValType | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  if (!ts.isIdentifier(calleeExpr)) return undefined;
+  // A compiled fnctor for this binding means the typed-struct path owns it.
+  if (ctx.funcConstructorMap.has(calleeExpr.text)) return undefined;
+  const runtimeFunctionAlias =
+    ctx.runtimeEvalCallableBoundaryEnabled === true && resolvesToGlobalFunctionAlias(calleeExpr, ctx.oracle);
+  if (!runtimeFunctionAlias && !resolvesToConstructableFunctionValue(ctx, calleeExpr)) return undefined;
+
+  // A linked `%Function%` alias is a provider marker rather than a local
+  // closure struct. Reserve the argv builders + generic apply bridge used by
+  // the construct driver's exact marker arm; ordinary function values retain
+  // the existing method-dispatch lowering.
+  if (runtimeFunctionAlias) {
+    ensureObjVecBuilders(ctx);
+    reserveApplyClosure(ctx);
+  }
+
+  // A non-flattenable spread has a RUNTIME argument count, so no fixed-arity
+  // driver fits; decline rather than construct with the wrong argument list.
+  const args = flattenCallArgs(rawArgs) ?? rawArgs;
+  if (args.some((a) => ts.isSpreadElement(a))) return undefined;
+  if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
+
+  // Register the object-model helpers the driver body calls and flush ONCE,
+  // before any emission — the driver bakes `call <funcIdx>` values that a later
+  // import insertion would otherwise shift (#608/#794).
+  ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  ensureLateImport(ctx, "__object_create", [{ kind: "externref" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  addStringConstantGlobal(ctx, "prototype");
+  const driverIdx = reserveNativeConstructDriver(ctx, args.length, stringConstantExternrefInstrs(ctx, "prototype"));
+
+  // Evaluate the callee, then each argument, exactly once and in source order.
+  const calleeTy = compileExpression(ctx, fctx, calleeExpr, { kind: "externref" });
+  if (calleeTy && calleeTy.kind !== "externref") {
+    coerceType(ctx, fctx, calleeTy, { kind: "externref" });
+  } else if (calleeTy === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const calleeLocal = allocLocal(fctx, `__nc_callee_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  // The prototype. A `F.prototype = …` write that #2660 S2 recognised lives in
+  // the per-fnctor module global, NOT on the closure — so read it from there
+  // when the binding resolves, and let the driver fall back to
+  // `__extern_get(callee, "prototype")` otherwise. Without this the instance is
+  // created with a null `$proto` and every inherited read returns undefined.
+  const fnctorName = resolveUserFnctorName(ctx, calleeExpr);
+  if (fnctorName === undefined || !emitFnctorProtoGet(ctx, fctx, fnctorName)) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const protoLocal = allocLocal(fctx, `__nc_proto_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: protoLocal });
+
+  const argLocals: number[] = [];
+  for (const arg of args) {
+    const argTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (argTy && argTy.kind !== "externref") {
+      coerceType(ctx, fctx, argTy, { kind: "externref" });
+    } else if (argTy === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    const argLocal = allocLocal(fctx, `__nc_arg${argLocals.length}_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: argLocal });
+    argLocals.push(argLocal);
+  }
+
+  fctx.body.push({ op: "local.get", index: calleeLocal });
+  fctx.body.push({ op: "local.get", index: protoLocal });
+  for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx });
+  return { kind: "externref" };
+}
+
+/**
  * (#2026) Dynamic-new fallback: `new K(...)` where `K` is a value-bound
  * identifier (a class flowing through a parameter / variable of type `any`)
  * that the static resolution arms could not pin to a known class. The value in
@@ -3160,9 +3255,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     if (ts.isArrowFunction(unwrappedNew)) {
       // #1528: throw a real TypeError instance so `assert.throws(TypeError, …)`
       // catches it (the bare-string throw is only `instanceof Error`/string).
-      emitThrowTypeError(ctx, fctx, "is not a constructor");
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
+      return emitStaticNotAConstructorThrow(ctx, fctx, []);
     }
   }
 
@@ -3212,12 +3305,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // even when TypeScript lib doesn't know about the method (type resolves to `any`).
     if (ts.isPropertyAccessExpression(unwrappedNonId)) {
       const obj = unwrappedNonId.expression; // e.g. Array.prototype
-      if (ts.isPropertyAccessExpression(obj) && obj.name.text === "prototype") {
-        // #1528: real TypeError instance so test262 `assert.throws(TypeError, …)`
-        // catches it (prototype methods are not constructors per spec §9.2.2).
-        emitThrowTypeError(ctx, fctx, "is not a constructor");
-        fctx.body.push({ op: "ref.null.extern" });
-        return { kind: "externref" };
+      if (isNewOnNonConstructablePrototype(ctx, unwrappedNonId)) {
+        return emitStaticNotAConstructorThrow(ctx, fctx, []);
       }
       // (#1732 S2) `new <NonCtorNamespace>.<method>()` — a method pulled off a
       // non-constructor namespace object (Math/JSON/Reflect/Atomics). Every such
@@ -3235,9 +3324,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       if (ts.isIdentifier(obj)) {
         const NS_NON_CONSTRUCTORS = new Set(["Math", "JSON", "Reflect", "Atomics"]);
         if (NS_NON_CONSTRUCTORS.has(obj.text)) {
-          emitThrowTypeError(ctx, fctx, "is not a constructor");
-          fctx.body.push({ op: "ref.null.extern" });
-          return { kind: "externref" };
+          return emitStaticNotAConstructorThrow(ctx, fctx, []);
         }
       }
     }
@@ -3259,9 +3346,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     if (unwrappedNonId.kind !== ts.SyntaxKind.ThisKeyword && callSigs.length > 0 && constructSigs.length === 0) {
       // #1528: real TypeError instance — spec requires `Construct(F)` to throw
       // `TypeError("F is not a constructor")` when F has no [[Construct]].
-      emitThrowTypeError(ctx, fctx, "is not a constructor");
-      fctx.body.push({ op: "ref.null.extern" });
-      return { kind: "externref" };
+      return emitStaticNotAConstructorThrow(ctx, fctx, []);
     }
   }
 
@@ -3545,6 +3630,18 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     }
   }
 
+  // (#3981) The class and fnctor arms above have declined: standalone/WASI
+  // `new <function value>(...)` now constructs natively instead of evaluating
+  // to null. Placed here, and not inside the `!className` block further down,
+  // because the checker often DOES give the callee an inferred symbol name — a
+  // JS `function F(){ this.x = 1 }` held in a `const` types `new C()` as `F`,
+  // which is not in `classSet`, so control skipped every arm and the whole
+  // expression fell out as `undefined`.
+  if (calleeIdent && !ctx.classSet.has(calleeIdent.text) && !(className && ctx.classSet.has(className))) {
+    const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, calleeIdent, expr.arguments ?? []);
+    if (nativeCtor) return nativeCtor;
+  }
+
   // (#2608) `new this(...)` inside a function-constructor (fnctor) STATIC method
   // — e.g. acorn's `Parser.parse = function(...) { ... return new this(opts, src) }`.
   // The #1679 ThisKeyword arm above only fires when the checker resolves `this`'s
@@ -3651,6 +3748,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           ? s1Callee.expression
           : (s1Callee as ts.NonNullExpression).expression;
     }
+    // (#4017) Standalone parity — see `emitStaticNotAConstructorThrow`.
+    if (ts.isIdentifier(s1Callee) && noJsHost(ctx) && provablyNonConstructableStatically(ctx, s1Callee)) {
+      return emitStaticNotAConstructorThrow(ctx, fctx, args);
+    }
+
     if (ts.isIdentifier(s1Callee) && !noJsHost(ctx) && resolvesToNonConstructableValue(ctx, s1Callee)) {
       // Evaluate `f` to an externref value (the held callee), stash in a local.
       const calleeTy = compileExpression(ctx, fctx, s1Callee, { kind: "externref" });

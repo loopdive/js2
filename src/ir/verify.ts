@@ -21,12 +21,14 @@
 // callers can decide whether to bail or fall back to the legacy path.
 
 import type { IrBlock, IrFunction, IrInstr, IrLabelId, IrType, IrValueId } from "./nodes.js";
-import { asVal, forEachInstrDeep, forEachNestedBuffer } from "./nodes.js";
+import { asVal, forEachInstrDeep, forEachNestedBuffer, irTypeEquals } from "./nodes.js";
 import type { ValType } from "./types.js";
 // #2949 slice 1 — canonical JsTag policy for the dynamic-operand rules
 // (payload-kind consistency of unbox/tag.test on `dynamic` values). Imported
 // from the dependency-free leaf, so this adds no codegen module-graph pull.
 import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
+import { verifyIrAsyncPlan } from "./async-plan.js";
 
 /**
  * #1850 — successor block ids of a block, derived from its terminator.
@@ -235,7 +237,7 @@ export function irGlobalReferenceProblem(value: unknown): string | null {
     case "support":
       return null;
     case "import":
-      return nonEmptyString(binding.module) && nonEmptyString(binding.field)
+      return nonEmptyString(binding.module) && typeof binding.field === "string"
         ? null
         : "has a malformed import global binding";
     case "runtime":
@@ -297,6 +299,80 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
             });
           }
           return;
+        } else if (nested.kind === "string.const") {
+          if (nested.storage && nested.materializer) {
+            errors.push({
+              message: "string.const cannot carry both storage and a materializer",
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+          if (nested.storage) {
+            const problem = irGlobalReferenceProblem(nested.storage);
+            if (problem !== null) {
+              errors.push({
+                message: `string.const storage ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          }
+          if (nested.materializer) {
+            const problem = callableReferenceProblem(nested.materializer);
+            if (problem !== null) {
+              errors.push({
+                message: `string.const materializer ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          }
+          return;
+        } else if (nested.kind === "string.len" && nested.provider) {
+          if (nested.provider.kind === "callable") {
+            const problem = callableReferenceProblem(nested.provider.target);
+            if (problem !== null) {
+              errors.push({
+                message: `string.len provider ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          } else {
+            const problem = irTypeReferenceProblem(nested.provider.ownerType);
+            if (
+              problem !== null ||
+              !Number.isSafeInteger(nested.provider.fieldIndex) ||
+              nested.provider.fieldIndex < 0
+            ) {
+              errors.push({
+                message:
+                  problem === null
+                    ? "string.len provider has an invalid struct field index"
+                    : `string.len provider ${problem}`,
+                func: func.name,
+                block: block.id as number,
+              });
+            }
+          }
+          return;
+        } else if (
+          (nested.kind === "string.concat" ||
+            nested.kind === "string.eq" ||
+            nested.kind === "string.char_at" ||
+            nested.kind === "string.char_code_at" ||
+            nested.kind === "forof.string") &&
+          nested.provider
+        ) {
+          const problem = callableReferenceProblem(nested.provider);
+          if (problem !== null) {
+            errors.push({
+              message: `${nested.kind} provider ${problem}`,
+              func: func.name,
+              block: block.id as number,
+            });
+          }
+          return;
         } else {
           return;
         }
@@ -312,6 +388,33 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
 export function verifyIrFunction(func: IrFunction): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
   const defs = new Set<IrValueId>();
+
+  if (func.asyncPlan) {
+    if (func.funcKind !== "async") {
+      errors.push({ message: "asyncPlan requires funcKind=async", func: func.name });
+    }
+    if (func.asyncPlan.ownerUnitId !== func.unitId) {
+      errors.push({ message: "asyncPlan ownerUnitId does not match its IrFunction", func: func.name });
+    }
+    for (const error of verifyIrAsyncPlan(func.asyncPlan)) {
+      errors.push({ message: `asyncPlan ${error.code}: ${error.message}`, func: func.name });
+    }
+  } else if (func.asyncRuntime) {
+    errors.push({ message: "asyncRuntime requires a semantic asyncPlan", func: func.name });
+  }
+  if (func.asyncRuntime) {
+    const capabilities = new Set<string>();
+    for (const adapter of func.asyncRuntime.adapters) {
+      if (capabilities.has(adapter.capability)) {
+        errors.push({ message: `asyncRuntime duplicates capability ${adapter.capability}`, func: func.name });
+      }
+      capabilities.add(adapter.capability);
+      const problem = callableReferenceProblem(adapter.target);
+      if (problem !== null) {
+        errors.push({ message: `asyncRuntime adapter ${adapter.capability} ${problem}`, func: func.name });
+      }
+    }
+  }
 
   verifySymbolicReferences(func, errors);
 
@@ -984,6 +1087,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [];
     case "call":
       return instr.args;
+    case "intrinsic":
+      return instr.args;
     case "global.get":
       return [];
     case "global.set":
@@ -1438,6 +1543,12 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
 
   const checkInstr = (instr: IrInstr, blockId: number): void => {
     switch (instr.kind) {
+      case "intrinsic": {
+        for (const message of verifyIrIntrinsicInstruction(instr, typeOf)) {
+          errors.push({ message, func: func.name, block: blockId });
+        }
+        break;
+      }
       case "binary": {
         const want = binopOperandKind(instr.op);
         for (const [label, v] of [
@@ -1515,14 +1626,14 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
         }
         break;
       }
-      // String ops produce a known IrType kind; validate resultType when set.
       case "string.len":
       case "vec.len": {
         if (instr.result !== null && instr.resultType) {
           const got = asVal(instr.resultType)?.kind ?? null;
-          if (got !== null && got !== "f64") {
+          const want = instr.kind === "vec.len" && instr.integer === true ? "i32" : "f64";
+          if (got !== null && got !== want) {
             errors.push({
-              message: `${instr.kind} resultType must be f64 (length), got ${got}`,
+              message: `${instr.kind} resultType must be ${want} (length), got ${got}`,
               func: func.name,
               block: blockId,
             });
@@ -1596,6 +1707,26 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
             block: blockId,
           });
         }
+        const vecType = typeOf.get(instr.vec);
+        if (vecType?.kind === "vec") {
+          if (instr.kind === "vec.get" && instr.resultType && !irTypeEquals(instr.resultType, vecType.elementType)) {
+            errors.push({
+              message: `vec.get result type ${describeKind(instr.resultType)} does not match element type ${describeKind(vecType.elementType)}`,
+              func: func.name,
+              block: blockId,
+            });
+          }
+          if (instr.kind === "vec.set") {
+            const valueType = typeOf.get(instr.newValue);
+            if (valueType && !irTypeEquals(valueType, vecType.elementType)) {
+              errors.push({
+                message: `vec.set value type ${describeKind(valueType)} does not match element type ${describeKind(vecType.elementType)}`,
+                func: func.name,
+                block: blockId,
+              });
+            }
+          }
+        }
         break;
       }
       case "vec.set_length": {
@@ -1617,6 +1748,23 @@ function verifyInstrTypeRules(func: IrFunction, typeOf: ReadonlyMap<IrValueId, I
             func: func.name,
             block: blockId,
           });
+        }
+        if (instr.resultType?.kind === "vec" && !irTypeEquals(instr.resultType.elementType, instr.elementType)) {
+          errors.push({
+            message: `vec.new_fixed result element type ${describeKind(instr.resultType.elementType)} does not match instruction element type ${describeKind(instr.elementType)}`,
+            func: func.name,
+            block: blockId,
+          });
+        }
+        for (const element of instr.elements) {
+          const elementType = typeOf.get(element);
+          if (elementType && !irTypeEquals(elementType, instr.elementType)) {
+            errors.push({
+              message: `vec.new_fixed element type ${describeKind(elementType)} does not match ${describeKind(instr.elementType)}`,
+              func: func.name,
+              block: blockId,
+            });
+          }
         }
         break;
       }

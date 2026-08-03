@@ -10,7 +10,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 // Regression floor, not a target. Raise it whenever a compiler fix moves the
 // number up; never lower it to make a red run green.
-const PASS_FLOOR = 39;
+const PASS_FLOOR = 55;
 const SCORED_FLOOR = 50;
 // Every upstream test that upstream itself does not `.skip` must RUN. Filtering
 // one out to keep the pass rate tidy is the failure mode this floor prevents.
