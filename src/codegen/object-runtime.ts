@@ -188,9 +188,9 @@ const OBJ_FLAG_FROZEN = 0x04;
 // (#3176) `[[IsRawJSON]]` internal-slot marker for the ES2025 `JSON.rawJSON`
 // carrier. Set on the `$Object.flags` field (a genuine internal slot, NOT an
 // own property — so a plain `{ rawJSON: '…' }` is distinguishable from a real
-// raw-JSON object). `JSON.isRawJSON` reads this bit. 0x10+ remain free; the
-// isFrozen/isSealed/isExtensible helpers mask only their own bits, so this is
-// inert to them.
+// raw-JSON object). `JSON.isRawJSON` reads this bit. 0x10/0x20 are #4120's
+// callable/ctor brand (builtin-callable-brand.ts), 0x40+ free; the isFrozen/
+// isSealed/isExtensible helpers mask only their own bits, so all stay inert.
 export const OBJ_FLAG_RAWJSON = 0x08;
 
 /**
