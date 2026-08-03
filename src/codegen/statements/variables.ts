@@ -726,7 +726,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       (stmt.declarationList.flags &
         (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) !==
       0;
-    const bindsModuleGlobal = !declarationIsLexical || ts.isSourceFile(stmt.parent);
+    const bindsModuleGlobal = !declarationIsLexical || (stmt.parent !== undefined && ts.isSourceFile(stmt.parent));
 
     // Track const bindings for runtime enforcement (assignment throws TypeError)
     if (stmt.declarationList.flags & ts.NodeFlags.Const) {
