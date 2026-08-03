@@ -1266,11 +1266,10 @@ export class IrFunctionBuilder {
    * operand through — see lower.ts `case "await"`). Only valid inside
    * `funcKind === "async"` functions.
    */
-  emitAwait(operand: IrValueId): IrValueId {
+  emitAwait(operand: IrValueId, resultType: IrType = { kind: "val", val: { kind: "externref" } }): IrValueId {
     if (this.funcKind !== "async") {
       throw new Error(`IrFunctionBuilder: emitAwait requires funcKind=async (${this.id.name})`);
     }
-    const resultType: IrType = { kind: "val", val: { kind: "externref" } };
     const result = this.allocator.fresh();
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "await", operand, result, resultType });
@@ -1430,6 +1429,15 @@ export class IrFunctionBuilder {
     const resultType: IrType = irVal({ kind: "f64" });
     this.valueTypes.set(result, resultType);
     this.pushInstr({ kind: "vec.len", vec, result, resultType });
+    return result;
+  }
+
+  /** Read a proven vector length without the JavaScript-number promotion. */
+  emitVecLenI32(vec: IrValueId): IrValueId {
+    const result = this.allocator.fresh();
+    const resultType: IrType = irVal({ kind: "i32" });
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "vec.len", vec, integer: true, result, resultType });
     return result;
   }
 

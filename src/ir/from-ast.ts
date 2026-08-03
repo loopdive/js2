@@ -109,6 +109,7 @@ import {
   inferEmptyArrayElementTypes,
 } from "./array-element-inference.js";
 import {
+  annotatedArrayElementValType,
   canonicalCountedPushPlanForLiteral,
   emitForwardingAwareLinearVecLen,
   emitSafeNarrowedI32VecGet,
@@ -119,6 +120,11 @@ import {
   planI32ArrayElements,
   tryLowerVecPush,
 } from "./array-element-lowering.js";
+import {
+  preparedAsyncAwaitResultType,
+  tryLowerPreparedAsyncPromiseAll,
+  type PreparedAsyncFromAstResolver,
+} from "./async-from-ast.js";
 import {
   assertNotDeferred,
   binaryOpCapability,
@@ -177,6 +183,7 @@ import {
   type IrValueId,
 } from "./nodes.js";
 import type { ValType } from "./types.js";
+import { coerceIrValueToExternref } from "./value-coercion.js";
 import { irVecElemSetSymbol, irVecNewSizedSymbol } from "./vector-runtime.js";
 
 interface ResolvedIrVecType {
@@ -295,7 +302,7 @@ export interface IrExternClassMeta {
  * `resolveClosure`. Those depend on registries that aren't populated
  * until Phase 3, so from-ast doesn't see them.
  */
-export interface IrFromAstResolver {
+export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /**
    * Resolve the canonical host ToPropertyDescriptor entry point for an
    * ambient `Object.defineProperty(target, key, descriptor)` call.
@@ -513,6 +520,8 @@ export interface IrFromAstResolver {
     indexArgRep: "f64" | "i32";
     padOmitted: "host" | "native-slice-len" | "native-substring" | "charcode-zero";
   } | null;
+  /** Non-escaping substring locals are cheaper through legacy's scalar descriptor read. */
+  preferLegacyFlatSubstringCharCodeAt?(receiver: ts.Expression): boolean;
   /**
    * (#2856) Resolve an extern-class member through the legacy inheritance
    * chain (`ctx.externClasses` + `ctx.externClassParent` — e.g. `appendChild`
@@ -1684,7 +1693,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
         if (valTy?.kind === "f64" || valTy?.kind === "i32") {
           cx.builder.emitGenSetReturn(value);
         } else {
-          cx.builder.emitGenSetReturn(coerceYieldValueToExternref(value, cx));
+          cx.builder.emitGenSetReturn(coerceIrValueToExternref(cx.builder, value));
         }
       }
       const generatorObj = cx.builder.emitGenEpilogue();
@@ -2961,14 +2970,11 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // with a NumberKeyword element), so every claim reaches a hint here. A
     // resolver that can't register the vec throws → clean demote to legacy.
     if (annotated === undefined && d.type && ts.isArrayTypeNode(d.type)) {
-      if (d.type.elementType.kind !== ts.SyntaxKind.NumberKeyword) {
-        throw new Error(`ir/from-ast: array annotation on '${name}' must be number[] in ${cx.funcName}`);
-      }
       // (#3734) An ANNOTATED `const arr: number[] = []` reaches the vec type
       // through this arm, not through the inference arm below — so the i32
       // element narrowing has to be consulted here too, or the exact shape the
       // landing-page `array.ts` benchmark uses would never narrow.
-      const elementValType = emptyLiteralElementValType(d.initializer, cx);
+      const elementValType = annotatedArrayElementValType(d, cx);
       const vec = cx.resolver?.resolveVecForElement?.(elementValType);
       if (!vec) {
         throw new Error(
@@ -3475,7 +3481,7 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     const externShaped =
       (opVal !== undefined && opVal !== null && opVal.kind === "externref") || opType?.kind === "extern";
     if (!externShaped) return operand;
-    return cx.builder.emitAwait(operand);
+    return cx.builder.emitAwait(operand, preparedAsyncAwaitResultType(expr.expression, cx.resolver));
   }
   if (ts.isNumericLiteral(expr)) {
     return cx.builder.emitConst({ kind: "f64", value: Number(expr.text) }, irVal({ kind: "f64" }));
@@ -5069,6 +5075,15 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (expr.questionDotToken) {
     throw new Error(`ir/from-ast: optional call (?.()) not in slice 11 (${cx.funcName})`);
   }
+  const preparedPromiseAll = tryLowerPreparedAsyncPromiseAll({
+    expression: expr,
+    statementPosition,
+    resolver: cx.resolver,
+    builder: cx.builder,
+    functionName: cx.funcName,
+    lowerExpression: (expression, expected) => lowerExpr(expression, cx, expected),
+  });
+  if (preparedPromiseAll !== undefined) return preparedPromiseAll;
   // #3000-E: `super(args)` — a derived constructor chaining to its parent's
   // `_init`. Intercepted BEFORE the property-access / identifier dispatch below
   // because `super` is a keyword, not an identifier the receiver-lowering can
@@ -5680,6 +5695,22 @@ function throwMethodCallNotInSlice(methodName: string, recvType: IrType, funcNam
   );
 }
 
+function lowerPreparedAsyncDateNow(
+  expr: ts.CallExpression,
+  cx: LowerCtx,
+  methodName: string,
+  receiverIdentifier: ts.Identifier | undefined,
+): IrValueId | null {
+  const target = cx.resolver?.preparedAsyncDateNowTarget?.(expr) ?? null;
+  if (target === null) return null;
+  if (methodName !== "now" || receiverIdentifier?.text !== "Date" || expr.arguments.length !== 0) {
+    throw new Error(`ir/from-ast: prepared Date.now proof diverged in ${cx.funcName}`);
+  }
+  const result = cx.builder.emitCall(target, [], irVal({ kind: "f64" }));
+  if (result === null) throw new Error(`ir/from-ast: prepared Date.now returned void in ${cx.funcName}`);
+  return result;
+}
+
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
     throw new Error(`ir/from-ast: malformed method call in ${cx.funcName}`);
@@ -5688,6 +5719,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   const receiverIdentifier = ts.isIdentifier(expr.expression.expression) ? expr.expression.expression : undefined;
   const receiverIsDirectModuleBinding =
     receiverIdentifier !== undefined && cx.resolver?.isDirectModuleBinding?.(receiverIdentifier) === true;
+
+  const preparedDateNow = lowerPreparedAsyncDateNow(expr, cx, methodName, receiverIdentifier);
+  if (preparedDateNow !== null) return preparedDateNow;
 
   // #3793 — Acorn's public wrappers call static properties on the retained
   // `Parser` function object. Load the exact existing module carrier and
@@ -5982,21 +6016,14 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       variant === "number" ? { kind: "f64" } : variant === "bool" ? { kind: "i32" } : { kind: "externref" };
     const argVal = lowerExpr(argExpr, cx, irVal(expected));
     const coerced = coerceToExpectedExtern(argVal, expected, cx, `arg of console.${methodName}`);
-    cx.builder.emitCall(irImportFuncRef("env", importName), [coerced], null);
+    const target = cx.resolver.preparedAsyncConsoleTarget?.(expr) ?? irImportFuncRef("env", importName);
+    cx.builder.emitCall(target, [coerced], null);
     return null;
   }
 
-  // (#1371/#2856/#3526 M1) Exact-arity Math builtin. Every accepted method
-  // becomes a semantic intrinsic here; runtime/backend provider selection is
-  // deferred until final IR preparation, after all middle-end transforms.
-  // the shape BEFORE lowering the receiver, because `Math` is a host
-  // global with no IR type binding (lowerExpr on `Math` would throw
-  // "unknown identifier"). The selector's `isPhase1Expr` already
-  // rejected anything not in `IR_MATH_UNARY_WHITELIST` — but check
-  // again here as a hard guard so an unsupported method on `Math`
-  // produces the same clean "not in slice" error we use elsewhere
-  // (avoiding a confusing "unknown identifier 'Math'" from the
-  // receiver lower path below).
+  // Exact-arity Math builtins become semantic intrinsics before receiver
+  // lowering because the ambient `Math` global has no IR value binding.
+  // Recheck the selector proof here so divergence fails with a clear error.
   if (
     ts.isIdentifier(expr.expression.expression) &&
     expr.expression.expression.text === "Math" &&
@@ -6165,7 +6192,8 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     recvType.val.kind === "f64" &&
     cx.resolver?.hasHostNumberToString?.() === true
   ) {
-    const r = cx.builder.emitCall(irImportFuncRef("env", "number_toString"), [recv], { kind: "string" });
+    const target = cx.resolver.preparedAsyncNumberToStringTarget?.(expr) ?? irImportFuncRef("env", "number_toString");
+    const r = cx.builder.emitCall(target, [recv], { kind: "string" });
     if (r === null) {
       throw new Error(`ir/from-ast: number_toString produced no result in ${cx.funcName}`);
     }
@@ -6530,6 +6558,10 @@ function lowerStringMethodCall(
     : undefined;
   if (!sig) return null;
 
+  if (methodName === "charCodeAt" && cx.resolver?.preferLegacyFlatSubstringCharCodeAt?.(receiverExpr) === true) {
+    return null;
+  }
+
   if (args.length < sig.requiredArgs || args.length > sig.hostArgs.length) {
     throw new Error(
       `ir/from-ast: String.${methodName}(...) arg count ${args.length} not in [${sig.requiredArgs}, ${sig.hostArgs.length}] (${cx.funcName})`,
@@ -6596,11 +6628,11 @@ function lowerStringMethodCall(
     if (expectedHost.kind === "f64") {
       // Index-style arg. Lower as f64, then truncate to i32 when the plan's
       // target signature takes i32 indices (the native helpers).
-      const f64Val = lowerExpr(args[i]!, cx, irVal({ kind: "f64" }));
+      const numeric = lowerExpr(args[i]!, cx, irVal({ kind: "f64" }));
       argVal =
         plan.indexArgRep === "i32"
-          ? cx.builder.emitUnary("i32.trunc_sat_f64_s", f64Val, irVal({ kind: "i32" }))
-          : f64Val;
+          ? cx.builder.emitUnary("i32.trunc_sat_f64_s", numeric, irVal({ kind: "i32" }))
+          : numeric;
     } else if (expectedHost.kind === "externref") {
       // The legacy host `string_indexOf` ABI carries its optional fromIndex
       // as a boxed externref even though the source argument is numeric.
@@ -6878,7 +6910,7 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
     // `__gen_yield_star(externref, externref)` import sees the
     // right Wasm value type.
     const inner = lowerExpr(expr.expression, cx, irVal({ kind: "externref" }));
-    const innerExt = coerceYieldValueToExternref(inner, cx);
+    const innerExt = coerceIrValueToExternref(cx.builder, inner);
     cx.builder.emitGenYieldStar(innerExt);
     return;
   }
@@ -6916,51 +6948,8 @@ function lowerYield(expr: ts.YieldExpression, cx: LowerCtx): void {
   }
   // Reference-shaped yield — coerce to externref so the lowerer's
   // `__gen_push_ref(buf, externref)` arm sees the right Wasm type.
-  const valueExt = coerceYieldValueToExternref(value, cx);
+  const valueExt = coerceIrValueToExternref(cx.builder, value);
   cx.builder.emitGenPush(valueExt);
-}
-
-/**
- * Slice 7b helper: coerce a yielded SSA value to externref for the
- * `__gen_push_ref` / `__gen_yield_star` arms. Skips the coerce when
- * the value's underlying Wasm valtype is ALREADY externref —
- * emitting `extern.convert_any` on an already-externref operand is
- * actually a Wasm validation error (the op expects an `anyref`
- * subtype, and `externref` is NOT a subtype of `anyref`).
- *
- * Cases that skip the coerce:
- *   - `IrType.val` with `val.kind === "externref"` — directly externref.
- *   - `IrType.string` in HOST-strings mode — `resolveString()` returns
- *     externref for the host backend (the wasm:js-string imports take
- *     externref), so the value flowing through is already externref.
- *
- * Cases that DO coerce:
- *   - `IrType.string` in NATIVE-strings mode — value is `(ref $AnyString)`,
- *     a struct ref subtype of anyref, so `extern.convert_any` re-tags it.
- *   - `IrType.val` with `val.kind === "ref"` / `"ref_null"` —
- *     struct/array refs are anyref subtypes; coerce is valid.
- *   - `IrType.object` / `class` / `closure` — all backed by struct refs,
- *     anyref subtypes; coerce is valid.
- *
- * Reuses `coerce.to_externref` (#1182) so the generator path and the
- * iter-host for-of path share one IR primitive — the lowerer emits
- * `extern.convert_any` for both.
- */
-function coerceYieldValueToExternref(value: IrValueId, cx: LowerCtx): IrValueId {
-  const t = cx.builder.typeOf(value);
-  if (t.kind === "val" && t.val.kind === "externref") {
-    return value;
-  }
-  // #2955 — de-polymorph on string mode. A string operand IS externref in
-  // host-strings mode and `(ref $AnyString)` (an anyref subtype needing
-  // `extern.convert_any`) in native-strings mode. That per-mode decision no
-  // longer branches here in the front-end: emit the abstract
-  // `coerce.to_externref` unconditionally and let the lowerer resolve the
-  // mode (host → the convert is elided because the value is already
-  // externref; native → `extern.convert_any`). The lowered bytes stay
-  // byte-identical to the previous `!nativeStrings` guard in both modes,
-  // and the produced IR is now identical across string modes.
-  return cx.builder.emitCoerceToExternref(value);
 }
 
 /**
@@ -6982,7 +6971,7 @@ function coerceYieldValueToExternref(value: IrValueId, cx: LowerCtx): IrValueId 
  *
  *   - Declared result is `externref` and the value is reference-shaped
  *     (class / object / closure / vec ref / ref_null / native-string) →
- *     coerce via `coerceYieldValueToExternref` (`extern.convert_any`). This
+ *     coerce via `coerceIrValueToExternref` (`extern.convert_any`). This
  *     is a zero-cost re-tag valid for any anyref subtype, agnostic to the
  *     exact struct typeIdx (so type compaction cannot break it).
  *   - Declared result is `externref` but the value is a native scalar
@@ -7065,10 +7054,10 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
     );
   }
   // Reference-shaped (class / object / closure / vec ref / ref_null /
-  // native-string) → extern.convert_any. `coerceYieldValueToExternref` is a
+  // native-string) → extern.convert_any. `coerceIrValueToExternref` is a
   // no-op for host-strings (already externref) and re-tags all anyref
   // subtypes otherwise.
-  return coerceYieldValueToExternref(value, cx);
+  return coerceIrValueToExternref(cx.builder, value);
 }
 
 /**
@@ -9151,14 +9140,42 @@ function emitI32PureExpr(e: ts.Expression, cx: LowerCtx): IrValueId {
   return cx.builder.emitUnary("i32.trunc_sat_f64_s", f64Value, irVal({ kind: "i32" }));
 }
 
+function collectPreparedConcatOperands(expression: ts.Expression, out: ts.Expression[]): void {
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    collectPreparedConcatOperands(expression.left, out);
+    collectPreparedConcatOperands(expression.right, out);
+    return;
+  }
+  out.push(expression);
+}
+
+function lowerPreparedAsyncConcat(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId | null {
+  const target = cx.resolver?.preparedAsyncConcatFiveTarget?.(expr) ?? null;
+  if (target === null) return null;
+  const operands: ts.Expression[] = [];
+  collectPreparedConcatOperands(expr, operands);
+  if (operands.length !== 5) {
+    throw new Error(`ir/from-ast: prepared five-part concat has ${operands.length} operands in ${cx.funcName}`);
+  }
+  const values = operands.map((operand) => {
+    const value = lowerExpr(operand, cx, { kind: "string" });
+    if (cx.builder.typeOf(value).kind !== "string") {
+      throw new Error(`ir/from-ast: prepared concat operand is not a string in ${cx.funcName}`);
+    }
+    return value;
+  });
+  const result = cx.builder.emitCall(target, values, { kind: "string" });
+  if (result === null) throw new Error(`ir/from-ast: prepared five-part concat returned void in ${cx.funcName}`);
+  return result;
+}
+
 function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrValueId {
   const op = expr.operatorToken.kind;
+  const preparedConcat = lowerPreparedAsyncConcat(expr, cx);
+  if (preparedConcat !== null) return preparedConcat;
 
-  // `??` nullish coalescing — IR-native short-circuit over a reference-
-  // shaped lhs (`lhs ?? rhs`). Handled before the slice-11 early-throw
-  // because, unlike `%` / `**` / `in` / `instanceof`, it has a lowering
-  // when both arms are the same reference type. `lowerNullish` throws
-  // clean fallback for non-reference / mismatched-type operands.
+  // IR-native nullish short-circuit for matching reference-shaped arms;
+  // lowerNullish rejects non-reference or mismatched operands.
   if (op === ts.SyntaxKind.QuestionQuestionToken) {
     return lowerNullish(expr, cx, hint);
   }
@@ -10732,7 +10749,7 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   // Reference-shaped — coerce to externref. The helper is a no-op
   // when the value is already externref or `IrType.string` in host
   // mode (mirrors the slice-7b yield value coercion).
-  const valueExt = coerceYieldValueToExternref(value, cx);
+  const valueExt = coerceIrValueToExternref(cx.builder, value);
   cx.builder.emitThrow(valueExt);
 }
 

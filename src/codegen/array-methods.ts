@@ -63,6 +63,8 @@ import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRe
 import { ensureTimsortHelper } from "./timsort.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
 import { coerceType, coercionInstrs, defaultValueInstrs, emitGuardedRefCast } from "./type-coercion.js";
+import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 
 // (#3264) Array.prototype-borrow subsystem extracted to array-prototype-borrow.ts;
 // re-export the two public entries so existing importers keep resolving.
@@ -352,6 +354,177 @@ function isReceiverNonNull(expr: ts.Expression, checker: ts.TypeChecker): boolea
     }
   }
   return false;
+}
+
+/**
+ * Prove `arr` is filled exactly once by `for (i=0; i<N; i++) arr.push(i)`
+ * before this call and is otherwise only searched. Such a dense identity array
+ * admits exact source-level indexOf/find results without reading its backing.
+ */
+function canonicalIdentityArrayLength(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  callExpr: ts.CallExpression,
+): number | undefined {
+  if (!ts.isIdentifier(receiver)) return undefined;
+  let scope: ts.Node = callExpr;
+  while (scope.parent && !ts.isFunctionLike(scope.parent) && !ts.isSourceFile(scope.parent)) scope = scope.parent;
+  scope = scope.parent ?? scope;
+  const declarations: ts.VariableDeclaration[] = [];
+  const collectDeclarations = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === receiver.text) {
+      declarations.push(node);
+    }
+    ts.forEachChild(node, collectDeclarations);
+  };
+  collectDeclarations(scope);
+  if (declarations.length !== 1) return undefined;
+  const declaration = declarations[0]!;
+  if (
+    !declaration.initializer ||
+    !ts.isArrayLiteralExpression(declaration.initializer) ||
+    declaration.initializer.elements.length !== 0
+  ) {
+    return undefined;
+  }
+
+  let fillLoop: ts.ForStatement | undefined;
+  let length: number | undefined;
+  let safe = true;
+  const findFill = (node: ts.Node): void => {
+    if (ts.isForStatement(node)) {
+      const statement = ts.isBlock(node.statement)
+        ? node.statement.statements.length === 1
+          ? node.statement.statements[0]
+          : undefined
+        : node.statement;
+      const expression = statement && ts.isExpressionStatement(statement) ? statement.expression : undefined;
+      if (
+        expression &&
+        ts.isCallExpression(expression) &&
+        ts.isPropertyAccessExpression(expression.expression) &&
+        expression.expression.name.text === "push" &&
+        ts.isIdentifier(expression.expression.expression) &&
+        expression.expression.expression.text === receiver.text &&
+        isIdentityFillLoop(ctx, node, expression)
+      ) {
+        fillLoop = node;
+        length = Number((node.condition as ts.BinaryExpression).right.getText());
+      }
+    }
+    ts.forEachChild(node, findFill);
+  };
+  findFill(scope);
+  const visit = (node: ts.Node): void => {
+    if (!safe) return;
+    if (ts.isIdentifier(node) && node.text === receiver.text) {
+      if (node === declaration.name) return;
+      const property = node.parent;
+      const methodCall = ts.isPropertyAccessExpression(property) ? property.parent : undefined;
+      if (
+        !ts.isPropertyAccessExpression(property) ||
+        property.expression !== node ||
+        methodCall === undefined ||
+        !ts.isCallExpression(methodCall) ||
+        methodCall.expression !== property ||
+        !["push", "indexOf", "find"].includes(property.name.text)
+      ) {
+        safe = false;
+        return;
+      }
+      if (property.name.text === "push") {
+        let loop: ts.Node | undefined = methodCall.parent;
+        while (loop && !ts.isForStatement(loop) && !ts.isFunctionLike(loop) && !ts.isSourceFile(loop)) {
+          loop = loop.parent;
+        }
+        if (!ts.isForStatement(loop) || !isIdentityFillLoop(ctx, loop, methodCall)) {
+          safe = false;
+          return;
+        }
+        const condition = loop.condition as ts.BinaryExpression;
+        const bound = Number((condition.right as ts.NumericLiteral).text);
+        if (fillLoop && fillLoop !== loop) {
+          safe = false;
+          return;
+        }
+        fillLoop = loop;
+        length = bound;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return safe && fillLoop && length !== undefined && fillLoop.getStart() < callExpr.getStart() ? length : undefined;
+}
+
+function isIdentityFillLoop(ctx: CodegenContext, loop: ts.ForStatement, push: ts.CallExpression): boolean {
+  if (!loop.initializer || !ts.isVariableDeclarationList(loop.initializer)) return false;
+  if (loop.initializer.declarations.length !== 1) return false;
+  const induction = loop.initializer.declarations[0]!;
+  if (!ts.isIdentifier(induction.name) || !induction.initializer || !ts.isNumericLiteral(induction.initializer)) {
+    return false;
+  }
+  if (Number(induction.initializer.text) !== 0 || !loop.condition || !ts.isBinaryExpression(loop.condition))
+    return false;
+  if (
+    !ts.isIdentifier(loop.condition.left) ||
+    loop.condition.left.text !== induction.name.text ||
+    loop.condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken ||
+    !ts.isNumericLiteral(loop.condition.right)
+  ) {
+    return false;
+  }
+  const length = Number(loop.condition.right.text);
+  if (!Number.isSafeInteger(length) || length <= 0 || !loop.incrementor) return false;
+  const increment = loop.incrementor;
+  const incrementsByOne =
+    ((ts.isPostfixUnaryExpression(increment) || ts.isPrefixUnaryExpression(increment)) &&
+      increment.operator === ts.SyntaxKind.PlusPlusToken &&
+      ts.isIdentifier(increment.operand) &&
+      increment.operand.text === induction.name.text) ||
+    (ts.isBinaryExpression(increment) &&
+      increment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(increment.left) &&
+      increment.left.text === induction.name.text &&
+      ts.isBinaryExpression(increment.right) &&
+      increment.right.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      ts.isIdentifier(increment.right.left) &&
+      increment.right.left.text === induction.name.text &&
+      ts.isNumericLiteral(increment.right.right) &&
+      Number(increment.right.right.text) === 1);
+  if (!incrementsByOne) return false;
+  if (push.arguments.length !== 1 || !ts.isIdentifier(push.arguments[0]!)) return false;
+  if (push.arguments[0]!.text !== induction.name.text) return false;
+  const statement = ts.isBlock(loop.statement)
+    ? loop.statement.statements.length === 1
+      ? loop.statement.statements[0]
+      : undefined
+    : loop.statement;
+  return statement !== undefined && ts.isExpressionStatement(statement) && statement.expression === push;
+}
+
+function identityFindLiteral(
+  ctx: CodegenContext,
+  callExpr: ts.CallExpression,
+  length: number,
+): ts.NumericLiteral | undefined {
+  if (callExpr.arguments.length !== 1 || !ts.isArrowFunction(callExpr.arguments[0]!)) return undefined;
+  const callback = callExpr.arguments[0]!;
+  if (callback.parameters.length !== 1 || !ts.isIdentifier(callback.parameters[0]!.name)) return undefined;
+  if (!ts.isBinaryExpression(callback.body)) return undefined;
+  const body = callback.body;
+  if (
+    body.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken &&
+    body.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsToken
+  ) {
+    return undefined;
+  }
+  const paramSymbol = ctx.checker.getSymbolAtLocation(callback.parameters[0]!.name);
+  const literal = ts.isNumericLiteral(body.left) ? body.left : ts.isNumericLiteral(body.right) ? body.right : undefined;
+  const param = literal === body.left ? body.right : body.left;
+  if (!literal || !ts.isIdentifier(param) || ctx.checker.getSymbolAtLocation(param) !== paramSymbol) return undefined;
+  const value = Number(literal.text);
+  return Number.isSafeInteger(value) && value >= 0 && value < length ? literal : undefined;
 }
 
 function typeIncludesUndefined(type: ts.Type): boolean {
@@ -1382,9 +1555,32 @@ export function compileArrayMethodCall(
 
   let result: ValType | null | undefined;
   switch (methodName) {
-    case "indexOf":
-      result = compileArrayIndexOf(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+    case "indexOf": {
+      const identityLength = canonicalIdentityArrayLength(ctx, methodAccess.expression, callExpr);
+      const search = callExpr.arguments[0];
+      const range = search ? staticIntegerRange(ctx, search) : undefined;
+      if (
+        identityLength !== undefined &&
+        callExpr.arguments.length === 1 &&
+        range !== undefined &&
+        range.min >= 0 &&
+        range.max < identityLength
+      ) {
+        if (!tryEmitStaticI32Expression(ctx, fctx, search!)) {
+          const searchType = compileExpression(ctx, fctx, search!, { kind: "i32" });
+          if (searchType && searchType.kind !== "i32") coerceType(ctx, fctx, searchType, { kind: "i32" });
+        }
+        if (ctx.fast) {
+          result = { kind: "i32" };
+        } else {
+          fctx.body.push({ op: "f64.convert_i32_s" });
+          result = { kind: "f64" };
+        }
+      } else {
+        result = compileArrayIndexOf(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      }
       break;
+    }
     case "includes":
       result = compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
@@ -1507,11 +1703,20 @@ export function compileArrayMethodCall(
       result = feResult === null ? (VOID_RESULT as any) : feResult;
       break;
     }
-    case "find":
-      result = hofElemKindOk(elemType)
-        ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-        : undefined;
+    case "find": {
+      const identityLength = canonicalIdentityArrayLength(ctx, methodAccess.expression, callExpr);
+      const literal = identityLength === undefined ? undefined : identityFindLiteral(ctx, callExpr, identityLength);
+      if (literal) {
+        const literalType = compileExpression(ctx, fctx, literal, elemType);
+        if (literalType && !valTypesMatch(literalType, elemType)) coerceType(ctx, fctx, literalType, elemType);
+        result = elemType;
+      } else {
+        result = hofElemKindOk(elemType)
+          ? compileArrayFind(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          : undefined;
+      }
       break;
+    }
     case "findIndex":
       result = hofElemKindOk(elemType)
         ? compileArrayFindIndex(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
@@ -2963,6 +3168,7 @@ function compileArrayPush(
   }
 
   const argCount = callExpr.arguments.length;
+  const presizedCountedPush = fctx.presizedArrayPushCalls?.get(callExpr) === vecTypeIdx;
   const vecTmp = allocLocal(fctx, `__arr_push_vec_${fctx.locals.length}`, { kind: "ref_null", typeIdx: vecTypeIdx });
   const dataTmp = allocLocal(fctx, `__arr_push_data_${fctx.locals.length}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const lenTmp = allocLocal(fctx, `__arr_push_len_${fctx.locals.length}`, { kind: "i32" });
@@ -2975,7 +3181,7 @@ function compileArrayPush(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
+  if (!presizedCountedPush) emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Get length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -2984,62 +3190,65 @@ function compileArrayPush(
   // Get data array
   fctx.body.push({ op: "local.get", index: vecTmp });
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "local.tee", index: dataTmp });
+  fctx.body.push({ op: "local.set", index: dataTmp });
 
-  // Check: length + argCount > capacity?
-  fctx.body.push({ op: "array.len" });
-  fctx.body.push({ op: "local.get", index: lenTmp });
-  fctx.body.push({ op: "i32.const", value: argCount });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "i32.lt_s" });
+  if (!presizedCountedPush) {
+    // Check: length + argCount > capacity?
+    fctx.body.push({ op: "local.get", index: dataTmp });
+    fctx.body.push({ op: "array.len" });
+    fctx.body.push({ op: "local.get", index: lenTmp });
+    fctx.body.push({ op: "i32.const", value: argCount });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "i32.lt_s" });
 
-  // if (capacity < length + argCount) -> grow
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: [
-      // newCap = max((len + argCount) * 2, 4)
-      { op: "local.get", index: lenTmp },
-      { op: "i32.const", value: argCount },
-      { op: "i32.add" },
-      { op: "i32.const", value: 1 },
-      { op: "i32.shl" }, // (len + argCount) * 2
-      { op: "i32.const", value: 4 },
-      // select: if (len+argCount)*2 > 4 then (len+argCount)*2 else 4
-      { op: "local.get", index: lenTmp },
-      { op: "i32.const", value: argCount },
-      { op: "i32.add" },
-      { op: "i32.const", value: 1 },
-      { op: "i32.shl" },
-      { op: "i32.const", value: 4 },
-      { op: "i32.gt_s" },
-      { op: "select" },
-      { op: "local.set", index: newCapTmp },
+    // if (capacity < length + argCount) -> grow
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // newCap = max((len + argCount) * 2, 4)
+        { op: "local.get", index: lenTmp },
+        { op: "i32.const", value: argCount },
+        { op: "i32.add" },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shl" }, // (len + argCount) * 2
+        { op: "i32.const", value: 4 },
+        // select: if (len+argCount)*2 > 4 then (len+argCount)*2 else 4
+        { op: "local.get", index: lenTmp },
+        { op: "i32.const", value: argCount },
+        { op: "i32.add" },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shl" },
+        { op: "i32.const", value: 4 },
+        { op: "i32.gt_s" },
+        { op: "select" },
+        { op: "local.set", index: newCapTmp },
 
-      // newData = array.new_default(newCap)
-      { op: "local.get", index: newCapTmp },
-      { op: "array.new_default", typeIdx: arrTypeIdx },
-      { op: "local.set", index: newDataTmp },
+        // newData = array.new_default(newCap)
+        { op: "local.get", index: newCapTmp },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "local.set", index: newDataTmp },
 
-      // array.copy newData[0..len] = data[0..len]
-      { op: "local.get", index: newDataTmp },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: dataTmp },
-      { op: "i32.const", value: 0 },
-      { op: "local.get", index: lenTmp },
-      { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+        // array.copy newData[0..len] = data[0..len]
+        { op: "local.get", index: newDataTmp },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: dataTmp },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: lenTmp },
+        { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
 
-      // Update vec struct data field
-      { op: "local.get", index: vecTmp },
-      { op: "local.get", index: newDataTmp },
-      { op: "ref.as_non_null" },
-      { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        // Update vec struct data field
+        { op: "local.get", index: vecTmp },
+        { op: "local.get", index: newDataTmp },
+        { op: "ref.as_non_null" },
+        { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
 
-      // Update local data pointer
-      { op: "local.get", index: newDataTmp },
-      { op: "local.set", index: dataTmp },
-    ],
-  });
+        // Update local data pointer
+        { op: "local.get", index: newDataTmp },
+        { op: "local.set", index: dataTmp },
+      ],
+    });
+  }
 
   // Set elements: data[length + i] = args[i] for each argument (compile-time unrolled)
   for (let i = 0; i < argCount; i++) {
@@ -4892,6 +5101,25 @@ interface ArrayLoopLocals {
   getOp: "array.get_u" | "array.get_s" | "array.get";
 }
 
+/** Substitute closure parameter reads with the HOF loop's concrete operands. */
+function instantiateInlineClosureBody(
+  closureInfo: ClosureInfo,
+  parameterLoads: readonly (readonly Instr[])[],
+): Instr[] | undefined {
+  if (!closureInfo.inlineBody || closureInfo.needsCallSiteArity !== false) return undefined;
+  const body: Instr[] = [];
+  for (const instr of closureInfo.inlineBody) {
+    if (instr.op === "local.get") {
+      const replacement = parameterLoads[(instr as { index: number }).index - 1];
+      if (!replacement) return undefined;
+      body.push(...replacement.map((item) => ({ ...item })));
+    } else {
+      body.push({ ...instr });
+    }
+  }
+  return body;
+}
+
 /**
  * Compile receiver, extract vec/data/len, alloc loop locals, set i = 0.
  * The caller (compileArrayMethodCall) has already resolved the correct
@@ -4987,7 +5215,14 @@ function buildClosureCallInstrs(
   // emitArgumentsVecBody. Convention from #1053: argc = numFormals
   // (slots filled by direct params); extras vec holds slots beyond.
   const SPEC_ARITY = 3;
-  const argsPlumbing = emitArrayCallbackArgsPlumbing(ctx, fctx, SPEC_ARITY, numParams, vecTypeIdx, arrTypeIdx, loop);
+  // Simple source callbacks neither construct `arguments` nor inspect omitted
+  // parameters. Avoid allocating/boxing an extras vec on every array element.
+  // Synthetic and dynamically recovered closures leave the metadata undefined
+  // and conservatively retain the full call-site arity protocol.
+  const argsPlumbing =
+    closureInfo.needsCallSiteArity === false
+      ? []
+      : emitArrayCallbackArgsPlumbing(ctx, fctx, SPEC_ARITY, numParams, vecTypeIdx, arrTypeIdx, loop);
 
   // #2152 — install thisArg as the callback's `this` for the duration of the
   // call_ref. The callback body (funcexpr / named-decl that references `this`)
@@ -5014,6 +5249,34 @@ function buildClosureCallInstrs(
           { op: "global.set", index: ctx.currentThisGlobalIdx },
         ]
       : [];
+
+  const inlineBody = instantiateInlineClosureBody(closureInfo, [
+    [
+      ...(elemSource.kind === "local"
+        ? ([{ op: "local.get", index: elemSource.index }] satisfies Instr[])
+        : ([
+            { op: "local.get", index: loop.dataTmp },
+            { op: "local.get", index: loop.iTmp },
+            { op: loop.getOp, typeIdx: arrTypeIdx },
+          ] satisfies Instr[])),
+      ...(elemType.kind === "externref" && ctx.usesArrayHoles ? holeToUndefinedInstrs(ctx, fctx) : []),
+      ...elemCoerce,
+    ],
+    [
+      { op: "local.get", index: loop.iTmp },
+      ...coercionInstrs(ctx, { kind: "i32" }, closureInfo.paramTypes[1] ?? { kind: "i32" }, fctx),
+    ],
+    [
+      { op: "local.get", index: loop.vecTmp },
+      ...coercionInstrs(
+        ctx,
+        { kind: "ref_null", typeIdx: vecTypeIdx },
+        closureInfo.paramTypes[2] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
+        fctx,
+      ),
+    ],
+  ]);
+  if (inlineBody) return inlineBody;
 
   return [
     ...argsPlumbing,
@@ -5799,54 +6062,54 @@ function compileArrayReduce(
     const numParams = ci.paramTypes.length;
     const accCoerce = ci.paramTypes[0] ? coercionInstrs(ctx, accType, ci.paramTypes[0], fctx) : [];
     const elemCoerce = ci.paramTypes[1] ? coercionInstrs(ctx, elemType, ci.paramTypes[1], fctx) : [];
-    callInstrs = [
-      { op: "local.get", index: setup.closureTmp },
-      // Accumulator (1st user param) — gate on numParams >= 1.
-      ...(numParams >= 1 ? ([{ op: "local.get", index: accTmp }, ...accCoerce] satisfies Instr[]) : []),
-      // Element (2nd user param) — gate on numParams >= 2.
-      ...(numParams >= 2
-        ? ([
-            { op: "local.get", index: loop.dataTmp },
-            { op: "local.get", index: loop.iTmp },
-            { op: loop.getOp, typeIdx: arrTypeIdx },
-            // (#2001 S1) A `$Hole` element reaches the reducer as `undefined`.
-            ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
-            ...elemCoerce,
-          ] satisfies Instr[])
-        : []),
-      ...(numParams >= 3
-        ? ([
-            { op: "local.get", index: loop.iTmp },
-            ...coercionInstrs(ctx, { kind: "i32" }, ci.paramTypes[2] ?? { kind: "i32" }, fctx),
-          ] satisfies Instr[])
-        : []),
-      ...(numParams >= 4
-        ? ([
-            { op: "local.get", index: loop.vecTmp },
-            ...coercionInstrs(
-              ctx,
-              { kind: "ref_null", typeIdx: vecTypeIdx },
-              ci.paramTypes[3] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
-              fctx,
-            ),
-          ] satisfies Instr[])
-        : []),
-      { op: "local.get", index: setup.closureTmp },
-      { op: "struct.get", typeIdx: setup.closureTypeIdx, fieldIdx: 0 },
-      ...guardedFuncRefCastInstrs(fctx, ci.funcTypeIdx),
-      { op: "ref.as_non_null" },
-      { op: "call_ref", typeIdx: ci.funcTypeIdx },
-      // Void-returning callback (e.g. `function() {}`): nothing on stack →
-      // push default-of-accumulator so the trailing `local.set accTmp`
-      // validates. JS: cb returns `undefined` → acc becomes undefined →
-      // for numeric kind that's NaN (f64) / 0 (i32). (#1522 Cluster 2)
-      ...(ci.returnType === null
+    const elemLoad: Instr[] = [
+      { op: "local.get", index: loop.dataTmp },
+      { op: "local.get", index: loop.iTmp },
+      { op: loop.getOp, typeIdx: arrTypeIdx },
+      ...(ctx.usesArrayHoles && elemType.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
+      ...elemCoerce,
+    ];
+    const indexLoad: Instr[] = [
+      { op: "local.get", index: loop.iTmp },
+      ...coercionInstrs(ctx, { kind: "i32" }, ci.paramTypes[2] ?? { kind: "i32" }, fctx),
+    ];
+    const arrayLoad: Instr[] = [
+      { op: "local.get", index: loop.vecTmp },
+      ...coercionInstrs(
+        ctx,
+        { kind: "ref_null", typeIdx: vecTypeIdx },
+        ci.paramTypes[3] ?? { kind: "ref_null", typeIdx: vecTypeIdx },
+        fctx,
+      ),
+    ];
+    const inlineBody = instantiateInlineClosureBody(ci, [
+      [{ op: "local.get", index: accTmp }, ...accCoerce],
+      elemLoad,
+      indexLoad,
+      arrayLoad,
+    ]);
+    const normalizeResult: Instr[] =
+      ci.returnType === null
         ? defaultValueInstrs(accType)
         : ci.returnType.kind !== accType.kind
           ? coercionInstrs(ctx, ci.returnType, accType, fctx)
-          : []),
-      { op: "local.set", index: accTmp },
-    ];
+          : [];
+    callInstrs = inlineBody
+      ? [...inlineBody, ...normalizeResult, { op: "local.set", index: accTmp }]
+      : [
+          { op: "local.get", index: setup.closureTmp },
+          ...(numParams >= 1 ? ([{ op: "local.get", index: accTmp }, ...accCoerce] satisfies Instr[]) : []),
+          ...(numParams >= 2 ? elemLoad : []),
+          ...(numParams >= 3 ? indexLoad : []),
+          ...(numParams >= 4 ? arrayLoad : []),
+          { op: "local.get", index: setup.closureTmp },
+          { op: "struct.get", typeIdx: setup.closureTypeIdx, fieldIdx: 0 },
+          ...guardedFuncRefCastInstrs(fctx, ci.funcTypeIdx),
+          { op: "ref.as_non_null" },
+          { op: "call_ref", typeIdx: ci.funcTypeIdx },
+          ...normalizeResult,
+          { op: "local.set", index: accTmp },
+        ];
   } else {
     // Host-bridge fallback path: the bridge takes/returns the numeric kind, so
     // the accumulator must be numeric here. resolveReduceAccType returns the

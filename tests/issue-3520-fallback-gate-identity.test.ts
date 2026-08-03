@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { describe, expect, it } from "vitest";
-import { planIrFallbackGateEntry } from "../scripts/check-ir-fallbacks.js";
+import { planIrFallbackGateEntry, reconcileFallbackGateFallbacks } from "../scripts/check-ir-fallbacks.js";
 import { ts } from "../src/ts-api.js";
 
 const FILES = new Map([
@@ -74,5 +74,34 @@ describe("#3520 fallback telemetry planning identity", () => {
       { name: "callA", reason: "external-call" },
       { name: "callB", reason: "external-call" },
     ]);
+  });
+
+  it("retires a preliminary fallback only for the matching source-qualified production owner", () => {
+    const fallback = { name: "main", reason: "async-function" } as const;
+    const emitted = {
+      key: "entry::main",
+      file: "/repo/entry.ts",
+      unitKind: "function",
+      displayName: "main",
+      ordinal: 0,
+      line: 1,
+      column: 1,
+      backend: "wasmgc",
+      target: "gc",
+      kind: "emitted",
+      stage: "patch",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    } as const;
+    expect(reconcileFallbackGateFallbacks([fallback], [emitted], "/repo/entry.ts")).toEqual({
+      remaining: [],
+      retired: [fallback],
+    });
+    expect(
+      reconcileFallbackGateFallbacks([fallback], [{ ...emitted, file: "/repo/dep.ts" }], "/repo/entry.ts"),
+    ).toEqual({
+      remaining: [fallback],
+      retired: [],
+    });
   });
 });

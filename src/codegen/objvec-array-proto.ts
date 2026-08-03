@@ -5,10 +5,17 @@ import { ensureArrayNativeProtoGlue } from "./array-object-proto.js";
 import { definedFuncAt } from "./func-space.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { fillVecOverlayHelpers } from "./vec-overlay.js";
+import { fillCarrierBagDelete } from "./carrier-bag-delete.js";
 
 /** Finalize the generic vec overlay before installing the exact `$ObjVec` prototype arm. */
 export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
   fillVecOverlayHelpers(ctx);
+  // (#4010 S2) `__carrier_bag_delete`'s body needs `__delete_property`'s own
+  // funcIdx, so it is reserved early and filled here — the same finalize pass
+  // that owns the rest of the overlay↔bag seam. Order-independent: every caller
+  // baked the reserved index, and both bag lookups are funcMap entries from
+  // RESERVE time, not fill time.
+  fillCarrierBagDelete(ctx);
   fillObjVecArrayPrototypeArm(ctx);
 }
 

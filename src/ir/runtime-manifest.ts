@@ -12,6 +12,7 @@
 import { irTypeEquals, type IrIntrinsicBackendOp } from "./nodes.js";
 import {
   ASYNC_HOST_CAPABILITY_IDS,
+  ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
   ASYNC_RUNTIME_PROVIDERS,
   ASYNC_RUNTIME_PROVIDER_IDS,
@@ -279,7 +280,11 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
   [...PURE_MATH_RUNTIME_PROVIDERS, ...ASYNC_RUNTIME_PROVIDERS].sort((left, right) => left.id.localeCompare(right.id)),
 );
 
-const FEATURE_SET: ReadonlySet<string> = new Set([...PURE_MATH_RUNTIME_FEATURES, ...ASYNC_RUNTIME_FEATURES]);
+const FEATURE_SET: ReadonlySet<string> = new Set([
+  ...PURE_MATH_RUNTIME_FEATURES,
+  ...ASYNC_RUNTIME_FEATURES,
+  ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
+]);
 const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,

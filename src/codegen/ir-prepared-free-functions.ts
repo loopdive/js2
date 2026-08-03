@@ -15,9 +15,12 @@ import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { preparedIrAsyncSourceCanSuspend, preparedIrAsyncSourceShape } from "./async-ir-planning.js";
 import { getOrRegisterVecType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
+import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
+import { applyIrFinalContextFunctionUnitIds, type IrOverlayPreparationPlan } from "./ir-overlay-preparation.js";
 import {
   buildIrRequestedFunctionSkipProjection,
   computeIrFirstSkipUnitIds,
@@ -422,25 +425,35 @@ function r3PromiseDelaySignatureMatchesAllocatedSlot(
   );
 }
 
-/** Exact #4106 numeric fulfillment ABI projected onto a Promise callable slot. */
+function r3SuspendingAsyncParamValType(ctx: CodegenContext, type: IrType): ValType | undefined {
+  const scalar = asVal(type);
+  if (scalar?.kind === "f64") return scalar;
+  if (type.kind !== "vec" || asVal(type.elementType)?.kind !== "f64") return undefined;
+  const vecTypeIdx = ctx.vecTypeMap.get("f64");
+  return vecTypeIdx === undefined ? undefined : { kind: type.nullable ? "ref_null" : "ref", typeIdx: vecTypeIdx };
+}
+
+/** Exact numeric fulfillment ABI projected onto a Promise callable slot. */
 function r3SuspendingAsyncSignatureMatchesAllocatedSlot(
   ctx: CodegenContext,
   unitId: IrUnitId,
   override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+  allowVoidFulfillment = false,
 ): boolean {
-  if (
-    override.params.some((type) => asVal(type)?.kind !== "f64") ||
-    override.returnType === null ||
-    asVal(override.returnType)?.kind !== "f64"
-  ) {
+  const params = override.params.map((type) => r3SuspendingAsyncParamValType(ctx, type));
+  if (params.some((type) => type === undefined)) {
     return false;
   }
+  const fulfillmentMatches =
+    (override.returnType !== null && asVal(override.returnType)?.kind === "f64") ||
+    (allowVoidFulfillment && override.returnType === null);
+  if (!fulfillmentMatches) return false;
   const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
   const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
   return (
     signature?.kind === "func" &&
     signature.params.length === override.params.length &&
-    signature.params.every((type) => type.kind === "f64") &&
+    signature.params.every((type, index) => sameValType(type, params[index]!)) &&
     signature.results.length === 1 &&
     signature.results[0]?.kind === "externref"
   );
@@ -532,61 +545,160 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
 }): ReadonlySet<string> {
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
   const functionValueTargets = collectTopLevelFunctionValueTargets(input.sourceFile, functionUnitsByName);
-  const dependencySelection: IrSelection = {
-    funcs: new Set(input.preparedDependencyLegacyNames),
-    classMembers: new Set(),
-    moduleInit: undefined,
-  };
-  const preparedDependencyUnitIds = new Set(
-    input.projectLoweringPlans(dependencySelection).ownerProjection.entries.map(({ unitId }) => unitId),
-  );
+  const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityPlan.identityContext);
   const selected = new Set<string>();
-  for (const legacyName of input.selectedLegacyNames) {
-    const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
-    if (!input.suspendingAsyncUnitIds.has(unitId)) continue;
-    const claim = input.claimsByUnitId.get(unitId);
-    const override = input.overridesByUnitId.get(unitId);
-    if (!claim || !override) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `R3 suspending async candidate ${unitId} / ${legacyName} has no exact claim/signature`,
+  const prepared = new Set(input.preparedDependencyLegacyNames);
+  for (let changed = true; changed; ) {
+    changed = false;
+    const additions: string[] = [];
+    const dependencySelection: IrSelection = {
+      funcs: new Set(prepared),
+      classMembers: new Set(),
+      moduleInit: undefined,
+    };
+    const preparedDependencyUnitIds = new Set(
+      [...prepared].map((legacyName) =>
+        irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName),
+      ),
+    );
+    for (const legacyName of input.selectedLegacyNames) {
+      if (selected.has(legacyName)) continue;
+      const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
+      if (!input.suspendingAsyncUnitIds.has(unitId)) continue;
+      const claim = input.claimsByUnitId.get(unitId);
+      const override = input.overridesByUnitId.get(unitId);
+      if (!claim || !override) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `R3 suspending async candidate ${unitId} / ${legacyName} has no exact claim/signature`,
+        );
+      }
+      const sourceShape = preparedIrAsyncSourceShape(input.ctx, claim.declaration);
+      if (
+        containsNestedExecutableSyntax(claim.declaration) ||
+        functionValueTargets.has(unitId) ||
+        containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
+        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override, sourceShape?.kind === "final-main")
+      ) {
+        continue;
+      }
+      if (!sourceShape || !preparedIrAsyncSourceCanSuspend(input.ctx, claim.declaration)) continue;
+      const sourceCallees = callEdges.callees.get(unitId) ?? new Set<IrUnitId>();
+      if ([...sourceCallees].some((calleeUnitId) => !preparedDependencyUnitIds.has(calleeUnitId))) continue;
+      const candidatePlans = input.projectLoweringPlans({
+        ...dependencySelection,
+        funcs: new Set([...dependencySelection.funcs, legacyName]),
+      });
+      const unitCalls = [...candidatePlans.directCalls.values()].filter(
+        (call) => call.ownerUnitId === unitId && call.target.binding.kind === "unit",
       );
+      if (
+        unitCalls.some(
+          (call) => call.target.binding.kind !== "unit" || !preparedDependencyUnitIds.has(call.target.binding.unitId),
+        )
+      ) {
+        continue;
+      }
+      if (sourceShape.kind === "identity") {
+        const awaitedCall = candidatePlans.directCalls.get(sourceShape.awaitedCall);
+        if (
+          awaitedCall?.ownerUnitId !== unitId ||
+          awaitedCall.target.binding.kind !== "unit" ||
+          !preparedDependencyUnitIds.has(awaitedCall.target.binding.unitId)
+        ) {
+          continue;
+        }
+      } else if (unitCalls.length === 0) {
+        continue;
+      }
+      additions.push(legacyName);
     }
-    if (
-      containsNestedExecutableSyntax(claim.declaration) ||
-      functionValueTargets.has(unitId) ||
-      containsTopLevelFunctionValueReference(claim.declaration, functionUnitsByName) ||
-      !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override)
-    ) {
-      continue;
+    for (const legacyName of additions) {
+      selected.add(legacyName);
+      prepared.add(legacyName);
+      changed = true;
     }
-    const declarationStatement = claim.declaration.body?.statements[0];
-    const declaration =
-      declarationStatement && ts.isVariableStatement(declarationStatement)
-        ? declarationStatement.declarationList.declarations[0]
-        : undefined;
-    const awaited = declaration?.initializer;
-    const awaitedCall =
-      awaited && ts.isAwaitExpression(awaited) && ts.isCallExpression(awaited.expression)
-        ? awaited.expression
-        : undefined;
-    if (!awaitedCall) continue;
-    const candidatePlans = input.projectLoweringPlans({
-      ...dependencySelection,
-      funcs: new Set([...dependencySelection.funcs, legacyName]),
-    });
-    const directCall = candidatePlans.directCalls.get(awaitedCall);
-    if (
-      directCall?.ownerUnitId !== unitId ||
-      directCall.target.binding.kind !== "unit" ||
-      !preparedDependencyUnitIds.has(directCall.target.binding.unitId)
-    ) {
-      continue;
-    }
-    selected.add(legacyName);
   }
   return selected;
+}
+
+/** Reconcile the final async fixed point with whole-source IR ownership. */
+export function finalizeR3PreparedOwnerPopulation(input: {
+  readonly ctx: CodegenContext;
+  readonly sourceFile: ts.SourceFile;
+  readonly plan: IrOverlayPreparationPlan & {
+    readonly suspendingAsyncUnitIds: ReadonlySet<IrUnitId>;
+    readonly functionClaimsByUnitId: ReadonlyMap<IrUnitId, IrExactFunctionClaim>;
+    readonly overrideMapByUnitId: ReadonlyMap<
+      IrUnitId,
+      { readonly params: readonly IrType[]; readonly returnType: IrType | null }
+    >;
+  };
+  readonly selection: IrSelection;
+  readonly preliminaryClassMethodNames: ReadonlySet<string>;
+  readonly preliminaryR2Names: ReadonlySet<string>;
+  readonly promiseDelayNames: ReadonlySet<string>;
+  readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
+}): {
+  readonly selection: IrSelection;
+  readonly classMethodNames: ReadonlySet<string>;
+  readonly freeFunctionNames: ReadonlySet<string>;
+} {
+  let selection = input.selection;
+  let classMethodNames = selectPreparedClassMethodNames(input.ctx, selection, input.plan.identityPlan);
+  if ([...input.preliminaryClassMethodNames].some((name) => !classMethodNames.has(name))) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "R3 final-context preparation changed a preflight-certified class-method component",
+    );
+  }
+
+  let suspendingAsyncNames = selectR3PreparedSuspendingAsyncFunctions({
+    ctx: input.ctx,
+    sourceFile: input.sourceFile,
+    selectedLegacyNames: selection.funcs,
+    identityPlan: input.plan.identityPlan,
+    claimsByUnitId: input.plan.functionClaimsByUnitId,
+    overridesByUnitId: input.plan.overrideMapByUnitId,
+    suspendingAsyncUnitIds: input.plan.suspendingAsyncUnitIds,
+    preparedDependencyLegacyNames: new Set([...input.preliminaryR2Names, ...input.promiseDelayNames]),
+    projectLoweringPlans: input.projectLoweringPlans,
+  });
+  const rejectedUnitIds = new Set(
+    [...input.plan.suspendingAsyncUnitIds].filter((unitId) => {
+      const claim = input.plan.functionClaimsByUnitId.get(unitId);
+      if (!claim) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `R3 suspending async candidate ${unitId} has no exact function claim`,
+        );
+      }
+      return !suspendingAsyncNames.has(claim.legacyName);
+    }),
+  );
+  if (rejectedUnitIds.size > 0) {
+    const retainedUnitIds = closeIrBlockedComponentByIdentity(
+      input.sourceFile,
+      input.plan.identityPlan.identityContext,
+      input.plan.identityPlan.safeFunctionUnitIds,
+      rejectedUnitIds,
+    );
+    selection = applyIrFinalContextFunctionUnitIds(input.plan, selection, retainedUnitIds);
+    classMethodNames = selectPreparedClassMethodNames(input.ctx, selection, input.plan.identityPlan);
+    suspendingAsyncNames = new Set([...suspendingAsyncNames].filter((name) => selection.funcs.has(name)));
+  }
+  return {
+    selection,
+    classMethodNames,
+    freeFunctionNames: new Set(
+      [...input.preliminaryR2Names, ...input.promiseDelayNames, ...suspendingAsyncNames].filter((name) =>
+        selection.funcs.has(name),
+      ),
+    ),
+  };
 }
 
 /**

@@ -1703,8 +1703,8 @@ export interface IrInstrSlotWrite extends IrInstrBase {
 export interface IrInstrVecLen extends IrInstrBase {
   readonly kind: "vec.len";
   readonly vec: IrValueId;
+  readonly integer?: true; // Certified internal counted-loop length stays physical i32.
 }
-
 /**
  * Index into a vec struct's data array. `index` must be an SSA value of
  * IrType `irVal({ kind: "i32" })` (f64-to-i32 conversion happens at the

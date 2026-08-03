@@ -41,6 +41,9 @@ import {
 } from "./regexp-standalone.js";
 import { tryCompileStandaloneSplitSeparator } from "./string-search-value.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { staticConstStringValues } from "./analysis/static-string-values.js";
+import { staticIntegerRange } from "./analysis/static-numeric-range.js";
+import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
@@ -68,6 +71,31 @@ import {
  */
 function valueExprTsType(ctx: CodegenContext, node: ts.Expression): ts.Type {
   return ts.isIdentifier(node) ? resolveIdentifierType(ctx, node) : ctx.checker.getTypeAtLocation(node);
+}
+
+/** A const local initialized by substring is already a FlatString slice view. */
+function isKnownFlatSubstringResult(ctx: CodegenContext, expression: ts.Expression): boolean {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  if (!ts.isIdentifier(current)) return false;
+  const symbol = ctx.checker.getSymbolAtLocation(current);
+  const declaration = symbol?.valueDeclaration;
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+  const list = declaration.parent;
+  if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+  const initializer = declaration.initializer;
+  return (
+    ts.isCallExpression(initializer) &&
+    ts.isPropertyAccessExpression(initializer.expression) &&
+    initializer.expression.name.text === "substring"
+  );
 }
 
 /**
@@ -2540,6 +2568,55 @@ export function compileNativeStringMethodCall(
     fctx.body.push({ op: "local.set", index: local });
     return local;
   };
+
+  if (!receiverOverride && method === "includes" && expr.arguments.length === 1) {
+    const receiverValues = staticConstStringValues(ctx, propAccess.expression);
+    const searchValues = staticConstStringValues(ctx, expr.arguments[0]!);
+    if (receiverValues && searchValues && new Set(searchValues).size === 1) {
+      const search = searchValues[0]!;
+      const results = new Set(receiverValues.map((value) => value.includes(search)));
+      if (results.size === 1) {
+        emitReceiver();
+        fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: results.values().next().value ? 1 : 0 });
+        return { kind: "i32", boolean: true };
+      }
+    }
+  }
+
+  // An immutable literal table sometimes feeds a string predicate whose
+  // result is identical for every entry. Preserve the receiver read/trap, but
+  // skip flattening and scanning when the full result is known. This is a
+  // narrow source-level constant propagation, not a benchmark-name special
+  // case: mutations, aliases, dynamic search values, and dynamic positions all
+  // retain the ordinary native helper path.
+  if (
+    !receiverOverride &&
+    (method === "startsWith" || method === "endsWith") &&
+    expr.arguments.length >= 1 &&
+    expr.arguments.length <= 2 &&
+    ts.isStringLiteralLike(expr.arguments[0]!) &&
+    (expr.arguments.length === 1 || ts.isNumericLiteral(expr.arguments[1]!))
+  ) {
+    const receiverValues = staticConstStringValues(ctx, propAccess.expression);
+    if (receiverValues) {
+      const search = expr.arguments[0]!.text;
+      const position = expr.arguments.length === 2 ? Number((expr.arguments[1]! as ts.NumericLiteral).text) : undefined;
+      const results = new Set(
+        receiverValues.map((value) =>
+          method === "startsWith" ? value.startsWith(search, position) : value.endsWith(search, position),
+        ),
+      );
+      if (results.size === 1) {
+        emitReceiver();
+        fctx.body.push({ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "i32.const", value: results.values().next().value ? 1 : 0 });
+        return { kind: "i32", boolean: true };
+      }
+    }
+  }
   const compileIntegerValueToLocal = (
     value: ts.Expression | undefined,
     fallback: number,
@@ -2564,6 +2641,66 @@ export function compileNativeStringMethodCall(
   // ECMA-262 §22.1.3.3: ToIntegerOrInfinity(pos), then return NaN when
   // the resulting position is outside [0, string length).
   if (method === "charCodeAt") {
+    if (!receiverOverride && ts.isIdentifier(propAccess.expression)) {
+      const symbol = ctx.checker.getSymbolAtLocation(propAccess.expression);
+      const substring = symbol ? fctx.derivedSubstringReads?.get(symbol) : undefined;
+      if (substring?.kind === "native") {
+        const idxLocal = allocLocal(fctx, `__substring_char_idx_${fctx.locals.length}`, { kind: "i32" });
+        const arg = expr.arguments[0];
+        const isLengthMinusOne =
+          arg !== undefined &&
+          ts.isBinaryExpression(arg) &&
+          arg.operatorToken.kind === ts.SyntaxKind.MinusToken &&
+          ts.isPropertyAccessExpression(arg.left) &&
+          arg.left.name.text === "length" &&
+          ts.isIdentifier(arg.left.expression) &&
+          ctx.checker.getSymbolAtLocation(arg.left.expression) === symbol &&
+          ts.isNumericLiteral(arg.right) &&
+          Number(arg.right.text) === 1;
+        if (isLengthMinusOne) {
+          fctx.body.push({ op: "local.get", index: substring.lenLocal });
+          fctx.body.push({ op: "i32.const", value: 1 });
+          fctx.body.push({ op: "i32.sub" });
+        } else if (arg && tryEmitStaticI32Expression(ctx, fctx, arg)) {
+          // already emitted as i32
+        } else if (arg) {
+          compileStringIntegerArg(ctx, fctx, arg);
+        } else {
+          fctx.body.push({ op: "i32.const", value: 0 });
+        }
+        fctx.body.push({ op: "local.set", index: idxLocal });
+        const range = arg ? staticIntegerRange(ctx, arg) : { min: 0, max: 0 };
+        const provenInBounds =
+          (range !== undefined && range.min >= 0 && range.max < substring.minLen) ||
+          (isLengthMinusOne && substring.minLen > 0);
+        const read: Instr[] = [
+          { op: "local.get", index: substring.dataLocal },
+          { op: "local.get", index: substring.offLocal },
+          { op: "local.get", index: idxLocal },
+          { op: "i32.add" },
+          { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+          { op: "f64.convert_i32_u" },
+        ];
+        if (provenInBounds) {
+          fctx.body.push(...read);
+        } else {
+          fctx.body.push({ op: "local.get", index: idxLocal });
+          fctx.body.push({ op: "i32.const", value: 0 });
+          fctx.body.push({ op: "i32.lt_s" });
+          fctx.body.push({ op: "local.get", index: idxLocal });
+          fctx.body.push({ op: "local.get", index: substring.lenLocal });
+          fctx.body.push({ op: "i32.ge_s" });
+          fctx.body.push({ op: "i32.or" });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [{ op: "f64.const", value: NaN }],
+            else: read,
+          });
+        }
+        return { kind: "f64" };
+      }
+    }
     // #2682 fast path: inside a recognised canonical read loop the receiver was
     // flattened once and the index is proven in-bounds — read directly from the
     // hoisted descriptor (no flatten / struct.get / NaN branch). This arm is the
@@ -2579,9 +2716,17 @@ export function compileNativeStringMethodCall(
       }
     }
     emitReceiver();
-    // Flatten to FlatString (handles ConsString → FlatString)
-    const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
-    fctx.body.push({ op: "call", funcIdx: flattenIdx });
+    if (!receiverOverride && isKnownFlatSubstringResult(ctx, propAccess.expression)) {
+      // `__str_substring` returns a FlatString view into its already-flattened
+      // receiver. A const binding cannot later become a rope, so the two
+      // charCodeAt calls in a typical slice consumer can use that descriptor
+      // directly instead of re-running the flatten discriminator each time.
+      fctx.body.push({ op: "ref.cast", typeIdx: strTypeIdx });
+    } else {
+      // Flatten to FlatString (handles ConsString → FlatString)
+      const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten")!;
+      fctx.body.push({ op: "call", funcIdx: flattenIdx });
+    }
     // Store flat string ref in a temp local to access both data and off
     const tmpLocal = allocLocal(fctx, "__charCodeAt_tmp", flatStringType(ctx));
     fctx.body.push({ op: "local.set", index: tmpLocal });

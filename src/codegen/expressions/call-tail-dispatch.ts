@@ -52,6 +52,7 @@ import {
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { compileSuperElementMethodCall } from "./new-super.js";
+import { compileCallDispatchTail } from "./stored-member-closure-call.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -1902,21 +1903,8 @@ export function compileTailDispatch(
     }
   }
 
-  // Graceful fallback: compile the callee expression and all arguments for side effects,
-  // then push ref.null.extern. This avoids hard compile errors for unrecognized call patterns
-  // (e.g. chained calls, dynamic dispatch, uncommon AST shapes).
-  {
-    const calleeType = compileExpression(ctx, fctx, expr.expression);
-    if (calleeType) {
-      fctx.body.push({ op: "drop" });
-    }
-    for (const arg of expr.arguments) {
-      const argType = compileExpression(ctx, fctx, arg);
-      if (argType) {
-        fctx.body.push({ op: "drop" });
-      }
-    }
-    fctx.body.push({ op: "ref.null.extern" });
-    return { kind: "externref" };
-  }
+  // (#4096) The last two steps — the stored-member-closure arm and the graceful
+  // `ref.null.extern` fallback it guards — live in `stored-member-closure-call.ts`,
+  // where the rationale sits next to the lowering. See that module's header.
+  return compileCallDispatchTail(ctx, fctx, expr);
 }

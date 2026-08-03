@@ -90,8 +90,9 @@ Be concise. Lead with the answer, then only the context needed to act on it.
     devs on separate branches each pick the same id (neither file is on `main`
     yet), the dup is green at PR time and only fails in the `merge_group`,
     wedging the queue. `--allocate` reserves the next id **atomically** against
-    `origin/main` ∪ every open PR's added issue files ∪ ids already reserved on
-    the orphan `issue-assignments` ref (first-push-wins; loser re-scans). Flow:
+    **upstream**'s `main` ∪ every open PR's added issue files ∪ ids already
+    reserved on the orphan `issue-assignments` ref (first-push-wins; loser
+    re-scans). Flow:
     ```bash
     NEW=$(node scripts/claim-issue.mjs --allocate --by ttraenkler/<agent>)
     # (or: node scripts/claim-issue.mjs --allocate ttraenkler/<agent> --branch <b>
@@ -112,6 +113,30 @@ Be concise. Lead with the answer, then only the context needed to act on it.
     reserving and then abandoning an id leaves a permanent hole in the sequence
     (#3890/#3891 were burned exactly that way). `--dry-run --no-pr-scan` is
     still fine: it reserves nothing.
+  - **There is ONE assignment book and it is UPSTREAM's (#4045/#4117).** Until
+    2026-08-03 the ref defaulted to `origin`, which in agent worktrees is the
+    **fork** — so the repo kept two disjoint reservation books and "atomic
+    reservation" was atomic against whichever one you were standing in. Two
+    lanes were handed the same id twice on the record (3750/3751 on 2026-07-28;
+    4113 on 2026-08-02, where a claim 24 minutes older was simply invisible).
+    Reads are now the union of upstream's book and any legacy book; writes go
+    only to upstream's, so the fork's drains. Consequences for you:
+    - **`--check` now distinguishes three states**, and prints WHICH ref
+      answered: `CLAIMED` (exit 3) · `RESERVED — id TAKEN, nobody working`
+      (exit 0) · `UNASSIGNED` (exit 0). The middle one used to print
+      "UNASSIGNED", so the tool that writes `reserved` records could not see
+      what it had just written. **A claim assertion without its ref is unusable
+      evidence** — quote the `read <remote>/issue-assignments` line.
+    - An unreadable **legacy** book REFUSES an allocate. `--allow-unscanned`
+      does *not* excuse it (that flag is about the open-PR scan); the specific
+      consent is `--allow-unmerged-books`. Once the fork's book is drained, set
+      `CLAIM_ASSIGN_LEGACY_REMOTES=""`.
+    - An unreadable **authoritative** book refuses outright and never falls back
+      to the fork.
+    - **Still open, by design:** the open-PR scan is a point-in-time check, not
+      a lock, so an id reserved now and PR'd minutes later is invisible to a
+      scan in between. The required `check:issue-ids:against-main` /
+      open-PR-collision gate is the backstop that actually arbitrates.
   - **Read the RECORD, not the exit code — and never pipe a command whose exit
     status you need.** `cmd | tail -4; echo $?` reports **`tail`'s** status, so a
     crashed script reads as success; this trap bit three agents in one session,
@@ -617,7 +642,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 30,765 / 43,488 (70.7 %)
+**test262 conformance**: 30,756 / 43,487 (70.7 %)
 
 <!-- AUTO:conformance-end -->
 

@@ -211,6 +211,13 @@ export function registerInlinableFunction(ctx: CodegenContext, funcName: string,
     returnType,
   });
 }
+
+function assertDirectAsyncBodyAllowed(name: string, isAsync: boolean): void {
+  if (isAsync && process.env.JS2WASM_TEST_POISON_DIRECT_ASYNC_BODY) {
+    throw new Error(`direct async body poison reached ${name}`);
+  }
+}
+
 export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclaration, func: WasmFunction): void {
   const sig = ctx.checker.getSignatureFromDeclaration(decl);
   if (!sig) {
@@ -229,9 +236,9 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   // compile while a lifted closure / nested function compiles.
   const liveBodiesAtEntry = ctx.liveBodies.size;
 
-  // For async functions, unwrap Promise<T> to get T
   const isAsync = ctx.asyncFunctions.has(func.name);
   const isGenerator = ctx.generatorFunctions.has(func.name);
+  assertDirectAsyncBodyAllowed(func.name, isAsync);
   const effectiveRetType = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
 
   // Use call-site resolved types for generic functions

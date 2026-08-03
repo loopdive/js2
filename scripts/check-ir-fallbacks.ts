@@ -60,7 +60,8 @@ import { buildIrUnitInventory } from "../src/ir/identity.js";
 import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { buildIrUnitTypeMap } from "../src/ir/propagate.js";
 import { planIrCompilationByIdentity, projectIrSelectionToLegacy } from "../src/ir/select-identity.js";
-import type { IrFallbackReason, IrSelection } from "../src/ir/select.js";
+import type { IrFallback, IrFallbackReason, IrSelection } from "../src/ir/select.js";
+import type { IrObservedOutcome } from "../src/ir/outcomes.js";
 import { makeIrHostDateSnapshotResolver } from "../src/ir/host-date.js";
 import { makeIrHostGlobalResolver, makeIrHostVoidCallbackResolver } from "../src/ir/host-extern.js";
 import { makeIrPromiseDelayResolver } from "../src/ir/promise-delay.js";
@@ -74,7 +75,7 @@ import {
   makeIrIdentityImportedFunctionResolver,
   projectIrIdentityImportedFunctionResolverToLegacy,
 } from "../src/ir/imported-functions.js";
-import { compileFiles } from "../src/index.js";
+import { compile, compileFiles } from "../src/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // `analyzeFiles` is also consumed from the published CJS-compatible surface
@@ -264,6 +265,35 @@ export function planIrFallbackGateEntry(graph: IrFallbackPlanningGraph): IrSelec
   return projectIrSelectionToLegacy(identitySelection).selection;
 }
 
+/**
+ * The bare selector records preliminary declines before prepared components
+ * are discovered. Reconcile those labels with the terminal production outcome
+ * for the same source-qualified owner so a prepared IR replacement removes its
+ * stale fallback instead of leaving the gate false-green.
+ */
+export function reconcileFallbackGateFallbacks(
+  fallbacks: readonly IrFallback[],
+  outcomes: readonly IrObservedOutcome[],
+  entryFile: string,
+): { readonly remaining: readonly IrFallback[]; readonly retired: readonly IrFallback[] } {
+  const entry = resolve(entryFile);
+  const replaced = new Set(
+    outcomes
+      .filter(
+        (outcome) =>
+          resolve(REPO_ROOT, outcome.file) === entry &&
+          outcome.kind === "emitted" &&
+          outcome.irBodyEmitted &&
+          !outcome.legacyBodyEmitted,
+      )
+      .map((outcome) => outcome.displayName),
+  );
+  const remaining: IrFallback[] = [];
+  const retired: IrFallback[] = [];
+  for (const fallback of fallbacks) (replaced.has(fallback.name) ? retired : remaining).push(fallback);
+  return { remaining, retired };
+}
+
 async function aggregate(): Promise<{
   unintended: Partial<Record<IrFallbackReason, number>>;
   deferred: Partial<Record<IrFallbackReason, number>>;
@@ -274,6 +304,7 @@ async function aggregate(): Promise<{
   moduleLevelInfo: { claimable: number; empty: number };
   modulePerFile: Array<{ file: string; status: string }>;
   perFile: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }>;
+  reconciled: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }>;
   // (#2856 Step-1) Per-rejection reject-arm detail for `body-shape-rejected`,
   // populated only when JS2WASM_IR_SHAPE_DIAG=1 (select.ts records it).
   shapeDetails: Array<{ file: string; name: string; detail: string }>;
@@ -292,6 +323,7 @@ async function aggregate(): Promise<{
   const moduleLevelInfo = { claimable: 0, empty: 0 };
   const modulePerFile: Array<{ file: string; status: string }> = [];
   const perFile: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }> = [];
+  const reconciled: Array<{ file: string; reasons: Partial<Record<IrFallbackReason, number>> }> = [];
   const shapeDetails: Array<{ file: string; name: string; detail: string }> = [];
 
   for (const filePath of corpus) {
@@ -305,8 +337,46 @@ async function aggregate(): Promise<{
       // to gate on TS type-checker quirks for example code.
       continue;
     }
+    let productionResult: Awaited<ReturnType<typeof compileFiles>> | undefined;
+    try {
+      productionResult = await compileFiles(filePath, { experimentalIR: true, trackIrOutcomes: true });
+      if (
+        IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath)) &&
+        !(productionResult.irCompiledFuncs ?? []).includes("main")
+      ) {
+        throw new Error(`#3214 A+B1 gate invariant: ${relative(REPO_ROOT, filePath)}::main was not emitted through IR`);
+      }
+      for (const e of productionResult.irPostClaimErrors ?? []) {
+        const kind = (POST_CLAIM_KINDS as readonly string[]).includes(e.kind) ? (e.kind as PostClaimKind) : "lower";
+        const cls = normalizeMessageClass(e.message);
+        postClaim[kind][cls] = (postClaim[kind][cls] ?? 0) + 1;
+      }
+    } catch (error) {
+      if (IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath))) throw error;
+      // Other example-file compile failures are not the gate's concern. Their
+      // preliminary selector fallbacks remain visible because no terminal
+      // production outcome exists to reconcile them.
+    }
+
+    // Prepared async discovery uses the same host-source lane as the bounded
+    // readiness census. `compileFiles` intentionally has a smaller ambient
+    // library and therefore cannot observe these Promise/Date/console-backed
+    // prepared components; keep it above for the multi-file post-claim meter,
+    // but reconcile its preliminary `async-function` labels with the actual
+    // production host outcome.
+    let terminalOutcomes = productionResult?.irOutcomes ?? [];
+    if ((selection.fallbacks ?? []).some((fallback) => fallback.reason === "async-function")) {
+      const hostResult = await compile(readFileSync(filePath, "utf8"), {
+        fileName: filePath,
+        target: "gc",
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      });
+      terminalOutcomes = hostResult.irOutcomes ?? [];
+    }
+    const effective = reconcileFallbackGateFallbacks(selection.fallbacks ?? [], terminalOutcomes, filePath);
     const fileReasons: Partial<Record<IrFallbackReason, number>> = {};
-    for (const fb of selection.fallbacks ?? []) {
+    for (const fb of effective.remaining) {
       const bucket = UNINTENDED.has(fb.reason) ? unintended : deferred;
       bucket[fb.reason] = (bucket[fb.reason] ?? 0) + 1;
       fileReasons[fb.reason] = (fileReasons[fb.reason] ?? 0) + 1;
@@ -315,6 +385,11 @@ async function aggregate(): Promise<{
       }
     }
     perFile.push({ file: relative(REPO_ROOT, filePath), reasons: fileReasons });
+    const retiredReasons: Partial<Record<IrFallbackReason, number>> = {};
+    for (const fb of effective.retired) retiredReasons[fb.reason] = (retiredReasons[fb.reason] ?? 0) + 1;
+    if (effective.retired.length > 0) {
+      reconciled.push({ file: relative(REPO_ROOT, filePath), reasons: retiredReasons });
+    }
 
     // #3142 Slice 1 — module-level claim assessment (one verdict per module).
     if (selection.moduleInit) {
@@ -330,25 +405,18 @@ async function aggregate(): Promise<{
         modulePerFile.push({ file: relative(REPO_ROOT, filePath), status: `claimable (${mi.stmtCount} stmts)` });
       }
     }
-
-    // #1923 — post-claim demotions: compile the full production graph for real
-    // and aggregate `irPostClaimErrors` by kind + normalized message class.
-    try {
-      const result = await compileFiles(filePath, { experimentalIR: true });
-      if (IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath)) && !(result.irCompiledFuncs ?? []).includes("main")) {
-        throw new Error(`#3214 A+B1 gate invariant: ${relative(REPO_ROOT, filePath)}::main was not emitted through IR`);
-      }
-      for (const e of result.irPostClaimErrors ?? []) {
-        const kind = (POST_CLAIM_KINDS as readonly string[]).includes(e.kind) ? (e.kind as PostClaimKind) : "lower";
-        const cls = normalizeMessageClass(e.message);
-        postClaim[kind][cls] = (postClaim[kind][cls] ?? 0) + 1;
-      }
-    } catch (error) {
-      if (IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath))) throw error;
-      // Other example-file compile failures are not the gate's concern.
-    }
   }
-  return { unintended, deferred, postClaim, moduleLevel, moduleLevelInfo, modulePerFile, perFile, shapeDetails };
+  return {
+    unintended,
+    deferred,
+    postClaim,
+    moduleLevel,
+    moduleLevelInfo,
+    modulePerFile,
+    perFile,
+    reconciled,
+    shapeDetails,
+  };
 }
 
 function loadBaseline(): Baseline | undefined {
@@ -441,8 +509,17 @@ async function main(): Promise<void> {
   const verbose = args.has("--verbose");
   const shapeDiag = args.has("--shape-diag");
 
-  const { unintended, deferred, postClaim, moduleLevel, moduleLevelInfo, modulePerFile, perFile, shapeDetails } =
-    await aggregate();
+  const {
+    unintended,
+    deferred,
+    postClaim,
+    moduleLevel,
+    moduleLevelInfo,
+    modulePerFile,
+    perFile,
+    reconciled,
+    shapeDetails,
+  } = await aggregate();
 
   // (#2856 Step-1) `--shape-diag`: print the `body-shape-rejected` reject-arm
   // histogram. Requires `JS2WASM_IR_SHAPE_DIAG=1` in the env (select.ts reads it
@@ -475,7 +552,8 @@ async function main(): Promise<void> {
 
   if (mode === "json") {
     process.stdout.write(
-      JSON.stringify({ unintended, deferred, postClaim, moduleLevel, moduleLevelInfo, perFile }, null, 2) + "\n",
+      JSON.stringify({ unintended, deferred, postClaim, moduleLevel, moduleLevelInfo, perFile, reconciled }, null, 2) +
+        "\n",
     );
     return;
   }

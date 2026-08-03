@@ -834,7 +834,11 @@ export function registerClosureBindingInfo(
   liftedFuncTypeIdx: number,
   closureReturnType: ValType | null,
   arrowParams: ValType[],
+  inlineBody?: Instr[],
 ): void {
+  const params = runtimeParameters(arrow);
+  const usesOwnArguments =
+    ts.isFunctionExpression(arrow) && ts.isBlock(arrow.body) && closureBodyUsesOwnArguments(arrow.body);
   // 8. Register closure info so call sites can emit call_ref
   const structDef = ctx.mod.types[structTypeIdx];
   const closureInfo: ClosureInfo = {
@@ -843,7 +847,10 @@ export function registerClosureBindingInfo(
     returnType: closureReturnType,
     paramTypes: arrowParams,
     hasCaptures: structDef?.kind === "struct" && structDef.fields.length > 1,
-    hasRestParam: runtimeParameters(arrow).some((p) => p.dotDotDotToken !== undefined),
+    hasRestParam: params.some((p) => p.dotDotDotToken !== undefined),
+    needsCallSiteArity:
+      usesOwnArguments || params.some((p) => p.dotDotDotToken !== undefined || p.initializer !== undefined),
+    inlineBody,
   };
 
   // Always register by struct type index (for valueOf coercion and anonymous closures)
@@ -874,4 +881,12 @@ export function registerClosureBindingInfo(
     // Object literal: { fn: function() { ... } }
     // Don't register in closureMap (property, not variable)
   }
+}
+
+/** Whether a function expression's own `arguments` binding is observable. */
+function closureBodyUsesOwnArguments(node: ts.Node): boolean {
+  if (ts.isIdentifier(node) && node.text === "arguments") return true;
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) return false;
+  // Nested arrows inherit the function expression's `arguments` binding.
+  return forEachChild(node, closureBodyUsesOwnArguments) ?? false;
 }

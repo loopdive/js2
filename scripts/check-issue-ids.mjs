@@ -292,7 +292,13 @@ function checkAgainstOpenPrs() {
   console.error("Two open PRs claim the same issue id. If neither renumbers, the one that");
   console.error("merges second gets auto-parked in the merge queue (`hold` label) and strands.");
   console.error("Tie-break: the merged/queued PR keeps the id; otherwise the EARLIER");
-  console.error("reservation on origin/issue-assignments wins. The losing branch renumbers:");
+  // (#4045/#4117) Named `origin/issue-assignments` until 2026-08-03. In agent
+  // worktrees `origin` is the FORK, so this instruction pointed the loser of a
+  // collision at the very book whose separateness caused it. There is one book
+  // now and it is upstream's; `claim-issue.mjs --check` prints which ref
+  // answered, so the tie-break can be settled from its output.
+  console.error("reservation on the issue-assignments ref (upstream's — `claim-issue.mjs --check <id>`");
+  console.error("prints which book answered) wins. The losing branch renumbers:");
   console.error("  NEW=$(node scripts/claim-issue.mjs --allocate)   # prints the reserved id");
   console.error("  git mv plan/issues/<old>-<slug>.md plan/issues/$NEW-<slug>.md");
   console.error("  # then update the file's frontmatter id: to $NEW");
