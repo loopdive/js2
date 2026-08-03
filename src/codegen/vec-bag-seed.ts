@@ -81,7 +81,19 @@
 import type { Instr, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { CARRIER_BAG_DELETE } from "./carrier-bag-delete.js";
+import { buildBagGopdFallback, buildBagHasFallback } from "./carrier-bag-visibility.js"; // (#4010 S3)
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+
+/**
+ * (#4010 S3) `__vec_gopd`'s LAST RESORT, spliced in front of its miss: the
+ * #3537 expando bag. Reached only when the #3251 companion has no entry AND the
+ * key is not an in-bounds index — i.e. exactly where the native used to answer
+ * `undefined`, so it is additive. `__carrier_bag_gopd` returns null ("not
+ * handled") for a key the bag does not hold, which keeps `miss` reachable.
+ */
+export function buildBagGopdOrMiss(ctx: CodegenContext, tmp: number, miss: Instr[]): Instr[] {
+  return [...buildBagGopdFallback(ctx, tmp), ...miss];
+}
 
 /** #3537 array expando bag reader (`vec-props.ts`). */
 const VEC_PROP_GET = "__vec_prop_get";
@@ -216,6 +228,110 @@ export function buildBagValueSeed(
   ];
 }
 
+/**
+ * (#4010 S3) Splice the vec arms into the own-property PREDICATES —
+ * `__hasOwnProperty` / `__object_hasOwn` / `__propertyIsEnumerable`.
+ *
+ * Moved here from `vec-overlay.ts` because this IS the overlay-to-bag seam that
+ * this module owns (the other direction of the same seam as the value seed and
+ * the delete arm), and because the god-file it came from has no LOC headroom.
+ *
+ * These predicates are independent natives, not wrappers around gOPD. The
+ * prologue consults the #3251 overlay so implicit indices and companion
+ * properties are own — and, since S3, falls through to the #3537 BAG when the
+ * overlay says no. Before S3 it `return`ed the overlay answer UNCONDITIONALLY,
+ * which is exactly why #4010's matrix recorded array `hasOwn` as ABSENT: a
+ * bag-only expando could never reach the bag. The affirmative answer is
+ * unchanged and still wins first; only the `false` is widened, so the change is
+ * additive.
+ *
+ * The bag consult is repeated here rather than left to `__vec_gopd`'s own
+ * fallback because `__vec_gopd` bails EARLY for a non-whitelisted carrier
+ * (TypedArray / subview) and for `length` — and `hasOwn` must not disagree with
+ * `in` on those receivers.
+ */
+export function fillVecHasOwnHelpers(ctx: CodegenContext, vecBaseIdx: number): void {
+  // Resolved by NAME (the #3251 overlay's `__vec_gopd`) rather than by importing
+  // vec-overlay's private constant — that would be a cycle, since vec-overlay
+  // imports this module.
+  const vecGopdIdx = ctx.funcMap.get("__vec_gopd");
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (vecGopdIdx === undefined || isUndefinedIdx === undefined) return;
+  // These predicates are independent natives, not wrappers around gOPD.
+  // Consult the overlay so implicit indices and companion properties are own.
+  for (const name of ["__hasOwnProperty", "__object_hasOwn"]) {
+    const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
+    if (!fn) continue;
+    fn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: vecBaseIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: vecGopdIdx },
+          { op: "call", funcIdx: isUndefinedIdx },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+          },
+          // (#4010 S3) This prologue used to `return` the gOPD answer
+          // UNCONDITIONALLY, which is why the #4010 matrix recorded array
+          // `hasOwn` as ABSENT: a bag-only expando never reached the #3537 bag.
+          // The affirmative answer above is unchanged and still wins; only the
+          // `false` falls through to the bag. The consult is repeated here
+          // rather than left to `__vec_gopd`'s own fallback because `__vec_gopd`
+          // bails EARLY for a non-whitelisted carrier (TypedArray/subview) and
+          // for `length`, and `hasOwn` must not disagree with `in` on those.
+          ...buildBagHasFallback(ctx),
+          { op: "i32.const", value: 0 },
+          { op: "return" },
+        ],
+      },
+    );
+  }
+
+  const propertyIsEnumerableFn = ctx.mod.functions.find((candidate) => candidate.name === "__propertyIsEnumerable");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const unboxBooleanIdx = ctx.funcMap.get("__unbox_boolean");
+  if (propertyIsEnumerableFn && externGetIdx !== undefined && unboxBooleanIdx !== undefined) {
+    const descLocal = 2 + propertyIsEnumerableFn.locals.length;
+    propertyIsEnumerableFn.locals.push({ name: "__vec_desc", type: { kind: "externref" } });
+    propertyIsEnumerableFn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: vecBaseIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: vecGopdIdx },
+          { op: "local.tee", index: descLocal },
+          { op: "call", funcIdx: isUndefinedIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+          },
+          { op: "local.get", index: descLocal },
+          ...nativeStringLiteralInstrs(ctx, "enumerable"),
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: externGetIdx },
+          { op: "call", funcIdx: unboxBooleanIdx },
+          { op: "return" },
+        ],
+      },
+    );
+  }
+}
+
 /** Everything `buildVecDeletePrologue` needs from `fillVecOverlayHelpers`. */
 export interface VecDeleteDeps {
   objectTypeIdx: number;
@@ -291,8 +407,14 @@ export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d:
   );
 
   const cbdIdx = ctx.funcMap.get(CARRIER_BAG_DELETE);
-  /** `rc = __carrier_bag_delete(obj, key); if (rc >= 0) return rc;` */
-  const bagConsult: Instr[] =
+  /**
+   * `rc = __carrier_bag_delete(obj, key); if (rc >= 0) return rc;`
+   *
+   * A FACTORY, not a shared array: since S3 this is spliced at two sites, and a
+   * shared `Instr` object reachable from two places is remapped twice by the
+   * finalize walks (`reference_shared_instr_object_dce_double_remap` / #1302).
+   */
+  const bagConsult = (): Instr[] =>
     cbdIdx === undefined
       ? []
       : [
@@ -339,7 +461,7 @@ export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d:
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [...bagConsult, { op: "i32.const", value: 1 }, { op: "return" }],
+          then: [...bagConsult(), { op: "i32.const", value: 1 }, { op: "return" }],
         },
         { op: "local.get", index: descLocal },
         ...nativeStringLiteralInstrs(ctx, "configurable"),
@@ -363,6 +485,21 @@ export function buildVecDeletePrologue(ctx: CodegenContext, fn: WasmFunction, d:
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            // (#4010 S3) S2 reached this arm only for a key the COMPANION knew,
+            // because `__vec_gopd` answered `undefined` for a bag-only key and
+            // the `bagConsult` branch above owned it. S3 made `__vec_gopd`
+            // bag-aware, so a bag-only key now arrives here — and delegating it
+            // to `__delete_property(comp, …)` would answer 1 (absent ⇒ success)
+            // while `bagShadow`'s own refusal was discarded, i.e. a loud success
+            // over a possibly-surviving value: the exact defect S2 was written
+            // to remove. Route a key the companion does not own back to the
+            // tri-state bag delete, which is authoritative for it.
+            { op: "local.get", index: compLocal },
+            { op: "ref.as_non_null" },
+            { op: "local.get", index: keyLocal },
+            { op: "call", funcIdx: d.objFindIdx },
+            { op: "ref.is_null" },
+            { op: "if", blockType: { kind: "empty" }, then: bagConsult() },
             { op: "local.get", index: compLocal },
             { op: "extern.convert_any" },
             { op: "local.get", index: keyLocal },

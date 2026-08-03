@@ -1,11 +1,12 @@
 ---
 id: 4010
 title: "M2 — own properties on a non-$Object receiver live in TWO DISJOINT side tables that clobber each other; unify them"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-01
 updated: 2026-08-03
-assignee: ttraenkler/dev-4010-s2
+completed: 2026-08-03
+assignee: ttraenkler/senior-4010-s3
 priority: high
 horizon: l
 feasibility: medium
@@ -501,3 +502,148 @@ restores and a define on a FUNCTION still lands nowhere, so a harness delete of
 a function expando is irreversible where it was a no-op; S3 widens exactly the
 runway that reaches it. S2's partial local stratum data was measured against a
 superseded tree — not reusable; run the control fresh, both arms.
+
+---
+
+# S3 — DONE. The −684 mechanism, finally isolated — and it was never the query
+
+Slice table (final):
+
+| slice | status | PR | what it changed |
+| --- | --- | --- | --- |
+| **S1′** clobber fix | done | #4058 | `defineProperty` stopped destroying the bag's value |
+| **S2** tombstones | done | #4063 (73eee7169b) | `delete` is real on array + function own-property stores |
+| **S3** visibility | **done** | this PR | `hasOwn` / `in` / gOPD / `keys` / for-in / gOPN / `propertyIsEnumerable` reach the store |
+
+## ⛔ THE HEADLINE: the −684 was NOT caused by widening the query
+
+`carrier-bag-hasown.ts` records that #4055 measured three candidate mechanisms
+for the −684 and **none reproduced outside the full harness assembly**, and drew
+the (correct-for-then) conclusion "narrow the change until the mechanism is out
+of scope". S3 had to widen the same surface, so the mechanism had to be found.
+It reproduces in **six lines**, standalone, host-free, on the pre-S3 tree:
+
+```js
+const f = Array.prototype.push;
+f.name = "unlikelyValue";   // REFUSED by the read path (#2896 meta arm wins)
+f.name;                     // => "push"           — looks correct
+delete f.name;              // #2896 arm clears the meta bit
+f.name;                     // => "unlikelyValue"  ← THE BAG KEPT IT
+```
+
+**`__extern_set` had no builtin-fn arm.** A write to a builtin's non-writable
+`name` / `length` was deposited in the #3468 closure bag and sat there
+invisibly, shadowed by the #2896 read arm. `propertyHelper.js` performs exactly
+that write, in exactly the wrong order:
+
+| line | what it does |
+| --- | --- |
+| `isWritable`, called from `verifyProperty:113` | `obj[name] = "unlikelyValue"` → **pollutes the bag** |
+| `isConfigurable`, called from `verifyProperty:120` | `delete obj[name]; return !__hasOwnProperty(obj, name)` |
+
+So a bag-aware `hasOwnProperty` answers **`true`** after the delete,
+`isConfigurable` returns **`false`**, and every file asserting
+`configurable: true` fails with *"descriptor should be configurable"* — the 696.
+The pollution was **already on main**; #4055 v1 only made it observable. Any
+future widening of any own-property query would have hit it again.
+
+**Fixed at the SOURCE, not at the query.** §10.1.9 OrdinarySet over an existing
+non-writable own data property is a no-op, so `__extern_set`'s non-`$Object` arm
+now refuses a key the #2896 metadata still owns (`buildBuiltinFnSetRefusalArm`,
+sited in `vec-props.ts`, prose in `carrier-bag-visibility.ts`). The refusal is
+scoped to **live** metadata: after `delete fn.name` an assignment lands again,
+which is also what the spec says. Three committed cases pin all three states.
+
+## What shipped
+
+`src/codegen/carrier-bag-visibility.ts` — four natives over both bags
+(`__closure_bag_lookup` / `__vec_bag_lookup`, **LOOKUP never ensure**):
+
+| native | answer | "not handled" is |
+| --- | --- | --- |
+| `__carrier_bag_of(o)` | the bag, `ref.test $Object`-screened | null |
+| `__carrier_bag_has(o,k)` | `__obj_find(bag,k) != null` | 0 |
+| `__carrier_bag_gopd(o,k)` | `__getOwnPropertyDescriptor(bag,k)` | **null, kept distinct from "absent"** |
+| `__carrier_bag_push_keys(o,vec,nonEnum)` | `__obj_ordered{,_all}(bag)` keys | 0 |
+
+Wired at seven sites, every one of them a place whose previous answer was the
+literal "absent" constant — `__hasOwnProperty` / `__object_hasOwn`,
+`__extern_has` (both the base body and the vec arm), `__getOwnPropertyDescriptor`
+(function receiver) and `__vec_gopd`'s miss (array — which also widens
+`hasOwnProperty` and `propertyIsEnumerable`, since `fillVecHasOwnHelpers`
+derives both from that descriptor), `__object_keys` / `__object_keys_forin`
+(base + vec arm) and `__getOwnPropertyNames`.
+
+**Composition is #4055 v2's throughout**: the existing helper answers FIRST and
+the bag is consulted only on a miss, so this can add a `true` and never override
+one. The #2896 arms still run first and return, so `{name,length}` on a builtin
+never reaches the bag. Tombstones are free — `__obj_find` / `__obj_ordered` /
+`__obj_ordered_all` all skip them.
+
+## The one place the two slices could have silently disagreed
+
+Making `__vec_gopd` bag-aware lets a **bag-only** key reach S2's
+companion-delete arm, where `__delete_property(comp, k)` answers **1 (absent ⇒
+success)** while `bagShadow`'s own refusal is discarded — a loud success over a
+possibly-surviving value, i.e. precisely the defect S2 existed to remove.
+`vec-bag-seed.ts` now routes a key the companion does not own back to the
+tri-state bag delete. Found by reasoning about S2's arm before running it, and
+pinned by S2's own "key held by BOTH tables" case, which still passes.
+
+## Acceptance — the matrix's two rows, and the screens
+
+24-cell probe (`.tmp/s3matrix.mts`), standalone, **zero imports asserted per
+module**, run on the final tree: **24/24**. Matrix cells flipped:
+
+| receiver | read | hasOwn | `in` | gOPD | keys | delete | defineProp→read |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **`$Object` (CONTROL)** | ok | ok | ok | ok | ok | ok | ok |
+| array | ok | ABSENT→**ok** | ABSENT→**ok** | ABSENT→**ok** | ABSENT→**ok** | ok (S2) | ABSENT→**ok** |
+| function | ok | ABSENT→**ok** | ABSENT→**ok** | ABSENT→**ok** | ABSENT→**ok** | ok (S2) | ok |
+| Date / RegExp / Error / class instance | unchanged — **no bag exists**, `__carrier_bag_of` answers null |
+
+Screens that did NOT move, each with a committed guard: `Object.keys(new
+Date(0))` and `Object.keys(/ab/)` stay `[]` (#4071's −5); builtin `name`/`length`
+reflection byte-unchanged; `Object.defineProperty` on a function still lands
+nowhere **and gOPD still reports it absent** (no new lie); #4055's
+function-as-descriptor path unchanged.
+
+`tests/issue-4010.test.ts`: **47 cases**. S1′/S2's **five SCOPE PINs are flipped
+deliberately** — that is what they existed to force — and kept, not deleted, so
+the before/after of the ordering law reads in one place.
+
+## No `loc-budget-allow` was taken
+
+The first cut grew three god-files (`object-runtime.ts` +45, `vec-overlay.ts`
++25, `object-runtime-descriptors.ts` +20) and the gate refused it. Restructured
+instead of granted: `fillVecHasOwnHelpers` **moved** out of `vec-overlay.ts` into
+`vec-bag-seed.ts` (which already owns both directions of the overlay↔bag seam),
+the builtin-fn refusal is sited in `vec-props.ts`, and every god-file call site
+is one line calling a composite builder, with the prose in the subsystem module.
+Final: `object-runtime.ts` −3, `vec-overlay.ts` −58,
+`object-runtime-descriptors.ts` −1 against baseline.
+
+## Instrument note — `runTest262File` cannot run this corpus unaided
+
+`runTest262File` does **not** supply the separately compiled
+`js2wasm:runtime-eval` provider that the CI worker links
+(`scripts/test262-worker.mjs` → `instantiateRuntimeEvalNamespace`). Any
+standalone module carrying those two imports therefore dies at
+`WebAssembly.instantiate`. **Measured: `propertyHelper.js` in the assembly is the
+trigger** (prefix alone = 0 imports; prefix + propertyHelper = 2), so a pilot of
+the `{name,length}.js` stratum scored **0 / 11 runnable** — the instrument was
+blind, not the compiler broken. Neutralising `$262.evalScript`'s `eval` in a
+local copy of `scripts/test262-fyi-runtime.js` (a function no `{name,length}.js`
+test calls) restores it, and the repaired instrument agrees with the published
+CI standalone baseline **16/16** pass/not-pass. Anyone measuring standalone
+locally needs this; it is not a defect on main.
+
+## What this closes
+
+#4010 is **done**: all three slices landed, and own-property truth for array and
+function receivers now has ONE owner — the bag — that every reflective surface
+reads. **#4098 is unblocked** for its own substrate work; note that its 124-file
+population is **class instances**, which have no bag at all (matrix row 7), so it
+still needs the per-instance store its file specifies. #4006 / #4007 remain
+deliberately unfunded symptoms. #4129 (`Reflect.deleteProperty` throws for every
+non-`$Object` receiver, pre-existing) is untouched.

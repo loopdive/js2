@@ -83,6 +83,12 @@ import { addUnionImportsViaRegistry, flushLateImportShifts } from "./shared.js";
 import { reserveAccessorGetDriver, reserveAccessorSetDriver } from "./accessor-driver.js";
 import { registerDescriptorHasOwn } from "./carrier-bag-hasown.js"; // (#4055) descriptor-scoped HasProperty over the #3468 bag
 import { buildNonObjectDeleteArms, reserveCarrierBagDelete } from "./carrier-bag-delete.js"; // (#4010 S2) OrdinaryDelete over the carrier bags
+import {
+  bagHasElseAbsent,
+  bagHasIfAbsent,
+  bagKeysTail,
+  reserveCarrierBagVisibility,
+} from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
@@ -837,6 +843,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // (#3537) reserve the array-expando side table right after — same
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
+    reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
   }
 
   // ── __extern_is_array(externref v) -> i32 ────────────────────────────────
@@ -3005,17 +3012,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             },
           ] satisfies Instr[])
         : []),
-      // any = any.convert_extern(obj); if !ref.test $Object → 0
+      // any = any.convert_extern(obj); if !ref.test $Object → carrier bag, else 0 (#4010 S3)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 2 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
+      bagHasIfAbsent(ctx),
       // e = __obj_find(cast<$Object>(any), key) ; return e != null
       { op: "local.get", index: 2 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -3115,17 +3118,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // locals: 2=o(ref null $Object) 3=any(anyref)
   {
     const body: Instr[] = [
-      // any = any.convert_extern(obj); if !ref.test $Object → 0
+      // any = any.convert_extern(obj); if !ref.test $Object → carrier bag, else 0 (#4010 S3)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 3 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 0 }, { op: "return" }],
-      },
+      bagHasIfAbsent(ctx),
       // o = cast<$Object>(any)
       { op: "local.get", index: 3 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -7373,8 +7372,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
               },
             ],
           },
-          { op: "local.get", index: kVec },
-          { op: "return" },
+          ...bagKeysTail(ctx, { vecLocal: kVec, includeNonEnum: false }), // (#4010 S3) expandos AFTER indices
         ],
       },
     ];
@@ -7444,9 +7442,8 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
             blockType: { kind: "empty" },
             then: strKeyBody,
           },
-          // vec receiver, non-string / non-index / non-length key → absent
-          { op: "i32.const", value: 0 },
-          { op: "return" },
+          // vec receiver, non-string / non-index / non-length key → the #3537 bag, else absent (#4010 S3)
+          ...bagHasElseAbsent(ctx),
         ],
       },
     ];
