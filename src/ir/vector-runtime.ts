@@ -6,12 +6,12 @@ import type { ValType } from "./types.js";
 export const IR_VEC_ELEM_SET_PREFIX = "__ir_vec_elem_set_";
 export const IR_VEC_NEW_SIZED_PREFIX = "__ir_vec_new_sized_";
 
-export type IrVectorRuntimeElementKind = "f64" | "i32";
+export type IrVectorRuntimeElementKind = "f64" | "i32" | "externref";
 
 /** Return the runtime-specializable scalar carried by a logical IR vector. */
 export function irVectorRuntimeElementKind(type: IrType): IrVectorRuntimeElementKind | null {
   const value = asVal(type);
-  return value?.kind === "f64" || value?.kind === "i32" ? value.kind : null;
+  return value?.kind === "f64" || value?.kind === "i32" || value?.kind === "externref" ? value.kind : null;
 }
 
 function requireRuntimeElementKind(type: IrType, operation: string): IrVectorRuntimeElementKind {
@@ -36,5 +36,5 @@ export function parseIrVectorRuntimeElement(
   prefix: typeof IR_VEC_ELEM_SET_PREFIX | typeof IR_VEC_NEW_SIZED_PREFIX,
 ): ValType | null {
   const suffix = symbol.startsWith(prefix) ? symbol.slice(prefix.length) : "";
-  return suffix === "f64" || suffix === "i32" ? { kind: suffix } : null;
+  return suffix === "f64" || suffix === "i32" || suffix === "externref" ? { kind: suffix } : null;
 }

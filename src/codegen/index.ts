@@ -151,11 +151,11 @@ import {
 import {
   completePreparedIrIntegration,
   computePreparedInheritedIrFirstSkipUnitIds,
+  finalizeR3PreparedOwnerPopulation,
   prepareIrClassMethodBodies,
   prepareIrFreeFunctionBodies,
   selectR2PreparedFreeFunctions,
   selectR3PreparedPromiseDelayFunctions,
-  selectR3PreparedSuspendingAsyncFunctions,
   selectPreparedClassMethodNames,
   type PreparedIrClassMethodBodies,
   type PreparedIrFreeFunctionBodies,
@@ -3256,21 +3256,13 @@ function planIrFirstBodyRouting(
     // the IR program is prepared. The exact Promise-delay route also settles
     // its late runtime imports here, before any direct body can bake funcIdxs.
     prepareModuleTdzGlobals(ctx, sourceFile);
-    const preparedSelection = finalizePreparedIrSelection(ctx, sourceFile, plan);
+    let preparedSelection = finalizePreparedIrSelection(ctx, sourceFile, plan);
     finalizedSelection = preparedSelection;
     if ([...preliminaryR2Names].some((legacyName) => !preparedSelection.funcs.has(legacyName))) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
         "R2 final-context preparation changed a preflight-certified free-function component",
-      );
-    }
-    const finalClassMethodNames = selectPreparedClassMethodNames(ctx, preparedSelection, plan.identityPlan);
-    if ([...preliminaryClassMethodNames].some((legacyName) => !finalClassMethodNames.has(legacyName))) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        "R3 final-context preparation changed a preflight-certified class-method component",
       );
     }
     const promiseDelayNames = selectR3PreparedPromiseDelayFunctions({
@@ -3282,19 +3274,21 @@ function planIrFirstBodyRouting(
       overridesByUnitId: plan.overrideMapByUnitId,
       promiseDelays: plan.promiseDelays,
     });
-    const suspendingAsyncNames = selectR3PreparedSuspendingAsyncFunctions({
+    const preparedPopulation = finalizeR3PreparedOwnerPopulation({
       ctx,
       sourceFile,
-      selectedLegacyNames: preparedSelection.funcs,
-      identityPlan: plan.identityPlan,
-      claimsByUnitId: plan.functionClaimsByUnitId,
-      overridesByUnitId: plan.overrideMapByUnitId,
-      suspendingAsyncUnitIds: plan.suspendingAsyncUnitIds,
-      preparedDependencyLegacyNames: new Set([...preliminaryR2Names, ...promiseDelayNames]),
+      plan,
+      selection: preparedSelection,
+      preliminaryClassMethodNames,
+      preliminaryR2Names,
+      promiseDelayNames,
       projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
     });
-    const preparedFreeFunctionNames = new Set([...preliminaryR2Names, ...promiseDelayNames, ...suspendingAsyncNames]);
-    if (preparedFreeFunctionNames.size === 0 && preliminaryClassMethodNames.size === 0) {
+    preparedSelection = preparedPopulation.selection;
+    finalizedSelection = preparedSelection;
+    const { classMethodNames: finalClassMethodNames, freeFunctionNames: preparedFreeFunctionNames } =
+      preparedPopulation;
+    if (preparedFreeFunctionNames.size === 0 && finalClassMethodNames.size === 0) {
       // Final-context Promise preparation may reject an occupied/mismatched
       // runtime ABI. Keep that owner on the established direct route.
     } else {
@@ -3315,7 +3309,7 @@ function planIrFirstBodyRouting(
       const preparedClassMethods = prepareIrClassMethodBodies({
         ctx,
         sourceFile,
-        selection: { classMembers: preliminaryClassMethodNames },
+        selection: { classMembers: finalClassMethodNames },
         identityPlan: plan.identityPlan,
         overrideMap: plan.overrideMap,
         classShapes: plan.classShapes,

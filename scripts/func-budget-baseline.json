@@ -1,5 +1,5 @@
 {
-  "generated": "2026-08-02",
+  "generated": "2026-08-03",
   "threshold": 300,
   "functions": {
     "src/codegen-linear/index.ts::compileBinaryExpression": 420,
@@ -174,7 +174,7 @@
     "src/ir/integration.ts::compileIrPathFunctions": 1326,
     "src/ir/integration.ts::makeDynamicLowering": 306,
     "src/ir/integration.ts::makeFromAstResolver": 309,
-    "src/ir/integration.ts::makeResolver": 371,
+    "src/ir/integration.ts::makeResolver": 354,
     "src/ir/lower.ts::emitInstrTree": 1919,
     "src/ir/lower.ts::lowerIrFunctionBody": 2779,
     "src/ir/passes/inline-small.ts::renameInstrOperands": 529,
