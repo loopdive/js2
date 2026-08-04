@@ -2,7 +2,7 @@
 id: 4154
 title: "private access on a foreign receiver traps `illegal cast` instead of throwing the §7.3.28 PrivateBrandCheck TypeError"
 status: ready
-sprint: Backlog
+sprint: current
 priority: medium
 goal: error-model
 feasibility: medium
@@ -88,3 +88,12 @@ assuming only the write is affected.
 - Both named test262 files pass.
 - `illegal_cast` trap population does not grow; ideally it drops by 2 and the
   `trap-growth-allow` declaration in #4149 can be retired.
+
+## Suspended-session pointer (2026-08-04)
+
+Filed while suspending PR #4106; the full handover is in
+`plan/issues/4150-*.md` under `## Suspended Work`. The valve that makes #4106
+land without this fix is `trap-growth-allow` in `plan/issues/4149-*.md` —
+landing this issue retires it. Reproduce with `.tmp/run262.mjs` (drives
+`runTest262File` on both named tests); the three-arm A/B that isolates the
+cause is recorded above.

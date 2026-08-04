@@ -148,3 +148,10 @@ gc half — no `__constructor_identity` param on gc twins).
 - The repro returns 42 on --target standalone (and gc). ✅
 - acorn 8.18 UMD tiny-parse (`acorn.parse("var x = 1;", {ecmaVersion:2020})`)
   returns 1 on standalone. ✅
+
+## Suspended-session pointer (2026-08-04)
+
+Shipped in PR #4106, which was suspended before merging — full handover in
+`plan/issues/4150-*.md` under `## Suspended Work`. The `trap-growth-allow` in
+this file's frontmatter is a consequence of THIS fix un-masking a latent trap
+(#4154), not of a defect in it; it should be retired when #4154 lands.

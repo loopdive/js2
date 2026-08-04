@@ -153,3 +153,83 @@ noise and comparability are fixed.
 - `benchmarks/suites/{arrays,dom,mixed,strings}.ts`
 - `scripts/benchmark-lifecycle.mjs`
 - `.github/workflows/benchmark-refresh.yml`
+
+---
+
+## Suspended Work — 2026-08-04 (ttraenkler/claude-bench)
+
+Suspended mid-flight on operator instruction. **PR #4106 is open and needs an
+owner** — it is not merged and nothing is watching it.
+
+- **Branch**: `claude/js2-cross-frame-capture-slot` (pushed to the fork,
+  `ttraenkler/js2`)
+- **Checkout**: `/home/user/js2-up` (NOT a worktree — a plain clone whose
+  `origin` is the FORK and `upstream` is `loopdive/js2`)
+- **PR**: <https://github.com/loopdive/js2/pull/4106>, head `a24cd69b`,
+  `mergeable_state: blocked` (CI re-running on a fresh `main` merge), no `hold`
+- **Scratch probes** (gitignored, DIE WITH THE CONTAINER — re-create if needed):
+  `.tmp/propfn-min.mjs`, `.tmp/propfn-gc.mjs` (#4149 repros, both lanes),
+  `.tmp/run262.mjs` (drives `runTest262File` on the two brand-check tests —
+  this is the tool that root-caused the merge-queue park), `.tmp/gap.py`
+  (per-benchmark ratio table from a results json)
+
+### The one decision that needs a human
+
+The merge queue parked this PR on the #3189 uncatchable-trap ratchet
+(`illegal_cast` 48 → 50). I resolved it with the **`trap-growth-allow` valve**
+(declared in `plan/issues/4149-*.md`, `count: 2`, both tests named) and filed
+**#4154** for the real fix, rather than fixing #4154 inside this PR.
+
+That is a judgment call and it is **not settled**. The trade: two tests that
+were already failing now fail via an *uncatchable trap* instead of a catchable
+`Test262Error`. The valve is the documented mechanism for baseline-`fail` trap
+growth and #2900 is a near-identical precedent — but if the reviewer prefers
+the strictly-better outcome, fixing #4154 here would very likely turn both
+tests from FAIL to PASS (their remaining assertion is exactly the
+`assert.throws(TypeError, …)` a catchable throw satisfies) and retire the
+declaration. **Ask before landing if you have the option.**
+
+### What is done and verified
+
+Six commits of compiler work, three of them perf (#4150) and three the acorn
+chain (#4139/#4144/#4149), plus the tests and budget/valve declarations.
+`tests/issue-4150-fmod-integral-fast-path.test.ts` and
+`tests/issue-4150-split-single-pass.test.ts` are committed and green, and were
+mutation-checked to confirm they have teeth.
+
+Equivalence suite run in three batches (212 files) plus targeted re-runs; every
+failure reproduces with identical counts at the pre-change commit. Full list of
+known-pre-existing failures is in the PR body — do not re-investigate them.
+
+### Traps for whoever picks this up
+
+1. **Do not quote a ratio-vs-node from a single run on this box.** Absolute
+   numbers here run ~1.5–2× the published environment and several node
+   baselines are bimodal (V8 hoists loop-invariant work in some runs, not
+   others). `mixed/csv-parse` has *beaten* node in 18 of 220 historical runs.
+   Use `benchmarks/results/history.json` medians. An earlier version of this
+   PR's own description got this wrong and had to be rewritten — the failure
+   mode is the one §2/§5 of this issue already describes.
+2. **PR #4088 merged at `77f080d0`, the three-defect state, not its five.** Its
+   description lists five fixes; two (`2ef595b7` fnctor-twin, `659c0bf9`
+   stack-balance tee) never reached `main` and are carried by #4106. If #4106
+   is closed without merging, those two are lost again — re-check before
+   abandoning the branch.
+3. **The auto-park bot mis-parsed the batch.** Its comment named
+   "(#4139, #4144, #4106)" as merge-group members; #4139 and #4144 are not PRs
+   (`GET /pulls/4139` → 404) — the bot pulled issue refs out of this PR's own
+   title. There was no batch. Worth fixing in the bot; noted on the PR.
+4. **Benchmark runs dirty the tree.** `benchmarks/run.ts` writes
+   `benchmarks/results/` and `public/benchmarks/results/`; both contain TRACKED
+   files. `git checkout -- benchmarks/results public/benchmarks/results` after
+   a run, and do not `rm -rf` the public dir (I did once and had to restore).
+
+### Remaining #4150 work not attempted
+
+`string/case-convert` is near its structural floor and I deliberately left it —
+reasoning and the scaling measurement are in the PR body. The DOM
+benchmark-definition mismatch (`modify-text` does 10× the writes of its wasm
+source plus a concat; `read-attributes` tests `!== null` vs `.length > 0`) is
+diagnosed but unfixed; those two published rows compare different programs.
+The remaining P4 from the DOM investigation — caching `declared_global` reads
+in a module-level wasm global, ~1/3 of `modify-text`'s crossings — is untouched.
