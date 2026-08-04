@@ -771,9 +771,54 @@ export function ensureFuncClosureSingleton(
   if (!wrapperTypes) return null;
   const { structTypeIdx, liftedFuncTypeIdx } = wrapperTypes;
 
-  const trampolineName = `__fn_tramp_${funcName}_cached`;
+  // (#4133) The trampoline and cache were keyed by the BARE function name, so
+  // two modules declaring the same top-level name shared one singleton. The
+  // reuse path below validates the existing trampoline's SHAPE but never that it
+  // targets the same function, so the second module's closure value silently
+  // called the FIRST module's function — and, once both units became genuinely
+  // reachable, two unit-anchored ABI binding ids claimed one trampoline object
+  // and `ProgramAbiSession` rejected the second ("allocator locator … is already
+  // owned by"), which is how this surfaced on the ESLint graph (eslint-visitor-
+  // keys 3.4.3 and 5.0.1 both ship a top-level `getKeys`).
+  //
+  // Resolve a key that is unique PER TARGET: reuse the base name when it is free
+  // or already points at this exact function, otherwise take the next `$n`
+  // suffix. Assignment order is compile order, which is deterministic and
+  // identical across passes — so unlike embedding a raw function handle, this
+  // cannot drift when late imports shift indices (#2043).
+  const targetOfTrampoline = (handle: number): number | undefined => {
+    const body = definedFuncAt(ctx, handle)?.body;
+    if (!body) return undefined;
+    for (let i = body.length - 1; i >= 0; i--) {
+      const instr = body[i]!;
+      if (instr.op === "call") return instr.funcIdx;
+    }
+    return undefined;
+  };
+
+  let key = funcName;
+  let trampolineName = `__fn_tramp_${key}_cached`;
   let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
-  let cacheGlobalIdx = ctx.funcClosureGlobals.get(funcName);
+  let cacheGlobalIdx = ctx.funcClosureGlobals.get(key);
+  for (let disambiguator = 1; ; disambiguator++) {
+    // Free, or an existing pair that already targets exactly this function.
+    if (trampolineFuncIdx === undefined && cacheGlobalIdx === undefined) break;
+    if (
+      trampolineFuncIdx !== undefined &&
+      cacheGlobalIdx !== undefined &&
+      targetOfTrampoline(trampolineFuncIdx) === funcIdx
+    ) {
+      break;
+    }
+    // A half-registered pair is the pre-existing "a user declaration occupies
+    // the synthetic name" case — keep rejecting it rather than inventing a
+    // suffix around it.
+    if ((trampolineFuncIdx === undefined) !== (cacheGlobalIdx === undefined)) break;
+    key = `${funcName}$${disambiguator}`;
+    trampolineName = `__fn_tramp_${key}_cached`;
+    trampolineFuncIdx = ctx.funcMap.get(trampolineName);
+    cacheGlobalIdx = ctx.funcClosureGlobals.get(key);
+  }
 
   // The generated trampoline and cache are one provenance pair. A source
   // declaration may legally occupy the synthetic trampoline name before the
@@ -789,7 +834,7 @@ export function ensureFuncClosureSingleton(
     if (
       trampoline?.name !== trampolineName ||
       trampoline.typeIdx !== liftedFuncTypeIdx ||
-      cache?.name !== `__fn_closure_${funcName}` ||
+      cache?.name !== `__fn_closure_${key}` ||
       cache.type.kind !== "externref" ||
       !cache.mutable
     ) {
@@ -826,12 +871,12 @@ export function ensureFuncClosureSingleton(
 
     cacheGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
     ctx.mod.globals.push({
-      name: `__fn_closure_${funcName}`,
+      name: `__fn_closure_${key}`,
       type: { kind: "externref" },
       mutable: true,
       init: [{ op: "ref.null.extern" }],
     });
-    ctx.funcClosureGlobals.set(funcName, cacheGlobalIdx);
+    ctx.funcClosureGlobals.set(key, cacheGlobalIdx);
   }
 
   observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx, cacheGlobalIdx);

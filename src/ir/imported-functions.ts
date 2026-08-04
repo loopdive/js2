@@ -432,8 +432,34 @@ export function makeIrImportedFunctionResolver(
       if (!target) return undefined;
       const targetSource = target.declaration.getSourceFile();
       identitySources.assertActiveSource(targetSource);
+      // (#4028) `targetUnitIdByDeclaration` is populated ONLY from
+      // `sourceFile.statements`, i.e. TOP-LEVEL FunctionDeclarations — that is
+      // the population the unit inventory authors. `targetForSymbol`, however,
+      // accepts any bodied non-ambient FunctionDeclaration in the source set,
+      // including one NESTED inside a function expression. So a nested
+      // declaration was admitted as a direct-call target that the inventory can
+      // never own, and the missing lookup was reported as an invariant
+      // violation that aborted the whole compile.
+      //
+      // `resolveTopLevelFunctionValue` already re-checks top-level membership
+      // for its own path; the imported path did not. This restores the
+      // symmetry at the identity boundary, where the inventory's scope is known.
+      //
+      // Real-world impact: `imurmurhash` declares `function MurmurHash3(…)`
+      // inside an IIFE — the ordinary UMD shape — so ESLint's dependency graph
+      // hard-failed with "imported target MurmurHash3 has no exact structural
+      // unit identity".
+      //
+      // Out of the inventory's scope is NOT an invariant violation: returning
+      // `undefined` means "not direct-call evidence", the same supported
+      // outcome every other guard in this resolver produces, and the call
+      // lowers through the ordinary (non-direct) path.
+      const isTopLevelInSource = targetSource.statements.some((statement) => statement === target.declaration);
+      if (!isTopLevelInSource) return undefined;
       const targetUnitId = identitySources.targetUnitIdByDeclaration.get(target.declaration);
       if (targetUnitId === undefined) {
+        // A TOP-LEVEL declaration missing from the map is a genuine desync
+        // between the inventory and the live AST — keep hard-failing that.
         return planningInvariant(
           "missing-planning-owner",
           `imported target ${target.targetName} has no exact structural unit identity`,
