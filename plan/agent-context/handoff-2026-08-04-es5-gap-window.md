@@ -97,13 +97,29 @@ Fixed at source (§10.1.9 no-op), not at the query. Six-line repro in #4010.
 - A **spurious bot park** looks like: shard dying at "Setup Node and pnpm
   (cached)" — an infra step, so the verdict never ran. The bot comment's own
   footer flags this case. Diagnose the cited run before touching any `hold`.
+- **`UNSTABLE` from a pending `measure-and-gate` is UNFINISHED, not FAILED.**
+  Two PRs read `UNSTABLE` purely because that non-required job (~15 min) was
+  still in progress; both settled to CLEAN unaided. Re-running would have been
+  wrong. Distinguish pending from failed before acting.
+- **`auto-enqueue.yml` needed no help all window** — every PR that reached
+  CLEAN (#4100, #4104, #4105, #4106) was picked up within a sweep or two; the
+  shepherd used zero of its one-shot backstops. Reach for a manual enqueue only
+  after the ~30-min cron has demonstrably passed the PR by.
+- **`quality` fails fast**: the gates after the failing one are *skipped*, not
+  passed. A first-round failure means later gates have never run on that PR —
+  expect a possible second round (#4100's post-R-FUNC tail ran only on round 2).
 
 ## Open at suspend
 
-- **PR #4100** — all six required checks GREEN; `UNSTABLE` only because the
-  non-required `measure-and-gate` was still in progress. It goes CLEAN and
-  auto-enqueue takes it when that finishes. **Verify it merged by CONTENT on
-  main next session** (`src/codegen/instance-tombstones.ts` present).
+- **PR #4100** (G1 stage 1) — reached CLEAN and **auto-enqueue took it: merge
+  queue position 1, `merge_group` re-validation running** at stand-down.
+  **First action next session: verify it merged by CONTENT on upstream/main**
+  (`src/codegen/instance-tombstones.ts` present) — not by PR field. If it was
+  parked instead, read the cited run before touching the `hold`.
+- **PR #4109** (`issue-4119-ladder-build`, head `bf8dfeb5c`) — D-g4-build's
+  `fix(#4119): runtime Object.prototype.toString classifier for standalone
+  (arm 1)`. Opened one minute before stand-down, `BEHIND`, full CI just
+  started. **Nothing diagnosed — it needs a fresh watch next session.**
 - **#4098 and #4119 claims remain HELD** (`ttraenkler/dev-4098-g1`,
   `ttraenkler/dev-4119-g4`) so the work is marked as resumable, not abandoned.
   Release or re-claim deliberately.
