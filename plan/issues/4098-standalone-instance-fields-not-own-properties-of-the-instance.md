@@ -20,6 +20,15 @@ updated: 2026-08-04
 loc-budget-allow:
   - src/codegen/object-runtime.ts
   - src/codegen/index.ts
+# (#4098 G1 stage 1) Sibling grant to the above: each function grew by exactly
+# ONE line — the irreducible wiring call into instance-tombstones.ts (fill in
+# the two finalize drivers, reserve in ensureObjectRuntime). The subsystem
+# extraction the R-FUNC gate prescribes was already done (see comment above);
+# the +1 IS the call to it.
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 priority: high
 feasibility: hard
 reasoning_effort: max
