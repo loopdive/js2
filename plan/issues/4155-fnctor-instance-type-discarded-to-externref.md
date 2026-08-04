@@ -465,6 +465,40 @@ That is a real result but a bounded one: Phase 2 (member dispatch on a
 struct-typed receiver) is where the note says it died, and Phase 2 is not
 written yet.
 
+### Measured on REAL acorn (2026-08-04), not a fixture
+
+`tests/dogfood/acorn-standalone-compile.mjs`, standalone, flag off vs on:
+
+| | flag off | flag on | delta |
+| --- | ---: | ---: | ---: |
+| binary | 943,140 B | **866,627 B** | **−76,513 (−8.1%)** |
+| function imports | 0 | 0 | — |
+| canaries (runtime/parseExprAt/tokenizer/fnBody) | 2,3,4,5 | 2,3,4,5 | — |
+| census `typed` | 49 | **52** | +3 |
+| census `discarded` | 4 | **1** | **−3** |
+| census `unknown` | 43 | 43 | — |
+| IR-path fallbacks | 3 | 3 | — |
+
+- The three recovered slots are `Parser.type` (141 reads), `Node.loc`, `Token.loc`.
+- The one that remains is `Parser.options`, and it is correctly **out of scope**:
+  it is boxed by the #2937 object-hash-consumer path, not by #1712. So this
+  lever is now **exhausted at the slot level** — there is no fifth slot to get.
+- `unknown` did not move, confirming that bucket is #743's and not reachable
+  from here.
+- **The 3 IR-path fallbacks are PRE-EXISTING** (`parse`, `parseExpressionAt`,
+  `tokenizer`, `typeIdx parity mismatch`) — they appear identically with the
+  flag OFF. An earlier draft of this section attributed them to Phase 1 before
+  the baseline run existed; it was wrong.
+- **Loose end worth a look:** `tests/issue-1712-standalone.test.ts` asserts
+  `report.errors` is `[]`, and this baseline run of the same script produced 3.
+  Either the test is currently red on main or its invocation differs from a bare
+  run. Not investigated here.
+
+The −8.1% is a code-size result, not a speed result. It is consistent with
+reads losing cast/dispatch scaffolding, but **no runtime measurement has been
+taken** — `__extern_get` self-time vs the #3780 5.6% baseline is still Phase 4
+and still unmeasured. Do not quote the 8.1% as a speedup.
+
 ### Revised next steps
 
 1. **Phase 2** — member dispatch, data-fields-only static, everything else
