@@ -1,4 +1,4 @@
-// #4045 / #4117 — `claim-issue.mjs` must reserve against ONE book, and that
+// #4133 / #4117 — `claim-issue.mjs` must reserve against ONE book, and that
 // book must be the one everybody else reads.
 //
 // The defect: `CLAIM_ASSIGN_REMOTE` defaulted to `origin`, and in agent
@@ -173,7 +173,7 @@ afterEach(() => {
   rmSync(fx.root, { recursive: true, force: true });
 });
 
-describe("#4045/#4117 one assignment ledger", () => {
+describe("#4133/#4117 one assignment ledger", () => {
   it("writes reservations to UPSTREAM's book, not the fork's", () => {
     const r = run(fx, ["--allocate", "--no-pr-scan", "--allow-unscanned", "--by", "lane-a"]);
     expect(r.code, r.stderr).toBe(0);
@@ -228,7 +228,7 @@ describe("#4045/#4117 one assignment ledger", () => {
   it("--check names the book that answered", () => {
     const c = run(fx, ["--check", "4001"]);
     expect(c.code).toBe(0);
-    // "the ledger says X" is unusable evidence without its ref (#4045).
+    // "the ledger says X" is unusable evidence without its ref (#4133).
     expect(c.stderr).toMatch(/read upstream\/issue-assignments/);
   });
 
