@@ -1,10 +1,11 @@
 ---
 id: 4025
 title: "`.apply(thisArg)` DROPS the receiver — no `this`-binding thunk is emitted, so `f.apply(o) === o` is false (`.call()` emits one and is correct)"
-status: in-progress
+status: done
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-04
+completed: 2026-08-04
 assignee: "ttraenkler/claude-harvest"
 priority: high
 horizon: l
@@ -208,3 +209,114 @@ either install `this` or refuse to compile — dropping it is the bug.
 function g() { return this.x; }
 export function test() { const o = { x: 42 }; return g.call(o); }  // NaN, expect 42
 ```
+
+## 2026-08-04 — fix, and TWO corrections to the analysis above
+
+### 1. The trampoline's runtime null-split claim HOLDS (this was the gating question)
+
+Verified by reading `ensureNamedThisCallTrampoline` **and** by disassembling an
+emitted module (`--target wasi`). The trampoline body really is a runtime split
+on the receiver value, with the null arm being the pre-existing unbound exact
+call:
+
+```wat
+(func $__named_this_call_g_49 (type 57)
+  (local $__previous_this externref) (local $__result externref)
+  local.get 0
+  ref.is_null
+  (if (result externref)
+    (then call 49)                    ;; null receiver → legacy unbound call
+    (else                             ;; live receiver → save/install/restore
+      global.get 9  local.set 1
+      local.get 0   global.set 9
+      (try (result externref) (do call 49)
+        (catch_all local.get 1 global.set 9 rethrow 0))
+      local.set 2 local.get 1 global.set 9 local.get 2)))
+```
+
+So the static non-nullish requirement was redundant for admission, exactly as
+:74 suspected. **Fix**: `oracleProvesNonNullish` (a proof no `any` receiver can
+ever supply) is replaced by `factIsStaticallyNullish` — admission now refuses
+only a receiver the oracle proves is *always* nullish. Every other gate in
+`resolveNamedThisCallTarget` is untouched.
+
+Two things make the relaxation safe beyond the split itself:
+
+- The call site (`calls.ts`) compiles `thisArg` with an **externref expected
+  type**, and `compileExpression` guarantees exactly one value of the expected
+  type on the stack in every path (`VOID_RESULT` → `pushDefaultValue`, `null` →
+  `pushDefaultValue`, kind mismatch → `coerceType`). So no stack-shape hazard
+  from an unprovable receiver. `void` is still refused anyway, belt and braces.
+- Standalone stays host-import-free for `any` receivers holding a number,
+  string, boolean, or `unknown` (measured: `imports=[]`, all valid).
+
+**Nullish behaviour is unchanged, measured before and after in BOTH lanes**:
+`g.call(null)`, `g.call(undefined)`, `g.call()`, `g.apply(null)`, and an
+`any`-typed receiver holding null/undefined at runtime all leave
+`this === undefined` (js2wasm compiles TS modules, which are strict — there is
+no sloppy-mode global substitution to preserve). The last two now route through
+the trampoline and take its null arm; the observable answer does not move.
+
+Also verified byte-identical on the `#3796` negatives corpus: the set of shapes
+that get a trampoline, and every one of their runtime values, is unchanged by
+this patch.
+
+### 2. The repro in the section above is NOT purely this bug — it is TWO bugs
+
+`const o = { x: 42 }; g.call(o)` conflates the `this`-binding drop with a
+**separate, standalone-only defect** that has nothing to do with `this`:
+
+```ts
+function h(p: any) { return p.x; }
+export function test() { const o = { x: 42 }; return h(o); }  // garbage in standalone, 42 in host
+```
+
+No `this`, no `.call`, still wrong. Measured (`--target wasi`):
+
+| receiver binding | dynamic `p.x` |
+| --- | --- |
+| `const o = {x:42}` inside a function | **wrong** |
+| `let o = {x:42}` inside a function | **wrong** |
+| `h({x:42})` inline literal | **wrong** |
+| `const o = {x:42}` at module scope | 42 |
+| `var o = {x:42}` at module scope | 42 |
+| `const o: O = {x:42}` (annotated) | 42 |
+
+I.e. a dynamic property read on a **function-local, un-annotated** object
+literal returns `undefined` in standalone. The host lane is correct throughout.
+
+**This needs its own issue and this branch could not file one**: `gh` is not
+installed in this container, so `claim-issue.mjs --allocate` reports
+`PR-scan DEGRADED` and reserving an id under `--allow-unscanned` would risk a
+collision with an in-flight PR. Recorded here instead so the finding is not
+lost; please allocate an id for it from a checkout that has `gh`.
+
+It is also why the tests below use annotated literals or receiver *identity*
+rather than the literal repro text — using the repro as-written would make them
+fail for the wrong reason.
+
+### What landed
+
+- `src/codegen/named-this-call.ts` — `factIsStaticallyNullish` replaces
+  `oracleProvesNonNullish`; module doc records that the runtime split is what
+  makes admission safe.
+- `tests/issue-4025-apply-call-this-binding.test.ts` — 15 standalone rows +
+  2 host-lane equivalence rows. Mutation-checked against the pre-fix compiler:
+  **11 of 17 fail** without the change. The 6 that pass on both sides are the
+  deliberate regression guards (statically-typed receiver, and the five
+  nullish-convention rows) — they exist to pin behaviour that must NOT move.
+
+Fixed shapes (all previously silently wrong): `.call(o)` / `.apply(o)` /
+`.apply(o, [])` / `.apply(o, [a])` / `.apply(o, [a, b])` with an `any` receiver,
+receiver identity (`g.call(o) === o`), constructor-function (`new O()`)
+receivers, class instances behind `any`, and ambient-`this` restore across
+consecutive calls with different receivers.
+
+### Pre-existing failures NOT caused by this change
+
+Confirmed identical with and without the patch (A/B by file copy):
+`tests/issue-2773-arraylike-call-thisarg.test.ts` (9 failures) and one row of
+`tests/issue-3796-named-this-call.test.ts` ("keeps unstable identity … off the
+trampoline" — `readsThis` gets a trampoline via the #3983 `.apply` reshape, which
+postdates that assertion), plus one row of `tests/issue-2166.test.ts`. Worth a
+separate look; they are red on `main` today.
