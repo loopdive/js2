@@ -26,6 +26,10 @@ loc-budget-allow:
   - src/codegen/literals.ts
   - src/ir/from-ast.ts
   - src/codegen/expressions/call-receiver-method.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/i32-static-range-expr.ts
+  - src/codegen/property-access.ts
+  - src/codegen/analysis/static-numeric-range.ts
 func-budget-allow:
   - src/codegen/string-ops.ts::compileNativeStringMethodCall
   - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
@@ -107,9 +111,25 @@ On the local Node v24.4.1 / macOS arm64 mixed-suite harness, host CSV parsing
 improves from 3.115 ms to 0.261 ms and beats the same-run 0.317 ms Node baseline;
 GC-native measures 0.197 ms. The unchanged 5 ns plausibility floor passes.
 
+## Affine array-index checkpoint
+
+Immutable numeric constants and canonical counted-loop variables now feed the
+existing static integer-range proof. Array reads and writes use that proof to
+emit affine indices such as `i * N + k` directly as `i32.mul`/`i32.add`, rather
+than converting the counters to f64 and truncating the result back to i32 at
+every access. The fast path requires the complete expression range to fit in a
+signed i32; an unbounded or overflowing expression keeps the generic f64 path.
+
+On the local Node v24.4.1 / macOS arm64 mixed-suite harness, the first candidate
+measurement improves matrix multiply from 0.267 ms to 0.203 ms in host-call and
+from 0.286 ms to 0.117 ms in GC-native. Linear-memory improves from 0.487 ms to
+0.430 ms but remains follow-up work. The emitted run function retains all three
+matrix index expressions, both hot array reads, the output write, and the f64
+multiply-accumulate.
+
 ## Follow-up
 
 - Move the remaining dispatcher-local proof consumers into subsystem modules
   while preserving the benchmark wins.
-- Close host-string search and affine-matrix gaps that remain after this checkpoint.
+- Close host-string search and the remaining linear-memory matrix gap.
 - Re-run the entire landing-page inventory on main after merge.

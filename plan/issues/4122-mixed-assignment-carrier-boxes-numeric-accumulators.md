@@ -1,10 +1,11 @@
 ---
 id: 4122
 title: "perf regression: `bindingHasMixedAssignmentCarrier` treats an UNRESOLVABLE assignment as a cross-domain one, boxing every numeric accumulator fed by a dynamic call — `method` axis 1.56x → 5.26x"
-status: ready
+status: done
 sprint: current
 created: 2026-08-03
 updated: 2026-08-03
+completed: 2026-08-03
 priority: high
 horizon: m
 feasibility: medium
@@ -15,6 +16,11 @@ language_feature: value-representation
 goal: performance
 related: [3961, 4121, 3683, 3754, 3765]
 origin: "git bisect of the cross-engine `method` axis, 2026-08-03"
+# The verdict must reach `bindingHasMixedAssignmentCarrier`, which runs before
+# any carrier type exists — there is no subsystem module upstream of it to hold
+# the field, so the context gains one line plus its doc.
+loc-budget-allow:
+  - src/codegen/context/types.ts
 ---
 
 # #4122 — an unresolvable assignment is not a mixed-domain assignment
@@ -136,16 +142,63 @@ is worth landing on its own because it is a measured 3.5x regression on main.
 
 ## Acceptance criteria
 
-- [ ] `var s = 0; for (…) s = s + p.inc();` emits an `f64` local and no
+- [x] `var s = 0; for (…) s = s + p.inc();` emits an `f64` local and no
       `__box_number` in the loop body, when `inc` is provably numeric.
-- [ ] Cross-engine `method` axis back to ≤2.0x vs node, measured same-container
-      interleaved with matching checksums.
-- [ ] The #3961 / PR #4008 React case that motivated the demotion still behaves
-      — a regression test pinning it, not just a green suite.
-- [ ] A binding genuinely assigned across domains (`let b = true; b = "s";`)
+      Measured: `$s` externref → **f64**, box 3 → 1, unbox 2 → **0**.
+- [x] Cross-engine `method` axis back to ≤2.0x vs node, measured same-container
+      interleaved with matching checksums. **2.85–3.01 ms → 0.813 ms (3.6x)**,
+      i.e. **1.35–1.67x vs node**, `chk=45000150000` on every leg.
+- [x] The #3961 / PR #4008 hazard still behaves — pinned by three explicit
+      cross-domain tests, not just a green suite.
+- [x] A binding genuinely assigned across domains (`let b = true; b = "s";`)
       still gets the boxed carrier, with a test.
-- [ ] No equivalence-suite regressions, confirmed by a full-capture run plus a
+- [x] No equivalence-suite regressions, confirmed by a full-capture run plus a
       kill-switch A/B of the failing set (not by a count match).
+
+## Result
+
+| axis                  | before | after | node        |
+| --------------------- | -----: | ----: | ----------- |
+| method                |   2.93 | 0.813 | 0.49 – 0.60 |
+| tokenizer (unchanged) |  0.253 | 0.257 | 0.17        |
+
+## The fix took three parts, not one
+
+Consulting the fixpoint was the easy part. Two gaps in the analysis had to close
+first, each verified by querying the verdict directly before and after:
+
+1. **Self-reference.** `s = s + f()` cannot be proven by a plain least fixpoint —
+   proving `s` numeric requires `s` numeric. The grounded set now assumes the
+   slot while judging its own definitions (the same induction `withSelf` gives
+   the property path), then re-checks **groundedness with the assumption
+   withdrawn**, so `var s = s + 1` — self-justifying, and NaN in JS — is still
+   rejected, and a mutual cycle `var a = b; var b = a` still cannot enter
+   (the assumption covers a slot's own name, never its partner's).
+
+2. **`numericFunctions` on a non-`this` receiver.** The verdict was consulted
+   only for `this.m()`:
+
+   ```ts
+   if (recv.kind === ts.SyntaxKind.ThisKeyword) return sets.numericFunctions.has(callee.name.text);
+   ```
+
+   `numericFunctions` is whole-program and NAME-keyed — "every visible function
+   of this name returns a number on every path" — which is exactly as true of
+   `p.inc()`. The restriction was conservatism, not a consequence of the
+   verdict. Widened to a bare-identifier receiver only, so member chains
+   (`a.b.inc()`) and call results (`f().inc()`) keep the old answer.
+
+   This does widen a trust boundary: an `inc` that is not statically visible
+   (a host/builtin method behind an opaque receiver) cannot demote the name.
+   That exposure already existed for `this.m()`, whose receiver is equally
+   unconstrained at runtime, and it is the same name-keying trade the file
+   documents throughout.
+
+3. **The split itself**, in `bindingHasMixedAssignmentCarrier`.
+
+Behind `JS2WASM_MIXED_CARRIER_NUMERIC=0` (part 3). Parts 1–2 are analysis
+precision improvements and are not separately gated — they can only ever add
+slots to a grounded set that every consumer already treats as advisory.
 
 ## Reproduce
 

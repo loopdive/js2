@@ -184,6 +184,30 @@ export function recordScriptVarBindingNames(target: Set<string>, sourceFile: ts.
   walk(sourceFile);
 }
 
+/** Names owned by the declarative half of a Script's GlobalEnvironmentRecord.
+ * Only declarations that are direct SourceFile children participate: a
+ * block/loop lexical has its own nested environment and must not collide with
+ * a later indirect-eval `var` declaration. */
+export function recordScriptGlobalLexicalBindingNames(target: Set<string>, sourceFile: ts.SourceFile): void {
+  const recordName = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) {
+      target.add(name.text);
+      return;
+    }
+    for (const element of name.elements) {
+      if (!ts.isOmittedExpression(element)) recordName(element.name);
+    }
+  };
+  for (const statement of sourceFile.statements) {
+    if (ts.isVariableStatement(statement)) {
+      if ((statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue;
+      for (const declaration of statement.declarationList.declarations) recordName(declaration.name);
+    } else if (ts.isClassDeclaration(statement) && statement.name) {
+      target.add(statement.name.text);
+    }
+  }
+}
+
 /**
  * (#3057) True when the source dynamically constructs a `$__ta_dyn_view` —
  * `new <ctorExpr>(bufferArg[, off[, len]])` where `<ctorExpr>` is an IDENTIFIER

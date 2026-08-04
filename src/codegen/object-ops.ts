@@ -45,7 +45,7 @@ import {
   maybeEmitVecLengthDefine,
   tryEmitVecLengthDefineForDefineProperties,
 } from "./array-length-define.js";
-import { isStaticDescWellFormed } from "./descriptor-shape.js";
+import { isStaticDescWellFormed, isStaticallyNonObjectDescExpr } from "./descriptor-shape.js";
 import {
   descriptorFieldName,
   inheritedTrueDescriptorFlags,
@@ -127,28 +127,10 @@ function provesDenseLiteralOwnIndex(
   return !interveningReference;
 }
 
-/**
- * Check whether a descriptor argument is statically a non-object primitive
- * value (number/string/boolean/null/undefined). When true, ES §6.2.5.5 step 1
- * requires the runtime to throw a TypeError "Property description must be an
- * object". We detect this at compile time and emit the throw directly.
- */
-function isStaticallyNonObjectDescArg(descArg: ts.Expression): boolean {
-  while (ts.isParenthesizedExpression(descArg)) descArg = descArg.expression;
-  if (
-    ts.isNumericLiteral(descArg) ||
-    ts.isStringLiteral(descArg) ||
-    ts.isNoSubstitutionTemplateLiteral(descArg) ||
-    descArg.kind === ts.SyntaxKind.TrueKeyword ||
-    descArg.kind === ts.SyntaxKind.FalseKeyword ||
-    descArg.kind === ts.SyntaxKind.NullKeyword
-  ) {
-    return true;
-  }
-  if (ts.isIdentifier(descArg) && descArg.text === "undefined") return true;
-  if (ts.isPrefixUnaryExpression(descArg) && ts.isNumericLiteral(descArg.operand)) return true;
-  return false;
-}
+// (#4061) `isStaticallyNonObjectDescArg` moved to descriptor-shape.ts as
+// `isStaticallyNonObjectDescExpr` — `Object.create`'s static expansion needs
+// the identical §6.2.5.5-step-1 classification, and a module-private copy here
+// is exactly why it did not have it.
 
 function isUndefinedLikeExpression(expr: ts.Expression): boolean {
   const inner = unwrapTransparentExpression(expr);
@@ -879,7 +861,7 @@ export function compileObjectDefineProperty(
   // Static check: numeric/string/boolean/null/undefined literal descriptors are spec
   // violations. The runtime helpers already check this for opaque cases, but the
   // compiler-time check produces a clean throw that the test262 suite expects.
-  if (isStaticallyNonObjectDescArg(descArg)) {
+  if (isStaticallyNonObjectDescExpr(descArg)) {
     // Compile obj/prop for side effects then throw.
     const t1 = compileExpression(ctx, fctx, objArg);
     if (t1) fctx.body.push({ op: "drop" });

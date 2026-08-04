@@ -5,6 +5,7 @@
  */
 import { ts } from "../ts-api.js";
 import { chainRootIsGrowable } from "./property-access.js";
+import { emitHostEqualityFromStack } from "./coercion-engine.js";
 import { resolveWidenedVarKey } from "./widened-var-key.js";
 import { isBooleanType, isStringType, isSymbolType } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -30,7 +31,11 @@ import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue } from "./shared.js";
 import { compileStringLiteral } from "./string-ops.js";
 import { emitDynamicWithDelete, findWithBinding, resolveWithBinding } from "./with-scope.js";
-import { emitGlobalEnvironmentDelete, tryEmitNonConfigurableGlobalObjectDelete } from "./global-environment.js";
+import {
+  emitGlobalEnvironmentDelete,
+  emitRuntimeEvalGlobalRead,
+  tryEmitNonConfigurableGlobalObjectDelete,
+} from "./global-environment.js";
 
 // (#2726 group (b), partial) The only value properties of the global object with
 // `[[Configurable]]: false` (ECMA-262 §19.1). `delete <bareIdentifier>` of any of
@@ -1397,6 +1402,23 @@ function sourceHasIdentifierAssignment(sf: ts.SourceFile, name: string): boolean
  * For statically known types, emits the string constant directly.
  * For externref/union types, calls the __typeof host helper.
  */
+function runtimeEvalMayRebindIdentifier(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (!(ctx.standalone || ctx.wasi) || !ctx.runtimeEvalGlobalFunctionBindings) return false;
+  let bare = expression;
+  while (
+    ts.isParenthesizedExpression(bare) ||
+    ts.isAsExpression(bare) ||
+    ts.isTypeAssertionExpression(bare) ||
+    ts.isNonNullExpression(bare)
+  ) {
+    bare = bare.expression;
+  }
+  if (!ts.isIdentifier(bare) || !ctx.moduleGlobals.has(bare.text)) return false;
+  return (
+    (ctx.globalObjectVarBindings?.has(bare.text) ?? false) || (ctx.liveFuncBindingGlobals?.has(bare.text) ?? false)
+  );
+}
+
 export function compileTypeofExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1493,6 +1515,15 @@ export function compileTypeofExpression(
         return compileStringLiteral(ctx, fctx, "undefined");
       }
       if (!hasValueDecl) {
+        if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+          addUnionImports(ctx);
+          const typeofIdx = ctx.funcMap.get("__typeof");
+          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          if (typeofIdx !== undefined && valueType !== null) {
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__typeof") ?? typeofIdx });
+            return { kind: "externref" };
+          }
+        }
         return compileStringLiteral(ctx, fctx, "undefined");
       }
     }
@@ -1545,6 +1576,13 @@ export function compileTypeofExpression(
       bareTdz = (bareTdz as ts.ParenthesizedExpression | ts.AsExpression).expression;
     }
     if (ts.isIdentifier(bareTdz) && fctx.boxedTdzFlags?.has(bareTdz.text)) {
+      forceRuntimeTypeof = true;
+    }
+    // A script global synchronized around runtime eval is mutable in the JS
+    // sense, irrespective of the checker's flow type at this source position.
+    // Eval may have replaced `var initial` (statically `undefined`) with an
+    // interpreted function, so folding `typeof initial` is unsound.
+    if (runtimeEvalMayRebindIdentifier(ctx, bareTdz)) {
       forceRuntimeTypeof = true;
     }
     // (#2623 P-7) `typeof x` where x's FLOW-narrowed type is null/undefined but
@@ -1691,6 +1729,32 @@ export function compileTypeofComparison(
       }
       const sym = ctx.checker.getSymbolAtLocation(ident);
       if (!sym?.valueDeclaration) {
+        const annexB = emitAnnexBTypeofFlagBranch(ctx, fctx, ident.text);
+        if (annexB) {
+          const actual = annexB;
+          if (actual.kind !== "externref") return null;
+          const literalType = compileStringLiteral(ctx, fctx, stringLiteral);
+          if (!literalType) return null;
+          return emitHostEqualityFromStack(ctx, fctx, actual, literalType, true, isNeq);
+        }
+        if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+          addUnionImports(ctx);
+          let helperName: string | null = null;
+          if (stringLiteral === "number") helperName = "__typeof_number";
+          else if (stringLiteral === "string") helperName = "__typeof_string";
+          else if (stringLiteral === "boolean") helperName = "__typeof_boolean";
+          else if (stringLiteral === "bigint") helperName = "__typeof_bigint";
+          else if (stringLiteral === "undefined") helperName = "__typeof_undefined";
+          else if (stringLiteral === "object") helperName = "__typeof_object";
+          else if (stringLiteral === "function") helperName = "__typeof_function";
+          const helperIdx = helperName === null ? undefined : ctx.funcMap.get(helperName);
+          const valueType = emitRuntimeEvalGlobalRead(ctx, fctx, ident.text, true);
+          if (helperIdx !== undefined && valueType !== null) {
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(helperName!) ?? helperIdx });
+            if (isNeq) fctx.body.push({ op: "i32.eqz" });
+            return { kind: "i32" };
+          }
+        }
         const matches = "undefined" === stringLiteral;
         const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
         fctx.body.push({ op: "i32.const", value: result });
@@ -1729,6 +1793,9 @@ export function compileTypeofComparison(
     staticTypeof = mathConstants.has(operand.name.text) ? "number" : "function";
   } else {
     staticTypeof = staticTypeofForType(ctx, tsType);
+  }
+  if (staticTypeof !== null && runtimeEvalMayRebindIdentifier(ctx, operand)) {
+    staticTypeof = null;
   }
   // (#2623 P-7) Same unsound-fold guard as compileTypeofExpression: a
   // null/undefined FLOW narrowing over a binding assigned elsewhere (closure-

@@ -9,6 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
+import { captureSourceSlot } from "../closures/capture-source-slot.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
@@ -35,6 +36,8 @@ import {
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
 import { calleeIsBoundFunctionVar, resolveStoredObjectStaticMethod } from "../object-builtin-effects.js";
+import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
 import { emitNullCheckThrow, emitNullGuardedStructGet, typeErrorThrowInstrs } from "../property-access.js";
 import { emitStandaloneRegExpToStringFromExpr } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
@@ -69,6 +72,7 @@ import {
 } from "./helpers.js";
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import { isForeignEvalNode } from "./eval-source.js";
+import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import {
   buildArgcExtrasReset,
@@ -969,6 +973,15 @@ export function compileIdentifierCall(
       if (storedObjectCall !== undefined) return storedObjectCall;
     }
 
+    // Linked runtime eval can replace a script function binding with an
+    // interpreted closure. Such a binding must call its live externref global
+    // through the generic apply bridge; a direct call to the declaration's
+    // immutable funcIdx would ignore the replacement entirely.
+    if (ctx.runtimeEvalGlobalFunctionBindings && ctx.liveFuncBindingGlobals?.has(funcName)) {
+      const liveCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      if (liveCall !== null) return liveCall;
+    }
+
     // (#1301) Param/local that shadows an outer function with nested captures:
     // the funcMap path emits a direct call AND prepends the outer's nested
     // captures using `cap.outerLocalIdx` indices. Inside a lifted closure
@@ -1045,6 +1058,28 @@ export function compileIdentifierCall(
       ) {
         const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
         if (storedObjectCall !== undefined) return storedObjectCall;
+      }
+      // `%Function%` is represented by the linked provider's structural
+      // callable marker. Calling an alias through the checker-derived
+      // FunctionConstructor signature first would compile native-string
+      // arguments into module-local ref slots; a failed guarded cast then
+      // irreversibly becomes null before the marker fallback can see it. Route
+      // proven aliases through the generic externref dispatcher up front. It
+      // still evaluates the live binding and every argument exactly once, so
+      // this is a dispatch choice rather than constant-folding the alias.
+      if (
+        isKnownVariable &&
+        ctx.standalone &&
+        ctx.runtimeEvalCallableBoundaryEnabled === true &&
+        resolvesToGlobalFunctionAlias(expr.expression, ctx.oracle)
+      ) {
+        const runtimeFunctionCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+        if (runtimeFunctionCall !== null) {
+          // `%Function%` always returns a callable. Give that provider marker
+          // the same caller-owned property/call trampoline as direct
+          // `Function(...)`, so reflective Function metadata remains visible.
+          return emitRuntimeEvalInterpretedCallableAdapter(ctx, fctx);
+        }
       }
       // (#1528/#56) Promise-combinator executor params are host functions, so
       // their narrow capability-constructor lane also routes via Reflect.apply.
@@ -1300,16 +1335,17 @@ export function compileIdentifierCall(
             argLocals.push(argLocal);
           }
 
-          // (#1712) Host-callable fallback: when the callee arrived as externref
+          // (#1712/#2928) Foreign-callable fallback: when the callee arrived as externref
           // and the guarded cast to the wrapper struct failed (closureLocal is
           // null) while the raw value is non-null, the callee is callable but
           // not a closure of the matched shape — a host builtin held in a JS
           // variable (acorn's `var hasOwn = Object.hasOwn || function(…){…}`),
-          // a bound function, or a closure with a foreign struct layout. The
-          // struct.get below would trap "dereferencing a null pointer". Route
-          // that case through `__call_function(callee, undefined, argsArray)`
-          // instead. JS-host mode only — standalone/WASI keeps the existing
-          // (trapping) path since __call_function has no host there.
+          // a bound function, a closure with a foreign struct layout, or the
+          // standalone runtime-eval callback marker (`var alias = eval`). The
+          // struct.get below would trap "dereferencing a null pointer". Host
+          // mode routes through `__call_function`; standalone/WASI routes
+          // through the native `__apply_closure` classifier, which owns the
+          // structurally canonical runtime-eval callback arm.
           // Eligibility excludes i64/v128-typed params/returns (no boxing rule).
           const boxableKind = (t: ValType | null): boolean =>
             t === null ||
@@ -1337,6 +1373,12 @@ export function compileIdentifierCall(
             // params so the #1941 dual-mode guarantee for ordinary callable
             // params is preserved.
             (calleeMayBeHostCallable(ctx, expr.expression) || calleeIsPromiseExecutorParam(ctx, expr.expression));
+          const runtimeApplyFallback =
+            rawCalleeLocal !== undefined &&
+            (ctx.standalone || ctx.wasi) &&
+            ctx.runtimeEvalCallableBoundaryEnabled === true &&
+            boxableKind(expectedReturn) &&
+            matchedClosureInfo.paramTypes.every((t) => boxableKind(t));
           // NB: capability-ctor `executor` params (#1528/#56 class-ctor arm) are
           // UNTYPED (`any`, no call signatures) so they never reach this
           // callable-param dispatch — they are routed earlier through the
@@ -1345,26 +1387,36 @@ export function compileIdentifierCall(
 
           let fallbackInstrs: Instr[] | null = null;
           let dispatchOuterBody: Instr[] | null = null;
-          if (hostCallFallback) {
+          if (hostCallFallback || runtimeApplyFallback) {
             // Ensure all fallback imports BEFORE detaching buffers so the index
             // shifts land while every buffer is reachable by the shifters.
-            const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-            const arrPushIdx = ensureLateImport(
-              ctx,
-              "__js_array_push",
-              [{ kind: "externref" }, { kind: "externref" }],
-              [],
-            );
-            const callFnIdx = ensureLateImport(
-              ctx,
-              "__call_function",
-              [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-              [{ kind: "externref" }],
-            );
-            flushLateImportShifts(ctx, fctx);
-            const arrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
-            const arrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
-            const callFn = ctx.funcMap.get("__call_function") ?? callFnIdx;
+            let arrNew: number | undefined;
+            let arrPush: number | undefined;
+            let callFn: number | undefined;
+            if (hostCallFallback) {
+              const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+              const arrPushIdx = ensureLateImport(
+                ctx,
+                "__js_array_push",
+                [{ kind: "externref" }, { kind: "externref" }],
+                [],
+              );
+              const callFnIdx = ensureLateImport(
+                ctx,
+                "__call_function",
+                [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+                [{ kind: "externref" }],
+              );
+              flushLateImportShifts(ctx, fctx);
+              arrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
+              arrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
+              callFn = ctx.funcMap.get("__call_function") ?? callFnIdx;
+            } else {
+              const builders = ensureObjVecBuilders(ctx);
+              arrNew = builders.newIdx;
+              arrPush = builders.pushIdx;
+              callFn = reserveApplyClosure(ctx);
+            }
             if (arrNew !== undefined && arrPush !== undefined && callFn !== undefined) {
               // Build the fallback arm in a detached buffer parked in savedBodies
               // (late-import/global shifters walk savedBodies — #1712 blocker 1).
@@ -1703,10 +1755,10 @@ export function compileIdentifierCall(
             }
           }
 
-          // (#1712) Assemble the host-callable fallback split: the funcref
+          // (#1712/#2928) Assemble the foreign-callable fallback split: the funcref
           // dispatch emitted above went into a detached buffer; wrap both arms
           // in an `if` on "cast failed but raw callee non-null".
-          if (hostCallFallback && fallbackInstrs && dispatchOuterBody) {
+          if ((hostCallFallback || runtimeApplyFallback) && fallbackInstrs && dispatchOuterBody) {
             const dispatchInstrs = fctx.body;
             fctx.body = dispatchOuterBody;
             fctx.savedBodies.pop(); // fallbackInstrs
@@ -1735,7 +1787,10 @@ export function compileIdentifierCall(
       // #1063 Part B: try inline dynamic-dispatch through closure-struct
       // candidates when the callee is a known variable of externref/any type
       // that may wrap a closure at runtime.
-      const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable);
+      const declaration = ctx.oracle.valueDeclarationOf(expr.expression);
+      const isRuntimeEvalGlobal =
+        (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings === true && declaration === undefined;
+      const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, isKnownVariable || isRuntimeEvalGlobal);
       if (dyn !== null) return dyn;
 
       // Graceful fallback for unknown functions — compile arguments (for side effects)
@@ -2009,11 +2064,17 @@ export function compileIdentifierCall(
             expectedCapType !== undefined &&
             (expectedCapType.kind === "ref" || expectedCapType.kind === "ref_null") &&
             expectedCapType.typeIdx === boxedCapture.refCellTypeIdx;
-          const sourceLocalIdx = boxedCapture
+          const transitiveSourceLocalIdx = fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name);
+          const sourceLocalCandidate = boxedCapture
             ? fctx.localMap.get(cap.name)
-            : cap.ownerFctx === fctx
-              ? cap.outerLocalIdx
-              : fctx.localMap.get(cap.name);
+            : (transitiveSourceLocalIdx ??
+              (cap.ownerFctx === fctx
+                ? cap.outerLocalIdx
+                : (fctx.localMap.get(cap.name) ?? captureSourceSlot(fctx, cap))));
+          const sourceLocalIdx =
+            sourceLocalCandidate !== undefined && sourceLocalCandidate < fctx.params.length + fctx.locals.length
+              ? sourceLocalCandidate
+              : undefined;
           if (sourceLocalIdx === undefined) {
             reportError(
               ctx,

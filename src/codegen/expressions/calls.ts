@@ -239,6 +239,7 @@ import {
 } from "./calls-closures.js";
 import { compileOptionalCallExpression } from "./calls-optional.js";
 import {
+  emitStandaloneDirectEvalRuntime,
   emitStandaloneIndirectEvalRuntime,
   ensureRuntimeEvalCallableCarrier,
   isFunctionCtorImmediateCall,
@@ -246,6 +247,22 @@ import {
   tryStaticEvalInline,
   tryStaticFunctionCtorCall,
 } from "./eval-inline.js";
+import {
+  ensureRuntimeEvalInterpretedCallbackType,
+  ensureRuntimeEvalValueType,
+  RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A,
+  RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B,
+  RUNTIME_EVAL_INTERP_CALLBACK_KIND_GENERIC,
+  RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_EVAL,
+  RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_FUNCTION,
+  RUNTIME_EVAL_VALUE_KIND_BIGINT,
+  RUNTIME_EVAL_VALUE_KIND_BOOLEAN,
+  RUNTIME_EVAL_VALUE_KIND_NULL,
+  RUNTIME_EVAL_VALUE_KIND_NUMBER,
+  RUNTIME_EVAL_VALUE_KIND_REFERENCE,
+  RUNTIME_EVAL_VALUE_KIND_STRING,
+  RUNTIME_EVAL_VALUE_KIND_UNDEFINED,
+} from "../runtime-eval-boundary.js";
 import { compileExternMethodCall, compileSpreadCallArgs, emitLazyProtoGet } from "./extern.js";
 import {
   compileStandaloneRegExpConstructor,
@@ -281,7 +298,7 @@ import {
   flushLateImportShifts,
   shiftLateImportIndices,
 } from "./late-imports.js";
-import { undefinedExternInstrs } from "../any-helpers.js";
+import { ensureAnyHelpers, undefinedExternInstrs } from "../any-helpers.js";
 import { emitSymbolToString, ensureSymbolRegistry } from "../symbol-native.js";
 import { resolveStructName } from "./misc.js";
 import { tryCompileErrorCtorCallWithoutNew } from "./new-builtin-globals.js";
@@ -324,6 +341,7 @@ import {
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
 import { resolveNamedThisCallTarget, tryReshapeApplyToNamedThisCall } from "../named-this-call.js";
+import { isStrictContext } from "../helpers/is-strict-function.js";
 
 // Registry extracted to its own leaf module (#1793; LOC ratchet #3102) —
 // re-exported here so existing importers keep resolving via calls.js.
@@ -3416,6 +3434,32 @@ function isGlobalEvalIdentifier(ident: ts.Identifier, checker: ts.TypeChecker): 
   return decls.every((d) => d.getSourceFile().isDeclarationFile);
 }
 
+/** A sloppy direct eval whose call expression belongs directly to Script code
+ * has the same GlobalEnvironmentRecord as indirect eval. Use the global entry
+ * instead of manufacturing an empty AOT activation record; the latter would
+ * hide B.3.3 global properties in a provider-private declarative record. */
+function directEvalRunsAtScriptGlobal(call: ts.CallExpression, ctx: CodegenContext): boolean {
+  if (isStrictContext(call, ctx.inferModuleStrictArguments)) return false;
+  let node: ts.Node | undefined = call.parent;
+  while (node) {
+    if (ts.isSourceFile(node)) return true;
+    if (
+      ts.isFunctionLike(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node) ||
+      ts.isBlock(node) ||
+      ts.isCaseClause(node) ||
+      ts.isDefaultClause(node) ||
+      ts.isCatchClause(node) ||
+      ts.isWithStatement(node)
+    ) {
+      return false;
+    }
+    node = node.parent;
+  }
+  return false;
+}
+
 /**
  * (#3145) True when `ident` refers to a GLOBAL builtin binding (declared only in
  * ambient .d.ts lib files) that is NOT shadowed by a local or captured variable
@@ -5728,6 +5772,522 @@ function tryRuntimeEvalApplyCallableIntrinsic(
   return externref;
 }
 
+/** Peel the generic `$AnyValue` extern/any carrier layers that can be added by
+ * erased object slots and closure dispatch. A callback marker is intentionally
+ * structural, so the boundary intrinsics must inspect the first real payload
+ * instead of relying on host/WeakMap identity. */
+function emitRuntimeEvalBoundaryCarrierPeel(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  candidateLocal: number,
+  externref: ValType,
+): void {
+  if (ctx.anyValueTypeIdx < 0) return;
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  const anyLocal = allocLocal(fctx, `__runtime_eval_boundary_any_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: anyTypeIdx,
+  });
+  for (let depth = 0; depth < 8; depth += 1) {
+    fctx.body.push(
+      { op: "local.get", index: candidateLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: anyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: externref },
+        then: [
+          { op: "local.get", index: candidateLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: anyTypeIdx },
+          { op: "local.tee", index: anyLocal },
+          { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+          { op: "i32.const", value: 6 },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: externref },
+            then: [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 3 },
+              { op: "extern.convert_any" },
+            ],
+            else: [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 0 },
+              { op: "i32.const", value: 5 },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: externref },
+                then: [
+                  { op: "local.get", index: anyLocal },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
+                ],
+                else: [{ op: "local.get", index: candidateLocal }],
+              },
+            ],
+          },
+        ],
+        else: [{ op: "local.get", index: candidateLocal }],
+      },
+      { op: "local.set", index: candidateLocal },
+    );
+  }
+}
+
+/** Marshal one provider result into a canonical, non-recursive carrier. The
+ * provider's `$AnyValue` and primitive box structs are private to that module;
+ * scalar payloads must cross explicitly so the caller can rebuild its own
+ * number/boolean/BigInt boxes. */
+function emitRuntimeEvalResultBoundaryWrap(ctx: CodegenContext, fctx: FunctionContext, externref: ValType): ValType {
+  ensureAnyHelpers(ctx);
+  const valueTypeIdx = ensureRuntimeEvalValueType(ctx);
+  const anyTypeIdx = ctx.anyValueTypeIdx;
+  const valueLocal = allocLocal(fctx, `__runtime_eval_result_value_${fctx.locals.length}`, externref);
+  const anyLocal = allocLocal(fctx, `__runtime_eval_result_any_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: anyTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: valueLocal });
+
+  const makeValue = (
+    kind: number,
+    i32Value: Instr[] = [{ op: "i32.const", value: 0 }],
+    f64Value: Instr[] = [{ op: "f64.const", value: 0 }],
+    i64Value: Instr[] = [{ op: "i64.const", value: 0n }],
+    refValue: Instr[] = [{ op: "ref.null.extern" }],
+  ): Instr[] => [
+    { op: "i32.const", value: kind },
+    ...i32Value,
+    ...f64Value,
+    ...i64Value,
+    ...refValue,
+    { op: "struct.new", typeIdx: valueTypeIdx },
+    { op: "extern.convert_any" },
+  ];
+  const anyField = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: anyLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx },
+  ];
+  const anyTagCase = (tag: number, then: Instr[], otherwise: Instr[]): Instr[] => [
+    ...anyField(0),
+    { op: "i32.const", value: tag },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then,
+      else: otherwise,
+    },
+  ];
+  const anyReference: Instr[] = [
+    ...anyField(3),
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: anyField(4),
+      else: [...anyField(3), { op: "extern.convert_any" }],
+    },
+  ];
+  const anyValue: Instr[] = anyTagCase(
+    0,
+    makeValue(RUNTIME_EVAL_VALUE_KIND_NULL),
+    anyTagCase(
+      1,
+      makeValue(RUNTIME_EVAL_VALUE_KIND_UNDEFINED),
+      anyTagCase(
+        2,
+        makeValue(RUNTIME_EVAL_VALUE_KIND_NUMBER, undefined, [...anyField(1), { op: "f64.convert_i32_s" }]),
+        anyTagCase(
+          3,
+          makeValue(RUNTIME_EVAL_VALUE_KIND_NUMBER, undefined, anyField(2)),
+          anyTagCase(
+            4,
+            makeValue(RUNTIME_EVAL_VALUE_KIND_BOOLEAN, anyField(1)),
+            anyTagCase(
+              5,
+              makeValue(RUNTIME_EVAL_VALUE_KIND_STRING, undefined, undefined, undefined, anyField(4)),
+              anyTagCase(
+                6,
+                makeValue(RUNTIME_EVAL_VALUE_KIND_REFERENCE, undefined, undefined, undefined, anyReference),
+                makeValue(RUNTIME_EVAL_VALUE_KIND_REFERENCE, undefined, undefined, undefined, [
+                  { op: "local.get", index: valueLocal },
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  const helperTest = (name: string, then: Instr[], otherwise: Instr[]): Instr[] => {
+    const idx = ctx.funcMap.get(name);
+    if (idx === undefined) return otherwise;
+    return [
+      { op: "local.get", index: valueLocal },
+      { op: "call", funcIdx: idx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: externref },
+        then,
+        else: otherwise,
+      },
+    ];
+  };
+  const helperPayload = (name: string, result: ValType): Instr[] => {
+    const idx = ctx.funcMap.get(name);
+    if (idx === undefined) {
+      if (result.kind === "i32") return [{ op: "i32.const", value: 0 }];
+      if (result.kind === "f64") return [{ op: "f64.const", value: 0 }];
+      return [{ op: "i64.const", value: 0n }];
+    }
+    return [
+      { op: "local.get", index: valueLocal },
+      { op: "call", funcIdx: idx },
+    ];
+  };
+  const fallbackReference = makeValue(RUNTIME_EVAL_VALUE_KIND_REFERENCE, undefined, undefined, undefined, [
+    { op: "local.get", index: valueLocal },
+  ]);
+  const classifiedValue = helperTest("__typeof_undefined", makeValue(RUNTIME_EVAL_VALUE_KIND_UNDEFINED), [
+    { op: "local.get", index: valueLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: makeValue(RUNTIME_EVAL_VALUE_KIND_NULL),
+      else: helperTest(
+        "__typeof_number",
+        makeValue(RUNTIME_EVAL_VALUE_KIND_NUMBER, undefined, helperPayload("__unbox_number", { kind: "f64" })),
+        helperTest(
+          "__typeof_boolean",
+          makeValue(RUNTIME_EVAL_VALUE_KIND_BOOLEAN, helperPayload("__unbox_boolean", { kind: "i32" })),
+          helperTest(
+            "__typeof_string",
+            makeValue(RUNTIME_EVAL_VALUE_KIND_STRING, undefined, undefined, undefined, [
+              { op: "local.get", index: valueLocal },
+            ]),
+            helperTest(
+              "__typeof_bigint",
+              makeValue(
+                RUNTIME_EVAL_VALUE_KIND_BIGINT,
+                undefined,
+                undefined,
+                helperPayload("__to_bigint", { kind: "i64" }),
+              ),
+              fallbackReference,
+            ),
+          ),
+        ),
+      ),
+    },
+  ]);
+
+  fctx.body.push(
+    { op: "local.get", index: valueLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [
+        { op: "local.get", index: valueLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyTypeIdx },
+        { op: "local.set", index: anyLocal },
+        ...anyValue,
+      ],
+      else: classifiedValue,
+    },
+  );
+  return externref;
+}
+
+/** Provider-local inverse of the canonical result carrier. This is used by
+ * canaries that exercise an exported envelope from inside the provider; user
+ * modules decode the same shape in emitRuntimeEvalResultUnwrap. */
+function emitRuntimeEvalResultBoundaryUnwrap(ctx: CodegenContext, fctx: FunctionContext, externref: ValType): ValType {
+  ensureAnyHelpers(ctx);
+  const typeIdx = ensureRuntimeEvalValueType(ctx);
+  const valueLocal = allocLocal(fctx, `__runtime_eval_result_wrapped_${fctx.locals.length}`, externref);
+  const carrierLocal = allocLocal(fctx, `__runtime_eval_result_carrier_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: valueLocal });
+
+  const field = (fieldIdx: number): Instr[] => [
+    { op: "local.get", index: carrierLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx, fieldIdx },
+  ];
+  const kindCase = (kind: number, then: Instr[], otherwise: Instr[]): Instr[] => [
+    ...field(0),
+    { op: "i32.const", value: kind },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then,
+      else: otherwise,
+    },
+  ];
+  const boxNumberIdx = ctx.funcMap.get("__box_number");
+  const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
+  const boxBigIntIdx = ctx.funcMap.get("__box_bigint");
+  const decoded = kindCase(
+    RUNTIME_EVAL_VALUE_KIND_REFERENCE,
+    field(4),
+    kindCase(
+      RUNTIME_EVAL_VALUE_KIND_UNDEFINED,
+      undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }],
+      kindCase(
+        RUNTIME_EVAL_VALUE_KIND_NULL,
+        [{ op: "ref.null.extern" }],
+        kindCase(
+          RUNTIME_EVAL_VALUE_KIND_NUMBER,
+          boxNumberIdx === undefined
+            ? [{ op: "ref.null.extern" }]
+            : [...field(2), { op: "call", funcIdx: boxNumberIdx }],
+          kindCase(
+            RUNTIME_EVAL_VALUE_KIND_BOOLEAN,
+            boxBooleanIdx === undefined
+              ? [{ op: "ref.null.extern" }]
+              : [...field(1), { op: "call", funcIdx: boxBooleanIdx }],
+            kindCase(
+              RUNTIME_EVAL_VALUE_KIND_STRING,
+              field(4),
+              kindCase(
+                RUNTIME_EVAL_VALUE_KIND_BIGINT,
+                boxBigIntIdx === undefined
+                  ? [{ op: "ref.null.extern" }]
+                  : [...field(3), { op: "call", funcIdx: boxBigIntIdx }],
+                field(4),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  fctx.body.push(
+    { op: "local.get", index: valueLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [
+        { op: "local.get", index: valueLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx },
+        { op: "local.set", index: carrierLocal },
+        ...decoded,
+      ],
+      else: [{ op: "local.get", index: valueLocal }],
+    },
+  );
+  return externref;
+}
+
+/** Provider-side half of the callback exception bridge. */
+function tryRuntimeEvalInterpretedBoundaryIntrinsic(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | undefined {
+  const calleeName = ts.isIdentifier(expr.expression) ? expr.expression.text : "";
+  const wrapsGeneric = calleeName === "__runtime_eval_wrap_interpreted_callback";
+  const wrapsIntrinsic = calleeName === "__runtime_eval_wrap_intrinsic_callback";
+  const wrapsFunction = calleeName === "__runtime_eval_wrap_intrinsic_function_callback";
+  const wraps = wrapsGeneric || wrapsIntrinsic || wrapsFunction;
+  const unwraps = calleeName === "__runtime_eval_unwrap_interpreted_callback";
+  const testsIntrinsic = calleeName === "__runtime_eval_is_intrinsic_callback";
+  const wrapsResult = calleeName === "__runtime_eval_wrap_result";
+  const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
+  if (
+    (!ctx.standalone && !ctx.wasi) ||
+    ctx.runtimeEvalCallableBoundaryEnabled !== true ||
+    (!wraps && !unwraps && !testsIntrinsic && !wrapsResult && !unwrapsResult) ||
+    (wraps ? expr.arguments.length !== (wrapsFunction ? 3 : 4) : expr.arguments.length !== 1)
+  ) {
+    return undefined;
+  }
+
+  const externref: ValType = { kind: "externref" };
+  const valueType = compileExpression(ctx, fctx, expr.arguments[0]!, externref);
+  if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, externref);
+  if (wrapsResult) return emitRuntimeEvalResultBoundaryWrap(ctx, fctx, externref);
+  if (unwrapsResult) return emitRuntimeEvalResultBoundaryUnwrap(ctx, fctx, externref);
+  const typeIdx = ensureRuntimeEvalInterpretedCallbackType(ctx);
+  const valueLocal = allocLocal(fctx, `__runtime_eval_boundary_value_${fctx.locals.length}`, externref);
+  const candidateLocal = allocLocal(fctx, `__runtime_eval_boundary_candidate_${fctx.locals.length}`, externref);
+  const markerLocal = allocLocal(fctx, `__runtime_eval_boundary_marker_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx,
+  });
+  fctx.body.push(
+    { op: "local.set", index: valueLocal },
+    { op: "local.get", index: valueLocal },
+    { op: "local.set", index: candidateLocal },
+  );
+  let nameLocal = -1;
+  let lengthLocal = -1;
+  let constructorLocal = -1;
+  if (wraps) {
+    nameLocal = allocLocal(fctx, `__runtime_eval_boundary_name_${fctx.locals.length}`, externref);
+    const nameType = compileExpression(ctx, fctx, expr.arguments[1]!, externref);
+    if (nameType && nameType.kind !== "externref") coerceType(ctx, fctx, nameType, externref);
+    fctx.body.push({ op: "local.set", index: nameLocal });
+    lengthLocal = allocLocal(fctx, `__runtime_eval_boundary_length_${fctx.locals.length}`, { kind: "f64" });
+    const lengthType = compileExpression(ctx, fctx, expr.arguments[2]!, { kind: "f64" });
+    if (lengthType && lengthType.kind !== "f64") coerceType(ctx, fctx, lengthType, { kind: "f64" });
+    fctx.body.push({ op: "local.set", index: lengthLocal });
+    if (!wrapsFunction) {
+      constructorLocal = allocLocal(fctx, `__runtime_eval_boundary_constructor_${fctx.locals.length}`, externref);
+      const constructorType = compileExpression(ctx, fctx, expr.arguments[3]!, externref);
+      if (constructorType && constructorType.kind !== "externref") {
+        coerceType(ctx, fctx, constructorType, externref);
+      }
+      fctx.body.push({ op: "local.set", index: constructorLocal });
+      emitRuntimeEvalBoundaryCarrierPeel(ctx, fctx, constructorLocal, externref);
+    }
+  }
+  emitRuntimeEvalBoundaryCarrierPeel(ctx, fctx, candidateLocal, externref);
+
+  const setMarker = (): Instr[] => [
+    { op: "local.get", index: candidateLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx },
+    { op: "local.set", index: markerLocal },
+  ];
+  const markerBrandsMatch = (): Instr[] => [
+    { op: "local.get", index: markerLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx, fieldIdx: 1 },
+    { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A },
+    { op: "i32.eq" },
+    { op: "local.get", index: markerLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx, fieldIdx: 2 },
+    { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B },
+    { op: "i32.eq" },
+    { op: "i32.and" },
+  ];
+
+  if (testsIntrinsic) {
+    const i32: ValType = { kind: "i32" };
+    fctx.body.push(
+      { op: "local.get", index: candidateLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: i32 },
+        then: [
+          ...setMarker(),
+          ...markerBrandsMatch(),
+          { op: "local.get", index: markerLocal },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx, fieldIdx: 3 },
+          { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_EVAL },
+          { op: "i32.eq" },
+          { op: "i32.and" },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    );
+    return i32;
+  }
+
+  if (unwraps) {
+    fctx.body.push(
+      { op: "local.get", index: candidateLocal },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: externref },
+        then: [
+          ...setMarker(),
+          ...markerBrandsMatch(),
+          {
+            op: "if",
+            blockType: { kind: "val", type: externref },
+            then: [
+              { op: "local.get", index: markerLocal },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx, fieldIdx: 3 },
+              { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_EVAL },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: externref },
+                then: [{ op: "local.get", index: candidateLocal }],
+                else: [
+                  { op: "local.get", index: markerLocal },
+                  { op: "ref.as_non_null" },
+                  { op: "struct.get", typeIdx, fieldIdx: 0 },
+                ],
+              },
+            ],
+            else: [{ op: "local.get", index: valueLocal }],
+          },
+        ],
+        else: [{ op: "local.get", index: valueLocal }],
+      },
+    );
+    return externref;
+  }
+
+  const markerKind = wrapsIntrinsic
+    ? RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_EVAL
+    : wrapsFunction
+      ? RUNTIME_EVAL_INTERP_CALLBACK_KIND_INTRINSIC_FUNCTION
+      : RUNTIME_EVAL_INTERP_CALLBACK_KIND_GENERIC;
+  const makeMarker = (): Instr[] => [
+    { op: "local.get", index: candidateLocal },
+    { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A },
+    { op: "i32.const", value: RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B },
+    { op: "i32.const", value: markerKind },
+    { op: "local.get", index: nameLocal },
+    { op: "local.get", index: lengthLocal },
+    ...((wrapsFunction
+      ? [{ op: "ref.null.extern" }]
+      : [{ op: "local.get", index: constructorLocal }]) satisfies Instr[]),
+    { op: "struct.new", typeIdx },
+    { op: "extern.convert_any" },
+  ];
+  fctx.body.push(
+    { op: "local.get", index: candidateLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [
+        ...setMarker(),
+        ...markerBrandsMatch(),
+        {
+          op: "if",
+          blockType: { kind: "val", type: externref },
+          then: [{ op: "local.get", index: candidateLocal }],
+          else: makeMarker(),
+        },
+      ],
+      else: makeMarker(),
+    },
+  );
+  return externref;
+}
+
 function compileCallExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -5749,6 +6309,10 @@ function compileCallExpression(
 
   {
     const r = tryRuntimeEvalApplyCallableIntrinsic(ctx, fctx, expr);
+    if (r !== undefined) return r;
+  }
+  {
+    const r = tryRuntimeEvalInterpretedBoundaryIntrinsic(ctx, fctx, expr);
     if (r !== undefined) return r;
   }
 
@@ -5897,7 +6461,9 @@ function compileCallExpression(
   // a compile-time-constant string, parse it and splice the AST inline at the
   // call site.  This is the zero-runtime-cost path.  If the argument is not
   // a constant (or parsing fails), fall through to __extern_eval (#1006/#1164).
-  // Covers direct `eval(src)` and indirect `(0, eval)(src)` / `(0,eval)(src)`.
+  // Direct eval may use the caller-scope splice. Indirect eval keeps the
+  // established literal-only compile-away surface; dynamic sources route
+  // through the realm-global runtime path.
   // In standalone/WASI mode the host import is unavailable and will trap at
   // instantiation time — callers that need eval must use a JS host.
   //
@@ -5923,16 +6489,19 @@ function compileCallExpression(
       if (rewritten !== undefined) return rewritten;
       const inlined = tryStaticEvalInline(ctx, fctx, expr, evalKind === "direct");
       if (inlined !== undefined) return inlined;
-      // #2928 — indirect eval is global-scoped, so standalone can route it to
-      // the linked interpreter without caller-scope reification. Direct eval
-      // still needs #2929 and retains #2960's catchable failure.
-      if (evalKind === "indirect") {
-        const runtimeEval = emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
-        if (runtimeEval !== undefined) return runtimeEval;
-      }
-      // (#2960) No-JS-host direct eval (and WASI until its linker grows the
-      // provider): refuse the unsatisfiable `__extern_eval` import with a
-      // source-located warning and a catchable call-site throw.
+      // #2928/#2929 — direct eval adds live caller cells to indirect eval's global environment.
+      const runtimeEval =
+        evalKind === "direct"
+          ? directEvalRunsAtScriptGlobal(expr, ctx)
+            ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
+            : ensureRuntimeEvalCallableCarrier(ctx, fctx)
+              ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
+              : undefined
+          : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
+      if (runtimeEval !== undefined) return runtimeEval;
+      // (#2960) WASI (until its linker grows the provider), or a standalone
+      // route that could not materialize its runtime ABI: refuse the
+      // unsatisfiable host import with a catchable call-site throw.
       if (noJsHost(ctx)) {
         reportError(
           ctx,

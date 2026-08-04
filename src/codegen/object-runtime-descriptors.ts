@@ -39,6 +39,7 @@ import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { reserveVecOverlayHelpers } from "./vec-overlay.js";
 import { buildIntegrityPredicate, registerIntegrityBagResolver } from "./object-integrity-carrier.js";
 import { buildObjectIntegrityMutationHelpers } from "./object-runtime-integrity.js";
+import { bagGopdBetween, bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) visibility over the bags
 
 /**
  * Everything the descriptor/integrity block reads from the enclosing
@@ -2472,7 +2473,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [...vecOverlayArm(2, vecOverlay?.gopdIdx ?? -1, 2), ...primitiveReceiverArm],
+        // (#4010 S3) the FUNCTION receiver's closure bag sits between the vec overlay and the primitive arm
+        then: bagGopdBetween(ctx, 6, vecOverlayArm(2, vecOverlay?.gopdIdx ?? -1, 2), primitiveReceiverArm),
       },
       // o = cast<$Object>(any) ; e = __obj_find(o, key)
       { op: "local.get", index: 2 },
@@ -2756,11 +2758,8 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
-      },
+      // (#4010 S3) non-`$Object` ⇒ the carrier bag's own string keys, enumerable filter DROPPED here
+      bagKeysIf(ctx, { vecLocal: 7, includeNonEnum: true }),
       // o = cast<$Object>(any) ; arr = __obj_ordered_all(o) ; cap = arr.len
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },

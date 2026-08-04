@@ -33,6 +33,32 @@ async function run(src: string): Promise<any> {
 }
 
 describe("#2664 — under-applied dynamic method dispatch (arity mismatch)", () => {
+  it("does not inherit argc from a getter when a known-arity setter runs next", async () => {
+    // Test262 propertyHelper.js invokes a zero-argument accessor getter before
+    // assigning through its one-argument setter. Both callbacks use the
+    // known-arity host bridge. The setter must seed argc=1 for its own call,
+    // rather than inheriting the getter's stale argc=0 and receiving undefined.
+    const exp = await run(`
+      // @ts-nocheck
+      export function probe() {
+        var obj = {};
+        obj.value = "before";
+        var getValue = function() { return obj.value; };
+        var setValue = function(next) { obj.value = next; };
+        Object.defineProperty(obj, "field", {
+          get: getValue,
+          set: setValue,
+          enumerable: true,
+          configurable: true
+        });
+        if (obj.field !== "before") return 0;
+        obj.field = "after";
+        return obj.value === "after" && obj.field === "after" ? 1 : 0;
+      }
+    `);
+    expect(exp.probe()).toBe(1);
+  });
+
   it("dispatches a 3-formal CommonJS export called with 2 args and preserves arguments.length", async () => {
     // React's production bundle assigns createElement to an open CommonJS
     // exports object. That object crosses the host mirror, whose old local

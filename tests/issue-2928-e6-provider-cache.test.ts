@@ -7,7 +7,7 @@
  * distribution plumbing so a drift (renamed export, broken strip, cache
  * key/path instability) fails fast without a multi-minute compile.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -27,12 +27,16 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     // The published `js2wasm:runtime-eval` surface.
     expect(source).toContain("function __runtime_new_function(");
     expect(source).toContain("function __runtime_indirect_eval(");
+    expect(source).toContain("function __runtime_direct_eval(");
+    expect(source).toContain("function __runtime_apply_interpreted(");
     // The interpreter entry points behind it.
     expect(source).toContain("function createDynamicFunction(");
     expect(source).toContain("function executeIndirectEval(");
+    expect(source).toContain("function executeDirectEval(");
     // Build-time positive controls must be present so the prebuild can refuse
     // a broken provider before caching it.
     expect(source).toContain("function __runtime_eval_canary(");
+    expect(source).toContain("function __runtime_direct_eval_canary(");
     expect(source).toContain("function __runtime_positive_corpus_canary(");
     // Module syntax must be stripped — the provider is ONE ordered-initializer
     // unit, not a module graph.
@@ -66,5 +70,17 @@ describe("#2928 E6 — runtime-eval provider seam", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("publishes one full provider artifact and requires it in every standalone CI shard", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/test262-sharded.yml"), "utf8");
+    expect(workflow).toContain("runtime-eval-provider:");
+    expect(workflow).toContain("node scripts/build-runtime-eval-provider.mjs\n");
+    expect(workflow).toContain("path: .test262-cache/runtime-eval-provider-*.wasm");
+    expect(workflow).toContain("uses: actions/upload-artifact@v6");
+    expect(workflow).toContain("uses: actions/download-artifact@v7");
+    expect(workflow).toContain("TEST262_FULL_RUNTIME_EVAL:");
+    expect(workflow.match(/--require-full-cache/g)).toHaveLength(2);
+    expect(workflow).not.toContain("Prebuild refusal runtime-eval provider (#2928)");
   });
 });

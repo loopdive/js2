@@ -170,6 +170,7 @@ import {
 } from "./property-access.js";
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
+import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -1620,6 +1621,9 @@ export function tryGlobalThisAndProcessRead(
     addStringConstantGlobal(ctx, propName);
     fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
     fctx.body.push({ op: "call", funcIdx: getIdx });
+    if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+      emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+    }
 
     // Coerce externref to expected type
     const accessType = ctx.checker.getTypeAtLocation(expr);
@@ -3302,12 +3306,22 @@ export function finalizeStructAndDynamicMemberGet(
           const fieldIdx = structFields ? structFields.findIndex((f) => f.name === propName) : -1;
           const structTypeIdx = ctx.structMap.get(typeName);
           if (!ctx.classSet.has(typeName) && structFields && fieldIdx >= 0 && structTypeIdx !== undefined) {
-            // Compile the object → struct ref on stack → struct.get the field.
+            // Direct eval may reify a typed object binding into an externref
+            // cell so the interpreter can observe and update it.  Preserve the
+            // object-literal method fast path, but recover the concrete struct
+            // before reading its closure field when that widening happened.
+            const fieldType = structFields[fieldIdx]!.type;
             const objResult = compileExpression(ctx, fctx, expr.expression);
             if (objResult) {
-              fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
-              const fType = structFields[fieldIdx]!.type;
-              return fType;
+              if (objResult.kind === "externref") {
+                emitExternrefToStructGet(ctx, fctx, fieldType, structTypeIdx, fieldIdx, propName, true);
+                if (fieldType.kind === "ref") {
+                  return { kind: "ref_null", typeIdx: fieldType.typeIdx };
+                }
+              } else {
+                fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+              }
+              return fieldType;
             }
           }
           // (#1394) For CLASS instances, return the SAME cached singleton
@@ -3515,6 +3529,7 @@ export function finalizeStructAndDynamicMemberGet(
               { op: "local.get", index: protoLocal },
               ...stringConstantExternrefInstrs(ctx, propName),
               { op: "call", funcIdx: getIdx },
+              ...(ctx.runtimeEvalGlobalFunctionBindings === true ? runtimeEvalSharedValueUnwrapInstrs(ctx, fctx) : []),
               ...((effectiveResult.kind === "f64" && unboxIdx !== undefined
                 ? [{ op: "call", funcIdx: unboxIdx }]
                 : effectiveResult.kind === "i32" && unboxIdx !== undefined
@@ -3551,6 +3566,9 @@ export function finalizeStructAndDynamicMemberGet(
           addStringConstantGlobal(ctx, propName);
           fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
           fctx.body.push({ op: "call", funcIdx: getIdx });
+          if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+            emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+          }
 
           // Unbox if the expected type is numeric
           const protoAccessType = ctx.checker.getTypeAtLocation(expr);
@@ -3796,6 +3814,9 @@ export function finalizeStructAndDynamicMemberGet(
           addStringConstantGlobal(ctx, propName);
           externGetFallback.push(...stringConstantExternrefInstrs(ctx, propName));
           externGetFallback.push({ op: "call", funcIdx: getIdx });
+          if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+            externGetFallback.push(...runtimeEvalSharedValueUnwrapInstrs(ctx, fctx));
+          }
           if (resultWasm.kind === "f64" && unboxIdx !== undefined) {
             externGetFallback.push({ op: "call", funcIdx: unboxIdx });
           } else if (resultWasm.kind === "i32" && unboxIdx !== undefined) {
@@ -3825,6 +3846,9 @@ export function finalizeStructAndDynamicMemberGet(
                   { op: "local.get", index: tmpAnyExt },
                   { op: "extern.convert_any" },
                   { op: "call", funcIdx: getMemberIdx },
+                  ...(ctx.runtimeEvalGlobalFunctionBindings === true
+                    ? runtimeEvalSharedValueUnwrapInstrs(ctx, fctx)
+                    : []),
                   ...coercionInstrs(ctx, { kind: "externref" }, resultWasm, fctx),
                   { op: "local.set", index: resultLocal },
                 ]
@@ -3874,6 +3898,9 @@ export function finalizeStructAndDynamicMemberGet(
           if (getMemberIdx !== undefined) {
             fctx.body.push({ op: "local.get", index: objTmp });
             fctx.body.push({ op: "call", funcIdx: getMemberIdx });
+            if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+              emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+            }
             if (accessWasm.kind === "f64") {
               if (unboxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx });
               return { kind: "f64" };
@@ -3892,6 +3919,9 @@ export function finalizeStructAndDynamicMemberGet(
         addStringConstantGlobal(ctx, propName);
         compileStringLiteral(ctx, fctx, propName);
         fctx.body.push({ op: "call", funcIdx: getIdx });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         if (accessWasm.kind === "f64") {
           if (unboxIdx !== undefined) {
             fctx.body.push({ op: "call", funcIdx: unboxIdx });
@@ -4051,6 +4081,9 @@ export function finalizeStructAndDynamicMemberGet(
         addStringConstantGlobal(ctx, propName);
         fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
         fctx.body.push({ op: "call", funcIdx: getIdx856 });
+        if (ctx.runtimeEvalGlobalFunctionBindings === true) {
+          emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+        }
         if (accessWasm.kind === "f64") {
           if (unboxIdx856 !== undefined) fctx.body.push({ op: "call", funcIdx: unboxIdx856 });
           return { kind: "f64" };

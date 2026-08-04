@@ -37,6 +37,9 @@ loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/extern-declarations.ts
+oracle-ratchet-allow:
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/index.ts
 func-budget-allow:
   - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
   - src/codegen/expressions/new-super.ts::compileNewExpression

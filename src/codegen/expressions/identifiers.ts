@@ -56,7 +56,12 @@ import {
   isSupportedBuiltinNamespace,
 } from "../builtin-static-globals.js";
 import { tryEmitPromiseSubclassValue } from "./promise-subclass.js";
-import { emitImplicitGlobalRead } from "../global-environment.js";
+import {
+  emitImplicitGlobalRead,
+  emitRuntimeEvalGlobalRead,
+  emitRuntimeEvalSharedValueUnwrap,
+} from "../global-environment.js";
+import { emitStandaloneIntrinsicEvalValue, emitStandaloneIntrinsicFunctionValue } from "./eval-inline.js";
 
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
@@ -639,6 +644,18 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
         undefined /* propName */,
         false /* throwOnNull — ref cells use default for uninitialized captures */,
       );
+      // Direct-eval cells cross a separately compiled provider module. Values
+      // written by that provider use the canonical `$RuntimeEvalValue`
+      // carrier; rebuild the caller module's primitive box before ordinary AOT
+      // consumers narrow or unbox it. Other closure-capture cells retain their
+      // existing representation and byte shape.
+      if (
+        boxed.valType.kind === "externref" &&
+        boxed.refCellTypeIdx === fctx.directEvalRefCellTypeIdx &&
+        ctx.runtimeEvalGlobalFunctionBindings === true
+      ) {
+        emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+      }
       return boxed.valType;
     }
 
@@ -812,6 +829,32 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
       return { kind: "ref", typeIdx: (mType as any).typeIdx };
     }
     return mType;
+  }
+
+  // A first-class read of the unshadowed global `%eval%` (`var indirect =
+  // eval`) must produce the provider's callable, realm-stable intrinsic
+  // marker. Syntactic direct/sequence calls are intercepted in calls.ts before
+  // identifier lowering reaches this branch; this is the value path that used
+  // to fall through to `ref.null.extern` and made every AOT eval alias inert.
+  if (ctx.standalone && name === "eval") {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+    if (isGlobalIntrinsic) {
+      const valueType = emitStandaloneIntrinsicEvalValue(ctx, fctx);
+      if (valueType !== undefined) return valueType;
+    }
+  }
+  // `%Function%` is a genuine realm-owned callable in runtime-eval builds.
+  // Direct `Function(...)` / `new Function(...)` syntax is intercepted before
+  // identifier lowering; this branch preserves first-class aliases and the
+  // constructor identity inherited by provider-owned interpreted functions.
+  if (ctx.standalone && name === "Function") {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+    if (isGlobalIntrinsic) {
+      const valueType = emitStandaloneIntrinsicFunctionValue(ctx, fctx);
+      if (valueType !== undefined) return valueType;
+    }
   }
   if (ctx.sloppyImplicitGlobals?.has(name)) return emitImplicitGlobalRead(ctx, fctx, name);
   // Standalone built-in namespace values (Array/Object) materialize as lazy
@@ -1221,6 +1264,10 @@ function compileIdentifierCore(ctx: CodegenContext, fctx: FunctionContext, id: t
   // lib.d.ts and should use the fallback default instead.
   const sym = ctx.checker.getSymbolAtLocation(id);
   if (!sym) {
+    if ((ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
+      const dynamicGlobal = emitRuntimeEvalGlobalRead(ctx, fctx, name, false);
+      if (dynamicGlobal !== null) return dynamicGlobal;
+    }
     // Truly undeclared variable — throw a proper ReferenceError instance.
     // The previous emission was a raw `throw ref.null.extern`, which surfaced
     // to JS as `null` so `e instanceof ReferenceError` was false (#1380,

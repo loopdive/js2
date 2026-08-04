@@ -1266,9 +1266,11 @@ export function compileTaggedTemplateExpression(
       if (nestedCaptures) {
         for (const cap of nestedCaptures) {
           const sourceLocalIdx =
-            cap.ownerFctx === fctx
-              ? cap.outerLocalIdx
-              : (fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name) ?? fctx.localMap.get(cap.name));
+            fctx.name === tagName
+              ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)
+              : cap.ownerFctx === fctx
+                ? cap.outerLocalIdx
+                : (fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name) ?? fctx.localMap.get(cap.name));
           if (sourceLocalIdx === undefined) {
             reportError(
               ctx,

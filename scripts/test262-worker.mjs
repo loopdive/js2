@@ -27,14 +27,8 @@ import { SANDBOX_GLOBAL_NAMES } from "./test262-sandbox-globals.mjs";
 // per-test namespace instantiation for `js2wasm:runtime-eval` imports.
 import {
   RUNTIME_EVAL_IMPORT_MODULE,
-  buildRuntimeEvalProviderSource,
-  buildRuntimeEvalRefusalProviderSource,
-  computeCompilerBundleHash,
-  defaultRuntimeEvalProviderCacheDir,
   instantiateRuntimeEvalNamespace,
-  readCachedRuntimeEvalProvider,
-  runtimeEvalProviderCacheKey,
-  runtimeEvalRefusalCachePath,
+  selectCachedRuntimeEvalProvider,
 } from "./runtime-eval-provider.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
@@ -89,25 +83,15 @@ const BUNDLE_HASH = computeBundleHash();
 let runtimeEvalProviderModule; // undefined = untried, null = unavailable
 let runtimeEvalProviderNoteShown = false;
 
-function loadCachedProviderModule(source, pathOf) {
-  const key = runtimeEvalProviderCacheKey(source, computeCompilerBundleHash());
-  const binary = readCachedRuntimeEvalProvider(defaultRuntimeEvalProviderCacheDir(), key, pathOf);
-  return { key, module: binary ? new WebAssembly.Module(binary) : null };
-}
-
 /**
  * (#2928 E7) Announce WHICH tier this run selected — on EVERY path, including
  * the successful one.
  *
  * This is the root defect being fixed, stated generally: a harness that
- * SILENTLY selects a capability the published lane does not have invalidates
- * every cross-lane comparison made against it, and the results carry no trace
- * of the choice. Between E6 and E7 this worker linked the real interpreter
- * whenever it happened to be cached — no flag, no log line — while CI's cache
- * was always cold, so local and CI standalone numbers diverged by roughly the
- * interpreter's yield with nothing in either report saying so. The opt-in flag
- * removes the silence; this line removes the ambiguity. Provenance has to
- * travel WITH the number.
+ * SILENTLY selects a capability invalidates every cross-lane comparison made
+ * against it. CI now publishes the full provider once and sets the explicit
+ * flag in every standalone shard; local refusal-only runs remain a fast
+ * diagnostic tier. This line keeps that provenance attached to every number.
  */
 function announceRuntimeEvalTier(message) {
   if (runtimeEvalProviderNoteShown) return;
@@ -117,46 +101,9 @@ function announceRuntimeEvalTier(message) {
 
 function getRuntimeEvalProviderModule() {
   if (runtimeEvalProviderModule !== undefined) return runtimeEvalProviderModule;
-  runtimeEvalProviderModule = null;
-  if (process.env.TEST262_DISABLE_RUNTIME_EVAL_PROVIDER === "1") {
-    announceRuntimeEvalTier("NONE (TEST262_DISABLE_RUNTIME_EVAL_PROVIDER=1) — eval-mentioning modules cannot link");
-    return null;
-  }
-  try {
-    // TEST262_FULL_RUNTIME_EVAL=1 opts into the real Acorn+interpreter tier.
-    // It is OPT-IN, not the default, so a local sweep and a CI shard report the
-    // same standalone number: the interpreter provider takes MINUTES to
-    // compile, so CI cannot build it per shard, and a default that silently
-    // uses it wherever it happens to be cached would make local results
-    // irreproducible in CI by exactly the interpreter's yield. Set it to
-    // measure the interpreter arm (run-test262-vitest.sh then prebuilds it).
-    const full =
-      process.env.TEST262_FULL_RUNTIME_EVAL === "1"
-        ? loadCachedProviderModule(buildRuntimeEvalProviderSource(), undefined)
-        : { key: "(not requested)", module: null };
-    if (full.module) {
-      // The loud case: this run is NOT comparable with a CI standalone number.
-      announceRuntimeEvalTier(
-        `INTERPRETER (key ${full.key}, TEST262_FULL_RUNTIME_EVAL=1) — results are NOT comparable with ` +
-          `the CI standalone lane, which links the refusal provider; label any figure from this run ` +
-          `as interpreter-linked (#2928 E7)`,
-      );
-      runtimeEvalProviderModule = full.module;
-      return runtimeEvalProviderModule;
-    }
-    const refusal = loadCachedProviderModule(buildRuntimeEvalRefusalProviderSource(), runtimeEvalRefusalCachePath);
-    announceRuntimeEvalTier(
-      refusal.module
-        ? `REFUSAL (key ${refusal.key}; interpreter ${full.key}) — CI-comparable: eval-mentioning modules ` +
-            `instantiate, dynamic-code calls throw TypeError`
-        : `NONE — refusal provider missing (key ${refusal.key}); eval-mentioning standalone modules stay ` +
-            `unlinkable. Prebuild with: node scripts/build-runtime-eval-provider.mjs --refusal-only`,
-    );
-    runtimeEvalProviderModule = refusal.module;
-  } catch (err) {
-    announceRuntimeEvalTier(`NONE — provider load failed: ${err?.message ?? err}`);
-    runtimeEvalProviderModule = null;
-  }
+  const selection = selectCachedRuntimeEvalProvider();
+  announceRuntimeEvalTier(selection.message);
+  runtimeEvalProviderModule = selection.module;
   return runtimeEvalProviderModule;
 }
 

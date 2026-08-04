@@ -9,6 +9,14 @@ export interface StaticIntegerRange {
 
 /** Conservative integer range proof for literals and canonical counted loops. */
 export function staticIntegerRange(ctx: CodegenContext, expression: ts.Expression): StaticIntegerRange | undefined {
+  return staticIntegerRangeInner(ctx, expression, new Set());
+}
+
+function staticIntegerRangeInner(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+  visiting: Set<ts.Symbol>,
+): StaticIntegerRange | undefined {
   let current = expression;
   while (
     ts.isParenthesizedExpression(current) ||
@@ -23,18 +31,40 @@ export function staticIntegerRange(ctx: CodegenContext, expression: ts.Expressio
     return Number.isSafeInteger(value) ? { min: value, max: value } : undefined;
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
-    const inner = staticIntegerRange(ctx, current.operand);
+    const inner = staticIntegerRangeInner(ctx, current.operand, visiting);
     return inner ? { min: -inner.max, max: -inner.min } : undefined;
   }
-  if (ts.isIdentifier(current)) return countedLoopIdentifierRange(ctx, current);
+  if (ts.isIdentifier(current)) {
+    const symbol = ctx.checker.getSymbolAtLocation(current);
+    if (!symbol || visiting.has(symbol)) return undefined;
+    visiting.add(symbol);
+    try {
+      return (
+        countedLoopIdentifierRange(ctx, current, symbol, visiting) ??
+        constIdentifierRange(ctx, current, symbol, visiting)
+      );
+    } finally {
+      visiting.delete(symbol);
+    }
+  }
   if (!ts.isBinaryExpression(current)) return undefined;
-  const left = staticIntegerRange(ctx, current.left);
-  const right = staticIntegerRange(ctx, current.right);
+  const left = staticIntegerRangeInner(ctx, current.left, visiting);
+  const right = staticIntegerRangeInner(ctx, current.right, visiting);
   switch (current.operatorToken.kind) {
     case ts.SyntaxKind.PlusToken:
-      return left && right ? { min: left.min + right.min, max: left.max + right.max } : undefined;
+      if (!left || !right) return undefined;
+      {
+        const min = left.min + right.min;
+        const max = left.max + right.max;
+        return Number.isSafeInteger(min) && Number.isSafeInteger(max) ? { min, max } : undefined;
+      }
     case ts.SyntaxKind.MinusToken:
-      return left && right ? { min: left.min - right.max, max: left.max - right.min } : undefined;
+      if (!left || !right) return undefined;
+      {
+        const min = left.min - right.max;
+        const max = left.max - right.min;
+        return Number.isSafeInteger(min) && Number.isSafeInteger(max) ? { min, max } : undefined;
+      }
     case ts.SyntaxKind.AsteriskToken:
       if (!left || !right) return undefined;
       {
@@ -51,18 +81,42 @@ export function staticIntegerRange(ctx: CodegenContext, expression: ts.Expressio
   }
 }
 
-function countedLoopIdentifierRange(ctx: CodegenContext, identifier: ts.Identifier): StaticIntegerRange | undefined {
-  const symbol = ctx.checker.getSymbolAtLocation(identifier);
+function constIdentifierRange(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+  symbol: ts.Symbol,
+  visiting: Set<ts.Symbol>,
+): StaticIntegerRange | undefined {
   const declaration = symbol?.valueDeclaration;
   if (!symbol || !declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return undefined;
+  if (!ts.isVariableDeclarationList(declaration.parent) || !(declaration.parent.flags & ts.NodeFlags.Const)) {
+    return undefined;
+  }
+  // Do not fold a lexical binding through its temporal dead zone. Comparing
+  // source positions also rejects a later declaration referenced from an
+  // earlier const initializer.
+  if (identifier.getSourceFile() !== declaration.getSourceFile() || identifier.getStart() <= declaration.getEnd()) {
+    return undefined;
+  }
+  return staticIntegerRangeInner(ctx, declaration.initializer, visiting);
+}
+
+function countedLoopIdentifierRange(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+  symbol: ts.Symbol,
+  visiting: Set<ts.Symbol>,
+): StaticIntegerRange | undefined {
+  const declaration = symbol.valueDeclaration;
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return undefined;
   const list = declaration.parent;
   const loop = ts.isVariableDeclarationList(list) && ts.isForStatement(list.parent) ? list.parent : undefined;
   if (!loop || loop.initializer !== list || !loop.condition || !loop.incrementor) return undefined;
-  const start = staticIntegerRange(ctx, declaration.initializer);
+  const start = staticIntegerRangeInner(ctx, declaration.initializer, visiting);
   if (!start || start.min !== start.max) return undefined;
   if (!ts.isBinaryExpression(loop.condition) || !ts.isIdentifier(loop.condition.left)) return undefined;
   if (ctx.checker.getSymbolAtLocation(loop.condition.left) !== symbol) return undefined;
-  const bound = staticIntegerRange(ctx, loop.condition.right);
+  const bound = staticIntegerRangeInner(ctx, loop.condition.right, visiting);
   if (!bound || bound.min !== bound.max) return undefined;
   let max: number;
   if (loop.condition.operatorToken.kind === ts.SyntaxKind.LessThanToken) max = bound.max - 1;
@@ -83,7 +137,7 @@ function isIncreasingLoopIncrement(ctx: CodegenContext, expression: ts.Expressio
   if (!ts.isBinaryExpression(expression) || !ts.isIdentifier(expression.left)) return false;
   if (ctx.checker.getSymbolAtLocation(expression.left) !== symbol) return false;
   if (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
-    const step = staticIntegerRange(ctx, expression.right);
+    const step = staticIntegerRangeInner(ctx, expression.right, new Set([symbol]));
     return step !== undefined && step.min === step.max && step.min > 0;
   }
   if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isBinaryExpression(expression.right)) {
@@ -92,6 +146,6 @@ function isIncreasingLoopIncrement(ctx: CodegenContext, expression: ts.Expressio
   const rhs = expression.right;
   if (rhs.operatorToken.kind !== ts.SyntaxKind.PlusToken || !ts.isIdentifier(rhs.left)) return false;
   if (ctx.checker.getSymbolAtLocation(rhs.left) !== symbol) return false;
-  const step = staticIntegerRange(ctx, rhs.right);
+  const step = staticIntegerRangeInner(ctx, rhs.right, new Set([symbol]));
   return step !== undefined && step.min === step.max && step.min > 0;
 }

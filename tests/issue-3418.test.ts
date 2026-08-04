@@ -230,6 +230,39 @@ describe("#3418 — elideDeadTopLevelBindings unit behavior", () => {
     expect(out.elided).toEqual([]);
   });
 
+  it("retains all bindings when eval can name them through computed source", () => {
+    const src =
+      'var hidden = 40;\nvar helper = function (x) { return x + 2; };\n(0, eval)(prefix + "helper(hidden)");\n';
+    const out = elide(src);
+    expect(out.source).toBe(src);
+    expect(out.elided).toEqual([]);
+  });
+
+  it("retains only names mentioned by literal eval source", () => {
+    const src =
+      'var hidden = 40;\nvar helper = function (x) { return x + 2; };\nvar unused = function () {};\neval("helper(hidden)");\n';
+    const out = elide(src);
+    expect(out.source).toContain("var hidden = 40;");
+    expect(out.source).toContain("var helper = function");
+    expect(out.elided).toEqual(["unused"]);
+  });
+
+  it("does not let literal eval revive a dead evalScript-style shim", () => {
+    const src =
+      'var shim = { evalScript: function (source) { return eval(source); } };\nvar answer = 42;\neval("answer");\n';
+    const out = elide(src);
+    expect(out.source).toContain("var answer = 42;");
+    expect(out.elided).toEqual(["shim"]);
+  });
+
+  it("retains all bindings when the Function constructor can name them", () => {
+    const src =
+      'var hidden = 40;\nvar helper = function (x) { return x + 2; };\nvar Ctor = Function;\nnew Ctor(prefix + "return helper(hidden)");\n';
+    const out = elide(src);
+    expect(out.source).toBe(src);
+    expect(out.elided).toEqual([]);
+  });
+
   it("never elides early-error binding names (strict `var eval` stays a SyntaxError)", async () => {
     const out = elide('"use strict";\nvar eval = function () {};\n');
     expect(out.elided).toEqual([]);

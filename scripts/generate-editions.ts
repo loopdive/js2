@@ -581,6 +581,15 @@ function normalizeStatus(s: string): StatusKey {
 // (#2910) Landing-page feature-row reconciliation
 // ---------------------------------------------------------------------------
 
+/**
+ * (#2871 follow-up) Normalize a result record's `file` ("test/language/…/x.js") to the
+ * path form the report page keys on. The page strips the leading "test/" when
+ * it displays a file, so the per-file edition map uses the same stripped form.
+ */
+function stripTestPrefix(file: string): string {
+  return file.replace(/^test\//, "");
+}
+
 /** A test after edition classification, used to compute reconciled row counts. */
 export interface ClassifiedTest {
   edition: number;
@@ -846,6 +855,14 @@ async function main() {
   // edition 100% ⇒ every row 100%). This is the reconciled row source for the
   // landing-page edition sections (replaces the path-glob population of #2774).
   const featureBuckets: Record<number, Record<string, { pass: number; fail: number; ce: number; skip: number }>> = {};
+  // (#2871 follow-up) Per-FILE edition classification for the non-passing tests, written
+  // to `test262-file-editions.json`. The report page's "Error Patterns" section
+  // can only filter by category otherwise, which is far too coarse: nearly
+  // every category contains at least one ES5 test, so selecting ES5 on the
+  // slider left the list essentially unfiltered. Restricted to non-`pass`
+  // records (that is all the error/skip views consume) to keep the artifact
+  // ~1 MB instead of ~3 MB.
+  const fileEditions: Record<string, string> = {};
   // Diagnostic: how many tests in each edition carry at least one `features:` tag.
   const taggedCounts: Record<number, number> = {};
   // (#2910) Every classified, tagged test — the input to computeFeatureRowCounts
@@ -869,6 +886,7 @@ async function main() {
     if (record.scope_official === false || record.scope === "proposal") {
       const proposalBucket = buckets[-1] ?? (buckets[-1] = { pass: 0, fail: 0, ce: 0, skip: 0 });
       proposalBucket[resolveStatusKey(record, hostFree)]++;
+      fileEditions[stripTestPrefix(file)] = EDITION_NAMES[-1];
       unclassified++;
       continue;
     }
@@ -892,6 +910,14 @@ async function main() {
 
     const bucket = buckets[edition] ?? (buckets[edition] = { pass: 0, fail: 0, ce: 0, skip: 0 });
     bucket[key]++;
+
+    // (#2871 follow-up) Index this file's edition so the report's error-pattern
+    // / skipped-test lists can filter per test rather than per category.
+    // EVERY test is indexed, not just the host lane's failures: the standalone
+    // root-cause map is scored against this same file (editions are a property
+    // of the test's frontmatter, not of the compile target), and a test that
+    // passes with a JS host but fails standalone must still resolve.
+    fileEditions[stripTestPrefix(file)] = EDITION_NAMES[edition] ?? `ES${edition}`;
 
     // (#2910) Slice this test into per-edition per-feature-tag buckets. Only
     // standard editions (year > 0) carry feature rows on the landing page;
@@ -1047,6 +1073,32 @@ async function main() {
   if (categoriesPath !== outputPath) {
     writeFileSync(categoriesPath, JSON.stringify(categoryEditionOutput, null, 2) + "\n");
     console.log(`Wrote ${Object.keys(categoryEditionOutput).length} category × edition buckets to: ${categoriesPath}`);
+  }
+
+  // (#2871 follow-up) Per-file edition index. Shape:
+  //   { "editions": ["ES5", "ES2015", …],
+  //     "files": { "language/statements/for/x.js": 0, … } }
+  // The edition label is stored as an index into `editions` purely to keep the
+  // file small (~48k entries). Consumed by the report page's Error Patterns and
+  // Skipped Tests sections so the edition slider filters per TEST, not per
+  // category (a category-level filter is a near no-op: almost every category
+  // contains at least one ES5 test), and by build-test262-report.mjs to give
+  // each standalone root-cause bucket a per-edition count breakdown.
+  const fileEditionsPath = outputPath.replace(/test262-editions\.json$/, "test262-file-editions.json");
+  if (fileEditionsPath !== outputPath) {
+    const editionLabels: string[] = [];
+    const labelIndex = new Map<string, number>();
+    const filesOut: Record<string, number> = {};
+    for (const [file, label] of Object.entries(fileEditions)) {
+      let idx = labelIndex.get(label);
+      if (idx === undefined) {
+        idx = editionLabels.push(label) - 1;
+        labelIndex.set(label, idx);
+      }
+      filesOut[file] = idx;
+    }
+    writeFileSync(fileEditionsPath, JSON.stringify({ editions: editionLabels, files: filesOut }) + "\n");
+    console.log(`Wrote ${Object.keys(filesOut).length} per-file edition entries to: ${fileEditionsPath}`);
   }
 
   // (#2910) Reconcile the landing-page feature-row counts with the edition

@@ -84,6 +84,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # (#4130) MUST run BEFORE the regeneration below. The staleness floor in
+      # the queue gate asks "how old is the artifact main is currently serving",
+      # and the only moment that question is answerable is before this job
+      # overwrites the file. Reading it afterwards yields the age of the
+      # measurement this job just took — always ~0 — so the floor could never
+      # fire and a permanently busy queue deferred the promotion forever. The
+      # workflow ran, reported success, and committed nothing for two days.
+      - name: Capture the COMMITTED artifact's age (before regenerating)
+        id: committed
+        shell: bash
+        run: |
+          set -euo pipefail
+          LAST_REFRESH="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
+          echo "last_refresh=${LAST_REFRESH}" >> "$GITHUB_OUTPUT"
+          echo "committed artifact generatedAt: ${LAST_REFRESH:-<unreadable>}"
+
       - name: Regenerate the npm-compat artifacts
         # No `--only`: a focused run never writes, because a partial file would
         # drop the other packages. Refreshing anything means regenerating all of
@@ -121,7 +137,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          LAST_REFRESH="$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("benchmarks/results/npm-compat.json","utf8"));process.stdout.write(String(r.generatedAt??""))}catch{process.stdout.write("")}')"
+          # (#4130) From the step that ran BEFORE the regeneration — the age of
+          # what main is serving, not of the measurement just taken.
+          LAST_REFRESH="${{ steps.committed.outputs.last_refresh }}"
           # `|| RC=$?`, not a bare call then `RC=$?`: the default step shell is
           # `bash -e {0}`, so a bare non-zero exit aborts the step before the
           # next line runs and the DEFER path would look like a step failure.
@@ -227,10 +245,35 @@ jobs:
               exit 0
             fi
 
-            git commit -q -m "chore(ci): refresh npm-compat artifacts [skip ci]"
-            if git push deploykey HEAD:main; then
+            # (#4132/#4140) --no-verify on BOTH the commit and the push. This job
+            # installs dependencies, so husky's hooks are live:
+            #   pre-commit runs `test:changed-root`, which needs a merge base with
+            #     `origin/main`;
+            #   pre-push  runs the oracle ratchet, which fails here too.
+            # The checkout is `fetch-depth: 1` with `persist-credentials: false`
+            # and the push remote is `deploykey`, so `origin/main` does not exist
+            # and neither hook can do its job. The sibling `benchmark-refresh` is
+            # immune only structurally — its promote job is separate and never
+            # runs `pnpm install`, so no hook is installed. This workflow is
+            # deliberately a SINGLE job and has to opt out explicitly. Running
+            # either check over generated JSON artifacts would be meaningless.
+            git commit -q --no-verify -m "chore(ci): refresh npm-compat artifacts [skip ci]"
+
+            # (#4140) Distinguish a genuine mid-promotion race from any other push
+            # failure. Replaying only helps when main moved under us; for
+            # anything else the replay is guaranteed to fail identically, and it
+            # buries the real error under five rounds of a MISLEADING message.
+            # That is exactly how a rejected pre-push hook read as "main advanced
+            # mid-promotion" for a full cycle.
+            push_err="$(mktemp)"
+            if git push --no-verify deploykey HEAD:main 2>"$push_err"; then
               echo "Published npm-compat artifacts measured at ${SOURCE_SHA}."
               exit 0
+            fi
+            cat "$push_err"
+            if ! grep -Eqi 'non-fast-forward|fetch first|behind its remote|stale info' "$push_err"; then
+              echo "::error::npm-compat push failed for a reason that replaying cannot fix (see above)."
+              exit 1
             fi
             echo "push rejected (main advanced mid-promotion); replaying onto the new head — attempt ${attempt}/5."
           done

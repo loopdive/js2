@@ -58,6 +58,19 @@ export type ArrowClosureCapture = {
   hasTdzFlag: boolean;
 };
 
+/** A closure created directly while an enclosing function's parameter
+ * environment is being initialized cannot see declarations from that
+ * function's body VariableEnvironment yet. A same-named live local therefore
+ * wins over an eagerly registered body-function entry in `funcMap`. */
+function isDirectParameterInitializerClosure(node: ts.ArrowFunction | ts.FunctionExpression): boolean {
+  let child: ts.Node = node;
+  for (let parent = node.parent; parent; child = parent, parent = parent.parent) {
+    if (ts.isParameter(parent)) return parent.initializer === child;
+    if (ts.isFunctionLike(parent)) return false;
+  }
+  return false;
+}
+
 /**
  * Phase 1 of compileArrowAsClosure: capture analysis. Scans the arrow /
  * function-expression body (and its parameter default initializers) for free
@@ -75,12 +88,14 @@ export function planClosureCaptures(
   fctx: FunctionContext,
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   body: ts.ConciseBody,
+  additionalCaptureNames?: Iterable<string>,
 ): { captures: ArrowClosureCapture[]; selfBindingName: string | undefined } {
   // 2. Analyze captured variables. Use scope-aware collection so that nested
   //    `var` declarations and parameter bindings inside the closure body shadow
   //    outer references — otherwise a closure with its own `var i;` would be
   //    treated as capturing the outer `i` (#995/#996).
   const ownLocals = arrowOwnLocals(arrow);
+  const createdInParameterEnvironment = isDirectParameterInitializerClosure(arrow);
 
   // (#2118) Self-recursive const/let arrow: `const f = (n) => ... f(n-1)`.
   // The closure references its own binding `f`. Without special handling the
@@ -136,6 +151,14 @@ export function planClosureCaptures(
   // captures.
   for (const p of arrow.parameters) {
     collectReferencedIdentifiers(p, referencedNames, ownLocals);
+  }
+  // Direct-eval source is opaque to the static identifier scan. Its lexical
+  // ancestors have already promoted all eval-visible bindings to cells; make
+  // those cells explicit captures so this closure can forward the live scope.
+  if (additionalCaptureNames) {
+    for (const name of additionalCaptureNames) {
+      if (!ownLocals.has(name)) referencedNames.add(name);
+    }
   }
 
   // Transitively add captures needed by called nested functions.
@@ -306,7 +329,13 @@ export function planClosureCaptures(
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
     // must not block capture of a same-named outer local (e.g. the test262
     // `let length = "outer"` dstr template). Discriminate by index.
-    if (ctx.funcMap.has(name) && ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)) continue;
+    if (
+      !createdInParameterEnvironment &&
+      ctx.funcMap.has(name) &&
+      ctx.funcMap.get(name) !== ctx.jsStringImports.get(name)
+    ) {
+      continue;
+    }
     // Skip if the name is the arrow's own parameter (including destructuring bindings)
     if (isOwnParamName(arrow, name)) continue;
     // Skip if the name is a named function expression's own name (self-reference)

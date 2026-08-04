@@ -117,6 +117,38 @@ someone else's work**:
 - `git stash push -- <file>` printing *"No local changes to save"* because the change was already **committed**, so the run labelled *"fix reverted"* still contained the fix. Two runs agreed; the agreement was meaningless.
 - A regex that never captured the token it was asserting on, so it passed **by absence**.
 
+## `contents` API on a big directory: empty = TRUNCATION, not absence (2× in one day, 2026-08-02/03)
+
+`gh api repos/<o>/<r>/contents/plan/issues --jq '.[].name' | grep '^NNNN'` came
+back EMPTY for files that were ON MAIN — the endpoint caps at 1000 entries and
+`plan/issues/` holds 4000+. Two independent near-misses in one session (one
+almost reported a live id collision that had already been resolved). The
+canonical "does main contain X" check is the git tree API **with an explicit
+truncation check**:
+
+```bash
+gh api "repos/<o>/<r>/git/trees/main?recursive=1" --jq '.truncated'  # must be false
+# then grep the tree for the path; or fetch the exact path via contents/<full/path>
+```
+
+A single exact-path `contents/<dir>/<file>` GET is also safe (404 = absent).
+Never grep a listing that can silently cap.
+
+## An HONEST negative from an unvalidated instrument is still unvalidated (2026-08-03, #4096)
+
+An agent marked "all 463 single-statement `ref.null.extern` push sites across
+60 files", got no marker hit on the repro, and honestly reported "the null
+comes from another spelling — not one of these sites." The next agent pinned
+the emit site by chokepoint instrumentation **on the first try** — and it WAS
+a plain single-statement push, squarely inside the class the sweep claimed to
+cover. **The sweep's negative was an instrument failure**: it had no positive
+control (mark a site KNOWN to be reached; confirm the marker fires through the
+same build/run path). The honesty of the report ("not pinned, here is what was
+ruled out") was real and still valuable — but "ruled out" was itself a result
+from an unproven tool, and it misdirected the follow-up brief. Rule: a
+negative sweep without a fired positive control rules out NOTHING; say "the
+sweep found nothing AND was not validated" — those are different handoffs.
+
 The same agent had built structural positive controls into an instrument hours
 earlier and then failed to apply the principle three feet away. **Knowing the
 rule does not protect you; running the falsifiability test does.**
