@@ -232,52 +232,56 @@
         min-width: 0;
       }
       .edition-legend-name {
-        font-size: 0.72rem;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--text-muted);
+        font-size: 0.92rem;
+        font-weight: 700;
+        letter-spacing: 0;
+        color: var(--text);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
       .edition-legend-ratio {
-        color: var(--text);
-        font-size: 0.8rem;
+        color: var(--text-muted);
+        font-size: 0.7rem;
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .edition-legend-trend-slot {
         min-width: 0;
-        height: 22px;
+        height: 30px;
+        margin: 0.1rem 0;
       }
       .edition-legend-trend {
         display: block;
         width: 100%;
-        height: 22px;
+        height: 30px;
       }
       .edition-legend-rate {
         font-family: var(--mono);
         font-weight: 700;
         font-variant-numeric: tabular-nums;
         font-size: 0.72rem;
-        padding: 0.15rem 0.5rem;
+        padding: 0.2rem 0.55rem;
         border-radius: 999px;
         text-align: center;
         white-space: nowrap;
         flex-shrink: 0;
-        background: rgba(63, 185, 80, 0.16);
-        color: var(--pass);
+        background: var(--pass);
+        color: #06210d;
       }
       .edition-legend-rate.tier-mid {
-        background: rgba(210, 153, 34, 0.16);
-        color: var(--error);
+        background: var(--error);
+        color: #2b1c00;
       }
       .edition-legend-rate.tier-low {
-        background: rgba(248, 81, 73, 0.16);
-        color: var(--fail);
+        background: var(--fail);
+        color: #2b0805;
       }
       .edition-legend-item.dimmed .edition-legend-rate {
-        background: rgba(255, 255, 255, 0.06);
-        color: rgba(255, 255, 255, 0.4);
+        background: rgba(255, 255, 255, 0.12);
+        color: rgba(255, 255, 255, 0.5);
       }
       .cat-table {
         width: 100%;

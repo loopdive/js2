@@ -107,6 +107,12 @@ class TrendChart extends HTMLElement {
     const fillPath =
       s.fill === false ? "" : `${path} L ${x(lastIdx)} ${PAD.top + plotH} L ${x(0)} ${PAD.top + plotH} Z`;
 
+    // Dashed reference line at the first point's level — lets the eye judge
+    // at a glance whether the series ended above or below where it started,
+    // the way a stock sparkline shows the previous-close line.
+    const baselineY = y(values[0]);
+    const baseline = `<line x1="${PAD.left}" y1="${baselineY}" x2="${W - PAD.right}" y2="${baselineY}" stroke="${color}" stroke-opacity="0.4" stroke-width="1" stroke-dasharray="2 2"/>`;
+
     this.shadowRoot.innerHTML = `
       <style>:host { display: block; }</style>
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block">
@@ -118,6 +124,7 @@ class TrendChart extends HTMLElement {
         </linearGradient></defs><path d="${fillPath}" fill="url(#sparkGrad)"/>`
             : ""
         }
+        ${baseline}
         <path d="${path}" fill="none" stroke="${color}" stroke-width="${s.lineWidth ?? 1.5}" stroke-linejoin="round" stroke-linecap="round"/>
         <circle cx="${x(lastIdx)}" cy="${y(values[lastIdx])}" r="2" fill="${color}"/>
       </svg>`;
