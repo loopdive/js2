@@ -155,3 +155,56 @@ both; confirm the method-call path independently.
       `.apply()` identity cases (the `.call()` case as a guard against
       regressing the currently-correct path).
 - [ ] Net official pass count does not regress in either lane.
+
+## 2026-08-04 — root cause, and a correction to this issue's own title
+
+**The title is wrong that `.call()` is correct.** Measured on `main` @ `269c26a80`,
+standalone, all four shapes return `NaN`:
+
+| case | result |
+| --- | ---: |
+| `g.call(o)` where `g` returns a constant | **7** (the call itself works) |
+| `o.x` read directly | **42** (the field read works) |
+| `g.call(o)` where `g` returns `this.x` | **NaN** |
+| `g.apply(o)` / `g.apply(o,[])` / `g.apply(o,[1])` | **NaN** |
+
+So this is not an `.apply`-specific defect and the `.apply`→`.call` reshape
+(#3983, `tryReshapeApplyToNamedThisCall`) cannot fix it — it reshapes onto a
+path that is broken the same way. Anyone porting an `.apply` fix will find it
+already landed and the bug still present; that happened once already.
+
+### Where it actually goes wrong
+
+`resolveNamedThisCallTarget` (`src/codegen/named-this-call.ts:212`) is gated on
+`receiverIsAdmitted` (:70), whose non-`this` branch is:
+
+```ts
+return oracleProvesNonNullish(ctx.oracle.typeFactOf(inner));
+```
+
+An `any`-typed receiver — `const o: any = {x:42}`, and every untyped-JS receiver
+in the corpus this matters for — cannot be proven non-nullish, so the gate
+refuses, the trampoline is never reserved, and control falls through to the
+generic lowering, **which evaluates the receiver and discards it**. The callee
+then runs with the ambient `this`, so `this.x` reads a field that is not there
+and yields `undefined` → `NaN`. A silent wrong answer, not a refusal.
+
+### Why the gate is probably not the thing to fix
+
+:74 already states the trampoline "runtime-splits a null value to the legacy
+unbound call", i.e. it handles a nullish receiver itself at runtime. If that
+holds, the static non-nullish requirement is redundant for admission and could
+be relaxed to admit `any` receivers. **That was NOT verified** — it needs the
+runtime split re-read and exercised against a genuinely null receiver before
+anyone leans on it.
+
+The deeper defect is the fallback: refusing the fast arm should not silently
+change semantics. Whatever admits the receiver, the non-trampoline path needs to
+either install `this` or refuse to compile — dropping it is the bug.
+
+### Repro
+
+```js
+function g() { return this.x; }
+export function test() { const o = { x: 42 }; return g.call(o); }  // NaN, expect 42
+```
