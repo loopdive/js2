@@ -15915,7 +15915,18 @@ export function buildImports(
     // Wrap host imports with recursion depth guard + exception capture for catch_all
     {
       const original = fn;
-      fn = function (this: any, ...args: any[]) {
+      // (#4156) Dispatch on `arguments.length` to a direct `.call` rather than
+      // collecting `...args` and using `.apply`: the rest parameter allocates an
+      // array on EVERY host import call, and this wrapper is on the path of all
+      // of them. Wasm-side A/B: ~4% (66.2/69.5 -> 64.9/65.4 ns/op) and steadier.
+      //
+      // Two traps, both recorded in #4156. (1) A JS->JS microbenchmark of these
+      // shapes claims -41%; that is MISLEADING, because V8's wasm->JS entry
+      // already materialises the argument list. (2) The switch must key off
+      // arguments RECEIVED, never `original.length` — that is 0 for a variadic
+      // or defaulted callee, so an arity-specialised wrapper built from it would
+      // silently drop arguments.
+      fn = function (this: any) {
         if (importCounts) importCounts[importIndex]++;
         if (hostCallDepth >= MAX_HOST_RECURSION_DEPTH) {
           const err = new RangeError("Maximum call stack size exceeded");
@@ -15924,7 +15935,21 @@ export function buildImports(
         }
         hostCallDepth++;
         try {
-          return original.apply(this, args);
+          switch (arguments.length) {
+            case 0:
+              return original.call(this);
+            case 1:
+              return original.call(this, arguments[0]);
+            case 2:
+              return original.call(this, arguments[0], arguments[1]);
+            case 3:
+              return original.call(this, arguments[0], arguments[1], arguments[2]);
+            case 4:
+              return original.call(this, arguments[0], arguments[1], arguments[2], arguments[3]);
+            default:
+              // Exact forwarding for the rare >4-argument import; no array literal.
+              return original.apply(this, arguments as unknown as any[]);
+          }
         } catch (e) {
           lastCaughtException = e;
           throw e;
