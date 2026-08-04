@@ -281,6 +281,9 @@ import {
 } from "./async-scheduler.js";
 import { ensureUnhandledRejectionReporter } from "./unhandled-rejection.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
+import { profileCount, profilePhase } from "../compile-profile.js";
+import { frameSnapshotAtCompile } from "./function-body.js";
+import { describeInternalError } from "./internal-error.js";
 import {
   brandExternMethodResult,
   ensureLateImport,
@@ -327,6 +330,7 @@ import {
   finalizeUnifiedCollector,
   unifiedVisitNode,
 } from "./declarations.js";
+import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import {
@@ -1144,29 +1148,53 @@ function atomToFieldIr(a: import("../ir/propagate.js").LatticeAtom): IrType | nu
  *
  * Field names are sorted into canonical (ascending) order to match
  * the `IrObjectShape` invariant.
+ *
+ * (#4019) `onPath` carries the object types currently being expanded on this
+ * descent. A SELF-REFERENTIAL type — `interface Node { parent: Node }`, and the
+ * far more common structural equivalents throughout real npm `.d.ts` files —
+ * otherwise recurses forever through `tsTypeToFieldIr`, and the resulting
+ * `RangeError: Maximum call stack size exceeded` is caught by the codegen
+ * try/catch and reported as an opaque hard error that aborts the WHOLE compile.
+ * A larger `--stack-size` does not help, because the recursion is unbounded
+ * rather than merely deep.
+ *
+ * Re-entering a type already on the path yields `null`, the established "IR
+ * cannot represent this — fall back to legacy" signal. That is the correct
+ * answer on the merits, not just a safety valve: `IrObjectShape` is a finite,
+ * flat field list, and a cyclic type has no such finite expansion.
+ *
+ * The set is PATH-scoped (removed on the way out), so a type appearing in two
+ * sibling fields is still expanded normally; only a genuine cycle is rejected.
  */
-function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type): IrType | null {
+function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: Set<ts.Type>): IrType | null {
   if (!(tsType.flags & ts.TypeFlags.Object)) return null;
   if (tsType.getCallSignatures().length > 0) return null; // callable
   if (isExternalDeclaredClass(tsType, ctx.checker)) return null;
   if (isTupleType(tsType)) return null;
+  const path = onPath ?? new Set<ts.Type>();
+  if (path.has(tsType)) return null; // cyclic shape — no finite IR expansion
 
   const props = tsType.getProperties();
   if (props.length === 0) return null; // empty object — defer to a future slice
 
   const fields: { name: string; type: IrType }[] = [];
-  for (const prop of props) {
-    const decl = prop.valueDeclaration;
-    if (
-      decl &&
-      (ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl))
-    ) {
-      return null;
+  path.add(tsType);
+  try {
+    for (const prop of props) {
+      const decl = prop.valueDeclaration;
+      if (
+        decl &&
+        (ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl))
+      ) {
+        return null;
+      }
+      const propType = ctx.checker.getTypeOfSymbol(prop);
+      const fieldIr = tsTypeToFieldIr(ctx, propType, path);
+      if (!fieldIr) return null;
+      fields.push({ name: prop.name, type: fieldIr });
     }
-    const propType = ctx.checker.getTypeOfSymbol(prop);
-    const fieldIr = tsTypeToFieldIr(ctx, propType);
-    if (!fieldIr) return null;
-    fields.push({ name: prop.name, type: fieldIr });
+  } finally {
+    path.delete(tsType);
   }
   fields.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return { kind: "object", shape: { fields } };
@@ -1178,11 +1206,13 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type): IrType | 
  * which causes `objectIrTypeFromTsType` to bail and the function to
  * fall back to legacy.
  */
-function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type): IrType | null {
+function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type, onPath?: Set<ts.Type>): IrType | null {
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
   if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
-  if (t.flags & ts.TypeFlags.Object) return objectIrTypeFromTsType(ctx, t);
+  // (#4019) thread the in-progress descent so a self-referential shape is
+  // rejected instead of recursing until the stack dies.
+  if (t.flags & ts.TypeFlags.Object) return objectIrTypeFromTsType(ctx, t, onPath);
   return null;
 }
 
@@ -6160,9 +6190,11 @@ export function generateMultiModule(
     // $AnyValue struct type is now registered lazily via ensureAnyValueType()
 
     // Phase 1: Collect extern declarations first (needed before import collectors)
-    for (const sf of multiAst.sourceFiles) {
-      collectExternDeclarations(ctx, sf);
-    }
+    profilePhase("extern-decls", () => {
+      for (const sf of multiAst.sourceFiles) {
+        collectExternDeclarations(ctx, sf);
+      }
+    });
 
     // WASI target: check for DOM-only globals and emit compile errors
     if (ctx.wasi) {
@@ -6174,25 +6206,29 @@ export function generateMultiModule(
 
     // Scan lib files for DOM extern classes + globals (only if any user code uses DOM)
     // After lib.d.ts refactoring, TS loads individual lib files (lib.es5.d.ts, etc.)
-    const anyUsesDom = multiAst.sourceFiles.some((sf) => sourceUsesLibGlobals(sf));
+    const anyUsesDom = profilePhase("lib-globals-probe", () =>
+      multiAst.sourceFiles.some((sf) => sourceUsesLibGlobals(sf)),
+    );
     if (anyUsesDom) {
-      // #2520 — gate the lib-file referenced-names filter to wasi/standalone
-      // only; under the default gc target it reorders the import/type table and
-      // exposed a latent late-import index-shift (#1787 −6). See the matching
-      // comment in generateModule above.
-      const libRefs =
-        ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
-      for (const libSf of multiAst.program.getSourceFiles()) {
-        const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
-        if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
-          collectExternDeclarations(ctx, libSf, libRefs);
-          for (const sf of multiAst.sourceFiles) {
-            if (sourceUsesLibGlobals(sf)) {
-              collectDeclaredGlobals(ctx, libSf, sf);
+      profilePhase("lib-globals-scan", () => {
+        // #2520 — gate the lib-file referenced-names filter to wasi/standalone
+        // only; under the default gc target it reorders the import/type table and
+        // exposed a latent late-import index-shift (#1787 −6). See the matching
+        // comment in generateModule above.
+        const libRefs =
+          ctx.wasi || ctx.standalone ? collectReferencedGlobalNames(multiAst.sourceFiles, ctx.checker) : undefined;
+        for (const libSf of multiAst.program.getSourceFiles()) {
+          const baseName = libSf.fileName.split("/").pop() ?? libSf.fileName;
+          if (baseName.startsWith("lib.") && baseName.endsWith(".d.ts")) {
+            collectExternDeclarations(ctx, libSf, libRefs);
+            for (const sf of multiAst.sourceFiles) {
+              if (sourceUsesLibGlobals(sf)) {
+                collectDeclaredGlobals(ctx, libSf, sf);
+              }
             }
           }
         }
-      }
+      });
     }
 
     registerBuiltinExternClasses(ctx);
@@ -6200,18 +6236,22 @@ export function generateMultiModule(
 
     // Pre-pass: detect empty object literals that get properties assigned later
     // Must run before import collectors so that widened types are known
-    for (const sf of multiAst.sourceFiles) {
-      collectObjectLiteralAssignedPropertyNames(ctx, sf);
-      collectEmptyObjectWidening(ctx, multiAst.checker, sf);
-      // (#2837) see single-file path above.
-      collectGrowableObjectLiterals(ctx, multiAst.checker, sf);
-    }
+    profilePhase("object-widening", () => {
+      for (const sf of multiAst.sourceFiles) {
+        collectObjectLiteralAssignedPropertyNames(ctx, sf);
+        collectEmptyObjectWidening(ctx, multiAst.checker, sf);
+        // (#2837) see single-file path above.
+        collectGrowableObjectLiterals(ctx, multiAst.checker, sf);
+      }
+    });
 
     // Single-pass collection of all source imports for each file (#592)
-    for (const sf of multiAst.sourceFiles) {
-      collectUsedExternImports(ctx, sf);
-      collectAllSourceImports(ctx, sf);
-    }
+    profilePhase("import-collect", () => {
+      for (const sf of multiAst.sourceFiles) {
+        collectUsedExternImports(ctx, sf);
+        collectAllSourceImports(ctx, sf);
+      }
+    });
 
     // #1677 — reconcile native-string helper indices before emitting deferred
     // helpers that look them up (see single-module path).
@@ -6244,15 +6284,17 @@ export function generateMultiModule(
 
     // #1121: Numeric return-type inference (must run BEFORE collectDeclarations
     // so the inferred f64 return is baked into the function signature).
-    {
+    profilePhase("numeric-return-inference", () => {
       const merged = new Map<string, ValType>();
       for (const sf of multiAst.sourceFiles) {
         const partial = inferNumericReturnTypes(ctx, sf);
         for (const [k, v] of partial) merged.set(k, v);
       }
       ctx.numericReturnTypes = merged;
-    }
-    ctx.booleanPropertyNames = analyzeBooleanPropertyNames(ctx, multiAst.sourceFiles);
+    });
+    ctx.booleanPropertyNames = profilePhase("boolean-property-analysis", () =>
+      analyzeBooleanPropertyNames(ctx, multiAst.sourceFiles),
+    );
 
     // #1677 — final reconcile before any user function is registered.
     reconcileNativeStrFinalizeShift(ctx);
@@ -6261,42 +6303,102 @@ export function generateMultiModule(
     // module trips the ITER_OVERRIDDEN brand. Must run BEFORE collectDeclarations
     // (the module-init filter / #1719 CPR write-arm reads the brand to keep the
     // override statement in __module_init).
-    for (const sf of multiAst.sourceFiles) {
-      if (sourceOverridesArrayIterator(sf)) {
-        ctx.arrayIteratorMaybeOverridden = true;
+    profilePhase("global-environment-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        if (sourceOverridesArrayIterator(sf)) {
+          ctx.arrayIteratorMaybeOverridden = true;
+        }
+        recordSourceGlobalEnvironment(ctx, sf);
       }
-      recordSourceGlobalEnvironment(ctx, sf);
-    }
+    });
 
     // Phase 2: Collect all declarations — only entry file gets Wasm exports
     // (#2023) Whole-realm new.target detection — OR across all source files.
-    for (const sf of multiAst.sourceFiles) {
-      scanForNewTarget(ctx, sf);
-    }
+    profilePhase("new-target-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        scanForNewTarget(ctx, sf);
+      }
+    });
 
     // (#802) Whole-realm proto-mutation receiver detection — OR across all
     // source files (marked roots must be known before class collection).
-    for (const sf of multiAst.sourceFiles) {
-      scanForDynamicProto(ctx, sf);
-    }
+    profilePhase("dynamic-proto-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        scanForDynamicProto(ctx, sf);
+      }
+    });
 
     // (#2001 S1) Whole-realm array-hole detection — OR across all source files.
-    for (const sf of multiAst.sourceFiles) {
-      scanForArrayHoles(ctx, sf);
+    profilePhase("array-hole-scan", () => {
+      for (const sf of multiAst.sourceFiles) {
+        scanForArrayHoles(ctx, sf);
+      }
+    });
+
+    // (#4037) Multi-source parity for the #2026/#53 up-front `$ObjVecArr`
+    // reservation. The single-source path reserves it whenever its source
+    // declares a class; `generateMultiModule` never did, so ANY dynamic
+    // `new K(...args)` anywhere in a multi-source graph hit
+    // "runtime-argv needs the up-front-reserved $ObjVecArr type … which was not
+    // reserved for this module" and blocked emission — three times on ESLint.
+    //
+    // Gated on any source declaring a class, matching the single-source gate, so
+    // class-free graphs stay byte-identical. Placed before `collectDeclarations`
+    // (and therefore before any body compiles) so the type index is fixed at one
+    // deterministic point for every pass that reads it.
+    if (multiAst.sourceFiles.some((sf) => sourceContainsClass(sf))) {
+      reserveObjVecArrType(ctx);
     }
 
-    for (const sf of multiAst.sourceFiles) {
-      const isEntry = sf === multiAst.entryFile;
-      collectDeclarations(ctx, sf, isEntry);
-    }
+    // (#4133) `ctx.funcMap` is keyed by BARE function name, so two modules that
+    // each declare a top-level `function shared()` collide: registration mints a
+    // distinct Wasm slot for each (verified — the emitted module really does
+    // carry two `$shared` functions), but the name→index map keeps only the LAST
+    // one. Every call in every module then reached that one body, and the
+    // compile reported `success: true` with ZERO errors while computing the
+    // wrong answer. On the resolved ESLint graph 55 names collide across 146
+    // sources (`posix.js` + `windows.js` alone share ~20), and a body compiled
+    // for one local frame installed against another's is also what surfaced as
+    // `local index out of range` at binary emit.
+    //
+    // The slots already exist and bodies are compiled ONE SOURCE AT A TIME, so
+    // the fix does not need the 282-set/1780-get re-key the full issue describes:
+    // snapshot each source's own binding here, then re-apply it before that
+    // source's bodies compile. Every `funcMap.get` site — including the ~117
+    // internal-helper lookups in `object-runtime.ts` — is untouched.
+    const collidingFuncNames = collectMultiIrFunctionNameCollisions(multiAst.sourceFiles);
+    const ownFuncIdxBySource = new Map<ts.SourceFile, Map<string, number>>();
+
+    profilePhase("collect-declarations", () => {
+      for (const sf of multiAst.sourceFiles) {
+        const isEntry = sf === multiAst.entryFile;
+        collectDeclarations(ctx, sf, isEntry);
+        if (collidingFuncNames.size === 0) continue;
+        // Immediately after THIS source's collect pass, `funcMap` still holds
+        // this source's index for every name it declares — a later source has
+        // not overwritten it yet. That is the only moment the per-source binding
+        // is observable without changing `collectDeclarations`.
+        const own = new Map<string, number>();
+        for (const stmt of sf.statements) {
+          if (!ts.isFunctionDeclaration(stmt) || !stmt.name || !stmt.body) continue;
+          const name = stmt.name.text;
+          if (!collidingFuncNames.has(name)) continue;
+          const idx = ctx.funcMap.get(name);
+          if (idx !== undefined) own.set(name, idx);
+        }
+        if (own.size > 0) ownFuncIdxBySource.set(sf, own);
+      }
+    });
     // #2847: make initial boolean brands visible while bodies are emitted;
     // recover again at finalize for fields discovered during body compilation.
     recoverBooleanStructFieldBrands(ctx);
 
     // Shape inference: detect array-like variables and override their types
-    for (const sf of multiAst.sourceFiles) {
-      applyShapeInference(ctx, multiAst.checker, sf);
-    }
+    profilePhase("shape-inference", () => {
+      for (const sf of multiAst.sourceFiles) {
+        applyShapeInference(ctx, multiAst.checker, sf);
+      }
+    });
 
     // (#1636-S1) Eagerly register the `__current_this` module global so that
     // `ThisKeyword` resolution in free-function-closure bodies (compiled in
@@ -6337,17 +6439,41 @@ export function generateMultiModule(
       sealedVars: new Set(ctx.sealedVars),
       nonExtensibleVars: new Set(ctx.nonExtensibleVars),
     };
-    for (const sf of multiAst.sourceFiles) {
-      ctx.definedPropertyFlags = new Map(multiDeclarationOrderState.definedPropertyFlags);
-      ctx.nonWritableExternKeys = new Set(multiDeclarationOrderState.nonWritableExternKeys);
-      ctx.frozenVars = new Set(multiDeclarationOrderState.frozenVars);
-      ctx.sealedVars = new Set(multiDeclarationOrderState.sealedVars);
-      ctx.nonExtensibleVars = new Set(multiDeclarationOrderState.nonExtensibleVars);
-      compileDeclarations(ctx, sf);
-    }
+    profilePhase("bodies", () => {
+      const lastIndex = multiAst.sourceFiles.length - 1;
+      for (const [index, sf] of multiAst.sourceFiles.entries()) {
+        ctx.definedPropertyFlags = new Map(multiDeclarationOrderState.definedPropertyFlags);
+        ctx.nonWritableExternKeys = new Set(multiDeclarationOrderState.nonWritableExternKeys);
+        ctx.frozenVars = new Set(multiDeclarationOrderState.frozenVars);
+        ctx.sealedVars = new Set(multiDeclarationOrderState.sealedVars);
+        ctx.nonExtensibleVars = new Set(multiDeclarationOrderState.nonExtensibleVars);
+        // The accumulated `__module_init` is graph state, not per-source state:
+        // `collectDeclarations` has already run over every source, so the
+        // statement list this loop sees is complete and IDENTICAL on every
+        // iteration. Compile the discovery pass once at the front, the
+        // final-registry pass once at the end, and nothing in between — see
+        // `ModuleInitMode`. This is what made the 146-source ESLint graph
+        // quadratic in both time and retained function bodies.
+        const moduleInitMode: ModuleInitMode = index === lastIndex ? "full" : index === 0 ? "discover" : "skip";
+        // (#4133) Point every colliding name at THIS source's own slot for the
+        // duration of its body compilation, so its calls resolve to its own
+        // function instead of whichever module happened to register last.
+        // Iterating in the same order as the collect loop leaves the map in the
+        // same last-wins end state it had before, so exports and the finalizers
+        // that run after this loop observe exactly what they observed before.
+        for (const [name, idx] of ownFuncIdxBySource.get(sf) ?? []) {
+          ctx.funcMap.set(name, idx);
+        }
+        profilePhase(sf.fileName, () => compileDeclarations(ctx, sf, undefined, undefined, undefined, moduleInitMode));
+      }
+    });
+
+    frameStage(ctx, "bodies");
 
     // (#1602) Rebuild method-closure trampolines against final method sigs.
-    finalizeMethodTrampolines(ctx);
+    profilePhase("finalize-method-trampolines", () => finalizeMethodTrampolines(ctx));
+    frameStage(ctx, "finalizeMethodTrampolines");
+    profileCount("functions-after-bodies", ctx.mod.functions.length);
 
     // (#2138 M0) Compile-twice IR overlay for multi-module top-level functions.
     // Every legacy body in every source file is already present, and method
@@ -6377,34 +6503,43 @@ export function generateMultiModule(
         occupiedFunctionKeys: [...ctx.funcMap.keys()],
         occupiedFunctionNameCounts,
       };
-      for (const sourceFile of multiAst.sourceFiles) {
-        compileMultiIrOverlaySource(
-          ctx,
-          multiAst,
-          sourceFile,
-          irPlanningIdentityContext!,
-          safety,
-          hostImportedFunctions,
-        );
-      }
+      profilePhase("ir-overlay", () => {
+        for (const sourceFile of multiAst.sourceFiles) {
+          profilePhase(sourceFile.fileName, () =>
+            compileMultiIrOverlaySource(
+              ctx,
+              multiAst,
+              sourceFile,
+              irPlanningIdentityContext!,
+              safety,
+              hostImportedFunctions,
+            ),
+          );
+        }
+      });
       // A+B1 may create callback singleton trampolines after the legacy
       // finalization pass. Rebuild those late declarations against the target's
       // final signature before any fixup/validation pass observes them.
       finalizeMethodTrampolines(ctx);
+      frameStage(ctx, "ir-overlay");
     }
 
     // Fixup pass: reconcile struct.new argument counts with actual struct field counts.
-    fixupStructNewArgCounts(ctx);
+    profilePhase("fixup-struct-new-args", () => fixupStructNewArgCounts(ctx));
+    frameStage(ctx, "fixupStructNewArgCounts");
 
     // Fixup pass: insert extern.convert_any after struct.new when the result
     // is stored into an externref local/global.
-    fixupStructNewResultCoercion(ctx);
+    profilePhase("fixup-struct-new-coercion", () => fixupStructNewResultCoercion(ctx));
+    frameStage(ctx, "fixupStructNewResultCoercion");
 
     // Build per-shape default property flags table for all user-visible structs
-    buildShapePropFlagsTable(ctx);
+    profilePhase("shape-prop-flags", () => buildShapePropFlagsTable(ctx));
+    frameStage(ctx, "buildShapePropFlagsTable");
 
     // Collect ref.func targets so the binary emitter can add a declarative element segment
-    collectDeclaredFuncRefs(ctx);
+    profilePhase("declared-func-refs", () => collectDeclaredFuncRefs(ctx));
+    frameStage(ctx, "collectDeclaredFuncRefs");
 
     // Resolve deferred `export default <variable>` for module globals (#1108).
     // Must run AFTER compileDeclarations — string-constant imports added during
@@ -6728,11 +6863,27 @@ export function generateMultiModule(
     for (const sourceFile of multiAst.sourceFiles) {
       recordWholeSourceFailure(ctx, sourceFile, failure, irPlanningIdentityContext);
     }
-    reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
+    // (#4030) Same reasoning as the expression catch: an untyped throw reaching
+    // here is a compiler bug, and a bare message costs a full instrumented
+    // re-run to localise on a large graph.
+    reportErrorNoNode(ctx, `Codegen error: ${describeInternalError(e)}`);
   }
 
   // (#2094) Emit-time backstop for the addImport gate — see generateModule.
   assertNoLeakedHostImports(ctx, mod);
+
+  // (#4134) `JS2WASM_CHECK_FRAMES=1` reports every function whose body reads or
+  // writes a local its own frame never declares, AT THE END OF CODEGEN.
+  //
+  // The emitter already rejects these, but only after every post-codegen pass
+  // has run — fixups, peephole, dead-code elision, late-import shifting — so
+  // "the emitter saw it" says nothing about who produced it. Running the same
+  // check here bisects the pipeline in one step: a function reported here was
+  // already inconsistent when codegen finished; one that is clean here but
+  // rejected at emit was corrupted by a later pass. Inert unless set.
+  if (typeof process !== "undefined" && process.env?.JS2WASM_CHECK_FRAMES) {
+    reportOutOfFrameLocals(ctx, mod);
+  }
 
   return {
     module: mod,
@@ -6743,6 +6894,102 @@ export function generateMultiModule(
     irOutcomes: ctx.irOutcomes,
     programAbi: ctx.programAbiSession?.publication,
   };
+}
+
+/**
+ * (#4134) Count bodies that reference locals outside their own frame.
+ *
+ * `JS2WASM_FRAME_STAGES=1` calls this after each post-body pass in
+ * `generateMultiModule` so the FIRST pass that introduces a breach names itself.
+ * The surviving breach class is provably not emitted by body compilation (a
+ * push-trap on ordinary function bodies stays silent for it), so the introducing
+ * pass has to be found by bisecting the pass list.
+ */
+export function countOutOfFrameLocals(mod: WasmModule): number {
+  const localOps = new Set(["local.get", "local.set", "local.tee"]);
+  let n = 0;
+  for (const func of mod.functions) {
+    const type = mod.types[func.typeIdx];
+    if (!type || type.kind !== "func") continue;
+    const frame = type.params.length + func.locals.length;
+    let bad = false;
+    const walk = (instrs: readonly Instr[]): void => {
+      for (const instr of instrs) {
+        if (bad) return;
+        if (localOps.has(instr.op)) {
+          const index = (instr as { index?: number }).index;
+          if (typeof index === "number" && index >= frame) bad = true;
+        }
+        for (const key of ["body", "then", "else", "catchAll"] as const) {
+          const nested = (instr as unknown as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) walk(nested as Instr[]);
+        }
+        const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+        if (Array.isArray(catches)) for (const c of catches) if (Array.isArray(c.body)) walk(c.body);
+      }
+    };
+    walk(func.body);
+    if (bad) n += 1;
+  }
+  return n;
+}
+
+let frameStagePrev = 0;
+
+/** (#4134) Report the first pass boundary at which the breach count grows. */
+function frameStage(ctx: CodegenContext, label: string): void {
+  if (!process.env?.JS2WASM_FRAME_STAGES) return;
+  const n = countOutOfFrameLocals(ctx.mod);
+  if (n !== frameStagePrev) {
+    process.stderr.write(`[js2:frame-stage] after ${label}: ${frameStagePrev} -> ${n}\n`);
+    // Did the FRAME shrink, or did the BODY grow? That fork decides whether to
+    // hunt a locals-array replacement or a late instruction splice.
+    for (const func of ctx.mod.functions) {
+      const snap = frameSnapshotAtCompile.get(func);
+      if (!snap) continue;
+      if (snap.locals !== func.locals.length || snap.bodyLen !== func.body.length) {
+        process.stderr.write(
+          `[js2:frame-stage]   '${func.name}' locals ${snap.locals}->${func.locals.length}` +
+            ` bodyLen ${snap.bodyLen}->${func.body.length}\n`,
+        );
+      }
+    }
+    frameStagePrev = n;
+  }
+}
+
+/** (#4134) Report bodies that reference locals outside their own frame. */
+function reportOutOfFrameLocals(ctx: CodegenContext, mod: WasmModule): void {
+  const localOps = new Set(["local.get", "local.set", "local.tee"]);
+  let reported = 0;
+  for (const [position, func] of mod.functions.entries()) {
+    const type = mod.types[func.typeIdx];
+    if (!type || type.kind !== "func") continue;
+    const frame = type.params.length + func.locals.length;
+    let worst = -1;
+    const walk = (instrs: readonly Instr[]): void => {
+      for (const instr of instrs) {
+        if (localOps.has(instr.op)) {
+          const index = (instr as { index?: number }).index;
+          if (typeof index === "number" && index >= frame && index > worst) worst = index;
+        }
+        for (const key of ["body", "then", "else", "catchAll"] as const) {
+          const nested = (instr as unknown as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) walk(nested as Instr[]);
+        }
+        const catches = (instr as { catches?: { body?: Instr[] }[] }).catches;
+        if (Array.isArray(catches)) for (const c of catches) if (Array.isArray(c.body)) walk(c.body);
+      }
+    };
+    walk(func.body);
+    if (worst < 0) continue;
+    reported += 1;
+    process.stderr.write(
+      `[js2:frames] position ${position} '${func.name}' frame=${frame} ` +
+        `(${type.params.length} params + ${func.locals.length} locals) worst local index=${worst}\n`,
+    );
+  }
+  process.stderr.write(`[js2:frames] ${reported} function(s) reference out-of-frame locals at end of codegen\n`);
 }
 
 // ── Unified single-pass import collector (#592) ─────────────────────

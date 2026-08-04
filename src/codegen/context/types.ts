@@ -535,14 +535,6 @@ export interface FunctionContext {
   /** All local names → index (params first, then locals) */
   localMap: Map<string, number>;
   /**
-   * Binding-aware slots for transitively threaded sibling captures. A lifted
-   * caller may declare its own local with the same text as a callee's outer
-   * capture; keying that hidden parameter through `localMap` would then select
-   * the caller-local binding. The owner frame disambiguates the two lexical
-   * bindings while retaining the existing name-based map for ordinary reads.
-   */
-  transitiveCaptureLocals?: Map<FunctionContext, Map<string, number>>;
-  /**
    * Function-scoped `var` bindings that are also bare `for...in` assignment
    * targets. Their slots must remain externref because the loop writes string
    * keys even when a later declaration initializer is numerically typed.
@@ -2298,9 +2290,6 @@ export interface CodegenContext {
     {
       name: string;
       outerLocalIdx: number;
-      /** Function frame that owns `outerLocalIdx`. Sibling callers must source
-       * the transitively-threaded binding from their own frame instead. */
-      ownerFctx: FunctionContext;
       mutable?: boolean;
       valType?: ValType;
       /**
@@ -2321,6 +2310,20 @@ export interface CodegenContext {
       outerTdzFlagIdx?: number;
     }[]
   >;
+  /**
+   * (#4133 / #4134) Which nested `FunctionDeclaration` currently owns a
+   * `funcMap` name.
+   *
+   * `funcMap` and `nestedFuncCaptures` are keyed by BARE name and are global
+   * and permanent, but a nested function declaration lexically SHADOWS any
+   * outer or imported binding of the same name, and only for the extent of its
+   * enclosing body. Without an owner record the hoist loop cannot tell "this
+   * exact declaration is already compiled" (skip) from "some unrelated module's
+   * function happens to have this name" (must still compile, shadowing it).
+   * Absent ⇒ the name belongs to a top-level declaration, an import, or a
+   * synthesized runtime helper — never to a nested declaration.
+   */
+  funcMapOwnerDecl: Map<string, ts.FunctionDeclaration>;
   /** Map from child className → parent className (for local class inheritance) */
   classParentMap: Map<string, string>;
   /**

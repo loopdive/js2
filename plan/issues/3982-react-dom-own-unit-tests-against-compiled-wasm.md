@@ -150,6 +150,44 @@ DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
 pnpm run dogfood:react-dom-upstream-suite
 ```
 
+## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
+
+36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the
+reason inline at each test — kept in the file, not deleted, so the shapes stay
+recorded. Both root causes are in main's implementations, not in a missing
+feature of this suite.
+
+**1. A nested `async function` DECLARATION inside an `async` parent loses its
+captures.** Guards two tests ("captures an assigned client module in a nested
+async helper", "keeps multiple assigned async-helper captures in declaration
+order"). Narrowed with probes — only the async-inside-async combination fails:
+
+| parent | nested       | result                                          |
+| ------ | ------------ | ----------------------------------------------- |
+| sync   | async decl   | works                                           |
+| async  | sync decl    | works                                           |
+| async  | async _expr_ | works                                           |
+| async  | async decl   | reads the pre-capture value, or traps on a null ref cell |
+
+Observed as `TypeError: createRoot is not a function` (capture read as its
+pre-assignment value) and, with the binding initialised at its declaration, as
+`dereferencing a null pointer`.
+
+**2. `captureSourceSlot` (#4134) resolves a cross-frame capture by NAME.**
+Guards "threads a sibling capture past a same-named caller local". When the
+lifted caller declares its own local with the same text as the capture, a name
+lookup cannot tell the two lexical bindings apart, so the emitted `local.get`
+reads the caller's own slot and the module fails validation
+(`struct.new[0] expected type f64, found local.get of type externref`). The
+restraint in that resolver is deliberate — #1177's blanket "prefer localMap"
+lookup regressed 100+ test262 tests — so the fix is not to loosen it but to key
+capture slots on the OWNING frame instead of on the name. An earlier revision of
+this branch carried exactly such a mechanism (`transitiveCaptureLocals` /
+`ownerFctx`); it was dropped when main's more general #4133/#4134 work landed,
+because its Phase-0 reservation reached its capture verdict too late — see the
+comment in `src/codegen/statements/nested-declarations.ts`. A future fix has to
+add binding-aware slots on top of main's design, not restore that one.
+
 ## Acceptance criteria
 
 - [x] The corpus is react-dom's own test sources at a verified commit shared
@@ -162,6 +200,8 @@ pnpm run dogfood:react-dom-upstream-suite
 - [x] react-dom's published client module compiles to a valid Wasm module.
 - [x] The native oracle and compiled lane run under the same jsdom host setup.
 - [ ] Freeze deferred capture-cycle ABIs before compiling ordinary callers.
+- [ ] Capture a nested `async function` declaration inside an `async` parent.
+- [ ] Key cross-frame capture slots on the owning frame, not the capture name.
 - [ ] Make the admitted upstream ReactDOM tests green against compiled Wasm.
 
 ## Permanent test reference

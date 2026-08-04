@@ -1265,22 +1265,14 @@ export function compileTaggedTemplateExpression(
       const tdzFlaggedNested = nestedCaptures ? nestedCaptures.filter((c) => c.hasTdzFlag) : [];
       if (nestedCaptures) {
         for (const cap of nestedCaptures) {
-          const sourceLocalIdx =
-            fctx.name === tagName
-              ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)
-              : cap.ownerFctx === fctx
-                ? cap.outerLocalIdx
-                : (fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name) ?? fctx.localMap.get(cap.name));
-          if (sourceLocalIdx === undefined) {
-            reportError(
-              ctx,
-              expr,
-              `Cannot resolve transitive capture '${cap.name}' for tagged function '${tagName}' in '${fctx.name}'`,
-            );
-            pushDefaultValue(fctx, cap.valType ?? { kind: "externref" }, ctx);
-          } else {
-            fctx.body.push({ op: "local.get", index: sourceLocalIdx });
-          }
+          // A recursive tagged-template call is emitted inside the lifted
+          // function, where `outerLocalIdx` belongs to the declaring fctx and
+          // is therefore out of range. Thread the lifted function's current
+          // capture parameter/cell instead. Calls from the declaring scope keep
+          // the established outer-slot path.
+          const captureLocalIdx =
+            fctx.name === tagName ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx) : cap.outerLocalIdx;
+          fctx.body.push({ op: "local.get", index: captureLocalIdx });
         }
         // #1205 Stage 3: after all value captures, push the boxed TDZ-flag refs.
         // Minimal replication of call-identifier.ts's cap-prepend (kept gated so

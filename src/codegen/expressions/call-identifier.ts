@@ -35,10 +35,10 @@ import {
 } from "../linear-uint8-signatures.js";
 import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
-import { calleeIsBoundFunctionVar, resolveStoredObjectStaticMethod } from "../object-builtin-effects.js";
+import { calleeIsBoundFunctionVar } from "../object-builtin-effects.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
+import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
 import { emitRuntimeEvalInterpretedCallableAdapter } from "../runtime-eval-callable.js";
-import { emitNullCheckThrow, emitNullGuardedStructGet, typeErrorThrowInstrs } from "../property-access.js";
 import { emitStandaloneRegExpToStringFromExpr } from "../regexp-standalone.js";
 import type { InnerResult } from "../shared.js";
 import { brandExternMethodResult, coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
@@ -962,17 +962,6 @@ export function compileIdentifierCall(
   if (ts.isIdentifier(expr.expression)) {
     const funcName = expr.expression.text;
 
-    // Stored Object.assign aliases must retain Object.assign's structural
-    // marshalling even when a lifted nested function captures the alias. In
-    // that case closureMap contains a callable carrier and would otherwise
-    // return through compileClosureCall before the later stored-builtin lane,
-    // routing opaque WasmGC sources through native Object.assign unchanged.
-    // Resolve the immutable builtin provenance before closure dispatch.
-    if (resolveStoredObjectStaticMethod(ctx.oracle, expr.expression) === "assign") {
-      const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
-      if (storedObjectCall !== undefined) return storedObjectCall;
-    }
-
     // Linked runtime eval can replace a script function binding with an
     // interpreted closure. Such a binding must call its live externref global
     // through the generic apply bridge; a direct call to the declaration's
@@ -997,19 +986,94 @@ export function compileIdentifierCall(
     // Other shadow cases stay on the funcMap path — direct calls that don't
     // emit cap-prepend logic are already correct, even if a coincidental
     // local with the same name exists in the current scope.
-    // Lexical binding wins even when JavaScript's checker type is `any` and
-    // therefore exposes no call signature. ReactDOM's renderWithHooks takes a
-    // parameter named `Component`; resolving it to React's captured outer
-    // `Component` function instead both calls the wrong value and attempts to
-    // read that function's owner-frame captures from this unrelated frame.
-    const isLocallyShadowed = fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName);
+    // (#4133/#4134) The same hazard, one scope out: `funcMap` is keyed by BARE
+    // name, so a NESTED function declaration's binding is visible to every
+    // later module. When an unrelated module calls its own `equal` — an import,
+    // a `require`d function value, its own top-level function — the funcMap
+    // path retargets it to that nested function AND prepends the nested
+    // function's captures, read from the declaring frame. On the ESLint graph
+    // that is how `assertASTDidntChange` (eslint's rule-tester, calling
+    // fast-deep-equal's `equal`) ended up carrying uri-js's UMD factory locals
+    // and emitting `local.get 51` into a 4-slot frame.
+    //
+    // A nested declaration is only in scope inside its enclosing body, so skip
+    // the funcMap path when the call site is not lexically inside it. Names
+    // owned by top-level declarations, imports and synthesized helpers have no
+    // owner record and are unaffected.
+    const nestedOwnerDecl = ctx.funcMapOwnerDecl.get(funcName);
+    let isOutOfScopeNestedBinding = false;
+    if (nestedOwnerDecl !== undefined) {
+      // The scope is the owner's enclosing FUNCTION, not its immediate parent.
+      // A declaration inside a nested block is hoisted to function scope
+      // (Annex B §B.3.3), so it is callable from anywhere in the enclosing
+      // function — including before and outside that block. Using the parent
+      // block here made `function hoisted from inside if-block` unresolvable
+      // (#165) and broke lodash's `_createWrap` (#1303/#1305).
+      let ownerScope: ts.Node = nestedOwnerDecl.parent;
+      while (
+        !ts.isSourceFile(ownerScope) &&
+        !ts.isFunctionDeclaration(ownerScope) &&
+        !ts.isFunctionExpression(ownerScope) &&
+        !ts.isArrowFunction(ownerScope) &&
+        !ts.isMethodDeclaration(ownerScope) &&
+        !ts.isConstructorDeclaration(ownerScope) &&
+        !ts.isGetAccessorDeclaration(ownerScope) &&
+        !ts.isSetAccessorDeclaration(ownerScope)
+      ) {
+        if (!ownerScope.parent) break;
+        ownerScope = ownerScope.parent;
+      }
+      let visible = false;
+      for (let n: ts.Node | undefined = expr; n !== undefined; n = n.parent) {
+        if (n === ownerScope) {
+          visible = true;
+          break;
+        }
+      }
+      isOutOfScopeNestedBinding = !visible;
+    }
 
-    // Check if this is a closure call
-    let closureInfo = isLocallyShadowed ? undefined : ctx.closureMap.get(funcName);
+    let isLocallyShadowed = false;
+    if (fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
+      const localCalleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
+      const localCallSigs = localCalleeTsType?.getCallSignatures?.();
+      if (localCallSigs && localCallSigs.length > 0) {
+        isLocallyShadowed = true;
+      }
+    }
 
-    if (!closureInfo) {
+    // (#4133/#4134) `ctx.closureMap` is a THIRD bare-name namespace and it is
+    // consulted BEFORE `funcMap`. A visible nested declaration lexically
+    // shadows any outer closure or function-valued variable of the same name,
+    // so it must win here too — otherwise a nested `function equal()` calling
+    // itself from a sibling reached another module's `const equal = function
+    // equal(...)` instead, and the enclosing function silently returned 0.
+    // (#4133/#4134) `ctx.closureMap` is a THIRD bare-name namespace, consulted
+    // BEFORE `funcMap`. A visible nested declaration lexically shadows any
+    // outer closure or function-valued variable of the same name, so it must
+    // win here too — otherwise a nested `function equal()` called from a
+    // sibling reached another module's `const equal = function equal(...)` and
+    // the enclosing function silently returned 0.
+    const nestedBindingVisible = nestedOwnerDecl !== undefined && !isOutOfScopeNestedBinding;
+    let closureInfo = isLocallyShadowed || nestedBindingVisible ? undefined : ctx.closureMap.get(funcName);
+
+    if (!closureInfo && !nestedBindingVisible) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
     }
+    // (#4133) An out-of-scope nested binding lets the closure/local paths above
+    // run FIRST — that is how the correctly-scoped callee is found (eslint's
+    // rule-tester reaching fast-deep-equal's `equal` rather than uri-js's
+    // factory-nested one). But if neither resolves it, fall through to the
+    // historical `funcMap` path rather than suppressing it.
+    //
+    // Suppressing unconditionally is what the first cut did, and it is unsound
+    // in the other direction: with nothing left to resolve, the call reaches
+    // the graceful `ref.null.extern` fallback below, so a call that used to
+    // reach SOME function now yields null and the next use traps. The
+    // merge_group caught exactly that — `null_deref` 156 -> 1357 across the
+    // Temporal suite. Reaching the wrong same-named function is a wrong answer;
+    // turning a resolvable call into an uncatchable trap is worse, and neither
+    // is a licence for the other, so this only ever PREFERS a better binding.
     if (closureInfo) {
       return compileClosureCall(ctx, fctx, expr, funcName, closureInfo);
     }
@@ -1052,10 +1116,7 @@ export function compileIdentifierCall(
         const hostCall = emitBoundFunctionCall(ctx, fctx, expr);
         if (hostCall !== null) return hostCall;
       }
-      if (
-        isKnownVariable &&
-        (ctx.standalone || noJsHost(ctx) || resolveStoredObjectStaticMethod(ctx.oracle, expr.expression) === "assign")
-      ) {
+      if (isKnownVariable && (ctx.standalone || noJsHost(ctx))) {
         const storedObjectCall = tryCompileStoredObjectBuiltinCall(ctx, fctx, expr);
         if (storedObjectCall !== undefined) return storedObjectCall;
       }
@@ -1112,11 +1173,23 @@ export function compileIdentifierCall(
           // chance to throw. Force `externref` for binding-pattern params so the
           // call site agrees with the compiled callee.
           const paramDecl = sig.parameters[i]!.valueDeclaration;
-          if (
-            paramDecl &&
-            ts.isParameter(paramDecl) &&
-            (ts.isObjectBindingPattern(paramDecl.name) || ts.isArrayBindingPattern(paramDecl.name))
-          ) {
+          // (#4038) `ParameterDeclaration.name` is typed as non-optional, but it
+          // is genuinely ABSENT for a parameter declared through JSDoc
+          // function-type syntax — `@param {function(string): void} cb` models
+          // its own parameters as nameless `ParameterDeclaration` nodes. Passing
+          // that `undefined` into `ts.isObjectBindingPattern` threw
+          // `Cannot read properties of undefined (reading 'kind')`, which the
+          // speculative wrapper reported as an opaque "Internal error compiling
+          // expression" and which blocked the ESLint graph.
+          //
+          // Treating a nameless parameter as "not a binding pattern" is correct
+          // on the merits, not a defensive shrug: a binding pattern IS a name
+          // node (`{a}` / `[a]`), so a parameter without one cannot be one. It
+          // then takes the ordinary `resolveWasmType` path every other named
+          // non-pattern parameter takes.
+          const paramName =
+            paramDecl && ts.isParameter(paramDecl) ? (paramDecl.name as ts.BindingName | undefined) : undefined;
+          if (paramName && (ts.isObjectBindingPattern(paramName) || ts.isArrayBindingPattern(paramName))) {
             sigParamWasmTypes.push({ kind: "externref" });
             continue;
           }
@@ -1852,6 +1925,13 @@ export function compileIdentifierCall(
           if (mapped !== undefined) {
             fctx.body.push({ op: "local.get", index: mapped });
           } else {
+            if (process.env?.JS2WASM_FRAME_OPS) {
+              process.stderr.write(
+                `[js2:inline-unmapped] inlining '${funcName}' into ${fctx.name}: local.get ${(instr as any).index} ` +
+                  `has no arg mapping (paramCount=${inlineInfo.paramCount}, argLocals=${argLocals.join(",")}), ` +
+                  `callerFrame=${fctx.params.length + fctx.locals.length}\n`,
+              );
+            }
             fctx.body.push({ ...instr });
           }
         } else {
@@ -1887,21 +1967,7 @@ export function compileIdentifierCall(
           }
           // "skip" — call site is after declaration, no check needed
         }
-        const transitiveSourceLocalIdx =
-          cap.ownerFctx === fctx ? undefined : fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name);
-        if (transitiveSourceLocalIdx !== undefined) {
-          // The caller carries this exact outer binding in a hidden lifted
-          // parameter. Prefer its binding-owner slot over a same-named local
-          // declared by the caller itself (ReactDOM's two distinct `root`
-          // bindings). Mutable captures already arrive as their canonical
-          // ref-cell ABI, so no additional box is needed here.
-          fctx.body.push({ op: "local.get", index: transitiveSourceLocalIdx });
-          const actualType = getLocalType(fctx, transitiveSourceLocalIdx);
-          const expectedType = captureParamTypes?.[capIdx];
-          if (actualType && expectedType && !valTypesMatch(actualType, expectedType)) {
-            coerceType(ctx, fctx, actualType, expectedType);
-          }
-        } else if (cap.mutable && cap.valType) {
+        if (cap.mutable && cap.valType) {
           // Mutable capture: wrap in a ref cell so writes propagate back
           const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
           // Check if this local is already boxed (from a previous call to the same or another closure)
@@ -1999,18 +2065,7 @@ export function compileIdentifierCall(
             // throwing inside an async fn body. Reverted; the canonical TDZ-
             // through-closure case is fixed via the call-site TDZ check below
             // and Stage 3 C.1 in compileArrowAsClosure.)
-            const sourceLocalIdx = cap.ownerFctx === fctx ? cap.outerLocalIdx : fctx.localMap.get(cap.name);
-            if (sourceLocalIdx === undefined) {
-              reportError(
-                ctx,
-                expr,
-                `Cannot resolve transitive capture '${cap.name}' for '${funcName}' in '${fctx.name}' ` +
-                  `(owner '${cap.ownerFctx.name}')`,
-              );
-              pushDefaultValue(fctx, cap.valType, ctx);
-            } else {
-              fctx.body.push({ op: "local.get", index: sourceLocalIdx });
-            }
+            fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
             fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
             // Also box the outer local so subsequent reads/writes go through the ref cell
             const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
@@ -2048,64 +2103,15 @@ export function compileIdentifierCall(
           }
         } else {
           // (#1177: TDZ check moved above the mutable/non-mutable branch.
-          // Stage 1 localMap-first lookup reverted — see comment in mutable
-          // branch above.)
-          // An async frame may conservatively force-box a spill that this
-          // lifted function captures by VALUE.  The callee ABI still expects
-          // the inner value, not the frame's ref-cell carrier.  Prefer the
-          // current frame-local box and read through it before coercing the
-          // capture argument.  Without this, try/catch async lowering passed
-          // `$__ref_cell_externref` itself as ReactDOMClient and the nested
-          // helper observed the wrong receiver (`createRoot` was undefined).
-          const boxedCapture = fctx.boxedCaptures?.get(cap.name);
-          const expectedCapType = captureParamTypes?.[capIdx];
-          const passBoxDirectly =
-            boxedCapture !== undefined &&
-            expectedCapType !== undefined &&
-            (expectedCapType.kind === "ref" || expectedCapType.kind === "ref_null") &&
-            expectedCapType.typeIdx === boxedCapture.refCellTypeIdx;
-          const transitiveSourceLocalIdx = fctx.transitiveCaptureLocals?.get(cap.ownerFctx)?.get(cap.name);
-          const sourceLocalCandidate = boxedCapture
-            ? fctx.localMap.get(cap.name)
-            : (transitiveSourceLocalIdx ??
-              (cap.ownerFctx === fctx
-                ? cap.outerLocalIdx
-                : (fctx.localMap.get(cap.name) ?? captureSourceSlot(fctx, cap))));
-          const sourceLocalIdx =
-            sourceLocalCandidate !== undefined && sourceLocalCandidate < fctx.params.length + fctx.locals.length
-              ? sourceLocalCandidate
-              : undefined;
-          if (sourceLocalIdx === undefined) {
-            reportError(
-              ctx,
-              expr,
-              `Cannot resolve transitive capture '${cap.name}' for '${funcName}' in '${fctx.name}' ` +
-                `(owner '${cap.ownerFctx.name}')`,
-            );
-            pushDefaultValue(fctx, captureParamTypes?.[capIdx] ?? { kind: "externref" }, ctx);
-          } else {
-            fctx.body.push({ op: "local.get", index: sourceLocalIdx });
-            if (boxedCapture !== undefined && !passBoxDirectly) {
-              emitNullGuardedStructGet(
-                ctx,
-                fctx,
-                { kind: "ref_null", typeIdx: boxedCapture.refCellTypeIdx },
-                boxedCapture.valType,
-                boxedCapture.refCellTypeIdx,
-                0,
-                undefined,
-                false,
-              );
-            }
-          }
+          // Stage 1's blanket localMap-first lookup remains reverted. The one
+          // sound cross-frame case is a name explicitly recorded as THIS
+          // lifted function's leading capture parameter.)
+          const capSourceIdx = captureSourceSlot(fctx, cap);
+          fctx.body.push({ op: "local.get", index: capSourceIdx });
           // Coerce capture value to expected param type if they differ
+          const expectedCapType = captureParamTypes?.[capIdx];
           if (expectedCapType) {
-            const actualType =
-              sourceLocalIdx === undefined
-                ? undefined
-                : passBoxDirectly
-                  ? getLocalType(fctx, sourceLocalIdx)
-                  : (boxedCapture?.valType ?? getLocalType(fctx, sourceLocalIdx));
+            const actualType = getLocalType(fctx, capSourceIdx);
             if (actualType && !valTypesMatch(actualType, expectedCapType)) {
               coerceType(ctx, fctx, actualType, expectedCapType);
             }

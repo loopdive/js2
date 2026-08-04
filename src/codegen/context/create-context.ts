@@ -187,6 +187,7 @@ export function createCodegenContext(
     liveFuncBindingGlobals: new Set(),
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),
+    funcMapOwnerDecl: new Map(),
     classParentMap: new Map(),
     classBuiltinParentMap: new Map(),
     classExternrefBackedSet: new Set(),

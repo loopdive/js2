@@ -37,7 +37,7 @@ import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-a
 import { addFunctionOwnLocals } from "./binding-info.js"; // (#2103) memoized own-locals oracle
 import { reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
-import { compileFunctionBody, registerInlinableFunction } from "./function-body.js";
+import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./function-body.js";
 import { _hasRuntimeComputedKey } from "./literals.js"; // (#3024) module-global externref routing for runtime-computed-key literals
 import { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 import {
@@ -120,6 +120,7 @@ import {
   collectObjectType,
   resolveStructFieldTypes,
 } from "./declarations/struct-type-registration.js";
+import { profileCount, profilePhase } from "../compile-profile.js";
 /**
  * (#1700) Record TypedArray classifications for a user-exported function so
  * the JS-host `wrapExports` can marshal `Uint8Array` params/returns across
@@ -1973,6 +1974,32 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
 }
 
+/**
+ * How one `compileDeclarations` call should treat the accumulated
+ * `__module_init` body.
+ *
+ * `ctx.moduleInitStatements` is **graph-global**: `collectDeclarations` runs
+ * over every source file before the first `compileDeclarations` call, so by
+ * the time bodies compile the list already holds the whole program's top-level
+ * statements. Compiling it inside every per-source call therefore re-does
+ * identical work n times over — and, because the injection at the end of each
+ * call `mintDefinedFunc`s a fresh function, leaves n−1 dead full-size
+ * `__module_init` copies in `ctx.mod.functions` for every later pass to walk.
+ * On the 146-source ESLint `linter.js` graph that dominated the compile.
+ *
+ * - `"full"` — pass 1, bodies, pass 2, inject. Single-source compiles and the
+ *   LAST source of a multi-source graph, whose pass 2 is the one that sees the
+ *   final inlinable-function registry and becomes the emitted initializer.
+ * - `"discover"` — pass 1 and bodies only; no pass 2, no injection. The FIRST
+ *   source of a multi-source graph. Pass 1 exists to populate `closureMap` for
+ *   module-level arrow functions before any body compiles, and since it already
+ *   compiles the complete statement list, running it once establishes that for
+ *   the whole graph.
+ * - `"skip"` — bodies only. Every source in between, for which both passes were
+ *   pure waste.
+ */
+export type ModuleInitMode = "full" | "discover" | "skip";
+
 /** Compile all function bodies (including class constructors and methods) */
 /**
  * Third pass — compile function bodies into the slots pre-allocated by
@@ -1992,6 +2019,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
  * the IR module pass has already made the complete optimization decision.
  * Returns the names actually skipped (undefined when `skipBodies` is not
  * passed).
+ *
+ * `moduleInitMode` controls the accumulated `__module_init` work, which is
+ * per-GRAPH state, not per-source state — see {@link ModuleInitMode}.
  */
 export function compileDeclarations(
   ctx: CodegenContext,
@@ -1999,12 +2029,29 @@ export function compileDeclarations(
   skipBodies?: ReadonlySet<string>,
   preserveSkippedBodies?: ReadonlySet<string>,
   classBodyRouting?: ClassBodyCompileRouting,
+  moduleInitMode: ModuleInitMode = "full",
 ): string[] | undefined {
   const skippedNames: string[] | undefined = skipBodies ? [] : undefined;
   // Build a map from function name → index within ctx.mod.functions
   const funcByName = new Map<string, number>();
   for (let i = 0; i < ctx.mod.functions.length; i++) {
     funcByName.set(ctx.mod.functions[i]!.name, i);
+  }
+  // (#4133) That scan is last-wins by NAME, so when two modules each declare a
+  // top-level `function shared()` — two real, distinct slots — every body lands
+  // in whichever slot happens to come last, leaving the other permanently empty
+  // and every caller pointed at one body.
+  //
+  // `ctx.funcMap` is the authority on which slot a name currently denotes, and
+  // the multi-source driver rebinds it to the source being compiled. Defer to it.
+  // The `fn.name === name` guard keeps this a strict no-op for every
+  // non-colliding name (there the two agree by construction) and skips names
+  // bound to imports, which own no defined slot.
+  for (const [name, handle] of ctx.funcMap) {
+    const fn = definedFuncAt(ctx, handle);
+    if (!fn || fn.name !== name) continue;
+    const position = ctx.mod.functions.indexOf(fn);
+    if (position >= 0) funcByName.set(name, position);
   }
   const siblingFunctionLists = new WeakSet<object>();
 
@@ -2494,8 +2541,12 @@ export function compileDeclarations(
     return initFctx;
   }
 
-  if (hasModuleInits || hasStaticInits) {
-    compiledInitFctx = compileModuleInitBody();
+  // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
+  // skipped only in `"skip"` mode, where an earlier source already ran it over
+  // the same complete statement list.
+  if ((hasModuleInits || hasStaticInits) && moduleInitMode !== "skip") {
+    profileCount("module-init-statements", ctx.moduleInitStatements.length);
+    compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
     ctx.pendingInitBody = compiledInitFctx.body;
@@ -2536,6 +2587,7 @@ export function compileDeclarations(
           }
           try {
             compileFunctionBody(ctx, stmt, func);
+            dumpFrameBreach(ctx, func);
             registerInlinableFunction(ctx, fnName, func);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -2594,6 +2646,7 @@ export function compileDeclarations(
     if (func.body.length > 0) continue;
     try {
       compileFunctionBody(ctx, fnExpr as unknown as ts.FunctionDeclaration, func);
+      dumpFrameBreach(ctx, func);
       registerInlinableFunction(ctx, funcName, func);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -2617,12 +2670,14 @@ export function compileDeclarations(
   // Recompile module init after top-level functions are compiled so call sites
   // inside module-level code can see the final inlinable-function registry.
   // The first compile above still serves early closure/setup discovery.
-  if (hasModuleInits || hasStaticInits) {
+  // Only the emitting call needs the final-registry recompile; in the other
+  // multi-source modes the body it would produce is discarded unread.
+  if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full") {
     // (#2965) Reset the program-order-sensitive property state to its
     // pre-pass-1 value so this recompile does not treat pass 1's own
     // defineProperty/freeze effects as pre-existing (see snapshot above).
     restorePropOrderState();
-    compiledInitFctx = compileModuleInitBody();
+    compiledInitFctx = profilePhase("module-init-pass2", () => compileModuleInitBody());
     ctx.pendingInitBody = compiledInitFctx.body;
   }
 
@@ -2640,7 +2695,10 @@ export function compileDeclarations(
   // index, causing unbounded self-recursion. `main` is just an ordinary export;
   // it gets no special init treatment. The standalone `__module_init` runs once
   // via the Wasm start section (or WASI `_start`), matching ES module semantics.
-  if (compiledInitFctx && compiledInitFctx.body.length > 0) {
+  // `"discover"`/`"skip"` never inject: each injection mints a fresh function
+  // holding a full copy of the graph initializer, and only the last one is
+  // ever reachable (via `startFuncIdx` / the `__module_init` export).
+  if (moduleInitMode === "full" && compiledInitFctx && compiledInitFctx.body.length > 0) {
     ctx.mod.hasTopLevelStatements = true;
 
     // Create a standalone __module_init and run it automatically via the Wasm
