@@ -216,6 +216,22 @@ const RULES = [
 Host cross-tab: a file is "also fails on host" when its `test262-current.jsonl`
 row has `status !== "pass"`.
 
+## Issues filed against this analysis (2026-08-04)
+
+| Cluster (this scope) | Files | Issue |
+| --- | ---: | --- |
+| Descriptor family (attribute round-trip + `defineProperty`/`create`/`gOPD`) | 762 | **#2668** — updated with this re-measure |
+| Array generic / live-mutation traversal | 738 | **#3185** — updated; reconcile with #2670, same files under the pre-#3639 `ES2015` label |
+| `with` + Annex B eval/global/function-code (incl. 45 compound-assignment files that fail *inside* a `with`) | 307 | **#2663** — updated |
+| Reference-layer abrupt completions (`GetValue`/`PutValue`/`ToObject` on an undefined or unresolvable base) | 138 | **#4158** — new |
+
+The fourth row is the **un-owned remainder** of the 310-file "assert.throws saw
+no exception" cluster. The other 172 of those files are step-order validation
+inside `Array.prototype` (113 → #3185) and illegal descriptor reconfiguration
+(59 → #2668/#4008), and are deliberately left with their owners. **Do not size
+#4158 at 310**, and do not add the four rows to 1,945 as independent work: #2668
+and #3185 share the MOP substrate, so a substrate fix moves both.
+
 ## Limits of this analysis
 
 - Clusters are assigned by **error signature and test path**, not by reading

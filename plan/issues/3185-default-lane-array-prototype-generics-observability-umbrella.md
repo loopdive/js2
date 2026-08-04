@@ -3,6 +3,7 @@ id: 3185
 title: "UMBRELLA default lane: Array.prototype generics + observable-semantics cluster (~1,057 fails — largest untracked builtin bucket)"
 status: ready
 created: 2026-07-12
+updated: 2026-08-04
 priority: high
 feasibility: hard
 model: fable
@@ -13,7 +14,7 @@ language_feature: array-methods
 goal: builtin-methods
 sprint: current
 horizon: l
-related: [3169, 3170, 3180, 2036, 3022, 1589]
+related: [3169, 3170, 3180, 2036, 3022, 1589, 2670, 2668, 4119]
 origin: "2026-07-12 Fable codebase audit (plan/log/2026-07-12-fable-codebase-audit.md, §F2)"
 ---
 
@@ -134,3 +135,63 @@ zero-regression in-file wins + honest re-slice"). #3199 is done on that basis.
 ## Audit cross-link
 
 `plan/log/2026-07-12-fable-codebase-audit.md` §F2.
+
+## Re-measure 2026-08-04 — standalone lane, ES5 + untagged scope
+
+Source: `plan/log/analysis-2026-08-04-es5-untagged-standalone-clusters.md`.
+Baselines fetched 2026-08-04, `oracle_version` 12, lane `honest`, baseline SHA
+`d3d7ec4c`.
+
+**738 files** in the ES5 + untagged standalone scope — second-largest cluster
+there, behind the descriptor family (#2668, 762). Note the edition split: only
+**40 are `ES5`-tagged, 698 are untagged**. The untagged label is the `esid`-only
+fall-through introduced by #3639; before that change these same files carried the
+`ES2015` label, which is why #2670 sized a near-identical population at ~1,017
+under an ES2015 heading. **#2670, #3185 and this re-measure are largely the same
+files under three different labels — reconcile before summing.**
+
+Per-method (non-pass, this scope):
+
+```
+112 reduceRight  104 reduce   70 filter   70 map    64 some
+ 63 forEach       62 every    54 lastIndexOf  51 indexOf   14 sort
+```
+
+Top failure shapes, with the confirmed mechanism read from the test bodies:
+
+```
+135  testResult !== true            15.4.4.18-7-b-12: "deleting own property with prototype property
+                                    causes prototype index property to be visited on an Array-like object"
+ 45  newArr.length mismatch         15.4.4.20-9-c-i-20: own accessor without a get, overriding an
+                                    inherited accessor
+ 40  testResult[i] mismatch         15.4.4.19-8-b-15: decreasing length mid-iteration must make the
+                                    prototype index property visible
+ 39  accessed !== true              15.4.4.20-4-8: side effects of step 2 visible when an exception occurs
+ 24  result !== true                15.4.4.18-1-11: forEach applied to a Date object
+ 18  "Reduce of empty array"        15.4.4.22-8-b-iii-1-28: reduceRight on a String object with its own
+                                    property get method
+```
+
+**Confirmed mechanism** (test sources read directly, not inferred from paths):
+the iteration reads a **dense snapshot** of the receiver instead of performing the
+spec's per-index `HasProperty` + `Get`, which must walk the prototype chain and
+re-invoke accessors; and `length` is read **once up front** rather than re-read
+through `Get` (with `ToUint32`/`ToLength`) on each step, so mid-iteration
+`length` mutation and accessor-`length` array-likes are both invisible.
+Non-Array receivers (`Date`, `String` object, plain array-like) take the same
+snapshot path.
+
+**Sizing caveat — 477 of 738 (65 %) also fail on the JS-host lane.** Only 261 are
+standalone-only, so the standalone-lane children (#3180/#3200/#2036/#4119) cannot
+close most of this; the observable-semantics arm is lane-independent.
+
+**Framing:** same substrate as #2668 — property access is shape-specialised
+rather than routed through the ordinary-object MOP. A MOP fix for ordinary
+objects should move both clusters, so do not size them additively.
+
+**Missing-throw sub-cluster:** 113 files in this scope are `assert.throws` seeing
+no exception at all inside `Array.prototype` methods (step-order validation never
+firing). They belong to this umbrella, not to the new #4158.
+
+**Not verified by repro** — counts from the published baselines; no compiler was
+built for this re-measure.
