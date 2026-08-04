@@ -394,10 +394,10 @@ Budget receipt for that decision is in the HANDOFF section above.
 The flip measurement **did complete**. The instrument is `runTest262File`, which
 is NOT the CI shard path — read differentially only; its "before" side reproduces
 the CI baseline exactly (76/76 refusing), which is the control that validates it.
-The 82-row regression sweep was run against the pre-restructure tree; after the
-restructure the 76-row measurement was re-run identical (75/76, 0 refusals), the
-10 solo regression spot-checks all pass, and `tsc`/`biome`/`prettier`/LOC-budget/
-oracle-ratchet are green.
+Both sweeps were re-run against the FINAL post-restructure tree and are
+unchanged (76 rows: 75/76, 0 refusals · 82 rows: 62 pass / 20 fail on both
+sides, 0 regressions). `tsc`, `biome`, `prettier`, the #3102 LOC budget (no
+allowance needed) and the oracle ratchet are all green.
 
 ### Still loud (intended) and the separate pre-existing defect
 
