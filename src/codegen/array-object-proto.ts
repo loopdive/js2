@@ -53,6 +53,14 @@ import {
 import { COLLECTION_KIND, MAP_LAYOUT, ensureMapHelpers } from "./map-runtime.js"; // (#3171) size getter
 import { emitReceiverBrandCheck } from "./receiver-brand.js"; // (#3171) shared brand preamble
 import { emitTransferredCharAtProtoMemberBody, unboxProtoArgToI32 as unboxArgToI32 } from "./char-at-transfer.js";
+// (#4119) The shared member-body tail: `Object.prototype.toString`'s real
+// §20.1.3.6 runtime classifier, and the graceful catchable-TypeError refusal for
+// every `(brand, member)` whose native body is not wired yet. Aliased to the
+// name the 14 existing call sites already use — it subsumes the local helper
+// that previously lived here, whose body it reproduces exactly for non-Object
+// brands (a reflective member closure must degrade to a catchable TypeError, not
+// a hard compile error — #2193 PR-C).
+import { emitObjectProtoOrRefusal as emitProtoMemberBodyRefusal } from "./object-proto-tostring.js";
 import { emitStringSubstringMemberBody } from "./string-proto-substring.js";
 import { NO_ARG_STRING_MEMBER_HELPER, emitStringProtoToStringFlat } from "./string-proto-tostring.js"; // (#3992)
 
@@ -682,23 +690,6 @@ const ASYNCDISPOSABLESTACK_PROTO_METHOD_LENGTH: Readonly<Record<string, number>>
   defer: 1,
   move: 0,
 };
-
-/**
- * Graceful member-body refusal: the value-read object (PR-A) does not need
- * member bodies, but if a reflective member closure is materialized for a member
- * whose native body isn't wired yet, emit a catchable TypeError instead of a
- * hard compile error. Keeps `Array.prototype` reads compilable while the
- * per-member native bodies land incrementally (#2193 PR-C).
- */
-function emitProtoMemberBodyRefusal(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  brandName: string,
-  member: string,
-): ValType | null {
-  emitThrowTypeError(ctx, fctx, `${brandName}.prototype.${member} is not yet implemented in --target standalone`);
-  return null;
-}
 
 /**
  * (#2193 PR-B) Emit the native body for an `Array.prototype.<member>` closure

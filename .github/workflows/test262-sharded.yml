@@ -2456,7 +2456,7 @@ jobs:
           # so `git add -A` cannot stage them as deletions, and NEW runs/<sha>
           # cache files are staged explicitly via `git add -A --sparse`.
           git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
-          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json'
           git -C /tmp/js2wasm-baselines checkout main
           cp /tmp/js2wasm-baselines/test262-current.jsonl /tmp/js2wasm-baselines/test262-current.before.jsonl 2>/dev/null || true
           cp /tmp/js2wasm-baselines/test262-standalone-current.jsonl /tmp/js2wasm-baselines/test262-standalone-current.before.jsonl 2>/dev/null || true
@@ -2539,6 +2539,16 @@ jobs:
             console.log('Skipped duplicate entry (same pass/total as last run)');
           }
           "
+
+          # Append per-ES-edition + standalone trend history (landing-page
+          # mini graphs). Both editions.json (regenerated above) and the
+          # standalone report are already fresh on disk in this job.
+          # Best-effort — never blocks the baseline promote pipeline.
+          node scripts/append-run-history.mjs \
+            --runs-dir /tmp/js2wasm-baselines/runs \
+            --editions website/public/benchmarks/results/test262-editions.json \
+            --standalone-report /tmp/js2wasm-baselines/test262-standalone-current.json \
+            --sha "${{ github.sha }}" || echo "::warning::append-run-history failed (non-fatal)"
 
           # #1081 — write the commit-hash-indexed run cache entry. This lets a
           # PR's regression-gate diff against main *at the PR's merge-base*
@@ -3307,7 +3317,7 @@ jobs:
           # the huge runs/ blob history — #3392). NEW runs/<sha> files are staged
           # explicitly with `git add -A --sparse` below.
           git clone --depth=1 --filter=blob:none --no-checkout git@github.com:loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines
-          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json'
+          git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone '/*' '!/runs/*' '/runs/index.json' '/runs/editions-index.json' '/runs/standalone-index.json'
           git -C /tmp/js2wasm-baselines checkout main
 
           # Snapshot the pre-refresh JSONLs for the #3335 trap-growth gate.
@@ -3365,6 +3375,18 @@ jobs:
             console.log('Skipped duplicate entry (same pass/total as last run)');
           }
           "
+
+          # Append standalone trend history (landing-page mini graphs) when this
+          # lane cleared its floor. Editions data isn't generated in this job
+          # (see promote-baseline for the editions-index.json append) — this
+          # job only ever fires on merge-queue pushes, so editions history
+          # accrues from the promote-baseline path instead. Best-effort.
+          if [ "$SA" = "true" ]; then
+            node scripts/append-run-history.mjs \
+              --runs-dir /tmp/js2wasm-baselines/runs \
+              --standalone-report /tmp/js2wasm-baselines/test262-standalone-current.json \
+              --sha "${{ github.sha }}" || echo "::warning::append-run-history failed (non-fatal)"
+          fi
 
           # #1081/#3467 — write the commit-hash-indexed HOST run cache entry so a
           # PR's regression-gate diffs against main at its exact merge-base

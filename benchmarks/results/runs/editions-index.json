@@ -1,0 +1,93 @@
+[
+  {
+    "timestamp": "20260804-013438",
+    "gitHash": "686d4cf3",
+    "editions": [
+      {
+        "edition": "ES5",
+        "pass": 6851,
+        "total": 8931
+      },
+      {
+        "edition": "ES2015",
+        "pass": 8538,
+        "total": 11691
+      },
+      {
+        "edition": "ES2016",
+        "pass": 90,
+        "total": 124
+      },
+      {
+        "edition": "ES2017",
+        "pass": 456,
+        "total": 687
+      },
+      {
+        "edition": "ES2018",
+        "pass": 3405,
+        "total": 4823
+      },
+      {
+        "edition": "ES2019",
+        "pass": 82,
+        "total": 136
+      },
+      {
+        "edition": "ES2020",
+        "pass": 951,
+        "total": 2033
+      },
+      {
+        "edition": "ES2021",
+        "pass": 314,
+        "total": 472
+      },
+      {
+        "edition": "ES2022",
+        "pass": 4194,
+        "total": 5792
+      },
+      {
+        "edition": "ES2023",
+        "pass": 167,
+        "total": 334
+      },
+      {
+        "edition": "ES2024",
+        "pass": 324,
+        "total": 556
+      },
+      {
+        "edition": "ES2025",
+        "pass": 684,
+        "total": 1001
+      },
+      {
+        "edition": "ES2026",
+        "pass": 131,
+        "total": 310
+      },
+      {
+        "edition": "ES2027",
+        "pass": 335,
+        "total": 897
+      },
+      {
+        "edition": "Proposals",
+        "pass": 596,
+        "total": 5114
+      },
+      {
+        "edition": "Unclassified (legacy)",
+        "pass": 273,
+        "total": 273
+      },
+      {
+        "edition": "Unclassified (untagged)",
+        "pass": 4187,
+        "total": 5445
+      }
+    ]
+  }
+]
