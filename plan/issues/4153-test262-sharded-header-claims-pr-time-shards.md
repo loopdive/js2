@@ -75,9 +75,47 @@ updated it".
 
 Comment-only — no behaviour change to any job.
 
+## Guard — `tests/issue-4153-test262-sharded-pr-gating.test.ts`
+
+A prose-only fix has no guard of its own, which is precisely how the *first*
+comment rotted for months without anyone noticing. Correcting the wording
+without pinning it just resets the clock.
+
+`tests/issue-4153-test262-sharded-pr-gating.test.ts` pins the comment and the
+conditions to each other. Three arms, each able to fail independently:
+
+1. **The conditions** — `test262-shard`'s `if:` admits `push` and
+   `workflow_dispatch` and never mentions `pull_request`; `test262-shard-mg`'s
+   `if:` requires `merge_group`. Read from the jobs themselves.
+2. **The header** — the exact stale claim is absent and the header states the
+   matrix does not run at PR time. Arm 1 alone would let the comment rot again
+   while the conditions stayed correct — the original defect.
+3. **The wiring** — `merge-report`'s `SHARDS_RAN` is derived from the two
+   matrix jobs' results, which is *why* a PR-time skip surfaces as a green
+   no-op rather than a failure.
+
+If PR-time shards are ever deliberately restored, arms 1 and 2 fail together
+and force the header to be updated with them. That is the intent, not a false
+positive.
+
+**Non-vacuity — demonstrated, not assumed.** String assertions over a
+1,100-line file pass easily for the wrong reason, so both arms were mutated and
+observed to go red on this checkout (2026-08-04):
+
+| mutation | result |
+| --- | --- |
+| stale claim spliced back into the `on:` header | 2 failed / 5 passed |
+| `workflow_dispatch` → `pull_request` in `test262-shard`'s `if:` | 1 failed / 6 passed |
+
+Unmutated: 7/7 pass in ~5 ms. The suite also asserts its own extraction
+(non-empty job block containing the job key) before trusting it, so a rename
+that broke slicing surfaces as a failure rather than as silent green.
+
 ## Acceptance criteria
 
 - [x] The header describes the actual `if:` gating.
 - [x] It states plainly that a green PR-level test262 check is not conformance
       evidence.
 - [x] No workflow behaviour changed.
+- [x] A permanent guard stops the header and the `if:` conditions drifting
+      apart again, and its non-vacuity is demonstrated rather than asserted.
