@@ -129,6 +129,8 @@ export const domBenchmarks: BenchmarkDef[] = [
   {
     name: "dom/create-elements",
     iterations: 100,
+    // 1000 createElement + 1000 appendChild host calls.
+    opsPerCall: 2000,
     // Uses extern class pattern for DOM
     source: `
 declare class Document {
@@ -154,6 +156,8 @@ export function run(): number {
   {
     name: "dom/set-attributes",
     iterations: 100,
+    // 1000 createElement + 5000 setAttribute host calls.
+    opsPerCall: 6000,
     source: `
 declare class Document {
   createElement(tag: string): Element;
@@ -181,6 +185,8 @@ export function run(): number {
   {
     name: "dom/read-attributes",
     iterations: 100,
+    // 1000 each of createElement / setAttribute / getAttribute.
+    opsPerCall: 3000,
     source: `
 declare class Document {
   createElement(tag: string): Element;
@@ -208,6 +214,8 @@ export function run(): number {
   {
     name: "dom/modify-text",
     iterations: 100,
+    // 1000 createElement + 1000 textContent writes.
+    opsPerCall: 2000,
     source: `
 declare class Document {
   createElement(tag: string): Element;

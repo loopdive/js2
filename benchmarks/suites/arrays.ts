@@ -125,6 +125,13 @@ export function run(): number {
   {
     name: "array/map-filter",
     iterations: 50,
+    // 10000 pushes + 10000 map visits + 10000 filter visits.
+    opsPerCall: 30000,
+    // No per-benchmark floor: measured 2026-08-04 at 4.4 ns/op (js) and 18.3
+    // (host-call / gc-native). A quarter of the honest cost is ~1.1 ns, i.e.
+    // essentially the universal 1 ns bound, so that bound is the right and only
+    // floor here. This lane is genuinely ~4.2x slower than js and stable across
+    // 14 consecutive runs (4.0x-5.1x) — it is a real gap, not a collapsed loop.
     source: `
 export function run(): number {
   const arr: number[] = [];
@@ -153,6 +160,22 @@ export function run(): number {
   {
     name: "array/indexOf",
     iterations: 50,
+    // 1000 `indexOf` calls (the pushes that build the array are setup).
+    opsPerCall: 1000,
+    // `arr.indexOf(i * 10)` on [0..9999] finds at index i*10, so each call scans
+    // ~5000 elements on average. Measured 2026-08-04: js 3939 ns/op, but
+    // host-call and gc-native both reported ~12.7 ns/op — 310x faster than js
+    // and ~0.0025 ns per element scanned, which is physically impossible. The
+    // wasm lanes fold the whole search away (the array is a compile-time
+    // constant sequence), and the page published that as a 310x speedup.
+    //
+    // 12.7 clears the universal 1 ns bound, so only a per-benchmark floor
+    // catches it — the same reason `string/indexOf` carries one. 25 ns/op means
+    // 200 elements/ns, comfortably impossible, while still allowing a wasm lane
+    // to be 150x faster than js before tripping. Deliberately loose: a floor
+    // that fires on a fast machine is worse than one that misses a mild
+    // collapse.
+    minNsPerOp: 25,
     source: `
 export function run(): number {
   const arr: number[] = [];
