@@ -12,11 +12,11 @@
       "--no-liftoff"
     ],
     "jsOptStatus": "41 (matches optimized-signature 40)",
-    "wasmUs": 4212.350930555554,
-    "jsUs": 9266.962393939388,
-    "wasmStdUs": 5.906855021905903,
-    "jsStdUs": 50.31747826103301,
-    "ratioStd": 0.010611100094971274,
+    "wasmUs": 4148.453722222225,
+    "jsUs": 9249.205575757584,
+    "wasmStdUs": 39.32491475527256,
+    "jsStdUs": 123.11676205135024,
+    "ratioStd": 0.03734915769220877,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -33,11 +33,11 @@
       "--no-liftoff"
     ],
     "jsOptStatus": "41 (matches optimized-signature 40)",
-    "wasmUs": 180.11680341880344,
-    "jsUs": 311.49240423280423,
-    "wasmStdUs": 0.4354563223352465,
-    "jsStdUs": 0.2154898184850596,
-    "ratioStd": 0.00481623373394715,
+    "wasmUs": 178.4809267267268,
+    "jsUs": 309.5078660436139,
+    "wasmStdUs": 2.1631328728799084,
+    "jsStdUs": 1.731879569146722,
+    "ratioStd": 0.02776496967657781,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -54,11 +54,11 @@
       "--no-liftoff"
     ],
     "jsOptStatus": "41 (matches optimized-signature 40)",
-    "wasmUs": 0.869540090411611,
-    "jsUs": 3.542257779156146,
-    "wasmStdUs": 0.0024670747828507335,
-    "jsStdUs": 0.12570913762758643,
-    "ratioStd": 0.1473845111976721,
+    "wasmUs": 0.8533119691632332,
+    "jsUs": 3.428438802934555,
+    "wasmStdUs": 0.005395187168464238,
+    "jsStdUs": 0.08513415046510991,
+    "ratioStd": 0.10423000593959787,
     "warmupRounds": 2,
     "measuredRounds": 9
   },
@@ -75,11 +75,11 @@
       "--no-liftoff"
     ],
     "jsOptStatus": "41 (matches optimized-signature 40)",
-    "wasmUs": 18.112124573268936,
-    "jsUs": 30.802996879266647,
-    "wasmStdUs": 0.07476844341214321,
-    "jsStdUs": 0.4676214352973505,
-    "ratioStd": 0.0264338059482635,
+    "wasmUs": 17.299576197297146,
+    "jsUs": 29.138668394777266,
+    "wasmStdUs": 0.16955495186911468,
+    "jsStdUs": 1.5337611658028838,
+    "ratioStd": 0.0930087093648759,
     "warmupRounds": 2,
     "measuredRounds": 9
   }
