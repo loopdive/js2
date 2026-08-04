@@ -499,6 +499,38 @@ reads losing cast/dispatch scaffolding, but **no runtime measurement has been
 taken** — `__extern_get` self-time vs the #3780 5.6% baseline is still Phase 4
 and still unmeasured. Do not quote the 8.1% as a speedup.
 
+### The prototype-alias bucket has NO headroom — verified at the instruction level
+
+§2's "Cause A" reports that acorn defines 257 of 270 methods through a
+prototype alias and that checkJs cannot follow it, which makes `this` — and so
+100% of the 1,485 reads through it — `any`. That is true **of the TypeScript
+checker** and has been repeatedly restated as if it were a live compiler cost.
+It is not. Compiling the two forms and diffing the emitted twin proves it:
+
+```wasm
+;; IDENTICAL for `P.prototype.step = …` and `var pp = P.prototype; pp.step = …`
+(func $__closure_0__typed_this (type 108)
+  local.get 0
+  struct.get 17 0      ;; this.pos — direct, unboxed, f64
+  f64.const 1
+  f64.add
+  struct.set 17 0
+  local.get 0
+  struct.get 17 0
+  return)
+```
+
+Whole-module: 93,179 B (direct) vs 93,188 B (alias), same twin count, same
+dispatcher count, same result. #2681's alias map recovers the receiver
+**completely**, and the twin reads its fields with a bare `struct.get` — there
+is no cast, no dispatcher, and no `__extern_get` to remove.
+
+**So do not open an issue to "fix prototype-alias inference."** The receiver is
+already recovered. What remains boxed is not the receiver but *what the slot
+holds*: a `struct.get` of an `externref` field is still a boxed read, and 43 of
+96 acorn slots are `externref` because they are seeded from untyped constructor
+parameters. That is #743, and it is the only bucket left with real size.
+
 ### Revised next steps
 
 1. **Phase 2** — member dispatch, data-fields-only static, everything else
