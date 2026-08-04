@@ -102,7 +102,9 @@ class TrendChart extends HTMLElement {
     let path = `M ${x(0)} ${y(values[0])}`;
     for (let i = 1; i < n; i++) path += ` L ${x(i)} ${y(values[i])}`;
 
-    const color = s.color || "#fff";
+    // White line/fill, matching the primary trend chart — brightening and
+    // glowing towards the right (the latest point), like the edition
+    // timeline bar.
     const lastIdx = n - 1;
     const fillPath =
       s.fill === false ? "" : `${path} L ${x(lastIdx)} ${PAD.top + plotH} L ${x(0)} ${PAD.top + plotH} Z`;
@@ -111,22 +113,30 @@ class TrendChart extends HTMLElement {
     // at a glance whether the series ended above or below where it started,
     // the way a stock sparkline shows the previous-close line.
     const baselineY = y(values[0]);
-    const baseline = `<line x1="${PAD.left}" y1="${baselineY}" x2="${W - PAD.right}" y2="${baselineY}" stroke="${color}" stroke-opacity="0.4" stroke-width="1" stroke-dasharray="2 2"/>`;
+    const baseline = `<line x1="${PAD.left}" y1="${baselineY}" x2="${W - PAD.right}" y2="${baselineY}" stroke="#fff" stroke-opacity="0.25" stroke-width="1" stroke-dasharray="2 2"/>`;
 
     this.shadowRoot.innerHTML = `
       <style>:host { display: block; }</style>
       <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block">
-        ${
-          fillPath
-            ? `<defs><linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
-          <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
-        </linearGradient></defs><path d="${fillPath}" fill="url(#sparkGrad)"/>`
-            : ""
-        }
+        <defs>
+          <linearGradient id="sparkFill" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#fff" stop-opacity="0.04"/>
+            <stop offset="70%" stop-color="#fff" stop-opacity="0.2"/>
+            <stop offset="100%" stop-color="#fff" stop-opacity="0.5"/>
+          </linearGradient>
+          <linearGradient id="sparkLine" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#fff" stop-opacity="0.5"/>
+            <stop offset="100%" stop-color="#fff" stop-opacity="1"/>
+          </linearGradient>
+          <filter id="sparkGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="1.1" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        ${fillPath ? `<path d="${fillPath}" fill="url(#sparkFill)"/>` : ""}
         ${baseline}
-        <path d="${path}" fill="none" stroke="${color}" stroke-width="${s.lineWidth ?? 1.5}" stroke-linejoin="round" stroke-linecap="round"/>
-        <circle cx="${x(lastIdx)}" cy="${y(values[lastIdx])}" r="2" fill="${color}"/>
+        <path d="${path}" fill="none" stroke="url(#sparkLine)" stroke-width="${s.lineWidth ?? 1.5}" stroke-linejoin="round" stroke-linecap="round" filter="url(#sparkGlow)"/>
+        <circle cx="${x(lastIdx)}" cy="${y(values[lastIdx])}" r="2.5" fill="#fff" filter="url(#sparkGlow)"/>
       </svg>`;
   }
 

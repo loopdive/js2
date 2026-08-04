@@ -258,29 +258,55 @@
         width: 100%;
         height: 30px;
       }
-      .edition-legend-rate {
-        font-family: var(--mono);
-        font-weight: 700;
-        font-variant-numeric: tabular-nums;
-        font-size: 0.72rem;
-        padding: 0.2rem 0.55rem;
-        border-radius: 999px;
-        text-align: center;
-        white-space: nowrap;
+      .edition-legend-donut {
+        --deg: 0deg;
+        position: relative;
+        width: 34px;
+        height: 34px;
         flex-shrink: 0;
-        background: var(--pass);
-        color: #06210d;
       }
-      .edition-legend-rate.tier-mid {
-        background: var(--error);
-        color: #2b1c00;
+      .edition-legend-donut-glow {
+        position: absolute;
+        inset: -3px;
+        border-radius: 50%;
+        background: conic-gradient(
+          rgba(255, 255, 255, 0) 0deg,
+          rgba(255, 255, 255, 0.4) var(--deg),
+          rgba(255, 255, 255, 0) calc(var(--deg) + 2deg) 360deg
+        );
+        filter: blur(3px);
+        pointer-events: none;
       }
-      .edition-legend-rate.tier-low {
-        background: var(--fail);
-        color: #2b0805;
+      .edition-legend-donut-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: conic-gradient(#fff 0deg, #fff var(--deg), rgba(255, 255, 255, 0.14) var(--deg) 360deg);
+        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+        mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
       }
-      .edition-legend-item.dimmed .edition-legend-rate {
-        background: rgba(255, 255, 255, 0.12);
+      .edition-legend-donut-value {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--mono);
+        font-size: 0.56rem;
+        font-weight: 700;
+        color: #fff;
+      }
+      .edition-legend-item.dimmed .edition-legend-donut-ring {
+        background: conic-gradient(
+          rgba(255, 255, 255, 0.35) 0deg,
+          rgba(255, 255, 255, 0.35) var(--deg),
+          rgba(255, 255, 255, 0.08) var(--deg) 360deg
+        );
+      }
+      .edition-legend-item.dimmed .edition-legend-donut-glow {
+        display: none;
+      }
+      .edition-legend-item.dimmed .edition-legend-donut-value {
         color: rgba(255, 255, 255, 0.5);
       }
       .cat-table {
@@ -1046,17 +1072,24 @@
           const isActive = row.edition === activeEdition;
           const isDimmed = dimAfterRank !== null && rowRank > dimAfterRank;
           const label = proposalEditionLabels.has(row.edition) ? PROPOSAL_LABEL : row.displayLabel || row.edition;
-          const rateTier = row.rate >= 70 ? "" : row.rate >= 40 ? " tier-mid" : " tier-low";
-          const rateColor = row.rate >= 70 ? "#3fb950" : row.rate >= 40 ? "#d29922" : "#f85149";
 
           const trendSlot = el("div", { className: "edition-legend-trend-slot" });
           const points = editionTrendSeries instanceof Map ? editionTrendSeries.get(row.edition) : null;
           if (points && points.length >= 2) {
             const chart = el("trend-chart", { className: "edition-legend-trend", mode: "sparkline" });
-            chart.setAttribute("series", JSON.stringify([{ key: "pct", color: rateColor, fill: true }]));
+            chart.setAttribute("series", JSON.stringify([{ key: "pct", fill: true }]));
             chart.data = points;
             trendSlot.appendChild(chart);
           }
+
+          // Mini gauge — same conic-gradient ring + glow technique as the big
+          // <t262-donut>, just the ring and percentage, no count labels.
+          const donut = document.createElement("div");
+          donut.className = "edition-legend-donut";
+          donut.style.setProperty("--deg", `${Math.max(0, Math.min(100, row.rate)) * 3.6}deg`);
+          donut.appendChild(el("div", { className: "edition-legend-donut-glow" }));
+          donut.appendChild(el("div", { className: "edition-legend-donut-ring" }));
+          donut.appendChild(el("div", { className: "edition-legend-donut-value" }, `${row.rate}%`));
 
           const item = el(
             "div",
@@ -1065,7 +1098,7 @@
               "div",
               { className: "edition-legend-top" },
               el("div", { className: "edition-legend-name" }, label),
-              el("div", { className: "edition-legend-rate" + rateTier }, `${row.rate}%`),
+              donut,
             ),
             trendSlot,
             el(
