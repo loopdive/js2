@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-04T01:27:16.485Z",
+  "generatedAt": "2026-08-04T02:08:28.692Z",
   "correctness": {
     "definition": {
       "verified": "a differential workload ran against native Node and every operation matched",
@@ -65,7 +65,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1699,
+        "durationMs": 1390,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -97,7 +97,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 13174,
+        "durationMs": 11155,
         "timedOut": false,
         "timeoutMs": 180000,
         "errorCount": 1,
@@ -139,7 +139,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 18609,
+        "durationMs": 16238,
         "errorCount": 0,
         "binaryBytes": 621067,
         "categories": {}
@@ -169,42 +169,42 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 4123076.178999996,
-            "nodeUs": 11319.967999996152,
-            "wasmStdUs": 434229.03452174214,
-            "nodeStdUs": 843.3308425620065,
-            "ratio": 0.0027455151223380204,
-            "ratioStd": 0.00032035801214406475,
+            "wasmUs": 2796901.8830000134,
+            "nodeUs": 7674.14000001736,
+            "wasmStdUs": 13801.378723024494,
+            "nodeStdUs": 451.2605338916421,
+            "ratio": 0.002743800219329082,
+            "ratioStd": 0.0001493662493105017,
             "iters": 1,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              4244516.3809999935,
-              4194487.0170000065,
-              4163283.9419999802,
-              5507630.6689999765,
-              4087301.355999982,
-              4090048.187999986,
-              4093452.794000012,
-              4091041.4509999976,
-              4123076.178999996
+              2781023.8519999986,
+              2795606.9969999953,
+              2801426.7399999956,
+              2778884.0469999993,
+              2796901.8830000134,
+              2788290.276999993,
+              2827440.813000023,
+              2804844.432999991,
+              2803965.273000009
             ],
             "nodeSamplesUs": [
-              11548.886999982642,
-              11319.967999996152,
-              11628.025000012713,
-              11300.851000007242,
-              13902.400999999372,
-              11028.623999998672,
-              11408.486000000266,
-              11137.652000004891,
-              11005.713999998989
+              7614.629000017885,
+              7740.931000007549,
+              7712.748000019928,
+              7674.14000001736,
+              7565.746000007493,
+              7599.85699999379,
+              9082.709999987856,
+              7618.545000004815,
+              7761.710999999195
             ],
-            "compileDurationMs": 25483.136680999996,
-            "wasmCompileMs": 4.494790999990073,
-            "instantiateMs": 7.675361999994493,
-            "wireMs": 0.26537599999574013,
-            "wrapMs": 0.45334799999545794,
+            "compileDurationMs": 21252.418564,
+            "wasmCompileMs": 1.427590000006603,
+            "instantiateMs": 4.272242999999435,
+            "wireMs": 0.14147399999637855,
+            "wrapMs": 0.3140050000001793,
             "binaryBytes": 345562,
             "moduleImportCount": 1150,
             "functionImportCount": 78,
@@ -219,41 +219,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.10865384515804741,
-            "nodeUs": 13444.818999998879,
-            "wasmStdUs": 0.017687978216021444,
-            "nodeStdUs": 487.4643619406905,
-            "ratio": 123739.92821369648,
-            "ratioStd": 15437.563712876572,
-            "iters": 26,
+            "wasmUs": 0.08407894730273831,
+            "nodeUs": 7457.868263158353,
+            "wasmStdUs": 0.00805859636679305,
+            "nodeStdUs": 33.63961951641887,
+            "ratio": 88700.78066397797,
+            "ratioStd": 7628.936832705843,
+            "iters": 38,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.1641538468762659,
-              0.10596153935274252,
-              0.10634615318849683,
-              0.10903846123255789,
-              0.11403846124616954,
-              0.10711538533751781,
-              0.10480769112921104,
-              0.11442307732068002,
-              0.10865384515804741
+              0.10278947363411517,
+              0.0835526313350879,
+              0.07457894695873715,
+              0.08407894730273831,
+              0.09094736857437773,
+              0.09723684266454687,
+              0.08378947371200315,
+              0.08907894708069139,
+              0.08171052659714692
             ],
             "nodeSamplesUs": [
-              13343.75211538505,
-              13444.818999998879,
-              13403.655307692065,
-              13291.686269230782,
-              13379.319692305917,
-              14395.56249999889,
-              14144.23749999976,
-              14552.540653846405,
-              14215.231384614108
+              7482.691078946932,
+              7480.600842105464,
+              7430.1951052628665,
+              7507.248763157373,
+              7472.667236842282,
+              7457.868263158353,
+              7427.773263157609,
+              7396.494368420558,
+              7424.030763158378
             ],
-            "compileDurationMs": 74444.08974299999,
-            "moduleCompileDurationMs": 1.5974950000527315,
-            "instantiateDurationMs": 0.02317400003084913,
-            "firstBatchDurationMs": 0.05355000001145527,
+            "compileDurationMs": 62725.41403500002,
+            "moduleCompileDurationMs": 2.7144160000025295,
+            "instantiateDurationMs": 0.024556999997003004,
+            "firstBatchDurationMs": 0.07694699999410659,
             "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -268,7 +268,7 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 294.18161700002383,
+              "stageDurationMs": 238.69550000000163,
               "stageBinaryBytes": 1608544,
               "stageModuleImportCount": 0
             }
@@ -278,42 +278,42 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 135694.77550001466,
-            "nodeUs": 11761.368000006769,
-            "wasmStdUs": 3383.3460390755895,
-            "nodeStdUs": 1685.9547421641212,
-            "ratio": 0.08667517195608979,
-            "ratioStd": 0.013812592736245946,
-            "iters": 2,
+            "wasmUs": 88997.32066667639,
+            "nodeUs": 8134.4076666670535,
+            "wasmStdUs": 2985.473974028208,
+            "nodeStdUs": 146.2105629901541,
+            "ratio": 0.0914005905541025,
+            "ratioStd": 0.0034203295214460163,
+            "iters": 3,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              138319.14499998675,
-              138625.67099998705,
-              135396.1249999993,
-              140151.7504999938,
-              136013.0904999969,
-              134466.32249999675,
-              135694.77550001466,
-              133427.49450000701,
-              127883.13249999192
+              90250.86366668499,
+              90177.80300000838,
+              97469.37900001649,
+              88997.32066667639,
+              88011.1456666685,
+              89364.71299999782,
+              87302.4836666688,
+              87355.15333333751,
+              87533.0323333231
             ],
             "nodeSamplesUs": [
-              12102.95749999932,
-              11761.368000006769,
-              13030.84600000875,
-              11708.273000025656,
-              11725.160000001779,
-              11693.320000020321,
-              11655.083499994362,
-              17143.69749999605,
-              13371.41399999382
+              8212.459000002127,
+              8134.4076666670535,
+              8083.260333320746,
+              8560.154999994362,
+              8178.855000005569,
+              8091.165666662468,
+              8041.804333333857,
+              8086.745666650435,
+              8179.30533333371
             ],
-            "compileDurationMs": 72718.38480500004,
-            "moduleCompileDurationMs": 9.601300000038464,
-            "instantiateDurationMs": 6.28535700001521,
-            "moduleInitDurationMs": 10.5997319999733,
-            "firstBatchDurationMs": 424.7862890000106,
+            "compileDurationMs": 64580.44020599997,
+            "moduleCompileDurationMs": 8.195888000016566,
+            "instantiateDurationMs": 5.422573000018019,
+            "moduleInitDurationMs": 9.443585000000894,
+            "firstBatchDurationMs": 229.72669400001178,
             "binaryBytes": 1608672,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -359,36 +359,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 4123076.178999996,
-        "nodeUs": 11319.967999996152,
-        "wasmStdUs": 434229.03452174214,
-        "nodeStdUs": 843.3308425620065,
-        "ratio": 0.0027455151223380204,
-        "ratioStd": 0.00032035801214406475,
+        "wasmUs": 2796901.8830000134,
+        "nodeUs": 7674.14000001736,
+        "wasmStdUs": 13801.378723024494,
+        "nodeStdUs": 451.2605338916421,
+        "ratio": 0.002743800219329082,
+        "ratioStd": 0.0001493662493105017,
         "iters": 1,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          4244516.3809999935,
-          4194487.0170000065,
-          4163283.9419999802,
-          5507630.6689999765,
-          4087301.355999982,
-          4090048.187999986,
-          4093452.794000012,
-          4091041.4509999976,
-          4123076.178999996
+          2781023.8519999986,
+          2795606.9969999953,
+          2801426.7399999956,
+          2778884.0469999993,
+          2796901.8830000134,
+          2788290.276999993,
+          2827440.813000023,
+          2804844.432999991,
+          2803965.273000009
         ],
         "nodeSamplesUs": [
-          11548.886999982642,
-          11319.967999996152,
-          11628.025000012713,
-          11300.851000007242,
-          13902.400999999372,
-          11028.623999998672,
-          11408.486000000266,
-          11137.652000004891,
-          11005.713999998989
+          7614.629000017885,
+          7740.931000007549,
+          7712.748000019928,
+          7674.14000001736,
+          7565.746000007493,
+          7599.85699999379,
+          9082.709999987856,
+          7618.545000004815,
+          7761.710999999195
         ]
       },
       "knownBugs": [
@@ -411,7 +411,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 304,
+        "durationMs": 243,
         "errorCount": 9,
         "binaryBytes": 19037,
         "categories": {
@@ -451,36 +451,36 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 217.61185765122246,
-            "nodeUs": 0.63091886123755,
-            "wasmStdUs": 18.062522317671114,
-            "nodeStdUs": 0.0033957012929733492,
-            "ratio": 0.002899285305715076,
-            "ratioStd": 0.00023714646677208467,
-            "iters": 1405,
+            "wasmUs": 189.28974026695485,
+            "nodeUs": 0.42486429366374284,
+            "wasmStdUs": 21.002859619633636,
+            "nodeStdUs": 0.005393712233330672,
+            "ratio": 0.0022445183403208106,
+            "ratioStd": 0.00025367503047700495,
+            "iters": 1798,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              196.36800782920733,
-              196.9744533807904,
-              205.30977010676386,
-              216.54673024914246,
-              217.61185765122246,
-              225.3089900355574,
-              234.79003345194434,
-              243.50743345196236,
-              248.5914676156462
+              154.53721301446777,
+              165.53872636262585,
+              175.62117686317,
+              177.09571023360806,
+              189.28974026695485,
+              196.03513904337774,
+              203.49515572859642,
+              214.60608453838827,
+              220.58884983313698
             ],
             "nodeSamplesUs": [
-              0.6344768683114537,
-              0.6265402135184015,
-              0.6342419929010297,
-              0.6363167259693013,
-              0.6281665480344347,
-              0.6267971530294848,
-              0.6290362989596253,
-              0.63091886123755,
-              0.6328654804041616
+              0.42486429366374284,
+              0.4128270300293758,
+              0.43048998888724954,
+              0.42632313682702894,
+              0.4163581757322969,
+              0.4225522803219845,
+              0.4209816462704259,
+              0.42847330367049663,
+              0.42613403784505843
             ],
             "binaryBytes": 15361,
             "moduleImportCount": 136,
@@ -495,41 +495,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0009410602546374666,
-            "nodeUs": 0.5762950313313545,
-            "wasmStdUs": 0.000009163746250507872,
-            "nodeStdUs": 0.0008500198758193229,
-            "ratio": 612.3890882559544,
-            "ratioStd": 6.230734725772447,
-            "iters": 450986,
+            "wasmUs": 0.0008548587421744157,
+            "nodeUs": 0.43094804478574583,
+            "wasmStdUs": 0.000007252361915923122,
+            "nodeStdUs": 0.0020248177157408723,
+            "ratio": 504.11608786919334,
+            "ratioStd": 4.831764694740154,
+            "iters": 654583,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009410602546374666,
-              0.0009595419812592334,
-              0.0009584998203718958,
-              0.0009373506051326711,
-              0.0009411267755396767,
-              0.0009374614732599988,
-              0.0009398384873399748,
-              0.0009584776468238706,
-              0.0009408407356343594
+              0.0008451594373772244,
+              0.0008442107417744056,
+              0.0008613758683502466,
+              0.0008548587421744157,
+              0.000859816096659294,
+              0.0008446996026093436,
+              0.00086079534603095,
+              0.0008550130388093062,
+              0.0008436760502417502
             ],
             "nodeSamplesUs": [
-              0.575935033459959,
-              0.575520031663956,
-              0.5753216241745515,
-              0.5778199079350501,
-              0.576924257072276,
-              0.5765311362215656,
-              0.5762950313313545,
-              0.576986749034305,
-              0.5750386242589514
+              0.4295526816308958,
+              0.43094804478574583,
+              0.4325341095018101,
+              0.4330862426919592,
+              0.4327721786236645,
+              0.4333145651507058,
+              0.42826307129880026,
+              0.4277691537972018,
+              0.429656920512746
             ],
-            "compileDurationMs": 379.0724749999936,
-            "moduleCompileDurationMs": 3.7199389999732375,
-            "instantiateDurationMs": 0.02571900002658367,
-            "firstBatchDurationMs": 0.03356299997540191,
+            "compileDurationMs": 300.22878199996194,
+            "moduleCompileDurationMs": 0.2758480000193231,
+            "instantiateDurationMs": 0.023815999971702695,
+            "firstBatchDurationMs": 0.057807000004686415,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -547,42 +547,42 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 8.160928840612051,
-            "nodeUs": 0.7937755856058004,
-            "wasmStdUs": 0.02695130556108187,
-            "nodeStdUs": 0.018240154561749277,
-            "ratio": 0.09726534823532036,
-            "ratioStd": 0.0020527169427406637,
-            "iters": 27066,
+            "wasmUs": 5.538187662368033,
+            "nodeUs": 0.5585162486429521,
+            "wasmStdUs": 0.018406037449608458,
+            "nodeStdUs": 0.015044980297214397,
+            "ratio": 0.10084819848884287,
+            "ratioStd": 0.0025815595131766567,
+            "iters": 42342,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              8.227161457180173,
-              8.15760459617245,
-              8.153325537575556,
-              8.199340205423578,
-              8.155081504471921,
-              8.150310019952098,
-              8.160928840612051,
-              8.209346079951343,
-              8.166621850290039
+              5.5453561947952625,
+              5.538187662368033,
+              5.534089769024357,
+              5.5339935052656735,
+              5.534098294836904,
+              5.533584077274793,
+              5.58896235416421,
+              5.546559893251108,
+              5.569928321760411
             ],
             "nodeSamplesUs": [
-              0.793617527526346,
-              0.7937755856058004,
-              0.7914302445874006,
-              0.8372009532250826,
-              0.7889752826420952,
-              0.7906006798193403,
-              0.7942382324691913,
-              0.836027820882632,
-              0.8034404049361017
+              0.583035661990441,
+              0.5585162486429521,
+              0.579050115724343,
+              0.5574222993708033,
+              0.5833876056875844,
+              0.5585103443389282,
+              0.5990577204671523,
+              0.5562164753675438,
+              0.5577269614105949
             ],
-            "compileDurationMs": 2707.480625999975,
-            "moduleCompileDurationMs": 0.8190349999931641,
-            "instantiateDurationMs": 0.15842700004577637,
-            "moduleInitDurationMs": 0.32173300004797056,
-            "firstBatchDurationMs": 1.1900899999891408,
+            "compileDurationMs": 2215.635591999977,
+            "moduleCompileDurationMs": 0.5530869999784045,
+            "instantiateDurationMs": 0.16346700000576675,
+            "moduleInitDurationMs": 0.3247209999826737,
+            "firstBatchDurationMs": 0.9629969999659806,
             "binaryBytes": 42616,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -595,36 +595,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 217.61185765122246,
-        "nodeUs": 0.63091886123755,
-        "wasmStdUs": 18.062522317671114,
-        "nodeStdUs": 0.0033957012929733492,
-        "ratio": 0.002899285305715076,
-        "ratioStd": 0.00023714646677208467,
-        "iters": 1405,
+        "wasmUs": 189.28974026695485,
+        "nodeUs": 0.42486429366374284,
+        "wasmStdUs": 21.002859619633636,
+        "nodeStdUs": 0.005393712233330672,
+        "ratio": 0.0022445183403208106,
+        "ratioStd": 0.00025367503047700495,
+        "iters": 1798,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          196.36800782920733,
-          196.9744533807904,
-          205.30977010676386,
-          216.54673024914246,
-          217.61185765122246,
-          225.3089900355574,
-          234.79003345194434,
-          243.50743345196236,
-          248.5914676156462
+          154.53721301446777,
+          165.53872636262585,
+          175.62117686317,
+          177.09571023360806,
+          189.28974026695485,
+          196.03513904337774,
+          203.49515572859642,
+          214.60608453838827,
+          220.58884983313698
         ],
         "nodeSamplesUs": [
-          0.6344768683114537,
-          0.6265402135184015,
-          0.6342419929010297,
-          0.6363167259693013,
-          0.6281665480344347,
-          0.6267971530294848,
-          0.6290362989596253,
-          0.63091886123755,
-          0.6328654804041616
+          0.42486429366374284,
+          0.4128270300293758,
+          0.43048998888724954,
+          0.42632313682702894,
+          0.4163581757322969,
+          0.4225522803219845,
+          0.4209816462704259,
+          0.42847330367049663,
+          0.42613403784505843
         ]
       },
       "knownBugs": [
@@ -643,7 +643,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 38107,
+        "durationMs": 34205,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -651,18 +651,18 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 18 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
+            "sample": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 18 (valid: [0, 8)) at function '__cb_6' (position 192, 6 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1629:5)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 18 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
+            "message": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 18 (valid: [0, 8)) at function '__cb_6' (position 192, 6 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1629:5)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 18 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
+        "firstError": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 18 (valid: [0, 8)) at function '__cb_6' (position 192, 6 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1629:5)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -685,7 +685,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 1687,
+        "durationMs": 1358,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -723,7 +723,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180137,
+        "durationMs": 180073,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -761,7 +761,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 1711,
+        "durationMs": 1355,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -793,7 +793,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 2845,
+        "durationMs": 2306,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -801,18 +801,18 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+            "sample": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         },
         "errors": [
           {
-            "message": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+            "message": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
+        "firstError": "Codegen error: inherited class callable jt_diff has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
       },
       "tests": null,
       "correctness": {
@@ -868,21 +868,26 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120161,
-        "timedOut": true,
+        "durationMs": 9640,
+        "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 0,
+        "errorCount": 1,
         "binaryBytes": 0,
         "categories": {
-          "compile-budget": {
+          "compiler-diagnostic": {
             "count": 1,
-            "sample": "compileProject exceeded the 120000ms budget"
+            "sample": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
           }
-        }
+        },
+        "errors": [
+          {
+            "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+          }
+        ]
       },
       "validation": {
         "validates": false,
-        "firstError": "compileProject exceeded the 120000ms budget"
+        "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -905,7 +910,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 222,
+        "durationMs": 184,
         "errorCount": 0,
         "binaryBytes": 8191,
         "categories": {}
@@ -934,36 +939,36 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (host-owned arguments)",
-            "wasmUs": 0.9221841245749605,
-            "nodeUs": 0.0350015359526099,
-            "wasmStdUs": 0.008702383092183125,
-            "nodeStdUs": 0.00016687611132498224,
-            "ratio": 0.03795504066906627,
-            "ratioStd": 0.00044621040087339643,
-            "iters": 221361,
+            "wasmUs": 0.9758651804805473,
+            "nodeUs": 0.02623665046983793,
+            "wasmStdUs": 0.04226109719527875,
+            "nodeStdUs": 0.07309565636944264,
+            "ratio": 0.02688552783174225,
+            "ratioStd": 0.08007876804722637,
+            "iters": 235233,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.9344424763171275,
-              0.9221841245749605,
-              0.9208534881934061,
-              0.916834505626486,
-              0.9266516324013132,
-              0.9220232290239533,
-              0.9195560690457366,
-              0.9391385835807782,
-              0.9423083560338882
+              0.9406064540263516,
+              0.9976369471972075,
+              0.9758651804805473,
+              0.9995224862157845,
+              0.85378899644183,
+              0.960345878341893,
+              0.9787575892837087,
+              0.9754034978084707,
+              0.9861799322373206
             ],
             "nodeSamplesUs": [
-              0.03526838964394187,
-              0.0350015359526099,
-              0.035322793988086854,
-              0.03541476140786204,
-              0.034967455875302804,
-              0.03498981302052608,
-              0.03498596410393058,
-              0.035022176445021154,
-              0.03497605269225192
+              0.026601990366957113,
+              0.026394005092739387,
+              0.0261158595944066,
+              0.205962964380195,
+              0.19809008514953527,
+              0.02618645343123747,
+              0.02620135355142249,
+              0.026103386854658427,
+              0.02623665046983793
             ],
             "binaryBytes": 2100,
             "moduleImportCount": 21,
@@ -978,41 +983,41 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.0009490709886922051,
-            "nodeUs": 0.019780245452162223,
-            "wasmStdUs": 0.000008551086388053009,
-            "nodeStdUs": 0.00008421334204483675,
-            "ratio": 20.84169223149354,
-            "ratioStd": 0.13268460112920524,
-            "iters": 4304953,
+            "wasmUs": 0.0008429008065985742,
+            "nodeUs": 0.015645324621345956,
+            "wasmStdUs": 0.000005685288402232254,
+            "nodeStdUs": 0.0000911128228233816,
+            "ratio": 18.561287993638064,
+            "ratioStd": 0.15656215399174234,
+            "iters": 4982559,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009488126815820002,
-              0.0009490709886922051,
-              0.0009763230864530345,
-              0.0009482215020741787,
-              0.0009518519714363879,
-              0.0009500366206158728,
-              0.0009500647277593941,
-              0.0009480421737517986,
-              0.000948649613601869
+              0.0008366897411441918,
+              0.0008353169525856863,
+              0.0008429008065985742,
+              0.0008441652171053014,
+              0.0008427360318265586,
+              0.0008325771957803261,
+              0.0008497129687728529,
+              0.0008489912512847289,
+              0.000845865748905028
             ],
             "nodeSamplesUs": [
-              0.019822690282558085,
-              0.019906625461417984,
-              0.020017079861270454,
-              0.019775274433889337,
-              0.019780124428757963,
-              0.019780245452162223,
-              0.019748173557293847,
-              0.019768634640141475,
-              0.019897537557310038
+              0.015645324621345956,
+              0.015643045471219762,
+              0.015472027125018828,
+              0.015667367109957753,
+              0.015560547301100677,
+              0.015687720707381444,
+              0.015761461128706203,
+              0.015595190342950883,
+              0.015783937330191677
             ],
-            "compileDurationMs": 396.35907599999337,
-            "moduleCompileDurationMs": 0.4073629999766126,
-            "instantiateDurationMs": 0.026008999964687973,
-            "firstBatchDurationMs": 0.045486000017262995,
+            "compileDurationMs": 298.6263130000443,
+            "moduleCompileDurationMs": 0.32223799999337643,
+            "instantiateDurationMs": 0.030326000007335097,
+            "firstBatchDurationMs": 0.05946999997831881,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -1030,41 +1035,41 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.44609270455798056,
-            "nodeUs": 0.054783129005042897,
-            "wasmStdUs": 0.009731909069444468,
-            "nodeStdUs": 0.00033407925062779156,
-            "ratio": 0.1228066015097149,
-            "ratioStd": 0.002856304747929175,
-            "iters": 591287,
+            "wasmUs": 0.371732987722379,
+            "nodeUs": 0.04297253971454907,
+            "wasmStdUs": 0.013745035450129792,
+            "nodeStdUs": 0.0008028006324202815,
+            "ratio": 0.11560055505927339,
+            "ratioStd": 0.00234792520287367,
+            "iters": 684006,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.47714870105387075,
-              0.44584111945642224,
-              0.4476265400727994,
-              0.44609270455798056,
-              0.4456298971564928,
-              0.44771400521244215,
-              0.44525816227989684,
-              0.446016897039834,
-              0.4461009323729409
+              0.4148626781051693,
+              0.37499558337208766,
+              0.37104134759046364,
+              0.3679494741274057,
+              0.371732987722379,
+              0.3702524261482672,
+              0.37379263339790714,
+              0.3735159896257946,
+              0.36975337058451585
             ],
             "nodeSamplesUs": [
-              0.05456061946229293,
-              0.0551686372268385,
-              0.054783129005042897,
-              0.05549087837212832,
-              0.054706947725939675,
-              0.05520618582858375,
-              0.05464971156141722,
-              0.05523778638797213,
-              0.0545105321104412
+              0.04526988359748639,
+              0.04430372394392198,
+              0.04297095785703378,
+              0.04284726449762311,
+              0.0431208176536103,
+              0.04297253971454907,
+              0.04287672330362022,
+              0.04299194012915921,
+              0.04283868416363808
             ],
-            "compileDurationMs": 1894.5947559999768,
-            "moduleCompileDurationMs": 0.6377840000204742,
-            "instantiateDurationMs": 0.1358540000510402,
-            "firstBatchDurationMs": 0.3579100000206381,
+            "compileDurationMs": 1521.9407650000066,
+            "moduleCompileDurationMs": 0.5669380000326782,
+            "instantiateDurationMs": 0.14920600003097206,
+            "firstBatchDurationMs": 0.3458129999926314,
             "binaryBytes": 32684,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -1077,36 +1082,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 0.9221841245749605,
-        "nodeUs": 0.0350015359526099,
-        "wasmStdUs": 0.008702383092183125,
-        "nodeStdUs": 0.00016687611132498224,
-        "ratio": 0.03795504066906627,
-        "ratioStd": 0.00044621040087339643,
-        "iters": 221361,
+        "wasmUs": 0.9758651804805473,
+        "nodeUs": 0.02623665046983793,
+        "wasmStdUs": 0.04226109719527875,
+        "nodeStdUs": 0.07309565636944264,
+        "ratio": 0.02688552783174225,
+        "ratioStd": 0.08007876804722637,
+        "iters": 235233,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.9344424763171275,
-          0.9221841245749605,
-          0.9208534881934061,
-          0.916834505626486,
-          0.9266516324013132,
-          0.9220232290239533,
-          0.9195560690457366,
-          0.9391385835807782,
-          0.9423083560338882
+          0.9406064540263516,
+          0.9976369471972075,
+          0.9758651804805473,
+          0.9995224862157845,
+          0.85378899644183,
+          0.960345878341893,
+          0.9787575892837087,
+          0.9754034978084707,
+          0.9861799322373206
         ],
         "nodeSamplesUs": [
-          0.03526838964394187,
-          0.0350015359526099,
-          0.035322793988086854,
-          0.03541476140786204,
-          0.034967455875302804,
-          0.03498981302052608,
-          0.03498596410393058,
-          0.035022176445021154,
-          0.03497605269225192
+          0.026601990366957113,
+          0.026394005092739387,
+          0.0261158595944066,
+          0.205962964380195,
+          0.19809008514953527,
+          0.02618645343123747,
+          0.02620135355142249,
+          0.026103386854658427,
+          0.02623665046983793
         ]
       },
       "knownBugs": [
@@ -1125,7 +1130,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180207,
+        "durationMs": 180187,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1162,7 +1167,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 792,
+        "durationMs": 604,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -1225,7 +1230,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120140,
+        "durationMs": 120145,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1262,7 +1267,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 2245,
+        "durationMs": 1845,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1270,18 +1275,18 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit"
+            "sample": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         },
         "errors": [
           {
-            "message": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit"
+            "message": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit"
+        "firstError": "Codegen error: inherited class callable RegExpRouterWithMatcherExport_add has no exact canonical class unit (at src/codegen/program-abi-class-callable-planning.ts:282:13)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1304,11 +1309,11 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1670,
+        "durationMs": 1331,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 2624,
+        "binaryBytes": 2410,
         "categories": {}
       },
       "validation": {
@@ -1336,7 +1341,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 2290,
+        "durationMs": 1827,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1344,18 +1349,18 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 9)) at function 'observeState'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)"
+            "sample": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 19 (valid: [0, 9)) at function 'observeState' (position 31, 8 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1007:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 9)) at function 'observeState'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)"
+            "message": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 19 (valid: [0, 9)) at function 'observeState' (position 31, 8 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1007:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 9)) at function 'observeState'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)"
+        "firstError": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 19 (valid: [0, 9)) at function 'observeState' (position 31, 8 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1007:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1378,7 +1383,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 10119,
+        "durationMs": 8477,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1386,18 +1391,18 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 65 (valid: [0, 10)) at function '__cb_3'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
+            "sample": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 65 (valid: [0, 10)) at function '__cb_3' (position 245, 8 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1629:5)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 65 (valid: [0, 10)) at function '__cb_3'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
+            "message": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 65 (valid: [0, 10)) at function '__cb_3' (position 245, 8 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1629:5)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 65 (valid: [0, 10)) at function '__cb_3'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
+        "firstError": "Binary emit error: RangeError: Codegen error: local (local.get) index out of range — 65 (valid: [0, 10)) at function '__cb_3' (position 245, 8 declared locals). This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1064:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:713:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:674:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:571:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1076:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1629:5)"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1420,7 +1425,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180134,
+        "durationMs": 180145,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1457,16 +1462,16 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 5578,
+        "durationMs": 4336,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 200760,
+        "binaryBytes": 188254,
         "categories": {}
       },
       "validation": {
         "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #211:\"nt\" failed: local.tee[0] expected type (ref null 199), found local.get of type i32 @+97293"
+        "firstError": "WebAssembly.Module(): Compiling function #211:\"nt\" failed: local.tee[0] expected type (ref null 192), found local.get of type i32 @+97101"
       },
       "tests": {
         "kind": "upstream-suite",
@@ -1489,14 +1494,14 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 25062,
+        "durationMs": 7099,
         "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 152,
+        "errorCount": 7,
         "binaryBytes": 0,
         "categories": {
           "compiler-diagnostic": {
-            "count": 152,
+            "count": 7,
             "sample": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
           }
         },
@@ -1508,442 +1513,7 @@
             "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
           },
           {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
-          },
-          {
             "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
-          },
-          {
-            "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
           },
           {
             "message": "'node:fs' call to 'readFileSync' requires the --allow-fs flag (or { allowFs: true } in CompileOptions) for non-WASI targets (#1491). Refusing to emit the host import to prevent accidental capability leakage."
@@ -1984,7 +1554,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1597,
+        "durationMs": 1261,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
