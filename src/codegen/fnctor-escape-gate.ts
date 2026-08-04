@@ -47,6 +47,7 @@ import type { FieldDef } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
 import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
+import { inferFnctorFieldTypeFromCtorParam } from "./fnctor-ctor-param-types.js";
 import { resolveWasmType } from "./index.js";
 
 /** Classification of a `new F()` fnctor allocation site. */
@@ -1454,13 +1455,18 @@ export function deriveFnctorFields(
     // cast `getOptions(options)` to null at the constructor assignment. The
     // early carrier scan records the RHS return type before fnctor reservation,
     // so let that proven dynamic representation override the nominal LHS.
+    // (#743) `this.x = <ctor param>` — narrow the slot to what the parameter's
+    // call sites agree on. Off by default; rationale + acorn numbers live in
+    // `fnctor-ctor-param-types.ts`.
+    const paramInferred = inferFnctorFieldTypeFromCtorParam(ctx, funcDecl, valueExpr, rhsWasm);
     const fieldType = carrierIsDynamicObjectCall
       ? ({ kind: "externref" } as const)
-      : ctx.objectHashConsumerTypes.has(rhsType) || ctx.objectHashConsumerTypes.has(carrierType)
-        ? carrierWasm
-        : lhsWasm.kind === "externref"
-          ? rhsWasm
-          : lhsWasm;
+      : (paramInferred ??
+        (ctx.objectHashConsumerTypes.has(rhsType) || ctx.objectHashConsumerTypes.has(carrierType)
+          ? carrierWasm
+          : lhsWasm.kind === "externref"
+            ? rhsWasm
+            : lhsWasm));
     fields.push({
       name: fieldName,
       type: fieldType,

@@ -27,6 +27,19 @@ files:
   src/codegen/expressions.ts:
     breaking:
       - "use narrowed parameter/return types from whole-program analysis"
+loc-budget-allow:
+  # +6: a three-line comment and one call in `deriveFnctorFields`, which is the
+  # single place a fnctor field slot is chosen and therefore the only place this
+  # narrowing can be applied. All of the decision logic — the flag, the
+  # parameter-resolution checks, the call-site query and the f64-only
+  # restriction — lives in the new `fnctor-ctor-param-types.ts`.
+  - src/codegen/fnctor-escape-gate.ts
+func-budget-allow:
+  # `deriveFnctorFields` 300 -> 301, crossing the threshold by one line for the
+  # call described above. Splitting it is a real refactor (#3399) and doing it
+  # underneath a flag-gated inference change would make both harder to review;
+  # the function is not growing in complexity, only in one delegation.
+  - src/codegen/fnctor-escape-gate.ts::deriveFnctorFields
 ---
 
 # #743 — Whole-program type flow analysis
