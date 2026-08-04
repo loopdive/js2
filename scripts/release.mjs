@@ -299,6 +299,13 @@ function main() {
   console.log(`       git ls-remote --tags ${upstream.name} refs/tags/${tag}   # verify it LANDED`);
   console.log(`     publish-npm.yml's verify-version job confirms the tag, manifests,`);
   console.log(`     and proxy dependency all match before publishing. See docs/releasing.md.`);
+  if (notesPath) {
+    console.log(`  5) Publish the notes onto the GitHub Release (publish-npm.yml creates the`);
+    console.log(`     release with an EMPTY body, so this is what readers actually see):`);
+    console.log(`       gh release edit ${tag} -R loopdive/js2 --notes-file ${notesPath}`);
+    console.log(`       gh release view ${tag} -R loopdive/js2 --json body   # verify it landed`);
+    console.log(`     ('edit', not 'create' — the release already exists by then.)`);
+  }
   if (upstream.note) console.log(`\n  ⚠️  ${upstream.note}`);
 }
 
