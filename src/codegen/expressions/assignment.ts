@@ -3857,6 +3857,14 @@ function compilePropertyAssignment(
     // unresolved-shape branch above uses: on standalone an empty-literal object
     // is a native `$Object`, so `__extern_set` stores and the aliased
     // `__extern_get` read finds it; on gc/host the host sidecar does the same.
+    //
+    // Landing this write is what lets a class body whose field was never
+    // declared (`set #m(v) { this._v = v; }` — `_v` has no declaration) actually
+    // store. Two test262 brand-check tests consequently run PAST their first
+    // assert and reach a pre-existing latent `illegal cast` on the subsequent
+    // foreign-receiver private access; that is a reclassification of an
+    // already-failing test, declared under `trap-growth-allow` in
+    // plan/issues/4149-*.md and tracked for a real fix in #4154.
     return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
   }
   const presenceSlot = presenceSlotOf(fields, fieldName);

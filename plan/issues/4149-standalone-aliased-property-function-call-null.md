@@ -21,6 +21,12 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/index.ts::resolveWasmType
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+trap-growth-allow:
+  count: 2
+  reason: "#3596 reclassification, fail -> fail, flavour only — neither test has ever passed. Landing undeclared-field writes (`set #m(v) { this._v = v; }`, where `_v` has no declaration) lets both brand-check tests run PAST their first assert, which previously failed as `Test262Error: Expected SameValue(<undefined>, <\"test262\">)` because the write was dropped outright. They now reach a PRE-EXISTING latent uncatchable `illegal cast` on foreign-receiver private access (section 7.3.28 PrivateBrandCheck should throw a catchable TypeError) — filed as #4154, which should make both files PASS and retire this declaration. Baseline status is `fail` in every arm, so this is the #3596 baseline-did-testify branch, not the #3595 never-instantiated class. Reproduced by local A/B on the single file `src/codegen/expressions/assignment.ts` via the real runner (runTest262File): upstream/main `Test262Error`, branch `illegal cast`, branch-with-that-one-file-reverted `Test262Error`. PR net +217 pass (31581 -> 31798), host stable-path fine-gate net +272 (279 improvements - 7 regressions); other trap categories flat or down (null_deref 1639 -> 1635, oob 52 -> 52, unreachable 3 -> 3)."
+  tests:
+    - test/language/statements/class/elements/private-setter-brand-check.js
+    - test/language/statements/class/elements/static-private-setter-access-on-inner-class.js
 ---
 
 # #4149 — aliased property-function call answers null on standalone
