@@ -1,5 +1,47 @@
 {
-  "generatedAt": "2026-08-01T11:06:18.699Z",
+  "generatedAt": "2026-08-03T23:52:59.968Z",
+  "correctness": {
+    "definition": {
+      "verified": "a differential workload ran against native Node and every operation matched",
+      "divergent": "a differential workload ran and at least one operation did NOT match native Node",
+      "unverified": "no differential workload exists — compile/validation only; correctness is UNKNOWN, not confirmed"
+    },
+    "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
+    "counts": {
+      "verified": 1,
+      "divergent": 4,
+      "unverified": 18
+    },
+    "verified": [
+      "react"
+    ],
+    "divergent": [
+      "acorn",
+      "clsx",
+      "cookie",
+      "lit"
+    ],
+    "unverified": [
+      "axios",
+      "eslint",
+      "hono",
+      "jest",
+      "jsdom",
+      "lodash",
+      "marked",
+      "moment",
+      "prettier",
+      "react-dom",
+      "redux",
+      "styled-components",
+      "stylelint",
+      "tailwindcss",
+      "three",
+      "typescript",
+      "uuid",
+      "webpack"
+    ]
+  },
   "note": "Only packages with a committed, reproducible tests/dogfood harness are listed. Original upstream tests are preferred; when npm omits them, the card says so instead of substituting harness-authored tests.",
   "popularity": {
     "metric": "weekly npm downloads",
@@ -22,32 +64,26 @@
       "entryFile": "dist/index.js",
       "shape": "esm-project",
       "compile": {
-        "success": false,
-        "durationMs": 2017,
+        "success": true,
+        "durationMs": 1719,
         "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 1,
-        "binaryBytes": 0,
-        "categories": {
-          "compiler-diagnostic": {
-            "count": 1,
-            "sample": "Codegen error: source callable v1ToV6 has no consistent exact top-level or compiler-support inventory owner"
-          }
-        },
-        "errors": [
-          {
-            "message": "Codegen error: source callable v1ToV6 has no consistent exact top-level or compiler-support inventory owner"
-          }
-        ]
+        "errorCount": 0,
+        "binaryBytes": 1219,
+        "categories": {}
       },
       "validation": {
-        "validates": false,
-        "firstError": "Codegen error: source callable v1ToV6 has no consistent exact top-level or compiler-support inventory owner"
+        "validates": true,
+        "firstError": null
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -61,7 +97,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 16373,
+        "durationMs": 13514,
         "timedOut": false,
         "timeoutMs": 180000,
         "errorCount": 1,
@@ -87,6 +123,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 250686863
@@ -99,9 +139,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 21880,
+        "durationMs": 19363,
         "errorCount": 0,
-        "binaryBytes": 620820,
+        "binaryBytes": 621067,
         "categories": {}
       },
       "validation": {
@@ -110,10 +150,16 @@
       },
       "tests": {
         "kind": "official-suite",
-        "passed": 3507,
+        "passed": 3508,
         "total": 3518,
-        "passRatePct": 99.69,
+        "passRatePct": 99.72,
         "sourceIssue": 3729
+      },
+      "correctness": {
+        "status": "divergent",
+        "passed": 3508,
+        "total": 3518,
+        "reason": "10 of 3518 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "parse(own 226KB dist bundle).body.length",
@@ -123,43 +169,43 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 7006641.087999975,
-            "nodeUs": 15261.266000044998,
-            "wasmStdUs": 1324848.6942873725,
-            "nodeStdUs": 2938.9509312722594,
-            "ratio": 0.002178114421499686,
-            "ratioStd": 0.00045885604162415155,
+            "wasmUs": 4180365.3080000076,
+            "nodeUs": 10276.646999991499,
+            "wasmStdUs": 9940.104360892645,
+            "nodeStdUs": 1785.9085278264592,
+            "ratio": 0.0024583131479741674,
+            "ratioStd": 0.00042897069378476746,
             "iters": 1,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              7080337.401000027,
-              7006641.087999975,
-              7485244.469000027,
-              7573588.804,
-              11151079.061000027,
-              6817045.915999973,
-              6809011.286999973,
-              6806228.968999989,
-              6714745.269999956
+              4173365.1410000166,
+              4160305.9850000134,
+              4169956.3609999893,
+              4183114.5160000017,
+              4177163.5279999757,
+              4182513.007000001,
+              4180365.3080000076,
+              4198729.982999997,
+              4181137.2630000114
             ],
             "nodeSamplesUs": [
-              14303.107000014279,
-              22246.32500001462,
-              14460.273000004236,
-              17181.790000002366,
-              19671.62899998948,
-              15261.266000044998,
-              14356.68299999088,
-              14170.992000028491,
-              20377.84400000237
+              10212.312999996357,
+              10412.818999990122,
+              13081.031999987317,
+              10188.032999983989,
+              15517.468999983976,
+              10124.907999997959,
+              10299.36400000588,
+              10276.646999991499,
+              10141.354999999749
             ],
-            "compileDurationMs": 45073.173454,
-            "wasmCompileMs": 2.2423690000141505,
-            "instantiateMs": 9.653410999977496,
-            "wireMs": 0.2540090000256896,
-            "wrapMs": 0.8134250000002794,
-            "binaryBytes": 345386,
+            "compileDurationMs": 26627.460213,
+            "wasmCompileMs": 1.609067999990657,
+            "instantiateMs": 5.349790000007488,
+            "wireMs": 0.1627230000012787,
+            "wrapMs": 0.33171800000127405,
+            "binaryBytes": 345562,
             "moduleImportCount": 1150,
             "functionImportCount": 78,
             "expectedChecksum": 422,
@@ -173,42 +219,42 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.2461428604354816,
-            "nodeUs": 15525.975785712944,
-            "wasmStdUs": 0.02067714551338467,
-            "nodeStdUs": 561.4464516941516,
-            "ratio": 63077.09172731654,
-            "ratioStd": 5203.239319421677,
-            "iters": 14,
+            "wasmUs": 0.09267857032162803,
+            "nodeUs": 10066.977892856812,
+            "wasmStdUs": 0.014429109819245601,
+            "nodeStdUs": 59.94583841067382,
+            "ratio": 108622.49879255552,
+            "ratioStd": 13091.991768969387,
+            "iters": 28,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.2731428581422993,
-              0.24499999874803635,
-              0.23407142725773156,
-              0.297571428486013,
-              0.2576428565329739,
-              0.2316428581252694,
-              0.2461428604354816,
-              0.23085714201442897,
-              0.257428569187011
+              0.13060714367644063,
+              0.08478571336516845,
+              0.0876785717472168,
+              0.08871428560399051,
+              0.09267857032162803,
+              0.09732142955596958,
+              0.08732142824945706,
+              0.10017857130151242,
+              0.11521428574009665
             ],
             "nodeSamplesUs": [
-              16061.631142856122,
-              15211.226928571705,
-              14518.697214283748,
-              15525.975785712944,
-              15719.325571429052,
-              16463.209714287328,
-              15130.368285712653,
-              15755.834857143262,
-              14952.758642857329
+              10020.730642857545,
+              10018.368000000399,
+              10066.977892856812,
+              10016.575392857443,
+              10114.424535713624,
+              10071.374999999534,
+              9980.401571428436,
+              10184.862571427531,
+              10108.036892856555
             ],
-            "compileDurationMs": 142322.19423700002,
-            "moduleCompileDurationMs": 128.19127800001297,
-            "instantiateDurationMs": 0.39435700001195073,
-            "firstBatchDurationMs": 0.13292599999113008,
-            "binaryBytes": 21039,
+            "compileDurationMs": 75737.36040900002,
+            "moduleCompileDurationMs": 2.116464000020642,
+            "instantiateDurationMs": 0.052487999957520515,
+            "firstBatchDurationMs": 0.07111299998359755,
+            "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 422,
@@ -222,8 +268,8 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 464.86510799999814,
-              "stageBinaryBytes": 2335336,
+              "stageDurationMs": 316.69735500001116,
+              "stageBinaryBytes": 1608544,
               "stageModuleImportCount": 0
             }
           },
@@ -232,43 +278,43 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 230200.97700000042,
-            "nodeUs": 20062.7000000095,
-            "wasmStdUs": 12970.745392847935,
-            "nodeStdUs": 1419.2545736967807,
-            "ratio": 0.08715297502846595,
-            "ratioStd": 0.007895271106219902,
+            "wasmUs": 135358.59099999652,
+            "nodeUs": 10775.33649999532,
+            "wasmStdUs": 2065.568161320514,
+            "nodeStdUs": 295.29979497627056,
+            "ratio": 0.0796058559740445,
+            "ratioStd": 0.0027962091906234307,
             "iters": 2,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              230200.97700000042,
-              210334.27299995674,
-              217910.73650005274,
-              252901.20000002207,
-              227701.69850002276,
-              231621.5090000187,
-              240484.88499998348,
-              248237.0579999988,
-              224677.66950000077
+              134080.3489999962,
+              141322.3219999927,
+              136937.81299999682,
+              136310.03349999082,
+              136707.13299998897,
+              135358.59099999652,
+              135040.48300001887,
+              134523.63499999046,
+              134766.5599999891
             ],
             "nodeSamplesUs": [
-              19812.489999982063,
-              18354.01050001383,
-              20062.7000000095,
-              16195.276500016917,
-              20610.881000000518,
-              20785.424000001512,
-              20684.680500009563,
-              20661.034999997355,
-              19762.14299997082
+              10814.274000003934,
+              10734.024000004865,
+              10825.669999991078,
+              10732.20600001514,
+              10775.33649999532,
+              10737.536000000546,
+              10838.083500013454,
+              11704.126500000712,
+              10730.703500012169
             ],
-            "compileDurationMs": 125536.31636900001,
-            "moduleCompileDurationMs": 13.787307000020519,
-            "instantiateDurationMs": 12.455541000002995,
-            "moduleInitDurationMs": 28.657397000002675,
-            "firstBatchDurationMs": 467.46700499998406,
-            "binaryBytes": 2335444,
+            "compileDurationMs": 75908.60001700005,
+            "moduleCompileDurationMs": 9.808275000017602,
+            "instantiateDurationMs": 6.3563929999945685,
+            "moduleInitDurationMs": 10.936646999965888,
+            "firstBatchDurationMs": 291.142537000007,
+            "binaryBytes": 1608672,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 422,
@@ -313,36 +359,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 7006641.087999975,
-        "nodeUs": 15261.266000044998,
-        "wasmStdUs": 1324848.6942873725,
-        "nodeStdUs": 2938.9509312722594,
-        "ratio": 0.002178114421499686,
-        "ratioStd": 0.00045885604162415155,
+        "wasmUs": 4180365.3080000076,
+        "nodeUs": 10276.646999991499,
+        "wasmStdUs": 9940.104360892645,
+        "nodeStdUs": 1785.9085278264592,
+        "ratio": 0.0024583131479741674,
+        "ratioStd": 0.00042897069378476746,
         "iters": 1,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          7080337.401000027,
-          7006641.087999975,
-          7485244.469000027,
-          7573588.804,
-          11151079.061000027,
-          6817045.915999973,
-          6809011.286999973,
-          6806228.968999989,
-          6714745.269999956
+          4173365.1410000166,
+          4160305.9850000134,
+          4169956.3609999893,
+          4183114.5160000017,
+          4177163.5279999757,
+          4182513.007000001,
+          4180365.3080000076,
+          4198729.982999997,
+          4181137.2630000114
         ],
         "nodeSamplesUs": [
-          14303.107000014279,
-          22246.32500001462,
-          14460.273000004236,
-          17181.790000002366,
-          19671.62899998948,
-          15261.266000044998,
-          14356.68299999088,
-          14170.992000028491,
-          20377.84400000237
+          10212.312999996357,
+          10412.818999990122,
+          13081.031999987317,
+          10188.032999983989,
+          15517.468999983976,
+          10124.907999997959,
+          10299.36400000588,
+          10276.646999991499,
+          10141.354999999749
         ]
       },
       "knownBugs": [
@@ -365,9 +411,9 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 351,
+        "durationMs": 318,
         "errorCount": 9,
-        "binaryBytes": 19035,
+        "binaryBytes": 19037,
         "categories": {
           "other": {
             "count": 9,
@@ -391,6 +437,12 @@
         "total": 21,
         "sourceIssue": 3751
       },
+      "correctness": {
+        "status": "divergent",
+        "passed": 18,
+        "total": 21,
+        "reason": "3 of 21 operations diverged from native node"
+      },
       "perf": {
         "sampleOp": "parseCookie(8-pair header); verify a/h",
         "lanes": {
@@ -399,38 +451,38 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 451.93082805910103,
-            "nodeUs": 0.9084957805786376,
-            "wasmStdUs": 50.58209309554841,
-            "nodeStdUs": 0.21199064778551108,
-            "ratio": 0.0020102540569766785,
-            "ratioStd": 0.0006219373709185797,
-            "iters": 948,
+            "wasmUs": 231.99113648651465,
+            "nodeUs": 0.6013641892177229,
+            "wasmStdUs": 24.62656118395999,
+            "nodeStdUs": 0.011309902539930751,
+            "ratio": 0.002592186056438753,
+            "ratioStd": 0.00030088633875891203,
+            "iters": 1480,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              338.5075981012066,
-              343.5191276371735,
-              388.2395706751299,
-              454.4671962025648,
-              462.15968037980514,
-              467.27398523207626,
-              439.69588818564966,
-              451.93082805910103,
-              475.78728902949416
+              195.96843918922318,
+              206.48770405406705,
+              215.15708040541222,
+              229.40410472971004,
+              231.99113648651465,
+              243.05189662161473,
+              255.21185472969444,
+              261.56079797294444,
+              273.85167500001813
             ],
             "nodeSamplesUs": [
-              0.8566213080576986,
-              0.889570675033856,
-              1.548932489491056,
-              1.0840200421445558,
-              1.1008597046130961,
-              0.8861677215693967,
-              0.9336445146812055,
-              0.9084957805786376,
-              0.8338291139316348
+              0.617570270283928,
+              0.5896331081276986,
+              0.620102027007945,
+              0.6063256756877653,
+              0.5883060810643853,
+              0.5916297297320655,
+              0.590804054062008,
+              0.6021432432651243,
+              0.6013641892177229
             ],
-            "binaryBytes": 15344,
+            "binaryBytes": 15361,
             "moduleImportCount": 136,
             "functionImportCount": 34,
             "expectedChecksum": 1,
@@ -443,42 +495,42 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0015339052120862558,
-            "nodeUs": 0.8935331821715642,
-            "wasmStdUs": 0.00010357794199777052,
-            "nodeStdUs": 0.02597936888282025,
-            "ratio": 582.5217719654755,
-            "ratioStd": 29.62111574993164,
-            "iters": 315335,
+            "wasmUs": 0.0009404304620200966,
+            "nodeUs": 0.584051441888013,
+            "wasmStdUs": 0.000012500817784383633,
+            "nodeStdUs": 0.0002622745366979322,
+            "ratio": 621.046919974751,
+            "ratioStd": 8.162002654211395,
+            "iters": 451422,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0015039751376025009,
-              0.0018023815941401239,
-              0.0015339052120862558,
-              0.0015353068959766002,
-              0.001723313301756553,
-              0.0015073049296096073,
-              0.001584330949813195,
-              0.0015138059523633713,
-              0.0014962246500785333
+              0.0009456007903618328,
+              0.0009638010554035228,
+              0.0009414516793281013,
+              0.0009390769613137895,
+              0.0009397415278525085,
+              0.0009401867875366044,
+              0.000938365874885263,
+              0.0009754952129222454,
+              0.0009404304620200966
             ],
             "nodeSamplesUs": [
-              0.9043585551875598,
-              0.9284642047346554,
-              0.8810926157897604,
-              0.8935331821715642,
-              0.9437970380707446,
-              0.8594133096549973,
-              0.8858767406092637,
-              0.8926207461906392,
-              0.9328687142245295
+              0.5837239523105926,
+              0.5840979814895791,
+              0.5839613355131664,
+              0.5841623647052889,
+              0.5839170598685677,
+              0.5844209210008037,
+              0.5841269012143346,
+              0.5834490853348382,
+              0.584051441888013
             ],
-            "compileDurationMs": 2339.1995299999835,
-            "moduleCompileDurationMs": 0.8584589998936281,
-            "instantiateDurationMs": 0.3377829999662936,
-            "firstBatchDurationMs": 0.1864470000145957,
-            "binaryBytes": 20337,
+            "compileDurationMs": 382.319868999999,
+            "moduleCompileDurationMs": 0.3252360000042245,
+            "instantiateDurationMs": 0.025046999973710626,
+            "firstBatchDurationMs": 0.03945400001248345,
+            "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 1,
@@ -491,50 +543,88 @@
             "target": "standalone"
           },
           "standaloneDynamic": {
-            "status": "runtime-error",
+            "status": "measured",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "TypeError: Cannot access property on null or undefined at 14:17",
-            "phase": "checksum",
-            "compileDurationMs": 3946.2578259999864,
-            "moduleCompileDurationMs": 0.8915819999529049,
-            "instantiateDurationMs": 0.3624520000303164,
-            "moduleInitDurationMs": 0.3369740000925958,
-            "binaryBytes": 44223,
+            "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
+            "wasmUs": 8.128111352216289,
+            "nodeUs": 0.7804604842385078,
+            "wasmStdUs": 0.056026616732417024,
+            "nodeStdUs": 0.013504373898027425,
+            "ratio": 0.09601990553755146,
+            "ratioStd": 0.0018449728903975403,
+            "iters": 26268,
+            "warmupRounds": 2,
+            "measuredRounds": 9,
+            "wasmSamplesUs": [
+              8.113937338207279,
+              8.104379054364067,
+              8.128488998020396,
+              8.170500038070173,
+              8.294577775239075,
+              8.118901286736683,
+              8.128111352216289,
+              8.128624257651419,
+              8.111703098827547
+            ],
+            "nodeSamplesUs": [
+              0.7874008679755179,
+              0.7798620755298485,
+              0.7878639028470991,
+              0.817800137048683,
+              0.7758352367899802,
+              0.7804604842385078,
+              0.7794207781350645,
+              0.7779973351596549,
+              0.8055551621740957
+            ],
+            "compileDurationMs": 2745.917965999979,
+            "moduleCompileDurationMs": 0.5924539999687113,
+            "instantiateDurationMs": 0.15047100000083447,
+            "moduleInitDurationMs": 0.3453439999721013,
+            "firstBatchDurationMs": 1.0760749999899417,
+            "binaryBytes": 42616,
             "moduleImportCount": 0,
-            "functionImportCount": 0
+            "functionImportCount": 0,
+            "expectedChecksum": 1,
+            "actualChecksum": 1,
+            "testCompiledToWasm": true,
+            "benchmarkUsesIr": false,
+            "irCompiledFunctions": [],
+            "target": "standalone",
+            "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 451.93082805910103,
-        "nodeUs": 0.9084957805786376,
-        "wasmStdUs": 50.58209309554841,
-        "nodeStdUs": 0.21199064778551108,
-        "ratio": 0.0020102540569766785,
-        "ratioStd": 0.0006219373709185797,
-        "iters": 948,
+        "wasmUs": 231.99113648651465,
+        "nodeUs": 0.6013641892177229,
+        "wasmStdUs": 24.62656118395999,
+        "nodeStdUs": 0.011309902539930751,
+        "ratio": 0.002592186056438753,
+        "ratioStd": 0.00030088633875891203,
+        "iters": 1480,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          338.5075981012066,
-          343.5191276371735,
-          388.2395706751299,
-          454.4671962025648,
-          462.15968037980514,
-          467.27398523207626,
-          439.69588818564966,
-          451.93082805910103,
-          475.78728902949416
+          195.96843918922318,
+          206.48770405406705,
+          215.15708040541222,
+          229.40410472971004,
+          231.99113648651465,
+          243.05189662161473,
+          255.21185472969444,
+          261.56079797294444,
+          273.85167500001813
         ],
         "nodeSamplesUs": [
-          0.8566213080576986,
-          0.889570675033856,
-          1.548932489491056,
-          1.0840200421445558,
-          1.1008597046130961,
-          0.8861677215693967,
-          0.9336445146812055,
-          0.9084957805786376,
-          0.8338291139316348
+          0.617570270283928,
+          0.5896331081276986,
+          0.620102027007945,
+          0.6063256756877653,
+          0.5883060810643853,
+          0.5916297297320655,
+          0.590804054062008,
+          0.6021432432651243,
+          0.6013641892177229
         ]
       },
       "knownBugs": [
@@ -553,7 +643,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 27101,
+        "durationMs": 38256,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -561,23 +651,27 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)\n    at compileMultiSource (/home/user/js2/src/compiler.ts:1616:5)"
+            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 18 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)\n    at compileMultiSource (/home/user/js2/src/compiler.ts:1616:5)"
+            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 18 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)\n    at compileMultiSource (/home/user/js2/src/compiler.ts:1616:5)"
+        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 18 (valid: [0, 8)) at function '__cb_6'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -591,7 +685,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 1828,
+        "durationMs": 1762,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -612,6 +706,11 @@
         "harnessIncompatible": 209,
         "sourceIssue": 3958
       },
+      "correctness": {
+        "status": "verified",
+        "passed": 55,
+        "total": 55
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 162687688
@@ -624,43 +723,27 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 10349,
-        "timedOut": false,
+        "durationMs": 180163,
+        "timedOut": true,
         "timeoutMs": 180000,
-        "errorCount": 6,
+        "errorCount": 0,
         "binaryBytes": 0,
         "categories": {
-          "compiler-diagnostic": {
-            "count": 6,
-            "sample": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
+          "compile-budget": {
+            "count": 1,
+            "sample": "compileProject exceeded the 180000ms ESLint harness budget"
           }
-        },
-        "errors": [
-          {
-            "message": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
-          },
-          {
-            "message": "Module '\"./linter\"' declares 'Linter' locally, but it is not exported."
-          },
-          {
-            "message": "Module '\"./rule-tester\"' declares 'RuleTester' locally, but it is not exported."
-          },
-          {
-            "message": "Module '\"./languages/js/source-code\"' declares 'SourceCode' locally, but it is not exported."
-          },
-          {
-            "message": "Cannot find name 'module'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node`."
-          },
-          {
-            "message": "Codegen error: source callable validate has no consistent exact top-level or compiler-support inventory owner"
-          }
-        ]
+        }
       },
       "validation": {
         "validates": false,
-        "firstError": "Module '\"./eslint/eslint\"' declares 'ESLint' locally, but it is not exported."
+        "firstError": "compileProject exceeded the 180000ms budget (#3672)"
       },
       "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
       "perf": null,
       "knownBugs": [
         {
@@ -678,7 +761,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 2354,
+        "durationMs": 1764,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -694,6 +777,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 139740993
@@ -706,7 +793,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 3107,
+        "durationMs": 2969,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -728,6 +815,10 @@
         "firstError": "Codegen error: inherited class callable jt_diff has no exact canonical class unit"
       },
       "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 117242232
@@ -740,7 +831,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120140,
+        "durationMs": 120082,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -760,6 +851,10 @@
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -773,7 +868,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120124,
+        "durationMs": 120164,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -794,6 +889,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 112353408
@@ -806,7 +905,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 277,
+        "durationMs": 209,
         "errorCount": 0,
         "binaryBytes": 8191,
         "categories": {}
@@ -821,6 +920,12 @@
         "total": 18,
         "sourceIssue": 3748
       },
+      "correctness": {
+        "status": "divergent",
+        "passed": 17,
+        "total": 18,
+        "reason": "1 of 18 operations diverged from native node"
+      },
       "perf": {
         "sampleOp": "op_two_strings.length (host-owned arguments)",
         "lanes": {
@@ -829,36 +934,36 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (host-owned arguments)",
-            "wasmUs": 1.7905703913714313,
-            "nodeUs": 0.06712560940827064,
-            "wasmStdUs": 0.22063850711454017,
-            "nodeStdUs": 0.007308012184926238,
-            "ratio": 0.037488394609752194,
-            "ratioStd": 0.005747043742467588,
-            "iters": 133326,
+            "wasmUs": 1.0262598385629182,
+            "nodeUs": 0.03508092403676811,
+            "wasmStdUs": 0.0411507686692275,
+            "nodeStdUs": 0.0002058556302714634,
+            "ratio": 0.034183276708842344,
+            "ratioStd": 0.0014623325393303417,
+            "iters": 218909,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              1.922686775272913,
-              1.7457661671389797,
-              1.7656343998914776,
-              1.7233391311520716,
-              1.7905703913714313,
-              1.942570668887258,
-              2.4303866537661993,
-              1.735725132382315,
-              2.1072110841101526
+              0.9361892612910614,
+              1.008110050294773,
+              1.0423390358548779,
+              1.0118514496889637,
+              1.0262598385629182,
+              1.0507641165962838,
+              1.021356527141504,
+              1.0804961879136878,
+              1.0792879598372382
             ],
             "nodeSamplesUs": [
-              0.06477422258158183,
-              0.06767733225333016,
-              0.06167399457008184,
-              0.07662331428165602,
-              0.07150401272066852,
-              0.08370078604322131,
-              0.05979783388104965,
-              0.06250357019620556,
-              0.06712560940827064
+              0.0350757986196828,
+              0.03512133352230663,
+              0.034985866273265775,
+              0.03570137819830474,
+              0.03499854734169354,
+              0.03508092403676811,
+              0.035122480117157365,
+              0.03502074377938569,
+              0.035141565673402056
             ],
             "binaryBytes": 2100,
             "moduleImportCount": 21,
@@ -873,42 +978,42 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.001262080452288723,
-            "nodeUs": 0.05396670033139253,
-            "wasmStdUs": 0.000017580190689661413,
-            "nodeStdUs": 0.001333064795568009,
-            "ratio": 42.76011107970691,
-            "ratioStd": 1.0718834763209508,
-            "iters": 2850659,
+            "wasmUs": 0.0009499338440128086,
+            "nodeUs": 0.019804769081224128,
+            "wasmStdUs": 0.0000020975160681647463,
+            "nodeStdUs": 0.00005774843533969385,
+            "ratio": 20.848577199400307,
+            "ratioStd": 0.06881165090478465,
+            "iters": 3794819,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0012319460166769762,
-              0.0012557408655453721,
-              0.0012674357052123275,
-              0.001262080452288723,
-              0.0012475325880712553,
-              0.0012886223852201502,
-              0.00125809821517809,
-              0.0012690988294273117,
-              0.0012910969007778415
+              0.0009501399144364954,
+              0.0009534665553183177,
+              0.0009475553379535817,
+              0.0009509873856969148,
+              0.0009499338440128086,
+              0.0009472515026480891,
+              0.0009467524010981711,
+              0.000951755538265172,
+              0.0009496750701353583
             ],
             "nodeSamplesUs": [
-              0.05328059932809771,
-              0.05327398857596235,
-              0.05371127448075232,
-              0.05259312145016282,
-              0.05409926897601387,
-              0.05466892532568317,
-              0.0574335067785843,
-              0.05396670033139253,
-              0.05505963393025193
+              0.019959745115649238,
+              0.019851197909571832,
+              0.019794158825486397,
+              0.019835425879344126,
+              0.019771963563995944,
+              0.019791969788280177,
+              0.019804769081224128,
+              0.01974822356481638,
+              0.019807588978560994
             ],
-            "compileDurationMs": 2141.508245999925,
-            "moduleCompileDurationMs": 0.7036490000318736,
-            "instantiateDurationMs": 0.34204200003296137,
-            "firstBatchDurationMs": 0.06329700001515448,
-            "binaryBytes": 20337,
+            "compileDurationMs": 373.77969600004144,
+            "moduleCompileDurationMs": 0.30066100001567975,
+            "instantiateDurationMs": 0.025397000019438565,
+            "firstBatchDurationMs": 0.027621000015642494,
+            "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 7,
@@ -925,42 +1030,42 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 1.3261582075406744,
-            "nodeUs": 0.1293440194946628,
-            "wasmStdUs": 0.08290886282376168,
-            "nodeStdUs": 0.01313341550034278,
-            "ratio": 0.09753287259332948,
-            "ratioStd": 0.006835209518611069,
-            "iters": 221595,
+            "wasmUs": 0.4817848460084782,
+            "nodeUs": 0.055239200163458534,
+            "wasmStdUs": 0.008128596981116712,
+            "nodeStdUs": 0.0003517924320631509,
+            "ratio": 0.1146553292846543,
+            "ratioStd": 0.001963922712385581,
+            "iters": 587370,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              1.3403708747943215,
-              1.3673895304497583,
-              1.3199733838762142,
-              1.4224991132472142,
-              1.2629614883007934,
-              1.254813154628665,
-              1.5001006520907882,
-              1.3261582075406744,
-              1.2168862474331865
+              0.5065820964639082,
+              0.4817848460084782,
+              0.482988509797951,
+              0.481153296899681,
+              0.4826101213885633,
+              0.4826181555066838,
+              0.48078957726817545,
+              0.47995822564995577,
+              0.4776596302160643
             ],
             "nodeSamplesUs": [
-              0.14214292741303194,
-              0.1247340508585642,
-              0.1388955752608487,
-              0.15378239129953086,
-              0.1135167806132565,
-              0.1293440194946628,
-              0.14847371556205155,
-              0.11898547349877064,
-              0.12264530336851932
+              0.055239200163458534,
+              0.0548308953470659,
+              0.05552557331838595,
+              0.054762415513248966,
+              0.0549844271924091,
+              0.05564973015307866,
+              0.05567659396966832,
+              0.05481449001486746,
+              0.05543592284248554
             ],
-            "compileDurationMs": 3136.7981599998893,
-            "moduleCompileDurationMs": 0.9916669999947771,
-            "instantiateDurationMs": 0.3365759999724105,
-            "firstBatchDurationMs": 0.6987609999487177,
-            "binaryBytes": 34081,
+            "compileDurationMs": 1894.2043239999912,
+            "moduleCompileDurationMs": 9.559095000033267,
+            "instantiateDurationMs": 0.1858669999637641,
+            "firstBatchDurationMs": 0.3570149999577552,
+            "binaryBytes": 32684,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "expectedChecksum": 14,
@@ -972,36 +1077,36 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 1.7905703913714313,
-        "nodeUs": 0.06712560940827064,
-        "wasmStdUs": 0.22063850711454017,
-        "nodeStdUs": 0.007308012184926238,
-        "ratio": 0.037488394609752194,
-        "ratioStd": 0.005747043742467588,
-        "iters": 133326,
+        "wasmUs": 1.0262598385629182,
+        "nodeUs": 0.03508092403676811,
+        "wasmStdUs": 0.0411507686692275,
+        "nodeStdUs": 0.0002058556302714634,
+        "ratio": 0.034183276708842344,
+        "ratioStd": 0.0014623325393303417,
+        "iters": 218909,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          1.922686775272913,
-          1.7457661671389797,
-          1.7656343998914776,
-          1.7233391311520716,
-          1.7905703913714313,
-          1.942570668887258,
-          2.4303866537661993,
-          1.735725132382315,
-          2.1072110841101526
+          0.9361892612910614,
+          1.008110050294773,
+          1.0423390358548779,
+          1.0118514496889637,
+          1.0262598385629182,
+          1.0507641165962838,
+          1.021356527141504,
+          1.0804961879136878,
+          1.0792879598372382
         ],
         "nodeSamplesUs": [
-          0.06477422258158183,
-          0.06767733225333016,
-          0.06167399457008184,
-          0.07662331428165602,
-          0.07150401272066852,
-          0.08370078604322131,
-          0.05979783388104965,
-          0.06250357019620556,
-          0.06712560940827064
+          0.0350757986196828,
+          0.03512133352230663,
+          0.034985866273265775,
+          0.03570137819830474,
+          0.03499854734169354,
+          0.03508092403676811,
+          0.035122480117157365,
+          0.03502074377938569,
+          0.035141565673402056
         ]
       },
       "knownBugs": [
@@ -1020,7 +1125,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180053,
+        "durationMs": 180152,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1041,6 +1146,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 89317829
@@ -1053,7 +1162,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 891,
+        "durationMs": 813,
         "errorCount": 64,
         "binaryBytes": 0,
         "categories": {
@@ -1095,6 +1204,10 @@
         "firstError": "no binary emitted"
       },
       "tests": null,
+      "correctness": {
+        "status": "unverified",
+        "reason": "package does not compile, so no workload could run"
+      },
       "perf": null,
       "knownBugs": [
         {
@@ -1112,7 +1225,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120163,
+        "durationMs": 120086,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1133,6 +1246,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 55617769
@@ -1145,7 +1262,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 2527,
+        "durationMs": 2255,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1171,6 +1288,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 53123258
@@ -1183,7 +1304,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1936,
+        "durationMs": 1687,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1199,6 +1320,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 46631732
@@ -1211,7 +1336,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 2629,
+        "durationMs": 2337,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1219,23 +1344,27 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 15)) at function 'observable'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)"
+            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 9)) at function 'observeState'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 15)) at function 'observable'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)"
+            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 9)) at function 'observeState'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 15)) at function 'observable'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/user/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/user/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/user/js2/src/compiler.ts:1072:16)"
+        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 19 (valid: [0, 9)) at function 'observeState'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:960:35)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1249,7 +1378,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 9924,
+        "durationMs": 10346,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -1257,23 +1386,27 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 11)) at function 'normalizeObjectUnits'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:954:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)"
+            "sample": "Binary emit error: RangeError: Codegen error: local index out of range — 65 (valid: [0, 10)) at function '__cb_3'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
           }
         },
         "errors": [
           {
-            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 11)) at function 'normalizeObjectUnits'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:954:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)"
+            "message": "Binary emit error: RangeError: Codegen error: local index out of range — 65 (valid: [0, 10)) at function '__cb_3'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 17 (valid: [0, 11)) at function 'normalizeObjectUnits'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/user/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/user/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:1016:44)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:960:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:954:35)\n    at encodeInstr (/home/user/js2/src/emit/binary.ts:948:35)\n    at encodeInstrWithSourceMap (/home/user/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/user/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/user/js2/src/emit/binary.ts:524:7)"
+        "firstError": "Binary emit error: RangeError: Codegen error: local index out of range — 65 (valid: [0, 10)) at function '__cb_3'. This is the late-import index-shift class (#2043): a captured index went stale across a deferred flushLateImportShifts/addUnionImports/addStringImports shift, or a map lookup failed and baked -1/undefined. Re-resolve the index by name AFTER the last shift, or make the producer refuse loudly.\n    at failIndex (/home/runner/work/js2/js2/src/emit/binary.ts:222:9)\n    at vIdx (/home/runner/work/js2/js2/src/emit/binary.ts:233:62)\n    at encodeInstr (/home/runner/work/js2/js2/src/emit/binary.ts:1016:44)\n    at encodeInstrWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:666:3)\n    at encodeFunctionWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:627:5)\n    at emitBinaryWithSourceMapUnguarded (/home/runner/work/js2/js2/src/emit/binary.ts:524:7)\n    at emitBinaryWithSourceMap (/home/runner/work/js2/js2/src/emit/binary.ts:303:12)\n    at emitBinary (/home/runner/work/js2/js2/src/emit/binary.ts:285:10)\n    at runPipeline (/home/runner/work/js2/js2/src/compiler.ts:1073:16)\n    at compileMultiSource (/home/runner/work/js2/js2/src/compiler.ts:1617:5)"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1287,7 +1420,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180050,
+        "durationMs": 180155,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -1308,6 +1441,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 12487515
@@ -1320,21 +1457,25 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 6497,
+        "durationMs": 5587,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
-        "binaryBytes": 206800,
+        "binaryBytes": 200760,
         "categories": {}
       },
       "validation": {
         "validates": false,
-        "firstError": "WebAssembly.Module(): Compiling function #212:\"nt\" failed: local.tee[0] expected type (ref null 205), found local.get of type i32 @+99408"
+        "firstError": "WebAssembly.Module(): Compiling function #211:\"nt\" failed: local.tee[0] expected type (ref null 199), found local.get of type i32 @+97293"
       },
       "tests": {
         "kind": "upstream-suite",
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
+      },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
       },
       "perf": null,
       "knownBugs": [],
@@ -1348,7 +1489,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 29105,
+        "durationMs": 25979,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 152,
@@ -1827,6 +1968,10 @@
         "status": "not-integrated",
         "reason": "not shipped in npm tarball; adapter pending"
       },
+      "correctness": {
+        "status": "unverified",
+        "reason": "workload 'upstream-suite' reported no pass/total counts"
+      },
       "perf": null,
       "knownBugs": [],
       "weeklyDownloads": 10427988
@@ -1839,7 +1984,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 1824,
+        "durationMs": 1648,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -1861,6 +2006,12 @@
         "harnessIncompatible": 563,
         "implementationInvalidTests": 478,
         "sourceIssue": 3977
+      },
+      "correctness": {
+        "status": "divergent",
+        "passed": 3,
+        "total": 16,
+        "reason": "13 of 16 operations diverged from native node"
       },
       "perf": null,
       "knownBugs": [],

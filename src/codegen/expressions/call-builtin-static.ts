@@ -99,6 +99,7 @@ import { compileMathCall } from "./builtins.js";
 import { tryCompileObjectCreateStaticPrototype } from "./call-object-builtins.js";
 import { emitLazyProtoGet } from "./extern.js";
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./helpers.js";
+import { mayStaticallyExpandCreateDescriptor, staticDescriptorTypeError } from "../descriptor-shape.js";
 import { emitUndefined, ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { tryCompileEs5GetPrototypeOfEarly, tryCompileEs5GetPrototypeOfValue } from "./object-get-prototype-of.js";
@@ -2052,29 +2053,16 @@ export function compileBuiltinStaticCall(
       }
       fctx.body.push({ op: "call", funcIdx: hostIdx });
 
-      // If there's a second argument (property descriptors), expand at compile time.
-      // Only use static expansion when every descriptor value is an object literal AND
-      // every writable/enumerable/configurable flag inside each descriptor is
-      // statically ToBoolean-resolvable (per §6.2.6). Non-resolvable flags
-      // (`configurable: someVar`) need runtime ToBoolean — fall through to the
-      // non-fast-path so the runtime honors §7.1.2 instead of silently degrading
-      // to `false`.
+      // Second argument (property descriptors): expand at compile time, but only
+      // for descriptors this expansion can FULLY model. The admission test and
+      // its reasoning are `mayStaticallyExpandCreateDescriptor` (#4061) —
+      // accessors (silently dropped here), §6.2.5.6 violations, unresolvable flags.
       if (
         expr.arguments.length >= 2 &&
         ts.isObjectLiteralExpression(expr.arguments[1]!) &&
-        (expr.arguments[1] as ts.ObjectLiteralExpression).properties.every((p) => {
-          if (!ts.isPropertyAssignment(p)) return true;
-          const init = (p as ts.PropertyAssignment).initializer;
-          if (!ts.isObjectLiteralExpression(init)) return false;
-          for (const dp of init.properties) {
-            if (!ts.isPropertyAssignment(dp) || !ts.isIdentifier(dp.name)) continue;
-            const n = dp.name.text;
-            if (n === "writable" || n === "enumerable" || n === "configurable") {
-              if (staticToBoolean(dp.initializer) === undefined) return false;
-            }
-          }
-          return true;
-        })
+        (expr.arguments[1] as ts.ObjectLiteralExpression).properties.every(
+          (p) => !ts.isPropertyAssignment(p) || mayStaticallyExpandCreateDescriptor(p.initializer, staticToBoolean),
+        )
       ) {
         const descsLiteral = expr.arguments[1] as ts.ObjectLiteralExpression;
         // Save created object to local for repeated use
@@ -2215,6 +2203,18 @@ export function compileBuiltinStaticCall(
                 ? prop.name.text
                 : undefined;
           if (propName === undefined) continue;
+
+          // (#4061) The two ToPropertyDescriptor TypeErrors the dynamic applier
+          // structurally cannot report — see `staticDescriptorTypeError`. Emitted
+          // where THIS key applies, after its side effects, so earlier keys land first.
+          const descTypeError = staticDescriptorTypeError(prop.initializer);
+          if (descTypeError !== undefined) {
+            const sideEffectType = compileExpression(ctx, fctx, prop.initializer);
+            if (sideEffectType) fctx.body.push({ op: "drop" });
+            emitThrowTypeError(ctx, fctx, descTypeError);
+            fctx.body.push({ op: "unreachable" });
+            return { kind: "externref" };
+          }
 
           if (dpDescIdx !== undefined) {
             fctx.body.push({ op: "local.get", index: objLocal });

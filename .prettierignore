@@ -5,6 +5,9 @@ benchmarks/results/
 website/public/benchmarks/results/npm-compat.json
 website/public/benchmarks/results/npm-compat-perf.json
 website/public/benchmarks/results/npm-compat-history.json
+# (#2871 follow-up) Per-file edition index — a generated 16k-entry map, written minified
+# on purpose (pretty-printing quadruples the download the report page makes).
+website/public/benchmarks/results/test262-file-editions.json
 .test262-cache/
 scripts/compiler-bundle.mjs
 scripts/runtime-bundle.mjs

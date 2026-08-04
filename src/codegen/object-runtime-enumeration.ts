@@ -27,6 +27,7 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildExternGetIdxBody } from "./object-runtime.js";
+import { bagKeysIf } from "./carrier-bag-visibility.js"; // (#4010 S3) carrier-bag key enumeration
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -107,17 +108,13 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       // vec = __objvec_new()
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
-      // any = any.convert_extern(obj); if !$Object → return empty vec
+      // any = any.convert_extern(obj); if !$Object → the carrier bag's keys, else empty (#4010 S3)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
-      },
+      bagKeysIf(ctx, { vecLocal: 7, includeNonEnum: false }),
       // o = cast<$Object>(any) ; arr = __obj_ordered(o) ; cap = arr.len
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -222,17 +219,13 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       { op: "local.set", index: 7 },
       { op: "call", funcIdx: newPlainObjectIdx },
       { op: "local.set", index: 8 },
-      // any = any.convert_extern(obj); if !$Object → return empty vec
+      // any = any.convert_extern(obj); if !$Object → the carrier bag's keys, else empty (#4010 S3)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
       { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 7 }, { op: "return" }],
-      },
+      bagKeysIf(ctx, { vecLocal: 7, includeNonEnum: false }),
       // cur = cast<$Object>(any)
       { op: "local.get", index: 1 },
       { op: "ref.cast", typeIdx: objectTypeIdx },

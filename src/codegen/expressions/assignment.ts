@@ -112,6 +112,7 @@ import {
 import { isStrictContext } from "../helpers/is-strict-function.js";
 import { tryCompileStrictFunctionPoisonAssignment } from "../function-poison-pill-access.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
+import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 
 /**
  * Emit a null/undefined guard for an externref-typed destructuring source.
@@ -4581,12 +4582,12 @@ function compileElementAssignment(
         else: [],
       });
     }
-    // #1179: hint i32 directly so an i32 loop index doesn't take an f64 round-trip.
-    // compileExpression with i32 hint emits i32.trunc_sat_f64_s for non-i32 results
-    // via coerceType, matching the previous behavior for f64 indices.
-    const idxResult = compileExpression(ctx, fctx, target.argumentExpression, {
-      kind: "i32",
-    });
+    // Preserve range-proven counted-loop index arithmetic as i32. Fall back to
+    // the existing conversion path when constants, bounds, or overflow safety
+    // cannot be established.
+    const idxResult = tryEmitStaticI32Expression(ctx, fctx, target.argumentExpression)
+      ? ({ kind: "i32" } as const)
+      : compileExpression(ctx, fctx, target.argumentExpression, { kind: "i32" });
     if (!idxResult) {
       reportError(ctx, target, "Failed to compile element index");
       return null;

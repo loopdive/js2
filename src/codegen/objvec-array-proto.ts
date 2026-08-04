@@ -6,6 +6,7 @@ import { definedFuncAt } from "./func-space.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { fillVecOverlayHelpers } from "./vec-overlay.js";
 import { fillCarrierBagDelete } from "./carrier-bag-delete.js";
+import { fillCarrierBagVisibility } from "./carrier-bag-visibility.js";
 
 /** Finalize the generic vec overlay before installing the exact `$ObjVec` prototype arm. */
 export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
@@ -16,6 +17,10 @@ export function fillObjVecReflectionHelpers(ctx: CodegenContext): void {
   // baked the reserved index, and both bag lookups are funcMap entries from
   // RESERVE time, not fill time.
   fillCarrierBagDelete(ctx);
+  // (#4010 S3) Same reason, same pass: `__carrier_bag_gopd` needs
+  // `__getOwnPropertyDescriptor`'s funcIdx and the key walker needs
+  // `__obj_ordered`/`__obj_ordered_all`, none of which exist at reserve time.
+  fillCarrierBagVisibility(ctx);
   fillObjVecArrayPrototypeArm(ctx);
 }
 
