@@ -6,6 +6,7 @@ import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { IrFuncRef } from "../ir/nodes.js";
 import type { FuncTypeDef, Import, WasmFunction, WasmModule } from "../ir/types.js";
 import { definedFuncAt, definedFuncHandleOf, isImportFuncIdx } from "./func-space.js";
+import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import type { CodegenContext } from "./context/types.js";
 import type { ProgramAbiSession, ProgramAbiSlotLocator } from "./program-abi-session.js";
 import {
@@ -13,7 +14,9 @@ import {
   cloneProgramAbiCallableTypeContract,
 } from "./program-abi-signatures.js";
 
-const PROGRAM_ABI_PROVIDER_ROLE_ORDINAL = 5;
+// (#4033) Sourced from the shared role table, NOT a local literal. This was
+// `= 5`, which silently duplicated `PROGRAM_ABI_CALLABLE_ROLE.moduleInit`.
+const PROGRAM_ABI_PROVIDER_ROLE_ORDINAL = PROGRAM_ABI_CALLABLE_ROLE.callableProvider;
 
 type ProviderBinding = Extract<IrFuncRef["binding"], { readonly kind: "runtime" | "intrinsic" }>;
 type ProviderLocator =

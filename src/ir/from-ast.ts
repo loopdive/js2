@@ -6992,7 +6992,15 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
       const boxed = boxConcreteToDynamic(value, actual, sourceExpression, cx);
       if (boxed !== null) return boxed;
     }
-    throw new Error(`ir/from-ast: concrete return needs a dynamic box in ${cx.funcName}`);
+    // (#4027) The from-ast half of the #1798 return-value concern that
+    // `return-type-legacy-coupling` already covers on the verify side. This is
+    // the documented "clean 'not in slice' fallback", NOT a compiler invariant,
+    // so it must demote the function to legacy rather than abort the compile.
+    throw new IrUnsupportedError(
+      "return-type-legacy-coupling",
+      "build",
+      `ir/from-ast: concrete return needs a dynamic box in ${cx.funcName}`,
+    );
   }
   // (#2856 C3) externref value into a NUMBER (f64) declared result —
   // `return hit;` where `hit = cache.get(n)` is the externref Map_get

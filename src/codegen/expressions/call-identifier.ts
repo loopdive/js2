@@ -986,6 +986,53 @@ export function compileIdentifierCall(
     // Other shadow cases stay on the funcMap path — direct calls that don't
     // emit cap-prepend logic are already correct, even if a coincidental
     // local with the same name exists in the current scope.
+    // (#4133/#4134) The same hazard, one scope out: `funcMap` is keyed by BARE
+    // name, so a NESTED function declaration's binding is visible to every
+    // later module. When an unrelated module calls its own `equal` — an import,
+    // a `require`d function value, its own top-level function — the funcMap
+    // path retargets it to that nested function AND prepends the nested
+    // function's captures, read from the declaring frame. On the ESLint graph
+    // that is how `assertASTDidntChange` (eslint's rule-tester, calling
+    // fast-deep-equal's `equal`) ended up carrying uri-js's UMD factory locals
+    // and emitting `local.get 51` into a 4-slot frame.
+    //
+    // A nested declaration is only in scope inside its enclosing body, so skip
+    // the funcMap path when the call site is not lexically inside it. Names
+    // owned by top-level declarations, imports and synthesized helpers have no
+    // owner record and are unaffected.
+    const nestedOwnerDecl = ctx.funcMapOwnerDecl.get(funcName);
+    let isOutOfScopeNestedBinding = false;
+    if (nestedOwnerDecl !== undefined) {
+      // The scope is the owner's enclosing FUNCTION, not its immediate parent.
+      // A declaration inside a nested block is hoisted to function scope
+      // (Annex B §B.3.3), so it is callable from anywhere in the enclosing
+      // function — including before and outside that block. Using the parent
+      // block here made `function hoisted from inside if-block` unresolvable
+      // (#165) and broke lodash's `_createWrap` (#1303/#1305).
+      let ownerScope: ts.Node = nestedOwnerDecl.parent;
+      while (
+        !ts.isSourceFile(ownerScope) &&
+        !ts.isFunctionDeclaration(ownerScope) &&
+        !ts.isFunctionExpression(ownerScope) &&
+        !ts.isArrowFunction(ownerScope) &&
+        !ts.isMethodDeclaration(ownerScope) &&
+        !ts.isConstructorDeclaration(ownerScope) &&
+        !ts.isGetAccessorDeclaration(ownerScope) &&
+        !ts.isSetAccessorDeclaration(ownerScope)
+      ) {
+        if (!ownerScope.parent) break;
+        ownerScope = ownerScope.parent;
+      }
+      let visible = false;
+      for (let n: ts.Node | undefined = expr; n !== undefined; n = n.parent) {
+        if (n === ownerScope) {
+          visible = true;
+          break;
+        }
+      }
+      isOutOfScopeNestedBinding = !visible;
+    }
+
     let isLocallyShadowed = false;
     if (fctx.localMap.has(funcName) && ctx.nestedFuncCaptures.has(funcName)) {
       const localCalleeTsType = ctx.checker.getTypeAtLocation(expr.expression);
@@ -995,12 +1042,38 @@ export function compileIdentifierCall(
       }
     }
 
-    // Check if this is a closure call
-    let closureInfo = isLocallyShadowed ? undefined : ctx.closureMap.get(funcName);
+    // (#4133/#4134) `ctx.closureMap` is a THIRD bare-name namespace and it is
+    // consulted BEFORE `funcMap`. A visible nested declaration lexically
+    // shadows any outer closure or function-valued variable of the same name,
+    // so it must win here too — otherwise a nested `function equal()` calling
+    // itself from a sibling reached another module's `const equal = function
+    // equal(...)` instead, and the enclosing function silently returned 0.
+    // (#4133/#4134) `ctx.closureMap` is a THIRD bare-name namespace, consulted
+    // BEFORE `funcMap`. A visible nested declaration lexically shadows any
+    // outer closure or function-valued variable of the same name, so it must
+    // win here too — otherwise a nested `function equal()` called from a
+    // sibling reached another module's `const equal = function equal(...)` and
+    // the enclosing function silently returned 0.
+    const nestedBindingVisible = nestedOwnerDecl !== undefined && !isOutOfScopeNestedBinding;
+    let closureInfo = isLocallyShadowed || nestedBindingVisible ? undefined : ctx.closureMap.get(funcName);
 
-    if (!closureInfo) {
+    if (!closureInfo && !nestedBindingVisible) {
       closureInfo = resolveClosureInfoFromLocal(ctx, fctx, funcName);
     }
+    // (#4133) An out-of-scope nested binding lets the closure/local paths above
+    // run FIRST — that is how the correctly-scoped callee is found (eslint's
+    // rule-tester reaching fast-deep-equal's `equal` rather than uri-js's
+    // factory-nested one). But if neither resolves it, fall through to the
+    // historical `funcMap` path rather than suppressing it.
+    //
+    // Suppressing unconditionally is what the first cut did, and it is unsound
+    // in the other direction: with nothing left to resolve, the call reaches
+    // the graceful `ref.null.extern` fallback below, so a call that used to
+    // reach SOME function now yields null and the next use traps. The
+    // merge_group caught exactly that — `null_deref` 156 -> 1357 across the
+    // Temporal suite. Reaching the wrong same-named function is a wrong answer;
+    // turning a resolvable call into an uncatchable trap is worse, and neither
+    // is a licence for the other, so this only ever PREFERS a better binding.
     if (closureInfo) {
       return compileClosureCall(ctx, fctx, expr, funcName, closureInfo);
     }
@@ -1100,11 +1173,23 @@ export function compileIdentifierCall(
           // chance to throw. Force `externref` for binding-pattern params so the
           // call site agrees with the compiled callee.
           const paramDecl = sig.parameters[i]!.valueDeclaration;
-          if (
-            paramDecl &&
-            ts.isParameter(paramDecl) &&
-            (ts.isObjectBindingPattern(paramDecl.name) || ts.isArrayBindingPattern(paramDecl.name))
-          ) {
+          // (#4038) `ParameterDeclaration.name` is typed as non-optional, but it
+          // is genuinely ABSENT for a parameter declared through JSDoc
+          // function-type syntax — `@param {function(string): void} cb` models
+          // its own parameters as nameless `ParameterDeclaration` nodes. Passing
+          // that `undefined` into `ts.isObjectBindingPattern` threw
+          // `Cannot read properties of undefined (reading 'kind')`, which the
+          // speculative wrapper reported as an opaque "Internal error compiling
+          // expression" and which blocked the ESLint graph.
+          //
+          // Treating a nameless parameter as "not a binding pattern" is correct
+          // on the merits, not a defensive shrug: a binding pattern IS a name
+          // node (`{a}` / `[a]`), so a parameter without one cannot be one. It
+          // then takes the ordinary `resolveWasmType` path every other named
+          // non-pattern parameter takes.
+          const paramName =
+            paramDecl && ts.isParameter(paramDecl) ? (paramDecl.name as ts.BindingName | undefined) : undefined;
+          if (paramName && (ts.isObjectBindingPattern(paramName) || ts.isArrayBindingPattern(paramName))) {
             sigParamWasmTypes.push({ kind: "externref" });
             continue;
           }
@@ -1840,6 +1925,13 @@ export function compileIdentifierCall(
           if (mapped !== undefined) {
             fctx.body.push({ op: "local.get", index: mapped });
           } else {
+            if (process.env?.JS2WASM_FRAME_OPS) {
+              process.stderr.write(
+                `[js2:inline-unmapped] inlining '${funcName}' into ${fctx.name}: local.get ${(instr as any).index} ` +
+                  `has no arg mapping (paramCount=${inlineInfo.paramCount}, argLocals=${argLocals.join(",")}), ` +
+                  `callerFrame=${fctx.params.length + fctx.locals.length}\n`,
+              );
+            }
             fctx.body.push({ ...instr });
           }
         } else {

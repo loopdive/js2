@@ -7,14 +7,16 @@ async function compileAndRunMulti(files: Record<string, string>, entryFile: stri
     result.success,
     `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
   ).toBe(true);
-  const imports = {
-    env: {
-      console_log_number: () => {},
-      console_log_string: () => {},
-      console_log_bool: () => {},
-    },
-  };
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  // (#4029) Instantiate through the real `result.importObject` instead of a
+  // hand-rolled `{ env: … }`. The hand-rolled object declared only the three
+  // console shims and no `string_constants` namespace, so every rung in this
+  // file died with `Import #0 module="string_constants": module is not an
+  // object or function` — 9 failed / 1 passed on a clean checkout — even
+  // though compilation itself succeeded. Even a two-function graph emits
+  // imported string-constant globals (function and module names), so a partial
+  // import object cannot instantiate one.
+  const { instance } = await WebAssembly.instantiate(result.binary, result.importObject);
+  (result.importObject as { __setExports?: (e: WebAssembly.Exports) => void }).__setExports?.(instance.exports);
   return instance.exports as Record<string, Function>;
 }
 

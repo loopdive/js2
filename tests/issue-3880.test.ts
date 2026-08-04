@@ -461,7 +461,7 @@ describe("#3880 claim-issue.mjs — preserved behaviour", () => {
 
     const check = run(fx, ["--check", "3000"]);
     expect(check.code).toBe(0);
-    // (#4045/#4117) The wording changed and the assertion moved with it,
+    // (#4133/#4117) The wording changed and the assertion moved with it,
     // deliberately. This used to require `is UNASSIGNED`, which conflated two
     // different questions: the LOCK is free (what this test is about) but the
     // ID is still taken (what the sibling test below is about). `--check` now
