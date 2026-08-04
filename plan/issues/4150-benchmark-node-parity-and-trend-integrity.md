@@ -14,6 +14,22 @@ sprint: current
 horizon: m
 es_edition: n/a
 related: [3898, 3899, 3900, 3902, 3904, 3929]
+# The host-import wrapper work is arity SPECIALIZATION: the same guard body
+# repeated across five fixed signatures, and the extern_class method shim's
+# ordinary case inlined per arity. That repetition IS the optimization — the
+# measured regression when the arms were collapsed into a shared callee is
+# recorded in the commit — and it has to sit inside buildImports/resolveImport,
+# which own the closures being specialized.
+loc-budget-allow:
+  - src/runtime.ts
+# `<anonymous>#83` is the depth-guard wrapper block inside buildImports. The
+# gate keys anonymous functions positionally, so this entry is brittle by
+# nature — if it stops matching after an unrelated edit to buildImports, the
+# right response is to re-read the gate's own output for the new key, not to
+# widen the allowance.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#83
 ---
 
 # #4150 — finish Node parity and make trend data comparable

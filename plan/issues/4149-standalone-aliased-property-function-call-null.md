@@ -10,6 +10,17 @@ horizon: m
 created: 2026-08-04
 requested_by: ttraenkler/claude-bench
 related: [4088, 4144, 4145]
+# The fix is two narrow arms in existing dispatch chains, both of which have to
+# live where the decision is already made: the empty-object shape decision is in
+# resolveWasmType, and the "resolved struct lacks this field" decision is the
+# tail of compilePropertyAssignment. Moving either to a new module would leave a
+# call at the same site plus an indirection, not less code in the god-file.
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/codegen/expressions/assignment.ts
+func-budget-allow:
+  - src/codegen/index.ts::resolveWasmType
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
 ---
 
 # #4149 — aliased property-function call answers null on standalone
