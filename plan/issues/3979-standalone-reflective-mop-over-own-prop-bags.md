@@ -299,3 +299,45 @@ function with `delete fn.name` fails to compile in standalone with an internal
 `TypeError: Cannot read properties of undefined (reading 'kind')`. Not minimised
 and not filed — flagging it here so it is not lost; it reproduces from
 `.tmp/probe/p.js` in the session that recorded this.
+
+
+### FIXED (2026-08-04, follow-up commit): 7 of the 8 — root cause was the WRITE path, not the readers
+
+The delete/hasOwn framing above was close but not final. The actual defect sat
+one step earlier, in **`__closure_prop_set`** (`src/codegen/closure-props.ts`):
+it stored into the #3468 side-table bag **unconditionally**. `verifyProperty`
+probes `writable:false` by WRITING to the property; that probe write created a
+stale bag shadow for `name`. It stayed masked while the #2896 metadata was live
+(reads answer from metadata first) and surfaced when `delete fn.name` cleared
+the metadata — hasOwnProperty/gOPD then answered from the bag, so the harness's
+own probe write broke its later configurable check.
+
+**Fix:** gate the bag store on `__builtinfn_get_meta(obj, key)` — non-null means
+the key is a LIVE builtin `name`/`length` own property, which is
+`writable:false` per §17, so the write is a sloppy no-op. Post-delete the
+metadata is gone, get_meta returns null, and assignment correctly creates an
+ordinary own property in the bag. Ordinary expandos are unaffected (get_meta is
+null for every other key/receiver).
+
+Re-run of the 8 regressed tests: **7 pass**, `15.2.3.6-4-594` still fails.
+Unit coverage added: `tests/issue-3979-bfn-name-writable-gate.test.ts` (4
+tests: the regressed cycle, gOPD §17 attributes, post-delete assignment,
+user-function expandos). Neighbouring suites green (issue-3980, issue-3978,
+this-receiver-apply, issue-3201-expando-method — 44 tests).
+
+### The remaining regression: 15.2.3.6-4-594 — needs proto-chain [[Set]], do not hack
+
+`obj = foo.bind({}); obj.prop = "overrideData"` with an accessor defined on
+`Function.prototype` must invoke the inherited SETTER and create no own
+property. Pre-#3979 this passed by **two wrongs cancelling**: the write landed
+in the bag (hasOwn couldn't see bags, so `hasOwnProperty("prop")` was false
+vacuously) and the read found the bag value. #3979 made hasOwn honest, which
+exposed that the write path never consulted prototype-chain accessors.
+
+The correct fix is OrdinarySet fidelity for closure receivers — walk to the
+%Function.prototype% brand object and dispatch inherited accessors before
+falling back to an own bag store. That is #2992/#3251 MOP substrate territory.
+A shortcut (e.g. hiding bags from hasOwn for bound functions) would re-break
+real expandos, so this one regression is accepted as known until the substrate
+lands. Net effect of #3979 with the gate: **+29 / −1** on the six descriptor
+directories.

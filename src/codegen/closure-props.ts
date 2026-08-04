@@ -405,7 +405,18 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
 
   // ── __closure_prop_set(externref obj, externref key, externref value) -> () ──
   // if is_closure(obj) { bag = ensure(obj); __extern_set(bag, key, value) }
+  //
+  // A LIVE builtin `name`/`length` own property is writable:false (§17), so a
+  // plain write to it must be a sloppy no-op — NOT a bag store. An
+  // unconditional store here leaves a stale shadow that stays masked while the
+  // #2896 metadata is live (reads answer from metadata first) and surfaces the
+  // moment `delete fn.name` clears the metadata: hasOwnProperty/gOPD then
+  // answer from the bag, so `verifyProperty`'s non-writable probe write broke
+  // its own later configurable check (the 7-test name.js/length.js family).
+  // After a delete, `__builtinfn_get_meta` returns null and the store proceeds
+  // — correct, since post-delete assignment creates an ordinary own property.
   if (isClosureIdx !== undefined && bagEnsureIdx !== undefined && externSetIdx !== undefined) {
+    const bfnGetMetaIdx = ctx.funcMap.get("__builtinfn_get_meta");
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: isClosureIdx },
@@ -413,6 +424,16 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
         op: "if",
         blockType: { kind: "empty" },
         then: [
+          ...(bfnGetMetaIdx !== undefined
+            ? ([
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                { op: "call", funcIdx: bfnGetMetaIdx },
+                { op: "ref.is_null" },
+                { op: "i32.eqz" },
+                { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
+              ] satisfies Instr[])
+            : []),
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: bagEnsureIdx }, // -> bag externref
           { op: "local.get", index: 1 }, // key
