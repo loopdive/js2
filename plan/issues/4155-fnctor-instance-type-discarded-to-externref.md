@@ -531,6 +531,42 @@ holds*: a `struct.get` of an `externref` field is still a boxed read, and 43 of
 96 acorn slots are `externref` because they are seeded from untyped constructor
 parameters. That is #743, and it is the only bucket left with real size.
 
+### The 43-slot `unknown` bucket cannot be shortcut — checked, do not try
+
+The obvious cheap move on the remaining bucket is: when a field is seeded from
+an untyped ctor parameter, infer that parameter's type from the module's own
+`new F(...)` call sites (the escape gate already holds every site in
+`sites: ReadonlyMap<ts.NewExpression, FnctorGateClass>`, so the data is right
+there) and use it for the slot. It is a module-local #743 and looks tractable.
+
+**It is unsound as stated.** Typing the *field* without typing the *parameter*
+puts an `externref` param local into an `f64` slot, so every ctor store needs a
+runtime unbox — cost moved, not removed, and a new failure mode when the value
+is not actually a number. Typing the *parameter* instead changes the ctor's wasm
+signature, which is ABI-affecting and has to agree with every call site.
+
+That is not a new discovery: `src/checker/usage-inference.ts` already scopes
+itself out of exactly this, in its header — parameters are *"ABI-affecting,
+needs a call graph — deferred to #743"* — and it handles only function-local
+identifier bindings for that reason. So the bucket is #743's by construction,
+and a shortcut here would be re-litigating a decision the codebase already made
+with the same evidence.
+
+### Evidence supporting a default flip (gathered 2026-08-04)
+
+| check | result |
+| --- | --- |
+| acorn standalone, flag on | 943,140 → 866,627 B (−8.1%), 0 imports, canaries 2,3,4,5 |
+| acorn census | `discarded` 4 → 1, `unknown` 43 unchanged |
+| 4 × `#2660` fnctor suites + Phase 0, flag on | 54 passed |
+| 26 object/struct/class/prototype equivalence files, flag on | **140 passed, 0 failed** |
+| full `tests/equivalence/`, either flag | OOMs in a 16 GB container — not a usable signal, do not re-attempt |
+
+Not yet covered: standalone **test262**, which only runs in the `merge_group`
+re-validation. That is the reason the flip should land as its own PR — if it
+parks, attribution is unambiguous — and the reason
+`JS2WASM_FNCTOR_TYPED_INSTANCES=0` must remain a one-variable revert.
+
 ### Revised next steps
 
 1. **Phase 2** — member dispatch, data-fields-only static, everything else
