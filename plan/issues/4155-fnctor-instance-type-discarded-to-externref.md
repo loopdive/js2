@@ -42,6 +42,15 @@ loc-budget-allow:
   # logic (flag, standalone check, gate-approval check, reserved-index lookup)
   # is in the new `fnctor-typed-instances.ts` module.
   - src/codegen/index.ts
+func-budget-allow:
+  # +1 line in `resolveWasmType` (354 > 353). Same two-line hook as the LOC
+  # grant above: the #1712 `return { kind: "externref" }` becomes
+  # `resolveFnctorInstanceType(...) ?? { kind: "externref" }`. `resolveWasmType`
+  # IS the single type-resolution switch, so a resolution change necessarily
+  # lands inside it; splitting the function is a separate refactor (#3399) and
+  # doing it under a flag-gated behavior change would make both harder to
+  # review. All decision logic lives in `fnctor-typed-instances.ts`.
+  - src/codegen/index.ts::resolveWasmType
 ---
 
 # #4155 — the type is known and thrown away
