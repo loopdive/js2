@@ -124,7 +124,20 @@ export function reserveCarrierBagDelete(ctx: CodegenContext): number | undefined
  */
 export function buildNonObjectDeleteArms(
   ctx: CodegenContext,
-  args: { bfnDeleteIdx: number | undefined; objectTypeIdx: number; anyLocal: number; resultLocal: number },
+  args: {
+    bfnDeleteIdx: number | undefined;
+    objectTypeIdx: number;
+    anyLocal: number;
+    resultLocal: number;
+    /**
+     * (#4098 G1 s1) Arms appended after the carrier-bag consult and before the
+     * historical `return 1`, for receivers whose own properties are struct
+     * FIELDS rather than bag entries (user-declared class instances). Last in
+     * order for the same reason the bag arm is second: every receiver/key an
+     * earlier arm answers for keeps its answer bit-for-bit.
+     */
+    tailArms?: Instr[];
+  },
 ): Instr[] {
   const cbdIdx = ctx.funcMap.get(CARRIER_BAG_DELETE);
   const bagArm: Instr[] =
@@ -160,7 +173,7 @@ export function buildNonObjectDeleteArms(
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...bagArm, { op: "i32.const", value: 1 }, { op: "return" }],
+      then: [...bagArm, ...(args.tailArms ?? []), { op: "i32.const", value: 1 }, { op: "return" }],
     },
   ];
 }
