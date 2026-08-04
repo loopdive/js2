@@ -1130,37 +1130,28 @@
       .feat-tables {
         margin-top: 16px;
       }
-      .feat-tables-summary {
-        cursor: pointer;
-        list-style: none;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        font-family: var(--mono);
-        font-size: 13px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: rgba(255, 255, 255, 0.7);
-        padding: 10px 0;
-        user-select: none;
-      }
-      .feat-tables-summary::-webkit-details-marker {
+      /* Each edition section collapses independently, collapsed by default —
+         click the edition headline to expand just that edition's rows. */
+      .feat-section:not(.expanded) .feat-row,
+      .feat-section:not(.expanded) .feat-note {
         display: none;
       }
-      .feat-tables-summary::before {
-        content: "▸";
-        display: inline-block;
-        color: rgba(255, 255, 255, 0.4);
-        transition: transform 0.15s ease;
+      .feat-edition {
+        cursor: pointer;
+        user-select: none;
       }
-      .feat-tables[open] > .feat-tables-summary::before {
-        transform: rotate(90deg);
-      }
-      .feat-tables-summary:hover {
+      .feat-edition:hover .feat-edition-label {
         color: #fff;
       }
-      .feat-tables-summary:hover::before {
-        color: rgba(255, 255, 255, 0.7);
+      .feat-edition-label::before {
+        content: "▸";
+        display: inline-block;
+        margin-right: 8px;
+        color: rgba(255, 255, 255, 0.35);
+        transition: transform 0.15s ease;
+      }
+      .feat-section.expanded .feat-edition-label::before {
+        transform: rotate(90deg);
       }
 
       .feat-panel {
@@ -1767,8 +1758,7 @@
           ></t262-edition-timeline>
         </div>
 
-        <details class="feat-tables" id="feat-tables">
-          <summary class="feat-tables-summary">Feature-by-feature breakdown</summary>
+        <div class="feat-tables" id="feat-tables">
           <div class="feat-panel">
             <div class="feat-section">
               <div class="feat-edition">ES3 / Core</div>
@@ -3514,7 +3504,7 @@ match (value) {
               </div>
             </div>
           </div>
-        </details>
+        </div>
       </section>
 
       <hr class="divider" />
@@ -5812,6 +5802,18 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
       sortFeatureSectionsChronologically();
       applyFeatureEditionScope();
+
+      // Each edition section (below the timeline slider) collapses
+      // independently, collapsed by default — click its headline to expand
+      // just that edition's feature rows. Delegated so it also covers
+      // sections added later by updateEditionPassBars().
+      document.addEventListener("click", (event) => {
+        const header = event.target.closest(".feat-edition");
+        if (!header) return;
+        const section = header.closest(".feat-section");
+        if (!section) return;
+        section.classList.toggle("expanded");
+      });
 
       (function hydrateEditionPassBars() {
         const strictToggle = document.getElementById("strict-only-toggle");
