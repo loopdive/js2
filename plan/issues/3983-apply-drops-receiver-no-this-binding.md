@@ -155,3 +155,24 @@ both; confirm the method-call path independently.
       `.apply()` identity cases (the `.call()` case as a guard against
       regressing the currently-correct path).
 - [ ] Net official pass count does not regress in either lane.
+
+
+## Measurement note (2026-08-04) — value confirmed, original lane label was wrong
+
+The delta first reported here ("+4 standalone, +4 host") came from a harness
+that silently ran the HOST lane for both runs: `runTest262File` takes
+POSITIONAL args and my script passed `{ target }` as `timeoutMs`, leaving
+`target` undefined. The two lanes agreeing exactly was the tell, and I
+misread it as evidence of lane-independence.
+
+Re-measured on the fixed harness (201 files, `language/function-code/10.4.3`):
+
+| lane | reshape disabled | with #3983 | delta |
+| --- | --- | --- | --- |
+| standalone | 64 | **68** | **+4** |
+| host | 65 | **69** | **+4** |
+
+So the +4 stands and the lane-independence claim happens to hold — but it was
+right by accident, not by measurement. Anyone re-running this must pass the
+target as the FOURTH positional argument and verify the two lanes actually
+differ before trusting a lane-specific number.

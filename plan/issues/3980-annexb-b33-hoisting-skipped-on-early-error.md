@@ -179,3 +179,31 @@ declaration`/`second declaration` — B.3.3 interaction with an existing
 - [x] Blast radius verified to be exactly the target cluster across all of test262.
 - [x] `tests/issue-3980.test.ts` covers all eight declaration positions, the six
       cancelling binders, and the non-cancelling counterparts.
+
+
+## Measurement correction (2026-08-04) — my re-verification was the WRONG LANE
+
+The integration commit for this issue said the +96 standalone figure was
+"measured independently on this branch". **It was not — that run used the HOST
+lane.**
+
+`runTest262File(filePath, category, timeoutMs, target?)` takes POSITIONAL
+arguments. My measurement script called `runTest262File(abs, rel, { target } as
+any)`, which passes the object as `timeoutMs` and leaves `target` **undefined**,
+so the standalone lane was never selected. The `as any` cast silenced the type
+error that would have caught it.
+
+Proof the harness was blind: after fixing the call, the same tree yields
+standalone 68 / host 69 on the `language/function-code/10.4.3` family; before
+the fix BOTH lanes returned 69.
+
+Consequence for this issue: my 107 -> 203 is a **host-lane** result, and it
+tracks the authoring agent's host numbers (107 -> 201), not its standalone
+(104 -> 199).
+
+**The standalone figure to cite is the authoring agent's own +95 (104 -> 199)**,
+which it measured separately and which was internally consistent with its host
+run. This issue's standalone claim rests on THAT measurement, not on mine.
+
+No regression is implied — the host-lane gain was real and the required checks
+passed on their own terms. What was wrong is the attribution, not the fix.
