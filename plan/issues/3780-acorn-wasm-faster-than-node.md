@@ -15,7 +15,7 @@ language_feature: strings, objects, arrays, classes, parser
 goal: performance
 assignee: "ttraenkler/codex"
 depends_on: [3779]
-related: [1710, 1712, 3756, 3920, 3921]
+related: [4157, 1710, 1712, 3756, 3920, 3921]
 files:
   - .husky/pre-push
   - package.json
