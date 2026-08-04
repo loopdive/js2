@@ -67,7 +67,8 @@ class TrendChart extends HTMLElement {
 
     if (seriesDef.length === 0) return;
 
-    const PAD = { top: 20, right: 40, bottom: 40, left: 60 };
+    const isSparkline = mode === "sparkline";
+    const PAD = isSparkline ? { top: 3, right: 3, bottom: 3, left: 3 } : { top: 20, right: 40, bottom: 40, left: 60 };
     const plotW = W - PAD.left - PAD.right;
     const plotH = H - PAD.top - PAD.bottom;
     const n = data.length;
@@ -76,9 +77,50 @@ class TrendChart extends HTMLElement {
 
     if (mode === "stacked") {
       this._renderStacked(data, seriesDef, W, H, PAD, plotW, plotH, n, x, labelsKey);
+    } else if (isSparkline) {
+      this._renderSparkline(data, seriesDef, W, H, PAD, plotW, plotH, n, x);
     } else {
       this._renderLine(data, seriesDef, W, H, PAD, plotW, plotH, n, x, labelsKey, mode === "step");
     }
+  }
+
+  // Compact, axis-free rendering for small inline trend indicators (e.g. next
+  // to a per-edition stat row). Single series only; no grid/labels/peak text.
+  _renderSparkline(data, seriesDef, W, H, PAD, plotW, plotH, n, x) {
+    const s = seriesDef[0];
+    if (!s) {
+      this.shadowRoot.innerHTML = `<style>:host { display: block; }</style>`;
+      return;
+    }
+
+    const values = data.map((d) => Number(d[s.key] || 0));
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const y = (v) => PAD.top + plotH - ((v - min) / range) * plotH;
+
+    let path = `M ${x(0)} ${y(values[0])}`;
+    for (let i = 1; i < n; i++) path += ` L ${x(i)} ${y(values[i])}`;
+
+    const color = s.color || "#fff";
+    const lastIdx = n - 1;
+    const fillPath =
+      s.fill === false ? "" : `${path} L ${x(lastIdx)} ${PAD.top + plotH} L ${x(0)} ${PAD.top + plotH} Z`;
+
+    this.shadowRoot.innerHTML = `
+      <style>:host { display: block; }</style>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:100%;display:block">
+        ${
+          fillPath
+            ? `<defs><linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.35"/>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+        </linearGradient></defs><path d="${fillPath}" fill="url(#sparkGrad)"/>`
+            : ""
+        }
+        <path d="${path}" fill="none" stroke="${color}" stroke-width="${s.lineWidth ?? 1.5}" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${x(lastIdx)}" cy="${y(values[lastIdx])}" r="2" fill="${color}"/>
+      </svg>`;
   }
 
   _buildXAccessor(data, xKey, left, plotW, n) {

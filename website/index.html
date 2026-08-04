@@ -1195,6 +1195,16 @@
         min-width: 160px;
         justify-content: flex-end;
       }
+      .feat-edition-trend {
+        display: block;
+        width: 56px;
+        height: 20px;
+        flex-shrink: 0;
+        opacity: 0.75;
+      }
+      .feat-edition-trend[hidden] {
+        display: none;
+      }
       .feat-edition-passbar-count {
         font-family: var(--mono);
         font-size: 11px;
@@ -4995,167 +5005,184 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
       // Conformance diagrams are now rendered by <t262-donut> and <t262-edition-bars> web components.
 
-      (async function hydrateConformanceHistoryChart() {
+      // Primary trend graph (next to the donut) — scope-aware. Called once at
+      // load for the default "overall" / js-host scope, then re-called by
+      // applyScopeFromDetail() whenever the ES-edition timeline slider or the
+      // standalone/host toggle changes, so it always matches the donut.
+      const conformanceHistoryProjectStart = new Date("2026-02-27T00:00:00Z");
+      const parseRunTimestamp = (value) => {
+        const raw = String(value || "");
+        if (!raw) return null;
+        const isoDate = new Date(raw);
+        if (Number.isFinite(isoDate.getTime())) return isoDate;
+        const compact = raw.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+        if (compact) {
+          const [, y, m, d, hh, mm, ss] = compact;
+          return new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
+        }
+        return null;
+      };
+      const formatHistoryLabel = (date) =>
+        `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+      const fetchJsonSafe = async (url) => {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) return null;
+          const data = await resp.json();
+          return Array.isArray(data) ? data : null;
+        } catch {
+          return null;
+        }
+      };
+
+      // Builds trend-chart points from an arbitrary runs[] history array.
+      // `extract(run)` returns `{ pass, total, timestampRaw }` for a run, or
+      // null/undefined to skip it — this is what lets the same point-building
+      // (gap-filling, stale-endpoint extension, sparse-run filtering) serve
+      // the overall/standalone histories AND a single ES edition's slice of
+      // editions-index.json. Returns null when there isn't enough real data.
+      const buildHistoryPoints = (runs, extract) => {
+        if (!Array.isArray(runs)) return null;
+
+        const extracted = runs
+          .map((run) => extract(run))
+          .filter((r) => r && Number(r.total ?? 0) > 1 && Number(r.pass ?? 0) >= 0)
+          .map((r) => ({ pass: Number(r.pass || 0), total: Number(r.total || 0), timestampRaw: r.timestampRaw }))
+          .sort((a, b) => {
+            const ta = parseRunTimestamp(a.timestampRaw)?.getTime() ?? Number.POSITIVE_INFINITY;
+            const tb = parseRunTimestamp(b.timestampRaw)?.getTime() ?? Number.POSITIVE_INFINITY;
+            return ta - tb;
+          });
+
+        const rawPoints = extracted
+          .map((run) => {
+            const ts = String(run.timestampRaw || "");
+            const date = parseRunTimestamp(ts);
+            return {
+              label: date ? formatHistoryLabel(date) : "",
+              timestamp: ts,
+              time: date?.getTime() ?? 0,
+              pass: run.pass,
+              total: run.total,
+              rate: run.total > 0 ? (run.pass / run.total) * 100 : 0,
+            };
+          })
+          .filter((point) => point.total > 0 && point.rate >= 5);
+
+        const points = [];
+        for (const point of rawPoints) {
+          const prev = points.at(-1);
+          if (prev && point.total < prev.total * 0.75) continue;
+          points.push(point);
+        }
+
+        const firstPoint = points[0];
+        if (firstPoint?.timestamp) {
+          const firstDate = new Date(firstPoint.timestamp);
+          if (
+            Number.isFinite(firstDate.getTime()) &&
+            firstDate.getTime() - conformanceHistoryProjectStart.getTime() > 12 * 60 * 60 * 1000
+          ) {
+            points.unshift({
+              label: formatHistoryLabel(conformanceHistoryProjectStart),
+              timestamp: conformanceHistoryProjectStart.toISOString(),
+              time: conformanceHistoryProjectStart.getTime(),
+              pass: 0,
+              total: 0,
+              rate: 0,
+            });
+          }
+        }
+
+        const lastRun = extracted.at(-1);
+        if (lastRun) {
+          const ts = String(lastRun.timestampRaw || "");
+          const lastRate = lastRun.total > 0 ? (lastRun.pass / lastRun.total) * 100 : 0;
+          const lastDate = ts ? new Date(ts) : null;
+          const now = new Date();
+          if (
+            Number.isFinite(lastRate) &&
+            lastRate >= 5 &&
+            lastDate instanceof Date &&
+            Number.isFinite(lastDate.getTime()) &&
+            now.getTime() - lastDate.getTime() > 12 * 60 * 60 * 1000
+          ) {
+            points.push({
+              label: formatHistoryLabel(now),
+              timestamp: now.toISOString(),
+              time: now.getTime(),
+              pass: lastRun.pass,
+              total: lastRun.total,
+              rate: lastRate,
+            });
+          }
+        }
+
+        if (points.length < 2) return null;
+        return points;
+      };
+
+      const CONFORMANCE_HISTORY_SERIES = JSON.stringify([
+        { key: "rate", color: "#ffffff", fill: true },
+        { key: "pass", color: "rgba(255,255,255,0.82)", axis: "right", lineWidth: 1, lineOpacity: 0.5 },
+        {
+          key: "total",
+          color: "rgba(141, 154, 184, 1)",
+          axis: "right",
+          lineWidth: 1,
+          lineOpacity: 1,
+          dasharray: "1 3",
+        },
+      ]);
+
+      async function updateConformanceHistoryChart(scope, hostEnabled) {
         const chart = document.getElementById("conformance-history-chart");
         if (!chart) return;
         try {
-          const projectStart = new Date("2026-02-27T00:00:00Z");
-          const parseRunTimestamp = (value) => {
-            const raw = String(value || "");
-            if (!raw) return null;
-            const isoDate = new Date(raw);
-            if (Number.isFinite(isoDate.getTime())) return isoDate;
-            const compact = raw.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
-            if (compact) {
-              const [, y, m, d, hh, mm, ss] = compact;
-              return new Date(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
-            }
-            return null;
-          };
-          const formatLabel = (date) =>
-            `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-          const resp = await fetch("./benchmarks/results/runs/index.json");
-          if (!resp.ok) return;
-          const runs = await resp.json();
-          if (!Array.isArray(runs)) return;
+          const isOverallScope = !scope || scope === "overall" || scope === "overall+proposal";
+          let points = null;
 
-          const rawPoints = runs
-            .filter((run) => Number(run?.total ?? 0) > 1 && Number(run?.pass ?? 0) >= 0)
-            .sort((a, b) => {
-              const ta = parseRunTimestamp(a.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-              const tb = parseRunTimestamp(b.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-              return ta - tb;
-            })
-            .map((run) => {
-              const total = Number(run.total || 0);
-              const pass = Number(run.pass || 0);
-              const ts = String(run.timestamp || "");
-              const date = parseRunTimestamp(ts);
-              return {
-                label: date ? formatLabel(date) : "",
-                timestamp: ts,
-                time: date?.getTime() ?? 0,
-                pass,
-                total,
-                rate: total > 0 ? (pass / total) * 100 : 0,
-              };
-            })
-            .filter((point) => point.total > 0 && point.rate >= 5);
-
-          const points = [];
-          for (const point of rawPoints) {
-            const prev = points.at(-1);
-            if (prev && point.total < prev.total * 0.75) continue;
-            points.push(point);
-          }
-
-          const firstPoint = points[0];
-          if (firstPoint?.timestamp) {
-            const firstDate = new Date(firstPoint.timestamp);
-            if (
-              Number.isFinite(firstDate.getTime()) &&
-              firstDate.getTime() - projectStart.getTime() > 12 * 60 * 60 * 1000
-            ) {
-              points.unshift({
-                label: formatLabel(projectStart),
-                timestamp: projectStart.toISOString(),
-                time: projectStart.getTime(),
-                pass: 0,
-                total: 0,
-                rate: 0,
-              });
-            }
-          }
-
-          const lastRun = runs
-            .filter((run) => Number(run?.total ?? 0) > 1 && Number(run?.pass ?? 0) >= 0)
-            .sort((a, b) => {
-              const ta = parseRunTimestamp(a.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-              const tb = parseRunTimestamp(b.timestamp)?.getTime() ?? Number.POSITIVE_INFINITY;
-              return ta - tb;
-            })
-            .at(-1);
-
-          if (lastRun) {
-            const ts = String(lastRun.timestamp || "");
-            const total = Number(lastRun.total || 0);
-            const pass = Number(lastRun.pass || 0);
-            const lastRate = total > 0 ? (pass / total) * 100 : 0;
-            const lastDate = ts ? new Date(ts) : null;
-            const now = new Date();
-            if (
-              Number.isFinite(lastRate) &&
-              lastRate >= 5 &&
-              lastDate instanceof Date &&
-              Number.isFinite(lastDate.getTime()) &&
-              now.getTime() - lastDate.getTime() > 12 * 60 * 60 * 1000
-            ) {
-              points.push({
-                label: formatLabel(now),
-                timestamp: now.toISOString(),
-                time: now.getTime(),
-                pass,
-                total,
-                rate: lastRate,
-              });
-            }
-          }
-
-          if (points.length === 0) {
-            const now = new Date();
-            points.push(
-              {
-                label: formatLabel(projectStart),
-                timestamp: projectStart.toISOString(),
-                time: projectStart.getTime(),
-                pass: 0,
-                total: 0,
-                rate: 0,
-              },
-              {
-                label: formatLabel(now),
-                timestamp: now.toISOString(),
-                time: now.getTime(),
-                pass: 0,
-                total: 0,
-                rate: 0,
-              },
+          if (isOverallScope) {
+            const runs = await fetchJsonSafe(
+              hostEnabled ? "./benchmarks/results/runs/index.json" : "./benchmarks/results/runs/standalone-index.json",
             );
+            points = buildHistoryPoints(runs, (run) => ({
+              pass: run?.pass,
+              total: run?.total,
+              timestampRaw: run?.timestamp,
+            }));
+          } else if (!hostEnabled) {
+            // Specific ES edition + standalone: no per-edition standalone
+            // history exists yet (only an overall standalone series) — leave
+            // the chart hidden rather than substitute a misleading series.
+            points = null;
+          } else {
+            const runs = await fetchJsonSafe("./benchmarks/results/runs/editions-index.json");
+            const label = normalizeEditionLabel(scope);
+            points = buildHistoryPoints(runs, (run) => {
+              if (!Array.isArray(run?.editions)) return null;
+              const entry = run.editions.find((e) => normalizeEditionLabel(String(e?.edition || "")) === label);
+              if (!entry) return null;
+              return { pass: entry.pass, total: entry.total, timestampRaw: run.timestamp };
+            });
           }
 
-          if (points.length < 2) return;
+          if (!points) {
+            chart.hidden = true;
+            return;
+          }
 
           chart.setAttribute("labels-key", "label");
-          chart.setAttribute(
-            "series",
-            JSON.stringify([
-              {
-                key: "rate",
-                color: "#ffffff",
-                fill: true,
-              },
-              {
-                key: "pass",
-                color: "rgba(255,255,255,0.82)",
-                axis: "right",
-                lineWidth: 1,
-                lineOpacity: 0.5,
-              },
-              {
-                key: "total",
-                color: "rgba(141, 154, 184, 1)",
-                axis: "right",
-                lineWidth: 1,
-                lineOpacity: 1,
-                dasharray: "1 3",
-              },
-            ]),
-          );
+          chart.setAttribute("series", CONFORMANCE_HISTORY_SERIES);
           chart.data = points;
+          chart.hidden = false;
         } catch {
-          // Leave the chart empty when the historical run index is unavailable.
+          chart.hidden = true;
         }
-      })();
+      }
+
+      updateConformanceHistoryChart("overall", true);
 
       const PROPOSAL_LABEL = "Proposals";
       const isEditionScope = (edition) =>
@@ -5201,6 +5228,41 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                 editionMap: new Map(editionList.map((edition) => [edition.normalizedEdition, edition])),
                 proposalBucket,
               };
+            })();
+          }
+          return pending;
+        };
+      })();
+
+      // Per-ES-edition pass-rate trend history (landing-page mini graphs, see
+      // benchmarks/results/runs/editions-index.json / scripts/append-run-history.mjs).
+      // Grows one snapshot per CI promote; a mini graph stays hidden until at
+      // least two snapshots exist for its edition.
+      const loadEditionTrendHistory = (() => {
+        let pending;
+        return async () => {
+          if (!pending) {
+            pending = (async () => {
+              const resp = await fetch("./benchmarks/results/runs/editions-index.json");
+              if (!resp.ok) throw new Error("edition trend history unavailable");
+              const runs = await resp.json();
+              if (!Array.isArray(runs)) throw new Error("edition trend history unavailable");
+
+              const seriesByEdition = new Map();
+              for (const run of runs) {
+                if (!Array.isArray(run?.editions)) continue;
+                for (const e of run.editions) {
+                  const label = normalizeEditionLabel(String(e?.edition || ""));
+                  if (!label) continue;
+                  const total = Number(e?.total || 0);
+                  if (total <= 0) continue;
+                  const pct = (Number(e?.pass || 0) / total) * 100;
+                  if (!Number.isFinite(pct)) continue;
+                  if (!seriesByEdition.has(label)) seriesByEdition.set(label, []);
+                  seriesByEdition.get(label).push({ pct });
+                }
+              }
+              return seriesByEdition;
             })();
           }
           return pending;
@@ -5615,6 +5677,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
 
             const currentScope = detail.scope || "overall";
             window.__conformanceEditionScope = currentScope;
+            updateConformanceHistoryChart(currentScope, hostToggle ? hostToggle.checked : true);
             if (currentScope === "overall") {
               renderSelectedConformance("overall", overall, "ECMAScript", { exactStrictSummary: strictSummary });
               applyFeatureEditionScope("overall");
@@ -5800,6 +5863,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             bar = document.createElement("span");
             bar.className = "feat-edition-passbar";
             bar.innerHTML = `
+              <trend-chart class="feat-edition-trend" mode="sparkline" hidden></trend-chart>
               <span class="feat-edition-passbar-count"></span>
               <span class="feat-edition-passbar-track">
                 <span class="feat-edition-passbar-fill"></span>
@@ -5854,6 +5918,27 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           return section;
         };
 
+        const updateEditionTrendCharts = async () => {
+          try {
+            const seriesByEdition = await loadEditionTrendHistory();
+            document.querySelectorAll(".feat-section").forEach((section) => {
+              const chart = section.querySelector(".feat-edition-trend");
+              if (!(chart instanceof HTMLElement)) return;
+              const label = getFeatureSectionLabel(section);
+              const points = seriesByEdition.get(label);
+              if (!points || points.length < 2) {
+                chart.hidden = true;
+                return;
+              }
+              chart.setAttribute("series", JSON.stringify([{ key: "pct", color: "rgba(63,185,80,0.9)", fill: true }]));
+              chart.data = points;
+              chart.hidden = false;
+            });
+          } catch {
+            // Leave mini trend graphs hidden when history is unavailable/too thin.
+          }
+        };
+
         const updateEditionPassBars = async () => {
           try {
             const { editionList, editionMap, proposalBucket } = await loadEditionBuckets();
@@ -5903,6 +5988,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               }
               bar.title = title;
             });
+            await updateEditionTrendCharts();
           } catch {
             renderHeuristicEditionPassBars();
           }
