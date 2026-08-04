@@ -3,7 +3,7 @@ id: 2929
 title: "Interpreter direct eval + with + Proxy-MOP convergence"
 status: in_progress
 created: 2026-07-02
-updated: 2026-08-03
+updated: 2026-08-04
 priority: medium
 horizon: xl
 feasibility: hard
@@ -427,6 +427,12 @@ The new coverage proves fresh and existing global descriptors, later
 same-name block-function wins, exact caller activation updates, provider
 routing for pre-declaration/collision cases, and preservation of the simple
 zero-import `eval("{ function f() {} } ...")` fast path.
+
+During PR #4077's 2026-08-04 main sync, its proposed 16-line classifier was
+found already present on `main` with the required `ctx.standalone` boundary.
+The stale unqualified duplicate made host literal indirect Annex-B eval import
+`__extern_eval`, so it was removed. No unique interpreter source delta remains
+in #4077; the corrected lifecycle checkpoint is already on `main`.
 
 ### Publication and remaining gate
 
