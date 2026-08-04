@@ -43,6 +43,7 @@ import { runHarness as runPrettier } from "../tests/dogfood/prettier-harness.mjs
 import { runHarness as runReact } from "../tests/dogfood/react-harness.mjs";
 import { runHarness as runReactUpstreamSuite } from "../tests/dogfood/react-upstream-suite.mjs";
 import { runHarness as runLitUpstreamSuite } from "../tests/dogfood/lit-upstream-suite.mjs";
+import { runHarness as runReactDomUpstreamSuite } from "../tests/dogfood/react-dom-upstream-suite.mjs";
 import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 
@@ -1581,11 +1582,53 @@ if (selectedPackages.has("lit")) {
   );
 }
 
+if (selectedPackages.has("react-dom")) {
+  console.log("[npm-compat] react-dom — package entry + react-dom's own upstream unit tests...");
+  const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
+  const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
+  const reactDomSuite = await runReactDomUpstreamSuite({ quiet: true });
+  packages.push(
+    await buildPackageEntry({
+      name: "react-dom",
+      version: reactDomEntry.version,
+      issue: 3982,
+      entryFile: reactDomEntry.entryModule.replace(/^package\//, ""),
+      shape: reactDomEntry.shape,
+      report: reactDomReport,
+      // (#3982) The suite landed in PR #4079 but this card kept saying
+      // "not-integrated" — the same failure mode as lit/#3977: a suite that
+      // exists in tests/dogfood/ is invisible to the dashboard until THIS
+      // generator runs it, because the refresh workflow regenerates from this
+      // file alone. Denominator is `scored`, not the admitted count, matching
+      // the react card: a test the harness cannot reproduce natively says
+      // nothing about the compiler.
+      tests: {
+        kind: "upstream-suite",
+        passed: reactDomSuite.results?.passed ?? null,
+        total: reactDomSuite.results?.scored ?? null,
+        passRatePct: reactDomSuite.summary?.passRatePct ?? null,
+        admitted: reactDomSuite.extraction?.admitted ?? null,
+        upstreamTestsSeen: reactDomSuite.extraction?.upstreamTestsSeen ?? null,
+        harnessIncompatible: reactDomSuite.results?.harnessIncompatible ?? null,
+        // Why 0 can be scored while 1,942 are admitted: while #3982 is open the
+        // implementation module itself may be rejected, and the suite's OWN
+        // test file pins that this is REPORTED with the compiler's message,
+        // never a silent zero. Carry that explanation onto the card (the lit
+        // card does the same via implementationInvalidTests, #3977/#3978).
+        implementationInvalidTests: reactDomSuite.summary?.implementationInvalidTests ?? null,
+        implementationError: reactDomSuite.summary?.implementationError ?? null,
+        sourceIssue: 3982,
+      },
+      perf: null,
+    }),
+  );
+}
+
 for (const entry of NPM_COMPAT_CATALOG) {
   if (!selectedPackages.has(entry.name)) continue;
   // Handled above with its own upstream suite rather than as a bare
-  // package-entry card.
   if (entry.name === "lit") continue;
+  if (entry.name === "react-dom") continue;
   console.log(`[npm-compat] ${entry.name} — bounded published package-entry compile/validate...`);
   const report = await runNpmCompatCatalogHarness(entry.name, { quiet: true });
   packages.push(
