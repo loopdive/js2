@@ -56,6 +56,40 @@ describe("#4130 — the staleness floor measures the committed artifact", () => 
   });
 });
 
+describe("#4132 — the promotion commit must not run the pre-commit hook", () => {
+  it("commits with --no-verify", () => {
+    // This job installs dependencies, so husky's hook is live and runs
+    // `test:changed-root`, which needs a merge base with `origin/main`. The
+    // checkout is `fetch-depth: 1` with `persist-credentials: false` and the
+    // push remote is `deploykey`, so there is no `origin/main` and the hook
+    // aborts the commit. It stayed hidden until #4130 stopped the gate
+    // deferring on every run — the step had simply never executed.
+    const promote = workflow.slice(at("- name: Promote"));
+    expect(promote).toMatch(/git commit[^\n]*--no-verify/);
+  });
+
+  it("keeps the [skip ci] marker that breaks the trigger loop", () => {
+    expect(workflow.slice(at("- name: Promote"))).toContain("[skip ci]");
+  });
+
+  // (#4140) The commit was fixed and the PUSH was not, so the promotion still
+  // failed — on husky's pre-push hook (the oracle ratchet) instead of
+  // pre-commit. Both hooks are live in this job; both must be opted out.
+  it("also pushes with --no-verify", () => {
+    expect(workflow.slice(at("- name: Promote"))).toMatch(/git push[^\n]*--no-verify/);
+  });
+
+  it("does not replay a push failure that replaying cannot fix", () => {
+    // Replaying only helps when main moved under us. For any other failure the
+    // replay fails identically five times and buries the real error under a
+    // MISLEADING "main advanced mid-promotion" message — which is exactly how a
+    // rejected pre-push hook stayed hidden for a full cycle.
+    const promote = workflow.slice(at("- name: Promote"));
+    expect(promote).toMatch(/non-fast-forward\|fetch first/);
+    expect(promote).toContain("replaying cannot fix");
+  });
+});
+
 describe("#4130 — the gate's own decision function", () => {
   it("defers a busy queue only while the artifact is fresh, and proceeds once it is stale", async () => {
     const { decide } = await import("../scripts/main-push-queue-gate.mjs");

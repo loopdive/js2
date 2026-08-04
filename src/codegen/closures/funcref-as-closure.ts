@@ -10,6 +10,7 @@
  */
 
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
+import { captureSourceSlot } from "./capture-source-slot.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -157,27 +158,7 @@ function emitMemoizedNestedFnClosure(
         fctx.body.push({ op: "ref.as_non_null" });
       }
     } else {
-      // (#4134) Same two sound cross-frame cases as the call-site prepend in
-      // `call-identifier.ts`: the name is one of THIS lifted function's own
-      // capture params, or `outerLocalIdx` lands outside this frame entirely.
-      // In the second case the historical read is provably invalid Wasm
-      // ("local index out of range"), so there is no behaviour to preserve.
-      // Restricting it to out-of-frame keeps every in-frame materialisation
-      // byte-identical, which is what makes it safe where #1177's blanket
-      // localMap-first lookup was not.
-      //
-      // This is the THIRD site in the family. The other two are the call-site
-      // capture prepend and the nested-declaration scoping; this one fires when
-      // a nested function is materialised as a closure VALUE rather than
-      // called. It is the last ESLint binary-emit blocker:
-      // `__fnctor_MurmurHash3_new` emitted `local.get 24` into a 6-slot frame,
-      // because imurmurhash declares `MurmurHash3` inside an IIFE that also
-      // holds the captured `cache`.
-      const capFrameSize = fctx.params.length + fctx.locals.length;
-      const capSourceIdx =
-        fctx.liftedCaptureNames?.has(cap.name) || cap.outerLocalIdx >= capFrameSize
-          ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)
-          : cap.outerLocalIdx;
+      const capSourceIdx = captureSourceSlot(fctx, cap);
       fctx.body.push({ op: "local.get", index: capSourceIdx });
     }
   }

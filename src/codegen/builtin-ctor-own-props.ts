@@ -72,6 +72,7 @@
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import { BUILTIN_CTOR_ARITY, tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
+import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
@@ -110,6 +111,13 @@ export function pushBuiltinCtorOwnPropSeed(
   if (!ctx.standalone) return;
   const arity = BUILTIN_CTOR_ARITY[builtinName] ?? EXTRA_CTOR_ARITY[builtinName];
   if (arity === undefined) return;
+
+  // (#4120) The carrier is a CONSTRUCTOR (it has a spec arity — `Math`/`JSON`/
+  // `Reflect` returned above, and `typeof Math === "object"` is correct), so it
+  // has [[Call]] and `typeof` must answer `"function"`. Brand it BEFORE the
+  // own-property seed so the mark lands even if `__defineProperty_value` is
+  // unavailable and the seed below declines.
+  pushMarkBuiltinCarrierCallable(ctx, fctx, objLocal);
 
   const defineIdx = ctx.funcMap.get("__defineProperty_value");
   if (defineIdx === undefined) return;

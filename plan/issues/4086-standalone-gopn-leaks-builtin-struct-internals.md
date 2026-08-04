@@ -161,3 +161,20 @@ of BOTH #4071 (`Object.keys` on class instances, measured at +5 net flips) and
 #4085 (`JSON.stringify` of class instances / assignment-built objects). Landing
 it unblocks two deferred fixes, which is most of its value — its own direct flip
 count is likely small.
+
+---
+
+## A structural builtin-carrier screen is available: `ctx.classDeclarationMap` (2026-08-03, #4098 G1)
+
+This issue records that `startsWith("__")` is **not** a safe screen for builtin
+struct internals. A structural alternative exists and is already populated:
+
+`ctx.classDeclarationMap` (`codegen/context/types.ts`) is written *only* by
+`collectClassDeclaration` (`class-bodies.ts:609`) and keyed by class name, the
+same key space as `ctx.structFields`. So `classDeclarationMap.has(structName)`
+partitions user-declared class structs from builtin carriers by **origin**
+rather than by name shape — Date/RegExp/Error carriers are never in it.
+
+This is the same predicate #4071's deferred −5 revert was blocked on, and the
+one #4098's `Object.keys` stage will use. Recorded here as available substrate;
+no arm built for this issue.

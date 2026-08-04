@@ -650,8 +650,12 @@ export interface TrapCategoryGrowth {
   /** files that newly entered each trap category (weren't trapping there in baseline). */
   newlyTrapping: Record<TrapCategory, string[]>;
   /**
-   * Candidate traps whose baseline never reached runtime because compilation
-   * timed out. They are unknown baseline outcomes, not observed trap growth.
+   * Candidate traps whose baseline never reached runtime: compilation timed
+   * out (`compile_timeout`), produced invalid Wasm that never instantiated
+   * (`compile_error`, #3595), or the file was never run at all (`skip`,
+   * #4141). All three are unknown baseline outcomes, not observed trap growth.
+   * (The field name predates the latter two; it is kept for compatibility with
+   * the existing gate output and tests.)
    */
   unknownBaselineTimeouts: Record<TrapCategory, string[]>;
   /**
@@ -703,8 +707,8 @@ export interface TrapCategoryGrowthOptions {
  * filter (#1222). This prevents a flaky pass→trap flip on an identical binary
  * from tripping the ratchet.
  *
- * A baseline `compile_timeout` or an absent baseline row is also not an observed
- * runtime outcome. If the candidate compiles that file and exposes a trap, the
+ * A baseline `compile_timeout`, `compile_error`, `skip`, or an absent baseline
+ * row is also not an observed runtime outcome. If the candidate compiles that file and exposes a trap, the
  * ratchet must not claim a new trap: the predecessor run did not establish that
  * the file was trap-free. Such rows stay visible in diagnostics, while the hard
  * ratchet remains unchanged for every baseline row that reached runtime.
@@ -770,7 +774,27 @@ export function evaluateTrapCategoryGrowth(
     // `Iterator/zip/iterables-iteration.js` traps identically with and without
     // the PR that made the file compile, so the trap pre-existed the change that
     // merely let the module reach it.
-    if (base?.status === "compile_timeout" || base?.status === "compile_error") {
+    //
+    // (#4141) `skip` is the THIRD member of the same class, and the most
+    // obviously so: a skipped test was never compiled and never instantiated,
+    // so the baseline run produced no runtime observation of that file at all.
+    // It cannot testify that the file was trap-free, and a candidate trap on
+    // it is therefore *unknown*, not *introduced*. This is correct on its own
+    // merits — it holds for every reason a row can be skipped (scope filter,
+    // HANGING_TESTS, feature filter) and does not depend on any particular
+    // producer bug. It also happens to be defense in depth for the healer
+    // asymmetry fixed alongside this in `test262-sharded.yml`: the baseline
+    // heal step ran without `TEST262_INCLUDE_PROPOSALS`, rewriting ~1,229 real
+    // Temporal traps as `skip`, while the never-healed candidate kept them as
+    // traps — a phantom `null_deref 156 → 1360` charged to two unrelated PRs
+    // (#4074, #4088). With the healer fixed those rows record as `fail` again;
+    // with this exclusion a future scope/skip asymmetry from ANY source cannot
+    // manufacture trap growth either.
+    //
+    // Deliberately NOT loosened beyond that: a baseline that actually RAN
+    // (`pass` or `fail`) and now traps still fails the ratchet, hard. See the
+    // `pass → trap` / `fail → trap` cases in `tests/issue-3189.test.ts`.
+    if (base?.status === "compile_timeout" || base?.status === "compile_error" || base?.status === "skip") {
       unknownBaselineTimeouts[row.error_category].push(file);
       continue;
     }
@@ -2422,15 +2446,42 @@ async function run(
       ` (#3189 ratchet) ===`,
   );
   const trapBaselineUnknowns = TRAP_ERROR_CATEGORIES.flatMap((category) => [
-    ...trapGrowth.unknownBaselineTimeouts[category].map((file) => ({ category, file, baseline: "compile_timeout" })),
+    // (#4141) Report the file's ACTUAL baseline status, not a hardcoded
+    // "compile_timeout". The bucket has covered `compile_error` since #3595 and
+    // `skip` since #4141, so the fixed label was already wrong and actively
+    // misleading: it tells a triager the predecessor timed out when it in fact
+    // never ran at all. The baseline status is the single field that selects
+    // which mechanism is in play, so print the real one.
+    ...trapGrowth.unknownBaselineTimeouts[category].map((file) => ({
+      category,
+      file,
+      baseline: baseline.get(file)?.status ?? "compile_timeout",
+    })),
     ...trapGrowth.unknownBaselineMissingRows[category].map((file) => ({ category, file, baseline: "absent" })),
   ]);
   if (trapBaselineUnknowns.length > 0) {
+    const byStatus = new Map<string, number>();
+    for (const u of trapBaselineUnknowns) byStatus.set(u.baseline, (byStatus.get(u.baseline) ?? 0) + 1);
     console.log(
-      `=== Trap baseline unknowns (absent/compile_timeout → trap; excluded from #3189): ${trapBaselineUnknowns.length} ===`,
+      `=== Trap baseline unknowns (baseline never observed runtime → trap; excluded from #3189): ` +
+        `${trapBaselineUnknowns.length} (` +
+        [...byStatus.entries()]
+          .sort()
+          .map(([s, n]) => `${s} ${n}`)
+          .join(", ") +
+        `) ===`,
     );
-    for (const { category, file, baseline: baselineStatus } of trapBaselineUnknowns) {
+    // Cap the per-file listing. A producer-side asymmetry can push this bucket
+    // into the thousands (#4141 put ~1,200 laundered Temporal rows in it), and
+    // a 1,200-line dump buries the summary line that actually names the cause.
+    const UNKNOWN_LIST_CAP = 50;
+    for (const { category, file, baseline: baselineStatus } of trapBaselineUnknowns.slice(0, UNKNOWN_LIST_CAP)) {
       console.log(`  ${category}: ${file} (baseline ${baselineStatus})`);
+    }
+    if (trapBaselineUnknowns.length > UNKNOWN_LIST_CAP) {
+      console.log(
+        `  … and ${trapBaselineUnknowns.length - UNKNOWN_LIST_CAP} more (listing capped at ${UNKNOWN_LIST_CAP}).`,
+      );
     }
   }
   for (const reason of trapGrowth.failures) {

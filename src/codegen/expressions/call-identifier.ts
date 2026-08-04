@@ -9,6 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
+import { captureSourceSlot } from "../closures/capture-source-slot.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
@@ -2105,19 +2106,7 @@ export function compileIdentifierCall(
           // Stage 1's blanket localMap-first lookup remains reverted. The one
           // sound cross-frame case is a name explicitly recorded as THIS
           // lifted function's leading capture parameter.)
-          // Second sound cross-frame case: `outerLocalIdx` lands OUTSIDE this
-          // frame entirely. Then the historical read is provably invalid Wasm
-          // ("local index out of range"), so there is no behaviour to preserve
-          // and the mapped slot is strictly better. Restricting it to
-          // out-of-frame keeps every in-frame call byte-identical, which is
-          // what makes it safe where #1177's blanket localMap-first lookup was
-          // not. Without this the lifted-closure class returns: uri-js's
-          // `toUnicode`/`toASCII` emit `local.get 17` into a 6-slot frame.
-          const capFrameSize = fctx.params.length + fctx.locals.length;
-          const capSourceIdx =
-            fctx.liftedCaptureNames?.has(cap.name) || cap.outerLocalIdx >= capFrameSize
-              ? (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx)
-              : cap.outerLocalIdx;
+          const capSourceIdx = captureSourceSlot(fctx, cap);
           fctx.body.push({ op: "local.get", index: capSourceIdx });
           // Coerce capture value to expected param type if they differ
           const expectedCapType = captureParamTypes?.[capIdx];
