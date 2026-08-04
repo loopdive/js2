@@ -1,7 +1,8 @@
 ---
 id: 4154
 title: "private access on a foreign receiver traps `illegal cast` instead of throwing the §7.3.28 PrivateBrandCheck TypeError"
-status: ready
+status: done
+completed: 2026-08-04
 sprint: current
 priority: medium
 goal: error-model
@@ -58,10 +59,13 @@ hit this trap. Measured by A/B on a single file, both tests:
 | #4149 branch | `RuntimeError: illegal cast in C_access() at source L33` |
 | #4149 branch, `assignment.ts` reverted | back to `Test262Error` |
 
-Both files are `fail` in the baseline in every arm — this is a change of
+Both files are `fail` in the baseline in every arm — this was a change of
 failure MODE (fail → fail), never a pass→fail. It was caught by the #3189
-uncatchable-trap ratchet in the merge queue (`illegal_cast` 48 → 50) and
-declared under `trap-growth-allow` in `plan/issues/4149-*.md`.
+uncatchable-trap ratchet in the merge queue (`illegal_cast` 48 → 50) and was
+briefly declared under `trap-growth-allow` in
+`plan/issues/4149-standalone-aliased-property-function-call-null.md`. That
+declaration has since been **removed**: this issue is fixed in the same PR, so
+the trap never appears and both files are expected to go `fail` → pass.
 
 ## Affected tests (the two the ratchet named)
 
@@ -72,28 +76,78 @@ Fixing this should make both **pass**, not merely stop trapping: each one's
 remaining assertion is exactly the `assert.throws(TypeError, …)` that the
 catchable throw would satisfy.
 
-## Fix sketch
+## Root cause (measured, not the original sketch)
 
-The private-accessor / private-field write paths in
-`src/codegen/expressions/assignment.ts` coerce the receiver to the declaring
-class's struct type before calling the setter. That coercion must become a
-`ref.test`-guarded branch: on failure, emit the spec TypeError via
-`emitThrowTypeError` instead of letting `ref.cast` trap. The read side
-(`compilePropertyAccess`) needs the symmetric treatment — check it before
-assuming only the write is affected.
+The sketch said "the write path coerces the receiver … that coercion must
+become a `ref.test`-guarded branch". The coercion is real but it was **not
+emitted by the write path at all** — which is why grepping `assignment.ts` for
+a `ref.cast` finds nothing to guard.
+
+`compilePropertyAssignment`'s private-accessor branch has a receiver coercion
+gated on `(ctx.standalone || ctx.wasi)` (#3232). On the gc/host lane that gate
+is false, so the receiver is pushed as a bare `externref` where the setter
+declares `(ref null $Class)`. Nothing in the front end fixes that up. The
+**generic call-argument repair pass** does: `fixCallArgTypesInBody` in
+`src/codegen/stack-balance.ts` sees an `externref` argument against a struct-ref
+param and splices in
+
+```wat
+any.convert_extern
+ref.cast_null $Class     ;; <- the uncatchable trap
+```
+
+That is a whole-module repair with no notion of private semantics, so it cannot
+be the place the brand check lives. Confirmed by dumping the repro's WAT:
+`C_access` was exactly `local.get 1; any.convert_extern; ref.cast null …;
+local.get 2; local.tee 3; call 4`.
+
+## Fix
+
+`compilePrivateSetterWithBrandCheck` (new, `src/codegen/expressions/assignment.ts`).
+When the receiver is statically an `externref` and the setter's self param is a
+struct ref, the private-accessor branch now performs the narrowing **itself**,
+guarded, so the repair pass never sees a mismatch:
+
+```wat
+local.set  $recv                 ;; receiver
+<value>                          ;; RHS evaluated BEFORE the check (§13.15.2)
+local.set  $val
+local.get  $recv
+any.convert_extern
+ref.test   $Class                ;; the brand check
+(if (then <narrow; call the setter>)
+    (else <throw a real TypeError instance>))
+local.get  $val                  ;; `=` evaluates to the RHS
+```
+
+`ref.test` uses the same subtype relation the `ref.cast_null` used, so every
+receiver the cast accepted still takes the call path — this converts a trap into
+a throw and changes nothing else. `ref.test` is false for null, which is also
+correct: PutValue on a Private Reference does `ToObject(base)` first and
+`ToObject(null)` throws TypeError anyway.
+
+**Read side: no change needed.** Measured on both lanes, foreign-receiver reads
+of a private *getter* and a private *field* already throw catchable TypeErrors.
+The one read-side gap is a private **method** call on a foreign receiver
+(`(o as any).#meth()`), which silently succeeds instead of throwing — verified
+identical before and after this fix, so it is a separate pre-existing defect,
+not part of this one.
 
 ## Acceptance
 
-- The repro above throws a catchable TypeError on both lanes.
-- Both named test262 files pass.
-- `illegal_cast` trap population does not grow; ideally it drops by 2 and the
-  `trap-growth-allow` declaration in #4149 can be retired.
+- The repro above throws a catchable TypeError on both lanes. ✅ (gc/host and
+  standalone; the thrown value passes `instanceof TypeError`)
+- Both named test262 files pass. ✅ locally, by transcription — both files'
+  shapes are covered by `tests/issue-4154-private-brand-check-typeerror.test.ts`
+  and pass on both lanes. The test262 submodule is not checked out in this
+  container, so the files themselves were not run; CI's merge-queue shards are
+  the authority.
+- `illegal_cast` does not grow; the `trap-growth-allow` in #4149 is retired. ✅
+  declaration removed.
 
-## Suspended-session pointer (2026-08-04)
+## Regression test
 
-Filed while suspending PR #4106; the full handover is in
-`plan/issues/4150-*.md` under `## Suspended Work`. The valve that makes #4106
-land without this fix is `trap-growth-allow` in `plan/issues/4149-*.md` —
-landing this issue retires it. Reproduce with `.tmp/run262.mjs` (drives
-`runTest262File` on both named tests); the three-arm A/B that isolates the
-cause is recorded above.
+`tests/issue-4154-private-brand-check-typeerror.test.ts` — both test262 shapes
+(instance setter, static setter via inner class) × both lanes, plus the
+branded-write, assignment-value and RHS-evaluation-order guard rails.
+Mutation-checked: all 4 cases fail against the pre-fix `assignment.ts`.

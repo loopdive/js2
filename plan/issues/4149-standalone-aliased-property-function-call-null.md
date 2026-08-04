@@ -21,12 +21,14 @@ loc-budget-allow:
 func-budget-allow:
   - src/codegen/index.ts::resolveWasmType
   - src/codegen/expressions/assignment.ts::compilePropertyAssignment
-trap-growth-allow:
-  count: 2
-  reason: "#3596 reclassification, fail -> fail, flavour only — neither test has ever passed. Landing undeclared-field writes (`set #m(v) { this._v = v; }`, where `_v` has no declaration) lets both brand-check tests run PAST their first assert, which previously failed as `Test262Error: Expected SameValue(<undefined>, <\"test262\">)` because the write was dropped outright. They now reach a PRE-EXISTING latent uncatchable `illegal cast` on foreign-receiver private access (section 7.3.28 PrivateBrandCheck should throw a catchable TypeError) — filed as #4154, which should make both files PASS and retire this declaration. Baseline status is `fail` in every arm, so this is the #3596 baseline-did-testify branch, not the #3595 never-instantiated class. Reproduced by local A/B on the single file `src/codegen/expressions/assignment.ts` via the real runner (runTest262File): upstream/main `Test262Error`, branch `illegal cast`, branch-with-that-one-file-reverted `Test262Error`. PR net +217 pass (31581 -> 31798), host stable-path fine-gate net +272 (279 improvements - 7 regressions); other trap categories flat or down (null_deref 1639 -> 1635, oob 52 -> 52, unreachable 3 -> 3)."
-  tests:
-    - test/language/statements/class/elements/private-setter-brand-check.js
-    - test/language/statements/class/elements/static-private-setter-access-on-inner-class.js
+# The `trap-growth-allow` this file used to carry (count: 2, the two
+# brand-check tests) is RETIRED. It existed only because this fix un-masked
+# #4154 — a latent uncatchable `illegal cast` on foreign-receiver private
+# access — and #4154 was deferred. #4154 is now fixed IN THIS SAME PR, so the
+# trap never appears: the brand check throws a catchable TypeError and both
+# named tests are expected to flip fail -> PASS rather than fail -> fail. A
+# valve whose whole justification was "the defect is deferred" must not
+# outlive the deferral.
 ---
 
 # #4149 — aliased property-function call answers null on standalone
@@ -149,9 +151,13 @@ gc half — no `__constructor_identity` param on gc twins).
 - acorn 8.18 UMD tiny-parse (`acorn.parse("var x = 1;", {ecmaVersion:2020})`)
   returns 1 on standalone. ✅
 
-## Suspended-session pointer (2026-08-04)
+## Trap-growth valve: retired (2026-08-04)
 
-Shipped in PR #4106, which was suspended before merging — full handover in
-`plan/issues/4150-*.md` under `## Suspended Work`. The `trap-growth-allow` in
-this file's frontmatter is a consequence of THIS fix un-masking a latent trap
-(#4154), not of a defect in it; it should be retired when #4154 lands.
+This file used to carry a `trap-growth-allow` (count 2) because THIS fix
+un-masked a latent uncatchable trap — #4154, the §7.3.28 PrivateBrandCheck
+lowering — and #4154 was deferred to a follow-up. It is no longer deferred:
+#4154 is fixed in the same PR (`compilePrivateSetterWithBrandCheck` in
+`src/codegen/expressions/assignment.ts`), so the two brand-check tests now
+throw a catchable TypeError and are expected to flip `fail` → **pass** rather
+than `fail` → `fail`. The declaration is removed; `illegal_cast` should not
+grow.

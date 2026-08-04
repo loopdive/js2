@@ -71,6 +71,7 @@ import {
   maybeCaptureArrayProtoOverride,
 } from "./proto-override.js";
 import {
+  buildThrowJsErrorInstrs,
   classifyPrivateMember,
   emitCoercedLocalSet,
   emitSuperUninitializedThisGuard,
@@ -3276,6 +3277,97 @@ function tryEmitPinnedStructMemberSet(
   return { kind: "externref" };
 }
 
+/**
+ * (#4154) `o.#x = v` where the receiver is statically an `externref` — emit the
+ * §7.3.28 PrivateBrandCheck as a real branch instead of letting the call-arg
+ * repair pass narrow the receiver with an unguarded `ref.cast_null`.
+ *
+ * The receiver externref is expected on the stack top (the caller has just
+ * compiled `target.expression`); it is popped into a temp so the value can be
+ * evaluated on a clean stack.
+ *
+ * Evaluation order follows §13.15.2 + §6.2.5.6: base first, then the RHS, and
+ * only then PutValue → PrivateSet, which is where the brand check throws. So a
+ * side-effecting RHS still runs before the TypeError, exactly as in a real
+ * engine.
+ *
+ * Emits:
+ * ```wat
+ *   local.set  $recv                     ;; receiver, externref
+ *   <value>                              ;; coerced to the setter's value param
+ *   local.set  $val
+ *   local.get  $recv
+ *   any.convert_extern
+ *   ref.test   $Class                    ;; the brand check
+ *   (if
+ *     (then local.get $recv; any.convert_extern; ref.cast_null $Class
+ *           local.get $val; call $Class_set_x)
+ *     (else <throw TypeError>))
+ *   local.get  $val                      ;; `=` evaluates to the RHS
+ * ```
+ */
+function compilePrivateSetterWithBrandCheck(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  spec: {
+    value: ts.Expression;
+    setterName: string;
+    funcIdx: number;
+    setterParamTypes: ValType[] | undefined;
+    brandTypeIdx: number;
+    privateName: string;
+  },
+): ValType | null {
+  const { value, setterName, funcIdx, setterParamTypes, brandTypeIdx, privateName } = spec;
+  const recvTmp = allocTempLocal(fctx, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: recvTmp });
+
+  const valResult = compileExpression(ctx, fctx, value, setterParamTypes?.[1]);
+  if (!valResult) {
+    releaseTempLocal(fctx, recvTmp);
+    return null;
+  }
+  const tmpVal = allocLocal(fctx, `__priv_setter_assign_${fctx.locals.length}`, valResult);
+  fctx.body.push({ op: "local.set", index: tmpVal });
+
+  // The throw arm is built BEFORE `finalSetterIdx` is read: it can add a late
+  // `__new_TypeError` import, which shifts every defined function's index.
+  // `buildThrowJsErrorInstrs` self-flushes the already-emitted body against
+  // that shift, so reading funcMap afterwards yields the relocated index.
+  const throwInstrs = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    `Cannot write private member #${privateName} to an object whose class did not declare it`,
+    { flush: fctx },
+  );
+  const finalSetterIdx = ctx.funcMap.get(setterName) ?? funcIdx;
+
+  const callArm: Instr[] = [
+    { op: "local.get", index: recvTmp },
+    { op: "any.convert_extern" },
+    { op: "ref.cast_null", typeIdx: brandTypeIdx },
+  ];
+  // Setter declaring only the self param takes no value argument.
+  if (setterParamTypes && setterParamTypes.length > 1) {
+    callArm.push({ op: "local.get", index: tmpVal });
+  }
+  callArm.push({ op: "call", funcIdx: finalSetterIdx });
+
+  fctx.body.push({ op: "local.get", index: recvTmp });
+  fctx.body.push({ op: "any.convert_extern" });
+  fctx.body.push({ op: "ref.test", typeIdx: brandTypeIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: callArm,
+    else: throwInstrs, // terminal throw — stack-polymorphic, validates as void
+  });
+  // `=` evaluates to the RHS, not the setter's return.
+  fctx.body.push({ op: "local.get", index: tmpVal });
+  releaseTempLocal(fctx, recvTmp);
+  return valResult;
+}
+
 function compilePropertyAssignment(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3402,6 +3494,37 @@ function compilePropertyAssignment(
         // is a no-op when the types already match, so the gc/host lane (whose
         // receiver is already the struct ref) stays byte-identical.
         const selfParamType = setterParamTypes?.[0];
+        // (#4154) §7.3.28 PrivateBrandCheck. When the receiver is statically an
+        // `externref` but the setter declares `(ref null $Class)`, SOMETHING has
+        // to narrow it. Left alone, nothing here does — and the generic call-arg
+        // repair in `fixCallArgTypesInBody` (stack-balance.ts) splices a bare
+        // `any.convert_extern; ref.cast_null $Class` in front of the call. On a
+        // receiver that does not carry the brand that is an UNCATCHABLE
+        // `illegal cast` trap, where the spec requires a catchable TypeError —
+        // so `assert.throws(TypeError, …)` cannot even run. Emit the narrowing
+        // ourselves, guarded by `ref.test` on the same type the cast would use
+        // (identical subtype relation, so every receiver the cast accepted still
+        // takes the call path), and throw on the miss.
+        //
+        // `ref.test` is false for null, which is also correct: PutValue on a
+        // Private Reference does `ToObject(base)` first, and `ToObject(null)`
+        // throws TypeError too.
+        const brandTypeIdx =
+          selfParamType &&
+          (selfParamType.kind === "ref" || selfParamType.kind === "ref_null") &&
+          (recvResult.kind === "externref" || recvResult.kind === "ref_extern")
+            ? selfParamType.typeIdx
+            : undefined;
+        if (brandTypeIdx !== undefined) {
+          return compilePrivateSetterWithBrandCheck(ctx, fctx, {
+            value,
+            setterName,
+            funcIdx,
+            setterParamTypes,
+            brandTypeIdx,
+            privateName: target.name.text,
+          });
+        }
         if (
           (ctx.standalone || ctx.wasi) &&
           selfParamType &&
