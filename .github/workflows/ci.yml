@@ -475,12 +475,18 @@ jobs:
           # Sparse + blob-filtered clone (#3028): a plain --depth=1 clone pulls
           # every tip blob incl. the ~500 MB runs/ tree — minutes for one file.
           { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/js2wasm-baselines \
-            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /runs/index.json \
+            && git -C /tmp/js2wasm-baselines sparse-checkout set --no-cone /runs/index.json /runs/editions-index.json /runs/standalone-index.json \
             && git -C /tmp/js2wasm-baselines checkout main; } 2>/dev/null || true
           if [ -f /tmp/js2wasm-baselines/runs/index.json ]; then
             mkdir -p benchmarks/results/runs
             cp /tmp/js2wasm-baselines/runs/index.json benchmarks/results/runs/index.json
           fi
+          [ -f /tmp/js2wasm-baselines/runs/editions-index.json ] && \
+            mkdir -p benchmarks/results/runs && \
+            cp /tmp/js2wasm-baselines/runs/editions-index.json benchmarks/results/runs/editions-index.json
+          [ -f /tmp/js2wasm-baselines/runs/standalone-index.json ] && \
+            mkdir -p benchmarks/results/runs && \
+            cp /tmp/js2wasm-baselines/runs/standalone-index.json benchmarks/results/runs/standalone-index.json
 
       - name: Regenerate planning artifacts
         if: github.event_name == 'push'
