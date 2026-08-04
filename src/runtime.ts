@@ -555,6 +555,15 @@ function _marshalHostConstructArg(
   if (a != null && typeof a === "object" && _isWasmStruct(a)) {
     const mat = _materializeIterable(a, callbackState);
     if (mat !== a) return mat;
+    // Array.from in a compiled callback can return a data-struct array-like
+    // rather than a vec (its numeric elements live in the live host mirror).
+    // A native cross-realm TypedArray constructor accepts that array-like just
+    // fine; preserve its length/index properties instead of treating the
+    // opaque backing struct as an unmarshalable value.
+    if (_isHostTypedArrayCtor(hostCallee)) {
+      const mirror = _wrapForHost(a, exports);
+      if (mirror !== a && typeof mirror.length === "number") return mirror;
+    }
     // (#3335) Refuse loudly: the arg is a compiled struct NONE of the
     // marshal probes can decode (not an AB vec, not a readable vec — e.g.
     // the opaque box a value acquires crossing a host bound-function
@@ -574,11 +583,40 @@ function _marshalHostConstructArg(
 }
 
 /** (#3335) Is `fn` a host %TypedArray% subclass constructor (Int8Array … BigUint64Array)? */
+const _HOST_TYPED_ARRAY_CTOR_NAMES = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]);
+
 function _isHostTypedArrayCtor(fn: any): boolean {
   if (typeof fn !== "function") return false;
   try {
     const taBase = Object.getPrototypeOf(Int8Array);
-    return fn === taBase || Object.getPrototypeOf(fn) === taBase;
+    if (fn === taBase || Object.getPrototypeOf(fn) === taBase) return true;
+    // The Test262 runner executes the harness in an isolated realm. Its
+    // intrinsic constructors are not identity-equal to this module's global
+    // constructors, but retain the standard name and BYTES_PER_ELEMENT
+    // contract. Recognize that cross-realm shape so dynamic `new TA(values)`
+    // still marshals compiled arrays into real host arrays before construction.
+    const name = typeof fn.name === "string" ? fn.name : "";
+    const proto = fn.prototype;
+    return (
+      _HOST_TYPED_ARRAY_CTOR_NAMES.has(name) &&
+      proto != null &&
+      typeof proto === "object" &&
+      proto.constructor === fn &&
+      typeof fn.BYTES_PER_ELEMENT === "number" &&
+      typeof proto.BYTES_PER_ELEMENT === "number"
+    );
   } catch {
     return false;
   }

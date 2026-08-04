@@ -105,7 +105,11 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
           (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !==
           0;
       if (mayCarryObject) {
-        ctx.objectLiteralAssignedPropertyNames.add(node.left.name.text);
+        const name = node.left.name.text;
+        ctx.objectLiteralAssignedPropertyNames.add(name);
+        const writes = ctx.objectLiteralAssignedPropertyTypes.get(name) ?? [];
+        writes.push(rhsType);
+        ctx.objectLiteralAssignedPropertyTypes.set(name, writes);
       }
     }
     forEachChild(node, visit);

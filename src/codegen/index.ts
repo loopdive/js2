@@ -7649,6 +7649,27 @@ function ensureDateStructForCtx(ctx: CodegenContext): number {
 }
 
 /**
+ * A property-name-wide carrier scan is intentionally conservative, but it must
+ * not turn every concrete string/boolean field with the same name into an
+ * externref.  Test262 descriptor literals commonly use fields such as
+ * `value` and `configurable`; those are concrete primitives even though an
+ * unrelated dynamic object write may use the same property name.  Only widen
+ * types that can actually receive an object-shaped value (or an explicitly
+ * nullish seed, handled by the caller) so their literal values keep their
+ * original representation.
+ */
+function typeMayCarryObjectValue(type: ts.Type): boolean {
+  const flags = type.flags;
+  if (flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) {
+    return true;
+  }
+  if (flags & ts.TypeFlags.Union) {
+    return (type as ts.UnionType).types.some((member) => typeMayCarryObjectValue(member));
+  }
+  return false;
+}
+
+/**
  * Ensure a ts.Type that's an object type is registered as a struct.
  * For named types already in structMap, this is a no-op.
  * For anonymous types, auto-registers them with a generated name.
@@ -7810,10 +7831,24 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
     const propType = ctx.checker.getTypeOfSymbol(prop);
     ensureStructForType(ctx, propType);
     let wasmType = symbolBrand(propType, resolveWasmType(ctx, propType));
-    const receivesObjectCarrier = ctx.objectLiteralAssignedPropertyNames.has(prop.name);
     const nullishScalarSeed =
       wasmType.kind === "i32" &&
       (propType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0;
+    const assignedObjectWrites = ctx.objectLiteralAssignedPropertyTypes.get(prop.name);
+    const hasIncompatibleObjectWrite =
+      assignedObjectWrites?.some((rhsType) => {
+        // `any`/`unknown` writes are deliberately handled by the property's
+        // own dynamic type. An `any` write in the generic Test262 descriptor
+        // helper must not widen every concrete `{ value: ... }` literal that
+        // happens to share that property name.
+        if (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return false;
+        return typeMayCarryObjectValue(rhsType) && !ctx.checker.isTypeAssignableTo(rhsType, propType);
+      }) ?? false;
+    const receivesObjectCarrier =
+      ctx.objectLiteralAssignedPropertyNames.has(prop.name) &&
+      ((propType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+        hasIncompatibleObjectWrite ||
+        nullishScalarSeed);
     if (
       receivesObjectCarrier &&
       (wasmType.kind === "ref" ||

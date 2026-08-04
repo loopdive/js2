@@ -55,6 +55,43 @@ describe("ReactDOM upstream-suite compiler blockers (#3982)", () => {
     expect((instance.exports.probe as () => number)()).toBe(7);
   });
 
+  it("keeps concrete descriptor literals typed when a dynamic write shares a field name", async () => {
+    const result = await compile(
+      `
+        function writeAny(target: any, value: any) { target.value = value; }
+        var expected = { value: "filter", writable: false, enumerable: false, configurable: true };
+        writeAny({}, { unrelated: 1 });
+        export function probe(): number {
+          return expected.value === "filter" && expected.configurable ? 1 : 0;
+        }
+      `,
+      { target: "standalone", fileName: "descriptor-representation.ts", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as () => number)()).toBe(1);
+  });
+
+  it("marshals array-like arguments for a cross-realm dynamic TypedArray constructor", async () => {
+    const result = await compile(
+      `export function probe(TA: any): number {
+        var values = new TA([1, 2, 3]);
+        return values.length;
+      }`,
+      { fileName: "cross-realm-typed-array.ts", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const dom = new JSDOM();
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setInstance?.(instance);
+    expect((instance.exports.probe as (ctor: unknown) => number)(dom.window.Float64Array)).toBe(3);
+  });
+
   it("initializes a Map captured by a nested registration helper", async () => {
     const result = await compile(
       `
