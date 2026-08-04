@@ -35,6 +35,22 @@ loc-budget-allow:
   # `fnctor-field-provenance.ts` module rather than the god-file, per this
   # gate's own guidance.
   - src/codegen/fnctor-escape-gate.ts
+  # +2 (Phase 1): one import, plus turning the `return { kind: "externref" }` at
+  # the #1712 resolution site into `resolveFnctorInstanceType(...) ?? { kind:
+  # "externref" }`. That site IS the single externref-ization point for fnctor
+  # instance types, so the hook cannot live anywhere else; all of the decision
+  # logic (flag, standalone check, gate-approval check, reserved-index lookup)
+  # is in the new `fnctor-typed-instances.ts` module.
+  - src/codegen/index.ts
+func-budget-allow:
+  # +1 line in `resolveWasmType` (354 > 353). Same two-line hook as the LOC
+  # grant above: the #1712 `return { kind: "externref" }` becomes
+  # `resolveFnctorInstanceType(...) ?? { kind: "externref" }`. `resolveWasmType`
+  # IS the single type-resolution switch, so a resolution change necessarily
+  # lands inside it; splitting the function is a separate refactor (#3399) and
+  # doing it under a flag-gated behavior change would make both harder to
+  # review. All decision logic lives in `fnctor-typed-instances.ts`.
+  - src/codegen/index.ts::resolveWasmType
 ---
 
 # #4155 — the type is known and thrown away
@@ -374,6 +390,156 @@ census's `discarded` bucket → 0.
 Sequencing: Phase 0 is its own small PR (pure tests, lands regardless).
 Phases 1+2 land together behind the flag. Phases 3+4 are verification.
 Overall XL per the frontmatter; Phase 0 alone is S.
+
+## 2026-08-04 — Phases 0 and 1 implemented; two plan corrections
+
+Both landed behind `JS2WASM_FNCTOR_TYPED_INSTANCES=1` (default OFF ⇒ the
+compile path is byte-identical). What implementing them changed about the plan:
+
+### Correction 1 — Phase 0 found three PRE-EXISTING bugs, and the cited shape is not one of them
+
+The plan assumed the #1712 fixtures would be a green baseline to protect. They
+are not. Of 10 standalone fixtures written against `main` @ `61ff9cc7a`, **3
+fail today**, and the shape #1712 actually names **passes**:
+
+| fixture | expected | main |
+| --- | ---: | ---: |
+| `F.prototype.m = function(){ return new F(…) }` + field read | 42 | 42 ✓ |
+| …+ method call at the call site | 42 | 42 ✓ |
+| instance in another fnctor's field, read via method | 42 | 42 ✓ |
+| instance passed as a parameter | 42 | 42 ✓ |
+| prototype-ALIAS definition (acorn's real shape) | 42 | 42 ✓ |
+| **instance returned from a plain function, then member-called** | 42 | **0** |
+| **instance round-tripped through an array element** | 42 | **0** |
+| **field added by a method, never seeded in the ctor** | 42 | **NaN** |
+
+All three are valid JS, all three are the #2660 S3 mechanism: an instance whose
+`new F()` site the gate does not classify `reconstruct` keeps a bespoke struct
+with **no `$proto`**, so dynamic reads miss the prototype walk and yield
+0/undefined instead of trapping. The gate classifies from the *syntactic* uses
+of the `new` expression, so an instance leaving through a return, a collection,
+or a late-added field escapes its analysis entirely.
+
+Committed as `it.fails` in `tests/issue-4155-fnctor-shape-regression.test.ts` —
+they assert the bug still exists, so whoever fixes one gets a RED test telling
+them to promote it. Two of the three (return position, collection round-trip)
+are shapes acorn uses constantly, so **Phase 1 cannot be called done while they
+are broken**.
+
+### Correction 2 — the #1712 branch is nearly unreachable, and only field slots reach it
+
+The plan (and this issue's own §5) implied the branch fires wherever a fnctor
+instance flows. Measured, it does not:
+
+- In **standalone** the branch is gated on `approvedStandaloneFnctor` — a
+  gate-**approved** (`reconstruct`) fnctor. Non-approved (`keep-typed`) fnctors
+  never enter it and **already** carry their closed struct.
+- More decisive: it needs `resolveTsType` to be called **with the instance
+  type**. For a *binding* it is called with the binding's declared type, which
+  in acorn-shaped code is `any` — so the branch is skipped for essentially every
+  local. Three separate fixtures confirmed byte-identical output with the flag
+  on before one finally reached it.
+- The position that **does** reach it is the one the census measured: a
+  **field slot**, where `deriveFnctorFields` passes the RHS type directly. And
+  it only carries a name under `.js` + `checkJs` (TS synthesizes an instance
+  type from the ctor's `this.*` writes); the same fixture written in `.ts`
+  reports `rhs:any` and is `unknown`, not `discarded`.
+
+So "#1712 discards a type it HAS" is true, but its blast radius is **field slots
+in checkJs sources**, not instance flow generally. That is consistent with the
+census's 4/96 and further narrows it.
+
+### What Phase 1 does, measured
+
+On the acorn configuration (`.js` + `checkJs` + standalone):
+
+```
+flag off:  P.type = externref  [rhs: TokenType]     95,013 bytes
+flag on:   P.type = ref_null   [rhs: TokenType]     95,054 bytes   ← reserved __fnctor_TokenType
+```
+
+Census `discarded` 1 → 0 on that fixture; execution unchanged. 54 tests across
+the four `#2660` fnctor suites plus the Phase 0 suite pass **with the flag on**,
+so the #1712 regression does **not** reproduce from the resolution change alone.
+That is a real result but a bounded one: Phase 2 (member dispatch on a
+struct-typed receiver) is where the note says it died, and Phase 2 is not
+written yet.
+
+### Measured on REAL acorn (2026-08-04), not a fixture
+
+`tests/dogfood/acorn-standalone-compile.mjs`, standalone, flag off vs on:
+
+| | flag off | flag on | delta |
+| --- | ---: | ---: | ---: |
+| binary | 943,140 B | **866,627 B** | **−76,513 (−8.1%)** |
+| function imports | 0 | 0 | — |
+| canaries (runtime/parseExprAt/tokenizer/fnBody) | 2,3,4,5 | 2,3,4,5 | — |
+| census `typed` | 49 | **52** | +3 |
+| census `discarded` | 4 | **1** | **−3** |
+| census `unknown` | 43 | 43 | — |
+| IR-path fallbacks | 3 | 3 | — |
+
+- The three recovered slots are `Parser.type` (141 reads), `Node.loc`, `Token.loc`.
+- The one that remains is `Parser.options`, and it is correctly **out of scope**:
+  it is boxed by the #2937 object-hash-consumer path, not by #1712. So this
+  lever is now **exhausted at the slot level** — there is no fifth slot to get.
+- `unknown` did not move, confirming that bucket is #743's and not reachable
+  from here.
+- **The 3 IR-path fallbacks are PRE-EXISTING** (`parse`, `parseExpressionAt`,
+  `tokenizer`, `typeIdx parity mismatch`) — they appear identically with the
+  flag OFF. An earlier draft of this section attributed them to Phase 1 before
+  the baseline run existed; it was wrong.
+- **Loose end worth a look:** `tests/issue-1712-standalone.test.ts` asserts
+  `report.errors` is `[]`, and this baseline run of the same script produced 3.
+  Either the test is currently red on main or its invocation differs from a bare
+  run. Not investigated here.
+
+The −8.1% is a code-size result, not a speed result. It is consistent with
+reads losing cast/dispatch scaffolding, but **no runtime measurement has been
+taken** — `__extern_get` self-time vs the #3780 5.6% baseline is still Phase 4
+and still unmeasured. Do not quote the 8.1% as a speedup.
+
+### The prototype-alias bucket has NO headroom — verified at the instruction level
+
+§2's "Cause A" reports that acorn defines 257 of 270 methods through a
+prototype alias and that checkJs cannot follow it, which makes `this` — and so
+100% of the 1,485 reads through it — `any`. That is true **of the TypeScript
+checker** and has been repeatedly restated as if it were a live compiler cost.
+It is not. Compiling the two forms and diffing the emitted twin proves it:
+
+```wasm
+;; IDENTICAL for `P.prototype.step = …` and `var pp = P.prototype; pp.step = …`
+(func $__closure_0__typed_this (type 108)
+  local.get 0
+  struct.get 17 0      ;; this.pos — direct, unboxed, f64
+  f64.const 1
+  f64.add
+  struct.set 17 0
+  local.get 0
+  struct.get 17 0
+  return)
+```
+
+Whole-module: 93,179 B (direct) vs 93,188 B (alias), same twin count, same
+dispatcher count, same result. #2681's alias map recovers the receiver
+**completely**, and the twin reads its fields with a bare `struct.get` — there
+is no cast, no dispatcher, and no `__extern_get` to remove.
+
+**So do not open an issue to "fix prototype-alias inference."** The receiver is
+already recovered. What remains boxed is not the receiver but *what the slot
+holds*: a `struct.get` of an `externref` field is still a boxed read, and 43 of
+96 acorn slots are `externref` because they are seeded from untyped constructor
+parameters. That is #743, and it is the only bucket left with real size.
+
+### Revised next steps
+
+1. **Phase 2** — member dispatch, data-fields-only static, everything else
+   dynamic. Unchanged from the plan.
+2. **Fix the three Phase 0 failures** — promoted ahead of Phase 3. They are
+   independent of the flag (they fail with it off) and they block any honest
+   claim that instance typing works.
+3. **Phase 3/4 as written**, with the census's `discarded` bucket measured on
+   real acorn rather than a fixture.
 
 ## Scope
 
