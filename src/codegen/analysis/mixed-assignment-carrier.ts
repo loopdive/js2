@@ -34,9 +34,65 @@ function carrierDomain(tag: JsTag): string {
   return tag;
 }
 
+function literalPropertyNames(initializer: ts.ObjectLiteralExpression): Set<string> | null {
+  const names = new Set<string>();
+  for (const property of initializer.properties) {
+    if (ts.isSpreadAssignment(property)) return null;
+    const name = property.name;
+    if (!name || (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name))) return null;
+    names.add(name.text);
+  }
+  return names;
+}
+
+/**
+ * A closed object local is widened by codegen when a later direct write adds a
+ * property outside the literal's initial shape. Detect that before any nested
+ * function signatures capture the local: changing the physical slot after a
+ * lifted function has recorded `(ref $OldShape)` leaves a stale capture ABI and
+ * turns the later externref value into an `illegal cast` during closure creation.
+ *
+ * The object itself may stay on the closed-struct path. Only its local carrier
+ * is widened, so statically known consumers can recover the original struct by
+ * casting the externref while the capture contract remains stable for the whole
+ * enclosing activation.
+ */
+function bindingHasOutOfShapePropertyWrite(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(decl.name) || !decl.initializer || !ts.isObjectLiteralExpression(decl.initializer)) return false;
+  const initialProperties = literalPropertyNames(decl.initializer);
+  if (!initialProperties) return false;
+
+  const scope = containingScope(decl);
+  let widens = false;
+  const visit = (node: ts.Node): void => {
+    if (widens) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left)
+    ) {
+      let receiver: ts.Expression = node.left.expression;
+      while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
+      if (
+        ts.isIdentifier(receiver) &&
+        ctx.oracle.variableDeclarationOf(receiver) === decl &&
+        !initialProperties.has(node.left.name.text)
+      ) {
+        widens = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(scope, visit);
+  return widens;
+}
+
 export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
   if (!ts.isIdentifier(decl.name)) return false;
   if (!decl.initializer) return false;
+
+  if (bindingHasOutOfShapePropertyWrite(ctx, decl)) return true;
 
   const initialTag = ctx.oracle.staticJsTypeOf(decl.initializer);
   if (initialTag === "mixed") return false;

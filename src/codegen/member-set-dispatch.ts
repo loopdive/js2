@@ -172,6 +172,7 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
     const buildSetDispatch = (idx: number): Instr[] => {
       if (idx >= candidates.length) return fallback;
       const cand = candidates[idx]!;
+      const next = buildSetDispatch(idx + 1);
       // Coerce the boxed externref value into the candidate field's wasm type via
       // the SINGLE coercion engine (#1917 / #2108 — never hand-roll a fresh
       // box/unbox matrix). For an externref field (the common acorn `type`/`value`
@@ -195,14 +196,59 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
           ]),
         );
       }
+      const fieldRuntimeTypeIdx =
+        cand.fieldType.kind === "ref" || cand.fieldType.kind === "ref_null" ? cand.fieldType.typeIdx : -1;
+      const fieldNeedsRuntimeBrand = fieldRuntimeTypeIdx >= 0;
+      const guardedSetFieldInstrs: Instr[] = fieldNeedsRuntimeBrand
+        ? [
+            { op: "local.get", index: 1 },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: fieldRuntimeTypeIdx },
+            ...(cand.fieldType.kind === "ref_null"
+              ? ([{ op: "local.get", index: 1 }, { op: "ref.is_null" }, { op: "i32.or" }] as Instr[])
+              : []),
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: setFieldInstrs,
+              // A dynamic receiver can match a closed struct even though the
+              // runtime value does not match that field's earlier static
+              // shape. JS fields are representation-polymorphic; route the
+              // incompatible value to the dynamic sidecar instead of trapping
+              // on externref -> ref.cast. Dynamic reads use the same sidecar.
+              else: fallback,
+            },
+          ]
+        : setFieldInstrs;
+      // WasmGC canonicalizes structurally equivalent structs even when their
+      // JavaScript field names differ. For collision-stamped structs, ref.test
+      // alone can therefore select the wrong logical shape and write another
+      // field's slot. Mirror the exported __sset_* guards: verify the hidden
+      // per-instance shape id and continue dispatching on a mismatch.
+      const shapeGuardedSetFieldInstrs: Instr[] =
+        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
+          ? [
+              { op: "local.get", index: 2 },
+              { op: "ref.cast", typeIdx: cand.structTypeIdx },
+              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
+              { op: "i32.const", value: cand.shapeId },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: guardedSetFieldInstrs,
+                else: next,
+              },
+            ]
+          : guardedSetFieldInstrs;
       return [
         { op: "local.get", index: 2 }, // __any
         { op: "ref.test", typeIdx: cand.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: setFieldInstrs,
-          else: buildSetDispatch(idx + 1),
+          then: shapeGuardedSetFieldInstrs,
+          else: next,
         },
       ];
     };

@@ -21,7 +21,12 @@ import { noJsHost } from "../js-errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { addFuncType, addImport, localGlobalIdx, resolveWasmType } from "../index.js";
-import { emitNullCheckThrow, typeErrorThrowInstrs } from "../property-access.js";
+import {
+  emitExternrefToStructGet,
+  emitNullCheckThrow,
+  emitNullGuardedStructGet,
+  typeErrorThrowInstrs,
+} from "../property-access.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch, VOID_RESULT } from "../shared.js";
 import { defaultValueInstrs, emitGuardedFuncRefCast, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
@@ -817,8 +822,7 @@ export function compileCallablePropertyCall(
 
   const fieldType = fields[fieldIdx]!.type;
 
-  // (#1734) Compile the receiver and normalize it to `(ref null structTypeIdx)`
-  // before the bare `struct.get` that extracts the method-closure field.
+  // (#1734) Compile the receiver and extract the callable field.
   //
   // The receiver expression's compiled wasm type can disagree with the resolved
   // struct type `structTypeIdx`: a receiver that is itself a call (e.g. a lifted
@@ -830,26 +834,41 @@ export function compileCallablePropertyCall(
   // through `any.convert_extern` (when externref) + a `ref.test`-guarded cast to
   // `structTypeIdx`, mirroring the guarded cast already used for the closure
   // field itself below, so the `struct.get` operand is always the right struct.
-  const compileGuardedReceiver = (): void => {
+  const compileCallableFieldValue = (): void => {
     const recvResult = compileExpression(ctx, fctx, propAccess.expression);
-    // Already exactly the target struct type (or its nullable form) — the bare
-    // struct.get is well-typed; no bridge needed.
+    // Already exactly the target struct type (or its nullable form) — retain
+    // the direct field read.
     if (
       recvResult &&
       (recvResult.kind === "ref" || recvResult.kind === "ref_null") &&
       (recvResult as { typeIdx: number }).typeIdx === structTypeIdx
     ) {
+      emitNullGuardedStructGet(ctx, fctx, recvResult, fieldType, structTypeIdx, fieldIdx, methodName, true);
       return;
     }
-    // externref must round-trip through anyref before ref.test/ref.cast.
+    // A JavaScript property may be replaced with an object of another closed
+    // shape. The field's stable carrier is then externref even though the
+    // checker still describes the original literal. Dispatch the read across
+    // every runtime shape instead of guarded-casting to the stale shape and
+    // immediately applying a bare struct.get to the resulting null. ReactDOM's
+    // shared dispatcher does exactly this (`Internals.d = { f, ... }`) before
+    // `flushSync` calls `Internals.d.f()`.
     if (recvResult && recvResult.kind === "externref") {
-      fctx.body.push({ op: "any.convert_extern" });
-      emitGuardedRefCast(fctx, structTypeIdx);
+      emitExternrefToStructGet(ctx, fctx, fieldType, structTypeIdx, fieldIdx, methodName, true);
       return;
     }
-    // A different struct ref is already an anyref subtype — guard-cast directly.
+    // A different struct ref can likewise be another valid closed shape.
     if (recvResult && (recvResult.kind === "ref" || recvResult.kind === "ref_null")) {
-      emitGuardedRefCast(fctx, structTypeIdx);
+      emitNullGuardedStructGet(
+        ctx,
+        fctx,
+        { kind: "ref_null", typeIdx: recvResult.typeIdx },
+        fieldType,
+        structTypeIdx,
+        fieldIdx,
+        methodName,
+        true,
+      );
       return;
     }
     // Anything else (primitive / void) — leave the stack as the legacy bare
@@ -884,8 +903,7 @@ export function compileCallablePropertyCall(
     const closureInfo = ctx.closureInfoByTypeIdx.get((fieldType as { typeIdx: number }).typeIdx);
     if (closureInfo) {
       // Compile receiver (normalized to the struct type, #1734), get field value.
-      compileGuardedReceiver();
-      fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+      compileCallableFieldValue();
 
       const closureLocal = allocLocal(fctx, `__cprop_${fctx.locals.length}`, fieldType);
       fctx.body.push({ op: "local.set", index: closureLocal });
@@ -957,8 +975,7 @@ export function compileCallablePropertyCall(
       );
 
       // Compile receiver (normalized to the struct type, #1734), get field value.
-      compileGuardedReceiver();
-      fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
+      compileCallableFieldValue();
 
       if (funcCandidates.length <= 1) {
         // ── Single-candidate path ──

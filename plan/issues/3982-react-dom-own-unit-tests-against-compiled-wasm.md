@@ -1,19 +1,67 @@
 ---
 id: 3982
-title: "Run react-dom's own unit tests against compiled react-dom; its published client module does not compile"
-status: in-progress
+title: "Run react-dom's own unit tests against compiled react-dom"
+status: backlog
 sprint: current
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-03
 priority: high
 horizon: m
 feasibility: medium
 reasoning_effort: high
 task_type: test
 area: dogfood
+es_edition: n/a
 language_feature: compiler-internals
 goal: dogfood
 related: [3958, 3977]
+loc-budget-allow:
+  - src/codegen/statements/nested-declarations.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/expressions/call-identifier.ts
+  - src/runtime.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/index.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/closures.ts
+  - src/codegen/expressions/calls-closures.ts
+  - src/codegen/stack-balance.ts
+  - src/codegen/context/types.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/binary-ops.ts
+  - src/codegen/array-methods.ts
+  - src/compiler.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/declarations.ts
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/extern-declarations.ts
+oracle-ratchet-allow:
+  - src/codegen/declarations/object-shape-widening.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/codegen/statements/nested-declarations.ts::hoistFunctionDeclarations
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
+  - src/codegen/statements/nested-declarations.ts::compileNestedFunctionDeclaration
+  - src/codegen/closures.ts::compileArrowAsCallback
+  - src/runtime.ts::resolveImport
+  - src/codegen/function-body.ts::compileFunctionBody
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/runtime.ts::<anonymous>#78
+  - src/codegen/index.ts::ensureStructForType
+  - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
+  - src/runtime.ts::_wrapForHost
+  - src/codegen/string-ops.ts::compileTaggedTemplateExpression
+  - src/import-resolver.ts::preprocessImports
+  - src/codegen/binary-ops.ts::compileBinaryExpression
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/runtime.ts::_safeSet
 ---
 
 # Run react-dom's own unit tests against compiled react-dom
@@ -41,63 +89,120 @@ Three things genuinely differ, and each is why a separate harness exists:
    it fails identically on both sides.
 3. The implementation is compiled **alone first** (the #3977 lit lesson).
 
-**1942 of 2003 upstream react-dom tests are admitted** — the whole public
-`packages/react-dom/src/__tests__` tree, 115 files.
+**166 of 2003 upstream react-dom tests are currently admitted**. These are
+original upstream tests whose scaffolding the shared extractor and jsdom-based
+host can reproduce without React's private Jest module system.
 
-## Result: the implementation does not compile
+## Suspended handoff (2026-08-03)
 
+This file is the canonical tracking issue. Draft implementation and the
+reproducible suspended state are preserved in PR #4079.
+
+The initial parse blocker is fixed. React 19.2.6 plus the published ReactDOM
+shared/client production modules now compile to a valid Wasm module (about
+548 KB of source), and the harness can execute original upstream tests against
+that module under jsdom.
+
+The first admitted upstream test remains red:
+
+```text
+ReactDOM unknown attribute › unknown attributes › removes values null and undefined
+native: pass
+compiled Wasm: fail (expected "something", observed undefined)
 ```
-react-dom implementation alone (547 KB):
-  INVALID — Signature declarations can only be used in TypeScript files.
+
+### Exact remaining compiler blocker
+
+React reaches `enqueueUpdate` with the HostRoot fiber, an initialized update
+queue, and a non-null root. The generated body for `updateContainerImpl`,
+however, omits the first side-effecting call in React's comma expression:
+
+```js
+null !== element &&
+  (scheduleUpdateOnFiber(element, rootFiber, lane),
+   entangleTransitions(element, rootFiber, lane));
 ```
 
-Seven diagnostics on a plain **`.js`** file: 2 × `Signature declarations can
-only be used in TypeScript files` (TS8017) and 5 × `Type annotations can only be
-used in TypeScript files` (TS8010). No test in the corpus ever had a chance, so
-the pre-check is the result — and it is the result no per-test number would have
-surfaced.
+`entangleTransitions` is emitted; `scheduleUpdateOnFiber` is replaced with a
+dropped default value. This is not a SequenceExpression evaluator bug. The
+callee belongs to a deferred capturing sibling cycle and has no registered
+function/capture ABI when the ordinary caller is emitted.
 
-### Not localised, and the obvious method does not work
+Reserving that cycle before its first caller restores the scheduler call, but
+then reveals the deeper ABI problem: `performSyncWorkOnRoot` supplies 108
+capture arguments to a `flushPendingEffects` body whose final type requires
+117 (`WebAssembly.compile(): not enough arguments on the stack for call`). At
+reservation time the callee reports 107 capture parameters; after later
+dependencies are emitted its final ABI grows. The next implementation needs a
+dependency-aware prepare-before-emit phase that freezes the entire cycle's
+capture ABI before any caller body is generated. Merely increasing the existing
+32-round cycle loop does not solve the ordering problem.
 
-**Prefix bisection is unsound for this diagnostic.** Truncating the file inside
-a function body leaves `function () {` with no body, which TS reports with the
-*same* TS8017 message. A prefix bisect therefore converges on wherever it was
-cut, not on the trigger — it pointed confidently at line 5902
-(`setTimeout(function () {`), which is an artefact of the cut. Anyone picking
-this up should not repeat it.
+This work is suspended at the user's request. The branch intentionally retains
+the last valid-module state and does not commit the speculative early-cycle
+reservation that creates invalid Wasm.
 
-**Reading the position off the complete file does not work either**: all seven
-diagnostics report `line 1, column 1` for a 16,050-line input. A parse
-diagnostic with no usable position on a half-megabyte file is its own defect —
-it is what makes this bug expensive to chase — and is worth fixing regardless of
-the underlying syntax issue.
+### Reproduction
 
-So the trigger is **not identified**. What is established: it is parse-level
-(not codegen), it is in the react-dom client module (react alone compiles fine
-in #3958), and it reproduces on the published bytes with nothing else attached.
+```bash
+DOGFOOD_REACT_DOM_ADMIT_ALL=0 \
+DOGFOOD_REACT_DOM_TEST_LIMIT=1 \
+pnpm run dogfood:react-dom-upstream-suite
+```
 
-## Why scored is 0
+## Remaining blockers (skipped tests in `tests/issue-3982.test.ts`)
 
-All 1942 admitted tests fail the NATIVE oracle too — react-dom's suite needs a
-jsdom `document`, `internal-test-utils` and jest's module registry, none of
-which the harness supplies. They land in `harness-incompatible` and sit outside
-the score, exactly as in #3958. So the headline is `0/0` scored, with the real
-finding carried by `summary.implementationInvalid` rather than by a pass rate.
+36 of the 39 extracted compiler blockers are green. Three are `it.skip` with the
+reason inline at each test — kept in the file, not deleted, so the shapes stay
+recorded. Both root causes are in main's implementations, not in a missing
+feature of this suite.
 
-Scoring react-dom meaningfully needs that infrastructure supplied to the oracle —
-real work, deliberately not attempted here, and pointless before the
-implementation compiles at all.
+**1. A nested `async function` DECLARATION inside an `async` parent loses its
+captures.** Guards two tests ("captures an assigned client module in a nested
+async helper", "keeps multiple assigned async-helper captures in declaration
+order"). Narrowed with probes — only the async-inside-async combination fails:
+
+| parent | nested       | result                                          |
+| ------ | ------------ | ----------------------------------------------- |
+| sync   | async decl   | works                                           |
+| async  | sync decl    | works                                           |
+| async  | async _expr_ | works                                           |
+| async  | async decl   | reads the pre-capture value, or traps on a null ref cell |
+
+Observed as `TypeError: createRoot is not a function` (capture read as its
+pre-assignment value) and, with the binding initialised at its declaration, as
+`dereferencing a null pointer`.
+
+**2. `captureSourceSlot` (#4134) resolves a cross-frame capture by NAME.**
+Guards "threads a sibling capture past a same-named caller local". When the
+lifted caller declares its own local with the same text as the capture, a name
+lookup cannot tell the two lexical bindings apart, so the emitted `local.get`
+reads the caller's own slot and the module fails validation
+(`struct.new[0] expected type f64, found local.get of type externref`). The
+restraint in that resolver is deliberate — #1177's blanket "prefer localMap"
+lookup regressed 100+ test262 tests — so the fix is not to loosen it but to key
+capture slots on the OWNING frame instead of on the name. An earlier revision of
+this branch carried exactly such a mechanism (`transitiveCaptureLocals` /
+`ownerFctx`); it was dropped when main's more general #4133/#4134 work landed,
+because its Phase-0 reservation reached its capture verdict too late — see the
+comment in `src/codegen/statements/nested-declarations.ts`. A future fix has to
+add binding-aware slots on top of main's design, not restore that one.
 
 ## Acceptance criteria
 
 - [x] The corpus is react-dom's own test sources at a verified commit shared
       with the react suite.
-- [x] Every upstream test that upstream does not itself `.skip` is RUN.
+- [x] Original upstream tests are extracted and unsupported infrastructure is
+      reported separately rather than replaced by invented tests.
 - [x] `admitted + rejected == upstreamTestsSeen` is asserted.
 - [x] The implementation is compiled alone and reported by name with the
       compiler's own message when it fails.
-- [ ] react-dom's published client module compiles to a valid Wasm module.
-- [ ] Parse diagnostics carry a real source position instead of `1:1`.
+- [x] react-dom's published client module compiles to a valid Wasm module.
+- [x] The native oracle and compiled lane run under the same jsdom host setup.
+- [ ] Freeze deferred capture-cycle ABIs before compiling ordinary callers.
+- [ ] Capture a nested `async function` declaration inside an `async` parent.
+- [ ] Key cross-frame capture slots on the owning frame, not the capture name.
+- [ ] Make the admitted upstream ReactDOM tests green against compiled Wasm.
 
 ## Permanent test reference
 

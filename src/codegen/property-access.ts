@@ -1207,6 +1207,8 @@ export function findAlternateStructsForField(
   fieldType: ValType;
   mutable: boolean;
   presenceSlot?: PresenceSlot;
+  shapeId?: number;
+  shapeFieldIdx?: number;
 }[] {
   const result: {
     structTypeIdx: number;
@@ -1214,18 +1216,23 @@ export function findAlternateStructsForField(
     fieldType: ValType;
     mutable: boolean;
     presenceSlot?: PresenceSlot;
+    shapeId?: number;
+    shapeFieldIdx?: number;
   }[] = [];
   for (const [typeName, fields] of ctx.structFields) {
     const sIdx = ctx.structMap.get(typeName);
     if (sIdx === undefined || sIdx === excludeTypeIdx) continue;
     const fIdx = fields.findIndex((f) => f.name === propName);
     if (fIdx !== -1) {
+      const shapeId = ctx.shapeIdByStructName.get(typeName);
+      const shapeFieldIdx = shapeId !== undefined ? fields.findIndex((f) => f.name === "$shape") : -1;
       result.push({
         structTypeIdx: sIdx,
         fieldIdx: fIdx,
         fieldType: fields[fIdx]!.type,
         mutable: fields[fIdx]!.mutable,
         ...(presenceSlotOf(fields, propName) ? { presenceSlot: presenceSlotOf(fields, propName)! } : {}),
+        ...(shapeId !== undefined && shapeFieldIdx >= 0 ? { shapeId, shapeFieldIdx } : {}),
       });
     }
   }
@@ -1682,10 +1689,17 @@ export function emitExternrefToStructGet(
   const resultType: ValType =
     fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: (fieldType as any).typeIdx } : fieldType;
   let primaryPresenceSlot: PresenceSlot | undefined;
+  let primaryShapeId: number | undefined;
+  let primaryShapeFieldIdx: number | undefined;
   if (propName) {
     for (const [structName, fields] of ctx.structFields) {
       if (ctx.structMap.get(structName) !== structTypeIdx) continue;
       if (fields[fieldIdx]?.presenceTracked) primaryPresenceSlot = presenceSlotOf(fields, propName);
+      primaryShapeId = ctx.shapeIdByStructName.get(structName);
+      if (primaryShapeId !== undefined) {
+        const shapeFieldIdx = fields.findIndex((field) => field.name === "$shape");
+        if (shapeFieldIdx >= 0) primaryShapeFieldIdx = shapeFieldIdx;
+      }
       break;
     }
   }
@@ -1798,28 +1812,45 @@ export function emitExternrefToStructGet(
       // null = this shape cannot produce `resultType`; skip the arm.
       const altRead = alternateFieldArmRead(ctx, fctx, alt, resultType, tmpAny);
       if (!altRead) return buildFallbackChain(altIdx + 1);
+      const altReadAndStore: Instr[] = [
+        ...(alt.presenceSlot !== undefined
+          ? ([
+              { op: "local.get", index: tmpAny },
+              { op: "ref.cast", typeIdx: alt.structTypeIdx },
+              ...presenceTestInstrs(alt.structTypeIdx, alt.presenceSlot),
+              {
+                op: "if",
+                blockType: { kind: "val", type: resultType },
+                then: altRead,
+                else: absentValueInstrs(),
+              },
+            ] satisfies Instr[])
+          : altRead),
+        { op: "local.set", index: resultLocal },
+      ];
+      const shapeGuardedAltRead: Instr[] =
+        alt.shapeId !== undefined && alt.shapeFieldIdx !== undefined
+          ? [
+              { op: "local.get", index: tmpAny },
+              { op: "ref.cast", typeIdx: alt.structTypeIdx },
+              { op: "struct.get", typeIdx: alt.structTypeIdx, fieldIdx: alt.shapeFieldIdx },
+              { op: "i32.const", value: alt.shapeId },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: altReadAndStore,
+                else: buildFallbackChain(altIdx + 1),
+              },
+            ]
+          : altReadAndStore;
       return [
         { op: "local.get", index: tmpAny },
         { op: "ref.test", typeIdx: alt.structTypeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: [
-            ...(alt.presenceSlot !== undefined
-              ? ([
-                  { op: "local.get", index: tmpAny },
-                  { op: "ref.cast", typeIdx: alt.structTypeIdx },
-                  ...presenceTestInstrs(alt.structTypeIdx, alt.presenceSlot),
-                  {
-                    op: "if",
-                    blockType: { kind: "val", type: resultType },
-                    then: altRead,
-                    else: absentValueInstrs(),
-                  },
-                ] satisfies Instr[])
-              : altRead),
-            { op: "local.set", index: resultLocal },
-          ],
+          then: shapeGuardedAltRead,
           else: buildFallbackChain(altIdx + 1),
         },
       ];
@@ -1851,33 +1882,51 @@ export function emitExternrefToStructGet(
     return [...defaultValueInstrs(resultType), { op: "local.set", index: resultLocal }];
   };
 
+  const primaryReadAndStore: Instr[] = [
+    ...(primaryPresenceSlot !== undefined
+      ? ([
+          { op: "local.get", index: tmpAny },
+          { op: "ref.cast", typeIdx: structTypeIdx },
+          ...presenceTestInstrs(structTypeIdx, primaryPresenceSlot),
+          {
+            op: "if",
+            blockType: { kind: "val", type: resultType },
+            then: [
+              { op: "local.get", index: tmpAny },
+              { op: "ref.cast", typeIdx: structTypeIdx },
+              { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+            ],
+            else: absentValueInstrs(),
+          },
+        ] satisfies Instr[])
+      : ([
+          { op: "local.get", index: tmpAny },
+          { op: "ref.cast", typeIdx: structTypeIdx },
+          { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+        ] satisfies Instr[])),
+    { op: "local.set", index: resultLocal },
+  ];
+  const shapeGuardedPrimaryRead: Instr[] =
+    primaryShapeId !== undefined && primaryShapeFieldIdx !== undefined
+      ? [
+          { op: "local.get", index: tmpAny },
+          { op: "ref.cast", typeIdx: structTypeIdx },
+          { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: primaryShapeFieldIdx },
+          { op: "i32.const", value: primaryShapeId },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: primaryReadAndStore,
+            else: buildFallbackChain(0),
+          },
+        ]
+      : primaryReadAndStore;
+
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
-    then: [
-      ...(primaryPresenceSlot !== undefined
-        ? ([
-            { op: "local.get", index: tmpAny },
-            { op: "ref.cast", typeIdx: structTypeIdx },
-            ...presenceTestInstrs(structTypeIdx, primaryPresenceSlot),
-            {
-              op: "if",
-              blockType: { kind: "val", type: resultType },
-              then: [
-                { op: "local.get", index: tmpAny },
-                { op: "ref.cast", typeIdx: structTypeIdx },
-                { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
-              ],
-              else: absentValueInstrs(),
-            },
-          ] satisfies Instr[])
-        : ([
-            { op: "local.get", index: tmpAny },
-            { op: "ref.cast", typeIdx: structTypeIdx },
-            { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
-          ] satisfies Instr[])),
-      { op: "local.set", index: resultLocal },
-    ],
+    then: shapeGuardedPrimaryRead,
     else: buildFallbackChain(0),
   });
 

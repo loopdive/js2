@@ -9,6 +9,7 @@
 // loop.
 import { describe, it, expect } from "vitest";
 import { compile, buildImports } from "../src/index.js";
+import { getDefaultEnvironment, setDefaultEnvironment } from "../src/env.js";
 import { preprocessImports } from "../src/import-resolver.js";
 
 async function compileAndInstantiate(src: string) {
@@ -22,11 +23,63 @@ async function compileAndInstantiate(src: string) {
 }
 
 describe("browser timer host imports (#1501) — preprocessImports shim", () => {
+  it("keeps Node compiler capabilities when jsdom installs a window global", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    try {
+      Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
+      setDefaultEnvironment(null);
+      const environment = getDefaultEnvironment();
+      expect(environment.fs).not.toBeNull();
+      expect(environment.module).not.toBeNull();
+    } finally {
+      setDefaultEnvironment(null);
+      if (descriptor) Object.defineProperty(globalThis, "window", descriptor);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
   it("injects a __timer_set_timeout shim when source calls setTimeout", () => {
     const src = `setTimeout(() => {}, 100);`;
-    const { source } = preprocessImports(src);
+    const { source, requiresTsGrammar } = preprocessImports(src);
     expect(source).toContain("__timer_set_timeout");
     expect(source).toContain("function setTimeout(");
+    expect(requiresTsGrammar).toBe(true);
+  });
+
+  it("parses a JavaScript timer caller with the injected TypeScript shim", async () => {
+    const result = await compile(
+      `
+        function tick() {}
+        export function schedule() { return setTimeout(tick, 1); }
+      `,
+      { fileName: "timer-caller.js", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.errors.filter((error) => error.code === 8010 || error.code === 8017)).toEqual([]);
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    expect(() => new WebAssembly.Module(result.binary)).not.toThrow();
+  });
+
+  it("keeps DOM globals available when the timer shim forces TypeScript grammar", async () => {
+    const result = await compile(
+      `
+        function tick() {}
+        export function probe() {
+          var timer = setTimeout(tick, 1);
+          clearTimeout(timer);
+          return document;
+        }
+      `,
+      { fileName: "timer-dom-caller.js", skipSemanticDiagnostics: true },
+    );
+
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    expect(result.imports).toContainEqual({
+      module: "env",
+      name: "global_document",
+      kind: "func",
+      intent: { type: "declared_global", name: "document" },
+    });
   });
 
   it("injects all four timer shims when each is referenced", () => {

@@ -74,12 +74,17 @@ let _cached: Environment | null = null;
 export function getDefaultEnvironment(): Environment {
   if (_cached !== null) return _cached;
 
-  if (isBrowserLikeRuntime()) {
+  // Node test and rendering environments commonly install a jsdom `window`.
+  // That must not erase Node's filesystem/module capabilities: the compiler
+  // still needs them to load TypeScript's ambient libs. Prefer an authoritative
+  // synchronous Node loader when present, and use the browser adapter only when
+  // no Node capability exists at all.
+  const loader = getSyncNodeLoader();
+  if (!loader && isBrowserLikeRuntime()) {
     _cached = { fs: null, path: null, url: null, module: null };
     return _cached;
   }
 
-  const loader = getSyncNodeLoader();
   _cached = {
     fs: loader ? safeLoad<typeof fsType>(loader, "fs") : null,
     path: loader ? safeLoad<typeof pathType>(loader, "path") : null,

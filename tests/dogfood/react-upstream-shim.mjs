@@ -92,7 +92,7 @@ function __contains(actual, expected) {
 function expect(actual) {
   return {
     toBe: function (expected) {
-      __assert(__objectIs(actual, expected), "expected toBe to match");
+      __assert(__objectIs(actual, expected), "expected " + actual + " toBe " + expected);
     },
     toEqual: function (expected) {
       __assert(__deepEqual(actual, expected), "expected toEqual to match");

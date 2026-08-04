@@ -109,6 +109,7 @@ export {
   applyShapeInference,
   collectDynamicObjectReturnCarrierTypes,
   collectEmptyObjectWidening,
+  collectObjectLiteralAssignedPropertyNames,
   collectGrowableObjectLiterals,
 } from "./declarations/object-shape-widening.js";
 export { inferImplicitAnyParamType, inferNumericReturnTypes } from "./declarations/param-return-inference.js";
