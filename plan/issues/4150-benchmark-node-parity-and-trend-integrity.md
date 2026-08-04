@@ -156,38 +156,51 @@ noise and comparability are fixed.
 
 ---
 
-## Suspended Work — 2026-08-04 (ttraenkler/claude-bench)
+## Suspension RESOLVED — 2026-08-04
 
-Suspended mid-flight on operator instruction. **PR #4106 is open and needs an
-owner** — it is not merged and nothing is watching it.
+PR #4106 was suspended mid-flight and handed over; it now has an owner again
+and the two open items below are closed. The original handover is kept because
+its "Traps for whoever picks this up" section is still live guidance.
 
-- **Branch**: `claude/js2-cross-frame-capture-slot` (pushed to the fork,
-  `ttraenkler/js2`)
-- **Checkout**: `/home/user/js2-up` (NOT a worktree — a plain clone whose
-  `origin` is the FORK and `upstream` is `loopdive/js2`)
-- **PR**: <https://github.com/loopdive/js2/pull/4106>, head `a24cd69b`,
-  `mergeable_state: blocked` (CI re-running on a fresh `main` merge), no `hold`
-- **Scratch probes** (gitignored, DIE WITH THE CONTAINER — re-create if needed):
-  `.tmp/propfn-min.mjs`, `.tmp/propfn-gc.mjs` (#4149 repros, both lanes),
-  `.tmp/run262.mjs` (drives `runTest262File` on the two brand-check tests —
-  this is the tool that root-caused the merge-queue park), `.tmp/gap.py`
-  (per-benchmark ratio table from a results json)
+- **Branch**: `claude/js2-cross-frame-capture-slot` (lives on the fork,
+  `ttraenkler/js2` — NOT on `loopdive/js2`)
+- **PR**: <https://github.com/loopdive/js2/pull/4106>
+- The suspending session's checkout (`/home/user/js2-up`) and its `.tmp/`
+  probes (`propfn-min.mjs`, `propfn-gc.mjs`, `run262.mjs`, `gap.py`) are gone
+  with that container. Nothing depends on them; the #4149 and #4154 repros
+  were re-created and are now committed as real tests.
 
-### The one decision that needs a human
+### The decision that needed a human: taken — fix #4154, do not use the valve
 
-The merge queue parked this PR on the #3189 uncatchable-trap ratchet
-(`illegal_cast` 48 → 50). I resolved it with the **`trap-growth-allow` valve**
-(declared in `plan/issues/4149-*.md`, `count: 2`, both tests named) and filed
-**#4154** for the real fix, rather than fixing #4154 inside this PR.
+The merge queue had parked this PR on the #3189 uncatchable-trap ratchet
+(`illegal_cast` 48 → 50), resolved at the time with a **`trap-growth-allow`
+valve** in
+`plan/issues/4149-standalone-aliased-property-function-call-null.md` plus a
+follow-up issue (#4154) for the real fix.
 
-That is a judgment call and it is **not settled**. The trade: two tests that
-were already failing now fail via an *uncatchable trap* instead of a catchable
-`Test262Error`. The valve is the documented mechanism for baseline-`fail` trap
-growth and #2900 is a near-identical precedent — but if the reviewer prefers
-the strictly-better outcome, fixing #4154 here would very likely turn both
-tests from FAIL to PASS (their remaining assertion is exactly the
-`assert.throws(TypeError, …)` a catchable throw satisfies) and retire the
-declaration. **Ask before landing if you have the option.**
+**The operator chose the strictly-better outcome: #4154 is fixed in this same
+PR and the valve is removed.** The prediction in the original handover held —
+each test's remaining assertion is exactly the `assert.throws(TypeError, …)`
+that a catchable throw satisfies, so both files are expected to flip
+`fail` → **pass** instead of `fail` → `fail`, and `illegal_cast` should not
+grow. Details and the measured root cause are in
+`plan/issues/4154-private-brand-check-uncatchable-illegal-cast.md`; the
+regression test is `tests/issue-4154-private-brand-check-typeerror.test.ts`.
+
+### `src/runtime.ts` merge conflict (resolved, worth knowing)
+
+Merging `origin/main` conflicted in exactly one hunk, in
+`__extern_method_call`'s `typeof fn !== "function"` recovery. Both sides were
+fixing the *same* root cause — a closure materialized while the module's
+`start` was running, before `setInstance` wired `callbackState` — but catching
+**different symptoms**, so the resolution keeps **both arms**:
+
+| side | guard | symptom it catches |
+| --- | --- | --- |
+| `origin/main` | `_isWasmStruct(obj)` | the cached host view MISSES the field; re-reads it via `_resolveHostField` |
+| this branch (#4149) | `_isWasmStruct(fn)` | the field READ fine, but the value is a RAW closure struct that was stored unwrapped |
+
+Taking either side alone would silently drop the other's fix.
 
 ### What is done and verified
 
