@@ -400,3 +400,37 @@ resulting `main` before execution pauses.
 - `/workspace` was 1,279 commits behind and is now level with `origin/main`.
   The 13 dirty files reverted to get there were each verified: every local-only
   line already existed on `main` in evolved form. Nothing unique lost.
+
+## 2026-08-04 — ≤ES5 goal window (rolling; not frozen)
+
+- **Goal scope 6,644 / 8,650 = 76.8 %**, gap ≈ 1,608. Overall standalone
+  30,982 / 43,505. Nine PRs merged, all verified by content on `upstream/main`.
+- **The −684 is root-caused and fixed** (#4091). Not the query widening, which
+  three attempts had assumed: `__extern_set` had no builtin-fn arm, so writes to
+  a builtin's non-writable `name`/`length` were deposited invisibly in the
+  closure bag. `propertyHelper.isWritable` writes *before* `isConfigurable`
+  deletes, so every `configurable: true` assertion failed. Pre-existing on main;
+  #4055 v1 only made it observable. Fixed at source (§10.1.9 no-op), with a
+  729/729 stratum control.
+- **#4061 landed 16/17 with 0/182 regressions** — and its more serious half was
+  never in the issue: `Object.create` dropped **every** accessor descriptor, so
+  `Object.create({}, {p:{get:()=>9}}).p` read `0` silently on main.
+- **G1 stage 1 landed at 0/124 flips, deliberately** (#4100). `verifyProperty`
+  is all-or-nothing, so the substrate prefix ships alone rather than as the
+  partial that would reproduce the −684 on its own stratum. Stages 2–4 carry
+  over with a written handoff.
+- **`--no-verify` had quietly become the default** and was disarming the
+  two-second prettier/biome gate along with the slow checks — that is how #4100
+  shipped an unformatted file. PR #4102 adds `SKIP_SLOW_PRECOMMIT=1`; the
+  checklist now bans `--no-verify` for commits.
+- **Local standalone measurement is blind on the propertyHelper population**
+  (#4147): `runTest262File` links no runtime-eval provider, so those files die
+  at instantiate and read as `fail`. Two lanes hit it independently in one
+  session; each pinned it only with a positive control (0/11, 0/36). Promoted
+  to the next window's first pull — it gates every #4098 successor stage.
+- Three silent-success traps banked: `prettier --check` on a `.tmp/` path checks
+  zero files and prints success; `git push` printed "Everything up-to-date"
+  while the server lacked the commit; agent worktrees seed from the **fork tip**
+  (non-ancestor of `upstream/main`, ~16 unlanded files).
+- Six issues filed (#4143, #4146, #4147, #4148, #4151, plus two recorded in
+  #4098's file). Handoff: `plan/agent-context/handoff-2026-08-04-es5-gap-window.md`.
