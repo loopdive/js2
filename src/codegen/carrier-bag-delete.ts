@@ -171,12 +171,7 @@ export function buildNonObjectDeleteArms(
       // keeps its answer bit-for-bit. `delete fn.name`/`fn.length` on a builtin
       // stays with `__builtinfn_delete` and never reaches here — that stratum is
       // the ~700 files whose regression cost #4055 v1 its -684.
-      then: [
-        ...bagArm,
-        ...buildInstanceTombstoneDeleteArm(ctx),
-        { op: "i32.const", value: 1 },
-        { op: "return" },
-      ],
+      then: [...bagArm, ...buildInstanceTombstoneDeleteArm(ctx), { op: "i32.const", value: 1 }, { op: "return" }],
     },
   ];
 }
