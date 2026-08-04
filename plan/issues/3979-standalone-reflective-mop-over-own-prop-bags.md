@@ -250,3 +250,52 @@ authoring agent's own count missed 6 of the 8.
 
 **Net +21 is still a real gain** and this is the 37 % lever, so the fix is worth
 having rather than reverting the slice.
+
+
+### Root-cause narrowed (2026-08-04), fix NOT applied
+
+Reproduced the single failing test on both sides in **standalone**:
+
+- BEFORE (#3979 reverted): `built-ins/Object/defineProperty/name.js` **passes**
+- AFTER: fails with `Test262Error: obj['name'] descriptor should be configurable`
+
+`verifyProperty` proves `configurable` by **delete → re-check**, so the failure
+is in the delete/hasOwn cycle, not in the descriptor read.
+
+**gOPD is exonerated by elimination.** Before #3979 the non-`$Object` branch was
+`primitiveReceiverArm`, which returns `undefined`; had gOPD gone down that path
+the test would have failed as "descriptor should exist", not "should be
+configurable". It passed, so the #2896 builtin-fn arm handles this receiver and
+returns early — and #3979 does not touch that arm.
+
+**Therefore the regression is in `__delete` / `__hasOwnProperty`.** All three
+helpers run their #2896 arm first, but that arm returns null for *two different
+reasons*: "receiver is not a builtin function" and "property was deleted". After
+a successful `delete fn.name`, `bfnGetMeta` returns null for the second reason,
+execution falls into the #3979 bag arm, and if a bag exists for that function
+receiver the bag answers instead of reporting absent — so `hasOwnProperty`
+still reports `true` and `verifyProperty` concludes non-configurable.
+
+**Why I did not land a fix:** the correct gate needs an *is-builtin-function*
+predicate distinct from *metadata-absent*. `bfnGetMetaIdx` conflates the two, so
+there is no way to express "builtin-fn receiver, property genuinely deleted →
+return absent, do NOT consult the bag" without adding that predicate. Guessing
+at it inside a shared MOP substrate risks trading 8 visible regressions for a
+silent wrong answer elsewhere.
+
+**Suggested shape for whoever picks this up:** add a cheap
+`__bfn_is_builtin(obj) -> i32` (or have `bfnGetMeta` return a tri-state), then in
+`__delete` / `__hasOwnProperty` / gOPD short-circuit to "absent" when the
+receiver is a builtin function and the metadata arm declined — never falling
+through to `bagSubstitutionArm` for that receiver class. Cover it with a
+standalone test over `verifyProperty(Object.defineProperty, "name", …)`; the
+family has no unit coverage today, which is why the original count reported −2
+instead of −8.
+
+### Unrelated crash found while probing
+
+A hand-written probe combining `Object.getOwnPropertyDescriptor` on a builtin
+function with `delete fn.name` fails to compile in standalone with an internal
+`TypeError: Cannot read properties of undefined (reading 'kind')`. Not minimised
+and not filed — flagging it here so it is not lost; it reproduces from
+`.tmp/probe/p.js` in the session that recorded this.
