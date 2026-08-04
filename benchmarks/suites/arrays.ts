@@ -38,10 +38,17 @@ function reduceSum(): void {
 }
 
 function indexOfSearch(): void {
+  // (#3898) Filled with a PERMUTATION, not with `i`. When `arr[i] === i` the
+  // whole search collapses to the identity `arr.indexOf(x) === x`, which the
+  // wasm lanes proved and constant-folded — they reported ~11 ns/op for a scan
+  // of ~5000 elements. 7919 is prime and coprime to 10000, so `i * 7919 % 10000`
+  // is a bijection on [0, 10000): every target still exists exactly once, at a
+  // position that is not derivable from its value.
   const arr: number[] = [];
-  for (let i = 0; i < 10000; i++) arr.push(i);
+  for (let i = 0; i < 10000; i++) arr.push((i * 7919) % 10000);
   let sum = 0;
   for (let i = 0; i < 1000; i++) sum += arr.indexOf(i * 10);
+  void sum;
 }
 
 function sliceSplice(): void {
@@ -180,7 +187,7 @@ export function run(): number {
 export function run(): number {
   const arr: number[] = [];
   for (let i = 0; i < 10000; i = i + 1) {
-    arr.push(i);
+    arr.push((i * 7919) % 10000);
   }
   let sum = 0;
   for (let i = 0; i < 1000; i = i + 1) {
