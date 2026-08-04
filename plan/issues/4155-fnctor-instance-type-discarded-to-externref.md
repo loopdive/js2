@@ -4,7 +4,7 @@ title: "why acorn's types cannot be inferred: 96.6% of `this.<field>` reads are 
 status: ready
 sprint: current
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-04
 priority: high
 horizon: xl
 feasibility: hard
@@ -264,13 +264,126 @@ roughly in increasing order of ambition:
 priced first. **Whatever is attempted, the #1712 note says the naive version
 regressed — reproduce that regression as a test before changing anything.**
 
+## Implementation Plan
+
+Option (1), standalone lane first, staged so every phase is independently
+mergeable and the prior regression is a committed test before any behavior
+moves.
+
+### Load-bearing facts the plan builds on (verified in source)
+
+- `compileFnctorNew` **already returns the struct ref** at the allocation
+  site — `src/codegen/expressions/new-super.ts:1626`
+  `return { kind: "ref", typeIdx: structTypeIdx }`. The instance is only
+  boxed when it flows into a position whose type comes from `resolveTsType`,
+  which is the single externref-ization point: `src/codegen/index.ts:7654-7688`.
+  Nothing needs to change at the `new` site.
+- Standalone **pre-reserves struct indices before compilation** —
+  `ctx.fnctorReservedTypeIdx` (`new-super.ts:1469`), populated by the escape
+  gate for every approved fnctor. So resolution can name the struct type
+  *before* the first `new F()` compiles, which kills the JS-host-mode ordering
+  problem (`funcConstructorMap` is populated lazily) for the standalone lane.
+- The documented regression is in **member-call dispatch**, not typing:
+  index.ts:7664 "the member-call static/dynamic split keys off this type, so
+  only the always-dynamic externref resolution is safe." Methods live on the
+  per-fnctor prototype `$Object` (#2660 S2, `context/types.ts:3369`), never in
+  the struct — a struct-typed receiver must NOT flip method calls to the
+  static path.
+
+### Phase 0 — commit the regression as a test (no behavior change)
+
+`tests/issue-4155-fnctor-shape-regression.test.ts`, both lanes:
+
+- The exact #1712 shape: `Parser.prototype.parse = function () { return new
+  Parser(...); }` — a prototype method returning a fresh instance, then
+  `p.parse().field` and `p.parse().method()` at the call site.
+- A fnctor instance stored to a field, passed as a param, and returned from a
+  plain function, each followed by a member call (the guard-cast-to-null
+  paths the #1712 note names).
+- Assert **execution results**, not representation — these must pass before
+  and after every later phase. This is the test `.tmp/dbg15.mts` G4/G5 never
+  became.
+
+### Phase 1 — resolve approved-standalone fnctor instance types to the reserved struct
+
+At index.ts:7672-7688: for `approvedStandaloneFnctor`, return
+`{ kind: "ref_null", typeIdx: ctx.fnctorReservedTypeIdx.get(sym.name) }`
+instead of `{ kind: "externref" }`. JS-host / wasi keep externref (the host
+MOP needs `$Object` identity; separate pricing later, if ever).
+
+- `ref_null`, not `ref` — the checker type reaches positions (uninitialized
+  locals, `null` seeds) where a non-nullable ref cannot be materialized.
+- Behind `JS2WASM_FNCTOR_TYPED_INSTANCES=1` until Phase 2 lands green, so the
+  flag flip is one line and A/B measurement is `env` only.
+- `coerceType` already handles `ref_null → externref` (`extern.convert_any`);
+  the reverse boundary (externref position → struct-typed position) is a
+  guarded `any.convert_extern` + `ref.cast` **that now targets a type that
+  exists at runtime** — the precise thing #1712's synthesized-shape cast got
+  wrong.
+
+### Phase 2 — member dispatch on a struct-typed receiver (where the old attempt died)
+
+Split by *member kind*, defaulting dynamic:
+
+- **Data fields present in `deriveFnctorFields`' list**
+  (`fnctor-escape-gate.ts:1413`): direct `struct.get` / `struct.set`,
+  honoring the #2847 presence flag when one exists. This is the payoff —
+  today each of these reads is a `__extern_get` call (14,035 lines, linear
+  scan).
+- **Everything else** — prototype methods, fields not in the struct,
+  computed names: box the receiver (`extern.convert_any`) and take the
+  **existing** dynamic path (native dispatcher receiver arm + per-fnctor
+  prototype `$Object`). Zero new dispatch machinery; the receiver arm for
+  `__fnctor_<name>` already exists (index.ts:7667-7670).
+- Touch points: `member-get-dispatch.ts`, `member-set-dispatch.ts`,
+  `expressions/call-receiver-method.ts`. The rule that must survive review:
+  **a member call is NEVER static off the struct type** — only data-field
+  access is.
+
+### Phase 3 — field slots retype themselves (the acceptance criterion)
+
+No new code — a dependency to verify. Once Phase 1 lands,
+`recordThisField`/`deriveFnctorFields` sees `this.type = types$1.eof ::
+TokenType` resolve to `(ref null $__fnctor_TokenType)` instead of externref,
+because slot typing goes through the same `resolveTsType`. Cross-fnctor
+ordering is safe for the same reason Phase 1 is: all approved fnctors'
+indices are reserved before any body compiles. Expected on acorn:
+`Parser.type`, `Parser.options`, `Node.loc`, `Token.loc` — exactly the
+census's `discarded` bucket → 0.
+
+### Phase 4 — measure, then decide about the flag
+
+- Census re-run: `discarded` 4 → 0, `unknown` unchanged (43 — that residue
+  is #743's, not this issue's).
+- `__extern_get` self-time vs the 5.6% #3780 baseline, same corpus and lane;
+  per-parse `--trace-gc` delta.
+- Standalone test262 in `merge_group` — the real gate; PR-level green is a
+  designed no-op.
+- Flag default flips on only with all of: Phase 0 tests green, no standalone
+  regression, measured win reported in this issue.
+
+### Risks
+
+| risk | containment |
+| --- | --- |
+| the unrecorded G4/G5 regression had a second mechanism | Phase 0 fixtures cover field/param/return flow, not just the named shape; any trap after Phase 1 bisects to one phase |
+| methods writing fields the ctor never seeds | not in the struct's field list → stays on the dynamic path by the Phase 2 default |
+| `instanceof`, `Object.create(F.prototype)`, ctor identity | untouched: registration (`__register_fnctor_instance`) and `compileFnctorNewAsObject` keep operating on the boxed form at those sites |
+| oracle-ratchet | resolution-site changes live in existing dispatch files; any new checker query routes through `ctx.oracle`, and slot typing reuses types already computed |
+
+Sequencing: Phase 0 is its own small PR (pure tests, lands regardless).
+Phases 1+2 land together behind the flag. Phases 3+4 are verification.
+Overall XL per the frontmatter; Phase 0 alone is S.
+
 ## Scope
 
 - [ ] Reproduce the #1712 regression as a committed failing test (the acorn
       `Parser.prototype.parse = function () { return new Parser(...) }` shape it
       names), so any fix is measured against a known break rather than a memory.
+      → Implementation Plan Phase 0.
 - [ ] Price option (1): map the checker's fnctor instance type to the registered
       `__fnctor_F` struct, keeping methods on the prototype `$Object`.
+      → Implementation Plan Phases 1-2 (priced: standalone lane first, flag-gated).
 - [x] Env-gated census of fnctor field-type provenance (house style of
       `alloc-census.ts` / `proven-receiver-stats.ts`) reporting, per field:
       checker type vs slot actually emitted. **Landed** as
