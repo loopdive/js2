@@ -1010,3 +1010,672 @@ where a naive proxy did not; keep it if you touch the file.
 
 Also available: `JS2WASM_COMPILE_PROFILE`, `JS2WASM_CHECK_FRAMES`,
 `JS2WASM_FRAME_OPS`, `JS2WASM_FRAME_STAGES`, `JS2WASM_TRACE_SLOT`.
+
+---
+
+## Verification Plan — #4133/#4134 shared remainder (capturedGlobals promotion)
+
+Written 2026-08-04 by the verification architect. The mechanism (#2029 family-A
+promotion of unreachable captured bindings to module globals) is specced
+separately in `## Implementation Plan`. This section answers only: how do we
+know it is correct, and what will it break. Everything marked **verified** below
+was run or read in this session; the workflow-gate claims cite the file read.
+
+### 0. Ground truth at plan time (verified 2026-08-04)
+
+- `uri.all.js` probe: **0 out-of-frame functions, valid 131,546-byte module**
+  (`JS2WASM_CHECK_FRAMES=1 … compile-project-probe.ts …/uri-js/dist/es5/uri.all.js`,
+  ran in ~2 min including TS program load). This is the do-not-regress floor.
+- The residual is exactly two functions on the ESLint Tier 1a graph:
+  `__fnctor_MurmurHash3_new` (worst 24 / frame 15) and `assertASTDidntChange`
+  (worst 51 / frame 4). Both fail **loudly** today (invalid module at emit).
+  That loud failure is the current safe state; any change that converts it into
+  a silent wrong value or a null trap is strictly worse than not shipping.
+
+### 1. Unit / equivalence tests to write
+
+Convention (project-wide, and enforced in review on this issue): every test
+states in a header comment **what the unfixed base does**, with the measured
+wrong value or the measured `success:false`. A test that passes on base is
+decoration, not evidence — see the recorded lesson in
+`tests/issue-4133-cross-module-function-name-collision.test.ts` (3 of 4 rungs
+pass on base because small bodies inline). Measure base via file-copy A/B
+(`cp src/... .tmp/`, `git show HEAD:src/... > src/...`), **never `git stash`**.
+
+New file `tests/issue-4134-unreachable-capture-promotion.test.ts` (same
+`compileMulti` + import-backfill harness as the existing #4133/#4134 guards):
+
+| # | construct | expected (node) | non-vacuity proof on unfixed base |
+|---|-----------|-----------------|-----------------------------------|
+| T1 | imurmurhash shape: IIFE holding `let cache` + a constructor-style `function MurmurHash3()` that reads/writes `cache`, called both with and without `new` from module scope; wide (20+ local) IIFE body so `cache`'s slot is out of any synthesized frame | the concrete hash/cache value node computes for the fixture | base: `success:false`, no binary — out-of-frame local at emit (the `__fnctor_MurmurHash3_new` class). Assert `success===true` **and** the value; compile success alone is vacuous |
+| T2 | cross-module unreachable callee: module A = UMD-style factory with wide frame + nested capturing `equal`; module B calls its **own** `equal` (fast-deep-equal shape); B's caller frame is 4 slots | B's caller returns B's `equal` result (e.g. 1), A's factory returns its own sum | base: this is the `assertASTDidntChange` class — `success:false` at emit. NOTE: distinguish from `tests/issue-4133-nested-name-scope.test.ts`, which passes on current main because its capture IS reachable there; this rung must use a shape where the shipped scoping still resolves to the out-of-scope nested binding |
+| T3 | mutation visibility: capture reassigned **after** the closure/nested fn is created, then the promoted-path callee is invoked | callee sees the updated value (ref-cell semantics must survive promotion) | on base the whole fixture fails to emit (same T1 shape carrier); on a *reachable* control variant (same code, narrow host frame) the value must be identical before/after the fix — that control is the anti-overreach probe |
+| T4 | factory invoked twice (hazard 4 — see §3 matrix) | two independent states | base fails to emit; the point of the rung is that the FIX must not share |
+| T5 | no-change guard: re-run the three existing guards (`issue-4133-*.test.ts` ×2, `issue-4134-transitive-nested-captures.test.ts`) plus a binary-hash A/B on `uri.all.js` (sha256 of the emitted binary, base vs fix) | byte-identical uri.all.js binary, or a named justified diff | these are already non-vacuous against their own bases; the binary hash is the "promotion fired only where nothing worked before" check |
+
+Equivalence: run the full suite locally once
+(`pnpm exec vitest run tests/equivalence.test.ts` or `node
+scripts/equivalence-gate.mjs` per shard) and require an **empty diff vs base**
+(the standard set on this issue: 32 failed / 1611 passed on both sides, same
+membership). Any membership change is an iterate signal even if counts match.
+
+### 2. npm-library / real-bundle checks (all local; NONE of these run in any PR gate — see §5)
+
+Commands, cheapest first:
+
+1. **uri.all.js floor** (~2 min, verified):
+   ```sh
+   JS2WASM_CHECK_FRAMES=1 node --max-old-space-size=4096 --import tsx \
+     tests/helpers/compile-project-probe.ts \
+     node_modules/.pnpm/uri-js@4.4.1/node_modules/uri-js/dist/es5/uri.all.js \
+     '{"allowJs":true,"target":"gc","platform":"node","allowFs":true}'
+   ```
+   Must stay `0 function(s) … out-of-frame`, `valid:true`. Also hash the binary
+   for the T5 byte-identity check.
+2. **lodash full bundle** — the `createHybrid` canary. The recompile-path
+   attempt on this issue broke lodash `createHybrid` and **no committed test
+   caught it** (verified: `createHybrid` appears nowhere in `tests/`; the
+   tier suites cover memoize/flow/partial/negate per-module, not the bundle).
+   So probe the bundle directly:
+   ```sh
+   JS2WASM_CHECK_FRAMES=1 node --max-old-space-size=6144 --import tsx \
+     tests/helpers/compile-project-probe.ts \
+     node_modules/.pnpm/lodash@4.17.23/node_modules/lodash/lodash.js \
+     '{"allowJs":true,"target":"gc","platform":"node","allowFs":true}'
+   ```
+   `createHybrid` is a nested function inside lodash's IIFE capturing many
+   IIFE locals — exactly the promotion's blast zone. Expect: no new breaches,
+   compile parity with base (A/B the probe output). Then run the runtime
+   suites that exist: `pnpm exec vitest run tests/stress/lodash-tier1.test.ts
+   tests/stress/lodash-tier2.test.ts tests/lodash-compile.test.ts`.
+3. **Hazard-3 guards (scoping regressions)**:
+   `pnpm exec vitest run tests/issue-165.test.ts
+   tests/issue-2200-annexb-block-fn-hoist.test.ts tests/issue-1303.test.ts
+   tests/issue-4133-nested-name-scope.test.ts` — the exact files the
+   parent-block-vs-enclosing-function mistake regressed last time.
+4. **ESLint Tier 1a** (~15 min per iteration — budget for exactly two runs:
+   one to confirm 2 → 0 breaches + binary emits, one after any subsequent
+   change):
+   ```sh
+   JS2WASM_CHECK_FRAMES=1 node --max-old-space-size=6144 --import tsx \
+     tests/helpers/compile-project-probe.ts <tier1-entry.ts> \
+     '{"allowJs":true,"target":"gc","platform":"node","allowFs":true}'
+   ```
+   (entry per `tests/stress/eslint-tier1.test.ts`; also run that test file.)
+   This is the acceptance criterion of the whole effort; do not iterate against
+   it — iterate against T1/T2 fixtures and use ESLint only to confirm.
+5. Do **not** run `pnpm run generate:npm-compat` (tens of minutes; CI
+   regenerates post-merge, and `--only` cannot write the artifact anyway).
+
+### 3. Mutation-semantics probe matrix
+
+The promotion moves a binding from a per-activation frame slot (or ref cell)
+to **one module global**. That is only correct when the binding's hosting scope
+is entered at most once per module instance. These probes decide whether the
+predicate the implementation uses ("host provably single-invocation") actually
+holds. Each row is a test in the T-file above or a sibling; each needs a
+node-computed expected value in the assertion, and each must be run on the
+control variant (reachable capture, narrow frame) to prove the fix did not
+change already-correct behaviour.
+
+| construct | expected behaviour | failure mode the probe catches |
+|---|---|---|
+| factory called twice; each call's closure increments its captured counter | two independent counters: `[1, 1]`, not `[1, 2]` | promoted global shared across activations — the headline hazard 4 |
+| capture reassigned after closure creation, closure called before and after | closure observes the reassignment (live binding) | promotion snapshotting the value instead of the cell |
+| recursive host: outer fn recurses, each depth's nested fn reads that depth's binding | per-depth values | one global serving all depths (last-write-wins) |
+| loop-created closures over `let` (3 iterations, closures called after loop) | `[0, 1, 2]` | promoted global collapses to `[2, 2, 2]` |
+| re-entrancy: nested fn's body calls back into the host before reading the capture | inner activation's mutation does not corrupt the outer's binding | global torn between interleaved activations |
+| single-run IIFE / module-init host (the actual target shape: imurmurhash, uri-js UMD) | plain correct values | (this is the case promotion is FOR — it must pass, and is the only shape the promotion should fire on) |
+
+Design consequence to hand the implementer: rows 1–5 are shapes where
+promotion is **unsound**. The verification stance is: the promotion predicate
+must exclude them (they keep today's behaviour — which for reachable captures
+is correct, and for unreachable ones is the loud emit failure), and the probes
+prove the predicate's edges. If the implementation instead makes rows 1–5 take
+the promoted path, expect exactly the class of silent wrong answers this issue
+family exists to kill — that is an abandon signal (§6), not a bug to patch
+around.
+
+### 4. Detecting the +1200 null_deref class BEFORE the merge queue
+
+History: suppressing the out-of-scope binding emitted `ref.null.extern` at the
+call and cost **+1200 null_deref** (measured, on Temporal-with-proposals) —
+found only in the merge_group trap ratchet. The promotion has the same failure
+shape available: a promoted global that is read before module init writes it,
+or that init never writes on some path, is a null at the call site → the same
+explosion, and the #3189 ratchet **hard-fails pass→trap with no valve**
+(verified in `scripts/diff-test262.ts` `evaluateTrapCategoryGrowth`: only
+baseline `fail` rows are eligible for a named `trap-growth-allow` (#3596);
+baseline `compile_error`/`compile_timeout`/`skip`/absent are excluded outright
+(#3595/#4141); baseline `pass` has no valve).
+
+Local pre-flight, in cost order:
+
+1. **Static canary, seconds**: `JS2WASM_CHECK_FRAMES=1` on uri.all.js + the
+   T1/T2 fixtures. Catches out-of-frame regressions, NOT null-at-runtime.
+2. **Scoped test262 A/B, ~minutes to ~tens of minutes** — the actual
+   null_deref detector. The runner honours `TEST262_PATH_FILTER`
+   (pipe-separated substrings, verified in `tests/test262-runner.ts`) and
+   `TEST262_INCLUDE_PROPOSALS=1`:
+   ```sh
+   TEST262_INCLUDE_PROPOSALS=1 TEST262_PATH_FILTER="Temporal" \
+     pnpm run test:262            # once on base, once on fix (file-copy A/B)
+   ```
+   plus a closure-semantics slice on the default population:
+   `TEST262_PATH_FILTER="language/statements/function|language/expressions/function|language/statements/let|annexB/language/function-code"`.
+   Then diff categories from the two jsonls
+   (`benchmarks/results/test262-results-<ts>.jsonl`):
+   ```sh
+   jq -r 'select(.error_category=="null_deref" or .error_category=="illegal_cast" or .error_category=="oob" or .error_category=="unreachable") | .file' <run>.jsonl | sort > /tmp/traps-{base,fix}
+   diff /tmp/traps-base /tmp/traps-fix
+   ```
+   **Decision input is the diff of trap FILES, not the pass count** — the
+   ratchet gates on category membership. Any file appearing on the fix side
+   only, whose base status was pass/fail, blocks: fix before PR.
+3. **Full local conformance** — see §5 for what fits.
+
+### 5. Trustworthy local conformance signal (honest costs)
+
+- `JS2WASM_LOCAL_CI=1 ./scripts/local-ci.sh` — **fits and is the recommended
+  single full-signal run** before opening the PR: idempotent setup + full
+  test262 at `COMPILER_POOL_SIZE=$(nproc)`; recorded baseline ~68 min
+  wall-clock / ~2.8 GB peak on a 4-core/16 GB container (script header,
+  read this session). Run it once on the finished fix, not per iteration —
+  per-iteration signal comes from §4's scoped runs. To A/B against base
+  cheaply, prefer the scoped runs; a second full 68-min base run is only
+  warranted if the scoped diffs are ambiguous.
+- The recorded constraints stand: `--shard` does not partition as documented
+  (one shard observed at 1h36m), and the unsharded `npm test` full suite OOMs
+  in the default ~512 MB vitest worker. For the root-suite batches you need
+  (equivalence + the named guard files), either run named files or raise the
+  worker heap: `VITEST_FORK_MAX_OLD_SPACE_SIZE=2048 npm test -- <files…>`
+  (knob verified in `vitest.config.ts`).
+- Whatever local run you use, the merge_group diffs against the **fetched
+  baseline** (`scripts/fetch-baseline-jsonl.mjs`, 6h freshness default) — for
+  any local triage, read the fetch helper's stderr age report; a stale-cache
+  comparison manufactures phantom deltas.
+
+### 6. What a green PR does and does not prove (verified against workflow files)
+
+Read this session from `.github/workflows/test262-sharded.yml` and `ci.yml`:
+
+| gate | PR (`pull_request`) | merge_group |
+|---|---|---|
+| `cheap gate (main-ancestor + lint)` | runs | runs |
+| `quality` (oracle-ratchet, func/loc budgets, **PR-touched root tests**, guard suite #3552) | runs | runs |
+| `equivalence-gate` (8 shards vs `scripts/equivalence-baseline.json`) | runs (path-gated) | runs |
+| test262 shard matrix | **does not run** — `test262-shard` has `if: push/workflow_dispatch` only; `test262-shard-mg` has `if: merge_group` only (test262-sharded.yml ~580 and ~827; the header comment at line 4 claiming "runs at PR-time" is **stale** — trust the job `if:`s) | runs (102-runner mg matrix) |
+| `check for test262 regressions` (#3467 per-SHA diff) | **green no-op** — `HOST_RAN=false`, prints "No js-host … artifacts to diff" (regression-gate job, ~line 1630) | real gate |
+| #3189 trap ratchet, #1668 catastrophic guard | no-op (same job) | real gate |
+| standalone floor/net (#1897/#2097) | no-op | real — `merge-report` step is `if: … && github.event_name == 'merge_group'` (line ~1577) |
+| root suite (~2,100 files incl. the #4133/#4134 guards, when untouched) | **not run** — post-merge only (`issue-tests.yml`: push:main + 6h cron; population is `tests/` root, non-recursive) | not run |
+| `tests/stress/*` (lodash/eslint tiers) | **not run anywhere in CI** (not in issue-tests population — root readdir only; not in guard-suite.json — verified) | not run |
+
+Consequences for the dev:
+
+- A fully green PR proves lint/types/budgets, equivalence parity, and that the
+  tests **this PR touches** pass. It proves **nothing** about test262, traps,
+  or the standalone floor. The first conformance verdict the queue gives is a
+  merge_group park (`hold` + `auto-park-bot:merge-group-failure`) — which is
+  precisely how all four prior regressions in this area were found. §4 exists
+  so this one is found at the desk instead.
+- Because this PR adds/modifies the #4133/#4134 test files, they DO run at PR
+  time (quality's changed-root step) — but the lodash/eslint tier evidence is
+  local-only and must be pasted into the PR description, since no gate will
+  reproduce it.
+- If the fix legitimately converts a baseline-`fail` file into a trap flavour
+  change, the valve is a **named** `trap-growth-allow` (#3596) in this issue
+  file's frontmatter — and note #3735: the declaration is only read if the
+  same PR touches a test262-paths-matched file (this PR touches `src/**`, so
+  it is).
+
+### 7. Decision criteria
+
+**Ship** when all of:
+1. ESLint Tier 1a: 2 → 0 out-of-frame functions AND a binary emits (probe §2.4).
+2. uri.all.js: still 0 breaches, valid; binary byte-identical to base (or every
+   byte of diff explained by a promotion that provably fired on a
+   previously-invalid shape).
+3. All §1 tests pass and each was demonstrated to fail (wrong value or
+   `success:false`) on base via file-copy A/B.
+4. Mutation matrix rows 1–5 keep node semantics (promotion did not fire) and
+   row 6 computes node's values.
+5. Scoped test262 A/B (§4.2): zero new trap-category files whose baseline
+   status was pass/fail; net Δ ≥ 0 on the scoped slices.
+6. Equivalence: identical membership vs base.
+7. lodash bundle probe + tier suites + `issue-165`/`annexb`/`issue-1303`
+   guards: identical to base.
+8. One full local-ci run completed with pass count ≥ the committed baseline
+   summary and trap counts ≤ baseline per category.
+
+**Iterate** (fix on branch, re-run the affected probe only) when:
+- A single mutation-matrix row fails → narrow the promotion predicate; do not
+  widen tests to match the implementation.
+- Scoped test262 shows a small (<10) trap or fail delta traceable to a named
+  promoted binding → tighten the predicate or the init-ordering, re-A/B.
+- ESLint drops to 1 breach → the two residuals are different sub-shapes
+  (fnctor-ctor vs cross-module callee); treat the survivor as its own fixture,
+  reduce it (the delta-debug tooling from this issue makes that cheap), and
+  extend — not generalise — the fix.
+
+**Abandon the mechanism** (report back to the architect pair, do not force it)
+when any of:
+- Per-activation isolation (matrix rows 1, 3, 4, 5) cannot be preserved
+  without the promotion predicate collapsing to "hosts that run exactly once"
+  AND the two real targets turn out not to satisfy that predicate (e.g. the
+  uri-js factory is instantiated twice in the ESLint graph — the emit dump in
+  this file already shows `toUnicode`/`toASCII` compiled twice; verify the
+  factory-activation count FIRST, it is a one-probe check and would kill the
+  design early).
+- The scoped Temporal A/B reproduces a broad null_deref growth (≥ ~50) that
+  tracing shows is structural (promoted globals read before init on the
+  harness path) rather than a fixable ordering bug.
+- Making the callee reachable changes which callee wins for any currently
+  *passing* test (a #1177-shaped regression: the wrong-slot read is
+  load-bearing somewhere). The #1177 history says: prefer keeping the loud
+  emit failure + the #4133 interim "refuse loudly" diagnostic over shipping a
+  semantics change that trades invalid-module for silent wrong answers.
+
+Fallback if abandoned: land the "refuse loudly" diagnostic from #4133's
+acceptance criteria for the unreachable-capture case (a hard, named compile
+error instead of an invalid module), which converts the residual from
+"mystery emit RangeError" to an actionable message without touching semantics.
+
+---
+
+## Implementation Plan (2026-08-04, architect — shared remainder of #4133/#4134)
+
+Full copy also at the session scratchpad (`spec-mechanism.md`). #4133's plan
+points here and adds only the naming-specific slice.
+
+## 0. Kill-check result (read first — it reshapes the plan)
+
+A sibling verification lane raised: if the declaring frames are multi-activation,
+#2029-style promotion is unsound for the very cases that motivate this work.
+Checked directly:
+
+- **`__fnctor_MurmurHash3_new`** — declaring frame is imurmurhash's bare
+  module-top-level IIFE (`(function(){ var cache; function MurmurHash3(...){…}
+  … cache = new MurmurHash3(); module.exports = MurmurHash3; }())`,
+  `node_modules/.pnpm/imurmurhash@0.1.4/.../imurmurhash.js`). Invoked exactly
+  once at module evaluation; CJS caches evaluation. **Single activation,
+  verified by reading the source.**
+- **`assertASTDidntChange`** — the prepended captures belong to uri-js's UMD
+  factory: outer IIFE called once at module top level; the factory function
+  expression is referenced three times inside the wrapper, all call positions,
+  on mutually exclusive branches. **Single activation at runtime.**
+- The sibling's "uri-js factory compiled twice" observation **does not hold on
+  current main**: `JS2WASM_EMIT_DUMP=1` over `uri.all.js` alone shows **zero
+  duplicated defined-function names** (`parse`/`serialize`/`equal`/… each appear
+  once). The historical 21/23 + 63/65 duplication was per-REFERENCE-site
+  `__closure_N` materialisation of `toUnicode`/`toASCII` (each referenced twice),
+  not a twice-compiled or twice-activated factory. Verified by running the probe
+  on this checkout (`[js2:frames] 0 breaches`, no `uniq -d` hits on names).
+
+**Branch landed: promotion stays, gated on an explicit single-activation
+predicate — but it is the primary fix for only ONE of the two survivors.**
+
+The second survivor, `assertASTDidntChange`, is a **misresolved callee** (#4133's
+bare-name fallthrough reaching uri-js's nested `equal` instead of
+fast-deep-equal's capture-free module export). Promoting uri-js's factory locals
+would make that module *emit* while still calling the *wrong* `equal` — it
+converts a loud invalid-module failure into a silent wrong answer, which this
+project has explicitly ranked worse. For that case the fix is resolution
+(#4133's plan) plus the diagnostic below; promotion must NOT fire as a
+workaround for misresolution.
+
+## 1. Design overview — additive write-through mirror
+
+Three deliberate departures from `promoteAccessorCapturesToGlobals`
+(`src/codegen/closures.ts:541-778`), which is the template but not the shape:
+
+1. **Additive, not a rebind.** The accessor promotion does `localMap.delete` and
+   reroutes every declaring-frame read through the global. We do NOT: the local
+   stays the primary store, and every write to the binding in the declaring
+   frame additionally mirrors into the global (`local.get; global.set`). In-frame
+   codegen semantics (including the #1177-load-bearing wrong-slot reads and
+   per-activation locals under recursion) stay byte-compatible; only sites that
+   today emit *provably invalid* Wasm read the mirror.
+2. **Planned before bodies compile, emitted during the declaring body's
+   compile.** The need is discovered at a FOREIGN call site that may compile
+   before or after the declaring frame (CJS cycles; fnctor synthesis order). So
+   a syntactic pre-pass mints the globals and registers them before any body
+   compiles; the declaring frame emits the value copies / box aliases when it
+   compiles. Runtime ordering is correct by module-init order (provider init
+   runs at `require` time, before any consumer call).
+3. **Keyed by declaration node, not bare name.** Bare-name keying is the #4133
+   disease; the plan is `Map<ts.FunctionDeclaration, …>` and each promoted
+   binding's global belongs to one declaring frame. The name-keyed
+   `ctx.capturedGlobals` / `ctx.capturedBoxGlobals` registration (needed because
+   all existing consumers are name-keyed) is first-wins with a conflict set —
+   a colliding later registration is refused, leaving that binding unpromoted
+   (→ diagnostic, loud) rather than silently read cross-module.
+
+No signature change anywhere: lifted functions keep their leading capture
+params; Phase-0 reservation (`hoistFunctionDeclarations`) is untouched. This
+sidesteps the reservation/compile-agreement trap that broke the first
+`transitiveSiblingCaptures` attempt (#4134 history, constraint 1).
+
+## 2. Eligibility (question 1)
+
+A capture of nested function F, declared in frame D, is promoted iff ALL hold:
+
+- **(E1) F escapes D** — F's identifier is referenced anywhere in D outside
+  call-callee position (assigned, returned, passed as argument, `exports.x =`,
+  `module.exports =`, `new F` counts via the value reference). Self-reference
+  inside F does not count. Both real cases qualify (`module.exports =
+  MurmurHash3`; `exports.equal = equal` etc. in the UMD factory).
+- **(E2) D is single-activation**, established syntactically by
+  `isSingleActivationFrame` (§3). Recursion of D, D being itself a
+  capture-carrying escapee, or an unrecognized shape ⇒ ineligible.
+- **(E3) the binding is declared directly in D's body** — not inside a loop
+  (per-iteration `let`/`const` semantics), not a `catch` parameter. `var`,
+  top-of-body `let`/`const`, and D's own parameters are eligible.
+- **(E4) no name conflict** — the bare name is not already registered in
+  `ctx.capturedGlobals`/`ctx.capturedBoxGlobals` by a different owner (first
+  wins; loser is unpromoted and recorded in `capturePromotionConflicts`).
+
+Mutation semantics under these conditions are EXACT, not approximate:
+
+| shape | verdict |
+| --- | --- |
+| immutable capture, single-activation D | value mirror ≡ local (single store of each write, one activation) |
+| mutable capture, single-activation D | box-alias: the SAME ref cell the declaring frame and siblings write through is aliased in a global — live write-through, identical to `capturedBoxGlobals` today |
+| factory called twice producing two closures | D fails E2 → not promoted → diagnostic if actually unreachable-called; in-frame closures unaffected either way |
+| recursive D | fails E2 |
+| loop-body binding | fails E3 |
+| two frames with same-named captures | E4: first promoted, second refused → diagnostic |
+
+## 3. The analysis pass (question 2)
+
+**New file** `src/codegen/closures/capture-promotion.ts`.
+
+`planCrossFrameCapturePromotions(ctx, sourceFiles)` — called from
+`generateMultiModule` AND the single-module generate path
+(`src/codegen/index.ts`), after module resolution / CJS rewrite (final ASTs),
+BEFORE the per-source body-compile loop.
+
+Walk: for each source file, find function-like nodes that pass
+`isSingleActivationFrame` (below); within each such D, find nested
+`FunctionDeclaration`s with a nonempty syntactic capture set and test E1.
+
+- The capture set MUST be computed with the same helpers Phase-0/compile use —
+  `addFunctionOwnLocals` + `collectReferencedIdentifiers` +
+  `transitiveSiblingCaptures` (`src/codegen/statements/nested-declarations.ts:221`,
+  mirroring `preRegisterCapturingSibling` at :1800-1816) — so the plan's verdict
+  and `compileNestedFunctionDeclaration`'s capture list agree (the lesson that
+  cost the earlier attempt a "every call returns 0" bug).
+- Mutability per capture: same predicate the capture collector uses (assignment
+  scan). Wasm type for the value global: `resolveWasmType` on the checker type —
+  the SAME derivation the lifted signature's capture params use, so the global's
+  type matches what consumers expect. (Use existing sanctioned helpers; do not
+  add raw `checker.*` queries — oracle-ratchet, #1930/#3273.)
+
+`isSingleActivationFrame(fn)` (also exported for tests):
+- (a) fn is a `FunctionExpression`/`ArrowFunction` whose ONLY reference is being
+  the callee of a `CallExpression` (paren-skipping) that is an
+  `ExpressionStatement` at SourceFile top level — the bare IIFE (imurmurhash);
+- (b) the UMD idiom: fn is an ARGUMENT to a case-(a) IIFE call, and inside the
+  IIFE callee the corresponding parameter is referenced only in call-callee
+  positions (uri-js). Honest note: a pathological wrapper calling its factory
+  twice defeats this; accepted and documented — the standard UMD boilerplate
+  never does, and the blast radius is bounded to bindings that today emit-crash.
+- (c) the CJS module wrapper synthesized by the rewrite, if it materializes as a
+  function (verify against the rewrite's output shape; if module top level stays
+  top level, (c) is vacuous).
+- In all cases: no self-reference by name inside fn.
+
+Stores (new context fields, `src/codegen/context/types.ts` +
+`src/codegen/context/create-context.ts`):
+
+```ts
+capturePromotionPlan: Map<ts.FunctionDeclaration /* the NESTED decl */, {
+  ownerFn: ts.Node;                    // the declaring frame D's AST node
+  captures: Map<string, {
+    kind: "value" | "box";
+    globalIdx: number;                 // minted at plan time (nextModuleGlobalIdx)
+    widened: boolean;                  // value kind: ref widened to ref_null
+    refCellTypeIdx?: number;           // box kind
+  }>;
+}>;
+capturePromotionConflicts: Set<string>;  // E4 losers, for diagnostics
+// on FunctionContext:
+captureMirrorGlobals?: Map<string, { kind: "value"|"box"; globalIdx: number }>;
+```
+
+At plan time, also register name-keyed for the existing consumers:
+`ctx.capturedGlobals.set(name, globalIdx)` (+`capturedGlobalsWidened`) for value
+kind, `ctx.capturedBoxGlobals.set(name, {globalIdx, refCellTypeIdx})` for box
+kind — first-wins per E4. Globals are minted with default inits (0 / null /
+`ref.null`), exactly like `promoteAccessorCapturesToGlobals` (closures.ts:689-707).
+
+## 4. Emission — producer side (the declaring frame)
+
+Hook in `compileNestedFunctionDeclaration`
+(`src/codegen/statements/nested-declarations.ts`, at the registration block
+~:1166-1221 where `nestedFuncCaptures.set` runs and the DECLARING `fctx` is the
+function's `fctx` parameter):
+
+If `ctx.capturePromotionPlan.has(stmt)`:
+
+1. For each planned **value** capture: emit into the DECLARING fctx (at the
+   current — hoist — position) `local.get <localIdx>; [coerce]; global.set
+   <globalIdx>` (initial copy — covers D's parameters and anything already
+   initialized), and record the name in `fctx.captureMirrorGlobals`.
+2. For each planned **box** capture: eagerly box in the declaring fctx if not
+   already boxed — same sequence `promoteAccessorCapturesToGlobals` uses at
+   closures.ts:630-650 (`local.get; struct.new cell; local.set __boxed_<name>;
+   localMap.set; boxedCaptures.set`), then `local.get box; global.set
+   <boxGlobalIdx>`. Eager boxing at hoist time is correct: later writes flow
+   through the cell (the standard mutable-capture machinery), and the global
+   aliases the one live cell from the start — so no null-box window exists for
+   foreign readers after module init. Follow the #2623/#2967 rule: the plan's
+   `refCellTypeIdx` derives from the capture's INNER value type, matching what
+   call-site consumers derive via `getOrRegisterRefCellType(valType)`.
+3. Nothing else in this function changes; note `ctx.currentFunc` is switched to
+   `liftedFctx` further down (:1164) — emit the mirror init BEFORE that switch,
+   into the declaring `fctx`.
+
+**Write-through mirror hooks** (value kind only; boxes are write-through by
+sharing the cell): after any store to a named local whose fctx has a
+`captureMirrorGlobals` "value" entry, append `local.get <idx>; global.set
+<globalIdx>`. Sites:
+
+- `src/codegen/expressions/assignment.ts` — identifier-LHS store path (the
+  existing `capturedGlobals` write handling around :791-795 is the adjacent
+  pattern; add the mirror on the LOCAL-store branch).
+- `src/codegen/statements/variables.ts` — declaration-initializer store.
+- `src/codegen/expressions/operator-assignment.ts`, `unary-updates.ts` — compound
+  assignment / `++`/`--` stores.
+- Destructuring assignments route through the same local-store helpers; verify
+  with a fixture rather than auditing every path (a missed exotic write path
+  yields a stale mirror — see Risks).
+
+Since `captureMirrorGlobals` is per-FunctionContext, the hooks cannot fire in
+lifted siblings, generators, or unrelated functions — no cross-fctx name
+ambiguity at the write sites.
+
+## 5. Emission — consumer side + the diagnostic (question 3)
+
+The three consumers of an unreachable capture already have `capturedGlobals` /
+`capturedBoxGlobals` arms that fire exactly when `fctx.localMap` misses:
+
+- call-site prepend, mutable box arm: `src/codegen/expressions/call-identifier.ts:2041-2050`
+- call-site prepend, value arm: `call-identifier.ts:2051-2059` and `:2093-2103`
+- closure-VALUE materialisation: `src/codegen/closures/funcref-as-closure.ts:120-159`
+- declaring-/foreign-frame identifier reads and writes (covers the fnctor ctor
+  body reading `cache` directly): `src/codegen/expressions/identifiers.ts:789+`,
+  `assignment.ts:440/533/791`.
+
+**No changes to those arms.** Once the plan registers the name-keyed entries,
+they light up for the promoted bindings. (This is why `funcref-as-closure`'s
+guard measured ineffective — `localMap` empty there means it needs a GLOBAL to
+fall through TO; the plan provides it. Do not re-add a slot-substitution guard.)
+
+**The diagnostic** replaces today's deliberate "let the wrong index through" in
+the terminal fallbacks — but ONLY in the provably-invalid configuration:
+
+New helper in `src/codegen/closures/capture-source-slot.ts`:
+
+```ts
+export function captureSourceKind(fctx, cap):
+  "lifted-param" | "in-frame" | "unreachable" 
+```
+
+`"unreachable"` iff: not in `liftedCaptureNames`, `cap.outerLocalIdx >=
+fctx.params.length + fctx.locals.length`, and no `localMap` entry — i.e. the
+exact condition under which the emitted `local.get` cannot validate.
+`captureSourceSlot` itself keeps byte-identical behavior.
+
+At the two terminal fallbacks — `call-identifier.ts:2060-2084` (mutable, raw
+`cap.outerLocalIdx` box-build) and `:2104-2118` (value,
+`captureSourceSlot`), plus `funcref-as-closure.ts:139-151` and `:160-163` —
+when `captureSourceKind` says `"unreachable"` AND no promotion arm fired:
+`ctx.errors.push` a compile error naming the callee, the capture, the declaring
+function, the call-site function, and (if applicable) that the name lost an E4
+conflict or that the callee resolved out of lexical scope (#4133); then emit the
+historical instruction as a placeholder (compile already fails; the emitter is
+never reached).
+
+Why a diagnosed compile error and not the alternatives:
+
+- **Ref-cell boxing alone cannot fix it** — the box would live in the declaring
+  frame's locals, exactly as unreachable as the value. Boxing only helps when
+  paired with a global alias, which IS the box-kind promotion above. So "box it"
+  is not a distinct fallback; it is the eligible-mutable path.
+- **`ref.null.extern` suppression is measured catastrophic** (+1200
+  `null_deref`, #4134 history) because it fired for calls that today reach a
+  working (or harmlessly wrong) in-frame configuration. The diagnostic here is
+  gated on `"unreachable"`, which is exactly the set of sites that today produce
+  a module that FAILS VALIDATION — no working program can regress, and the
+  Temporal class (in-range or resolvable) is untouched by construction.
+- In-range wrong-slot reads (the #1177 load-bearing class) do not satisfy
+  `"unreachable"` and keep their current behavior. Not negotiable — 100+ test262
+  regressions the last time this restraint was dropped.
+
+## 6. IR path or legacy path (question 4)
+
+**Legacy AST→Wasm.** The entire lifted-capture mechanism (`nestedFuncCaptures`,
+cap-prepend, `funcref-as-closure`) is legacy-path; the IR front-end REJECTS
+capture-carrying call graphs (`call-graph-closure` is an unintended fallback
+bucket — `scripts/ir-fallback-baseline.json`), so there is no IR lowering to
+fix and nothing here changes `src/ir/`. Per `docs/architecture/codegen-axes.md`
+this is a legacy-hack area the IR will eventually adopt wholesale; keep
+`capture-promotion.ts` free of legacy-context entanglement (pure functions over
+AST + a thin context adapter) so the IR closure conversion can reuse the
+analysis (`isSingleActivationFrame`, escape test) later.
+
+## 7. Ordering constraints
+
+1. Plan pass AFTER CJS rewrite / module resolution (needs final ASTs), BEFORE
+   the first body compiles (consumers read name-keyed maps at compile time).
+2. Plan-time global minting precedes all other global minting done during body
+   compile — indices are stable; no fixup needed. (Do NOT mint globals lazily
+   mid-consumer: a consumer can compile before the declaring frame.)
+3. Producer emission in `compileNestedFunctionDeclaration` must run before
+   `ctx.currentFunc = liftedFctx` (nested-declarations.ts:1164) and target the
+   declaring `fctx`.
+4. Phase-0 reservation and lifted signatures are UNCHANGED — the plan must not
+   alter capture lists or param layouts (constraint 1 of the
+   `transitiveSiblingCaptures` fix).
+5. The runtime ordering claim (provider module init before consumer use) holds
+   for CJS require semantics; a true init cycle where the consumer calls during
+   the provider's init reads the global's default — same value a local would
+   hold at that point, so not worse than node semantics violations we already
+   have in cycles.
+
+## 8. Edge cases
+
+- **fnctor ctor body reads** (`__fnctor_MurmurHash3_new`): the ctor compiles
+  the user body in its own fctx (`src/codegen/expressions/new-super.ts`,
+  `compileNewFunctionDeclaration`); its reads of `cache` resolve via
+  `identifiers.ts`'s existing `capturedGlobals` arm once promoted. The `new` may
+  live in a different module than the IIFE — covered because E1 (escape via
+  `module.exports`) triggers the plan regardless of where the `new` is.
+- **`cache = new MurmurHash3()` inside the IIFE**: a write AFTER the fn
+  declaration — covered by the assignment mirror hook; also note `cache` is
+  mutable-captured (assigned in D) → box kind → alias covers it without any
+  mirror hook at all.
+- **TDZ-flagged captures** (`hasTdzFlag`): promote the flag exactly as
+  `promoteAccessorCapturesToGlobals` does (closures.ts:741-763,
+  `ctx.tdzGlobals`); the consumer prepend's flag sourcing already treats
+  cross-fctx-unavailable flags as initialized (`i32.const 1`), so this is
+  belt-and-suspenders, not load-bearing.
+- **Same package, two versions** (eslint-visitor-keys 3.4.3/5.0.1): distinct
+  AST nodes → distinct plan entries → distinct globals; the bare NAME collides →
+  E4 first-wins; the loser's unreachable uses get the diagnostic. Acceptable
+  interim; the real fix is re-keying the name-keyed consumer maps by owner,
+  which is follow-up scope (it touches `identifiers.ts`/`assignment.ts`
+  consumers).
+- **`preRegisterOnly` / `reuseReservedEntry` paths** through
+  `compileNestedFunctionDeclaration`: the producer hook must be idempotent per
+  decl (emit the mirror init once — guard with a `Set<ts.FunctionDeclaration>`
+  on ctx).
+- **Standalone/WASI lanes**: nothing here is host-dependent; globals and ref
+  cells work in both. Keep the standalone floor green (#1897/#2097).
+
+## 9. What could regress
+
+- **Equivalence drift in declaring frames**: mirror `global.set`s are additive
+  instructions in real bodies. Expect wasm-byte diffs but identical results;
+  gate with the full equivalence suite (diff vs base must be results-empty).
+- **A missed write path → stale value mirror**: silent wrong value at a foreign
+  read. Bounded to promoted bindings; covered by fixture (4) below and by
+  preferring box-kind whenever the binding is assigned anywhere after
+  declaration (cheap over-approximation: if the capture collector marks it
+  mutable OR the plan's own assignment scan finds any post-declaration store,
+  use box kind — then the only value-kind mirrors are single-assignment
+  bindings, whose one store is the declaration initializer hook).
+  **Recommended: adopt this narrowing** — value kind ONLY for
+  never-reassigned-after-init bindings; everything else box kind. It removes
+  the assignment.ts/operator-assignment.ts/unary-updates.ts hooks from the
+  critical path entirely (only variables.ts init remains), shrinking both the
+  diff and the risk.
+- **The diagnostic firing on previously-"working" graphs**: only possible where
+  emit was already invalid (validation failure). Message quality matters more
+  than reach; include the #4133 out-of-scope hint.
+- **Global-index assumptions**: `capturedBoxGlobals` participates in a
+  global-index fixup (see assignment.ts:524 comment) — plan-time minting is
+  before any shifting, but verify the fixup shifts plan-minted indices too.
+- **`merge_group`-only gates**: PR-level green is a no-op for test262; the real
+  regression check happens in the queue. Watch `null_deref` buckets
+  specifically (the suppression failure mode) — should be structurally
+  impossible here, but it is the named hazard of this issue family.
+
+## 10. Tests & validation
+
+`tests/issue-4134-cross-frame-capture-promotion.test.ts`, rungs (verify each is
+non-vacuous against unfixed base — expect base to fail 1, 2, 3):
+
+1. Two modules: A = IIFE with local `k`, nested capturing `f`, `module.exports
+   = f`; B calls `f()`. Assert node-equivalent result (base: invalid module).
+2. imurmurhash shape: IIFE-nested constructor function using a captured
+   `cache`, exported, consumer does `new F()` (fnctor path). Base: the
+   `__fnctor_*_new` breach.
+3. Mutable capture: consumer call mutates through the promoted box; a second
+   in-frame call in A observes the write (live write-through).
+4. Single-assignment value capture initialized AFTER the nested decl (hoisting
+   order) — foreign read sees the initialized value, not the default.
+5. Two factories with same-named captures — first promoted, second's unreachable
+   use produces the diagnostic (assert the error message, not a crash).
+6. Recursion / factory-called-twice fixture — NOT promoted (E2), in-frame
+   behavior identical to base (equivalence).
+
+Validation runs:
+- `JS2WASM_CHECK_FRAMES=1` on `uri.all.js` (must stay 0) and on the ESLint
+  Tier 1a graph (**2 → expected 1**: the MurmurHash3 breach closes; the
+  `assertASTDidntChange` breach closes only with #4133's resolution slice, or
+  becomes the diagnostic — see #4133's plan for the paired change).
+- Full equivalence suite, results-diff empty vs base.
+- `JS2WASM_FRAME_TRAP=<fn>` for any surprise (accessor-on-FunctionContext
+  detail — see the note in #4134; keep it if touching frame-trap.ts).
+
+## 11. Explicitly out of scope
+
+- Re-keying `capturedGlobals`/`capturedBoxGlobals`/`nestedFuncCaptures` by
+  owner identity (the full flat-namespace retirement) — follow-up issue.
+- The #4133 trampoline/allocator-locator per-owner discriminator
+  (`ensureFuncClosureSingleton`) — tracked in #4133, unchanged by this spec.
+- Multi-activation declaring frames: deliberately ineligible; their unreachable
+  uses become the diagnostic. If real code hits it, that is a new issue with
+  its own design (likely an environment-record object, not globals).
