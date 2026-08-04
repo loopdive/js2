@@ -33,14 +33,34 @@
  * must retain `$Object` identity for the host MOP, and `__extern_get` /
  * host-bridge member access is the coherent representation.
  *
- * Off unless `JS2WASM_FNCTOR_TYPED_INSTANCES=1`. With the flag unset this
- * returns null on the first line and the compile path is byte-identical.
+ * ON by default; set `JS2WASM_FNCTOR_TYPED_INSTANCES=0` to restore the
+ * pre-#4155 externref resolution. See {@link fnctorTypedInstancesEnabled} for
+ * the measurements behind the default and why the opt-out has to stay.
  */
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 
+/**
+ * ON by default since 2026-08-04. `JS2WASM_FNCTOR_TYPED_INSTANCES=0` restores
+ * the pre-#4155 externref resolution.
+ *
+ * The default is justified by the real corpus, not by fixtures. Standalone
+ * acorn: 943,140 → 866,627 bytes (−8.1%), zero function imports, all four
+ * runtime canaries unchanged (2,3,4,5); the provenance census's `discarded`
+ * bucket 4 → 1, recovering `Parser.type` (141 reads), `Node.loc` and
+ * `Token.loc`. The survivor, `Parser.options`, is boxed by the #2937
+ * object-hash-consumer path rather than by #1712, so it is out of reach here
+ * and this lever is exhausted at the slot level. Also green with the flag on:
+ * 54 tests across the four #2660 fnctor suites plus the #4155 Phase 0 suite,
+ * and 140/140 across 26 object/struct/class/prototype equivalence files.
+ *
+ * The opt-out is NOT decoration. Standalone **test262** only runs in the
+ * `merge_group` re-validation and therefore could not gate this pre-merge, so a
+ * one-variable revert must stay available without a code change. If the queue
+ * parks this, set the variable rather than reverting the commit.
+ */
 export function fnctorTypedInstancesEnabled(): boolean {
-  return process.env.JS2WASM_FNCTOR_TYPED_INSTANCES === "1";
+  return process.env.JS2WASM_FNCTOR_TYPED_INSTANCES !== "0";
 }
 
 /**
