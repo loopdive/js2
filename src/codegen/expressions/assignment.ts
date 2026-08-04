@@ -3844,7 +3844,20 @@ function compilePropertyAssignment(
   if (structTypeIdx === undefined || !fields) return null;
 
   const fieldIdx = fields.findIndex((f) => f.name === fieldName);
-  if (fieldIdx === -1) return null;
+  if (fieldIdx === -1) {
+    // (#4149) The receiver resolved to a KNOWN struct shape that provably lacks
+    // this own field — a post-hoc property ADD (`var e = {}; e.f = fn`). The old
+    // `return null` here made the whole assignment vanish: the caller's fallback
+    // evaluated the RHS for side effects and dropped it, so nothing was ever
+    // stored and every later dynamic read (`__extern_get` through an alias of
+    // the same object) answered null. That is exactly the CommonJS/UMD wrapper
+    // shape (`exports.parse = …` then `m.exports.parse(...)` — acorn defect #6).
+    // Route the write through the dynamic sidecar instead, the same terminal the
+    // unresolved-shape branch above uses: on standalone an empty-literal object
+    // is a native `$Object`, so `__extern_set` stores and the aliased
+    // `__extern_get` read finds it; on gc/host the host sidecar does the same.
+    return compilePropertyAssignmentExternSet(ctx, fctx, target, value, fieldName);
+  }
   const presenceSlot = presenceSlotOf(fields, fieldName);
 
   const structSelfType: ValType = { kind: "ref_null", typeIdx: structTypeIdx };

@@ -7494,6 +7494,32 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       }
       return { kind: "ref", typeIdx: ctx.structMap.get(name)! };
     }
+    // (#4149) EMPTY anonymous object shape (`{}` — zero properties, zero call
+    // signatures) on a host-free target: resolve to externref, never to the
+    // zero-field closed struct. An empty object literal is BUILT as a native
+    // `$Object` (`__new_plain_object`) — same fact the field-level widening in
+    // ensureStructForType and the pure-index-signature guard above rely on — so
+    // a binding typed `ref_null $__anon_empty` guard-casts that `$Object` to
+    // NULL, silently severing the alias. That is the acorn/UMD wrapper shape:
+    // `var e = m.exports; e.f = fn; m.exports.f()` had BOTH `e` and the
+    // re-read alias nulled, so the write landed nowhere and the call answered
+    // null. Zero properties means no static field access can ever rely on the
+    // struct layout, so keeping the value on its dynamic `$Object` rep loses
+    // nothing. Named classes resolved above are untouched.
+    // ALL lanes: gc/host builds `{}` as a host plain object (externref) — the
+    // guarded cast nulls the binding there identically (host read then throws
+    // `Cannot read properties of null`), so the widening is lane-independent.
+    // No name gate: a `{}` type reached through a variable carries that
+    // variable's symbol name (e.g. `x`), and anything legitimately struct-typed
+    // (named class/interface) already returned through the structMap branch
+    // above — only anonymous/empty shapes fall through to here.
+    if (
+      tsType.getProperties().length === 0 &&
+      tsType.getCallSignatures().length === 0 &&
+      tsType.getConstructSignatures().length === 0
+    ) {
+      return { kind: "externref" };
+    }
     // Check anonymous type registry
     const anonName = ctx.anonTypeMap.get(tsType);
     if (anonName && ctx.structMap.has(anonName)) {

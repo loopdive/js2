@@ -11391,6 +11391,20 @@ assert._isSameValue = isSameValue;
             return ret === wrappedObj ? obj : _unwrapForHost(ret);
           }
           if (typeof fn !== "function") {
+            // (#4149) A closure stored via __extern_set/__extern_set_strict
+            // while the module's `start` was still running (module_init runs
+            // inside WebAssembly.instantiate, BEFORE setInstance wires
+            // callbackState) was saved RAW — _maybeWrapCallableUnknownArity had
+            // no exports to consult, so the wrap was skipped. The alias-write
+            // shape (`e.f = function…; m.exports.f()`) hits exactly this.
+            // Wrap it lazily at call time, when exports ARE reachable.
+            if (_isWasmStruct(fn)) {
+              const resolved = _maybeWrapCallableUnknownArity(fn, callbackState);
+              if (typeof resolved === "function") {
+                const ret = resolved.apply(wrappedObj, wrappedArgs);
+                return ret === obj || ret === wrappedObj ? obj : _unwrapForHost(ret);
+              }
+            }
             // (#1712) Static method on a callable closure struct (function-style
             // constructor): `wrapHostValue` wrapped the receiver into a bare JS
             // function bridge (`_wrapWasmClosureUnknownArity`), which has no view
