@@ -35,6 +35,13 @@ loc-budget-allow:
   # `fnctor-field-provenance.ts` module rather than the god-file, per this
   # gate's own guidance.
   - src/codegen/fnctor-escape-gate.ts
+  # +2 (Phase 1): one import, plus turning the `return { kind: "externref" }` at
+  # the #1712 resolution site into `resolveFnctorInstanceType(...) ?? { kind:
+  # "externref" }`. That site IS the single externref-ization point for fnctor
+  # instance types, so the hook cannot live anywhere else; all of the decision
+  # logic (flag, standalone check, gate-approval check, reserved-index lookup)
+  # is in the new `fnctor-typed-instances.ts` module.
+  - src/codegen/index.ts
 ---
 
 # #4155 — the type is known and thrown away
@@ -374,6 +381,90 @@ census's `discarded` bucket → 0.
 Sequencing: Phase 0 is its own small PR (pure tests, lands regardless).
 Phases 1+2 land together behind the flag. Phases 3+4 are verification.
 Overall XL per the frontmatter; Phase 0 alone is S.
+
+## 2026-08-04 — Phases 0 and 1 implemented; two plan corrections
+
+Both landed behind `JS2WASM_FNCTOR_TYPED_INSTANCES=1` (default OFF ⇒ the
+compile path is byte-identical). What implementing them changed about the plan:
+
+### Correction 1 — Phase 0 found three PRE-EXISTING bugs, and the cited shape is not one of them
+
+The plan assumed the #1712 fixtures would be a green baseline to protect. They
+are not. Of 10 standalone fixtures written against `main` @ `61ff9cc7a`, **3
+fail today**, and the shape #1712 actually names **passes**:
+
+| fixture | expected | main |
+| --- | ---: | ---: |
+| `F.prototype.m = function(){ return new F(…) }` + field read | 42 | 42 ✓ |
+| …+ method call at the call site | 42 | 42 ✓ |
+| instance in another fnctor's field, read via method | 42 | 42 ✓ |
+| instance passed as a parameter | 42 | 42 ✓ |
+| prototype-ALIAS definition (acorn's real shape) | 42 | 42 ✓ |
+| **instance returned from a plain function, then member-called** | 42 | **0** |
+| **instance round-tripped through an array element** | 42 | **0** |
+| **field added by a method, never seeded in the ctor** | 42 | **NaN** |
+
+All three are valid JS, all three are the #2660 S3 mechanism: an instance whose
+`new F()` site the gate does not classify `reconstruct` keeps a bespoke struct
+with **no `$proto`**, so dynamic reads miss the prototype walk and yield
+0/undefined instead of trapping. The gate classifies from the *syntactic* uses
+of the `new` expression, so an instance leaving through a return, a collection,
+or a late-added field escapes its analysis entirely.
+
+Committed as `it.fails` in `tests/issue-4155-fnctor-shape-regression.test.ts` —
+they assert the bug still exists, so whoever fixes one gets a RED test telling
+them to promote it. Two of the three (return position, collection round-trip)
+are shapes acorn uses constantly, so **Phase 1 cannot be called done while they
+are broken**.
+
+### Correction 2 — the #1712 branch is nearly unreachable, and only field slots reach it
+
+The plan (and this issue's own §5) implied the branch fires wherever a fnctor
+instance flows. Measured, it does not:
+
+- In **standalone** the branch is gated on `approvedStandaloneFnctor` — a
+  gate-**approved** (`reconstruct`) fnctor. Non-approved (`keep-typed`) fnctors
+  never enter it and **already** carry their closed struct.
+- More decisive: it needs `resolveTsType` to be called **with the instance
+  type**. For a *binding* it is called with the binding's declared type, which
+  in acorn-shaped code is `any` — so the branch is skipped for essentially every
+  local. Three separate fixtures confirmed byte-identical output with the flag
+  on before one finally reached it.
+- The position that **does** reach it is the one the census measured: a
+  **field slot**, where `deriveFnctorFields` passes the RHS type directly. And
+  it only carries a name under `.js` + `checkJs` (TS synthesizes an instance
+  type from the ctor's `this.*` writes); the same fixture written in `.ts`
+  reports `rhs:any` and is `unknown`, not `discarded`.
+
+So "#1712 discards a type it HAS" is true, but its blast radius is **field slots
+in checkJs sources**, not instance flow generally. That is consistent with the
+census's 4/96 and further narrows it.
+
+### What Phase 1 does, measured
+
+On the acorn configuration (`.js` + `checkJs` + standalone):
+
+```
+flag off:  P.type = externref  [rhs: TokenType]     95,013 bytes
+flag on:   P.type = ref_null   [rhs: TokenType]     95,054 bytes   ← reserved __fnctor_TokenType
+```
+
+Census `discarded` 1 → 0 on that fixture; execution unchanged. 54 tests across
+the four `#2660` fnctor suites plus the Phase 0 suite pass **with the flag on**,
+so the #1712 regression does **not** reproduce from the resolution change alone.
+That is a real result but a bounded one: Phase 2 (member dispatch on a
+struct-typed receiver) is where the note says it died, and Phase 2 is not
+written yet.
+
+### Revised next steps
+
+1. **Phase 2** — member dispatch, data-fields-only static, everything else
+   dynamic. Unchanged from the plan.
+2. **Fix the three Phase 0 failures** — promoted ahead of Phase 3. They are
+   independent of the flag (they fail with it off) and they block any honest
+   claim that instance typing works.
+3. **Phase 3/4 as written**, with the census's `discarded` bucket measured on
+   real acorn rather than a fixture.
 
 ## Scope
 

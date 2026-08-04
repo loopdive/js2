@@ -4,6 +4,7 @@ import { emitToBoolean } from "./coercion-engine.js";
 import { emitWasiErrorConstructor, fillExternGetErrorProps } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
+import { resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
@@ -7683,7 +7684,8 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       // itself callable) — the function VALUE type (callable) must keep its
       // closure-wrapper resolution.
       if (isFnCtorType && tsType.getCallSignatures().length === 0) {
-        return { kind: "externref" };
+        // (#4155 Phase 1) Opt-in: map onto the ALREADY-RESERVED runtime struct.
+        return resolveFnctorInstanceType(ctx, sym?.name) ?? { kind: "externref" };
       }
     }
 
