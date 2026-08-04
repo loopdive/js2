@@ -4,8 +4,8 @@ id: 4133
 title: "Same-named top-level functions in different modules share one slot and silently compute the wrong answer"
 status: in-progress
 created: 2026-08-02
-updated: 2026-08-02
-assignee: ttraenkler/claude
+updated: 2026-08-04
+assignee: unassigned  # authoring lane stood down after PR #4074 landed the first slice
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -250,3 +250,42 @@ closure/trampoline-focused tests, not just the #4133 rungs.
 - Whether two versions of the *same package* (the eslint-visitor-keys 3.4.3 /
   5.0.1 case) need anything beyond per-unit naming — they are distinct units by
   construction, so probably not, but it has not been verified.
+
+---
+
+# POST-MERGE STATE — PR #4074 landed a slice, 2026-08-04
+
+`status` stays `in-progress`. Both halves of the *naming* defect shipped; the
+residual is the reachability problem tracked jointly with #4134.
+
+## What landed
+
+- **Top-level collision** — `funcMap` is rebound per source, so two modules
+  declaring the same top-level function name no longer share one slot.
+- **Nested collision** — a nested declaration's bare name is scoped to its
+  **enclosing function**, not to the parent block. The scope choice is
+  load-bearing: an earlier revision walked only to the parent block and
+  regressed Annex B §B.3.3 block-hoisted declarations (#165) plus lodash #1303.
+
+Both were **silent wrong answers**, not crashes — they compile and validate
+cleanly and only the computed value detects them. A factory whose nested `equal`
+lost to another module's `equal` returned `0` where node gives `306`.
+
+Regression guards: `tests/issue-4133-cross-module-function-name-collision.test.ts`
+and `tests/issue-4133-nested-name-scope.test.ts`, both verified non-vacuous
+against the unfixed base.
+
+## What remains
+
+The out-of-scope nested binding case, where the correct callee is not reachable
+from the calling frame. Neither available end is safe today:
+
+| out-of-scope nested binding | consequence |
+| --- | --- |
+| suppress it | call falls to `ref.null.extern` → `null_deref` +1200 (measured) |
+| let it through | wrong-frame capture index → module fails to validate |
+
+The shipped code lets it through. A real fix makes the callee *reachable* via
+the #2029 family-A promotion to `capturedGlobals`, which changes mutation
+semantics and needs a spec first. This is the same remainder as #4134's — the
+two should be specced together, not separately.

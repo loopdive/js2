@@ -2,10 +2,10 @@
 horizon: m
 id: 4134
 title: "Codegen leaves out-of-frame local references; reproduces in ONE file (uri.all.js)"
-status: ready
+status: in-progress
 created: 2026-08-02
-updated: 2026-08-02
-assignee: unassigned
+updated: 2026-08-04
+assignee: unassigned  # partial slice landed in PR #4074; remainder needs a spec
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -939,3 +939,74 @@ A correct fix has to make the *right* callee reachable, which is the same
 promotion work. Until then the branch takes the "let it through" end, because an
 invalid module is a loud failure and a null-trap explosion is a conformance
 regression that also parks the merge queue.
+
+---
+
+# POST-MERGE STATE — PR #4074 landed a slice, 2026-08-04
+
+`status` stays `in-progress`, **not** `done`: the PR that closed ten sibling
+issues shipped only the first half of this one. Recording the boundary so the
+next lane starts from the remainder rather than re-deriving it.
+
+## What landed
+
+The out-of-frame capture guard. `main` had independently landed the equivalent
+as a shared helper — `captureSourceSlot` (`src/codegen/closures/capture-source-slot.ts`)
+— and the merge took main's version, so the rule now lives in one place:
+
+> prefer the mapped slot when the name is one of this lifted function's own
+> capture params, **or** when `outerLocalIdx` lands outside the frame entirely
+> (where the historical read is provably invalid Wasm, so there is no behaviour
+> to preserve).
+
+Restricting the second disjunct to *out-of-frame* is what makes it safe where
+#1177's blanket `localMap`-first lookup was not: every in-frame call stays
+byte-identical.
+
+Measured effect: `uri.all.js` went from 8 out-of-frame functions and no binary
+to **0 and a valid 131 KB module**. ESLint went from 14 to **2**.
+
+## What remains — and why re-indexing will not close it
+
+Two functions still emit out-of-frame locals:
+
+| function | worst index | frame |
+| --- | ---: | ---: |
+| `__fnctor_MurmurHash3_new` | 24 | 15 |
+| `assertASTDidntChange` | 51 | 4 |
+
+These are **not** more of the same bug. The right callee is not merely
+mis-indexed, it is **unreachable** from the frame doing the call, so no choice
+of index is correct. The mechanism that fixes it already exists: the #2029
+family-A promotion of a capture to `capturedGlobals`. Applying it here changes
+mutation semantics for the promoted binding, so it needs a spec before code —
+see `/architect-spec`.
+
+## Negative results — do not re-run these
+
+- **A third guard site** (`funcref-as-closure.ts`, the closure-**value**
+  materialisation path, as opposed to the call-site prepend) was implemented and
+  **measured ineffective**: `localMap` is empty there, so the guard falls through
+  to the identical index. It was briefly claimed here as "the last blocker" —
+  that was wrong and was retracted on the PR. The merge dropped it in favour of
+  main's shared helper.
+- **A recompile path** (`funcMapOwnerDecl` + `restoreShadowedFuncBindings`) broke
+  lodash `createHybrid` and was backed out entirely.
+- **Suppressing the out-of-scope nested binding** — i.e. emitting
+  `ref.null.extern` rather than a wrong index — trades an invalid module for a
+  `null_deref` explosion (+1200 on Temporal, measured). The shipped code
+  deliberately picks "let it through": an invalid module fails loudly at
+  validation, whereas a null-trap explosion is a silent conformance regression.
+  That trade is the residual this issue still owns.
+
+## Instrumentation left in place (env-gated, inert by default)
+
+`JS2WASM_FRAME_TRAP=<fn>` (`src/codegen/frame-trap.ts`) reports, with a stack,
+the moment an instruction referencing an out-of-frame local is appended to a
+function's body. It installs the accessor on the **FunctionContext**, not on
+`fctx.body` — `body` is reassigned by the `savedBodies` swap, so a proxy on the
+array stops observing after the first swap. That detail is what made it work
+where a naive proxy did not; keep it if you touch the file.
+
+Also available: `JS2WASM_COMPILE_PROFILE`, `JS2WASM_CHECK_FRAMES`,
+`JS2WASM_FRAME_OPS`, `JS2WASM_FRAME_STAGES`, `JS2WASM_TRACE_SLOT`.
