@@ -4383,10 +4383,7 @@ export function generateModule(
 
     // Closed compiler structs are not `$Object` hash maps. Fill the native
     // Object.hasOwn / hasOwnProperty predicates from the complete shape table.
-    // (#4098 G1 s1) Fill the per-instance tombstone natives FIRST: the three
-    // ladders below bake `call __instance_field_deleted` into their screens, and
-    // the carrier predicate needs the COMPLETE user-class struct set.
-    fillInstanceTombstones(ctx);
+    fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructExternGetArms(ctx);
@@ -6518,10 +6515,7 @@ export function generateMultiModule(
     fillTypedMemberGetF64Dispatch(ctx); // (#3673) typed f64 twins
 
     // Mirror the single-source closed-struct own-property finalizer.
-    // (#4098 G1 s1) Fill the per-instance tombstone natives FIRST: the three
-    // ladders below bake `call __instance_field_deleted` into their screens, and
-    // the carrier predicate needs the COMPLETE user-class struct set.
-    fillInstanceTombstones(ctx);
+    fillInstanceTombstones(ctx); // (#4098 G1 s1) BEFORE the ladders below: they bake its call
     fillClosedStructHasOwnArms(ctx);
     fillClosedStructOwnPropertyNamesArms(ctx);
     fillClosedStructExternGetArms(ctx);

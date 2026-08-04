@@ -90,12 +90,7 @@ import {
   reserveCarrierBagVisibility,
 } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
-import {
-  buildInstanceTombstoneDeleteArm,
-  buildTombstoneScreen,
-  buildTombstoneSkip,
-  reserveInstanceTombstones,
-} from "./instance-tombstones.js"; // (#4098 G1 s1) per-instance own-property deletability
+import { buildTombstoneScreen, buildTombstoneSkip, reserveInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
@@ -2753,13 +2748,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // module for why the bag consult is tri-state and strictly additive.
     reserveCarrierBagDelete(ctx);
     const body: Instr[] = [
-      ...buildNonObjectDeleteArms(ctx, {
-        bfnDeleteIdx,
-        objectTypeIdx,
-        anyLocal: 2,
-        resultLocal: 5,
-        tailArms: buildInstanceTombstoneDeleteArm(ctx),
-      }),
+      ...buildNonObjectDeleteArms(ctx, { bfnDeleteIdx, objectTypeIdx, anyLocal: 2, resultLocal: 5 }),
       // o = cast<$Object>(any) ; e = __obj_find(o, key)
       { op: "local.get", index: 2 },
       { op: "ref.cast", typeIdx: objectTypeIdx },
@@ -6514,10 +6503,8 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
           ]
         : [{ op: "i32.const", value: 1 }];
     return [
-      // (#4098 G1 s1) The tombstone screen runs BEFORE the field arms, because
-      // each arm below `return`s UNCONDITIONALLY on a field-name match — a
-      // screen placed after them could never run. Narrowing only: it turns
-      // `true` into `false` for a key an explicit `delete` tombstoned.
+      // (#4098 G1 s1) BEFORE the field arms: each arm below returns unconditionally
+      // on a name match, so a screen after them could never run. Narrowing only.
       ...buildTombstoneScreen(ctx, [{ op: "i32.const", value: 0 }, { op: "return" }]),
       ...structReceiverGuard,
       {
@@ -6646,9 +6633,7 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
           { op: "extern.convert_any" },
           { op: "call", funcIdx: objVecPushIdx },
         ];
-        // (#4098 G1 s1) A field an explicit `delete` tombstoned is no longer an
-        // own property, so it must not be enumerated either. Keyed by the
-        // literal field name, since this ladder has no key parameter.
+        // (#4098 G1 s1) A tombstoned field is not an own property ⇒ not enumerated.
         const pushLive = buildTombstoneSkip(
           ctx,
           [...nativeStringLiteralInstrs(ctx, field.name), { op: "extern.convert_any" }],
@@ -6949,10 +6934,8 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     }
   }
   fn.body.unshift(
-    // (#4098 G1 s1) Tombstone screen ahead of every field arm — the arms below
-    // `return` unconditionally on a name match, so this cannot go after them.
-    // A fresh instruction array (never a shared one): finalize remaps bodies in
-    // place and a shared tree gets double-remapped (#1719 / the DCE remap note).
+    // (#4098 G1 s1) Screen ahead of every field arm (see fillClosedStructHasOwnArms).
+    // Fresh Instr objects: finalize remaps bodies in place, a shared tree twice.
     ...buildTombstoneScreen(ctx, [
       ...(undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" as const }]),
       { op: "return" as const },
