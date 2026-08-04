@@ -202,19 +202,16 @@
         --t262-edition-text-muted: var(--text-muted);
       }
       .edition-legend-grid {
-        display: flex;
-        flex-direction: column;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.7rem 1rem;
         margin-top: 0.8rem;
-        border-top: 1px solid rgba(255, 255, 255, 0.06);
       }
       .edition-legend-item {
         display: grid;
-        grid-template-columns: minmax(96px, auto) 1fr auto;
-        align-items: center;
-        gap: 1rem;
+        gap: 0.3rem;
         min-width: 0;
-        padding: 0.55rem 0.4rem;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 0.5rem;
         border-radius: 8px;
         transition: background 0.14s ease;
       }
@@ -227,42 +224,46 @@
       .edition-legend-item.dimmed {
         opacity: 0.4;
       }
-      .edition-legend-name-group {
-        display: grid;
-        gap: 0.15rem;
+      .edition-legend-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
         min-width: 0;
       }
       .edition-legend-name {
-        font-size: 0.85rem;
-        font-weight: 700;
-        letter-spacing: 0.01em;
-        color: var(--text);
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-muted);
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .edition-legend-ratio {
-        color: var(--text-muted);
-        font-size: 0.72rem;
+        color: var(--text);
+        font-size: 0.8rem;
         font-variant-numeric: tabular-nums;
-        white-space: nowrap;
       }
       .edition-legend-trend-slot {
         min-width: 0;
-        height: 32px;
+        height: 22px;
       }
       .edition-legend-trend {
         display: block;
         width: 100%;
-        height: 32px;
+        height: 22px;
       }
       .edition-legend-rate {
         font-family: var(--mono);
         font-weight: 700;
         font-variant-numeric: tabular-nums;
-        font-size: 0.8rem;
-        padding: 0.25rem 0.65rem;
+        font-size: 0.72rem;
+        padding: 0.15rem 0.5rem;
         border-radius: 999px;
         text-align: center;
         white-space: nowrap;
+        flex-shrink: 0;
         background: rgba(63, 185, 80, 0.16);
         color: var(--pass);
       }
@@ -1058,16 +1059,16 @@
             { className: "edition-legend-item" + (isActive ? " active" : "") + (isDimmed ? " dimmed" : "") },
             el(
               "div",
-              { className: "edition-legend-name-group" },
+              { className: "edition-legend-top" },
               el("div", { className: "edition-legend-name" }, label),
-              el(
-                "div",
-                { className: "edition-legend-ratio" },
-                `${row.pass.toLocaleString()} / ${row.total.toLocaleString()}`,
-              ),
+              el("div", { className: "edition-legend-rate" + rateTier }, `${row.rate}%`),
             ),
             trendSlot,
-            el("div", { className: "edition-legend-rate" + rateTier }, `${row.rate}%`),
+            el(
+              "div",
+              { className: "edition-legend-ratio" },
+              `${row.pass.toLocaleString()} / ${row.total.toLocaleString()}`,
+            ),
           );
 
           legendHost.appendChild(item);
