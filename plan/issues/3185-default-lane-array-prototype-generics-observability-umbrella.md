@@ -172,14 +172,20 @@ Top failure shapes, with the confirmed mechanism read from the test bodies:
                                     property get method
 ```
 
-**Confirmed mechanism** (test sources read directly, not inferred from paths):
+**Confirmed mechanism** (test sources read directly, plus `src/codegen/hof-native.ts`):
 the iteration reads a **dense snapshot** of the receiver instead of performing the
-spec's per-index `HasProperty` + `Get`, which must walk the prototype chain and
-re-invoke accessors; and `length` is read **once up front** rather than re-read
-through `Get` (with `ToUint32`/`ToLength`) on each step, so mid-iteration
-`length` mutation and accessor-`length` array-likes are both invisible.
-Non-Array receivers (`Date`, `String` object, plain array-like) take the same
-snapshot path.
+spec's per-index `HasProperty` + `Get`, which must walk the **prototype chain**
+and invoke accessors. Non-Array receivers (`Date`, `String` object, plain
+array-like) take the same snapshot path.
+
+**Correction — this is NOT a per-step `length` re-read.** The spec fixes `len`
+once (§23.1.3.15 step 2 and analogues) and `__hof_*` already does that; its
+header says so explicitly. `15.4.4.19-8-b-15` passes in a real engine because the
+loop runs to the ORIGINAL bound and the now-out-of-range index resolves through
+`Array.prototype["2"]` — a prototype lookup, not a re-read. Adding a
+per-iteration `length` re-read would be incorrect and slower. The `length`-side
+gap is narrower: `LengthOfArrayLike` must be a real `[[Get]]` (once, before the
+loop) so an accessor `length` is invoked — `15.4.4.19-2-9`.
 
 **Sizing caveat — 477 of 738 (65 %) also fail on the JS-host lane.** Only 261 are
 standalone-only, so the standalone-lane children (#3180/#3200/#2036/#4119) cannot

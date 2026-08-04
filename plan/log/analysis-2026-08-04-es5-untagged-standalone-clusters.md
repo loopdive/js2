@@ -104,12 +104,15 @@ Evidence, from the failing tests themselves:
   Array-like object"*. Fails `testResult !== true`, the single largest signature
   in scope (135 files). The iteration is reading a dense snapshot; the spec
   requires a per-index `HasProperty` + `Get` that walks the prototype chain.
-- `Array/prototype/reduce/15.4.4.21-9-b-14.js` — a getter installed via
-  `defineProperty` sets `arr.length = 2` mid-iteration. `length` is read once up
-  front instead of re-read through `Get` each step.
+- `Array/prototype/map/15.4.4.19-8-b-15.js` — a getter installed via
+  `defineProperty` sets `arr.length = 2` mid-iteration, and `Array.prototype["2"]`
+  is an accessor. The spec fixes `len` once (correctly — the loop must still run
+  to the original bound) and the shortened index is then supposed to resolve
+  **through the prototype chain**. It is the per-index prototype lookup that is
+  missing, not a per-step `length` re-read.
 - `Array/prototype/map/15.4.4.19-2-9.js` — array-like whose `length` is an own
-  **accessor** that overrides an inherited accessor. Accessor `length` is not
-  consulted at all.
+  **accessor** that overrides an inherited accessor. `LengthOfArrayLike` must be
+  a real `[[Get]]` (once, before the loop); the accessor is not consulted at all.
 - `Object/defineProperty/15.2.3.6-4-82.js` — `configurable: true` then
   `configurable: false`, then `verifyProperty`. Attributes do not survive the
   round-trip.
@@ -215,6 +218,21 @@ const RULES = [
 
 Host cross-tab: a file is "also fails on host" when its `test262-current.jsonl`
 row has `status !== "pass"`.
+
+## Correction (2026-08-04, after reading `src/codegen/hof-native.ts`)
+
+An earlier revision of this file said `length` is "read once up front instead of
+re-read through `Get` each step". **That is wrong and would send an implementer
+the wrong way.** The spec fixes `len` once for the iteration methods
+(§23.1.3.15 step 2 and friends), and `__hof_*` already does exactly that — its
+header says so. Adding a per-iteration `length` re-read would be both incorrect
+and slower.
+
+The two real gaps are: **per-index `HasProperty` + `Get` through the prototype
+chain** (which is what makes a shortened array's index resolve to
+`Array.prototype["2"]`), and **`LengthOfArrayLike` being a real `[[Get]]`** so an
+accessor `length` is invoked — once, before the loop. Corrected in the body
+above and in #3185.
 
 ## Issues filed against this analysis (2026-08-04)
 
