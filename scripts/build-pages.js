@@ -398,6 +398,16 @@ const test262RunsIndexSource = resolvePreferredFileOrNull(
   join(BENCHMARKS_RESULTS_DIR, "runs", "index.json"),
   join(PUBLIC_BENCH, "runs", "index.json"),
 );
+// Per-ES-edition and per-standalone-target trend history (landing-page mini
+// trend graphs). Same fallback order as test262RunsIndexSource above.
+const test262RunsEditionsIndexSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "runs", "editions-index.json"),
+  join(PUBLIC_BENCH, "runs", "editions-index.json"),
+);
+const test262RunsStandaloneIndexSource = resolvePreferredFileOrNull(
+  join(BENCHMARKS_RESULTS_DIR, "runs", "standalone-index.json"),
+  join(PUBLIC_BENCH, "runs", "standalone-index.json"),
+);
 copyFile(test262ReportSource, join(PAGES_DIST, "benchmarks", "results", "test262-report.json"));
 if (test262StandaloneReportSource) {
   copyFile(test262StandaloneReportSource, join(PAGES_DIST, "benchmarks", "results", "test262-standalone-report.json"));
@@ -407,6 +417,15 @@ if (test262ResultsSource) {
 }
 if (test262RunsIndexSource) {
   copyFile(test262RunsIndexSource, join(PAGES_DIST, "benchmarks", "results", "runs", "index.json"));
+}
+if (test262RunsEditionsIndexSource) {
+  copyFile(test262RunsEditionsIndexSource, join(PAGES_DIST, "benchmarks", "results", "runs", "editions-index.json"));
+}
+if (test262RunsStandaloneIndexSource) {
+  copyFile(
+    test262RunsStandaloneIndexSource,
+    join(PAGES_DIST, "benchmarks", "results", "runs", "standalone-index.json"),
+  );
 }
 
 const equivTests = buildEquivTests();

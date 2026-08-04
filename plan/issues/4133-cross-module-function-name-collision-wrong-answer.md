@@ -289,3 +289,80 @@ The shipped code lets it through. A real fix makes the callee *reachable* via
 the #2029 family-A promotion to `capturedGlobals`, which changes mutation
 semantics and needs a spec first. This is the same remainder as #4134's — the
 two should be specced together, not separately.
+
+---
+
+## Implementation Plan (2026-08-04, architect)
+
+The shared mechanism — planned promotion of cross-frame-unreachable captures to
+module globals, gated on a single-activation predicate, plus a diagnosed compile
+error for the unpromotable-unreachable case — is written ONCE, in
+`plan/issues/4134-eslint-local-index-out-of-range-emit.md` § "Implementation
+Plan". Read that first. This section adds only what is specific to the NAMING
+case, and one verdict that changes how the shared mechanism applies here.
+
+### Verdict: promotion is NOT the fix for `assertASTDidntChange`
+
+The kill-check in #4134's plan (§0) confirmed uri-js's UMD factory is
+single-activation, so promotion CAN fire for its captures — but it MUST NOT be
+the route for this survivor. `assertASTDidntChange` calls fast-deep-equal's
+capture-free `equal`; the bare-name fallthrough resolves it to uri-js's
+factory-nested `equal` instead. Promoting uri-js's `SCHEMES`/`UNRESERVED`
+would make the module *emit* while still calling the *wrong* `equal` — it
+converts today's loud validation failure into a silent wrong answer, the
+outcome this issue exists to prevent. The acceptance criterion is the correct
+VALUE, not a valid binary.
+
+Consequence for the shared plan: uri-js's nested `equal`/`parse`/`serialize`
+DO satisfy E1/E2 and will be promoted (they are legitimately exported), so the
+`assertASTDidntChange` frame breach disappears as a side effect. That is
+acceptable ONLY together with the resolution slice below — land them in the
+same change-set so the misresolution cannot hide behind a now-valid emit.
+
+### The naming-specific slice: resolve, then refuse
+
+In `compileIdentifierCall` (`src/codegen/expressions/call-identifier.ts`), the
+out-of-scope handling at :1057-1088 currently lets an out-of-scope nested
+binding fall through to `funcMap` when the closure/local paths miss. Two
+changes, in order:
+
+1. **Try the module's own bindings before the flat fallthrough.** When
+   `isOutOfScopeNestedBinding` (:1003-1034) is true and `closureInfo` /
+   `resolveClosureInfoFromLocal` missed, consult the CURRENT source's import /
+   CJS-require binding for the bare name (the `registerImportBindingAliases`
+   machinery and `ctx.moduleGlobals`) before `funcMap.get(funcName)`. For
+   `assertASTDidntChange`, the CJS rewrite binds `equal` to fast-deep-equal's
+   module export — that binding must win over a foreign module's nested
+   declaration. Audit exactly what the CJS rewrite produces for
+   `var equal = require('fast-deep-equal')` in eslint's rule-tester before
+   coding; the dev should trace it with a two-module fixture, not assume.
+2. **Refuse loudly only where provably invalid.** If the fallthrough still
+   reaches a `funcMap` entry that is an out-of-scope NESTED binding AND its
+   cap-prepend would emit an unreachable capture (the shared plan's
+   `captureSourceKind === "unreachable"` with no promotion registered), emit
+   the shared plan's diagnostic, naming both the out-of-scope owner and the
+   likely-intended binding. Do NOT suppress to `ref.null.extern` (measured
+   +1200 `null_deref`) and do NOT gate on out-of-scope-ness alone — in-frame
+   and promoted cases keep today's behavior (the #1177 restraint).
+
+### Scope walk constraint (restated so it is not re-broken)
+
+Any visibility walk added by slice 1 must keep the owner scope at the enclosing
+FUNCTION, never the parent block — block-scoping regressed Annex B §B.3.3
+hoisting (#165) and lodash #1303 (see :1006-1011).
+
+### Tests
+
+- Extend `tests/issue-4133-cross-module-function-name-collision.test.ts` with
+  the misresolution rung: module A = UMD-style factory with nested exported
+  `equal` (with captures); module B requires a DIFFERENT capture-free `equal`
+  and calls it. Assert B gets ITS `equal`'s value (base today: invalid module
+  or wrong value). Non-vacuity: verify against unfixed base.
+- ESLint Tier 1a: `JS2WASM_CHECK_FRAMES=1` goes 2 → 0 only with #4134's
+  promotion AND this slice together; record which change closes which breach.
+
+### Still open after this slice (unchanged from above)
+
+- `ensureFuncClosureSingleton` trampoline / allocator-locator per-owner
+  discriminator (`src/codegen/closures/method-trampolines.ts`).
+- `ref.func` / re-export chains / two-package-version audit.

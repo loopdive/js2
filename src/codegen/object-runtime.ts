@@ -90,6 +90,7 @@ import {
   reserveCarrierBagVisibility,
 } from "./carrier-bag-visibility.js";
 import { reserveClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
+import { buildTombstoneScreen, buildTombstoneSkip, reserveInstanceTombstones } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
@@ -844,6 +845,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // reserve-before-arms-bake discipline, appended indices only.
     reserveVecPropHelpers(ctx);
     reserveCarrierBagVisibility(ctx); // (#4010 S3) visibility over both bags — see that module
+    reserveInstanceTombstones(ctx); // (#4098 G1 s1) per-instance delete over the SAME bag
   }
 
   // ── __extern_is_array(externref v) -> i32 ────────────────────────────────
@@ -6501,6 +6503,9 @@ export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
           ]
         : [{ op: "i32.const", value: 1 }];
     return [
+      // (#4098 G1 s1) BEFORE the field arms: each arm below returns unconditionally
+      // on a name match, so a screen after them could never run. Narrowing only.
+      ...buildTombstoneScreen(ctx, [{ op: "i32.const", value: 0 }, { op: "return" }]),
       ...structReceiverGuard,
       {
         op: "if",
@@ -6628,15 +6633,21 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
           { op: "extern.convert_any" },
           { op: "call", funcIdx: objVecPushIdx },
         ];
+        // (#4098 G1 s1) A tombstoned field is not an own property ⇒ not enumerated.
+        const pushLive = buildTombstoneSkip(
+          ctx,
+          [...nativeStringLiteralInstrs(ctx, field.name), { op: "extern.convert_any" }],
+          pushName,
+        );
         if (field.presenceSlot === undefined) {
-          pushFields.push(...pushName);
+          pushFields.push(...pushLive);
         } else {
           pushFields.push(
             { op: "local.get", index: 0 },
             { op: "any.convert_extern" },
             { op: "ref.cast", typeIdx: entry.typeIdx },
             ...presenceTestInstrs(entry.typeIdx, field.presenceSlot),
-            { op: "if", blockType: { kind: "empty" }, then: pushName },
+            { op: "if", blockType: { kind: "empty" }, then: pushLive },
           );
         }
       }
@@ -6923,6 +6934,12 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     }
   }
   fn.body.unshift(
+    // (#4098 G1 s1) Screen ahead of every field arm (see fillClosedStructHasOwnArms).
+    // Fresh Instr objects: finalize remaps bodies in place, a shared tree twice.
+    ...buildTombstoneScreen(ctx, [
+      ...(undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" as const }]),
+      { op: "return" as const },
+    ]),
     ...(numericKeyArms.length > 0
       ? ([
           { op: "local.get", index: 1 },

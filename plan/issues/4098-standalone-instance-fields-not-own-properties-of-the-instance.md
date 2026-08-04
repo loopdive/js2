@@ -1,11 +1,34 @@
 ---
 id: 4098
 title: "standalone: class instance fields are invisible to getOwnPropertyDescriptor/Object.keys and survive delete — the unanimous blocker of #3976's residual (population 124, blocked on #4010)"
-status: ready
+status: in-progress
+assignee: ttraenkler/dev-4098-g1
 blocked_by: []
 sprint: current
 created: 2026-08-02
-updated: 2026-08-02
+updated: 2026-08-04
+# (#4098 G1 stage 1) The three screen call sites live in `object-runtime.ts`
+# because that is where the closed-struct ladders they screen are BUILT — a
+# screen has to be emitted ahead of the arms it narrows, and those arms return
+# unconditionally on a name match. Everything with a choice of home was moved
+# OUT: the natives, both screen builders and the delete arm are all in the new
+# `src/codegen/instance-tombstones.ts`, and the `__delete_property` tail is
+# sourced inside `carrier-bag-delete.ts` rather than passed through the
+# god-file. That restructuring took the growth from +34/+9 to +17/+3; the
+# residual is 3 ladder call sites + 1 import + 1 reserve, and 2 fill calls +
+# 1 import in the finalize driver.
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
+  - src/codegen/index.ts
+# (#4098 G1 stage 1) Sibling grant to the above: each function grew by exactly
+# ONE line — the irreducible wiring call into instance-tombstones.ts (fill in
+# the two finalize drivers, reserve in ensureObjectRuntime). The subsystem
+# extraction the R-FUNC gate prescribes was already done (see comment above);
+# the +1 IS the call to it.
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -529,3 +552,116 @@ record shows it passing 729/729. It does not get to be a surprise twice.
   very likely yields an `$Object` receiver rather than a closed struct, so the
   probe is **not** measuring a carrier-less receiver. Treat VI1 as an unvalidated
   instrument, not as evidence the repro is fixed.
+
+---
+
+# G1 STAGE 1 — LANDED: per-instance deletability (2026-08-04, dev-4098-g1)
+
+**Shipped prefix, not the whole issue.** Stage 1 of the four in the handoff
+above. Budget went 12 % → 9 % with a 1 %-of-window per-agent share against an
+**L**; per the stage-boundary rule a stage that cannot finish is not started, so
+stages 2–4 are handed on. `status` stays `in-progress`.
+
+## What landed
+
+New module `src/codegen/instance-tombstones.ts` (natives, both screen builders,
+the delete arm) + four wiring points. `delete o[k]` on a user-declared class
+instance is now **real**: it was a silent no-op, and `propertyHelper.js`'s
+`isConfigurable` is `delete obj[name]` then `return !__hasOwnProperty(obj,
+name)`, which 100 % of the 124 assert.
+
+**The tombstone is a SELF-REFERENTIAL bag entry — `bag[k] === bag`.** The
+handoff's substrate finding held exactly: the #3468 carrier bag is keyed by
+`eqref` **identity**, so `__closure_bag_lookup`/`_ensure` work on an instance
+unchanged; this is a predicate plus arms, not a new side table. The marker is
+*not* a real `FLAG_TOMBSTONE`, and that is deliberate:
+
+- **a real tombstone is undetectable.** `__obj_find`, `__obj_ordered` **and**
+  `__obj_ordered_all` all skip `FLAG_TOMBSTONE`, so "deleted" would be
+  indistinguishable from "never present" — the screens could not read it without
+  a new tombstone-piercing native inside `object-runtime.ts` (its
+  `emitClassifyKey`/`emitKeyMatch` are function-local closures, so the native
+  cannot live anywhere else);
+- **identity is unforgeable** — the bag is unreachable from user source, so no
+  program can synthesise a value `ref.eq` to it;
+- it costs **no allocation and no global**.
+
+⚠ **Stage 3/4 MUST filter `bag[k] === bag` when they add the instance arm to
+`__carrier_bag_of`,** or the marker enumerates as a real own property. It is
+unobservable today only because no instance arm exists yet.
+
+## Probe matrix — before → after (`.tmp/m4098.mts`, host-free, 0 imports)
+
+Every key runtime-built; a literal key measures the static fast path.
+
+| cell | before | after |
+| --- | :---: | :---: |
+| II1 delete then `hasOwn === false` | 2 | **1** |
+| II2 delete then value also gone | 2 | **1** |
+| II3 delete then every surface absent | 2 | **1** |
+| II6 delete on one instance only | 2 | **1** |
+| V12 subclass declared-field delete | 2 | **1** |
+| III3 delete → `defineProperty` restore | 1 | **2** |
+| I3 gOPD · I4 keys · I5 for-in | 2 | 2 (stages 3–4) |
+| III1 write · III2 define · II7 resurrect · IV1 | 2 | 2 (stage 2) |
+
+**III3's 1 → 2 is the vacuous cell unmasking, not a regression.** The handoff
+flagged it: it was green only because the `delete` never happened, so nothing
+needed restoring. It is now honestly red and gated on stage 2/3.
+
+Controls all hold: `$Object` (V5), `$Object` delete (V6), array delete + length
+(V7), closure carrier bag (V8), `Object.keys(new Date(0))` and `Object.keys(/ab/)`
+still `[]` (V1/V2 — the #4071 −5 guard), private `#f` absent in both spellings
+(V3), methods not own properties (V4), subclass reads (V11).
+
+## ⛔ THE MANDATORY STRATUM CONTROL WAS **NOT** RUN — the instrument is blind
+
+Stating this plainly because the handoff makes it a pre-queue gate and it is
+**not satisfied**.
+
+Built the at-risk set exactly as #4010 M2 specifies — `built-ins/**/{name,length}.js`
+is **1,240** files, **728** of them `pass` in the standalone baseline
+(`/workspace/.test262-cache/test262-standalone-current.jsonl`, mtime
+2026-08-03T19:46Z, **4.6 h old**; a `--force` refetch printed a path it did not
+create and emitted **zero** freshness output, so it is not claimed as fresh).
+
+Then ran the **positive control first**: 36 of those 728 baseline-`pass` files
+through `.tmp/sweep-one.mts` (`runTest262File`, per-file process).
+
+**Result: 0/36 agreement — all 36 read `compile_error`.** That is #4147
+reproduced with a measurement rather than asserted: `runTest262File` links no
+`js2wasm:runtime-eval` provider. The S3 lane's repair (neutralising
+`$262.evalScript`'s `eval` in a local `scripts/test262-fyi-runtime.js`) is **not
+recoverable** — that worktree's copy is now byte-identical to `main`'s. At 391 s
+per 36 files the full 728 is ~2.2 h, which neither fits the budget nor is worth
+spending on a blind instrument.
+
+**So no number is reported for that stratum.** What exists instead is an
+*argument*, labelled as one:
+
+- no visibility widening (`__carrier_bag_of` gets **no** instance arm), and no
+  write path — the two ingredients of the −684;
+- the delete arm runs strictly **after** `__builtinfn_delete` and
+  `__carrier_bag_delete`, and both it and the screens are gated on
+  `__is_class_instance_carrier`, which `ref.test`s user-class struct types only.
+  A builtin function receiver answers 0, so the fall-through is the historical
+  `return 1`, unchanged;
+- when a module declares no class at all, `fillInstanceTombstones` returns early
+  and every native stays at its `i32.const 0` placeholder.
+
+An argument is not a measurement. **The `merge_group` re-validation is the
+backstop that actually arbitrates this**, and this is exactly the class of
+failure `auto-park` exists for. Escalated to the tech lead rather than quietly
+skipped.
+
+## Two gaps found that the handoff's five-gap map does not list
+
+Both pre-existing on `main` (present in the before-arm), neither touched here:
+
+- **`k in o` is FALSE for a declared instance field with a dynamic key**, while
+  `hasOwnProperty(o, k)` is true (cell V10). A sixth gap, and an
+  internal inconsistency between two surfaces that must agree.
+- **`C[k]` with a dynamic key does not read a `static` field** (cell V9).
+
+Worth their own issue ids; not filed here to avoid burning a reservation on a
+lane that is standing down.
