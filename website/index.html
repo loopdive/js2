@@ -1130,6 +1130,38 @@
       .feat-tables {
         margin-top: 16px;
       }
+      .feat-tables-summary {
+        cursor: pointer;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 13px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.7);
+        padding: 10px 0;
+        user-select: none;
+      }
+      .feat-tables-summary::-webkit-details-marker {
+        display: none;
+      }
+      .feat-tables-summary::before {
+        content: "▸";
+        display: inline-block;
+        color: rgba(255, 255, 255, 0.4);
+        transition: transform 0.15s ease;
+      }
+      .feat-tables[open] > .feat-tables-summary::before {
+        transform: rotate(90deg);
+      }
+      .feat-tables-summary:hover {
+        color: #fff;
+      }
+      .feat-tables-summary:hover::before {
+        color: rgba(255, 255, 255, 0.7);
+      }
 
       .feat-panel {
         columns: 2;
@@ -1194,16 +1226,6 @@
         flex-shrink: 0;
         min-width: 160px;
         justify-content: flex-end;
-      }
-      .feat-edition-trend {
-        display: block;
-        width: 56px;
-        height: 20px;
-        flex-shrink: 0;
-        opacity: 0.75;
-      }
-      .feat-edition-trend[hidden] {
-        display: none;
       }
       .feat-edition-passbar-count {
         font-family: var(--mono);
@@ -1745,7 +1767,8 @@
           ></t262-edition-timeline>
         </div>
 
-        <div class="feat-tables">
+        <details class="feat-tables" id="feat-tables">
+          <summary class="feat-tables-summary">Feature-by-feature breakdown</summary>
           <div class="feat-panel">
             <div class="feat-section">
               <div class="feat-edition">ES3 / Core</div>
@@ -3491,7 +3514,7 @@ match (value) {
               </div>
             </div>
           </div>
-        </div>
+        </details>
       </section>
 
       <hr class="divider" />
@@ -5234,41 +5257,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
         };
       })();
 
-      // Per-ES-edition pass-rate trend history (landing-page mini graphs, see
-      // benchmarks/results/runs/editions-index.json / scripts/append-run-history.mjs).
-      // Grows one snapshot per CI promote; a mini graph stays hidden until at
-      // least two snapshots exist for its edition.
-      const loadEditionTrendHistory = (() => {
-        let pending;
-        return async () => {
-          if (!pending) {
-            pending = (async () => {
-              const resp = await fetch("./benchmarks/results/runs/editions-index.json");
-              if (!resp.ok) throw new Error("edition trend history unavailable");
-              const runs = await resp.json();
-              if (!Array.isArray(runs)) throw new Error("edition trend history unavailable");
-
-              const seriesByEdition = new Map();
-              for (const run of runs) {
-                if (!Array.isArray(run?.editions)) continue;
-                for (const e of run.editions) {
-                  const label = normalizeEditionLabel(String(e?.edition || ""));
-                  if (!label) continue;
-                  const total = Number(e?.total || 0);
-                  if (total <= 0) continue;
-                  const pct = (Number(e?.pass || 0) / total) * 100;
-                  if (!Number.isFinite(pct)) continue;
-                  if (!seriesByEdition.has(label)) seriesByEdition.set(label, []);
-                  seriesByEdition.get(label).push({ pct });
-                }
-              }
-              return seriesByEdition;
-            })();
-          }
-          return pending;
-        };
-      })();
-
       (async function hydrateConformanceEditionFilter() {
         const donutSlot = document.getElementById("conformance-donut-slot");
         const editionTimeline = document.getElementById("conformance-edition-timeline");
@@ -5863,7 +5851,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             bar = document.createElement("span");
             bar.className = "feat-edition-passbar";
             bar.innerHTML = `
-              <trend-chart class="feat-edition-trend" mode="sparkline" hidden></trend-chart>
               <span class="feat-edition-passbar-count"></span>
               <span class="feat-edition-passbar-track">
                 <span class="feat-edition-passbar-fill"></span>
@@ -5918,27 +5905,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           return section;
         };
 
-        const updateEditionTrendCharts = async () => {
-          try {
-            const seriesByEdition = await loadEditionTrendHistory();
-            document.querySelectorAll(".feat-section").forEach((section) => {
-              const chart = section.querySelector(".feat-edition-trend");
-              if (!(chart instanceof HTMLElement)) return;
-              const label = getFeatureSectionLabel(section);
-              const points = seriesByEdition.get(label);
-              if (!points || points.length < 2) {
-                chart.hidden = true;
-                return;
-              }
-              chart.setAttribute("series", JSON.stringify([{ key: "pct", color: "rgba(63,185,80,0.9)", fill: true }]));
-              chart.data = points;
-              chart.hidden = false;
-            });
-          } catch {
-            // Leave mini trend graphs hidden when history is unavailable/too thin.
-          }
-        };
-
         const updateEditionPassBars = async () => {
           try {
             const { editionList, editionMap, proposalBucket } = await loadEditionBuckets();
@@ -5988,7 +5954,6 @@ console.log(instance.exports.run()); // &rarr; 55</pre
               }
               bar.title = title;
             });
-            await updateEditionTrendCharts();
           } catch {
             renderHeuristicEditionPassBars();
           }

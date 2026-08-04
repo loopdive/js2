@@ -243,6 +243,14 @@
         font-size: 0.8rem;
         font-variant-numeric: tabular-nums;
       }
+      .edition-legend-trend {
+        display: block;
+        width: 100%;
+        max-width: 96px;
+        height: 20px;
+        margin-top: 0.2rem;
+        opacity: 0.75;
+      }
       .cat-table {
         width: 100%;
         border-collapse: collapse;
@@ -961,12 +969,43 @@
         return cat;
       }
 
+      // Matches t262NormalizeEditionLabel in components/t262-charts.js — kept
+      // as a local copy since that file is loaded as a module and doesn't
+      // expose it globally.
+      function normalizeEditionLabelForTrend(edition) {
+        return edition === "≤ ES3" || edition === "ES3" ? "ES3 / Core" : edition;
+      }
+
+      // Per-ES-edition pass-rate trend history for the mini sparklines in the
+      // edition legend, sourced from benchmarks/results/runs/editions-index.json
+      // (see scripts/append-run-history.mjs). Host-mode only — no per-edition
+      // standalone history exists yet.
+      function buildEditionTrendSeries(editionRuns) {
+        const seriesByEdition = new Map();
+        if (!Array.isArray(editionRuns)) return seriesByEdition;
+        for (const run of editionRuns) {
+          if (!Array.isArray(run?.editions)) continue;
+          for (const e of run.editions) {
+            const label = normalizeEditionLabelForTrend(String(e?.edition || ""));
+            if (!label) continue;
+            const total = Number(e?.total || 0);
+            if (total <= 0) continue;
+            const pct = (Number(e?.pass || 0) / total) * 100;
+            if (!Number.isFinite(pct)) continue;
+            if (!seriesByEdition.has(label)) seriesByEdition.set(label, []);
+            seriesByEdition.get(label).push({ pct });
+          }
+        }
+        return seriesByEdition;
+      }
+
       function renderEditionLegend(
         rows,
         legendHost,
         activeEdition = null,
         dimAfterRank = null,
         proposalEditionLabels = new Set(),
+        editionTrendSeries = null,
       ) {
         legendHost.textContent = "";
         if (!rows || rows.length === 0) return;
@@ -976,19 +1015,27 @@
           const isDimmed = dimAfterRank !== null && rowRank > dimAfterRank;
           const label = proposalEditionLabels.has(row.edition) ? PROPOSAL_LABEL : row.displayLabel || row.edition;
 
-          legendHost.appendChild(
+          const item = el(
+            "div",
+            { className: "edition-legend-item" + (isActive ? " active" : "") + (isDimmed ? " dimmed" : "") },
+            el("div", { className: "edition-legend-name" }, label),
+            el("div", { className: "edition-legend-rate" }, `${row.rate}%`),
             el(
               "div",
-              { className: "edition-legend-item" + (isActive ? " active" : "") + (isDimmed ? " dimmed" : "") },
-              el("div", { className: "edition-legend-name" }, label),
-              el("div", { className: "edition-legend-rate" }, `${row.rate}%`),
-              el(
-                "div",
-                { className: "edition-legend-ratio" },
-                `${row.pass.toLocaleString()} / ${row.total.toLocaleString()}`,
-              ),
+              { className: "edition-legend-ratio" },
+              `${row.pass.toLocaleString()} / ${row.total.toLocaleString()}`,
             ),
           );
+
+          const points = editionTrendSeries instanceof Map ? editionTrendSeries.get(row.edition) : null;
+          if (points && points.length >= 2) {
+            const chart = el("trend-chart", { className: "edition-legend-trend", mode: "sparkline" });
+            chart.setAttribute("series", JSON.stringify([{ key: "pct", color: "rgba(63,185,80,0.9)", fill: true }]));
+            chart.data = points;
+            item.appendChild(chart);
+          }
+
+          legendHost.appendChild(item);
         });
       }
 
@@ -1394,7 +1441,8 @@
         });
       }
 
-      function renderConformance(view, container, conformanceRuns) {
+      function renderConformance(view, container, conformanceRuns, editionRuns) {
+        const editionTrendSeries = view.mode === "host" ? buildEditionTrendSeries(editionRuns) : null;
         const data = view.report;
         // Point per-file detail/error-pattern lookups at this view's source.
         activeFileResultsSrc = view.fileResultsSrc;
@@ -1487,6 +1535,7 @@
             editionDetail.activeEdition,
             editionDetail.limitRank,
             editionDetail.proposalEditionLabels,
+            editionTrendSeries,
           );
         }
 
@@ -2393,11 +2442,12 @@
       }
 
       async function main() {
-        const [conformance, standaloneReport, conformanceRuns, categoryEditions] = await Promise.all([
+        const [conformance, standaloneReport, conformanceRuns, categoryEditions, editionRuns] = await Promise.all([
           loadReportWithFallback(),
           loadJSON(STANDALONE_REPORT_JSON),
           loadJSON(assetPath("benchmarks/results/runs/index.json")),
           loadJSON(CATEGORY_EDITIONS_JSON),
+          loadJSON(assetPath("benchmarks/results/runs/editions-index.json")),
         ]);
         const app = document.getElementById("app");
         app.textContent = "";
@@ -2438,7 +2488,7 @@
           const renderActive = () => {
             conformanceHost.textContent = "";
             const view = activeMode === "standalone" && standaloneView ? standaloneView : hostView;
-            renderConformance(view, conformanceHost, conformanceRuns);
+            renderConformance(view, conformanceHost, conformanceRuns, editionRuns);
           };
           if (standaloneView) {
             const modeSwitch = el("div", { className: "mode-switch" });
