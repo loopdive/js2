@@ -540,6 +540,9 @@ export interface FunctionContext {
    * keys even when a later declaration initializer is numerically typed.
    */
   forInIdentifierVars?: Set<string>;
+  /** Bindings widened because their assignments cross representation domains.
+   * Reads keep the boxed carrier; concrete consumers perform coercion at use. */
+  mixedAssignmentCarrierVars?: Set<string>;
   /** Return type */
   returnType: ValType | null; // null = void
   /** Accumulated body instructions */
@@ -1722,6 +1725,14 @@ export interface CodegenContext {
    * dual-struct-type compile-order hazard is mode-independent).
    */
   memberSetDispatchNames?: Set<string>;
+  /**
+   * Property names assigned an object literal outside their defining literal.
+   * Anonymous struct fields with these names use an externref carrier so a
+   * later object of a different closed shape can be stored without ref.cast.
+   */
+  objectLiteralAssignedPropertyNames: Set<string>;
+  /** Concrete RHS types observed for those property writes. */
+  objectLiteralAssignedPropertyTypes: Map<string, ts.Type[]>;
   /**
    * (#2674) Property names that need a deferred-fill member-READ dispatcher
    * `__get_member_<name>(recv: externref) -> externref` — the SYMMETRIC read-side

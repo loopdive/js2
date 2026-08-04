@@ -46,6 +46,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { FieldDef } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { appendFnctorInternalFields } from "./fnctor-identity-fields.js";
+import { recordFnctorFieldProvenance } from "./fnctor-field-provenance.js";
 import { resolveWasmType } from "./index.js";
 
 /** Classification of a `new F()` fnctor allocation site. */
@@ -1466,6 +1467,8 @@ export function deriveFnctorFields(
       mutable: true,
       ...(carrierIsDynamicObjectCall ? { dynamicObjectCarrier: true as const } : {}),
     });
+    // (#4155) Census only, off unless JS2WASM_FNCTOR_FIELD_PROVENANCE=1.
+    recordFnctorFieldProvenance(ctx, funcDecl.name?.text ?? "<anonymous>", fieldName, fieldType, lhsType, rhsType);
     onlyConditional.set(fieldName, conditional);
   }
   // Walk an assignment EXPRESSION, collecting EVERY `this.<field>` LHS in a

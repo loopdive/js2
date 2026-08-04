@@ -240,6 +240,8 @@ export function createCodegenContext(
     weakRefTypeIdx: -1,
     mapHelpers: new Map(),
     mapHelpersEmitted: false,
+    objectLiteralAssignedPropertyNames: new Set(),
+    objectLiteralAssignedPropertyTypes: new Map(),
     refCellTypeMap: new Map(),
     anyValueTypeIdx: -1,
     anyHelpers: new Map(),

@@ -154,7 +154,7 @@ export function tryEmitExactStructFieldGet(
     return fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: fieldType.typeIdx } : fieldType;
   }
   if (objResult?.kind === "externref") {
-    if (ctx.standalone && isStructuralObjectContract(ctx, objType, typeName)) {
+    if ((!ctx.standalone && !ctx.wasi) || isStructuralObjectContract(ctx, objType, typeName)) {
       const structuralResult = emitStructuralExternrefFieldGet(ctx, fctx, expr, propName);
       if (structuralResult !== undefined) return structuralResult;
     }

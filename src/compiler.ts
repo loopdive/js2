@@ -1305,7 +1305,7 @@ export function compileSourceSync(
   // unit under the TS grammar so the prelude's TS syntax (type annotations,
   // `private`, signature declarations) isn't hard-rejected with TS8009/8010/8017.
   // ScriptKind-only override; `.js`-derived lenient checking stays intact.
-  const forceTsGrammar = stdinResult.injected || iterStaticsResult.injected;
+  const forceTsGrammar = stdinResult.injected || iterStaticsResult.injected || preprocessed.requiresTsGrammar;
 
   processedSource = foldGroundCalls(processedSource, effectiveFileName, options.optimize, isJsMode && !forceTsGrammar);
 
@@ -1323,7 +1323,11 @@ export function compileSourceSync(
     // Incremental path: reuse cached lib files via the language service
     languageService.updateSource(processedSource, effectiveFileName, forceTsGrammar);
     ast = languageService.analyze({
-      allowJs: options.allowJs,
+      // A `.js` unit may be parsed with TS grammar after preprocessing injects
+      // typed declarations (timers/import stubs). Keep its JS environment and
+      // lib-global resolution explicit: the language service otherwise infers
+      // allowJs from the forced ScriptKind.TS and drops ambient DOM bindings.
+      allowJs: isJsMode,
       skipSemanticDiagnostics: options.skipSemanticDiagnostics,
       ...(options.platform ? { platform: options.platform } : {}),
     });

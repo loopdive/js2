@@ -68,6 +68,7 @@ import {
   registerLinearU8Buffer,
 } from "./linear-uint8-signatures.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, emitLinearU8ArenaReset } from "./linear-uint8-arena.js";
+import { walkInstructions } from "./walk-instructions.js";
 import {
   collectDirectEvalActivationBindingNames,
   collectDirectEvalBindingNames,
@@ -865,7 +866,26 @@ export function compileFunctionBody(ctx: CodegenContext, decl: ts.FunctionDeclar
   }
 
   cacheStringLiterals(ctx, fctx);
+  const localsBeforeDedup = fctx.locals.length;
   deduplicateLocals(fctx);
+  const maxLocal = fctx.params.length + fctx.locals.length;
+  const invalidLocalRefs = new Set<number>();
+  walkInstructions(fctx.body, (instr) => {
+    if ((instr.op === "local.get" || instr.op === "local.set" || instr.op === "local.tee") && instr.index >= maxLocal) {
+      invalidLocalRefs.add(instr.index);
+    }
+  });
+  if (invalidLocalRefs.size > 0) {
+    const staleBindings = [...fctx.localMap.entries()]
+      .filter(([, index]) => index >= maxLocal)
+      .map(([name, index]) => `${name}=${index}`)
+      .join(", ");
+    throw new Error(
+      `codegen invariant: '${func.name}' references out-of-range local(s) ${[...invalidLocalRefs].join(", ")} ` +
+        `after local dedup (params=${fctx.params.length}, locals=${fctx.locals.length}, before=${localsBeforeDedup}` +
+        `${staleBindings ? `, stale bindings: ${staleBindings}` : ""})`,
+    );
+  }
   func.locals = fctx.locals;
   func.body = fctx.body;
 

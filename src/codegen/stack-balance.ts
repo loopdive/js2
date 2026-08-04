@@ -28,6 +28,7 @@
 import { coercionPlan } from "./coercion-plan.js";
 import type { BlockType, FuncTypeDef, Instr, TypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { STABLE_FUNC_BASE, absoluteFuncIndexCached } from "../emit/resolve-layout.js"; // (#1916 S3)
+import { walkInstructions } from "./walk-instructions.js";
 
 /**
  * (#2934) Widen a packed i8/i16 STORAGE type to the i32 that actually lives on
@@ -264,6 +265,20 @@ function resolveFuncType(types: TypeDef[], typeIdx: number): FuncTypeDef | null 
     return (t as any).type;
   }
   return null;
+}
+
+function assertLocalRefsInRange(func: WasmFunction, ft: FuncTypeDef | null, stage: string): void {
+  const limit = (ft?.params.length ?? 0) + func.locals.length;
+  walkInstructions(func.body, (instr) => {
+    if ((instr.op === "local.get" || instr.op === "local.set" || instr.op === "local.tee") && instr.index >= limit) {
+      throw new Error(
+        `stack-balance invariant (${stage}): '${func.name}' references local ${instr.index}, ` +
+          `but only ${ft?.params.length ?? 0} params + ${func.locals.length} locals are declared ` +
+          `(locals: ${func.locals.map((local, index) => `${(ft?.params.length ?? 0) + index}:${local.name}`).join(", ")}; ` +
+          `body: ${JSON.stringify(func.body)})`,
+      );
+    }
+  });
 }
 
 /**
@@ -1211,6 +1226,7 @@ function buildFuncSigs(mod: WasmModule): FuncSigInfo {
   const numImports = idx;
   for (const func of mod.functions) {
     const ft = resolveFuncType(mod.types, func.typeIdx);
+    assertLocalRefsInRange(func, ft, "entry");
     if (ft) {
       const resultType = ft.results.length === 1 ? valTypeCategory(ft.results[0]!) : undefined;
       map.set(idx, { params: ft.params.length, results: ft.results.length, resultType });
@@ -2618,6 +2634,7 @@ export function stackBalance(mod: WasmModule): number {
         unboxNumberIdx,
       );
     }
+    assertLocalRefsInRange(func, ft, "exit");
   }
 
   // #2090 — drain the invented-value collector into structured compile errors.

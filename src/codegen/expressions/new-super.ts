@@ -318,6 +318,33 @@ function resolvesToDynamicAnyCtorValue(ctx: CodegenContext, calleeExpr: ts.Expre
   // never intercept those; their explicit branches own them.
   if (decl.getSourceFile().isDeclarationFile) return false;
   if (!ts.isParameter(decl) && !ts.isVariableDeclaration(decl) && !ts.isBindingElement(decl)) return false;
+  // A local selected by a conditional expression is also genuinely dynamic,
+  // even when TypeScript infers a concrete union instead of `any`/`unknown`.
+  // ReactDOM uses exactly this feature-detection pattern:
+  //
+  //   var AbortControllerLocal =
+  //     typeof AbortController !== "undefined"
+  //       ? AbortController
+  //       : function AbortControllerFallback() { ... };
+  //   new AbortControllerLocal();
+  //
+  // Both branches are runtime VALUES. Treating the binding name as a static
+  // extern-class name requests a nonexistent `__new_AbortControllerLocal`
+  // dependency. The host construct bridge performs the real IsConstructor
+  // check and Reflect.construct on whichever value was selected, so it also
+  // preserves the correct TypeError if a conditional branch is not
+  // constructable.
+  if (ts.isVariableDeclaration(decl) && decl.initializer) {
+    let init: ts.Expression = decl.initializer;
+    while (ts.isParenthesizedExpression(init) || ts.isAsExpression(init) || ts.isNonNullExpression(init)) {
+      init = ts.isParenthesizedExpression(init)
+        ? init.expression
+        : ts.isAsExpression(init)
+          ? init.expression
+          : init.expression;
+    }
+    if (ts.isConditionalExpression(init)) return true;
+  }
   const fact = ctx.oracle.typeFactOf(calleeExpr);
   if (fact.kind === "any" || fact.kind === "unknown") return true;
   // (#3435) A binding typed as the bare lib `Function` interface is equally a
@@ -3476,6 +3503,21 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   ) {
     className = calleeIdent.text;
   }
+  // Preprocessing may upgrade a JavaScript file to TypeScript grammar to host
+  // injected declarations (timers/import shims). In large vendor bundles the
+  // checker can then return `any` with no symbol for a plainly spelled ambient
+  // constructor such as `new Map()`. The extern-import prepass has a matching
+  // syntactic fallback; recover the same class identity here so codegen calls
+  // `Map_new` instead of falling through to an absent `__new_Map` and silently
+  // producing null. `resolvesToAmbientGlobal` excludes every user shadow.
+  if (
+    !className &&
+    calleeIdent &&
+    ctx.externClasses.has(calleeIdent.text) &&
+    resolvesToAmbientGlobal(ctx, calleeIdent)
+  ) {
+    className = calleeIdent.text;
+  }
   if ((!className || !ctx.classSet.has(className)) && calleeIdent) {
     const idName = calleeIdent.text;
     if (ctx.classSet.has(idName)) {
@@ -4333,8 +4375,63 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   if (externInfo) {
     // Compile constructor arguments with type hints
     const args = expr.arguments ?? [];
-    for (let i = 0; i < args.length; i++) {
-      compileExpression(ctx, fctx, args[i]!, externInfo.constructorParams[i]);
+    const literalIterable = args.length === 1 && ts.isArrayLiteralExpression(args[0]!) ? args[0]! : undefined;
+    const pairIterableCtor = className === "Map" || className === "WeakMap";
+    const flatIterableCtor = className === "Set" || className === "WeakSet";
+    const canMaterializeLiteralIterable =
+      literalIterable !== undefined &&
+      ((flatIterableCtor &&
+        !literalIterable.elements.some((entry) => ts.isOmittedExpression(entry) || ts.isSpreadElement(entry))) ||
+        (pairIterableCtor &&
+          literalIterable.elements.every(
+            (entry) =>
+              ts.isArrayLiteralExpression(entry) &&
+              entry.elements.length === 2 &&
+              !entry.elements.some(ts.isSpreadElement),
+          )));
+
+    if (canMaterializeLiteralIterable && literalIterable) {
+      // During module initialization the host cannot call back through exported
+      // `__vec_get` helpers yet: WebAssembly.instantiate has not returned the
+      // instance. Build a real host array (and real [k,v] entry arrays for Map)
+      // directly through the array imports instead of handing an opaque WasmGC
+      // vec to the native iterable constructor.
+      ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+      ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+      flushLateImportShifts(ctx, fctx);
+      const newHostArray = (): number => {
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_new")! });
+        const local = allocLocal(fctx, `__ctor_iter_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: local });
+        return local;
+      };
+      const pushHostValue = (arrayLocal: number, value: ts.Expression): void => {
+        fctx.body.push({ op: "local.get", index: arrayLocal });
+        const valueType = compileExpression(ctx, fctx, value, { kind: "externref" });
+        if (valueType && valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
+        if (!valueType) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
+      };
+
+      const outer = newHostArray();
+      for (const entry of literalIterable.elements) {
+        if (pairIterableCtor) {
+          const pair = entry as ts.ArrayLiteralExpression;
+          const pairLocal = newHostArray();
+          pushHostValue(pairLocal, pair.elements[0]!);
+          pushHostValue(pairLocal, pair.elements[1]!);
+          fctx.body.push({ op: "local.get", index: outer });
+          fctx.body.push({ op: "local.get", index: pairLocal });
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__js_array_push")! });
+        } else if (!ts.isOmittedExpression(entry) && !ts.isSpreadElement(entry)) {
+          pushHostValue(outer, entry);
+        }
+      }
+      fctx.body.push({ op: "local.get", index: outer });
+    } else {
+      for (let i = 0; i < args.length; i++) {
+        compileExpression(ctx, fctx, args[i]!, externInfo.constructorParams[i]);
+      }
     }
     // Pad missing optional args with default values
     for (let i = args.length; i < externInfo.constructorParams.length; i++) {

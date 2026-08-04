@@ -576,7 +576,14 @@ export function compileBinaryExpression(
     if (leftType) {
       fctx.body.push({ op: "drop" });
     }
-    return compileExpression(ctx, fctx, expr.right);
+    const rightType = compileExpression(ctx, fctx, expr.right);
+    // `compileExpression` intentionally exposes a successfully-emitted void
+    // expression as `null`.  Propagate the inner VOID_RESULT sentinel here so
+    // the transactional wrapper around the comma expression commits both
+    // operands' side effects instead of treating the whole expression as a
+    // failed speculative compile and rolling its body back.  This is observable
+    // in statement-position shapes such as `ready && (schedule(), entangle())`.
+    return rightType ?? VOID_RESULT;
   }
 
   // instanceof: compile left value, resolve right to struct type, emit ref.test

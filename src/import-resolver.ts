@@ -648,6 +648,13 @@ export interface NodeBuiltinImport {
 export interface PreprocessResult {
   /** The transformed source code with import stubs. */
   source: string;
+  /**
+   * Whether preprocessing injected TypeScript-only declarations or
+   * annotations into a JavaScript input. Callers must preserve JavaScript
+   * checking semantics while selecting the TypeScript grammar for the
+   * transformed source.
+   */
+  requiresTsGrammar: boolean;
   /** Node builtin modules detected during preprocessing. */
   nodeBuiltins: NodeBuiltinImport[];
   /** JSX runtime import (if any) detected during preprocessing (#1540). */
@@ -1046,6 +1053,7 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
   if (nsImports.size === 0 && otherImports.length === 0 && jsxRuntimeImportRanges.length === 0) {
     return {
       source: timerShim ? timerShim + source : source,
+      requiresTsGrammar: timerShim.length > 0,
       nodeBuiltins,
       jsxRuntime,
       // #1928 — no imports here; only the (optional) timer-shim prepend shifts positions.
@@ -1455,5 +1463,14 @@ export function preprocessImports(source: string, opts?: { wasi?: boolean }): Pr
     result = result.substring(0, r.start) + r.text + result.substring(r.end);
   }
 
-  return { source: prelude ? prelude + result : result, nodeBuiltins, jsxRuntime, positionMap };
+  return {
+    source: prelude ? prelude + result : result,
+    // Import replacement emits `declare` stubs (and the optional path/timer
+    // preludes carry annotations), all of which require TS grammar even when
+    // the original source is a `.js` file.
+    requiresTsGrammar: true,
+    nodeBuiltins,
+    jsxRuntime,
+    positionMap,
+  };
 }

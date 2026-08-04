@@ -27,6 +27,8 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
+import { createRequire } from "node:module";
+import { JSDOM } from "jsdom";
 
 import { compile } from "../../src/index.ts";
 import { wrapExports } from "../../src/runtime.ts";
@@ -44,6 +46,45 @@ const REPORT_PATH = join(HERE, "report", "react-dom-upstream-suite.json");
 // to bound #3775's blast radius rather than to keep a unit compilable at all.
 const MAX_BATCH_CHARS = 120_000;
 
+function decodeVlq(segment) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const values = [];
+  for (let i = 0; i < segment.length; ) {
+    let value = 0;
+    let shift = 0;
+    let digit;
+    do {
+      digit = alphabet.indexOf(segment[i++]);
+      if (digit < 0) return values;
+      value |= (digit & 31) << shift;
+      shift += 5;
+    } while (digit & 32);
+    values.push(value & 1 ? -(value >>> 1) : value >>> 1);
+  }
+  return values;
+}
+
+function sourceAtWasmOffset(sourceMapJson, wasmOffset) {
+  if (!sourceMapJson) return null;
+  const sourceMap = JSON.parse(sourceMapJson);
+  let offset = 0;
+  let source = 0;
+  let line = 0;
+  let column = 0;
+  let best = null;
+  for (const segment of String(sourceMap.mappings ?? "").split(",")) {
+    const values = decodeVlq(segment);
+    if (values.length < 4) continue;
+    offset += values[0];
+    source += values[1];
+    line += values[2];
+    column += values[3];
+    if (offset > wasmOffset) break;
+    best = { source: sourceMap.sources?.[source] ?? "", line: line + 1, column: column + 1 };
+  }
+  return best;
+}
+
 // Each published CJS module gets its own function scope. `require` calls are
 // rewired to the in-module values rather than stubbed, so what runs is the
 // published implementation wired to the published implementation.
@@ -54,39 +95,137 @@ function wireRequires(source) {
     .replace(/require\(\s*['"]scheduler['"]\s*\)/g, "__SCHEDULER__");
 }
 
+const REACT_DOM_SCHEDULER_SHIM = `
+var __schedulerTaskId = 0;
+exports.unstable_ImmediatePriority = 1;
+exports.unstable_UserBlockingPriority = 2;
+exports.unstable_NormalPriority = 3;
+exports.unstable_LowPriority = 4;
+exports.unstable_IdlePriority = 5;
+exports.unstable_now = function () { return Date.now(); };
+exports.unstable_shouldYield = function () { return false; };
+exports.unstable_requestPaint = function () {};
+exports.unstable_getCurrentPriorityLevel = function () { return 3; };
+exports.unstable_scheduleCallback = function (priority, callback) {
+  var task = { id: ++__schedulerTaskId, callback: callback, timer: null };
+  function run() {
+    if (task.callback === null) return;
+    var continuation = task.callback(false);
+    task.callback = typeof continuation === "function" ? continuation : null;
+    if (task.callback !== null) task.timer = setTimeout(run, 0);
+  }
+  task.timer = setTimeout(run, 0);
+  return task;
+};
+exports.unstable_cancelCallback = function (task) {
+  task.callback = null;
+  if (task.timer !== null) clearTimeout(task.timer);
+};
+exports.log = undefined;
+exports.unstable_setDisableYieldValue = undefined;
+`;
+
 function buildImplementationSource({ reactSource, sharedSource, clientSource }) {
+  const wiredClientSource = wireRequires(clientSource);
   return [
     "function __reactModule() { var exports = {};",
     reactSource,
     "return exports; }",
     "var __REACT__ = __reactModule();",
-    // react-dom's client renderer reaches for the scheduler; it is not part of
-    // the react-dom tarball, so it is an empty object here. Anything that
-    // actually needs it fails identically on both sides and lands in
-    // `harness-incompatible` rather than being filtered out.
-    "var __SCHEDULER__ = {};",
+    "function __schedulerModule() { var exports = {};",
+    REACT_DOM_SCHEDULER_SHIM,
+    "return exports; }",
+    "var __SCHEDULER__ = __schedulerModule();",
     "function __reactDomSharedModule() { var exports = {};",
     wireRequires(sharedSource),
     "return exports; }",
     "var __REACTDOM_SHARED__ = __reactDomSharedModule();",
     "function __reactDomClientModule() { var exports = {};",
-    wireRequires(clientSource),
+    wiredClientSource,
     "return exports; }",
     "var __REACTDOM__ = __reactDomClientModule();",
   ].join("\n");
 }
 
+function reactDomTestSetup(prelude) {
+  const lines = [`document.body.textContent = "";`];
+  const binds = (name, expression) => {
+    if (new RegExp(`\\b(?:let|var)\\s+${name}\\b`).test(prelude)) lines.push(`${name} = ${expression};`);
+  };
+  binds("React", "__REACT__");
+  binds("ReactDOM", "__REACTDOM_SHARED__");
+  binds("ReactDOMClient", "__REACTDOM__");
+  binds("OuterReactDOMClient", "__REACTDOM__");
+  binds("InnerReactDOM", "{ flushSync: __REACTDOM_SHARED__.flushSync }");
+  binds("InnerReactDOMClient", "{ createRoot: __REACTDOM__.createRoot }");
+  if (/\b(?:let|var)\s+act\b/.test(prelude)) {
+    lines.push(`act = async function (callback) {
+  var result;
+  __REACTDOM_SHARED__.flushSync(function () { result = callback(); });
+  if (result !== null && result !== undefined && typeof result.then === "function") await result;
+  return result;
+};`);
+  }
+  return lines.join("\n");
+}
+
+function withReactDomSetup(test) {
+  const leadingDeclarations = /^(?:(?:let|var)\s+[^;\n]+;\s*)+/.exec(test.prelude)?.[0] ?? "";
+  const setup = reactDomTestSetup(test.prelude);
+  const prelude = `${leadingDeclarations}${setup}\n${test.prelude.slice(leadingDeclarations.length)}`;
+  return { ...test, prelude };
+}
+
+function installDomGlobals() {
+  const dom = new JSDOM("<!doctype html><html><body></body></html>", {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
+  const window = dom.window;
+  const globals = [
+    "window",
+    "self",
+    "document",
+    "navigator",
+    "Node",
+    "Element",
+    "HTMLElement",
+    "HTMLInputElement",
+    "HTMLSelectElement",
+    "HTMLTextAreaElement",
+    "Event",
+    "CustomEvent",
+    "MouseEvent",
+    "KeyboardEvent",
+    "FocusEvent",
+    "InputEvent",
+    "MutationObserver",
+    "getComputedStyle",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
+  ];
+  for (const name of globals) {
+    const value = name === "window" || name === "self" ? window : window[name];
+    if (value === undefined) continue;
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+  }
+  return dom;
+}
+
 function buildModuleSource(implementation, tests) {
-  return [implementation, REACT_EXPECT_SHIM, ...tests.map((test) => buildTestFunction(test)), LAST_ERROR_EXPORT].join(
-    "\n",
-  );
+  return [
+    implementation,
+    REACT_EXPECT_SHIM,
+    ...tests.map((test) => buildTestFunction(withReactDomSetup(test))),
+    LAST_ERROR_EXPORT,
+  ].join("\n");
 }
 
 function buildNativeRunners(implementation, tests) {
   const source = [
     implementation,
     REACT_EXPECT_SHIM,
-    ...tests.map((test) => buildTestFunction(test, { exported: false })),
+    ...tests.map((test) => buildTestFunction(withReactDomSetup(test), { exported: false })),
     `return { __lastError: function () { return __lastError; }, tests: { ${tests
       .map((test) => `${JSON.stringify(test.id)}: ${test.id}`)
       .join(", ")} } };`,
@@ -124,7 +263,11 @@ async function compileImplementationOnly(implementation) {
   const started = performance.now();
   let result;
   try {
-    result = await compile(source, { fileName: "react-dom.js", skipSemanticDiagnostics: true });
+    result = await compile(source, {
+      fileName: "react-dom.js",
+      skipSemanticDiagnostics: true,
+      experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
+    });
   } catch (thrown) {
     return {
       validates: false,
@@ -169,11 +312,22 @@ function splitBySize(tests) {
 
 export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
+  installDomGlobals();
 
   // --- 1. ACQUIRE ----------------------------------------------------------
   const { root: reactRoot, version: reactVersion } = setupReact();
   const reactSource = readFileSync(join(reactRoot, "package", "cjs", "react.production.js"), "utf-8");
   const implementationPin = setupReactDomImplementation();
+  const localRequire = createRequire(import.meta.url);
+  const installedReactDom = localRequire("react-dom/package.json");
+  if (installedReactDom.version !== implementationPin.version) {
+    throw new Error(
+      `[dogfood] installed react-dom ${installedReactDom.version} does not match pinned ${implementationPin.version}`,
+    );
+  }
+  const reactDomRequire = createRequire(localRequire.resolve("react-dom/package.json"));
+  const schedulerPackagePath = reactDomRequire.resolve("scheduler/package.json");
+  const schedulerPackage = JSON.parse(readFileSync(schedulerPackagePath, "utf-8"));
   const sharedSource = readFileSync(implementationPin.sharedPath, "utf-8");
   const clientSource = readFileSync(implementationPin.clientPath, "utf-8");
   const { root: suiteRoot, pin: suitePin } = setupReactDomUpstreamSuite();
@@ -185,6 +339,7 @@ export async function runHarness({ quiet = false } = {}) {
     reactDom: {
       version: implementationPin.version,
       reactVersion,
+      schedulerVersion: schedulerPackage.version,
       source: implementationPin.pin.tarball,
       modules: [suitePin.implementation.sharedModule, suitePin.implementation.clientModule],
       implementationChars: implementation.length,
@@ -207,6 +362,7 @@ export async function runHarness({ quiet = false } = {}) {
     root: suiteRoot,
     testFiles: suitePin.testFiles,
     admitAll: process.env.DOGFOOD_REACT_DOM_ADMIT_ALL !== "0",
+    supportedInfrastructure: new Set(["needs-react-dom", "needs-act", "needs-dom", "needs-scheduler"]),
   });
   report.extraction = {
     upstreamTestsSeen: extracted.tests.length + extracted.rejected.length,
@@ -215,6 +371,10 @@ export async function runHarness({ quiet = false } = {}) {
     rejectionCounts: extracted.rejectionCounts,
     rejectedTests: extracted.rejected,
   };
+  const requestedLimit = Number(process.env.DOGFOOD_REACT_DOM_TEST_LIMIT ?? 0);
+  const selectedTests =
+    Number.isInteger(requestedLimit) && requestedLimit > 0 ? extracted.tests.slice(0, requestedLimit) : extracted.tests;
+  report.extraction.selected = selectedTests.length;
   log(
     `[dogfood] react-dom@${implementationPin.version} upstream @ ${suitePin.tag}: ` +
       `${extracted.tests.length} of ${extracted.tests.length + extracted.rejected.length} upstream tests admitted`,
@@ -240,9 +400,9 @@ export async function runHarness({ quiet = false } = {}) {
     // the report can say how many the compiler would have to get right, and they
     // are scored as failures rather than quietly dropped.
     implementationInvalid = { error: String(baseline.error), compileMs: baseline.compileMs };
-    admitted = extracted.tests;
-    const nativeResults = new Map((await runNative(implementation, extracted.tests)).map((e) => [e.id, e]));
-    for (const test of extracted.tests) {
+    admitted = selectedTests;
+    const nativeResults = new Map((await runNative(implementation, selectedTests)).map((e) => [e.id, e]));
+    for (const test of selectedTests) {
       runResults.set(test.id, {
         native: nativeResults.get(test.id) ?? {},
         compiled: null,
@@ -251,7 +411,7 @@ export async function runHarness({ quiet = false } = {}) {
     }
   } else {
     const batches = new Map();
-    for (const test of extracted.tests) {
+    for (const test of selectedTests) {
       if (!batches.has(test.file)) batches.set(test.file, []);
       batches.get(test.file).push(test);
     }
@@ -262,9 +422,12 @@ export async function runHarness({ quiet = false } = {}) {
       let compileMs = 0;
       const started = performance.now();
       try {
-        result = await compile(buildModuleSource(implementation, batchTests), {
+        const moduleSource = buildModuleSource(implementation, batchTests);
+        result = await compile(moduleSource, {
           fileName: "react-dom.js",
           skipSemanticDiagnostics: true,
+          experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
+          sourceMap: true,
         });
       } catch (thrown) {
         result = { success: false, errors: [{ message: thrown instanceof Error ? thrown.message : String(thrown) }] };
@@ -298,11 +461,14 @@ export async function runHarness({ quiet = false } = {}) {
         try {
           const imports = result.importObject ?? {};
           const { instance } = await WebAssembly.instantiate(result.binary, imports);
-          imports.__setExports?.(instance.exports);
+          imports.setInstance?.(instance);
           imports.__setInstance?.(instance);
           compiled = wrapExports(instance.exports, { signatures: result.exportSignatures });
         } catch (error) {
-          firstError = `instantiate failed: ${error instanceof Error ? error.message : String(error)}`;
+          const stack = error instanceof Error ? (error.stack ?? error.message) : String(error);
+          const offsetMatch = /wasm-function\[\d+\]:0x([0-9a-f]+)/i.exec(stack);
+          const source = offsetMatch ? sourceAtWasmOffset(result.sourceMap, Number.parseInt(offsetMatch[1], 16)) : null;
+          firstError = `instantiate failed: ${stack}${source ? `\nsource ${source.source}:${source.line}:${source.column}` : ""}`;
         }
       }
 
@@ -311,6 +477,7 @@ export async function runHarness({ quiet = false } = {}) {
         tests: batchTests.length,
         compileMs,
         binaryBytes: result?.binary?.length ?? 0,
+        imports: result?.imports?.map((entry) => `${entry.module}.${entry.name}`) ?? [],
         compileSuccess: result?.success ?? false,
         validates,
         firstError,
@@ -322,7 +489,12 @@ export async function runHarness({ quiet = false } = {}) {
 
       const nativeResults = new Map((await runNative(implementation, batchTests)).map((e) => [e.id, e]));
       for (const test of batchTests) {
-        runResults.set(test.id, { native: nativeResults.get(test.id) ?? {}, compiled, firstError });
+        runResults.set(test.id, {
+          native: nativeResults.get(test.id) ?? {},
+          compiled,
+          firstError,
+          sourceMap: result?.sourceMap,
+        });
       }
     };
 
@@ -351,7 +523,7 @@ export async function runHarness({ quiet = false } = {}) {
 
   const tests = [];
   for (const test of admitted) {
-    const { native, compiled, firstError } = runResults.get(test.id) ?? {};
+    const { native, compiled, firstError, sourceMap } = runResults.get(test.id) ?? {};
     const entry = {
       id: test.id,
       file: test.file,
@@ -378,7 +550,10 @@ export async function runHarness({ quiet = false } = {}) {
       value = await compiled[test.id]();
     } catch (error) {
       entry.status = "trapped";
-      entry.compiledMessage = error instanceof Error ? error.message : String(error);
+      const stack = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      const offsetMatch = /wasm-function\[\d+\]:0x([0-9a-f]+)/i.exec(stack);
+      const source = offsetMatch ? sourceAtWasmOffset(sourceMap, Number.parseInt(offsetMatch[1], 16)) : null;
+      entry.compiledMessage = `${stack}${source ? `\nsource ${source.source}:${source.line}:${source.column}` : ""}`;
       tests.push(entry);
       continue;
     }

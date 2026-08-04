@@ -2207,6 +2207,11 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
   // after subsequent late imports are added — so `new UserClass(...)` lowers
   // to a call against an unrelated host import (e.g. `__extern_set`).
   const userClassNames = new Set<string>();
+  // Bare built-in constructors can be checker-unresolved in JavaScript files
+  // that preprocessing upgrades to TypeScript grammar (for example when timer
+  // declarations are injected). Keep a conservative source-wide binding set so
+  // the syntactic extern fallback below never captures a user-shadowed name.
+  const userValueNames = new Set<string>();
   // (#1794) A class is only a USER class if it is not ambient. `declare class X`
   // and classes inside `declare namespace N { class X }` ARE the extern-class
   // declarations themselves — collecting them here made the #1284 shadow guard
@@ -2230,6 +2235,25 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
   function collectUserClassNames(node: ts.Node): void {
     if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name && !isAmbientClassDecl(node)) {
       userClassNames.add(node.name.text);
+      userValueNames.add(node.name.text);
+    }
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) &&
+      ts.isIdentifier(node.name)
+    ) {
+      userValueNames.add(node.name.text);
+    }
+    if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) && node.name) {
+      userValueNames.add(node.name.text);
+    }
+    if (ts.isImportClause(node) && node.name) {
+      userValueNames.add(node.name.text);
+    }
+    if (ts.isImportSpecifier(node)) {
+      userValueNames.add(node.name.text);
+    }
+    if (ts.isNamespaceImport(node)) {
+      userValueNames.add(node.name.text);
     }
     forEachChild(node, collectUserClassNames);
   }
@@ -2261,7 +2285,13 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
     // new ClassName()
     if (ts.isNewExpression(node)) {
       const type = ctx.checker.getTypeAtLocation(node);
-      const className = type.getSymbol()?.name;
+      const inferredClassName = type.getSymbol()?.name;
+      const bareClassName = ts.isIdentifier(node.expression) ? node.expression.text : undefined;
+      const className =
+        inferredClassName ??
+        (bareClassName && !userValueNames.has(bareClassName) && ctx.externClasses.has(bareClassName)
+          ? bareClassName
+          : undefined);
       if (className && !userClassNames.has(className) && !isNativeEncodingClass(className)) {
         const info = ctx.externClasses.get(className);
         if (info) register(`${info.importPrefix}_new`, info.constructorParams, [{ kind: "externref" }]);

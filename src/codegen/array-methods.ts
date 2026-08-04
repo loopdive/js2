@@ -1603,7 +1603,13 @@ export function compileArrayMethodCall(
       result = compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "concat":
-      result = compileArrayConcat(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      // Host methods such as String.prototype.split return ordinary JavaScript
+      // arrays. They cannot be cast to the WasmGC vec representation expected
+      // by the native concat lowering, so preserve their Array.prototype.concat
+      // semantics through the existing host fallback.
+      result = receiverIsExternref
+        ? compileArrayConcatExtern(ctx, fctx, methodAccess, callExpr)
+        : compileArrayConcat(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "join":
     // #1997: Array.prototype.toString() (§23.1.3.36) is specified to call join

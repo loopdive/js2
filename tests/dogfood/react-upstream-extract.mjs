@@ -106,7 +106,7 @@ function isSkipped(node) {
 // A prelude statement is kept unless it only exists to wire up Jest module
 // mocking or to pull in infrastructure this harness deliberately does not have.
 // `React = require('react')` is rewritten to bind the module under test.
-function filterPreludeStatement(statement, sourceFile) {
+function filterPreludeStatement(statement, sourceFile, supportedInfrastructure) {
   const text = statement.getText(sourceFile);
   if (/^\s*['"]use strict['"]/.test(text)) return null;
   // Scaffolding that only exists to wire up the infrastructure this harness
@@ -116,7 +116,9 @@ function filterPreludeStatement(statement, sourceFile) {
   // sit in the same `describe` as the ReactDOM ones and share its prelude. A
   // test that actually USES one of these names still gets rejected, because
   // `classifyBody` re-scans the surviving prelude together with the body.
-  for (const [pattern] of INFRA_PATTERNS) if (pattern.test(text)) return null;
+  for (const [pattern, reason] of INFRA_PATTERNS) {
+    if (!supportedInfrastructure.has(reason) && pattern.test(text)) return null;
+  }
   if (/require\(\s*['"]react['"]\s*\)/.test(text)) {
     return text.replace(/require\(\s*['"]react['"]\s*\)/g, "__REACT__");
   }
@@ -169,7 +171,7 @@ function matcherRejection(text) {
   return null;
 }
 
-function classifyBody(fn, text, bodyText, droppedNames, admitAll) {
+function classifyBody(fn, text, bodyText, droppedNames, admitAll, supportedInfrastructure) {
   // STRUCTURAL rejection — a `done`-callback test never resolves without a
   // scheduler to call it, so it cannot be turned into a callable function at
   // all. `async` bodies ARE runnable: they compile to an async export and are
@@ -183,7 +185,9 @@ function classifyBody(fn, text, bodyText, droppedNames, admitAll) {
   // `harness-incompatible` rather than blaming the compiler.
   if (admitAll) return null;
 
-  for (const [pattern, reason] of INFRA_PATTERNS) if (pattern.test(text)) return reason;
+  for (const [pattern, reason] of INFRA_PATTERNS) {
+    if (!supportedInfrastructure.has(reason) && pattern.test(text)) return reason;
+  }
   // Only the BODY is checked against dropped names. The surviving prelude may
   // still *declare* one (`let act;` sits above the `internal-test-utils`
   // destructure that was dropped), which is harmless — an unused binding. A
@@ -198,7 +202,7 @@ function classifyBody(fn, text, bodyText, droppedNames, admitAll) {
 /**
  * @returns {{ tests: Array<object>, rejected: Array<object>, rejectionCounts: Record<string, number> }}
  */
-export function extractReactUpstreamTests({ root, testFiles, admitAll = false }) {
+export function extractReactUpstreamTests({ root, testFiles, admitAll = false, supportedInfrastructure = new Set() }) {
   const tests = [];
   const rejected = [];
 
@@ -219,7 +223,7 @@ export function extractReactUpstreamTests({ root, testFiles, admitAll = false })
       const pending = [];
 
       const keep = (statement, sink) => {
-        const kept = filterPreludeStatement(statement, sourceFile);
+        const kept = filterPreludeStatement(statement, sourceFile, supportedInfrastructure);
         if (kept === null) declaredNames(statement, localDropped);
         else sink.push(kept);
       };
@@ -275,7 +279,14 @@ export function extractReactUpstreamTests({ root, testFiles, admitAll = false })
 
         const bodyText = fn.body.statements.map((statement) => statement.getText(sourceFile)).join("\n");
         const preludeText = [...localScope, ...localEach].join("\n");
-        const reason = classifyBody(fn, `${preludeText}\n${bodyText}`, bodyText, localDropped, admitAll);
+        const reason = classifyBody(
+          fn,
+          `${preludeText}\n${bodyText}`,
+          bodyText,
+          localDropped,
+          admitAll,
+          supportedInfrastructure,
+        );
         if (reason) {
           rejected.push({ ...record, reason });
           continue;

@@ -147,6 +147,8 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
     fieldIdx: number;
     fieldType: ValType;
     jsBoolean: boolean;
+    shapeId?: number;
+    shapeFieldIdx?: number;
   };
   const fieldMap = new Map<string, GetterEntry[]>();
 
@@ -156,6 +158,9 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
 
     // Skip internal/wrapper types
     if (isSyntheticStructName(structName)) continue;
+
+    const shapeId = ctx.shapeIdByStructName.get(structName);
+    const shapeFieldIdx = shapeId !== undefined ? fields.findIndex((field) => field?.name === "$shape") : -1;
 
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
@@ -173,6 +178,7 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
         fieldIdx: i,
         fieldType: field.type,
         jsBoolean: field.jsBoolean === true || (field.type.kind === "i32" && field.type.boolean === true),
+        ...(shapeId !== undefined && shapeFieldIdx >= 0 ? { shapeId, shapeFieldIdx } : {}),
       });
     }
   }
@@ -1087,7 +1093,14 @@ interface SentinelArmConfig {
 
 /** Build nested if/else for struct field getter dispatch. */
 function buildNestedIfElse(
-  entries: { typeIdx: number; fieldIdx: number; fieldType: ValType; jsBoolean: boolean }[],
+  entries: {
+    typeIdx: number;
+    fieldIdx: number;
+    fieldType: ValType;
+    jsBoolean: boolean;
+    shapeId?: number;
+    shapeFieldIdx?: number;
+  }[],
   anyLocal: number,
   boxNumIdx: number | undefined,
   returnMode: "extern" | "f64" | "i32" = "extern",
@@ -1121,7 +1134,7 @@ function buildNestedIfElse(
 
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    const thenBranch = buildGetterExtract(
+    const extractBranch = buildGetterExtract(
       entry,
       anyLocal,
       boxNumIdx,
@@ -1130,6 +1143,22 @@ function buildNestedIfElse(
       boxSymbolIdx,
       sentinelArms,
     );
+    const thenBranch: Instr[] =
+      entry.shapeId !== undefined && entry.shapeFieldIdx !== undefined
+        ? [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: entry.typeIdx },
+            { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
+            { op: "i32.const", value: entry.shapeId },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: blockRetType },
+              then: extractBranch,
+              else: current,
+            },
+          ]
+        : extractBranch;
 
     const ifInstr: Instr = {
       op: "if",

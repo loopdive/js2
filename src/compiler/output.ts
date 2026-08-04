@@ -254,6 +254,7 @@ export function compileToObjectSource(source: string, options: CompileOptions = 
   const ast = analyzeSource(processedSource, effectiveFileName, {
     allowJs: options.allowJs,
     emulateNode: options.emulateNode,
+    forceTsGrammar: preprocessed.requiresTsGrammar,
   });
 
   for (const diag of ast.diagnostics) {
