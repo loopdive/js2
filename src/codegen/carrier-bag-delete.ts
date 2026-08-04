@@ -67,6 +67,7 @@
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { buildInstanceTombstoneDeleteArm } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { addFuncType } from "./registry/types.js";
 
 /** The tri-state carrier-bag delete native minted here. */
@@ -124,7 +125,12 @@ export function reserveCarrierBagDelete(ctx: CodegenContext): number | undefined
  */
 export function buildNonObjectDeleteArms(
   ctx: CodegenContext,
-  args: { bfnDeleteIdx: number | undefined; objectTypeIdx: number; anyLocal: number; resultLocal: number },
+  args: {
+    bfnDeleteIdx: number | undefined;
+    objectTypeIdx: number;
+    anyLocal: number;
+    resultLocal: number;
+  },
 ): Instr[] {
   const cbdIdx = ctx.funcMap.get(CARRIER_BAG_DELETE);
   const bagArm: Instr[] =
@@ -160,7 +166,12 @@ export function buildNonObjectDeleteArms(
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...bagArm, { op: "i32.const", value: 1 }, { op: "return" }],
+      // (#4098 G1 s1) The instance-tombstone arm goes LAST, for the same reason
+      // the bag arm is second: every receiver/key an earlier arm answers for
+      // keeps its answer bit-for-bit. `delete fn.name`/`fn.length` on a builtin
+      // stays with `__builtinfn_delete` and never reaches here — that stratum is
+      // the ~700 files whose regression cost #4055 v1 its -684.
+      then: [...bagArm, ...buildInstanceTombstoneDeleteArm(ctx), { op: "i32.const", value: 1 }, { op: "return" }],
     },
   ];
 }

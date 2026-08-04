@@ -209,39 +209,105 @@
       }
       .edition-legend-item {
         display: grid;
-        gap: 0.12rem;
+        gap: 0.3rem;
+        min-width: 0;
+        padding: 0.5rem;
+        border-radius: 8px;
+        transition: background 0.14s ease;
+      }
+      .edition-legend-item:hover {
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .edition-legend-item.active {
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .edition-legend-item.dimmed {
+        opacity: 0.4;
+      }
+      .edition-legend-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
         min-width: 0;
       }
-      .edition-legend-item.active .edition-legend-name,
-      .edition-legend-item.active .edition-legend-rate,
-      .edition-legend-item.active .edition-legend-ratio {
-        color: rgba(255, 255, 255, 0.98);
-      }
-      .edition-legend-item.dimmed .edition-legend-name {
-        color: rgba(255, 255, 255, 0.26);
-      }
-      .edition-legend-item.dimmed .edition-legend-rate {
-        color: rgba(255, 255, 255, 0.4);
-      }
-      .edition-legend-item.dimmed .edition-legend-ratio {
-        color: rgba(255, 255, 255, 0.32);
-      }
       .edition-legend-name {
-        font-size: 0.72rem;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        color: var(--text-muted);
-      }
-      .edition-legend-rate {
-        color: rgba(255, 255, 255, 0.92);
+        font-size: 0.92rem;
         font-weight: 700;
-        font-variant-numeric: tabular-nums;
-        text-align: left;
+        letter-spacing: 0;
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .edition-legend-ratio {
-        color: var(--text);
-        font-size: 0.8rem;
+        color: var(--text-muted);
+        font-size: 0.7rem;
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .edition-legend-trend-slot {
+        min-width: 0;
+        height: 30px;
+        margin: 0.1rem 0;
+      }
+      .edition-legend-trend {
+        display: block;
+        width: 100%;
+        height: 30px;
+      }
+      .edition-legend-donut {
+        --deg: 0deg;
+        position: relative;
+        width: 34px;
+        height: 34px;
+        flex-shrink: 0;
+      }
+      .edition-legend-donut-glow {
+        position: absolute;
+        inset: -3px;
+        border-radius: 50%;
+        background: conic-gradient(
+          rgba(255, 255, 255, 0) 0deg,
+          rgba(255, 255, 255, 0.4) var(--deg),
+          rgba(255, 255, 255, 0) calc(var(--deg) + 2deg) 360deg
+        );
+        filter: blur(3px);
+        pointer-events: none;
+      }
+      .edition-legend-donut-ring {
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background: conic-gradient(#fff 0deg, #fff var(--deg), rgba(255, 255, 255, 0.14) var(--deg) 360deg);
+        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+        mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 4px));
+      }
+      .edition-legend-donut-value {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--mono);
+        font-size: 0.56rem;
+        font-weight: 700;
+        color: #fff;
+      }
+      .edition-legend-item.dimmed .edition-legend-donut-ring {
+        background: conic-gradient(
+          rgba(255, 255, 255, 0.35) 0deg,
+          rgba(255, 255, 255, 0.35) var(--deg),
+          rgba(255, 255, 255, 0.08) var(--deg) 360deg
+        );
+      }
+      .edition-legend-item.dimmed .edition-legend-donut-glow {
+        display: none;
+      }
+      .edition-legend-item.dimmed .edition-legend-donut-value {
+        color: rgba(255, 255, 255, 0.5);
       }
       .cat-table {
         width: 100%;
@@ -961,12 +1027,43 @@
         return cat;
       }
 
+      // Matches t262NormalizeEditionLabel in components/t262-charts.js — kept
+      // as a local copy since that file is loaded as a module and doesn't
+      // expose it globally.
+      function normalizeEditionLabelForTrend(edition) {
+        return edition === "≤ ES3" || edition === "ES3" ? "ES3 / Core" : edition;
+      }
+
+      // Per-ES-edition pass-rate trend history for the mini sparklines in the
+      // edition legend, sourced from benchmarks/results/runs/editions-index.json
+      // (see scripts/append-run-history.mjs). Host-mode only — no per-edition
+      // standalone history exists yet.
+      function buildEditionTrendSeries(editionRuns) {
+        const seriesByEdition = new Map();
+        if (!Array.isArray(editionRuns)) return seriesByEdition;
+        for (const run of editionRuns) {
+          if (!Array.isArray(run?.editions)) continue;
+          for (const e of run.editions) {
+            const label = normalizeEditionLabelForTrend(String(e?.edition || ""));
+            if (!label) continue;
+            const total = Number(e?.total || 0);
+            if (total <= 0) continue;
+            const pct = (Number(e?.pass || 0) / total) * 100;
+            if (!Number.isFinite(pct)) continue;
+            if (!seriesByEdition.has(label)) seriesByEdition.set(label, []);
+            seriesByEdition.get(label).push({ pct });
+          }
+        }
+        return seriesByEdition;
+      }
+
       function renderEditionLegend(
         rows,
         legendHost,
         activeEdition = null,
         dimAfterRank = null,
         proposalEditionLabels = new Set(),
+        editionTrendSeries = null,
       ) {
         legendHost.textContent = "";
         if (!rows || rows.length === 0) return;
@@ -976,19 +1073,42 @@
           const isDimmed = dimAfterRank !== null && rowRank > dimAfterRank;
           const label = proposalEditionLabels.has(row.edition) ? PROPOSAL_LABEL : row.displayLabel || row.edition;
 
-          legendHost.appendChild(
+          const trendSlot = el("div", { className: "edition-legend-trend-slot" });
+          const points = editionTrendSeries instanceof Map ? editionTrendSeries.get(row.edition) : null;
+          if (points && points.length >= 2) {
+            const chart = el("trend-chart", { className: "edition-legend-trend", mode: "sparkline" });
+            chart.setAttribute("series", JSON.stringify([{ key: "pct", fill: true }]));
+            chart.data = points;
+            trendSlot.appendChild(chart);
+          }
+
+          // Mini gauge — same conic-gradient ring + glow technique as the big
+          // <t262-donut>, just the ring and percentage, no count labels.
+          const donut = document.createElement("div");
+          donut.className = "edition-legend-donut";
+          donut.style.setProperty("--deg", `${Math.max(0, Math.min(100, row.rate)) * 3.6}deg`);
+          donut.appendChild(el("div", { className: "edition-legend-donut-glow" }));
+          donut.appendChild(el("div", { className: "edition-legend-donut-ring" }));
+          donut.appendChild(el("div", { className: "edition-legend-donut-value" }, `${row.rate}%`));
+
+          const item = el(
+            "div",
+            { className: "edition-legend-item" + (isActive ? " active" : "") + (isDimmed ? " dimmed" : "") },
             el(
               "div",
-              { className: "edition-legend-item" + (isActive ? " active" : "") + (isDimmed ? " dimmed" : "") },
+              { className: "edition-legend-top" },
               el("div", { className: "edition-legend-name" }, label),
-              el("div", { className: "edition-legend-rate" }, `${row.rate}%`),
-              el(
-                "div",
-                { className: "edition-legend-ratio" },
-                `${row.pass.toLocaleString()} / ${row.total.toLocaleString()}`,
-              ),
+              donut,
+            ),
+            trendSlot,
+            el(
+              "div",
+              { className: "edition-legend-ratio" },
+              `${row.pass.toLocaleString()} / ${row.total.toLocaleString()}`,
             ),
           );
+
+          legendHost.appendChild(item);
         });
       }
 
@@ -1394,7 +1514,8 @@
         });
       }
 
-      function renderConformance(view, container, conformanceRuns) {
+      function renderConformance(view, container, conformanceRuns, editionRuns) {
+        const editionTrendSeries = view.mode === "host" ? buildEditionTrendSeries(editionRuns) : null;
         const data = view.report;
         // Point per-file detail/error-pattern lookups at this view's source.
         activeFileResultsSrc = view.fileResultsSrc;
@@ -1487,6 +1608,7 @@
             editionDetail.activeEdition,
             editionDetail.limitRank,
             editionDetail.proposalEditionLabels,
+            editionTrendSeries,
           );
         }
 
@@ -2393,11 +2515,12 @@
       }
 
       async function main() {
-        const [conformance, standaloneReport, conformanceRuns, categoryEditions] = await Promise.all([
+        const [conformance, standaloneReport, conformanceRuns, categoryEditions, editionRuns] = await Promise.all([
           loadReportWithFallback(),
           loadJSON(STANDALONE_REPORT_JSON),
           loadJSON(assetPath("benchmarks/results/runs/index.json")),
           loadJSON(CATEGORY_EDITIONS_JSON),
+          loadJSON(assetPath("benchmarks/results/runs/editions-index.json")),
         ]);
         const app = document.getElementById("app");
         app.textContent = "";
@@ -2438,7 +2561,7 @@
           const renderActive = () => {
             conformanceHost.textContent = "";
             const view = activeMode === "standalone" && standaloneView ? standaloneView : hostView;
-            renderConformance(view, conformanceHost, conformanceRuns);
+            renderConformance(view, conformanceHost, conformanceRuns, editionRuns);
           };
           if (standaloneView) {
             const modeSwitch = el("div", { className: "mode-switch" });

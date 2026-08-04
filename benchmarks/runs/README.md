@@ -23,9 +23,11 @@ baseline for its merge-base. Reported regressions become precisely
 ## Layout
 
 ```
-runs/index.json          — trend-graph history (unchanged; never pruned)
-runs/<commit-sha>.json   — summary: pass/fail/CE counts, run metadata, per-category breakdown
-runs/<commit-sha>.jsonl  — per-test results for that commit
+runs/index.json            — overall pass-rate trend-graph history (unchanged; never pruned)
+runs/editions-index.json   — per-ES-edition pass-rate trend history, for the landing-page mini edition graphs (never pruned)
+runs/standalone-index.json — standalone-target pass-rate trend history, for the landing-page primary graph's standalone scope (never pruned)
+runs/<commit-sha>.json     — summary: pass/fail/CE counts, run metadata, per-category breakdown
+runs/<commit-sha>.jsonl    — per-test results for that commit
 ```
 
 `<commit-sha>` is `github.sha` of main at the time the sharded run ran.
@@ -80,6 +82,7 @@ jsonl.
 |--------|------|
 | `scripts/write-run-cache.mjs` | Build `<sha>.json` + copy `<sha>.jsonl` (promote-baseline). |
 | `scripts/resolve-merge-base-baseline.mjs` | Pick merge-base cache entry vs. latest-main fallback (PR gate). |
-| `scripts/prune-run-cache.mjs` | Apply retention policy (weekly prune). |
+| `scripts/prune-run-cache.mjs` | Apply retention policy (weekly prune); only matches `<sha>.{json,jsonl}`, never touches `index.json`/`editions-index.json`/`standalone-index.json`. |
+| `scripts/append-run-history.mjs` | Append a snapshot to `editions-index.json` / `standalone-index.json` (promote-baseline / write-run-cache-bot / refresh-baseline.yml). |
 
 Unit tests: `tests/issue-1081.test.ts`.
