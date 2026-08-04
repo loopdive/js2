@@ -13,7 +13,7 @@ task_type: performance
 area: codegen
 language_feature: objects, classes, compiler-internals
 goal: performance
-related: [3780, 3927, 3926, 3685, 3683, 2681, 1712, 743, 684, 4074]
+related: [4157, 3780, 3927, 3926, 3685, 3683, 2681, 1712, 743, 684, 4074]
 origin: "2026-08-02 — asked to find why types cannot be inferred for acorn. They largely can be; the binary discards them."
 oracle-ratchet-allow:
   # (+2 `ctx.checker.typeToString`, in the census module itself.) The census

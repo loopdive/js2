@@ -5,6 +5,7 @@ status: ready
 created: 2026-03-22
 updated: 2026-07-18
 priority: critical
+horizon: xl
 feasibility: hard
 model: fable
 fable_role: spec
@@ -12,7 +13,7 @@ reasoning_effort: max
 goal: performance
 sprint: current
 required_by: [744, 904, 905]
-related: [773, 745, 2773, 1046, 1124, 1131]
+related: [4157, 773, 745, 2773, 1046, 1124, 1131]
 files:
   src/checker/type-mapper.ts:
     breaking:
