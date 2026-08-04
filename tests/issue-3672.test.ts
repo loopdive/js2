@@ -114,11 +114,22 @@ describe.skipIf(ESLINT_LINTER === null)(
     // costs 10-20 s PER FILE with outliers at 97.6 s and 159.1 s. At 149 files
     // that is ~60 min for that loop alone.
     //
-    // It is NOT quadratic — per-file cost does not grow as the module fills
-    // (first-half vs second-half average ratio 0.35x, i.e. decreasing). So this
-    // is flat-but-heavy throughput, not a hang and not an O(n^2) blowup, and
-    // widening the budget to ~90 min would put an hour-plus job in CI to assert
-    // something a fast rung already covers.
+    // CORRECTION (2026-08-01, #4001): the "NOT quadratic" conclusion recorded
+    // here was WRONG, and the evidence for it is exactly what hid the defect.
+    // The reasoning was "per-file cost does not grow as the module fills
+    // (first-half vs second-half ratio 0.35x, decreasing), so this is
+    // flat-but-heavy throughput, not an O(n^2) blowup."
+    //
+    // Per-file cost was flat because EVERY file compiled the FULL accumulated
+    // module initializer, not a growing prefix: `collectDeclarations` runs over
+    // the whole graph before the body loop starts, so `ctx.moduleInitStatements`
+    // was already complete on iteration 1. Total work was n x (whole program's
+    // top level) — quadratic in the graph — while the per-file series looked
+    // flat. Growth-in-per-file-cost is simply the wrong probe for this shape.
+    //
+    // The 97.6 s and 159.1 s outliers noted above were the big CJS bundles'
+    // initializers being recompiled, once per source, all 149 times.
+    // Fixed in #4001; see that issue for the measurements.
     //
     // Automated signal is NOT lost: Tier 1a in `tests/stress/eslint-tier1.test.ts`
     // pins the package entry's frontier at 297 s under a measured 600 s budget,

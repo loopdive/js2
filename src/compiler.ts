@@ -46,6 +46,7 @@ import { collectGraphNodeBuiltinImports } from "./compiler/node-builtin-import-c
 import { rewriteCjsRequire, rewriteCjsRequireWithMap } from "./cjs-rewrite.js";
 import { preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
+import { profileCount, profilePhase } from "./compile-profile.js";
 import { injectProcessStdinPrelude } from "./process-stdin-prelude.js";
 import { injectIteratorStaticsPrelude } from "./iterator-statics-prelude.js";
 import * as irIds from "./compiler/ir-outcome-inventory.js";
@@ -961,9 +962,11 @@ function runPipeline(input: PipelineInput): CompileResult {
         return failResult(errors);
       }
     } else {
-      const result = multiAst
-        ? generateMultiModule(multiAst, input.codegenOptions)
-        : generateModule(entryAst, input.codegenOptions, input.irInventoryOptions);
+      const result = profilePhase("codegen", () =>
+        multiAst
+          ? generateMultiModule(multiAst, input.codegenOptions)
+          : generateModule(entryAst, input.codegenOptions, input.irInventoryOptions),
+      );
       mod = result.module;
       capturedFallbackCounts = result.fallbackCounts;
       capturedIrPostClaimErrors = result.irPostClaimErrors;
@@ -1507,8 +1510,13 @@ export async function compileMultiSource(
   // Rewrite CJS `const X = require('Y')` to ESM `import X from 'Y'` (#1279) across
   // every input file. This runs before TypeScript's analyzer so the require() calls
   // are seen as proper module imports during cross-file resolution.
-  const rewrittenFiles = Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)]));
-  const processedFiles = foldGroundCallsInMulti(rewrittenFiles, entryFile, options.optimize);
+  const rewrittenFiles = profilePhase("cjs-rewrite", () =>
+    Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)])),
+  );
+  const processedFiles = profilePhase("ground-call-fold", () =>
+    foldGroundCallsInMulti(rewrittenFiles, entryFile, options.optimize),
+  );
+  profileCount("input-files", Object.keys(processedFiles).length);
 
   const analyzeOptions = {
     allowJs: options.allowJs,
@@ -1518,11 +1526,15 @@ export async function compileMultiSource(
   };
   let multiAst: MultiTypedAST;
   if (projectService && projectResolutions === undefined) {
-    projectService.updateProject(processedFiles, entryFile);
-    multiAst = projectService.analyze(analyzeOptions);
+    profilePhase("analyze/update-project", () => projectService.updateProject(processedFiles, entryFile));
+    multiAst = profilePhase("analyze/checker", () => projectService.analyze(analyzeOptions));
   } else {
-    multiAst = analyzeMultiSource(processedFiles, entryFile, undefined, analyzeOptions, projectResolutions);
+    multiAst = profilePhase("analyze", () =>
+      analyzeMultiSource(processedFiles, entryFile, undefined, analyzeOptions, projectResolutions),
+    );
   }
+  profileCount("source-files", multiAst.sourceFiles.length);
+  profileCount("program-files", multiAst.program.getSourceFiles().length);
 
   // When allowJs is set (e.g. compiling npm packages like lodash-es), only report
   // diagnostics from the entry file — dependency files may have TS errors we can't

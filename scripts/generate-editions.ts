@@ -18,7 +18,7 @@
  * Issue: #959
  */
 
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -590,6 +590,50 @@ function stripTestPrefix(file: string): string {
   return file.replace(/^test\//, "");
 }
 
+/**
+ * (#2871 follow-up) The runner's proposal-scope rules, for files the walk below
+ * adds. A record carries the runner's own verdict (`scope_official === false`);
+ * a file the lane never reported does not, so without this a Temporal or
+ * staging test would be indexed as the draft edition and appear inside the
+ * published range. Mirrors `classifyTestScope` / `PROPOSAL_FEATURES` in
+ * tests/test262-runner.ts — that module is not importable here (it pulls in the
+ * compiler), so keep the two in sync if the runner's list changes.
+ */
+const PROPOSAL_FEATURE_TAGS = new Set(["Temporal", "import-defer", "source-phase-imports"]);
+
+function isProposalScopeByPath(relPath: string, features: string[] | undefined): boolean {
+  if (relPath.startsWith("staging/")) return true;
+  if (relPath.includes("built-ins/Temporal/")) return true;
+  return (features ?? []).some((feature) => PROPOSAL_FEATURE_TAGS.has(feature));
+}
+
+/**
+ * Every test file in the checkout, as "language/…/x.js"
+ * paths. The per-file edition index is completed from this walk so it covers
+ * tests that the lane being processed never reported — the standalone lane's
+ * results are scored against the same index, and a file only IT reports would
+ * otherwise have no edition and silently drop out of an edition-scoped count
+ * (measured before this: 241 of one bucket's 4,547 failures).
+ */
+function walkTestFiles(testDir: string, prefix = ""): string[] {
+  const out: string[] = [];
+  let entries: ReturnType<typeof readdirSync>;
+  try {
+    entries = readdirSync(testDir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      out.push(...walkTestFiles(join(testDir, entry.name), rel));
+    } else if (entry.name.endsWith(".js") && !entry.name.endsWith("_FIXTURE.js")) {
+      out.push(rel);
+    }
+  }
+  return out;
+}
+
 /** A test after edition classification, used to compute reconciled row counts. */
 export interface ClassifiedTest {
   edition: number;
@@ -1086,6 +1130,18 @@ async function main() {
   // each standalone root-cause bucket a per-edition count breakdown.
   const fileEditionsPath = outputPath.replace(/test262-editions\.json$/, "test262-file-editions.json");
   if (fileEditionsPath !== outputPath) {
+    // Complete the index from the checkout so it covers every test, not only
+    // the ones this lane reported. Records win where both exist — they carry
+    // the proposal-scope verdict, which frontmatter alone cannot express.
+    let fromWalk = 0;
+    for (const file of walkTestFiles(join(test262Root, "test"))) {
+      if (fileEditions[file] !== undefined) continue;
+      const fm = parseFrontmatter(join(test262Root, "test", file));
+      const edition = isProposalScopeByPath(file, fm.features) ? -1 : classifyEdition(fm, `test/${file}`);
+      fileEditions[file] = EDITION_NAMES[edition] ?? `ES${edition}`;
+      fromWalk++;
+    }
+    if (fromWalk > 0) console.log(`Indexed ${fromWalk} test file(s) not present in this lane's results.`);
     const editionLabels: string[] = [];
     const labelIndex = new Map<string, number>();
     const filesOut: Record<string, number> = {};

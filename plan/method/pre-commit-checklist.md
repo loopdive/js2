@@ -16,6 +16,13 @@
 7. [ ] No test files from other issues being deleted
 8. [ ] No source files being reverted to old versions
 9. [ ] Commit message references your issue number (#N)
+10. [ ] **Never `git commit --no-verify`.** If the full pre-commit chain is too
+        slow for your tool timeout (test:changed-root + ratchets take minutes),
+        commit with `SKIP_SLOW_PRECOMMIT=1 git commit …` instead — that keeps
+        the seconds-cheap prettier/biome gate (lint-staged) and skips only the
+        slow checks, which CI runs anyway. `--no-verify` skips EVERYTHING, and
+        that is how PR #4100 shipped an unformatted file to a failing `quality`
+        lane (2026-08-04 post-mortem).
 
 ## Lint suppressions — this project uses BIOME, not ESLint
 

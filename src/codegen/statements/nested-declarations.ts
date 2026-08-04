@@ -21,6 +21,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "../context/types.js";
+import { installFrameTrap } from "../frame-trap.js";
 import {
   compileNativeGeneratorFunction,
   isNativeGeneratorCandidate,
@@ -487,6 +488,36 @@ export function compileNestedFunctionDeclaration(
     for (const name of fctx.boxedCaptures?.keys() ?? []) referencedNames.add(name);
   }
 
+  // (#4134) TRANSITIVE captures through sibling calls.
+  //
+  // A nested function that CALLS a capturing sibling has to supply that
+  // sibling's captures at the call site (`nestedFuncCaptures` prepend in
+  // call-identifier.ts), and it does so by `local.get`-ing the DECLARING
+  // frame's slot. When the caller is itself lifted to a module-level function,
+  // that slot does not exist in its frame and the emitted index is out of
+  // range — the module fails to validate ("local index out of range").
+  //
+  // Reference example (uri-js's UMD bundle): the factory body declares
+  // `SCHEMES`/`URI_PROTOCOL`/… as locals; nested `parse`/`serialize` capture
+  // them; sibling `normalize`/`resolve`/`equal` call `parse` without
+  // mentioning those names at all, so they captured nothing and emitted
+  // `local.get 31` into a 7-slot frame.
+  //
+  // Fix: treat a referenced capturing sibling's captures as referenced here
+  // too, so they become this function's captures as well and ride in as
+  // leading params. The call site then resolves them through `localMap` to
+  // those params (`liftedCaptureNames`, call-identifier.ts).
+  //
+  // The closure is computed SYNTACTICALLY over the sibling set rather than
+  // from `ctx.nestedFuncCaptures`, because the Phase-0 reservation in
+  // `hoistFunctionDeclarations` has to reach the SAME verdict before any
+  // sibling has been compiled. If the two disagree — reservation says
+  // "capture-free", compile says "capturing" — the capturing branch never
+  // fills the reserved slot and every call to that function returns 0.
+  for (const name of transitiveSiblingCaptures(ctx, fctx, stmt)) {
+    if (!ownLocals.has(name)) referencedNames.add(name);
+  }
+
   // Detect which captured variables are written inside the function body
   const writtenInBody = new Set<string>();
   for (const s of stmt.body.statements) {
@@ -731,6 +762,7 @@ export function compileNestedFunctionDeclaration(
       liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
       liftedFctx.directEvalActivationBindingNames = collectDirectEvalActivationBindingNames(stmt);
     }
+    installFrameTrap(liftedFctx, funcName);
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
@@ -774,6 +806,7 @@ export function compileNestedFunctionDeclaration(
       };
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdxNC, reservedEntryNC);
       ctx.funcMap.set(funcName, reservedFuncIdxNC);
+      ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4133/#4134) see funcMapOwnerDecl
     }
 
     // Emit default-value initialization for parameters with initializers
@@ -1056,10 +1089,15 @@ export function compileNestedFunctionDeclaration(
         liftedFctx.directEvalOuterBindingNames.add(capture.name);
       }
     }
+    installFrameTrap(liftedFctx, funcName);
     initializeFunctionPoisonPillContext(ctx, liftedFctx, stmt);
     for (let i = 0; i < liftedFctx.params.length; i++) {
       liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);
     }
+    // (#4134) Record which names arrived as leading capture params. Forwarding
+    // call sites must read OUR param for these, not the declaring function's
+    // slot number — see `liftedCaptureNames` in context/types.ts.
+    liftedFctx.liftedCaptureNames = new Set(captures.map((c) => c.name));
 
     // Register mutable captures as boxed so reads/writes use struct.get/set.
     // Also register non-mutable captures that are already boxed in the outer
@@ -1155,6 +1193,7 @@ export function compileNestedFunctionDeclaration(
       const reservedFuncIdx = mintDefinedFunc(ctx);
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reservedEntry);
       ctx.funcMap.set(funcName, reservedFuncIdx);
+      ctx.funcMapOwnerDecl.set(funcName, stmt); // see funcMapOwnerDecl
     }
     ctx.nestedFuncCaptures.set(
       funcName,
@@ -1888,6 +1927,7 @@ export function hoistFunctionDeclarations(
       };
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reserved);
       ctx.funcMap.set(funcName, reservedFuncIdx);
+      ctx.funcMapOwnerDecl.set(funcName, stmt); // (#4133/#4134) see funcMapOwnerDecl
       if (!ctx.preRegisteredBodyless) ctx.preRegisteredBodyless = new Set();
       ctx.preRegisteredBodyless.add(funcName);
     }
