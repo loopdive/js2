@@ -11,6 +11,7 @@ import {
   emitFuncRefAsClosure,
   isOwnParamName,
 } from "../closures.js";
+import { installFrameTrap } from "../frame-trap.js";
 import { emitCachedFuncClosureAccess } from "../closures/method-trampolines.js"; // (#3486) fnctor ctor-closure singleton
 import {
   provablyNonConstructableStatically,
@@ -1516,6 +1517,7 @@ function compileNewFunctionDeclaration(
   };
 
   // Set up param locals
+  installFrameTrap(ctorFctx, ctorName);
   for (let i = 0; i < ctorFctx.params.length; i++) {
     ctorFctx.localMap.set(ctorFctx.params[i]!.name, i);
   }

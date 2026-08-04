@@ -2304,6 +2304,20 @@ export interface CodegenContext {
       outerTdzFlagIdx?: number;
     }[]
   >;
+  /**
+   * (#4133 / #4134) Which nested `FunctionDeclaration` currently owns a
+   * `funcMap` name.
+   *
+   * `funcMap` and `nestedFuncCaptures` are keyed by BARE name and are global
+   * and permanent, but a nested function declaration lexically SHADOWS any
+   * outer or imported binding of the same name, and only for the extent of its
+   * enclosing body. Without an owner record the hoist loop cannot tell "this
+   * exact declaration is already compiled" (skip) from "some unrelated module's
+   * function happens to have this name" (must still compile, shadowing it).
+   * Absent ⇒ the name belongs to a top-level declaration, an import, or a
+   * synthesized runtime helper — never to a nested declaration.
+   */
+  funcMapOwnerDecl: Map<string, ts.FunctionDeclaration>;
   /** Map from child className → parent className (for local class inheritance) */
   classParentMap: Map<string, string>;
   /**

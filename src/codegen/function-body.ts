@@ -170,6 +170,48 @@ export const INLINE_DISALLOWED_OPS = new Set([
  * - No extra locals beyond parameters
  * - Not a rest-param or capture function
  */
+/**
+ * (#4134) Dump a just-compiled ordinary function body that references locals
+ * outside its own frame, with `<<<<` on the offending ops.
+ *
+ * A `push`-trap on `fctx.body` misses this class entirely: `fctx.body` is
+ * REASSIGNED during compilation (the savedBodies swap), so a proxy installed on
+ * the initial array stops seeing writes after the first swap. Inspecting the
+ * finished body sidesteps that. Enabled by `JS2WASM_FRAME_OPS`.
+ */
+export const frameSnapshotAtCompile = new Map<WasmFunction, { locals: number; bodyLen: number }>();
+
+export function dumpFrameBreach(ctx: CodegenContext, func: WasmFunction): void {
+  if (process.env?.JS2WASM_FRAME_STAGES) {
+    frameSnapshotAtCompile.set(func, { locals: func.locals.length, bodyLen: func.body.length });
+  }
+  if (!process.env?.JS2WASM_FRAME_OPS) return;
+  const type = ctx.mod.types[func.typeIdx];
+  if (!type || type.kind !== "func") return;
+  const frame = type.params.length + func.locals.length;
+  const lines: string[] = [];
+  let bad = false;
+  const walk = (instrs: readonly Instr[], depth: number): void => {
+    for (const instr of instrs) {
+      const index = (instr as { index?: number }).index;
+      const out = typeof index === "number" && index >= frame && instr.op.startsWith("local.");
+      if (out) bad = true;
+      lines.push(`${"  ".repeat(depth)}${instr.op}${index === undefined ? "" : ` ${index}`}${out ? "   <<<<" : ""}`);
+      for (const key of ["body", "then", "else", "catchAll"] as const) {
+        const nested = (instr as unknown as Record<string, unknown>)[key];
+        if (Array.isArray(nested)) walk(nested as Instr[], depth + 1);
+      }
+    }
+  };
+  walk(func.body, 0);
+  if (!bad) return;
+  process.stderr.write(
+    `[js2:fn-breach] ${func.name} frame=${frame} (${type.params.length} params + ${func.locals.length} locals)` +
+      ` locals=${func.locals.map((l) => `${l.name}:${l.type.kind}`).join(",")}\n`,
+  );
+  for (const line of lines) process.stderr.write(`[js2:fn-breach]   ${line}\n`);
+}
+
 export function registerInlinableFunction(ctx: CodegenContext, funcName: string, func: WasmFunction): void {
   // Skip functions with rest params or captures
   if (ctx.funcRestParams.has(funcName)) return;
