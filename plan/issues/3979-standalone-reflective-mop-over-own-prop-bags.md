@@ -191,3 +191,62 @@ family stays red. **Do not flip the helper without re-running the repro above.**
 ## Validation
 
 See "Measured" below (filled in by the A/B run).
+
+
+## MEASURED on the real standalone lane (2026-08-04) — net +21, and the −2 was actually −8
+
+The authoring agent reported +28 / −2. Re-run as a clean A/B on the **standalone**
+lane (an earlier attempt was void — the harness silently ran the host lane, see
+the correction on PR #11), over the six descriptor directories
+(`Object/{defineProperty,defineProperties,create,getOwnPropertyDescriptor,isExtensible,preventExtensions}`,
+2,471 files, `runTest262File`, host-free pass rule):
+
+| | standalone |
+| --- | --- |
+| BEFORE (propdesc reverted to c40c9286) | 1,625 / 2,471 |
+| AFTER | **1,646 / 2,471** |
+| fixed | **+29** |
+| regressed | **−8** |
+| **net** | **+21** |
+
+### The 8 regressions are ONE family
+
+```
+built-ins/Object/create/name.js
+built-ins/Object/defineProperties/name.js
+built-ins/Object/defineProperty/name.js
+built-ins/Object/defineProperty/15.2.3.6-4-594.js
+built-ins/Object/getOwnPropertyDescriptor/length.js
+built-ins/Object/getOwnPropertyDescriptor/name.js
+built-ins/Object/isExtensible/name.js
+built-ins/Object/preventExtensions/name.js
+```
+
+Seven are `name.js` / `length.js`: `verifyProperty(Object.<fn>, "name", {value,
+writable:false, enumerable:false, configurable:true})` — i.e. **gOPD over a
+BUILT-IN FUNCTION receiver**, asking for its own `name`/`length`. The eighth
+(`15.2.3.6-4-594`) is the same shape via `Function.prototype` + `bind`.
+
+### Lead for the fix
+
+`buildGetOwnPropertyDescriptor` already has the **#2896 builtin-fn metadata
+arm** that synthesizes exactly those descriptors and returns early; it stores
+the synthesized descriptor with `local.tee index 6`. #3979 appends its bag local
+at `gopdBagLocalIdx = 7 + (strExotic ? 6 : 0)` and installs `bagSubstitutionArm`
+with `fallback: primitiveReceiverArm`.
+
+So the two candidates, in order of suspicion:
+
+1. **Local-index collision / clobber** around index 6-7 corrupting the #2896
+   arm's stored descriptor before it returns.
+2. **Arm ordering** — the bag arm intercepting a built-in function receiver that
+   must fall through to #2896.
+
+Either way the invariant to restore is: *a built-in function receiver asking for
+its own `name`/`length` must reach the #2896 arm untouched.* Add a regression
+test for `verifyProperty(Object.defineProperty, "name", …)` in standalone once
+fixed — this family is currently uncovered by unit tests, which is why the
+authoring agent's own count missed 6 of the 8.
+
+**Net +21 is still a real gain** and this is the 37 % lever, so the fix is worth
+having rather than reverting the slice.
