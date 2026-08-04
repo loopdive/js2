@@ -116,10 +116,24 @@ Fixed at source (§10.1.9 no-op), not at the query. Six-line repro in #4010.
   **First action next session: verify it merged by CONTENT on upstream/main**
   (`src/codegen/instance-tombstones.ts` present) — not by PR field. If it was
   parked instead, read the cited run before touching the `hold`.
-- **PR #4109** (`issue-4119-ladder-build`, head `bf8dfeb5c`) — D-g4-build's
-  `fix(#4119): runtime Object.prototype.toString classifier for standalone
-  (arm 1)`. Opened one minute before stand-down, `BEHIND`, full CI just
-  started. **Nothing diagnosed — it needs a fresh watch next session.**
+- **PR #4109** (`issue-4119-ladder-build`, head `758b30c0a`) — #4119 **arm 1
+  COMPLETE**: the 76 `Object.prototype.toString` rows go **0/76 → 75/76**,
+  refusals 76 → 0, **0 regressions** across an 82-row sweep, kill-switch
+  15/15-loud → 11 correct / 4 loud / **0 wrong**. The 1 residual fails on
+  `String.prototype.split` — owned by **#4095** (G5 bundle). Merged up to
+  current main, CLEAN, auto-enqueue owns it. **Verify it merged by content.**
+  - The 4 still-loud shapes (Date/Error/RegExp/class instance, `$Proxy`,
+    Symbol/BigInt wrappers) are **intentional refusals, not misses**.
+  - Separate **pre-existing** defect recorded on `44bc97680`: the
+    property-assign idiom returns a non-string instead of the tag or a
+    TypeError for 6 shapes — kill-switch receipt proves arm 1 introduces none
+    of it. Needs an id.
+  - ⚠ **Tripwire for arm 2 (`map`, 146 rows, deferred on budget):** giving
+    `toString` a body flipped `tryEmitNativeProtoReflectiveCall` from silently
+    declining to **succeeding**, which took **27 passing rows down** before it
+    was handled. **The same tripwire will fire for `map`** — implementing a
+    member body changes that helper's decline/succeed verdict for every
+    receiver shape it then claims. Budget the regression sweep accordingly.
 - **#4098 and #4119 claims remain HELD** (`ttraenkler/dev-4098-g1`,
   `ttraenkler/dev-4119-g4`) so the work is marked as resumable, not abandoned.
   Release or re-claim deliberately.
