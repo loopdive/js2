@@ -312,6 +312,25 @@ receiver identity (`g.call(o) === o`), constructor-function (`new O()`)
 receivers, class instances behind `any`, and ambient-`this` restore across
 consecutive calls with different receivers.
 
+### Still dropping the receiver after this fix (NOT regressions — measured)
+
+The argv shapes that `tryReshapeApplyToNamedThisCall` and
+`resolveNamedThisCallTarget` deliberately refuse still take the
+evaluate-and-drop lowering. Measured on the JS lane (`.mjs`,
+`skipSemanticDiagnostics`), `function g(a) { return this.x + a }`,
+`var o = {x:42}`:
+
+| shape | result |
+| --- | --- |
+| `g.apply(o, [5])` | 47 ✅ |
+| `g.apply(o, arr)` — dynamic argv | wrong, no trampoline |
+| `g.apply(o, [...a])` — spread in argv | wrong, no trampoline |
+| `g.call(o, ...a)` — spread call | wrong, no trampoline |
+
+These need a dynamic-argv lowering (the trampoline ABI is fixed-arity), which is
+a bigger change than admission. They were equally broken before this fix; naming
+them here so nobody reads #4025 as covering them.
+
 ### Pre-existing failures NOT caused by this change
 
 Confirmed identical with and without the patch (A/B by file copy):
