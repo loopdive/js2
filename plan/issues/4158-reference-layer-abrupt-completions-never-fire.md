@@ -40,6 +40,57 @@ assert.throws(TypeError, function () {
 
 No exception is raised, so the `assert.throws` fails.
 
+## Confirmed repro (2026-08-05) — and a CORRECTION to the framing above
+
+This issue was filed from baseline signatures alone. Now measured on this tree
+(`--target standalone`, deps installed). Encoding: **0 = nothing thrown (bug)**,
+**1 = threw, but not an instance of the expected constructor**, **2 = correct**.
+
+```
+A  delete base.prop      base = local  const base: any = undefined   -> 2  CORRECT
+B  read   base.prop      base = local                                -> 0  BUG
+C  write  base.prop = 1  base = local                                -> 0  BUG
+D  read   base.prop      base = local  const base: any = null        -> 1  BUG (wrong ctor)
+F  delete base.prop      base = MODULE-SCOPE var, read in a closure  -> 0  BUG
+G  control: throw new TypeError("x"); e instanceof TypeError         -> 2  CORRECT
+```
+
+**The `delete` example quoted above is the wrong canonical case, and this issue
+originally led with it.** `delete base.prop` on an undefined base *does* throw a
+proper `TypeError` when the base is a local in the same function (A). It only
+fails when the base is a module-scope binding reached from a **closure** (F) —
+which is exactly the shape
+`language/expressions/delete/member-identifier-reference-undefined.js` uses, so
+the test still fails, but not for the reason this issue first gave.
+
+What the probes actually establish:
+
+1. **Plain member READ and WRITE on an undefined base never throw at all** (B, C)
+   — broader than `delete` and not called out in the original framing. This is
+   the primary defect.
+2. **`delete` is scope-sensitive** (A vs F). A same-function local is handled;
+   a closure-captured module-scope binding is not. That points at the
+   *reference-resolution* path for captured bindings, not at `delete` semantics —
+   a much sharper lead than "the Reference layer never throws".
+3. **A `null` base throws the wrong thing** (D) — something is raised, but it is
+   not an instance of `TypeError`. That is the error-constructor identity
+   sub-shape listed in the table below, and it is implicated in the base-coercion
+   path too, not only in the 4 files attributed to it.
+4. **The `instanceof` machinery itself is fine** (G), so D is a real
+   wrong-constructor bug and not an artifact of how the probe tests it.
+
+Probe artifact, not a finding: the closure-plus-helper variant (E) failed to
+instantiate with a missing `env` host import rather than returning a verdict, so
+it is excluded.
+
+**Consequences for whoever picks this up.** Lead with B/C, not with `delete`.
+Treat A-vs-F as the diagnostic that localises the bug — the same syntactic
+operation succeeds or fails purely on how its base binding is stored, which
+should point straight at the closure/module-binding read path. And do not assume
+the 138-file count partitions the way the sub-shape table below suggests; that
+table was derived from error text, and D shows at least one row bleeding into
+another mechanism.
+
 ## Measurement
 
 **138 files** in the ES5 + untagged standalone scope
@@ -121,8 +172,8 @@ Two arms to check:
   the GitHub API: two open PRs (#4106, #4123); the highest issue id introduced by
   either is 4154. The required `check:issue-ids:against-main` gate remains the
   backstop.
-- No compiler was built or run for this issue. The counts come from the published
-  baselines and the causal claim is read from the test bodies plus the failure
-  shapes — it has **not** been confirmed by a local repro. First step for whoever
-  picks this up: reproduce `delete base.prop` on `undefined` and confirm the
-  lowering.
+- **Superseded 2026-08-05.** This bullet said no repro had been run and named
+  `delete base.prop` as the first thing to reproduce. That has now been done, and
+  it partly refuted the framing — see the confirmed-repro section above. The
+  counts still come from the published baselines and have not been
+  re-partitioned against the corrected mechanism.
