@@ -40,6 +40,27 @@ loc-budget-allow:
 # if one lands, this helper is a one-call rewrite.
 coercion-sites-allow:
   - src/codegen/proto-index-store.ts
+# (#3400 func ratchet) This slice's whole shape is "emit extra arms under a
+# compile-time flag", so the emitters that host those arms grow. Each entry is
+# the irreducible cost of a chokepoint the spec named, not logic that could
+# live in the new subsystem module (proto-index-store.ts owns everything that
+# CAN be factored out — the store, the key gate, and the consult builders; what
+# remains at each site is the splice itself):
+#   - ensureNativeArrayHof (+103, the largest): the per-iteration HasProperty
+#     gate plus the reduce first-present seed scan are inline loop-body emission
+#     for 7 methods. Splitting a 435-line emitter is a real refactor and belongs
+#     with #3182/#3105, not smuggled into a behavioural slice.
+#   - buildObjectEnumerationHelpers / ensureObjectRuntime / generateModule /
+#     generateMultiModule: reserve + fill wiring for the new helpers.
+#   - fillExternArrayLikeStructArms crosses 300 for the first time (+10) — it is
+#     the closed-struct field-ladder miss point, one of the read chokepoints.
+func-budget-allow:
+  - src/codegen/hof-native.ts::ensureNativeArrayHof
+  - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/object-runtime.ts::fillExternArrayLikeStructArms
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #4160 — "clean elements" protector cell for Array.prototype traversal
