@@ -1,7 +1,7 @@
 {
-  "generated": "2026-08-04",
+  "generated": "2026-08-05",
   "threshold": 1500,
-  "totalCeiling": 549385,
+  "totalCeiling": 549637,
   "files": {
     "src/codegen-linear/index.ts": 5614,
     "src/codegen-linear/runtime.ts": 4306,
@@ -50,7 +50,7 @@
     "src/codegen/native-strings.ts": 2285,
     "src/codegen/number-ryu.ts": 1632,
     "src/codegen/object-ops.ts": 4719,
-    "src/codegen/object-runtime-descriptors.ts": 3026,
+    "src/codegen/object-runtime-descriptors.ts": 3098,
     "src/codegen/object-runtime.ts": 8535,
     "src/codegen/parse-number-native.ts": 1852,
     "src/codegen/program-abi-session.ts": 3064,
