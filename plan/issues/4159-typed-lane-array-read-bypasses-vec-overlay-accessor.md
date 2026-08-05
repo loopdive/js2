@@ -177,3 +177,132 @@ guard is needed whose cost the dense case does not pay. Options, cheapest first:
 - No regression test is added with this issue on purpose — a committed failing
   test would red the `equivalence-gate` for every unrelated PR. Add it with the
   fix.
+
+## Implementation Plan
+
+### Root cause
+
+`compileElementAccessBody` (`src/codegen/property-access.ts`, ~L5285-5330) lowers
+a typed `arr[i]` to `struct.get $__vec_<k> 1` (the backing) followed by a raw
+`array.get`. It never consults the #3251 companion table, so an accessor entry —
+which by construction has **no value written back into the vec** — is invisible.
+The write side is the same shape: `emitBoundsGuardedArraySet`
+(`property-access.ts:3361`) and the `array.set` sites in
+`expressions/assignment.ts` (~L4459, ~L4634-4653) store into the backing without
+asking whether index `i` carries a setter.
+
+### The design constraint, and why a runtime guard is the WRONG first answer
+
+The premise of #3251's overlay is that the dense path pays nothing. A runtime
+check at every element access (`global.get $__vec_overlay_state; ref.is_null`)
+would put a load and a branch inside every counted loop — including the
+`isSafeBoundsEliminated` arm, which exists specifically to make hot loops emit a
+bare `array.get`. That trades a correctness bug for a perf regression.
+
+**This codebase already has the right pattern, twice, and it is a COMPILE-TIME
+flag, not a runtime cell:** `ctx.usesArrayHoles` and `ctx.arrayProtoIndexDirty`
+(`src/codegen/array-holes.ts`, `scanForArrayHoles`, #2001 S2). Both are set by a
+cheap AST pre-scan before body compilation; when clear — the overwhelmingly
+common case — the guarded emission is simply never generated and every array
+read stays **byte-identical**. That is a stronger no-regression guarantee than
+any benchmark argument, because there is no new instruction to measure.
+
+The pre-scan's own header states the reason it must be a pre-pass rather than a
+lazy per-site flag: function compilation order is not source order, so a lazily
+set flag desyncs reads in one function against stores in another. The same
+hazard applies here — reuse the pre-scan, do not invent a lazy flag.
+
+### Work Item A: `ctx.vecAccessorDescriptorDirty` pre-scan flag
+**Risk**: Low — purely additive; no emission changes at all.
+**Priority**: 1st
+
+**File: `src/codegen/array-holes.ts`** (or a sibling; `scanForArrayHoles` is
+already the single AST pre-scan pass and its early-exit already tracks two flags)
+- Extend the existing `visit` walk with a third predicate,
+  `isAccessorDescriptorDefine(node)`: a call to
+  `Object.defineProperty` / `Object.defineProperties` / `Object.create` /
+  `Reflect.defineProperty` whose descriptor argument is **not provably a
+  data-only object literal**. An object literal carrying only
+  `value`/`writable`/`enumerable`/`configurable` keys is provably data-only and
+  does NOT set the flag; anything with `get`/`set`, a spread, a computed key, or
+  a non-literal descriptor expression DOES.
+- Deliberately over-approximate, exactly as `isArrayProtoIndexWrite` does: a
+  module that might install an accessor anywhere loses the typed fast path
+  everywhere. Record that in the doc comment.
+
+**File: `src/codegen/context/types.ts`** — add `vecAccessorDescriptorDirty: boolean`.
+**File: `src/codegen/context/create-context.ts`** — initialise `false` (~L130,
+next to `arrayProtoIndexDirty`).
+
+**Test**: a unit test asserting the flag is set for
+`Object.defineProperty(a, "1", {get(){}})` and clear for
+`Object.defineProperty(a, "1", {value: 1})`. No codegen assertions yet.
+
+### Work Item B: route the typed READ when the flag is set
+**Risk**: Medium — touches the hot element-read path, but only under the flag.
+**Priority**: 2nd
+
+**File: `src/codegen/vec-overlay.ts`**
+- Export the overlay-core handles. `VecOverlayReserved` already carries
+  `stateGlobalIdx` and `lookupIdx` but the interface is only consumed
+  in-module; expose a `getVecOverlayCore(ctx)` accessor so `property-access.ts`
+  can emit a call without importing internals piecemeal.
+
+**File: `src/codegen/property-access.ts`**
+- Function `compileElementAccessBody` (~L5285-5330). Gate on
+  `ctx.standalone && ctx.vecAccessorDescriptorDirty`. When set, emit the
+  overlay-aware read instead of the raw `array.get`:
+  `state == null ? array.get : __extern_get_idx(vec, i)`. The dynamic chokepoint
+  already has the finalize-spliced accessor prologue (#3251) and is proven
+  correct by control C in the repro above — **reuse it, do not re-implement the
+  accessor invocation.**
+- The `isSafeBoundsEliminated` arm gets the same treatment. Do **not** try to
+  keep it bare: if the module might install an accessor, a bounds-eliminated
+  read is exactly as unsound as any other.
+- When the flag is clear, the function must emit what it emits today, byte for
+  byte. Assert this with a WAT-diff test, not by inspection.
+
+**Test**: `.tmp` repro case A promoted to `tests/issue-4159.test.ts` —
+`arr[1]` returns 99, and `(arr as any)[1]` still returns 99.
+
+### Work Item C: route the typed WRITE when the flag is set
+**Risk**: Medium.
+**Priority**: 3rd
+
+**File: `src/codegen/expressions/assignment.ts`** (~L4459, ~L4634-4653) and
+**`src/codegen/property-access.ts`** `emitBoundsGuardedArraySet` (L3361)
+- Same gate, same shape: route to the dynamic set path so a setter entry invokes
+  `__call_accessor_set` and a `writable:false` entry drops the store (or throws
+  in strict mode — see the open question below, resolve it before implementing).
+
+**Test**: repro case B — `arr[1] = 5` calls the setter.
+
+### Edge cases
+
+- **Data descriptors must not regress.** They are correct today via the
+  value write-back; the flag must not reroute them into a slower path
+  unnecessarily. Control B in the repro is the regression test.
+- **`Object.create(proto, descriptorBag)`** — a descriptor bag is a *nested*
+  object literal, so the "provably data-only" check has to recurse one level.
+- **A descriptor held in a variable** (`const d = {get(){}}; defineProperty(a,"1",d)`)
+  is not a literal at the call site — the over-approximation must catch it, which
+  the "not provably data-only" phrasing does.
+- **Host/gc lane** — gate on `ctx.standalone` until the host behaviour is
+  measured (open question below). Host output must stay byte-identical.
+
+### Sequencing note
+
+Work Item A is independently valuable and zero-risk: it can land alone, and the
+flag it introduces is the same mechanism **#4160** needs for prototype-chain
+index inheritance (that issue's `Object.prototype` scan is the sibling
+predicate). Land A once, consume it from both.
+
+### What this plan deliberately does NOT do
+
+- No runtime protector global in the element-access path — see above.
+- No escape analysis. It would give a tighter flag (per-array rather than
+  per-module) but it is a much larger change, and the compile-time module flag
+  already gives byte-identical output for every program that does not call
+  `defineProperty` with an accessor — which is approximately all real input.
+  Escape analysis is the follow-up if the coarse flag ever measurably hurts a
+  real workload; file it then, with the measurement.
