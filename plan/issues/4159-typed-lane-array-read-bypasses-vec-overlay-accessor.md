@@ -15,6 +15,18 @@ language_feature: arrays, property-descriptors
 goal: standalone-mode
 related: [3251, 3116, 2042, 3185]
 origin: "Design review of #3251's fast-path guard, 2026-08-04"
+# (#3102 LOC ratchet) Work Item A declares two new CodegenContext flags. A
+# context field has no subsystem module to live in — types.ts IS the
+# declaration site — so the growth is the irreducible cost of the flags
+# themselves, not logic added to a barrel. Comments were trimmed first; the
+# full rationale lives in this issue instead.
+loc-budget-allow:
+  - src/codegen/context/types.ts
+# (#3400 func ratchet) +2 lines in createCodegenContext: the two new flags need
+# an initialiser each, next to the existing protoIndexDirty. Same reasoning as
+# the LOC grant — a context field's initialiser has exactly one legal home.
+func-budget-allow:
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # #4159 — typed-lane array element access bypasses the vec overlay (accessor arm)
@@ -222,7 +234,10 @@ lazy per-site flag: function compilation order is not source order, so a lazily
 set flag desyncs reads in one function against stores in another. The same
 hazard applies here — reuse the pre-scan, do not invent a lazy flag.
 
-### Work Item A: `ctx.vecAccessorDescriptorDirty` pre-scan flag
+### Work Item A: `ctx.vecAccessorDescriptorDirty` pre-scan flag — **LANDED 2026-08-05**
+
+Shipped with #4160 slice 1 in one commit (the spec's own "land A once, consume it from both"). `isNonDataDescriptorDefine` covers `Object.defineProperty`/`defineProperties`/`Object.create`/`Reflect.defineProperty`, treats a provably data-only literal as clean (so #3251's value write-back keeps its fast path), and recurses one level into a descriptor bag. A descriptor held in a variable, a spread, or a computed key all set the flag — unprovable means dirty. Byte-identity A/B'd against main over 14 compilations: identical. Work Items B and C remain.
+
 **Risk**: Low — purely additive; no emission changes at all.
 **Priority**: 1st
 

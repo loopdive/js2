@@ -1404,7 +1404,22 @@ export interface CodegenContext {
    * keeps the spec-correct skip. See the regressed trio
    * `built-ins/Array/prototype/{every,filter,some}/*-c-i-22.js`.
    */
-  arrayProtoIndexDirty: boolean;
+  protoIndexDirty: boolean;
+  /**
+   * (#4159) A descriptor that is not provably data-only may exist somewhere in
+   * the module. Consumers: the TYPED element read/write lanes only — #3251's
+   * value write-back keeps `array.get` coherent for DATA descriptors, but an
+   * accessor has no value to write back. Clear ⇒ byte-identical emission, no
+   * runtime guard. Per-MODULE over-approximation; see #4159 for the rationale.
+   */
+  vecAccessorDescriptorDirty: boolean;
+  /**
+   * (#4159/#4160) `eval` / `Function` present ⇒ forces BOTH flags above.
+   * Load-bearing: static eval inlining (#1163) splices statements in during
+   * BODY compilation, after this pre-scan, so the flags would otherwise stay
+   * clear for code the scan never saw. See #4160.
+   */
+  dynamicCodeDirty: boolean;
   /**
    * (#2083) Set true the first time `getOrRegisterVecType` is asked for a vec
    * type from a genuine usage site (an array literal, array method, for-of over
