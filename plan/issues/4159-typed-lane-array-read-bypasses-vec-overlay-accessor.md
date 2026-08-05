@@ -180,6 +180,16 @@ guard is needed whose cost the dense case does not pay. Options, cheapest first:
 
 ## Implementation Plan
 
+> **Superseded in four places by `## Architect Spec (fable)` below (2026-08-05).**
+> That review ran three new probes and refuted: (1) Work Item C's premise — the
+> dynamic write path does not invoke setters either, so routing typed writes
+> there today converts "wrong value stored" into "write silently dropped";
+> (2) `getVecOverlayCore(ctx)` — unimplementable, the overlay core is minted at
+> finalize, after body compilation; (3) part of the write-site list —
+> `assignment.ts` L4459 is the `$__subview` arm and is out of scope;
+> (4) #4160's generic-arm location. The compile-time pre-scan-flag mechanism
+> itself was **confirmed**. Where the two disagree, the architect spec wins.
+
 ### Root cause
 
 `compileElementAccessBody` (`src/codegen/property-access.ts`, ~L5285-5330) lowers
@@ -306,3 +316,258 @@ predicate). Land A once, consume it from both.
   `defineProperty` with an accessor — which is approximately all real input.
   Escape analysis is the follow-up if the coarse flag ever measurably hurts a
   real workload; file it then, with the measurement.
+
+## Architect Spec (fable, 2026-08-05)
+
+Unified spec for the shared substrate behind #4159 + #4160, validating the draft
+`## Implementation Plan` above against the code and against three new
+measurements. Probes run on this tree (standalone target, compile + instantiate):
+
+| Probe | Program | Expected (spec) | Measured |
+| --- | --- | --- | --- |
+| P1 | dynamic-lane `arr[1] = 5` through a defined setter | 5 (setter runs) | **0 — write silently dropped** |
+| P2 | `Array.prototype.forEach.call({0:0,2:2,length:3})` after `Object.prototype[1]=111` | sum 113, visits 3 | **sum 2, visits 2 — absent own index skipped, inherited index invisible** |
+| P3 | `Object.prototype[1]=111` then `({length:3})[1]` | 111 | **miss (NaN) — the write lands nowhere** |
+
+### Verdict
+
+The compile-time pre-scan-flag design is **correct and confirmed as the right
+mechanism** — when the flags are clear no new instruction exists, which is the
+byte-identity guarantee the draft wants. But the draft is wrong in four places,
+each of which changes the work plan:
+
+1. **Work Item C's premise is false (P1).** "Route the typed write to the dynamic
+   set path so a setter entry invokes `__call_accessor_set`" assumes a
+   setter-invoking dynamic path. There isn't one: the `__extern_set` overlay
+   prologue hits `FLAG_ACCESSOR` and emits a bare `return`
+   (`src/codegen/vec-overlay.ts:1404-1409`) — silent drop, measured. The
+   setter-invoke + `writable:false` enforcement is exactly #3251 **S2**,
+   implemented and validated but UNMERGED on fork branch
+   `issue-3251-s2-write-enforcement` (tip `766af9b980`, per the epic's 2026-07-23
+   reconciliation note). The write slice must land **after** (or subsume) S2 —
+   routing typed writes into today's `__extern_set` only changes "wrong value
+   stored" into "write silently dropped".
+2. **`getVecOverlayCore(ctx)` cannot exist as proposed.** The overlay core (state
+   global, numeric-flag global, `__vec_overlay_lookup`) is minted at FINALIZE
+   only — `fillVecOverlayHelpers` -> `ensureOverlayCore`, ctx fields set at
+   `vec-overlay.ts:313-324`. `compileElementAccessBody` runs during body
+   compilation, before any of those indices exist, so a typed read can never bake
+   `global.get $__vec_overlay_state`. The correct emission is a `call` to
+   **`__extern_get_idx` by funcMap name** (reserved early under standalone by
+   `ensureObjectRuntime`; the overlay prologue is finalize-spliced into it,
+   `vec-overlay.ts:1494-1608`, and is the path repro control C already proves
+   correct). See (d).
+3. **The draft's write-site list is partly wrong.** `assignment.ts` ~L4459 is the
+   `$__subview` (TypedArray subarray) arm — integer-indexed-exotic semantics,
+   explicitly out of overlay scope; do not touch it. The real plain-vec
+   user-write sites are enumerated in (c).
+4. **#4160's generic arm does not primarily live in `__hof_*`.** Measured (P2):
+   `Array.prototype.forEach.call(obj, function(){...})` with an inline callback
+   compiles through `compileArrayLikeBorrow`
+   (`src/codegen/array-prototype-borrow.ts:339-489`), an inline per-call-site
+   loop that already gates every iteration on `__extern_has_idx` ("spec
+   HasProperty used to skip holes", `array-prototype-borrow.ts:607`) — that is
+   why P2 skipped the absent index. The missing piece is not a new loop shape; it
+   is that **`__extern_has_idx` / `__extern_get_idx` answer own-only** and there
+   is **no runtime store for prototype index writes at all** (P3). Put the
+   prototype fallback in those two chokepoints and every consumer (borrow loops,
+   `__hof_*` Gets, direct dynamic reads) is fixed at once.
+
+### (a) The `arrayProtoIndexDirty` claim — VERIFIED
+
+Exactly one consumer: `shouldHoleSkip` (`src/codegen/array-methods.ts:5590-5592`,
+`ctx.usesArrayHoles && !ctx.arrayProtoIndexDirty && elemType.kind === "externref"`).
+Its effect is only to DISABLE the #2001-S2 HOF hole-visit-skip, falling back to
+visit-with-`undefined` (doc comment at `array-methods.ts:5581-5588` says so
+explicitly). No prototype walk exists anywhere downstream of the flag. Setter:
+`scanForArrayHoles` (`src/codegen/array-holes.ts:69-70`), predicate
+`isArrayProtoIndexWrite` (`array-holes.ts:107-132`) — `Array.prototype` only
+(`isArrayPrototypeExpr`, L78-85). Declared `context/types.ts:1407`, initialised
+`create-context.ts:130`. Pre-scan call sites: `codegen/index.ts:3859`
+(single-source) and `index.ts:6337` (multi-source, OR across files).
+
+### (b) Flags: THREE, one shared walk; the eval hole is real but compile-time-closable
+
+Distinct flags, because their consumers and their deopt costs are disjoint — one
+merged flag would make `Object.prototype[0] = 1` deoptimise every typed element
+read and an array accessor-define deoptimise every HOF loop:
+
+- **`vecAccessorDescriptorDirty`** (#4159) — "some array receiver may carry a
+  non-data / non-writable own descriptor". Consumers: typed element read/write
+  lanes only.
+- **`protoIndexDirty`** (#4160) — the existing `arrayProtoIndexDirty` with
+  `isArrayPrototypeExpr` widened to `Object.prototype` (rename; only 5 references
+  exist, all listed in (a), so migrate rather than alias). Consumers:
+  `shouldHoleSkip` (existing) + the new runtime-store emissions in (c).
+- **`dynamicCodeDirty`** — set by any call whose callee identifier is `eval` or
+  `Function` / `new Function(...)`. ORs into BOTH flags above (i.e. the scan sets
+  both when it fires). Rationale below.
+
+All three set by the **existing** `scanForArrayHoles` walk (extend the early-exit
+at `array-holes.ts:60` to include the new flags, or it will stop scanning before
+finding them). Same over-approximation discipline, same pre-pass timing — the
+function-compilation-order desync argument in the file header
+(`array-holes.ts:52-57`) applies identically.
+
+**The eval hole is real, and it already bites the EXISTING flag today.** Static
+eval inlining (#1163, `src/codegen/expressions/eval-inline.ts:1-18`) parses a
+compile-time-constant eval string and splices its statements into the current
+function **during body compilation** — after the pre-scan has run. So
+`eval('Array.prototype[0] = 1')` never sets `arrayProtoIndexDirty` on today's
+main. Setting the flag lazily at splice time is unsound (the desync hazard
+above), so the fix is the `dynamicCodeDirty` predicate: eval presence dirties
+everything, compile-time only.
+
+**A runtime cell is NOT needed, including for the dynamic-code lane.** Measured
+basis: standalone has no runtime store that eval'd code could invalidate — P3
+shows a prototype index write lands nowhere. Runtime eval (host `__extern_eval`
+#1164, standalone provider `js2wasm:runtime-eval` #2928/#2527) runs the eval'd
+script in a fresh module / the interp; its prototype writes cannot reach the
+parent's compiled arrays today, so there is no working behaviour for a missed
+invalidation to break. Once `dynamicCodeDirty` forces the generic arm, that arm
+consults the runtime stores introduced in (c) — which is precisely the surface a
+future runtime-eval boundary write would have to target anyway. A runtime cell
+buys something only if we want eval-containing modules to KEEP the fast path;
+that is a measurement-driven follow-up, not part of this substrate. (UNVERIFIED:
+whether the runtime-eval interp can mutate a parent-module array passed across
+the boundary at all; irrelevant to soundness under the over-approximation,
+relevant only to that future refinement.)
+
+### (c) The generic arm, concretely
+
+**#4160 — prototype-index store + chokepoint fallbacks (standalone).**
+
+1. **Store.** Two module globals `(ref null $Object)` — companions for
+   `%Object.prototype%` and `%Array.prototype%` — in a NEW sibling module
+   (suggest `src/codegen/proto-index-store.ts`; vec-overlay is 1,748 lines and
+   under the #3102 ratchet). Companion minted on first write via
+   `__new_plain_object`, so the `$Object` machinery (`__obj_find`,
+   `__defineProperty_value` validation) is reused wholesale — the same
+   delegate-don't-duplicate argument as #3251's companion.
+2. **Write arms** (all emission gated on `ctx.standalone && ctx.protoIndexDirty`):
+   - `__extern_set` gets a `$NativeProto` brand arm: `ref.test $NativeProto`
+     (`ctx.nativeProtoTypeIdx`, `native-proto.ts:180-198`) -> brand ==
+     Object.prototype / Array.prototype glue brand (`getBuiltinBrand`) -> numeric
+     key -> store into the matching companion. This is what makes
+     `Object.prototype[1] = 1` land (P3 fix). Splice at the same finalize point
+     as the existing prologues, same append-locals discipline.
+   - `__defineProperty_value` / `__defineProperty_accessor` get the same brand
+     arm (covers `Object.defineProperty(Array.prototype, "0", ...)`, which
+     `isArrayProtoIndexWrite` already recognises as a dirtying shape).
+3. **Read fallbacks** (same gate): final arms in **`__extern_has_idx`** and
+   **`__extern_get_idx`** — after own struct fields / sidecar / vec / companion
+   arms miss, canonical non-negative integer key -> consult the Array.prototype
+   companion iff the receiver is a `$__vec_base`, then the Object.prototype
+   companion for every receiver. This mirrors the host lane's architect-ratified
+   design `_protoIndexHas` / `_protoIndexGet` (`src/runtime.ts:372-417`,
+   consulted at `runtime.ts:9692` and `:9776`), including accessor invocation on
+   Get. One store, two chokepoints, every consumer inherits it:
+   `compileArrayLikeBorrow`'s has-gated loop
+   (`array-prototype-borrow.ts:346-351,472`), the `__hof_*` steppers' Gets
+   (`hof-native.ts:143-148`), and plain dynamic `o[i]`.
+4. **`__hof_*` HasProperty gate.** `ensureNativeArrayHof` builds its loop at
+   reserve time with NO per-index presence check (`hof-native.ts:351-374` — every
+   index in `[0,len)` is visited). Under `protoIndexDirty` only, wrap the
+   per-iteration body of the presence-sensitive methods
+   (forEach/map/filter/some/every/reduce/reduceRight per §23.1.3.*) in
+   `if (__extern_has_idx(recv, i))` — the flag is known before any body compiles,
+   so the flag-clear helper body is byte-identical by construction. (The
+   own-absent-index visit-with-undefined bug for flag-CLEAR modules is real but
+   belongs to #3185/#2001 scope, not this substrate — do not widen here.)
+5. **`LengthOfArrayLike` as a real `[[Get]]`** stays #4160 slice 3, independent
+   of these flags; nothing here blocks it.
+
+**#4159 — typed-lane routing (standalone).**
+
+- **Read** — `compileElementAccessBody` (`src/codegen/property-access.ts:4452`
+  ff.). Two regions to gate on `ctx.standalone && ctx.vecAccessorDescriptorDirty`:
+  the vec-struct arm (raw fast paths at L5299-5314 `isSafeBoundsEliminated`
+  `array.get` and the shared bounds-checked read at L5379) and the raw-array arm
+  (L5416-5435 ff.). When the flag is set: `extern.convert_any` the receiver,
+  `f64.convert` the index, `call __extern_get_idx` (funcMap name — #16 re-resolve
+  discipline, exactly as `hof-native.ts:91-97` does), then coerce the externref
+  result back to the expected ValType (`__unbox_number` for an f64 context; pass
+  through for externref). Defensively `ensureObjectRuntime(ctx)` first and fall
+  back to today's raw emission if `__extern_get_idx` is absent — a flag-set
+  module virtually always has the runtime already (the dirtying `defineProperty`
+  call pulls it in), but `dynamicCodeDirty` can set the flag without it. Do NOT
+  exempt the `isSafeBoundsEliminated` arm (draft is right here).
+- **Write** — same gate, route to
+  `__extern_set(recvExt, __box_number(f64 i), boxedValue)`. Sites (audited;
+  complete for user-visible element writes):
+  - `expressions/assignment.ts` L4654-4667 (bounds-eliminated `array.set`),
+    L4699-4816 (grow path, store at L4816), L4943 (raw-array assign),
+    L2640-2651 (destructuring element target `[a[i]] = src`).
+  - `expressions/unary-updates.ts` L1863 and the `emitBoundsGuardedArraySet`
+    calls at L913/L926 (`arr[i]++` family; helper defined at
+    `property-access.ts:3362`).
+  - NOT `assignment.ts` L4459 (`$__subview`) and NOT the L4423-4428 `$__ta_view`
+    arm — integer-indexed exotics, out of scope.
+  - `assignment.ts` L1909 (rest-destructuring copy loop) writes a fresh internal
+    array — leave the write; note its paired `array.get` READ of the source vec
+    is a per-index `[[Get]]` in spec terms (an accessor should fire on rest
+    destructuring). Record as a known boundary, don't fix in this pass.
+  - **Sequencing: this slice lands only after #3251 S2** (see Verdict 1). Resolve
+    the `writable:false` strict-throw open question there — module code is
+    strict, so §13.15.2/§10.1.9 requires a TypeError; today's dynamic lane
+    silently drops, which S2's enforcement arm is the right place to fix.
+
+**Host lane.** All of the above is `ctx.standalone`-gated; host output must be
+byte-identical (the #1917 sha-compare discipline, as done for #3251 S1). Two open
+host questions stay open and are NOT resolved by this spec: the #4159 host repro
+(issue's own open question), and why 63% of the #4160 cluster fails on host
+despite `_protoIndexHas/Get` existing there — a host-lane probe is the first task
+of whoever picks up #4160's host half; do not assume the standalone mechanism
+transfers.
+
+### (d) Exports from vec-overlay.ts: NONE needed
+
+With routing through `__extern_get_idx` / `__extern_set`, the cross-module "API"
+is funcMap names — the established pattern (`hof-native.ts:91-97`,
+`ta-hof-map-filter.ts:74`, `array-prototype-borrow.ts:471-484`). The draft's
+`getVecOverlayCore(ctx)` is rejected: its handles do not exist until finalize
+(Verdict 2), and exporting them would invite baked global indices that the
+`registry/imports.ts:456-457` shift fixup only partially covers. The overlay's
+ctx-visible fields (`vecOverlayStateGlobalIdx` / `vecOverlayNumericGlobalIdx`,
+`context/types.ts:1829-1841`) already exist for the shift machinery — do not grow
+that surface. The #4160 proto-index store is a new module and consumes
+object-runtime natives by name; nothing from vec-overlay.
+
+### (e) Slices, risk, and how byte-identity is PROVEN
+
+Proof method, per slice: an A/B compile of a fixed corpus (all
+`playground/examples/*.ts` + the dense-array benchmarks) on branch vs main,
+comparing sha256 of the emitted standalone binary per file (the
+`.tmp/probe-host-bytes.mts` pattern from #3251 S1), with a WAT dump diff of any
+differing function. Shas pasted into the PR description. Additionally commit one
+durable structural test per consumer slice: compile a canonical flag-clear
+dense-loop program and assert the emitted WAT for the loop function contains
+**no** `call $__extern_get_idx` / no `__extern_has_idx` gate — that assertion
+survives in CI where a branch-vs-main diff cannot.
+
+| # | Slice | Contents | Risk | Byte-identity proof scope |
+| --- | --- | --- | --- | --- |
+| S0 | Pre-scan flags (lands alone; #4159 WI-A + #4160 slice 1 merged) | `vecAccessorDescriptorDirty` + `protoIndexDirty` widening + `dynamicCodeDirty` predicate; ctx fields; early-exit fix at `array-holes.ts:60`; flag unit tests | **Low** | Corpus-wide identical EXCEPT programs with (`usesArrayHoles` and (`Object.prototype` index write or eval)), where `shouldHoleSkip` now correctly disables — an intended, existing-consumer behaviour change; name those files in the PR |
+| S1 | #4160 store + chokepoint arms | proto-index-store module; `__extern_set`/define-native `$NativeProto` brand arms; `__extern_has_idx`/`__extern_get_idx` fallback arms | **Medium-high** (MOP chokepoints; finalize-splice discipline — append locals, fresh Instr factories per the shared-instr double-remap hazard) | Corpus-wide identical (all emission flag-gated); P2 -> 113/3, P3 -> 111 |
+| S2 | #4160 `__hof_*` has-gate | flag-gated per-iteration `__extern_has_idx` in `ensureNativeArrayHof` | **Medium** | `__hof_*` bodies flag-clear identical; `15.4.4.18-7-b-12` passes |
+| S3 | #4159 typed READ | `compileElementAccessBody` both arms | **Medium** (hot path, but compile-time-gated) | Corpus-wide identical; repro A returns 99 on both lanes; control B (data descriptor) unregressed |
+| S4 | Land #3251 S2 | salvage fork branch `issue-3251-s2-write-enforcement` (fresh main merge + revalidate, per epic notes) | **Medium** (pre-validated but 2 weeks stale) | Its own #3251 discipline; P1 -> 5 afterwards |
+| S5 | #4159 typed WRITE | assignment/unary-update sites in (c) | **Medium-high** (most sites; strict-throw semantics decided in S4) | Corpus-wide identical; repro B returns 5; `writable:false` behaviour matches S4's decision on both lanes |
+
+S0 is the shared substrate both issues consume — land it once, first. S1/S2
+(#4160) and S3 (#4159) are independent after S0 and can proceed in parallel
+lanes; S5 strictly after S4.
+
+### Two NEW confirmed defects surfaced by this review
+
+Neither is covered by an existing issue and both are measured, not inferred:
+
+- **P1 — the DYNAMIC write lane drops setters too.** `vec-overlay.ts:1404-1409`
+  returns bare on `FLAG_ACCESSOR`. #4159's summary says "only the typed lane is
+  wrong"; that is now known to be too narrow for **writes** (it remains accurate
+  for reads, where control C passes). The fix is #3251 S2, which exists but is
+  unmerged.
+- **P3 — a prototype index write lands nowhere in standalone.**
+  `Object.prototype[1] = 111` followed by `({length:3})[1]` misses entirely.
+  This is the substrate #4160 assumed it could extend; it does not exist yet, so
+  #4160's slice 1 must CREATE the store, not just widen a scan.

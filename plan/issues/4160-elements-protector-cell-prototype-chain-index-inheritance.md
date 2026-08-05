@@ -198,3 +198,55 @@ narrow addition for the dynamic-code lane only.
   repro was run for this issue** — the mechanism is read from the test bodies
   (quoted above) plus `src/codegen/hof-native.ts`. Reproducing
   `15.4.4.18-7-b-12` is the first step for whoever picks it up.
+
+## Architect review (fable, 2026-08-05) — two corrections to the design above
+
+Full spec lives in #4159 under `## Architect Spec (fable)`; it covers both
+issues. Two findings change this issue's plan materially:
+
+**1. The generic arm does NOT belong in `__hof_*`.** Measured: an
+`Array.prototype.forEach.call(obj, fn)` with an inline callback does not reach
+`hof-native.ts` at all — it compiles through `compileArrayLikeBorrow`
+(`src/codegen/array-prototype-borrow.ts:339-489`), an inline per-call-site loop
+that ALREADY gates each iteration on `__extern_has_idx`
+(`array-prototype-borrow.ts:607`, "spec HasProperty used to skip holes"). Slice 2
+above ("one consumer, one method") is therefore aimed at the wrong layer.
+
+The correct target is the two MOP chokepoints — **`__extern_has_idx` and
+`__extern_get_idx`** — which today answer **own-only**. Fix the fallback there
+and every consumer inherits it at once: the borrow loops, the `__hof_*` steppers'
+Gets, and plain dynamic `o[i]`.
+
+**2. Slice 1 must CREATE a store, not just widen a scan.** This issue assumed the
+runtime substrate existed and only the compile-time flag needed widening. It does
+not. Measured: `Object.prototype[1] = 111` followed by `({length:3})[1]` **misses
+entirely** — the write lands nowhere in standalone. So the work is a new
+proto-index store (two `(ref null $Object)` companions for `%Object.prototype%`
+and `%Array.prototype%`, suggested module `src/codegen/proto-index-store.ts`)
+plus write arms on `__extern_set` / the define natives, mirroring the host lane's
+existing `_protoIndexHas` / `_protoIndexGet` (`src/runtime.ts:372-417`).
+
+That also reframes this issue's size: it is substrate creation, not an
+extension — re-check the `horizon: l` estimate before scheduling.
+
+**Also confirmed:** the `arrayProtoIndexDirty` reading in the section above is
+correct — one consumer (`array-methods.ts:5590-5592`), disables the hole-skip,
+no prototype walk downstream.
+
+**New: the eval hole is real and already bites the EXISTING flag on main.**
+Static eval inlining (#1163, `expressions/eval-inline.ts`) splices eval'd
+statements in during **body compilation**, after the pre-scan has run — so
+`eval('Array.prototype[0] = 1')` never sets `arrayProtoIndexDirty` today. The
+spec's fix is a `dynamicCodeDirty` predicate (any `eval` / `Function` callee)
+that ORs into both flags; a lazy set at splice time would reintroduce the
+compilation-order desync the pre-pass exists to avoid. Still no runtime cell
+needed.
+
+**Host half stays open.** Why 63 % of this cluster fails on host *despite*
+`_protoIndexHas` / `_protoIndexGet` existing there is unexplained. A host-lane
+probe is the first task for whoever picks that half up — do not assume the
+standalone mechanism transfers.
+
+**Sequencing.** Shared slice **S0** (the pre-scan flags, jointly with #4159's
+Work Item A) lands once and first. This issue's S1/S2 then run in parallel with
+#4159's S3.
